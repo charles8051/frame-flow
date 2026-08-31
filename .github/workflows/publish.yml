@@ -146,10 +146,10 @@ jobs:
     environment: nuget.org
     permissions:
       # A job-level block REPLACES the workflow-level one rather than extending
-      # it, so packages: write is restated here — the GitHub Packages push below
-      # authenticates with GITHUB_TOKEN and fails without it.
+      # it. packages: write is deliberately NOT restated: nothing in this job
+      # pushes to GitHub Packages any more, and the read below uses
+      # PACKAGES_READ_PAT rather than GITHUB_TOKEN.
       contents: read
-      packages: write
       id-token: write   # required for nuget.org to issue the short-lived key
     # Defaults to the maintainer's self-hosted Linux runner. Set the repo
     # variable LINUX_RUNNER to a hosted label as JSON to run entirely on
@@ -365,14 +365,25 @@ jobs:
 
           echo "OK: all ${#expected[@]} expected packages are present."
 
-      - name: Push to GitHub Packages
-        # Only a real tag push publishes; a workflow_dispatch dry-run stops after pack.
-        if: github.event_name == 'push'
-        run: |
-          dotnet nuget push "packages/*.nupkg" \
-            --source "$NUGET_SOURCE" \
-            --api-key ${{ secrets.GITHUB_TOKEN }} \
-            --skip-duplicate
+      # The GitHub Packages PUSH is gone; the READ above stays, for now.
+      #
+      # The reseed retired it. Every FrameFlow.* package on GitHub Packages is
+      # linked to the repository that first published it, which is now
+      # frame-flow-archive. A package is scoped to its owning repository, so this
+      # repository's GITHUB_TOKEN has no rights over one owned by another: the
+      # push returned 403 Forbidden even with packages: write granted. Not a
+      # permissions bug — a package-ownership fact the rename did not carry over.
+      #
+      # Rather than delete 39 archive-linked packages or re-link them by hand, the
+      # destination is nuget.org, which is where these were always headed.
+      #
+      # Reading is still authenticated above, deliberately. The six projects that
+      # reference FrameFlow.Native.Runtime resolve it from GitHub Packages at
+      # 0.1.1-alpha.*, and that read still works — only the cross-repo write is
+      # refused. Removing the source before the package exists on nuget.org would
+      # fail restore before anything could publish it. Once this tag lands the
+      # package publicly, the follow-up bumps those six references and drops the
+      # read, the PACKAGES_READ_PAT secret and the github-charles8051 source.
 
       # Requested immediately before the push, not earlier in the job: the key
       # nuget.org returns is valid for one hour.
