@@ -9,9 +9,17 @@ name: Release
 #     bundles Install-MotionClip.ps1, and attaches the zip to the matching
 #     GitHub Release (`release-binaries` job), so consumers can grab
 #     MotionClip.exe without a .NET SDK or `dotnet tool install`.
-# FrameFlow packages go to GitHub Packages on every tag. Publishing the same
-# packages to nuget.org is wired but OFF by default — see the nuget.org block
-# in the publish job for the two preconditions and the variable that arms it.
+# FrameFlow packages go to GitHub Packages and to nuget.org on every v*.*.* tag.
+# nuget.org uses Trusted Publishing: the publish job requests a short-lived OIDC
+# token from GitHub and nuget.org validates it against a policy naming this
+# repository and the `nuget.org` environment. There is no publishing secret.
+#
+# A workflow_dispatch is a dry run: it builds, tests, packs and performs the real
+# OIDC exchange, then stops without pushing anything.
+#
+# Before the first real tag: the `FrameFlow` ID prefix must be reserved on
+# nuget.org, or the ids stay registrable by anyone — the same dependency-confusion
+# reasoning that keeps `FrameFlow.*` unmapped to nuget.org in nuget.config.
 on:
   push:
     tags:
@@ -131,6 +139,18 @@ jobs:
 
   publish:
     needs: test
+    # The trusted-publishing policy on nuget.org names this environment, so a
+    # token minted by any other job or workflow does not validate against it.
+    # That scoping is what makes it safe to hold id-token in the same job that
+    # builds — the same shape periphery uses.
+    environment: nuget.org
+    permissions:
+      # A job-level block REPLACES the workflow-level one rather than extending
+      # it, so packages: write is restated here — the GitHub Packages push below
+      # authenticates with GITHUB_TOKEN and fails without it.
+      contents: read
+      packages: write
+      id-token: write   # required for nuget.org to issue the short-lived key
     # Defaults to the maintainer's self-hosted Linux runner. Set the repo
     # variable LINUX_RUNNER to a hosted label as JSON to run entirely on
     # GitHub's runners, e.g. ["ubuntu-latest"].
@@ -219,7 +239,14 @@ jobs:
         # all of src/* and none of tests/* or examples/*. FrameFlowLocalFeedDisable
         # steers PackageOutputPath away from the user-level local feed so
         # we end up with a clean ./packages folder under the workspace.
-        run: dotnet pack FrameFlow.slnx --configuration Release -p:FrameFlowLocalFeedDisable=true -o packages
+        # rm -rf first: this workflow's own credential-removal step notes that the
+        # workspace can outlive the job on a self-hosted runner, so a .nupkg left
+        # by an EARLIER tag would otherwise survive into the push glob below and
+        # be published alongside this release. periphery clears for the same
+        # reason.
+        run: |
+          rm -rf packages
+          dotnet pack FrameFlow.slnx --configuration Release -p:FrameFlowLocalFeedDisable=true -o packages
 
       - name: Pack native runtime package
         # Native.Runtime lives outside the solution (it's a
@@ -227,8 +254,116 @@ jobs:
         # so it needs an explicit pack invocation.
         run: dotnet pack nuget/FrameFlow.Native.Runtime.csproj --configuration Release -o packages
 
-      - name: List packages
-        run: ls -lh packages/
+      - name: List packages and assert the family is complete
+        # Fail-loud completeness gate, ported from periphery. A release that
+        # silently ships 22 of 23 packages is worse than a release that fails,
+        # and a nuget.org version cannot be replaced once it exists.
+        #
+        # The expected set is DERIVED, not hardcoded: every project in
+        # FrameFlow.slnx whose evaluated $(IsPackable) is true, plus
+        # FrameFlow.Native.Runtime, which lives outside the solution and is packed
+        # by its own step above. Adding a packable project extends this gate
+        # automatically — there is no count to remember to bump.
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The SDK's own solution reader, not a regex over the .slnx XML: no
+          # chance of matching a commented-out <Project Path="…">, and no
+          # breakage if the format grows an attribute.
+          projects="$(dotnet sln FrameFlow.slnx list | tr '\\' '/' | grep '\.csproj$')"
+          projects="$projects
+          nuget/FrameFlow.Native.Runtime.csproj"
+
+          expected=()
+          while IFS= read -r proj; do
+            proj="$(echo "$proj" | xargs)"
+            [ -n "$proj" ] || continue
+            packable="$(dotnet msbuild "$proj" -nologo -getProperty:IsPackable \
+              -p:Configuration=Release -p:FrameFlowLocalFeedDisable=true | tr -d '[:space:]')"
+            # The shape `set -e` cannot see: msbuild exiting 0 having printed
+            # nothing usable. Unchecked it would quietly shrink the expected set
+            # and a short release would sail through this gate.
+            if [ -z "$packable" ]; then
+              echo "::error::Could not evaluate \$(IsPackable) for $proj — refusing to publish on a guess."
+              exit 1
+            fi
+            # MSBuild yields the literal text from the project file, so `True` is
+            # as valid as `true`. A capitalised spelling would otherwise drop a
+            # genuinely packable project and red-X a complete release.
+            [ "${packable,,}" = "true" ] || continue
+            id="$(dotnet msbuild "$proj" -nologo -getProperty:PackageId \
+              -p:Configuration=Release -p:FrameFlowLocalFeedDisable=true | tr -d '[:space:]')"
+            if [ -z "$id" ]; then
+              echo "::error::$proj is packable but has no evaluable \$(PackageId)."
+              exit 1
+            fi
+            expected+=("$id")
+          done <<< "$projects"
+
+          if [ "${#expected[@]}" -eq 0 ]; then
+            echo "::error::Derived zero packable projects — this step's MSBuild evaluation is broken, not the pack. Fix the step; do NOT publish."
+            exit 1
+          fi
+
+          found=(); for f in packages/*.nupkg; do [ -e "$f" ] && found+=("$f"); done
+
+          missing=()
+          for id in "${expected[@]}"; do
+            ok=0
+            for f in "${found[@]}"; do
+              case "$(basename "$f")" in "$id".[0-9]*) ok=1;; esac
+            done
+            [ "$ok" -eq 1 ] || missing+=("$id")
+          done
+
+          # The reverse direction: a .nupkg no expected project accounts for.
+          unexpected=()
+          for f in "${found[@]}"; do
+            owned=0
+            for id in "${expected[@]}"; do
+              case "$(basename "$f")" in "$id".[0-9]*) owned=1;; esac
+            done
+            [ "$owned" -eq 1 ] || unexpected+=("$f")
+          done
+
+          printf 'expected %d package(s):\n' "${#expected[@]}"; printf '  %s\n' "${expected[@]}"
+          printf 'found %d file(s):\n' "${#found[@]}"; printf '  %s\n' "${found[@]:-<none>}"
+
+          if [ "${#missing[@]}" -ne 0 ] || [ "${#unexpected[@]}" -ne 0 ]; then
+            [ "${#missing[@]}" -eq 0 ]    || { echo "missing:"; printf '  %s\n' "${missing[@]}"; }
+            [ "${#unexpected[@]}" -eq 0 ] || { echo "unexpected:"; printf '  %s\n' "${unexpected[@]}"; }
+            echo "::error::Package family incomplete: expected ${#expected[@]}, found ${#found[@]} (${#missing[@]} missing, ${#unexpected[@]} unexpected)."
+            exit 1
+          fi
+
+          # On a tag push the version is not a free variable: MinVer derives it
+          # from the tag, so every .nupkg must be exactly <id>.<tag-without-v>.
+          # Checking it catches the two cases the ID match alone cannot — a stale
+          # file from an earlier tag, and a version/identity drift between what
+          # MinVer produced and what the tag claims. Skipped on a dispatch, where
+          # there is no tag and MinVer legitimately produces a height-based
+          # prerelease.
+          if [ "${GITHUB_EVENT_NAME:-}" = "push" ]; then
+            want="${GITHUB_REF_NAME#v}"
+            bad=()
+            for f in "${found[@]}"; do
+              b="$(basename "$f" .nupkg)"
+              matched=0
+              for id in "${expected[@]}"; do
+                [ "$b" = "$id.$want" ] && matched=1
+              done
+              [ "$matched" -eq 1 ] || bad+=("$(basename "$f")")
+            done
+            if [ "${#bad[@]}" -ne 0 ]; then
+              echo "not <id>.$want:"; printf '  %s\n' "${bad[@]}"
+              echo "::error::Tag $GITHUB_REF_NAME expects every package at version $want. Refusing to publish a set that does not match the tag."
+              exit 1
+            fi
+            echo "OK: every package is at $want, matching tag $GITHUB_REF_NAME."
+          fi
+
+          echo "OK: all ${#expected[@]} expected packages are present."
 
       - name: Push to GitHub Packages
         # Only a real tag push publishes; a workflow_dispatch dry-run stops after pack.
@@ -239,15 +374,51 @@ jobs:
             --api-key ${{ secrets.GITHUB_TOKEN }} \
             --skip-duplicate
 
-      # Hand the packed .nupkg files to the publish-nuget-org job. That job holds
-      # the OIDC token and must not run repository code, so it takes the packages
-      # as an artifact rather than checking out and re-packing them.
+      # Requested immediately before the push, not earlier in the job: the key
+      # nuget.org returns is valid for one hour.
+      #
+      # This step runs on a dispatch too, deliberately. It is what makes
+      # `workflow_dispatch` a real dry run: the OIDC exchange with nuget.org is
+      # exercised for real, and only the push below is withheld. A dry run that
+      # skipped the exchange would not tell you whether the policy is right.
+      - name: NuGet login
+        id: login
+        # Pinned by commit (v1.2.0) rather than the mutable @v1 periphery uses.
+        # This step mints the credential that can publish every package id under
+        # the reserved prefix; a retagged @v1 could exfiltrate the OIDC token or
+        # the key it returns. The cost of pinning is one SHA bump per upgrade.
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841
+        with:
+          # A repo VARIABLE, not a secret. The nuget.org profile name is public,
+          # and a secret would be masked to *** in the log precisely when a failed
+          # OIDC exchange makes you want to read the value back.
+          user: ${{ vars.NUGET_USER }}
+
+      # The only push trigger on this workflow is a v*.*.* tag, so this runs for a
+      # release tag and for nothing else.
+      - name: Push to nuget.org
+        if: ${{ github.event_name == 'push' }}
+        run: >
+          dotnet nuget push "packages/*.nupkg"
+          --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - name: Dry run complete
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        run: |
+          echo "Dry run: the OIDC exchange with nuget.org succeeded and the"
+          echo "packages below were built. NOTHING WAS PUSHED."
+          ls -1 packages/*.nupkg
+
       - name: Upload packages
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: nupkgs
+          name: packages
           path: packages/*.nupkg
-          retention-days: 7
+          if-no-files-found: warn
 
       # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
       # clear text — NuGet has no other way to hand a credential to a v3 source in
@@ -286,82 +457,6 @@ jobs:
   #
   # See THIRD-PARTY-NOTICES.md. Do not set this back to true without deciding
   # what LGPL §6 then requires of the release, under both versions.
-
-  # ── nuget.org ────────────────────────────────────────────────────────────
-  #
-  # A separate job for one reason: `id-token: write` is available to every step
-  # of whatever job holds it, regardless of any step-level `if`. Granting it to
-  # the publish job would mean restore, MSBuild targets and pack could each
-  # request an OIDC token from the runner endpoint and exchange it for a
-  # nuget.org publishing credential — without PUBLISH_TO_NUGET_ORG ever being
-  # true. So the token lives in a job that runs no repository code: no checkout,
-  # no restore, no build. It downloads the packages the publish job already
-  # produced and pushes them.
-  #
-  # DISARMED until `vars.PUBLISH_TO_NUGET_ORG` is exactly 'true'. The condition is
-  # on the job, so when it is unset this job does not exist and neither does its
-  # token. Merging changes nothing on the next tag push; arming it is a separate,
-  # deliberate act — a push to nuget.org cannot be taken back, since a version
-  # can be unlisted but never replaced and never reused.
-  #
-  # Two things must be true before arming it:
-  #
-  #   1. The `FrameFlow` ID prefix is reserved (mail account@nuget.org). Until it
-  #      is, every frameflow.* id is registrable by anyone. That is the same
-  #      dependency-confusion reasoning that keeps `FrameFlow.*` unmapped to
-  #      nuget.org in nuget.config. Publishing first leaves a window where a
-  #      sibling id can be claimed.
-  #
-  #   2. A trusted-publishing policy exists on nuget.org for THIS repository. The
-  #      policy is keyed on the numeric repository id, and the reseed changed it,
-  #      so a policy created before the reseed will not match.
-  publish-nuget-org:
-    needs: publish
-    if: github.event_name == 'push' && vars.PUBLISH_TO_NUGET_ORG == 'true'
-    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]') }}
-    container: ${{ contains(fromJSON(vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]'), 'self-hosted') && 'mcr.microsoft.com/dotnet/sdk:10.0' || '' }}
-    permissions:
-      # Deliberately no `contents` and no `packages`: this job reads an artifact
-      # and talks to nuget.org. It needs neither the repository nor the registry.
-      id-token: write
-    steps:
-      - name: Download packages
-        # Pinned by commit (v6.0.0), for the same reason the login action below
-        # is: this runs inside the job that holds `id-token: write`, and it runs
-        # BEFORE the login step. A compromised mutable tag here could request the
-        # job's OIDC token and exchange it for a nuget.org credential without
-        # ever reaching the login step. Elsewhere in this workflow the artifact
-        # actions use tags; in this job they must not.
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
-        with:
-          name: nupkgs
-          path: packages
-
-      - name: List what is about to be published
-        run: ls -lh packages/
-
-      # Trusted publishing rather than a long-lived NUGET_API_KEY secret: this
-      # exchanges the job's OIDC token for a key that expires in minutes, so no
-      # publish credential sits at rest in this repository.
-      - name: Authenticate to nuget.org
-        id: nuget-login
-        # Pinned by commit (v1.2.0). This action mints a publishing credential —
-        # a mutable tag is the wrong risk to accept on that specific step.
-        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841
-        with:
-          user: ${{ vars.NUGET_ORG_USER }}
-
-      - name: Push to nuget.org
-        # NUGET_ORG_PACKAGE_GLOB narrows what goes public, so the first release can
-        # be staged. Set it to 'packages/FrameFlow.Native.Runtime.*.nupkg' to
-        # publish only the package the six FrameFlow.Native.Runtime consumers need,
-        # prove the pipeline, and commit no other id permanently. Unset, it
-        # publishes everything the pack steps produced.
-        run: |
-          dotnet nuget push "${{ vars.NUGET_ORG_PACKAGE_GLOB || 'packages/*.nupkg' }}" \
-            --source https://api.nuget.org/v3/index.json \
-            --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
-            --skip-duplicate
 
   release-binaries:
     needs: test
