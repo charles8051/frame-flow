@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "FrameFlow.Examples.SdlPlayer": {
+      "commandName": "Project",
+      "commandLineArgs": "tests/corpus/files/test-1080p-h264-aac.mp4\r\n--log-file\r\nsdl-player.log",
+      "workingDirectory": "../.."
+    }
+  }
+}

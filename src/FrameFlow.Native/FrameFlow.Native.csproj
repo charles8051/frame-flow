@@ -1,0 +1,75 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FFmpeg.AutoGen.Abstractions" Version="7.1.1" />
+    <PackageReference
+      Include="Microsoft.Extensions.DependencyInjection.Abstractions"
+      Version="9.*"
+    />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="9.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FrameFlow.Media\FrameFlow.Media.csproj" />
+  </ItemGroup>
+
+  <!--
+    Bundle FFmpeg shared libraries into the NuGet package so downstream
+    consumers (kiosk, etc.) get runtimes/{rid}/native/*.dll deployed via
+    standard NuGet runtime-asset conventions.
+
+    Five entries, not the manifest's seven. Every DllImport under src/ names
+    avcodec, avformat, avutil, swresample or swscale; nothing references
+    avfilter or avdevice. fetch-ffmpeg.cs fetches those two because the bundled
+    ffmpeg/ffprobe tools load them, which is a develop-time need and not a
+    reason to put them in a consumer's output directory.
+
+    CUDA/cuDNN DLLs are intentionally excluded: they total ~3 GB which
+    exceeds NuGet's practical limits and belong in a separate optional
+    HW-decode package.
+
+    Condition guards against packing when scripts/fetch-ffmpeg.cs hasn't
+    been run yet — preferable to a hard error since src/ projects are
+    built constantly during development on machines that may not have
+    pulled the natives.
+  -->
+  <ItemGroup Condition="Exists('..\..\runtimes\win-x64\native\avutil-59.dll')">
+    <None Include="..\..\runtimes\win-x64\native\avutil-59.dll"    Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
+    <None Include="..\..\runtimes\win-x64\native\avcodec-61.dll"   Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
+    <None Include="..\..\runtimes\win-x64\native\avformat-61.dll"  Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
+    <None Include="..\..\runtimes\win-x64\native\swscale-8.dll"    Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
+    <None Include="..\..\runtimes\win-x64\native\swresample-5.dll" Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
+  </ItemGroup>
+
+  <!--
+    This package redistributes FFmpeg's LGPL binaries, so it ships the licence
+    texts themselves rather than only a metadata link.
+
+    Three texts, because the pinned FFmpeg build carries ``enable-version3``
+    and is therefore LGPL-3, not LGPL-2.1 - see the licence comment in
+    nuget/FrameFlow.Native.Runtime.csproj for what forces that and how it was
+    measured. LGPL-3 incorporates GPL-3 by reference, so GPL-3 is where the
+    operative wording lives; LGPL-2.1 stays because it documents the upstream
+    grant these binaries were built from.
+
+    Which packages actually carry natives was re-checked by reading the pack
+    items rather than trusting this comment's previous claim, which named four
+    packages when only two pack FFmpeg: this one and FrameFlow.Native.Runtime.
+    FrameFlow.MotionClip and FrameFlow.Audio.OpenAL pack no natives at all -
+    they receive them transitively at publish time.
+  -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)../../LICENSE-LGPL-3.0.txt" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../../LICENSE-GPL-3.0.txt" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../../LICENSE-Apache-2.0.txt" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../../LICENSE-LGPL-2.1.txt" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

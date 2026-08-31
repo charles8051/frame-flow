@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!--
+      NU5118 / NU5100: Whisper.net.Runtime ships its native DLLs in BOTH
+      `build/<rid>/` and `content/` (plus `contentFiles/`), so when this
+      project gets packed the publisher emits "file already in package"
+      duplicates and "assembly not inside lib/" warnings — both purely
+      cosmetic and entirely upstream. Suppress at the project level.
+      NU1903: pre-existing security advisory on a transitive dependency.
+    -->
+    <NoWarn>$(NoWarn);NU1903;NU5118;NU5100</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FrameFlow.Media\FrameFlow.Media.csproj" />
+    <!-- Crossbar via the local-feed PackageReference shape (see
+         ../../NuGet.config). Floating version range picks up freshest
+         local build. -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Whisper.net wraps whisper.cpp; .Runtime brings the native libs.
+         Pulled in for the multi-RID developer-friendly experience the
+         live-captioning example uses today. -->
+    <PackageReference Include="Whisper.net" Version="1.*" />
+    <PackageReference Include="Whisper.net.Runtime" Version="1.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FrameFlow.Graph" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />
+  </ItemGroup>
+</Project>

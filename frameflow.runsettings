@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FrameFlow test run configuration.
+
+  Usage:
+    dotnet test -settings frameflow.runsettings
+
+  Visual SDL tests are skipped by default because they require a display and
+  a real SDL window.  Set FRAMEFLOW_VISUAL_TESTS=1 in your environment (or edit
+  the <EnvironmentVariables> block below) to enable them locally.
+-->
+<RunSettings>
+
+  <!-- ───────────────────────────── Runner ───────────────────────────── -->
+  <RunConfiguration>
+    <!-- Maximum time (ms) the entire test run may take before being aborted. -->
+    <TestSessionTimeout>300000</TestSessionTimeout>
+
+    <!-- Maximum time (ms) a single test may run before it is aborted. -->
+    <TestTimeout>60000</TestTimeout>
+
+    <!-- Degree of parallelism across test assemblies (0 = logical CPU count). -->
+    <MaxCpuCount>1</MaxCpuCount>
+
+    <!-- Collect result files next to the test binaries. -->
+    <ResultsDirectory>.\TestResults</ResultsDirectory>
+
+    <!-- Treat inconclusive / skipped tests as non-fatal. -->
+    <TreatNoTestsAsError>false</TreatNoTestsAsError>
+
+    <!-- Environment variables injected into every test process. -->
+    <EnvironmentVariables>
+      <!--
+        Set to "1" or "true" to run visual SDL tests that open a real window.
+        Leave as "0" (default) for headless / CI runs.
+      -->
+      <FRAMEFLOW_VISUAL_TESTS>0</FRAMEFLOW_VISUAL_TESTS>
+    </EnvironmentVariables>
+  </RunConfiguration>
+
+  <!-- ──────────────────────────── Filtering ──────────────────────────── -->
+  <!--
+    Uncomment the block below to exclude Visual tests from the default run
+    at the runner level (in addition to the env-var gate in the attribute).
+
+  <TestCaseFilter>Category!=Visual</TestCaseFilter>
+  -->
+
+  <!-- ──────────────────────── Code Coverage (opt-in) ─────────────────── -->
+  <!--
+    Uncomment to enable Coverlet / Microsoft code coverage collection.
+
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="Code Coverage" uri="datacollector://Microsoft/CodeCoverage/2.0">
+        <Configuration>
+          <CodeCoverage>
+            <ModulePaths>
+              <Include>
+                <ModulePath>.*FrameFlow\..*\.dll$</ModulePath>
+              </Include>
+              <Exclude>
+                <ModulePath>.*\.Tests\.dll$</ModulePath>
+                <ModulePath>.*\.Examples\..*\.dll$</ModulePath>
+              </Exclude>
+            </ModulePaths>
+            <UseVerifiableInstrumentation>true</UseVerifiableInstrumentation>
+            <EnableStaticNativeInstrumentation>true</EnableStaticNativeInstrumentation>
+            <EnableDynamicNativeInstrumentation>true</EnableDynamicNativeInstrumentation>
+          </CodeCoverage>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+  -->
+
+  <!-- ────────────────────────── xUnit logger ─────────────────────────── -->
+  <LoggerRunSettings>
+    <Loggers>
+      <!-- Human-readable console output with timing. -->
+      <Logger friendlyName="console" enabled="true">
+        <Configuration>
+          <Verbosity>normal</Verbosity>
+        </Configuration>
+      </Logger>
+    </Loggers>
+  </LoggerRunSettings>
+
+</RunSettings>

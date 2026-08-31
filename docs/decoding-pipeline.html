@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Decoding Pipeline (Pull Model) — FrameFlow</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --fg: #1a1a1a;
+      --muted: #585858;
+      --soft: #8a8a8a;
+      --rule: #d8d8d8;
+      --bg: #fafaf7;
+      --accent: #6b3a1a;
+      --accent-soft: #c25b00;
+      --decode: #c25b00;
+      --boundary: #9a5b1f;
+      --playback: #3a5b6a;
+      --audio: #5b6a3a;
+      --video: #6b3a1a;
+      --code-bg: #f0ede4;
+      --warn: #a04018;
+    }
+    body {
+      font-family: "Iowan Old Style", "Charter", "Georgia", serif;
+      max-width: 1040px;
+      margin: 2.5em auto;
+      padding: 0 1.5em;
+      color: var(--fg);
+      background: var(--bg);
+      line-height: 1.55;
+      font-size: 16px;
+    }
+    h1 { font-size: 1.7em; margin-bottom: 0.1em; letter-spacing: -0.01em; }
+    h2 {
+      margin-top: 2.4em;
+      padding-bottom: 0.2em;
+      border-bottom: 1px solid var(--rule);
+      font-size: 1.2em;
+      letter-spacing: -0.005em;
+    }
+    h3 { margin-top: 1.6em; font-size: 1.0em; color: var(--accent); }
+    .subtitle { color: var(--muted); font-style: italic; margin-top: 0; margin-bottom: 1.5em; }
+    .meta { color: var(--muted); font-size: 0.85em; margin: 0 0 2em 0; }
+    code { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 0.88em; background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 3px; }
+    pre { background: var(--code-bg); padding: 0.9em 1.1em; border-radius: 4px; overflow-x: auto; font-size: 0.83em; line-height: 1.45; }
+    pre code { background: none; padding: 0; }
+
+    figure { margin: 1.5em 0; }
+    figcaption { font-size: 0.85em; color: var(--muted); margin-top: 0.6em; font-style: italic; text-align: center; }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.2em;
+      font-size: 0.85em;
+      color: var(--muted);
+      margin: 0.8em 0 1.4em;
+      justify-content: center;
+    }
+    .legend .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+    .legend .arrow-data { display: inline-block; width: 28px; border-top: 2px solid #444; vertical-align: middle; margin-right: 4px; }
+    .legend .arrow-back { display: inline-block; width: 28px; border-top: 2px dashed #a04018; vertical-align: middle; margin-right: 4px; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4em; margin: 1.2em 0; }
+    .card {
+      border: 1px solid var(--rule);
+      border-radius: 4px;
+      padding: 1em 1.2em;
+      background: #fff;
+    }
+    .card h4 { margin: 0 0 0.5em 0; font-size: 1em; color: var(--accent); }
+    .card p { margin: 0.4em 0; font-size: 0.95em; }
+    .card .pump { color: var(--video); font-weight: 600; }
+    .card .pump-audio { color: var(--audio); font-weight: 600; }
+
+    table { border-collapse: collapse; width: 100%; font-size: 0.9em; margin: 1em 0; }
+    th, td { border-bottom: 1px solid var(--rule); padding: 0.5em 0.7em; text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; }
+
+    .callout {
+      background: #fdfbf3;
+      border-left: 3px solid var(--accent-soft);
+      padding: 0.8em 1.1em;
+      margin: 1.2em 0;
+      font-size: 0.95em;
+    }
+    .callout .title { font-weight: 600; color: var(--accent); font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-bottom: 0.3em; }
+
+    .timeline { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; font-size: 0.82em; line-height: 1.5; background: var(--code-bg); padding: 1em 1.2em; border-radius: 4px; white-space: pre; overflow-x: auto; }
+
+    .pill { display: inline-block; font-size: 0.75em; padding: 0.1em 0.5em; border-radius: 10px; background: #eee2cc; color: var(--accent); margin-right: 0.4em; vertical-align: middle; }
+
+    svg text { font-family: "Iowan Old Style", "Charter", "Georgia", serif; }
+    svg .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; }
+  </style>
+</head>
+<body>
+
+<h1>Decoding pipeline — pull model</h1>
+<p class="subtitle">How decoded video frames and audio buffers flow from FFmpeg to the sinks, how the two streams stay synchronized, and where backpressure lives now that channels are bounded(1).</p>
+<p class="meta">ADR-0030 (Crossbar frame contracts) · ADR-0032 (pull-shape controller) · ADR-0033 (HW decode) · ADR-0035 (<code>IMasterClock</code> split) · ADR-0036 (decode/playback decoupling). Generated 2026-05-12.</p>
+<p class="meta"><strong>Stale as of 2026-08-26:</strong> the clock contract shown here as <code>IAudioSink &middot; IMasterClock</code> no longer exists. It shipped as <code>FrameFlow.Graph.IClockSource</code> &mdash; a published signal rather than an inherited pull &mdash; per the proposal in <a href="decoding-pipeline-proposed.html">decoding-pipeline-proposed.html</a>. The rest of the pull-model description still holds.</p>
+
+<h2>The short version</h2>
+
+<p>The decode side and the playback side are <em>two separate subsystems joined by a pair of bounded(1) channels exposed as <code>FramePipeline&lt;T&gt;</code></em>. Decode produces, playback consumes. Nothing in the decode layer knows about clocks, sinks, pause, or AV-sync. Synchronization is applied <strong>between</strong> the seam and the sink, not inside the decoder.</p>
+
+<p>The pull shape changes how synchronization works compared to the old push pipeline:</p>
+
+<ul>
+  <li><strong>Audio</strong> is presented "as fast as the sink can accept it." OpenAL's sample-counter <em>is</em> the master clock — buffers go in, the sound card consumes them at the real sample rate, and <code>GetPlaybackTime()</code> returns how many seconds of audio have actually been played.</li>
+  <li><strong>Video</strong> is gated by a <code>PacedAgainst(clock, strategy)</code> Crossbar operator inserted between <code>stream.Video</code> and the video sink. For each frame it computes <code>delay = framePts − clock.Position</code> and <code>await Task.Delay(delay)</code> before letting the frame through.</li>
+  <li><strong>The "are we ahead or behind?"</strong> question is answered by the master clock, which is the audio sink when audio is being played, and a wallclock-backed <code>IReadOnlyPlaybackClock</code> otherwise.</li>
+  <li><strong>Backpressure</strong> is the bounded(1) channel. A slow video sink causes the video decode worker to block on <code>WriteAsync</code>, which causes the demux pump to block on its packet queue, which causes the source reader to slow down — all without explicit cooperation.</li>
+</ul>
+
+<h2>Full pipeline diagram</h2>
+
+<figure>
+<svg viewBox="0 0 1000 620" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Decoding pipeline diagram showing demux, decoders, bounded channels, paced video, sinks, and master-clock feedback">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    </marker>
+    <marker id="arrow-back" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#a04018"/>
+    </marker>
+    <marker id="arrow-clock" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3a5b6a"/>
+    </marker>
+  </defs>
+
+  <!-- Layer labels at top -->
+  <text x="125" y="22" text-anchor="middle" fill="#6b3a1a" font-size="13" font-weight="600" letter-spacing="0.08em">DECODE — FrameFlow.Decoding</text>
+  <text x="500" y="22" text-anchor="middle" fill="#9a5b1f" font-size="13" font-weight="600" letter-spacing="0.08em">SEAM — bounded(1) channels · FramePipeline&lt;T&gt;</text>
+  <text x="855" y="22" text-anchor="middle" fill="#3a5b6a" font-size="13" font-weight="600" letter-spacing="0.08em">PLAYBACK — FrameFlow.Playback</text>
+
+  <!-- Vertical layer dividers -->
+  <line x1="255" y1="40" x2="255" y2="595" stroke="#d8d8d8" stroke-dasharray="3 4"/>
+  <line x1="745" y1="40" x2="745" y2="595" stroke="#d8d8d8" stroke-dasharray="3 4"/>
+
+  <!-- ============ DECODE COLUMN ============ -->
+  <!-- Demux session -->
+  <rect x="30" y="55" width="200" height="60" rx="4" fill="#fff" stroke="#c25b00" stroke-width="1.5"/>
+  <text x="130" y="78" text-anchor="middle" font-size="13" font-weight="600" fill="#6b3a1a">IDemuxSession</text>
+  <text x="130" y="96" text-anchor="middle" font-size="10.5" fill="#585858">reads AVPackets from source</text>
+  <text x="130" y="109" text-anchor="middle" font-size="10.5" fill="#585858" class="mono">.ReadPacketAsync()</text>
+
+  <!-- Demux pump -->
+  <rect x="30" y="140" width="200" height="50" rx="4" fill="#fdf6e8" stroke="#c25b00" stroke-width="1.5"/>
+  <text x="130" y="161" text-anchor="middle" font-size="13" font-weight="600" fill="#6b3a1a">DemuxPump</text>
+  <text x="130" y="178" text-anchor="middle" font-size="10.5" fill="#585858" class="mono">routes packet → decoder.queue</text>
+
+  <!-- Video decoder -->
+  <rect x="30" y="220" width="200" height="80" rx="4" fill="#fff" stroke="#c25b00" stroke-width="1.5"/>
+  <text x="130" y="244" text-anchor="middle" font-size="13" font-weight="600" fill="#6b3a1a">VideoDecoder</text>
+  <text x="130" y="262" text-anchor="middle" font-size="10.5" fill="#585858">packet queue · HW/SW decode</text>
+  <text x="130" y="276" text-anchor="middle" font-size="10.5" fill="#585858" class="mono">.DecodeAsync() → IVideoFrame</text>
+  <text x="130" y="292" text-anchor="middle" font-size="9.5" fill="#8a8a8a">(ADR-0033 hardware probe)</text>
+
+  <!-- Video decode worker -->
+  <rect x="30" y="320" width="200" height="48" rx="4" fill="#fdf6e8" stroke="#c25b00" stroke-width="1.5"/>
+  <text x="130" y="341" text-anchor="middle" font-size="12" font-weight="600" fill="#6b3a1a">RunVideoDecodeAsync</text>
+  <text x="130" y="357" text-anchor="middle" font-size="10" fill="#585858" class="mono">channel.Writer.WriteAsync(frame)</text>
+
+  <!-- Audio decoder -->
+  <rect x="30" y="395" width="200" height="80" rx="4" fill="#fff" stroke="#5b6a3a" stroke-width="1.5"/>
+  <text x="130" y="419" text-anchor="middle" font-size="13" font-weight="600" fill="#5b6a3a">AudioDecoder</text>
+  <text x="130" y="437" text-anchor="middle" font-size="10.5" fill="#585858">packet queue · SwrContext</text>
+  <text x="130" y="451" text-anchor="middle" font-size="10.5" fill="#585858" class="mono">.DecodeAsync() → PcmAudioBuffer</text>
+
+  <!-- Audio decode worker -->
+  <rect x="30" y="495" width="200" height="48" rx="4" fill="#f6f7ec" stroke="#5b6a3a" stroke-width="1.5"/>
+  <text x="130" y="516" text-anchor="middle" font-size="12" font-weight="600" fill="#5b6a3a">RunAudioDecodeAsync</text>
+  <text x="130" y="532" text-anchor="middle" font-size="10" fill="#585858" class="mono">channel.Writer.WriteAsync(buf)</text>
+
+  <!-- Decode pipeline owner -->
+  <rect x="20" y="565" width="220" height="26" rx="3" fill="none" stroke="#c25b00" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="130" y="582" text-anchor="middle" font-size="10.5" fill="#6b3a1a" font-style="italic">IDecodedMediaStream owns all of the above</text>
+
+  <!-- ============ SEAM COLUMN ============ -->
+  <!-- Video channel -->
+  <rect x="305" y="290" width="160" height="56" rx="4" fill="#fff" stroke="#9a5b1f" stroke-width="2"/>
+  <text x="385" y="312" text-anchor="middle" font-size="12" font-weight="600" fill="#9a5b1f">Channel&lt;IVideoFrame&gt;</text>
+  <text x="385" y="330" text-anchor="middle" font-size="10.5" fill="#585858">bounded(1) · Wait full-mode</text>
+  <text x="385" y="343" text-anchor="middle" font-size="10" fill="#8a8a8a" font-style="italic">exposed as stream.Video</text>
+
+  <!-- Audio channel -->
+  <rect x="305" y="465" width="160" height="56" rx="4" fill="#fff" stroke="#9a5b1f" stroke-width="2"/>
+  <text x="385" y="487" text-anchor="middle" font-size="12" font-weight="600" fill="#9a5b1f">Channel&lt;PcmAudioBuffer&gt;</text>
+  <text x="385" y="505" text-anchor="middle" font-size="10.5" fill="#585858">bounded(1) · Wait full-mode</text>
+  <text x="385" y="518" text-anchor="middle" font-size="10" fill="#8a8a8a" font-style="italic">exposed as stream.Audio</text>
+
+  <!-- PacedAgainst operator (video only) -->
+  <rect x="510" y="290" width="170" height="56" rx="4" fill="#eef3f6" stroke="#3a5b6a" stroke-width="2"/>
+  <text x="595" y="312" text-anchor="middle" font-size="12" font-weight="600" fill="#3a5b6a">.PacedAgainst(clock, strategy)</text>
+  <text x="595" y="329" text-anchor="middle" font-size="10.5" fill="#585858">await Task.Delay(framePts − now)</text>
+  <text x="595" y="342" text-anchor="middle" font-size="10" fill="#8a8a8a" font-style="italic">Crossbar pipeline operator</text>
+
+  <!-- (no operator for audio — passes through) -->
+  <text x="595" y="497" text-anchor="middle" font-size="11" fill="#8a8a8a" font-style="italic">(no pacing operator — sink IS the clock)</text>
+
+  <!-- ============ PLAYBACK COLUMN ============ -->
+  <!-- Video pump -->
+  <rect x="770" y="225" width="200" height="55" rx="4" fill="#eef3f6" stroke="#3a5b6a" stroke-width="1.5"/>
+  <text x="870" y="247" text-anchor="middle" font-size="13" font-weight="600" fill="#3a5b6a">RunVideoPumpAsync</text>
+  <text x="870" y="263" text-anchor="middle" font-size="10" fill="#585858" class="mono">stream.Video</text>
+  <text x="870" y="275" text-anchor="middle" font-size="10" fill="#585858" class="mono">  .PacedAgainst(…).ToSinkAsync(…)</text>
+
+  <!-- Video sink -->
+  <rect x="770" y="295" width="200" height="55" rx="4" fill="#fff" stroke="#3a5b6a" stroke-width="1.5"/>
+  <text x="870" y="317" text-anchor="middle" font-size="13" font-weight="600" fill="#3a5b6a">IVideoSink</text>
+  <text x="870" y="333" text-anchor="middle" font-size="10.5" fill="#585858">Avalonia · SDL · capture</text>
+  <text x="870" y="345" text-anchor="middle" font-size="10" fill="#585858" class="mono">.PresentAsync(frame)</text>
+
+  <!-- Audio pump -->
+  <rect x="770" y="430" width="200" height="55" rx="4" fill="#f6f7ec" stroke="#5b6a3a" stroke-width="1.5"/>
+  <text x="870" y="452" text-anchor="middle" font-size="13" font-weight="600" fill="#5b6a3a">RunAudioPumpAsync</text>
+  <text x="870" y="468" text-anchor="middle" font-size="10" fill="#585858" class="mono">stream.Audio</text>
+  <text x="870" y="480" text-anchor="middle" font-size="10" fill="#585858" class="mono">  .ToSinkAsync(audioSink)</text>
+
+  <!-- Audio sink / master clock -->
+  <rect x="770" y="500" width="200" height="68" rx="4" fill="#fff" stroke="#5b6a3a" stroke-width="2"/>
+  <text x="870" y="521" text-anchor="middle" font-size="13" font-weight="600" fill="#5b6a3a">IAudioSink · IMasterClock</text>
+  <text x="870" y="537" text-anchor="middle" font-size="10.5" fill="#585858">OpenAL · sample counter</text>
+  <text x="870" y="550" text-anchor="middle" font-size="10" fill="#585858" class="mono">.WriteAsync(buf)</text>
+  <text x="870" y="563" text-anchor="middle" font-size="10" fill="#585858" class="mono">.GetPlaybackTime()</text>
+
+  <!-- Controller box -->
+  <rect x="760" y="215" width="220" height="360" rx="3" fill="none" stroke="#3a5b6a" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="870" y="595" text-anchor="middle" font-size="10.5" fill="#3a5b6a" font-style="italic">PipelineController spawns the two pumps</text>
+
+  <!-- ============ DATA FLOW ARROWS ============ -->
+  <!-- demux -> pump -->
+  <line x1="130" y1="115" x2="130" y2="138" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- pump -> video decoder packet queue -->
+  <path d="M 130 190 L 130 218" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- pump -> audio decoder packet queue -->
+  <path d="M 230 165 C 280 165, 280 430, 230 430" stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <!-- video decoder -> video worker -->
+  <line x1="130" y1="300" x2="130" y2="318" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- audio decoder -> audio worker -->
+  <line x1="130" y1="475" x2="130" y2="493" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- video worker -> video channel -->
+  <line x1="230" y1="344" x2="303" y2="318" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- audio worker -> audio channel -->
+  <line x1="230" y1="519" x2="303" y2="493" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- video channel -> PacedAgainst -->
+  <line x1="465" y1="318" x2="508" y2="318" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- PacedAgainst -> video pump -->
+  <line x1="680" y1="318" x2="770" y2="252" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- video pump -> video sink -->
+  <line x1="870" y1="280" x2="870" y2="293" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- audio channel -> audio pump (no operator) -->
+  <line x1="465" y1="493" x2="770" y2="457" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- audio pump -> audio sink -->
+  <line x1="870" y1="485" x2="870" y2="498" stroke="#333" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ============ MASTER CLOCK FEEDBACK ============ -->
+  <!-- audio sink GetPlaybackTime() -> PacedAgainst -->
+  <path d="M 770 537 C 700 537, 660 420, 595 348" stroke="#3a5b6a" stroke-width="1.5" stroke-dasharray="2 3" fill="none" marker-end="url(#arrow-clock)"/>
+  <text x="688" y="430" font-size="10.5" fill="#3a5b6a" font-style="italic">GetPlaybackTime()</text>
+  <text x="688" y="443" font-size="10" fill="#3a5b6a" font-style="italic">per video frame</text>
+
+  <!-- ============ BACKPRESSURE ARROWS (dashed red) ============ -->
+  <!-- sink slow -> pump waits (already implicit) -->
+  <!-- video channel full -> decode worker blocks -->
+  <path d="M 303 332 C 270 348, 230 350, 230 354" stroke="#a04018" stroke-width="1.3" stroke-dasharray="3 3" fill="none" marker-end="url(#arrow-back)"/>
+  <!-- audio channel full -> decode worker blocks -->
+  <path d="M 303 507 C 270 523, 230 525, 230 529" stroke="#a04018" stroke-width="1.3" stroke-dasharray="3 3" fill="none" marker-end="url(#arrow-back)"/>
+  <!-- decoders full -> demux pump blocks -->
+  <path d="M 130 220 C 90 200, 90 195, 110 190" stroke="#a04018" stroke-width="1.3" stroke-dasharray="3 3" fill="none" marker-end="url(#arrow-back)"/>
+  <path d="M 130 395 C 30 395, 20 195, 90 188" stroke="#a04018" stroke-width="1.3" stroke-dasharray="3 3" fill="none" marker-end="url(#arrow-back)"/>
+
+</svg>
+<figcaption>Two parallel pull pipelines joined at <code>IDecodedMediaStream</code>. Solid arrows are data flow; dashed red arrows are the backpressure path; the dashed blue arrow is the per-frame master-clock read.</figcaption>
+</figure>
+
+<div class="legend">
+  <span><span class="swatch" style="background:#c25b00"></span>decode subsystem</span>
+  <span><span class="swatch" style="background:#9a5b1f"></span>seam (channel)</span>
+  <span><span class="swatch" style="background:#3a5b6a"></span>video playback</span>
+  <span><span class="swatch" style="background:#5b6a3a"></span>audio playback / clock</span>
+  <span><span class="arrow-data"></span>frame flow</span>
+  <span><span class="arrow-back"></span>backpressure</span>
+</div>
+
+<h2>How A/V sync actually works</h2>
+
+<p>The two streams never explicitly "wait for each other." Synchronization emerges from two independent feedback loops, both reading the same master clock.</p>
+
+<div class="grid-2">
+  <div class="card">
+    <h4>Audio side <span class="pill">no operator</span></h4>
+    <p><span class="pump-audio">RunAudioPumpAsync</span> is the simplest possible composition:</p>
+    <pre><code>await stream.Audio.ToSinkAsync(audioSink, ct);</code></pre>
+    <p>The pump pulls a <code>PcmAudioBuffer</code>, hands it to <code>OpenAlAudioSink.WriteAsync</code>, and OpenAL queues it onto the sound device. The sound card consumes samples at the real PCM rate, advancing the sink's sample counter. When asked, the sink returns <code>samples_played / sample_rate</code> as its <code>GetPlaybackTime()</code>. That <em>is</em> the master clock.</p>
+    <p>The audio pump runs as fast as <code>WriteAsync</code> lets it, which is governed by OpenAL's internal buffer fullness — that's the natural rate limiter. No <code>Task.Delay</code> on the audio path.</p>
+  </div>
+
+  <div class="card">
+    <h4>Video side <span class="pill">PacedAgainst</span></h4>
+    <p><span class="pump">RunVideoPumpAsync</span> inserts one operator between the stream and the sink:</p>
+    <pre><code>await stream.Video
+    .PacedAgainst(masterClock, syncStrategy)
+    .Observe(metrics)
+    .ToSinkAsync(videoSink, ct);</code></pre>
+    <p>For each pulled <code>IVideoFrame</code>, <code>PacedAgainst</code> calls <code>strategy.GetVideoDelay(frame.Pts, clock.GetPlaybackTime())</code> and awaits the result before letting the frame through. The strategy's job is "given where the master timeline is, how long should this frame wait?"</p>
+    <p>If the video is ahead of the clock, the operator delays. If it's behind, <code>delay</code> is zero and the frame goes straight through — the sink presents back-to-back frames until video catches up.</p>
+  </div>
+</div>
+
+<h3>Master clock selection</h3>
+
+<p>The video pump asks <code>PipelineController.MasterClockForVideo()</code> for the clock to pace against. Two cases:</p>
+
+<table>
+<thead><tr><th>Source has audio?</th><th>Clock returned</th><th>Why</th></tr></thead>
+<tbody>
+<tr>
+  <td>Yes (and audio sink registered)</td>
+  <td><code>ConservativeAudioMasterClock</code></td>
+  <td>Wraps the audio sink's <code>GetPlaybackTime()</code> and the wallclock together, returning <code>min(audio, wall)</code>. The min guards against the audio clock running ahead during sink activation glitches (audio buffers queued but not yet playing).</td>
+</tr>
+<tr>
+  <td>No audio stream</td>
+  <td><code>ReadOnlyClockAdapter</code></td>
+  <td>Forwards the playback session's wallclock. The audio sink's sample counter would be stuck at zero (no buffers ever arrive) and would stall video forever if used.</td>
+</tr>
+</tbody>
+</table>
+
+<p>Both adapters implement <code>IMasterClock</code> — a single-method interface (<code>GetPlaybackTime()</code>) extracted from <code>IAudioSink</code> by <a href="adr/ADR-0035-master-clock-interface-split.md">ADR-0035</a> precisely so the <code>PacedAgainst</code> operator could couple to "a clock" rather than "an audio sink."</p>
+
+<h2>Backpressure — why bounded(1) is enough</h2>
+
+<p>Each channel's capacity is <strong>one</strong>. The <code>FullMode</code> is <code>Wait</code>, not <code>DropOldest</code>. This means the producer blocks on a full channel — and that block ripples all the way back to the source reader.</p>
+
+<div class="timeline">Video sink is slow (presenting a frame takes longer than the decode rate)
+       │
+       ▼
+RunVideoPumpAsync   stuck inside videoSink.PresentAsync
+       │
+       ▼
+PacedAgainst        already produced; no read happens
+       │
+       ▼
+Channel&lt;IVideoFrame&gt; (1)   full — has one frame buffered
+       │
+       ▼
+RunVideoDecodeAsync  blocks on channel.Writer.WriteAsync
+       │
+       ▼
+VideoDecoder         stops draining decoded frames
+       │
+       ▼
+VideoDecoder.PacketQueue   fills up
+       │
+       ▼
+DemuxPump            blocks on SendPacketAsync(video, …)
+       │
+       ▼
+IDemuxSession        stops calling av_read_frame — source idles</div>
+
+<p>The audio path has the same shape. Critically, <strong>audio and video backpressure independently</strong>: if the video sink stalls, audio keeps playing through cleanly because they share only the demux pump's packet routing, not the channels or the workers. The demux pump routes whichever side has free queue space.</p>
+
+<div class="callout">
+<span class="title">Pause is free</span>
+<p>Because backpressure is end-to-end, <strong>pause is just "stop pulling."</strong> When <code>PipelineController.PauseWorkersAsync</code> cancels the episode CTS, both pumps exit their <code>ToSinkAsync</code> loops. The channels fill, the decode workers block on <code>WriteAsync</code>, the demux pump blocks on the packet queue — the whole pipeline quiesces with no extra gate primitive. Resume just spawns fresh pump tasks, and they drain whatever's buffered and continue.</p>
+</div>
+
+<h2>Lifecycle behaviors</h2>
+
+<table>
+<thead><tr><th>Event</th><th>What happens at the seam</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>Play / first start</strong></td>
+  <td>Stream's <code>_epochCts</code> already running (constructed at <code>CreateAsync</code>). Controller spawns video + audio pumps, both immediately start <code>await foreach</code> over the channel-backed pipelines.</td>
+</tr>
+<tr>
+  <td><strong>Pause</strong></td>
+  <td>Controller cancels <em>episode</em> CTS. Pumps exit. Decode side keeps running until channels fill, then naturally blocks. Decoders, demuxer, and channels all stay alive.</td>
+</tr>
+<tr>
+  <td><strong>Resume</strong></td>
+  <td>Controller spawns fresh pump tasks on a new episode CTS. Pumps immediately drain whatever buffered frames the channels hold. EOF latch is cleared.</td>
+</tr>
+<tr>
+  <td><strong>Seek</strong></td>
+  <td>Controller pauses pumps first, then calls <code>stream.SeekAsync(t)</code>. The stream cancels its <em>epoch</em> CTS (separate from the controller's episode CTS), waits for decode workers to exit, drains pre-seek frames out of the channels, calls <code>decoder.Flush()</code> + <code>demux.SeekAsync(t)</code>, then starts a fresh epoch with the same channel objects. Controller then re-spawns pumps.</td>
+</tr>
+<tr>
+  <td><strong>EOF</strong></td>
+  <td>Demux pump returns naturally. Stream finalizes decoders (drains any flushed trailing frames), calls <code>channel.Writer.TryComplete()</code>. Pump <code>await foreach</code>s exit. Stream fires <code>EndOfStreamReached</code>; controller waits for pumps to drain then re-fires its own EOF event so the state machine transitions to <code>Ended</code> only after the last frame was presented.</td>
+</tr>
+<tr>
+  <td><strong>Loop restart</strong> (EOF then seek)</td>
+  <td>EOF completed the channels. <code>SeekAsync</code> detects this and constructs <em>new</em> channel objects so the new epoch can write again. Pull consumers iterating the public <code>FramePipeline</code> see the iteration restart cleanly because <code>stream.Video</code> resolves the channel on each iteration start.</td>
+</tr>
+</tbody>
+</table>
+
+<h2>Pull consumers can skip playback entirely</h2>
+
+<p>The big payoff of ADR-0036's split: anything that wants <em>decoded frames without playback</em> uses <code>IDecodedMediaStream</code> directly and never instantiates a <code>PlaybackController</code>:</p>
+
+<pre><code>await using var stream = await factory.CreateAsync(source, ct);
+
+// Live captioning — pull audio, run Whisper, no AV-sync, no audio sink
+await foreach (var pcm in stream.Audio.TranscribeWithWhisper(model))
+    Console.WriteLine(pcm.Text);
+
+// YOLO inference — pull video frames at decode rate, no pacing
+await foreach (var det in stream.Video.ToCpu().DetectWith(yolo))
+    Render(det);</code></pre>
+
+<p>These consumers see <em>no pacing</em>. <code>stream.Video</code> emits as fast as the decoder produces; <code>stream.Audio</code> the same. Backpressure still works — if Whisper takes 800ms per buffer, the audio decoder blocks until Whisper consumes — but there's no master clock and no <code>Task.Delay</code>. The pull consumer's own consumption rate paces the whole pipeline.</p>
+
+<p>When playback <em>is</em> wanted alongside inference, the pipeline can be tee'd: <code>controller.AudioBuffers.TeeTo(audioSink).TranscribeWithWhisper(model)</code>. The audio sink keeps the master clock alive for video pacing, and Whisper gets a parallel copy of every buffer.</p>
+
+<h2>One-line summary</h2>
+
+<p style="font-size:1.05em">Decode produces frames into bounded(1) channels; audio plays through to the sound card, whose sample counter <em>is</em> the master clock; video reads that clock once per frame via <code>PacedAgainst</code> and inserts the right <code>Task.Delay</code> before presenting; if any consumer slows down, the bounded channel propagates the slowdown all the way back to the source.</p>
+
+</body>
+</html>

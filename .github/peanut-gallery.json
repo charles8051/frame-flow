@@ -1,0 +1,47 @@
+{
+  "_comment": "Reviewer panel for PR review (charles8051/peanut-gallery). seedAndAuto: the single seed reviewer (General Reviewer, openai/gpt-5.6-luna via OpenRouter) always runs; the orchestrator (gpt-5.6-luna) adds up to 2 diff-specific reviewers, also gpt-5.6-luna via personaModel. comment=panel: one deduplicated, lens-attributed comment for the whole panel. Repo conventions are read and applied automatically. Uses openai/gpt-5.6-luna rather than minimax-m3: fast, concise, and not prone to the reasoning-runaway minimax exhibited here (a 40,000-token truncated review, p50 102s, and roughly 17x the output tokens per review). Sampling is temperature-only at the model default; the minimax-era persona temperature, raised 0->0.2 to bound that runaway, is superseded by personaTemperature 1.0.",
+  "providers": [
+    {
+      "name": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKeyEnv": "OPENROUTER_API_KEY"
+    }
+  ],
+  "personas": [
+    {
+      "id": "reviewer-general",
+      "name": "General Reviewer",
+      "lens": "general",
+      "tier": "diff",
+      "model": {
+        "provider": "openrouter",
+        "modelId": "openai/gpt-5.6-luna"
+      },
+      "temperature": 1.0,
+      "systemPrompt": "You are a senior code reviewer. Review this pull request diff for: correctness bugs (off-by-one, null/lifetime, races, error handling, boundary conditions); design and architecture problems (leaky abstractions, misplaced responsibilities, fused state/IO/timing); and clear quality or maintainability issues. Cite file:line for every finding and keep each one specific and actionable. Skip pure style nitpicks. An empty findings list is a valid review."
+    }
+  ],
+  "repos": [
+    {
+      "name": "repo",
+      "path": "."
+    }
+  ],
+  "assignments": [
+    {
+      "personaId": "reviewer-general",
+      "repoName": "repo"
+    }
+  ],
+  "panel": "seedAndAuto",
+  "orchestrator": {
+    "provider": "openrouter",
+    "modelId": "openai/gpt-5.6-luna"
+  },
+  "comment": "panel",
+  "personaModel": {
+    "provider": "openrouter",
+    "modelId": "openai/gpt-5.6-luna"
+  },
+  "personaTemperature": 1.0
+}

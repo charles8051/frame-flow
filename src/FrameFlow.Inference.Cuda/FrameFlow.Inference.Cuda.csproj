@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!--
+    FrameFlow.Inference.Cuda: ORT CUDA EP wrapper. Per ADR-0049 §3,
+    binds inputs / outputs via host memory (ICpuTensor). The CUDA EP
+    handles host→device staging internally — Crossbar.Cuda's
+    ICudaTensor device-binding path is *not* exposed here; that
+    primitive stays in Crossbar's Holoscan-class substrate (Crossbar
+    ADR-0024).
+
+    Consumers that bring their own device pointers (e.g. FFmpeg
+    NVDEC AVFrames) use the OrtValue escape hatch on
+    CudaInferenceSession to bind device memory directly.
+
+    Conflicts with FrameFlow.Inference.Dml's onnxruntime.dll in a
+    single process — apps pick exactly one inference EP package at
+    the executable boundary.
+  -->
+
+  <ItemGroup>
+    <!-- FrameFlow.Inference.Ort: the shared host->ORT staging base
+         (OrtInferenceSessionBase). Per ADR-0049 §3 the binding pipeline
+         is uniform across EPs; this EP keeps only its CUDA bootstrap /
+         session-options and the device-pointer escape hatch. The base
+         lives in its own project (not in Abstractions, which stays
+         ORT-free) so it can reference the ORT *managed* API without
+         dragging a native onnxruntime.dll into the EP-agnostic contract. -->
+    <ProjectReference Include="../FrameFlow.Inference.Ort/FrameFlow.Inference.Ort.csproj" />
+    <ProjectReference Include="../FrameFlow.Inference.Abstractions/FrameFlow.Inference.Abstractions.csproj" />
+    <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      PINNED to the 1.26 line, NOT floated to "1.*", because the CUDA major
+      version is coupled to the redists scripts/fetch-cuda.cs downloads. ORT
+      1.27 moved its CUDA EP to CUDA 13 (onnxruntime_providers_cuda.dll imports
+      cublas64_13 / cufft64_12), but fetch-cuda.cs is pinned to CUDA 12.9.1
+      "to match ORT 1.26.0's CUDA-12 build". A "1.*" float silently advanced ORT
+      past the redists and the CUDA EP failed with "Failed to load shared
+      library". Bump this pin and the fetch-cuda.cs CUDA version together,
+      deliberately, when moving to a newer ORT. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.26.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FrameFlow.Graph" />
+    <Using Include="FrameFlow.Inference" />
+  </ItemGroup>
+</Project>

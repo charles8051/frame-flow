@@ -1,0 +1,58 @@
+# STATUS: grammar draft. Does not run yet.
+#
+# tools/FrameFlow.TestBench does not exist. This file was written to test the
+# script grammar in docs/adr/command-driven-testbench-host.md against a real
+# reproduction, and three of that grammar's rules changed because of it. The
+# invocation below is what it will be, not what works today.
+#
+# Signage shape, sustained.
+#
+#   dotnet run --project tools/FrameFlow.TestBench -- \
+#       --presenter gpu --no-audio \
+#       --script scripts/repro/signage-gpu-noaudio-soak.bench
+#
+# The faithful conversion (signage-gpu-noaudio.bench) plays a 3-second synthetic
+# clip once, because that is what the launch profile it came from named. The
+# symptom that profile is named after builds over a long unattended run, and
+# three seconds of testsrc2 cannot show it. Same shape, with a fixture and a
+# duration that can fail.
+
+require presenter gpu
+require audio off
+
+set timeout 30s
+
+load tests/corpus/files/test-1080p60-h264-aac.mp4
+
+# 1920x1080, 60 fps, 10.0s — scripts/generate-test-corpus.cs
+expect duration == 10.0s +- 200ms
+
+repeat one
+play
+wait state == Playing
+wait sink.presented >= 120           # two seconds; past the warm-up
+
+mark m1
+wait 60s
+expect since m1 sink.presented >= 57/s
+expect since m1 sync.dropped == 0
+expect since m1 sink.dropped == 0
+expect since m1 video.shed == 0
+expect since m1 video.errors == 0
+
+# The same window four minutes later. A rate that holds here and not in m1 is a
+# slow start; one that holds in m1 and not here is the thing worth chasing.
+wait 240s
+mark m5
+wait 60s
+expect since m5 sink.presented >= 57/s
+expect since m5 sync.dropped == 0
+expect since m5 sink.dropped == 0
+expect since m5 video.shed == 0
+
+# RepeatMode.One restarts have their own stall detector (ADR-0034). A stalled
+# loop presents as a frozen last frame while the clock keeps advancing, which
+# reads as choppiness rather than as a stop.
+expect loop.stalled == false
+
+diag

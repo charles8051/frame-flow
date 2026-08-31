@@ -1,0 +1,94 @@
+# Template roam deployment manifest for MotionClip.
+#
+# Copy to `roamfile.yaml` and fill in your own hosts. Real manifests are
+# gitignored (`roamfile*.yaml`, with this example negated) because they name
+# machines and accounts, which is site information rather than library
+# configuration. Keep yours in whatever private repo holds the rest of your
+# deployment inventory.
+#
+# The operational notes below are the part worth keeping. They were learned
+# against a real fleet and are not specific to any one site.
+
+version: 1
+project: FrameFlow.MotionClip
+csproj: FrameFlow.MotionClip.csproj
+
+hosts:
+  local:
+    ssh: localhost
+    os: windows
+
+  kiosk:
+    # Use a real hostname, not an ~/.ssh/config alias: roam's artifact
+    # transfer resolves it through native DNS, which does not read ssh_config.
+    ssh: kiosk-hostname-or-magicdns-name
+    # The auto-login account the recorder runs as. Note it may contain a
+    # space; quote it if so.
+    user: kiosk-account
+    os: windows
+
+profiles:
+  kiosk:
+    description: >
+      Publish self-contained, stop whatever is running, re-register the
+      scheduled task, start it.
+    source: local
+    build: local
+    target: kiosk
+    publish:
+      rid: win-x64
+      self-contained: true
+      configuration: Release
+      framework: net10.0
+    launch-profile: FrameFlow.MotionClip
+    deploy:
+      path: C:/Users/kiosk-account/frameflow-motionclip
+      flatten-publish: true
+      transfer: archive
+
+      # Stop the scheduled task AND any orphaned process, in case the task
+      # was unregistered out-of-band. Do NOT set -ErrorAction Stop here: a
+      # missing task or absent process is the normal cold state and must not
+      # fail the deploy.
+      #
+      # The process match is scoped by path. An unqualified
+      # `Get-Process -Name 'MotionClip'` also matches instances started by
+      # other accounts on a shared host, and any unrelated program using the
+      # same executable name. Note the pattern uses backslashes even though
+      # deploy.path above uses forward slashes: Get-Process reports native
+      # Windows paths.
+      stop: |
+        Stop-ScheduledTask -TaskName 'FrameFlow.MotionClip' -ErrorAction SilentlyContinue;
+        Get-Process -Name 'MotionClip' -ErrorAction SilentlyContinue |
+          Where-Object { $_.Path -like 'C:\Users\kiosk-account\frameflow-motionclip\*' } |
+          Stop-Process -Force
+
+      # Re-register the task (idempotent - picks up argument changes since the
+      # last deploy), then trigger it. The action runs in the auto-login
+      # account's logged-on session, so camera, filesystem and log paths are
+      # exactly what they would be after a reboot.
+      #
+      # Stop-then-Start is belt-and-braces: a previous run that crashed without
+      # Task Scheduler noticing can leave the task in a stale "Running" state,
+      # which makes Start-ScheduledTask silently no-op because
+      # MultipleInstances=IgnoreNew - the only option PS 5.1's ScheduledTasks
+      # module supports for "don't double-launch" (StopExisting is PS 7+). The
+      # explicit Stop clears that; the short sleep lets Task Scheduler settle.
+      #
+      # Pass -User explicitly if you install from an account other than the one
+      # the task runs as; the script resolves its default paths from -User.
+      start: |
+        & 'C:/Users/kiosk-account/frameflow-motionclip/scripts/install-kiosk-task.ps1' -LogLevel info;
+        Stop-ScheduledTask  -TaskName 'FrameFlow.MotionClip' -ErrorAction SilentlyContinue;
+        Start-Sleep -Seconds 1;
+        Start-ScheduledTask -TaskName 'FrameFlow.MotionClip'
+
+      # Symmetric inverse of `start:`. Invokes the paired uninstaller that
+      # ships with the publish: stops and unregisters the task, kills the
+      # process, removes deploy.path and the log directory. Clip output is
+      # preserved by default; append `-- -RemoveClips` to the roam invocation
+      # to wipe it too.
+      uninstall: |
+        & 'C:/Users/kiosk-account/frameflow-motionclip/scripts/uninstall-kiosk-task.ps1' -InstallDir 'C:/Users/kiosk-account/frameflow-motionclip'
+
+      ready-timeout: 30

@@ -1,0 +1,75 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- DML variant of the Multicast demo. Identical topology to
+         FrameFlow.Examples.Multicast; the only structural difference
+         is the inference backend — FrameFlow.Inference.Dml here vs
+         FrameFlow.Inference.Cuda in the sibling demo. Lets us validate
+         the DML path on the same media + same operator graph the CUDA
+         path already runs against, and also gives us a demo that runs
+         on Intel UHD / AMD / any DX12 GPU where the CUDA original
+         cannot even start. The two demos can't run in the same process
+         (each pulls a conflicting onnxruntime.dll) but they can run
+         side by side in two windows. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Media\FrameFlow.Media.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Player\FrameFlow.Player.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Playback\FrameFlow.Playback.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Audio.OpenAL\FrameFlow.Audio.OpenAL.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Video\FrameFlow.Video.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Yolo\FrameFlow.Yolo.csproj" />
+    <!-- ADR-0049 §5: FrameFlow.Yolo.Dml merged into FrameFlow.Yolo;
+         the DirectML EP comes from FrameFlow.Inference.Dml. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Inference.Dml\FrameFlow.Inference.Dml.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.*" />
+    <PackageReference Include="Avalonia" Version="11.*" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.*" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.*" />
+    <!--
+      FrameFlow.Native.Runtime ships FFmpeg's avutil / avcodec / avformat
+      / avdevice / avfilter / swresample / swscale as NuGet runtime
+      assets under runtimes/<rid>/native/. Required at the executable
+      boundary — without it, a self-contained publish reaches the
+      target machine without FFmpeg natives and MediaPlayer.CreateAsync
+      throws "Failed to load FFmpeg library 'avutil'" the first time
+      anything tries to demux/decode (per ADR-0014 + ADR-0046).
+
+      Repo-internal src/ projects deliberately don't reference this —
+      they rely on Directory.Build.targets to copy the gitignored
+      runtimes/<rid>/native/ dev binaries (populated by
+      scripts/fetch-ffmpeg.cs) into their bin. That dev-time mechanism
+      only fires when the natives are already present in the worktree,
+      which is *not* the case for fresh worktrees / fresh clones. The
+      PackageReference here is the durable, worktree-independent path
+      that consumers — including shipping examples and downstream
+      signage or kiosk apps — should use.
+    -->
+    <PackageReference Include="FrameFlow.Native.Runtime" Version="0.1.1-alpha.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FrameFlow.Graph" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/FrameFlow.Graph/FrameFlow.Graph.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared examples support (FileLoggerProvider), consolidated from the
+         former per-example copies into FrameFlow.Examples.Common. -->
+    <ProjectReference Include="..\FrameFlow.Examples.Common\FrameFlow.Examples.Common.csproj" />
+    <Using Include="FrameFlow.Examples.Common" />
+  </ItemGroup>
+</Project>

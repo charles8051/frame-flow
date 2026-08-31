@@ -1,0 +1,124 @@
+name: Peanut Gallery Review
+
+# Dogfood the persona-driven reviewer (charles8051/peanut-gallery) on this repo's PRs.
+# Runs on push to a PR AND on new PR comments, so reviewers can respond to the author
+# (e.g. withdraw a finding called out as intentional). Stateful; the bot-author guard
+# below prevents a comment loop. Runs on a self-hosted ephemeral runner.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# cancel-in-progress: false (with an action-side stale-run skip) — serialize
+# review runs in the group instead of killing the older
+# one. A kill recorded a CANCELLED conclusion that turned the PR check rollup UNSTABLE
+# even though the review posted fine. With false, a push-vs-comment collision queues
+# (A completes, then B runs) — both green; serialization keeps the persona-comment
+# writes single-writer, so B updates A's comment in place (CommentSync marker upsert),
+# never a duplicate. A genuinely stale run (head moved on) clean-exits inside the
+# action (Supersession), which a workflow-level head-SHA `if:` could not do correctly —
+# an issue_comment run has github.sha=main and carries no head SHA.
+concurrency:
+  group: peanut-gallery-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    # Efficiency filter only: skip our own bot comment events so they don't spawn no-op
+    # jobs. SECURITY (fork refusal + comment-author trust) is enforced inside the action.
+    # issue_comment fires on ALL issue comments, but the action resolves the PR by
+    # github.event.issue.number and GET /pulls/<n> 404s when <n> is a plain issue.
+    # github.event.issue.pull_request is populated ONLY for PR comments, so gate on it --
+    # run on PR comments, skip issue comments. (Bot guard unchanged; SECURITY still
+    # enforced inside the action.)
+    #
+    # Fork gate (pull_request only). A pull_request event runs this workflow from the
+    # PR's merge ref and checks the fork's tree out onto the self-hosted runner. The action
+    # itself comes from charles8051/peanut-gallery@main rather than the checkout, so
+    # no fork-authored action code runs - but the fork's files land on the runner,
+    # and the fork's copy of THIS FILE is what executes, so an edited job here runs
+    # whatever it likes. Keep fork PRs off the self-hosted runner.
+    #
+    # No hosted twin: a fork pull_request receives no secrets, so
+    # OPENROUTER_API_KEY is empty and there is no review to run. A skipped job
+    # reports neutral, so nothing hangs waiting on it.
+    #
+    # Availability and hygiene, not a security boundary, for the reason above: the
+    # fork controls this condition. The boundary is "Require approval for all
+    # outside collaborators" under Settings -> Actions, which cannot be set while
+    # the repo is private.
+    #
+    # issue_comment needs no FORK gate - that event checks out the base repo -
+    # but it does need an AUTHOR gate, and until 2026-08-31 it had none.
+    #
+    # The distinction matters and cuts the opposite way from the note above.
+    # A pull_request from a fork runs the FORK's copy of this file, so nothing
+    # written here is a boundary. An issue_comment runs the BASE repo's copy,
+    # on the base repo's token - so a condition here is one an outsider cannot
+    # edit, and is therefore a real boundary rather than hygiene.
+    #
+    # What it was: `comment.user.type != 'Bot'` plus "is this a PR comment".
+    # Both are satisfied by any GitHub account on earth. On a public repo that
+    # means a drive-by commenter starts a job on the maintainer's own hardware,
+    # holding OPENROUTER_API_KEY and pull-requests: write. The action refuses
+    # untrusted callers internally, but the job has already been scheduled,
+    # checked out, and handed the secrets by then - refusal is not the same as
+    # never running.
+    #
+    # OWNER / MEMBER / COLLABORATOR only. CONTRIBUTOR is deliberately excluded:
+    # it means "has had a PR merged here at some point", which is exactly the
+    # graduation rule that makes the default fork-approval policy too weak.
+    #
+    # This is not covered by "Require approval for all outside collaborators".
+    # That setting gates fork pull requests; issue_comment is not one.
+    if: >-
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'issue_comment' ||
+       (github.event.comment.user.type != 'Bot' &&
+        github.event.issue.pull_request &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                 github.event.comment.author_association)))
+    runs-on: [self-hosted, linux, x64, docker]
+    timeout-minutes: 15   # backstop: kill a wedged review instead of holding the runner for hours
+    steps:
+      # Pinned for the same reason the action below is, and it matters more here
+      # than the ordering suggests: checkout runs FIRST, so a compromised or
+      # retagged release executes on this runner before anything else, with the
+      # job's token and write access to the workspace. First-party ownership is
+      # not the distinction - metrics-report.yml already refuses to run ANY
+      # `uses:` step in its write-capable job for exactly this reason, and this
+      # job is the fork-reachable one.
+      #
+      # d23441a is the commit v6 and v6.1.0 both point at today.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # Without this, checkout leaves the job's token in .git/config inside the
+          # workspace. On a self-hosted runner that file outlives the job unless the
+          # runner is ephemeral. The action needs no git credential of its own.
+          persist-credentials: false
+      # Pinned to a commit, not a branch. This is the one step that runs
+      # third-party code on a self-hosted runner while holding a provider API
+      # key and pull-requests: write, so a mutable ref means whoever can push
+      # to that repository's main executes here on the next PR event, across
+      # every open PR, with no diff in this repo to review.
+      #
+      # The repo already holds this standard for a narrower case:
+      # metrics-report.yml pins its image by sha256 digest and spends thirty
+      # lines explaining why :main is unacceptable for a job with a read-only
+      # token. This job's blast radius is strictly wider.
+      #
+      # Pinned at v0.1.1. main is three commits ahead and all three are
+      # docs-only (#49, #50, #51), so this pins a released, reviewed version
+      # without losing behaviour. To move it: pick a tag, resolve it with
+      # `gh api repos/charles8051/peanut-gallery/tags`, and paste both here.
+      - uses: charles8051/peanut-gallery@aa1f3845086e0400b5d64070b876a45444207bad # v0.1.1
+        with:
+          config: .github/peanut-gallery.json   # seed: bug-hunter + general; orchestrator adds diff-specific reviewers
+          pr-number: ${{ github.event.pull_request.number || github.event.issue.number }}
+          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}

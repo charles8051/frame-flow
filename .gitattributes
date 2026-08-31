@@ -1,0 +1,31 @@
+# Auto-detect text files; normalise to LF in the repo AND the working
+# tree. `eol=lf` prevents the "LF will be replaced by CRLF" warnings
+# on Windows checkouts and keeps line endings deterministic across the
+# workspace — Windows / WSL / CI all see byte-identical files.
+* text=auto eol=lf
+
+# Windows-only scripts that genuinely need CRLF for cmd.exe
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+
+# Source files: language-aware diff
+*.cs   text eol=lf diff=csharp
+
+# Common binaries — never normalise, never diff
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.dll  binary
+*.exe  binary
+*.pdb  binary
+*.so   binary
+*.dylib binary
+*.onnx binary
+*.pdf  binary
+*.zip  binary
+*.7z   binary
+*.gz   binary
+*.tar  binary
+*.nupkg binary

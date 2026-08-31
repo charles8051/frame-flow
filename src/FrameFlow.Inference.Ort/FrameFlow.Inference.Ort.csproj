@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!--
+    FrameFlow.Inference.Ort: the shared ORT-managed staging base that the
+    EP wrapper packages (FrameFlow.Inference.Cuda, FrameFlow.Inference.Dml,
+    future FrameFlow.Inference.TensorRT) inherit. Holds the host->ORT
+    binding pipeline that ADR-0049 §3 mandates be uniform across EPs:
+    "every wrapper binds host memory via ICpuTensor; per-EP differences are
+    confined to bootstrap and session-options configuration." Before this
+    project existed the ~190-line staging body (BindCpuTensor / ToLongShape
+    / MapDType / ValidateNames / BuildShapes / the dictionary-Run + IoBinding
+    loop) was copy-pasted byte-identical into both EP sessions, violating
+    that decision; OrtInferenceSessionBase is the single home.
+
+    WHY a dedicated project instead of FrameFlow.Inference.Abstractions:
+    the staging needs the ORT *managed* API (InferenceSession, OrtValue,
+    IoBinding, SessionOptions, TensorElementType). Abstractions is
+    deliberately contracts-only with NO ORT dependency (consumers like
+    FrameFlow.Yolo reference it EP-agnostically), so it must stay
+    ORT-free. This project references Microsoft.ML.OnnxRuntime.Managed:
+    the managed-only assembly that BOTH Microsoft.ML.OnnxRuntime.Gpu and
+    Microsoft.ML.OnnxRuntime.DirectML already depend on transitively. It
+    carries the managed Microsoft.ML.OnnxRuntime.dll but NO native
+    onnxruntime.dll, so inheriting from this base contributes zero native
+    payload and does NOT reintroduce the "pick exactly one EP package at
+    the executable boundary" conflict between the GPU and DirectML native
+    runtimes. Each EP keeps its own native EP package; NuGet unifies the
+    shared Managed version with whichever native EP package the app picks.
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="../FrameFlow.Inference.Abstractions/FrameFlow.Inference.Abstractions.csproj" />
+    <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Managed ORT API only: no native onnxruntime.dll ships from this
+         package. The native EP runtime comes from the inheriting EP
+         project's Microsoft.ML.OnnxRuntime.{Gpu,DirectML} reference. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FrameFlow.Graph" />
+    <Using Include="FrameFlow.Inference" />
+  </ItemGroup>
+</Project>

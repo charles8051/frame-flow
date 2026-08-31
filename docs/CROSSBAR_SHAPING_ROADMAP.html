@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Crossbar-Shaping Roadmap — FrameFlow</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --fg: #1a1a1a;
+      --muted: #585858;
+      --rule: #d8d8d8;
+      --bg: #fafaf7;
+      --accent: #6b3a1a;
+      --tier1: #c25b00;
+      --tier2: #9a5b1f;
+      --tier3: #5b6a3a;
+      --tier4: #3a5b6a;
+      --tier5: #555;
+      --code-bg: #f0ede4;
+    }
+    body {
+      font-family: "Iowan Old Style", "Charter", "Georgia", serif;
+      max-width: 760px;
+      margin: 3em auto;
+      padding: 0 1.5em;
+      color: var(--fg);
+      background: var(--bg);
+      line-height: 1.55;
+      font-size: 17px;
+    }
+    h1 {
+      font-size: 1.7em;
+      margin-bottom: 0.1em;
+      letter-spacing: -0.01em;
+    }
+    h2 {
+      margin-top: 2.2em;
+      padding-bottom: 0.2em;
+      border-bottom: 1px solid var(--rule);
+      font-size: 1.25em;
+      letter-spacing: -0.005em;
+    }
+    h3 {
+      margin-top: 1.6em;
+      font-size: 1.05em;
+      color: var(--accent);
+    }
+    .subtitle {
+      color: var(--muted);
+      font-style: italic;
+      margin-top: 0;
+      margin-bottom: 2em;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 0.88em;
+      margin: 0 0 2em 0;
+    }
+    .tier {
+      border-left: 4px solid var(--accent);
+      padding: 0.1em 0 0.1em 1.2em;
+      margin: 1.5em 0;
+    }
+    .tier-1 { border-left-color: var(--tier1); }
+    .tier-2 { border-left-color: var(--tier2); }
+    .tier-3 { border-left-color: var(--tier3); }
+    .tier-4 { border-left-color: var(--tier4); }
+    .tier-5 { border-left-color: var(--tier5); }
+    .tier h2 {
+      margin-top: 0.4em;
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+    code {
+      font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
+      background: var(--code-bg);
+      padding: 0.1em 0.35em;
+      border-radius: 3px;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--code-bg);
+      padding: 0.9em 1.1em;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-size: 0.85em;
+      line-height: 1.45;
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1em 0;
+      font-size: 0.94em;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.5em 0.8em;
+      border-bottom: 1px solid var(--rule);
+      vertical-align: top;
+    }
+    th {
+      background: rgba(0,0,0,0.03);
+      font-weight: 600;
+    }
+    td:first-child {
+      font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
+      font-size: 0.88em;
+      white-space: nowrap;
+    }
+    .principle {
+      background: #f0ecd9;
+      border: 1px solid #d6d0b8;
+      border-radius: 4px;
+      padding: 0.9em 1.1em;
+      margin: 1.5em 0;
+      font-size: 0.95em;
+    }
+    .principle strong {
+      color: var(--accent);
+    }
+    ul {
+      padding-left: 1.4em;
+    }
+    li {
+      margin-bottom: 0.4em;
+    }
+    blockquote {
+      border-left: 3px solid var(--rule);
+      margin: 1em 0;
+      padding: 0.1em 0 0.1em 1em;
+      color: var(--muted);
+      font-style: italic;
+    }
+    .footnote {
+      color: var(--muted);
+      font-size: 0.9em;
+      margin-top: 3em;
+      padding-top: 1.5em;
+      border-top: 1px solid var(--rule);
+    }
+  </style>
+</head>
+<body>
+  <h1>Crossbar-Shaping Roadmap</h1>
+  <p class="subtitle">What's still pre-Crossbar in FrameFlow, ranked by architectural pain it relieves.</p>
+  <p class="meta">Recorded 2026-05-12. Snapshot taken immediately after ADR-0036 (decoded media stream decoupled from playback) landed end-to-end across three commits. The decode layer now speaks fluent Crossbar; the playback layer wraps it as a state machine over pump tasks. This document is the audit of what remains.</p>
+
+  <div class="principle" style="background:#fff5e0;border-left:3px solid #c25b00;padding:0.6em 1em;">
+    <strong>Update 2026-05-16 (Crossbar ADR-0010 / ADR-0012).</strong>
+    References below to <code>IFrameSink&lt;T&gt;</code> (as a Crossbar
+    substrate type), <code>SupportedMemoryDomains</code>, and "sink
+    inheritance from Crossbar" are stale. The substrate's only sink
+    concept is now the <code>FrameConsumer&lt;TFrame&gt;</code>
+    delegate; FrameFlow's <code>IVideoSink</code> /
+    <code>IAudioSink</code> are standalone <code>IAsyncDisposable</code>
+    interfaces that expose a <code>Consumer</code> property.
+    Substitute mentally: "extends <code>IFrameSink&lt;X&gt;</code>"
+    &rarr; "exposes <code>FrameConsumer&lt;X&gt; Consumer</code>"; and
+    "<code>.ToSinkAsync(sink, ct)</code>" &rarr;
+    "<code>.ToSinkAsync(sink.Consumer, ct)</code>". The roadmap's
+    tier structure and pain-relief ranking are unchanged.
+  </div>
+
+  <div class="principle">
+    <strong>What "Crossbar-shaped" means.</strong> Expose your output as
+    <code>FramePipeline&lt;T&gt;</code>; accept inputs as
+    <code>FramePipeline&lt;T&gt;</code> where applicable; compose via operators
+    (<code>Transform</code>, <code>Observe</code>, <code>Broadcast</code>,
+    <code>ToSinkAsync</code>) rather than register callbacks.<br><br>
+    For things that are <em>transforms</em> over frame streams, Crossbar shape
+    is right. For <em>side effects on frames</em> (sinks), Crossbar's
+    <code>IFrameSink&lt;T&gt;</code> is the right shape, and bridges via
+    <code>ToSinkAsync</code>. For <em>stateful coordinators</em> (state machines)
+    Crossbar shape doesn't apply.
+  </div>
+
+  <h2>Inventory of what's already Crossbar-shaped</h2>
+  <ul>
+    <li><strong>Decode pipeline</strong> &mdash; <code>IDecodedMediaStream</code> exposes <code>FramePipeline&lt;IVideoFrame&gt;</code> and <code>FramePipeline&lt;PcmAudioBuffer&gt;</code>. (ADR-0036)</li>
+    <li><strong>Audio resampling</strong> &mdash; <code>pipeline.Resample(rate, channels)</code> operator in <code>FrameFlow.Audio</code>.</li>
+    <li><strong>AV-sync pacing</strong> &mdash; <code>pipeline.PacedAgainst(clock, strategy)</code> operator in <code>FrameFlow.Playback</code>. (ADR-0036 Phase 2)</li>
+    <li><strong>Video sink integration</strong> &mdash; <code>IVideoSink</code> implements Crossbar's <code>IFrameSink&lt;IVideoFrame&gt;</code>; <code>pipeline.ToSinkAsync(videoSink, ct)</code> works directly. (ADR-0030)</li>
+  </ul>
+
+  <div class="tier tier-1">
+    <h2>Tier 1 &mdash; Pixel-domain operators (landed 2026-05-12)</h2>
+    <p><strong>Status: ConvertPixelFormat, Resize, ResizeAndConvert shipped via ADR-0037.</strong> Crop and Overlay deferred to follow-ups (see notes below). <code>IFrameConverter</code> marked <code>[Obsolete]</code>; will be removed in a future release.</p>
+    <p>The new package <code>FrameFlow.Video</code> is the peer of <code>FrameFlow.Audio</code> in both shape and location:</p>
+    <pre><code>FrameFlow.Audio                     FrameFlow.Video
+&boxvr;&boxh; IAudioResampler        (interface)   &boxvr;&boxh; IVideoConverter        (interface)
+&boxvr;&boxh; FfmpegAudioResampler   (swr impl)    &boxvr;&boxh; SwScaleVideoConverter  (sws impl)
+&boxur;&boxh; AudioPipelineExtensions (ops)        &boxur;&boxh; VideoPipelineExtensions (ops)</code></pre>
+    <p>The original audit follows for reference.</p>
+    <p><strong><code>IFrameConverter</code> was a placeholder.</strong> Defined in <code>FrameFlow.Media</code> but never implemented. <code>PipelineConfig</code> references it; <code>PipelineNegotiator</code>'s comment said "Future versions will insert an <code>IFrameConverter</code> when the format or domain requires it." That future arrived as ADR-0037.</p>
+
+    <table>
+      <tr><th>Operator</th><th>Purpose</th><th>Pain it relieves</th></tr>
+      <tr>
+        <td>ConvertPixelFormat(target)</td>
+        <td>swscale-backed YUV&harr;RGB, planar/packed, bit-depth changes</td>
+        <td>Every video sink today does format conversion internally (Avalonia, SDL). Becomes a composable transform.</td>
+      </tr>
+      <tr>
+        <td>Resize(w, h)</td>
+        <td>swscale-backed rescaling</td>
+        <td>Captioning Phase 2 wants a fixed-size preview; YOLO wants 640&times;640 input; thumbnails; ABR transcoding.</td>
+      </tr>
+      <tr>
+        <td>Crop(rect)</td>
+        <td>Extract a sub-rectangle</td>
+        <td>YOLO region-of-interest, multi-camera viewport, picture-in-picture.</td>
+      </tr>
+      <tr>
+        <td>Overlay(other, blend)</td>
+        <td>Composite two pipelines</td>
+        <td><strong>Captioning Phase 2</strong> (caption overlay on video) is exactly this. YOLO bounding-box rendering is this. Watermark stamping is this.</td>
+      </tr>
+      <tr>
+        <td>ColorSpaceConvert(target)</td>
+        <td>BT.601&harr;BT.709, sRGB&harr;linear</td>
+        <td>HDR work eventually; less urgent.</td>
+      </tr>
+    </table>
+
+    <p>The swscale wrapper for the first three is small (well-understood library, single-input/single-output, naturally fits <code>Transform</code>). Overlay composes two pipelines &mdash; Crossbar idioms support this but we don't have an example yet.</p>
+    <p>Doing this also lets <code>IFrameConverter</code> retire &mdash; it's the push-shaped predecessor of these operators, and once they exist no one needs the interface.</p>
+  </div>
+
+  <div class="tier tier-2">
+    <h2>Tier 2 &mdash; Memory-domain operators (Phase A landed 2026-05-12)</h2>
+    <p><strong>Status: Phase A shipped via ADR-0038.</strong> The producer-side seam (a GPU-resident frame type that decoders can yield) plus the <code>ToCpu()</code> readback operator are in place. Phase B (<code>MapToGpu</code> upload direction, GPU-aware sinks, flipping the decoder default to yield GPU when hwaccel is active) is deferred to follow-up commits with separate design work.</p>
+
+    <p>What landed:</p>
+    <ul>
+      <li><code>GpuVideoFrame</code> in <code>FrameFlow.Decoding</code> &mdash; wraps a cloned <code>AVFrame*</code> via <code>av_frame_clone</code>, exposes the software pixel format (typically Nv12) that readback would produce, throws on <code>IVideoFrame.ToCpu</code> with a redirect to the operator.</li>
+      <li><code>VideoDecoder.YieldHardwareFrames</code> opt-in flag &mdash; default <code>false</code>, so every existing consumer keeps getting <code>CpuVideoFrame</code> like before. Set to <code>true</code> and the decoder yields <code>GpuVideoFrame</code> instead of doing internal <code>av_hwframe_transfer_data + sws_scale</code>.</li>
+      <li><code>pipeline.ToCpu()</code> operator in <code>FrameFlow.Video</code> &mdash; no-op pass-through for CPU frames; for <code>GpuVideoFrame</code> runs <code>av_hwframe_transfer_data + sws_scale</code> internally to produce a tightly-packed Bgra32 <code>CpuVideoFrame</code>.</li>
+      <li><code>pipeline.AsDomain(target)</code> convenience &mdash; selects <code>ToCpu</code> when <code>target = Cpu</code>; throws <code>NotSupportedException</code> for <code>target = Gpu</code> with a pointer to Phase B's <code>MapToGpu</code>.</li>
+    </ul>
+
+    <p>The original audit follows for reference.</p>
+    <p>Today, when hwaccel is active (CUDA, DXVA, D3D11VA), the decoder produces GPU-resident frames internally but reads them back to CPU before yielding, because the sinks expect CPU frames. Two layering problems welded together:</p>
+    <ol>
+      <li><strong>Inference consumers can't get GPU frames.</strong> YOLO-on-GPU paths get CPU readbacks they'd have to upload back. Whisper-on-GPU (future) same story.</li>
+      <li><strong>The decoder makes memory-domain decisions for everyone.</strong> A consumer that knows their sink wants CPU still gets the readback whether they ask or not.</li>
+    </ol>
+
+    <p><strong>Phase B (deferred):</strong></p>
+    <ul>
+      <li><code>MapToGpu(domain)</code> &mdash; CPU&rarr;GPU upload. Requires device-context lifecycle management; needs its own ADR.</li>
+      <li>GPU-aware sinks (D3D11 / Vulkan video presenters) that consume <code>GpuVideoFrame</code> directly without a CPU round-trip.</li>
+      <li>Flipping the decoder default to yield GPU frames when hwaccel is active. Currently breaks every sink consumer without GPU-aware sinks landing first; defer until at least one such sink exists.</li>
+      <li>Per-backend frame sub-interfaces (<code>ICudaVideoFrame</code>, <code>ID3D11VideoFrame</code>) for zero-copy ML / shader access.</li>
+    </ul>
+  </div>
+
+  <div class="tier tier-3">
+    <h2>Tier 3 &mdash; User-domain transforms (Whisper landed 2026-05-12)</h2>
+    <p><strong>Status: Whisper operator shipped via ADR-0039.</strong> <code>FrameFlow.Whisper</code> is a new peer package: <code>audio.TranscribeWithWhisper(modelPath, options)</code> turns a <code>FramePipeline&lt;PcmAudioBuffer&gt;</code> into a <code>FramePipeline&lt;Caption&gt;</code>. The live-captioning demo migrated to use it &mdash; <code>WhisperAsrWorker</code>, <code>WhisperFormatConverter</code>, and <code>AudioChunk</code> are deleted; the demo's <code>Program.cs</code> is now ~150 lines of orchestration around a single pipeline composition.</p>
+    <p>Remaining Tier 3 operators (queued for their own ADRs as concrete consumers emerge):</p>
+    <ul>
+      <li><strong>YOLO inference.</strong> The inference demo's <code>Yolov8InferencePreview</code> doing rent&rarr;infer&rarr;draw inside an <code>IFrameSink&lt;IVideoFrame&gt;</code> can become <code>frames.DetectWith(yolov8Model)</code> emitting <code>FramePipeline&lt;DetectedFrame&gt;</code> (packets enriched with detection metadata via Crossbar's <code>Enrich</code>). Same pattern as the Whisper operator just landed.</li>
+      <li><strong>Audio metering / leveling.</strong> Not implemented yet but a natural fit: <code>audio.MeasureLoudness()</code> &rarr; enriched packets with dB metadata.</li>
+    </ul>
+  </div>
+
+  <div class="tier tier-4">
+    <h2>Tier 4 &mdash; Audio sink as Crossbar sink (landed 2026-05-12)</h2>
+    <p><strong>Status: shipped.</strong> <code>IAudioSink</code> now implements <code>IFrameSink&lt;PcmAudioBuffer&gt;</code> via default interface methods that bridge <code>PresentAsync</code> &rarr; <code>WriteAsync</code> + Dispose. The audio pump in <code>PipelineController</code> dropped the <code>Observe</code> adapter and uses <code>stream.Audio.ToSinkAsync(audioSink, ct)</code> directly &mdash; symmetric with the video pump.</p>
+  </div>
+
+  <div class="tier tier-5">
+    <h2>Tier 5 &mdash; Capture sources + encoder terminals (design captured 2026-05-12)</h2>
+    <p><strong>Status: design ADR shipped (ADR-0040); implementation deferred.</strong> The shape for both sides is locked in:</p>
+    <ul>
+      <li><code>ICaptureSource</code> / <code>IVideoCaptureSource</code> / <code>IAudioCaptureSource</code> / <code>IMultimodalCaptureSource</code> in a future <code>FrameFlow.Capture</code> package, each exposing <code>FramePipeline&lt;T&gt;</code> like <code>IDecodedMediaStream</code> from ADR-0036.</li>
+      <li>Per-backend packages (<code>FrameFlow.Capture.MediaFoundation</code>, <code>...AVFoundation</code>, <code>...V4L2</code>) mirroring the audio-sink split. Periphery's device topology bridges in via a <code>Camera.FromPeripheryProxy</code>-style factory.</li>
+      <li><code>IEncoder&lt;TFrame, TPacket&gt;</code> + <code>IMuxer</code> in <code>FrameFlow.Encoding</code> as the dual of decoders + muxers. <code>FrameFlow.Encoding.LibAv</code> provides FFmpeg-backed H264 / AAC / MP4 / MKV first.</li>
+      <li>Composition end-state: <code>camera.Frames.Encode(H264).ToSinkAsync(mux.AddStream(...))</code> &mdash; five concepts, five lines, no bespoke ceremony.</li>
+    </ul>
+    <p>Implementation sized at multiple months when there's a concrete consumer pulling for it (OBS-replication, a recording demo, a webcam example). The ADR lists scopes per subsystem.</p>
+  </div>
+
+  <h2>Things that should NOT be Crossbar-shaped</h2>
+  <p>For symmetry, the parts of FrameFlow that <em>correctly</em> aren't pipeline-shaped:</p>
+  <ul>
+    <li><strong><code>IPlaybackController</code></strong> &mdash; a state machine. Its inputs are commands; outputs are state transitions. Already exposes observable streams (<code>PlaybackStateChanged</code>, <code>PositionTick</code>) which is the right shape for state events. Not a transform.</li>
+    <li><strong>Sink lifecycle methods</strong> &mdash; <code>IAudioSink.Activate/Pause/Resume/Deactivate</code> describe device state independent of pipeline flow. Have to stay as separate methods.</li>
+    <li><strong><code>IFrameFlowBootstrapper</code></strong> &mdash; native-library init. Not a transform.</li>
+    <li><strong><code>IMasterClock</code></strong> &mdash; a primitive consumed by the <code>PacedAgainst</code> operator. The clock itself is a reading, not a pipeline.</li>
+    <li><strong>State machines</strong> (the three Stateless-backed machines inside <code>PlaybackController</code>) &mdash; not transforms.</li>
+  </ul>
+
+  <h2>Suggested execution order</h2>
+  <ol>
+    <li><strong>Tier 1 first.</strong> Pixel operators unlock the captioning demo's next phases, retire <code>IFrameConverter</code>, and the swscale wrapper is a well-trodden path. An ADR for "swscale-backed pixel pipeline operators" carries it cleanly. Estimated scope: 4&ndash;6 commits, similar shape to the <code>Resample</code> operator landing.</li>
+    <li><strong>Tier 4 right after.</strong> Making audio sinks implement <code>IFrameSink&lt;PcmAudioBuffer&gt;</code> is a ~50-line change. Drops the audio pump's <code>Observe</code>-wrapped sink call to a direct <code>ToSinkAsync</code>. Tiny but cleans the symmetry.</li>
+    <li><strong>Tier 3</strong> &mdash; Whisper + YOLO operators &mdash; once Tier 1 lands. Caption overlay (Tier 1) and Whisper operator (Tier 3) together make the captioning demo essentially <code>stream.Audio.TranscribeWithWhisper().Overlay(stream.Video, &hellip;).ToSinkAsync(renderer)</code>.</li>
+    <li><strong>Tier 2</strong> &mdash; memory-domain operators &mdash; biggest architectural lift, depends on hwaccel maturity. Worth doing before the inference example gets serious about GPU-resident pipelines.</li>
+    <li><strong>Tier 5</strong> &mdash; when the codebase is ready for capture/encode, probably after the captioning + inference demos are fully shipped and OBS-replication starts looking real.</li>
+  </ol>
+
+  <p>The captioning Phase 2&ndash;5 backlog effectively <em>forces</em> Tier 1 first &mdash; there's no clean way to do "captions overlaid on video" without an <code>Overlay</code> operator. So that's both the most impactful next step and the one with the most concrete demand behind it.</p>
+
+  <p class="footnote">
+    See also: <code>docs/adr/ADR-0036-decoded-media-stream-decoupled-from-playback.md</code>,
+    <code>docs/LIVE_CAPTIONING_DEMO.md</code>,
+    <code>docs/OBS_REPLICATION.md</code>.
+  </p>
+</body>
+</html>

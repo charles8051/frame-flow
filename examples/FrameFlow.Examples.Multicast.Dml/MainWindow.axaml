@@ -1,0 +1,127 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:FrameFlow.Examples.Multicast.Dml"
+        xmlns:ff="clr-namespace:FrameFlow.Avalonia;assembly=FrameFlow.Avalonia"
+        x:Class="FrameFlow.Examples.Multicast.Dml.MainWindow"
+        Width="1500" Height="700"
+        Title="FrameFlow — Multicast preview, DirectML backend (3 panes from one decoded video)"
+        Background="#1a1a1a">
+  <Grid RowDefinitions="Auto,*,Auto,Auto" Margin="12">
+
+    <!-- Top: file picker -->
+    <DockPanel Grid.Row="0" LastChildFill="True" Margin="0,0,0,12">
+      <Button Name="OpenButton"
+              Content="📂 Open…"
+              DockPanel.Dock="Right"
+              Margin="8,0,0,0"
+              Click="OnOpenClick"/>
+      <ToggleButton Name="LoopButton"
+                    Content="🔁 Loop"
+                    DockPanel.Dock="Right"
+                    IsChecked="True"
+                    Margin="8,0,0,0"
+                    Click="OnLoopClick"/>
+      <TextBlock Name="FileNameText"
+                 Foreground="#cccccc"
+                 VerticalAlignment="Center"
+                 Text="(no file loaded — use Open or pass a path on the command line)"/>
+    </DockPanel>
+
+    <!-- Middle: 3-column pane grid -->
+    <Grid Grid.Row="1" ColumnDefinitions="*,*,*">
+
+      <!-- Pane 1 — Direct: reuses FrameFlow.Avalonia's stock
+           FrameFlowVideoView as a Crossbar terminal sink. No bespoke
+           pane class needed — the view's owned AvaloniaVideoSink
+           exposes a FrameConsumer<IVideoFrame> via .Consumer (set up
+           in code-behind via Pane1Preview.EnsureSink()). -->
+      <Border Grid.Column="0" Background="#252525" CornerRadius="4"
+              Padding="6" Margin="0,0,4,0">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Text="Pane 1 — Direct feed (FrameFlowVideoView)"
+                     Foreground="#dddddd" FontWeight="SemiBold" Margin="0,0,0,4"/>
+          <SelectableTextBlock DockPanel.Dock="Bottom" Name="Pane1Stats"
+                               Foreground="#999999" FontFamily="Consolas,Menlo,monospace"
+                               FontSize="11" Margin="0,4,0,0"
+                               Text="FPS: --   Dropped: --"/>
+          <Border Background="Black" CornerRadius="2">
+            <ff:FrameFlowVideoView Name="Pane1Preview"/>
+          </Border>
+        </DockPanel>
+      </Border>
+
+      <!-- Pane 2 — YOLOv8 object detection -->
+      <Border Grid.Column="1" Background="#252525" CornerRadius="4"
+              Padding="6" Margin="4,0,4,0">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Text="Pane 2 — Object detection (YOLOv8)"
+                     Foreground="#dddddd" FontWeight="SemiBold" Margin="0,0,0,4"/>
+          <SelectableTextBlock DockPanel.Dock="Bottom" Name="Pane2Stats"
+                               Foreground="#999999" FontFamily="Consolas,Menlo,monospace"
+                               FontSize="11" Margin="0,4,0,0"
+                               Text="FPS: --   Dropped: --"/>
+          <Border Background="Black" CornerRadius="2">
+            <local:ObjectDetectionPreview Name="Pane2Preview"/>
+          </Border>
+        </DockPanel>
+      </Border>
+
+      <!-- Pane 3 — Color filter -->
+      <Border Grid.Column="2" Background="#252525" CornerRadius="4"
+              Padding="6" Margin="4,0,0,0">
+        <DockPanel>
+          <DockPanel DockPanel.Dock="Top" LastChildFill="True" Margin="0,0,0,4">
+            <ComboBox Name="FilterPicker" DockPanel.Dock="Right"
+                      MinWidth="120" Margin="8,0,0,0"/>
+            <TextBlock Text="Pane 3 — Color filter"
+                       Foreground="#dddddd" FontWeight="SemiBold"
+                       VerticalAlignment="Center"/>
+          </DockPanel>
+          <SelectableTextBlock DockPanel.Dock="Bottom" Name="Pane3Stats"
+                               Foreground="#999999" FontFamily="Consolas,Menlo,monospace"
+                               FontSize="11" Margin="0,4,0,0"
+                               Text="FPS: --   Dropped: --"/>
+          <Border Background="Black" CornerRadius="2">
+            <local:FilteredPreview Name="Pane3Preview"/>
+          </Border>
+        </DockPanel>
+      </Border>
+
+    </Grid>
+
+    <!-- Player chrome row — demonstrates FrameFlowPlayerChrome used
+         standalone (separate from any video surface). The chrome is
+         bound to the source MediaPlayer that drives the broadcast
+         above, so Play/Pause/Stop/seek/volume all act on the upstream
+         source — controlling all three panes at once.
+
+         HasOpenButton="False" because the top row already has its own
+         Open + Loop buttons; we don't want two file-picker buttons
+         competing. The chrome's keyboard shortcuts (Space, M, ←/→)
+         stay enabled (default) so the standard player keys work
+         throughout the multicast window.
+
+         The Border around the chrome is the consumer's choice —
+         FrameFlowPlayerChrome ships with no background of its own
+         precisely so hosts can decorate it with whatever fits
+         (solid bar here; the bundled FrameFlowPlayerView paints a
+         gradient scrim for the overlay-on-video layout). -->
+    <Border Grid.Row="2" Background="#202020" CornerRadius="4"
+            Margin="0,12,0,0" Padding="4">
+      <ff:FrameFlowPlayerChrome Name="PlayerChrome"
+                                HasOpenButton="False"
+                                LoopByDefault="True"/>
+    </Border>
+
+    <!-- Bottom: global diagnostics -->
+    <Border Grid.Row="3" Background="#252525" CornerRadius="4"
+            Padding="10,6" Margin="0,8,0,0">
+      <SelectableTextBlock Name="GlobalStatsText"
+                           Foreground="#cccccc"
+                           FontFamily="Consolas,Menlo,monospace"
+                           FontSize="12"
+                           Text="Open a media file to begin."/>
+    </Border>
+
+  </Grid>
+</Window>

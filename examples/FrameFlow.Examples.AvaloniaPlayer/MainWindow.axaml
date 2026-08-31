@@ -1,0 +1,171 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ff="clr-namespace:FrameFlow.Avalonia;assembly=FrameFlow.Avalonia"
+        x:Class="FrameFlow.Examples.AvaloniaPlayer.MainWindow"
+        Title="FrameFlow Player"
+        Width="1280" Height="800"
+        MinWidth="640" MinHeight="480"
+        Background="#1a1a1a">
+
+  <!--
+    The video surface + transport / status / seek / volume UI now
+    come from FrameFlow.Avalonia's FrameFlowPlayerView control. The
+    only example-side concern is wiring FileOpenRequested to a
+    build-the-player handler and surfacing the log textbox at the
+    bottom. The Window.Styles + ~150 LOC of XAML that used to live
+    here are now in the library control where every consumer
+    benefits from them.
+  -->
+  <Window.Styles>
+    <!-- Same dark theme as before, but only buttons + log textbox
+         remain — the player view styles itself. -->
+    <Style Selector="Button">
+      <Setter Property="Background" Value="#2d2d2d"/>
+      <Setter Property="Foreground" Value="#e0e0e0"/>
+      <Setter Property="BorderBrush" Value="#555"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="12,6"/>
+      <Setter Property="CornerRadius" Value="4"/>
+    </Style>
+    <Style Selector="Button:pointerover">
+      <Setter Property="Background" Value="#3d3d3d"/>
+    </Style>
+    <Style Selector="Button:disabled">
+      <Setter Property="Foreground" Value="#555"/>
+      <Setter Property="Background" Value="#222"/>
+      <Setter Property="BorderBrush" Value="#333"/>
+    </Style>
+    <Style Selector="ToggleButton">
+      <Setter Property="Background" Value="#2d2d2d"/>
+      <Setter Property="Foreground" Value="#e0e0e0"/>
+      <Setter Property="BorderBrush" Value="#555"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="12,6"/>
+      <Setter Property="CornerRadius" Value="4"/>
+    </Style>
+    <Style Selector="ToggleButton:checked">
+      <Setter Property="Background" Value="#1a6b3a"/>
+      <Setter Property="BorderBrush" Value="#2a9d4e"/>
+    </Style>
+    <!-- Playlist list: dark rows, green highlight on the now-playing item. -->
+    <Style Selector="ListBoxItem">
+      <Setter Property="Padding" Value="2,1"/>
+      <Setter Property="Margin" Value="0"/>
+      <Setter Property="MinHeight" Value="0"/>
+      <Setter Property="CornerRadius" Value="3"/>
+    </Style>
+    <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+      <Setter Property="Background" Value="#1a6b3a"/>
+    </Style>
+    <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#262626"/>
+    </Style>
+    <Style Selector="TextBox.diagnostic">
+      <Setter Property="IsReadOnly" Value="True"/>
+      <Setter Property="AcceptsReturn" Value="True"/>
+      <Setter Property="TextWrapping" Value="NoWrap"/>
+      <Setter Property="FontFamily" Value="Cascadia Mono,Consolas,Menlo,monospace"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Foreground" Value="#bbb"/>
+      <Setter Property="Background" Value="#0d0d0d"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="8,6"/>
+      <Style.Resources>
+        <SolidColorBrush x:Key="TextControlBackground" Color="#0d0d0d"/>
+        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#0d0d0d"/>
+        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#0d0d0d"/>
+        <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#0d0d0d"/>
+        <SolidColorBrush x:Key="TextControlForeground" Color="#bbb"/>
+        <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="#bbb"/>
+        <SolidColorBrush x:Key="TextControlForegroundFocused" Color="#bbb"/>
+        <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="#666"/>
+        <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent"/>
+        <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent"/>
+        <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent"/>
+      </Style.Resources>
+    </Style>
+  </Window.Styles>
+
+  <Grid ColumnDefinitions="300,4,*">
+
+    <!-- ── Playlist sidebar: open a folder, list its files, follow playback. ── -->
+    <Grid Grid.Column="0" RowDefinitions="Auto,*" Background="#161616">
+      <StackPanel Grid.Row="0" Margin="10" Spacing="8">
+        <TextBlock Text="PLAYLIST" Foreground="#888" FontSize="11" FontWeight="SemiBold"/>
+        <Button x:Name="OpenFolderButton"
+                Content="Open Folder…"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Left"/>
+        <Button x:Name="OpenFileButton"
+                Content="Open File…"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Left"/>
+        <TextBlock x:Name="PlaylistStatus"
+                   Text="Open a folder to play through all of its media files."
+                   Foreground="#777" FontSize="11" TextWrapping="Wrap"/>
+      </StackPanel>
+      <ListBox x:Name="PlaylistBox" Grid.Row="1"
+               Margin="6,0,6,8"
+               Background="Transparent"
+               BorderThickness="0">
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <TextBlock Text="{Binding Name}"
+                       Foreground="#ddd" FontSize="12"
+                       TextTrimming="CharacterEllipsis"
+                       ToolTip.Tip="{Binding Name}"
+                       Padding="4,3"/>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </Grid>
+
+    <GridSplitter Grid.Column="1"
+                  ResizeDirection="Columns"
+                  VerticalAlignment="Stretch"
+                  Background="#333"
+                  Width="4" />
+
+    <!-- ── Player + log (unchanged from the single-file layout). ── -->
+    <Grid Grid.Column="2" RowDefinitions="*,5,200">
+    <ff:FrameFlowPlayerView x:Name="PlayerView" Grid.Row="0" />
+    <GridSplitter Grid.Row="1"
+                  ResizeDirection="Rows"
+                  HorizontalAlignment="Stretch"
+                  Background="#333"
+                  Height="5" />
+    <Border Grid.Row="2" Background="#0d0d0d" BorderBrush="#333" BorderThickness="0,1,0,0">
+      <DockPanel LastChildFill="True">
+        <!--
+          Keyboard-shortcut legend. The shortcuts themselves live in
+          FrameFlowPlayerView.OnKeyDown; this strip just publishes
+          them so users know what's bound without having to read the
+          source. Pinned to the top of the log pane so it stays
+          visible regardless of how the user resizes the splitter.
+        -->
+        <Border DockPanel.Dock="Top"
+                Background="#161616"
+                BorderBrush="#222"
+                BorderThickness="0,0,0,1"
+                Padding="10,4">
+          <TextBlock Foreground="#888"
+                     FontFamily="Cascadia Mono,Consolas,Menlo,monospace"
+                     FontSize="11">
+            <Run Text="⌨  " Foreground="#bbb"/>
+            <Run Text="Space" Foreground="#bbb"/><Run Text=" play/pause "/>
+            <Run Text=" · "/>
+            <Run Text="M" Foreground="#bbb"/><Run Text=" mute "/>
+            <Run Text=" · "/>
+            <Run Text="←/→" Foreground="#bbb"/><Run Text=" seek ±5s"/>
+            <Run Text="     ·     Drop a media file anywhere on the player to open."/>
+          </TextBlock>
+        </Border>
+        <TextBox x:Name="LogOutput" Classes="diagnostic"
+                 Watermark="Open a media file to see activity." />
+      </DockPanel>
+    </Border>
+    </Grid>
+
+  </Grid>
+
+</Window>

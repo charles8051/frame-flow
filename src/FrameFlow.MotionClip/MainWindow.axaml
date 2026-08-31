@@ -1,0 +1,31 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ff="clr-namespace:FrameFlow.Avalonia;assembly=FrameFlow.Avalonia"
+        x:Class="FrameFlow.MotionClip.MainWindow"
+        Title="FrameFlow — Motion Clip Recorder"
+        Width="820" Height="680">
+  <DockPanel>
+    <Border DockPanel.Dock="Bottom" Background="#1A1A1A" Padding="10,6">
+      <StackPanel Orientation="Horizontal" Spacing="18">
+        <TextBlock Name="StatusChip" Text="○ Idle" FontWeight="Bold"
+                   Foreground="#888888" VerticalAlignment="Center"/>
+        <TextBlock Name="StatsText" Text="starting…"
+                   Foreground="#CCCCCC" VerticalAlignment="Center"/>
+      </StackPanel>
+    </Border>
+    <Border Background="Black">
+      <!-- VideoView fills the area; SectorOverlay sits on top of it in
+           the same Grid cell. SectorOverlay is populated in code-behind
+           from the gate's MotionSectorMask, and stays hidden when all 9
+           sectors are armed (i.e. no masking in effect). -->
+      <Grid>
+        <ff:FrameFlowVideoView Name="VideoView"/>
+        <Grid Name="SectorOverlay"
+              IsVisible="False"
+              IsHitTestVisible="False"
+              RowDefinitions="*,*,*"
+              ColumnDefinitions="*,*,*"/>
+      </Grid>
+    </Border>
+  </DockPanel>
+</Window>

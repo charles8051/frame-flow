@@ -1,0 +1,46 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:FrameFlow.Examples.Camera.Inference.Dml"
+        x:Class="FrameFlow.Examples.Camera.Inference.Dml.MainWindow"
+        Width="960" Height="760"
+        Title="FrameFlow — Camera inference (DirectML)"
+        Background="#1a1a1a">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="12">
+
+    <!-- Top: camera picker + Refresh. Selecting a camera connects via
+         DeviceSessionHost; re-selecting reconnects. -->
+    <DockPanel Grid.Row="0" LastChildFill="True" Margin="0,0,0,10">
+      <Button Name="RefreshButton" Content="↻ Refresh" DockPanel.Dock="Right"
+              Margin="8,0,0,0" Click="OnRefreshClick"/>
+      <ComboBox Name="DevicePicker" PlaceholderText="Select a camera…"
+                HorizontalAlignment="Stretch">
+        <ComboBox.ItemTemplate>
+          <DataTemplate>
+            <TextBlock Text="{Binding Name}"/>
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+    </DockPanel>
+
+    <!-- Middle: the post-inference preview. One pane is shown at a time —
+         the YOLO object pane by default, or the BlazeFace pane in face mode.
+         Both live in the tree; MainWindow toggles visibility. -->
+    <Border Grid.Row="1" Background="Black" CornerRadius="3">
+      <Grid>
+        <local:ObjectDetectionPreview Name="DetectionPane"/>
+        <local:FaceDetectionPreview Name="FacePane" IsVisible="False"/>
+      </Grid>
+    </Border>
+
+    <!-- Bottom: model + fps + per-stage inference timing. -->
+    <Border Grid.Row="2" Background="#252525" CornerRadius="4"
+            Padding="10,6" Margin="0,8,0,0">
+      <SelectableTextBlock Name="StatusText"
+                           Foreground="#cccccc"
+                           FontFamily="Consolas,Menlo,monospace"
+                           FontSize="12"
+                           Text="Pick a camera to begin."/>
+    </Border>
+
+  </Grid>
+</Window>

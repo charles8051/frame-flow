@@ -1,0 +1,108 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ff="clr-namespace:FrameFlow.Avalonia;assembly=FrameFlow.Avalonia"
+        x:Class="FrameFlow.Examples.DualPlayer.MainWindow"
+        Title="FrameFlow — Dual Player"
+        Width="1400" Height="820"
+        MinWidth="720" MinHeight="480"
+        Background="#1a1a1a">
+
+  <Window.Styles>
+    <Style Selector="TextBlock.paneTitle">
+      <Setter Property="Foreground" Value="#e0e0e0"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="FontSize" Value="13"/>
+    </Style>
+    <Style Selector="TextBlock.paneConfig">
+      <Setter Property="Foreground" Value="#9ad19a"/>
+      <Setter Property="FontFamily" Value="Cascadia Mono,Consolas,Menlo,monospace"/>
+      <Setter Property="FontSize" Value="11"/>
+    </Style>
+    <Style Selector="TextBlock.paneStatus">
+      <Setter Property="Foreground" Value="#bbb"/>
+      <Setter Property="FontFamily" Value="Cascadia Mono,Consolas,Menlo,monospace"/>
+      <Setter Property="FontSize" Value="11"/>
+    </Style>
+    <Style Selector="TextBox.diagnostic">
+      <Setter Property="IsReadOnly" Value="True"/>
+      <Setter Property="AcceptsReturn" Value="True"/>
+      <Setter Property="TextWrapping" Value="NoWrap"/>
+      <Setter Property="FontFamily" Value="Cascadia Mono,Consolas,Menlo,monospace"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Foreground" Value="#bbb"/>
+      <Setter Property="Background" Value="#0d0d0d"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="8,6"/>
+      <Style.Resources>
+        <SolidColorBrush x:Key="TextControlBackground" Color="#0d0d0d"/>
+        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#0d0d0d"/>
+        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#0d0d0d"/>
+        <SolidColorBrush x:Key="TextControlForeground" Color="#bbb"/>
+        <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="#bbb"/>
+        <SolidColorBrush x:Key="TextControlForegroundFocused" Color="#bbb"/>
+        <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent"/>
+        <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent"/>
+      </Style.Resources>
+    </Style>
+  </Window.Styles>
+
+  <Grid RowDefinitions="*,5,170">
+
+    <!-- ── Two side-by-side player panes ───────────────────────────── -->
+    <Grid Grid.Row="0" ColumnDefinitions="*,2,*">
+
+      <!-- LEFT pane -->
+      <Border Grid.Column="0" Background="#101010" BorderBrush="#2a2a2a" BorderThickness="0,0,0,1">
+        <DockPanel LastChildFill="True">
+          <Border DockPanel.Dock="Top" Background="#161616" Padding="10,6"
+                  BorderBrush="#222" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="2">
+              <TextBlock x:Name="LeftTitle" Classes="paneTitle" Text="LEFT"/>
+              <TextBlock x:Name="LeftConfig" Classes="paneConfig" Text="—"/>
+            </StackPanel>
+          </Border>
+          <Border DockPanel.Dock="Bottom" Background="#161616" Padding="10,5"
+                  BorderBrush="#222" BorderThickness="0,1,0,0">
+            <TextBlock x:Name="LeftStatus" Classes="paneStatus" Text="idle"/>
+          </Border>
+          <ff:FrameFlowVideoView x:Name="LeftVideo" />
+        </DockPanel>
+      </Border>
+
+      <Border Grid.Column="1" Background="#333" />
+
+      <!-- RIGHT pane -->
+      <Border Grid.Column="2" Background="#101010" BorderBrush="#2a2a2a" BorderThickness="0,0,0,1">
+        <DockPanel LastChildFill="True">
+          <Border DockPanel.Dock="Top" Background="#161616" Padding="10,6"
+                  BorderBrush="#222" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="2">
+              <TextBlock x:Name="RightTitle" Classes="paneTitle" Text="RIGHT"/>
+              <TextBlock x:Name="RightConfig" Classes="paneConfig" Text="—"/>
+            </StackPanel>
+          </Border>
+          <Border DockPanel.Dock="Bottom" Background="#161616" Padding="10,5"
+                  BorderBrush="#222" BorderThickness="0,1,0,0">
+            <TextBlock x:Name="RightStatus" Classes="paneStatus" Text="idle"/>
+          </Border>
+          <ff:FrameFlowVideoView x:Name="RightVideo" />
+        </DockPanel>
+      </Border>
+
+    </Grid>
+
+    <GridSplitter Grid.Row="1"
+                  ResizeDirection="Rows"
+                  HorizontalAlignment="Stretch"
+                  Background="#333"
+                  Height="5" />
+
+    <!-- ── Shared diagnostic log ───────────────────────────────────── -->
+    <Border Grid.Row="2" Background="#0d0d0d" BorderBrush="#333" BorderThickness="0,1,0,0">
+      <TextBox x:Name="LogOutput" Classes="diagnostic"
+               Watermark="Two independent players starting…" />
+    </Border>
+
+  </Grid>
+
+</Window>

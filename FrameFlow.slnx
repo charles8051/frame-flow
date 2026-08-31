@@ -1,0 +1,66 @@
+<Solution>
+  <Folder Name="/scripts/">
+    <File Path="scripts/fetch-ffmpeg.cs" />
+    <File Path="scripts/generate-test-corpus.cs" />
+    <File Path="scripts/runtime-manifest.json" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/FrameFlow.Audio.OpenAL/FrameFlow.Audio.OpenAL.csproj" />
+    <Project Path="src/FrameFlow.Audio/FrameFlow.Audio.csproj" />
+    <Project Path="src/FrameFlow.Avalonia.Windows/FrameFlow.Avalonia.Windows.csproj" />
+    <Project Path="src/FrameFlow.Avalonia/FrameFlow.Avalonia.csproj" />
+    <Project Path="src/FrameFlow.Camera/FrameFlow.Camera.csproj" />
+    <Project Path="src/FrameFlow.Decoding/FrameFlow.Decoding.csproj" />
+    <Project Path="src/FrameFlow.Encoding/FrameFlow.Encoding.csproj" />
+    <Project Path="src/FrameFlow.Face/FrameFlow.Face.csproj" />
+    <Project Path="src/FrameFlow.Graph/FrameFlow.Graph.csproj" />
+    <Project Path="src/FrameFlow.Inference.Abstractions/FrameFlow.Inference.Abstractions.csproj" />
+    <Project Path="src/FrameFlow.Inference.Ort/FrameFlow.Inference.Ort.csproj" />
+    <Project Path="src/FrameFlow.Inference.Cuda/FrameFlow.Inference.Cuda.csproj" />
+    <Project Path="src/FrameFlow.Inference.Dml/FrameFlow.Inference.Dml.csproj" />
+    <Project Path="src/FrameFlow.Media/FrameFlow.Media.csproj" />
+    <Project Path="src/FrameFlow.MotionClip/FrameFlow.MotionClip.csproj" />
+    <Project Path="src/FrameFlow.Native/FrameFlow.Native.csproj" />
+    <Project Path="src/FrameFlow.Playback/FrameFlow.Playback.csproj" />
+    <Project Path="src/FrameFlow.Player/FrameFlow.Player.csproj" />
+    <Project Path="src/FrameFlow.Sdl/FrameFlow.Sdl.csproj" />
+    <Project Path="src/FrameFlow.Video/FrameFlow.Video.csproj" />
+    <Project Path="src/FrameFlow.Whisper/FrameFlow.Whisper.csproj" />
+    <Project Path="src/FrameFlow.Yolo/FrameFlow.Yolo.csproj" />
+  </Folder>
+  <Folder Name="/examples/">
+    <Project Path="examples/FrameFlow.Examples.Common/FrameFlow.Examples.Common.csproj" />
+    <Project Path="examples/FrameFlow.Examples.AudioOnlyPlayer/FrameFlow.Examples.AudioOnlyPlayer.csproj" />
+    <Project Path="examples/FrameFlow.Examples.Multicast/FrameFlow.Examples.Multicast.csproj" />
+    <Project Path="examples/FrameFlow.Examples.Camera.Multicast/FrameFlow.Examples.Camera.Multicast.csproj" />
+    <Project Path="examples/FrameFlow.Examples.Multicast.Dml/FrameFlow.Examples.Multicast.Dml.csproj" />
+    <Project Path="examples/FrameFlow.Examples.Camera.Inference.Dml/FrameFlow.Examples.Camera.Inference.Dml.csproj" />
+    <Project Path="examples/FrameFlow.Examples.AvaloniaPlayer/FrameFlow.Examples.AvaloniaPlayer.csproj" />
+    <Project Path="examples/FrameFlow.Examples.DualPlayer/FrameFlow.Examples.DualPlayer.csproj" />
+    <Project Path="examples/FrameFlow.Examples.HostedServicePlayer/FrameFlow.Examples.HostedServicePlayer.csproj" />
+    <Project Path="examples/FrameFlow.Examples.LiveCaptioning/FrameFlow.Examples.LiveCaptioning.csproj" />
+    <Project Path="examples/FrameFlow.Examples.SdlPlayer/FrameFlow.Examples.SdlPlayer.csproj" />
+    <Project Path="examples/FrameFlow.Examples.ZeroCopyInterop/FrameFlow.Examples.ZeroCopyInterop.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FrameFlow.Audio.Tests/FrameFlow.Audio.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Avalonia.Tests/FrameFlow.Avalonia.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Avalonia.Windows.Tests/FrameFlow.Avalonia.Windows.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Camera.Tests/FrameFlow.Camera.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Decoding.Tests/FrameFlow.Decoding.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Encoding.Tests/FrameFlow.Encoding.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Graph.Tests/FrameFlow.Graph.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Inference.Abstractions.Tests/FrameFlow.Inference.Abstractions.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Inference.Cuda.Tests/FrameFlow.Inference.Cuda.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Integration.Tests/FrameFlow.Integration.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Media.Tests/FrameFlow.Media.Tests.csproj" />
+    <Project Path="tests/FrameFlow.MotionClip.Tests/FrameFlow.MotionClip.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Native.Tests/FrameFlow.Native.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Playback.Tests/FrameFlow.Playback.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Player.Tests/FrameFlow.Player.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Video.Tests/FrameFlow.Video.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Face.Tests/FrameFlow.Face.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Whisper.Tests/FrameFlow.Whisper.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Yolo.Tests/FrameFlow.Yolo.Tests.csproj" />
+  </Folder>
+</Solution>

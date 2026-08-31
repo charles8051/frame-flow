@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FrameFlow.Media\FrameFlow.Media.csproj" />
+    <ProjectReference Include="..\FrameFlow.Inference.Abstractions\FrameFlow.Inference.Abstractions.csproj" />
+    <!-- Mirrors FrameFlow.Yolo (ADR-0049 §5): the detector takes an
+         IInferenceSession from FrameFlow.Inference.Abstractions, so the
+         EP choice (CUDA / DirectML) is a composition concern at the call
+         site. This module ships no weights (ADR-0051); BlazeFace's
+         Apache-2.0 licence additionally unlocks the bundled-package path
+         that the AGPL YOLO weights keep closed. -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FrameFlow.Graph" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />
+  </ItemGroup>
+</Project>

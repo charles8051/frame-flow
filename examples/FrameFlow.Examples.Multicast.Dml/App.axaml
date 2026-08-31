@@ -1,0 +1,15 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="FrameFlow.Examples.Multicast.Dml.App"
+             RequestedThemeVariant="Dark">
+  <!--
+    Force Dark variant so Fluent renders the chrome's transport buttons
+    with dark backgrounds and light text (matching the dark video panes
+    and chrome backdrop). Without this the variant follows the OS — on
+    Windows Light mode the buttons render light-gray with black text,
+    jarring against the dark multicast window.
+  -->
+  <Application.Styles>
+    <FluentTheme />
+  </Application.Styles>
+</Application>

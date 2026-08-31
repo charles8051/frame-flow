@@ -1,0 +1,113 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:FrameFlow.Examples.Camera.Multicast"
+        xmlns:ff="clr-namespace:FrameFlow.Avalonia;assembly=FrameFlow.Avalonia"
+        x:Class="FrameFlow.Examples.Camera.Multicast.MainWindow"
+        Width="1500" Height="700"
+        Title="FrameFlow — Multicast preview (3 panes from one live camera)"
+        Background="#1a1a1a">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="12">
+
+    <!-- Top: device picker + Refresh/Disconnect. Mirrors the proven
+         layout from the (now-resurrected) Periphery multicast demo:
+         no explicit Start button — selecting a camera connects via
+         DeviceSessionHost; Disconnect tears it down; Refresh re-
+         enumerates the device list. -->
+    <DockPanel Grid.Row="0" LastChildFill="True" Margin="0,0,0,12">
+      <Button Name="RefreshButton"
+              Content="↻ Refresh"
+              DockPanel.Dock="Right"
+              Margin="8,0,0,0"
+              Click="OnRefreshClick"/>
+      <Button Name="DisconnectButton"
+              Content="Disconnect"
+              DockPanel.Dock="Right"
+              Margin="8,0,0,0"
+              IsEnabled="False"
+              Click="OnDisconnectClick"/>
+      <ComboBox Name="DevicePicker"
+                PlaceholderText="Select a camera…"
+                HorizontalAlignment="Stretch">
+        <ComboBox.ItemTemplate>
+          <!-- DeviceInfo.Name is the OS device-tree label (e.g.
+               "NexiGo N60 FHD Webcam"). DeviceInfo.DisplayName is EDID
+               monitor metadata — null for cameras. -->
+          <DataTemplate>
+            <TextBlock Text="{Binding Name}"/>
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+    </DockPanel>
+
+    <!-- Middle: 3-column pane grid. Pane controls match the file
+         Multicast sibling (FrameFlowVideoView for pane 1; bespoke
+         ObjectDetectionPreview / FilteredPreview for panes 2-3). -->
+    <Grid Grid.Row="1" ColumnDefinitions="*,*,*">
+
+      <!-- Pane 1 — Direct feed -->
+      <Border Grid.Column="0" Background="#252525" CornerRadius="4"
+              Padding="6" Margin="0,0,4,0">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Text="Pane 1 — Direct feed (FrameFlowVideoView)"
+                     Foreground="#dddddd" FontWeight="SemiBold" Margin="0,0,0,4"/>
+          <SelectableTextBlock DockPanel.Dock="Bottom" Name="Pane1Stats"
+                               Foreground="#999999" FontFamily="Consolas,Menlo,monospace"
+                               FontSize="11" Margin="0,4,0,0"
+                               Text="FPS: --   Dropped: --"/>
+          <Border Background="Black" CornerRadius="2">
+            <ff:FrameFlowVideoView Name="Pane1Preview"/>
+          </Border>
+        </DockPanel>
+      </Border>
+
+      <!-- Pane 2 — YOLOv8 object detection -->
+      <Border Grid.Column="1" Background="#252525" CornerRadius="4"
+              Padding="6" Margin="4,0,4,0">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Text="Pane 2 — Object detection (YOLOv8 CUDA EP)"
+                     Foreground="#dddddd" FontWeight="SemiBold" Margin="0,0,0,4"/>
+          <SelectableTextBlock DockPanel.Dock="Bottom" Name="Pane2Stats"
+                               Foreground="#999999" FontFamily="Consolas,Menlo,monospace"
+                               FontSize="11" Margin="0,4,0,0"
+                               Text="FPS: --   Dropped: --"/>
+          <Border Background="Black" CornerRadius="2">
+            <local:ObjectDetectionPreview Name="Pane2Preview"/>
+          </Border>
+        </DockPanel>
+      </Border>
+
+      <!-- Pane 3 — Color filter -->
+      <Border Grid.Column="2" Background="#252525" CornerRadius="4"
+              Padding="6" Margin="4,0,0,0">
+        <DockPanel>
+          <DockPanel DockPanel.Dock="Top" LastChildFill="True" Margin="0,0,0,4">
+            <ComboBox Name="FilterPicker" DockPanel.Dock="Right"
+                      MinWidth="120" Margin="8,0,0,0"/>
+            <TextBlock Text="Pane 3 — Color filter"
+                       Foreground="#dddddd" FontWeight="SemiBold"
+                       VerticalAlignment="Center"/>
+          </DockPanel>
+          <SelectableTextBlock DockPanel.Dock="Bottom" Name="Pane3Stats"
+                               Foreground="#999999" FontFamily="Consolas,Menlo,monospace"
+                               FontSize="11" Margin="0,4,0,0"
+                               Text="FPS: --   Dropped: --"/>
+          <Border Background="Black" CornerRadius="2">
+            <local:FilteredPreview Name="Pane3Preview"/>
+          </Border>
+        </DockPanel>
+      </Border>
+
+    </Grid>
+
+    <!-- Bottom: global diagnostics -->
+    <Border Grid.Row="2" Background="#252525" CornerRadius="4"
+            Padding="10,6" Margin="0,8,0,0">
+      <SelectableTextBlock Name="GlobalStatsText"
+                           Foreground="#cccccc"
+                           FontFamily="Consolas,Menlo,monospace"
+                           FontSize="12"
+                           Text="Pick a camera to begin."/>
+    </Border>
+
+  </Grid>
+</Window>

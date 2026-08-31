@@ -1,0 +1,34 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference
+      Include="Microsoft.Extensions.DependencyInjection.Abstractions"
+      Version="9.*"
+    />
+    <!-- CpuFramePool uses ILogger<CpuFramePool> for rent/return
+         diagnostics; it lived in FrameFlow.Playback (which already
+         had this package) before the move here during Crossbar
+         ADR-0014 Phase 4 prep. Logging.Abstractions only — no
+         concrete provider deps. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="9.*" />
+    <!-- Crossbar is consumed via PackageReference against the user-level
+         local feed (see ../../NuGet.config). The floating version range
+         picks up whichever Crossbar build is freshest in the local feed —
+         Crossbar's Directory.Build.props produces a new version per
+         commit. Released versions on nuget.org (1.0.0+) won't satisfy
+         this pre-release range. -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FrameFlow.Graph" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />
+  </ItemGroup>
+</Project>

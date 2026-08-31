@@ -1,0 +1,19 @@
+<Project>
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <!--
+    Examples are applications, not library packages.
+
+    Without this, `dotnet pack FrameFlow.slnx` produces a .nupkg for every
+    example — .NET's default for a project is packable, and nothing under
+    examples/ opted out. That is not hypothetical: .github/workflows/publish.yml
+    packs the solution and then pushes `packages/*.nupkg`, so a release would
+    have published twelve example applications as packages. They would also have
+    gone out as 1.0.0, because MinVer's tag-derived versioning is configured in
+    src/Directory.Build.props and does not reach here — squatting the ids at a
+    version above the libraries' 0.x.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

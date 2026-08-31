@@ -1,0 +1,316 @@
+name: Peanut Gallery Metrics Report
+
+# Tier 1 of the streamlined-metrics work: a scheduled,
+# workflow-only report, no changes to the action or CLI. Reuses the prebuilt review image
+# directly (bypassing action.yml, which hardcodes `review-pr` — see action/entrypoint.sh in
+# the peanut-gallery repo) to invoke the `metrics` CLI verb, which already aggregates every
+# PR's metrics ledger comment into a failure/refute/cache-hit/latency report
+# (PeanutGallery.Core.MetricsReport). Posts a trailing-7-day snapshot to the tracking issue
+# daily, so the panel (models, tiers, timeouts) can be tuned from real run data instead of
+# guesswork. Same workflow already running in charles8051/peanut-gallery itself.
+#
+# Runs on a self-hosted Linux runner with Docker, because the job's whole shape is
+# `docker run` against the review image. That image and its repository are public now,
+# so the pull itself no longer needs a GHCR login — the comment here previously said
+# the image was private and used that as the reason for the runner. It is not the
+# reason any more; Docker on the runner is.
+#
+# Split into two jobs (render, post) rather than one. Review
+# correctly flagged that pinning the image digest defends against *drift*, but
+# does nothing to stop a compromised or subtly backdoored image AT that exact pinned digest
+# from misusing whatever GITHUB_TOKEN it's handed. render (read-only: issues:read +
+# pull-requests:read) pulls and runs the pinned image; post (the only job with issues:write)
+# runs ZERO `uses:` actions — no third-party OR first-party marketplace action code executes
+# in the write-capable job at all. That's stronger than pinning actions/*-artifact by SHA
+# (the initial ask): a pinned-but-still-third-party
+# action running inside the issues:write job can still reach github.token. The report crosses
+# the job boundary via a job output (GITHUB_OUTPUT multiline heredoc), not an artifact, so
+# there's nothing for post to `uses: actions/download-artifact` for in the first place.
+
+on:
+  schedule:
+    - cron: '0 13 * * *' # daily, 13:00 UTC
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Trailing window in days for the metrics report'
+        required: false
+        default: '7'
+
+# schedule + workflow_dispatch can overlap (a manual run while the cron is mid-flight, or
+# two scheduled runs if the runner is delayed past 24h) — both would independently comment
+# on the tracking issue. cancel-in-progress: false so a slow daily run isn't aborted just
+# because someone triggered a manual check — GitHub queues the second run behind it instead.
+# NOTE: a concurrency group holds at most one running + one queued run; a THIRD overlapping
+# trigger cancels the queued one rather than forming an unbounded queue. Given the daily
+# cadence and 10-minute timeout, three overlapping triggers in one window is an accepted,
+# very unlikely edge case — this closes the common single-overlap case, not every case.
+concurrency:
+  group: metrics-report-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  # A repo variable, not a literal. This was `90`, which is an issue number in
+  # THIS repository's numbering - so on any repository that does not have that
+  # exact issue, the first scheduled run fails at the verify step below. A
+  # reseeded repo starts at #1, so the literal guaranteed a red cron on day one.
+  #
+  # Unset means "the tracking issue does not exist yet", and the jobs skip
+  # rather than fail. Set it once the issue is filed:
+  #   gh variable set METRICS_TRACKING_ISSUE --body <n> -R <owner>/<repo>
+  TRACKING_ISSUE: ${{ vars.METRICS_TRACKING_ISSUE }}
+  # Pinned to a specific, verified image build rather than the mutable :main tag. Earlier
+  # revisions of this workflow argued that resolving the digest right after `docker pull`
+  # closed the risk, matching action.yml's accepted trust boundary for :main. A later review's
+  # review correctly pushed back: the pull-then-resolve pattern closes the pull/run TOCTOU race
+  # WITHIN one run (true), but does nothing about :main's mutability BETWEEN scheduled runs —
+  # whatever sits at :main on a given day is what executes, so anyone with push access to the
+  # image can substitute it and it runs the next cron. And the action.yml comparison doesn't
+  # actually transfer: action.yml's blast radius (pull-requests:write + provider API keys, on
+  # every PR) is wider than this workflow's, a separate decision with a different threat model.
+  # A pinned digest FAILS CLOSED on drift: `docker pull` of a deleted/unavailable digest simply
+  # fails and the job stops before `docker run` (review correctly caught
+  # an earlier draft of this comment overclaiming a "keeps using the last-verified image"
+  # fallback that doesn't actually exist — there is no local image cache across the
+  # ephemeral per-job runners, so an unavailable digest is a hard failure that day, not a silent
+  # continuation on stale content). To update — review flagged that "after
+  # verifying the new build is trusted" was underspecified, so concretely:
+  #   1. docker pull ghcr.io/charles8051/peanut-gallery:main
+  #   2. docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/charles8051/peanut-gallery:main
+  #   3. Cross-reference that digest to the git commit it was built from: image.yml tags every
+  #      build with BOTH :main and :<git-sha>, so
+  #      `gh api user/packages/container/peanut-gallery/versions --jq '.[] | select(.name=="<digest>") | .metadata.container.tags'`
+  #      (needs read:packages) returns the exact commit SHA alongside "main". Read that commit's
+  #      diff/PR and confirm its CI passed before trusting it.
+  #   4. Paste the resulting sha256 here in a reviewed PR, WITH the step-3 output, so the
+  #      digest-to-commit mapping is reviewable in the diff rather than asserted in it.
+  #
+  # Provenance of the digest below, from step 3 on 2026-08-28:
+  #   version 1182097810, created 2026-08-28T10:57:50Z
+  #   tags    ["2445d4ed10f513ed46fd47e14e7b24018382bc2a", "main"]
+  # Both tags on one version is the whole check: it is simultaneously what :main resolves to
+  # and the build of 2445d4ed, with no second candidate. That commit is
+  # "chore: pin Avalonia, disable version floating, add NOTICE (#216)", an ancestor of main,
+  # with build=success and test=success (test-fork and the hosted matrix skip by design on a
+  # push). Pinning fixes the bytes so this mapping cannot drift; it does not attest to more
+  # than "built by image.yml from a reviewed, CI-green, merged commit".
+  PEANUT_GALLERY_IMAGE: "ghcr.io/charles8051/peanut-gallery@sha256:44b5e2d24f816566a957c117b28f5b25b22cb359be203cf1418d82ea146b38e1"
+  # Hoisted to workflow level rather than duplicated per-job (review: both
+  # render and post install gh independently since jobs share nothing but explicit outputs/
+  # artifacts, but the version pin itself is the trust anchor for both and must move in
+  # lockstep — one place to bump it, even though the ~10-line install script is still
+  # necessarily duplicated per job).
+  GH_CLI_VERSION: "2.97.0"
+
+jobs:
+  render:
+    # Skip cleanly when the tracking issue has not been configured. A workflow that
+    # fails every night because a variable is unset trains people to ignore it.
+    if: vars.METRICS_TRACKING_ISSUE != ''
+    # Defaults to the maintainer's self-hosted Linux runner, which is where Docker
+    # lives. Set the repo variable LINUX_RUNNER to a hosted label as JSON to run
+    # elsewhere - same escape hatch publish.yml already offers, and without it a
+    # fork inherits a job that queues forever against a runner it cannot reach.
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]') }}
+    timeout-minutes: 10
+    # Read-only. This job runs the pinned third-party image and hands it GITHUB_TOKEN so the
+    # metrics CLI can list PRs and read their ledger comments — issues:write is deliberately
+    # NOT granted here: a compromised or subtly backdoored image at the pinned digest would
+    # otherwise be handed a token that can modify/delete the tracking issue on top of whatever
+    # it was pinned to do. Posting happens in the separate `post` job below, which never runs
+    # third-party (or even first-party marketplace) action code.
+    permissions:
+      issues: read
+      pull-requests: read
+    outputs:
+      report: ${{ steps.render.outputs.report }}
+    steps:
+      # The ephemeral runner container does not have the GitHub CLI installed (the
+      # review workflow never needed it — the review action talks to the GitHub REST API over
+      # raw HTTP from inside its own Docker container, not via `gh` on the host). Every step
+      # below calls `gh` directly on the bare runner, so install a portable copy first rather
+      # than depend on a change to the shared runner image. Extracted to RUNNER_TEMP (always
+      # writable, no sudo) and prepended to GITHUB_PATH so it's visible to later steps.
+      #
+      # Version is pinned at workflow level (GH_CLI_VERSION, above — one place to bump for both
+      # jobs) rather than resolved from releases/latest at runtime, and the download is
+      # checksum-verified against gh's own published checksums file before extraction — an
+      # unpinned/unverified fetch would run whatever cli/cli's release happens to contain today.
+      # Extraction avoids `grep -Po`: PCRE mode isn't guaranteed on a minimal/BusyBox-style
+      # image, and this runner's toolset is already known to differ from a standard image (it's
+      # missing `gh` itself), so awk field-matching is used instead.
+      - name: Install GitHub CLI
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then
+            exit 0
+          fi
+          archive="gh_${GH_CLI_VERSION}_linux_amd64.tar.gz"
+          base_url="https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" "$base_url/$archive"
+          curl -fsSL -o "$RUNNER_TEMP/checksums.txt" "$base_url/gh_${GH_CLI_VERSION}_checksums.txt"
+          expected=$(awk -v f="$archive" '$2==f {print $1}' "$RUNNER_TEMP/checksums.txt")
+          if [ -z "$expected" ]; then
+            echo "::error::could not find a checksum for $archive in gh's published checksums file"
+            exit 1
+          fi
+          actual=$(sha256sum "$RUNNER_TEMP/$archive" | awk '{print $1}')
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::gh CLI checksum mismatch: expected $expected, got $actual"
+            exit 1
+          fi
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gh_${GH_CLI_VERSION}_linux_amd64/bin" >> "$GITHUB_PATH"
+
+      - name: Verify tracking issue is open
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # `gh issue view` on a number that does not exist exits non-zero with its own
+          # message, which under `set -e` ends the job before the intended error is
+          # printed. Capture instead, so both failure modes read the same way.
+          if ! state=$(gh issue view "$TRACKING_ISSUE" -R "${{ github.repository }}" --json state -q .state 2>/dev/null); then
+            echo "::error::Tracking issue #$TRACKING_ISSUE does not exist in ${{ github.repository }}. Point the repo variable METRICS_TRACKING_ISSUE at a real issue, or unset it to disable this report."
+            exit 1
+          fi
+          if [ "$state" != "OPEN" ]; then
+            echo "::error::Tracking issue #$TRACKING_ISSUE is not open (state: $state). Reopen it, or point METRICS_TRACKING_ISSUE at another issue."
+            exit 1
+          fi
+
+      # PEANUT_GALLERY_IMAGE is already a content-addressed digest ref, so this is a plain pull
+      # of an immutable artifact — no TOCTOU to close, no separate resolve step needed.
+      - name: Pull image
+        run: docker pull "$PEANUT_GALLERY_IMAGE"
+
+      # GITHUB_TOKEN goes through the step's env, not a docker CLI argument: `-e GITHUB_TOKEN`
+      # (no =value) tells docker to read the value from ITS OWN process environment, so the
+      # token never appears in the docker CLI's argv — where it would be visible to anything
+      # that can list processes on the shared self-hosted runner (`ps aux`). This token is
+      # issues:read + pull-requests:read only (see the job-level permissions above) — the
+      # container never receives write access, regardless of what it does with the token.
+      - name: Render metrics report
+        id: render
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Piped through env rather than interpolated straight into the script (the standard
+          # GitHub Actions injection concern for ${{ }} in a run: body) even though this input
+          # is workflow_dispatch-only (requires write access to trigger) and the CLI itself
+          # falls back to a sane default on anything unparseable (PeanutGallery.Cli.Commands).
+          # The `|| '7'` is NOT redundant with the input's declared default: the `inputs.*`
+          # context (and its defaults) is only populated on a workflow_dispatch/workflow_call
+          # trigger. This workflow's PRIMARY trigger is `schedule`, where `inputs.since` is
+          # simply absent regardless of what default: declares — drop the fallback and every
+          # daily cron run would pass an empty --since instead of 7.
+          SINCE_DAYS: ${{ inputs.since || '7' }}
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint dotnet \
+            -e GITHUB_TOKEN \
+            -e GITHUB_REPOSITORY="${{ github.repository }}" \
+            "$PEANUT_GALLERY_IMAGE" \
+            /app/peanut-gallery.dll metrics --since "$SINCE_DAYS" \
+            | tee metrics.txt
+          test -s metrics.txt
+          # Sanity-check the shape before it's ever posted publicly: either output MetricsReport.Render
+          # produces on success, or the CLI's own explicit empty-window message. This only catches
+          # accidental garbage/partial output (a crash, a truncated pipe) — it is not a meaningful
+          # defense against a compromised image, since matching text is trivial to emit. That threat
+          # is bounded by PEANUT_GALLERY_IMAGE being a pinned, reviewed digest AND by this job never
+          # holding issues:write in the first place (see the job-level permissions above).
+          grep -qE "Peanut Gallery metrics|No metrics found" metrics.txt
+          # Reject a compromised/malicious render output before it ever crosses into the
+          # write-capable post job - token isolation alone doesn't stop a
+          # compromised image from choosing what CONTENT gets posted). A legitimate
+          # MetricsReport.Render() output is plain tabular text and never contains a URL, an
+          # HTML tag, a markdown link, or a backtick — reject anything that does rather than
+          # trust it blind. The backtick check matters specifically because
+          # post wraps this content in a ``` fence: without it, a compromised image could emit
+          # its own ``` to close that fence early and inject arbitrary Markdown (headings,
+          # mentions, misleading content) into the actual posted comment.
+          if grep -qiE 'https?://|<[a-zA-Z!/]|\]\(|`' metrics.txt; then
+            echo "::error::metrics.txt contains a URL/HTML tag/markdown link/backtick — refusing to forward a report that doesn't look like plain tabular CLI output"
+            exit 1
+          fi
+          # base64-encoded (single line, no embedded newlines) rather than a raw multiline
+          # GITHUB_OUTPUT heredoc: a fixed delimiter
+          # (like the PGMETRICSEOF this replaced) can collide with attacker-influenced content
+          # — if the report contained that exact line, GitHub would terminate the output early
+          # and parse the rest as arbitrary additional output assignments. A single-line
+          # base64 value needs no delimiter at all, so there's nothing to collide with.
+          echo "report=$(base64 -w0 metrics.txt)" >> "$GITHUB_OUTPUT"
+
+  post:
+    needs: render
+    if: vars.METRICS_TRACKING_ISSUE != ''
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]') }}
+    timeout-minutes: 5
+    # The only job with issues:write, and deliberately runs ZERO `uses:` steps — no third-party
+    # OR first-party marketplace action executes here, only plain shell: `gh` (installed from
+    # the same pinned, checksum-verified release as render) and render's job OUTPUT. An earlier
+    # revision used actions/upload-artifact + actions/download-artifact to hand off the report;
+    # review flagged those as unpinned, and pointed out that even a
+    # SHA-pinned artifact action still executes in this job and can reach `github.token` — so
+    # this removes the action entirely rather than just pinning it. The report crosses the job
+    # boundary as a plain string (GITHUB_OUTPUT multiline heredoc), which needs no `uses:` step
+    # to produce OR consume.
+    permissions:
+      issues: write
+    steps:
+      - name: Install GitHub CLI
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then
+            exit 0
+          fi
+          archive="gh_${GH_CLI_VERSION}_linux_amd64.tar.gz"
+          base_url="https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" "$base_url/$archive"
+          curl -fsSL -o "$RUNNER_TEMP/checksums.txt" "$base_url/gh_${GH_CLI_VERSION}_checksums.txt"
+          expected=$(awk -v f="$archive" '$2==f {print $1}' "$RUNNER_TEMP/checksums.txt")
+          if [ -z "$expected" ]; then
+            echo "::error::could not find a checksum for $archive in gh's published checksums file"
+            exit 1
+          fi
+          actual=$(sha256sum "$RUNNER_TEMP/$archive" | awk '{print $1}')
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::gh CLI checksum mismatch: expected $expected, got $actual"
+            exit 1
+          fi
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gh_${GH_CLI_VERSION}_linux_amd64/bin" >> "$GITHUB_PATH"
+
+      - name: Post to tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT_B64: ${{ needs.render.outputs.report }}
+        run: |
+          set -euo pipefail
+          # Reverses render's base64 encoding (see that step's comment for why: a raw multiline
+          # GITHUB_OUTPUT heredoc's delimiter can collide with attacker-influenced content).
+          base64 -d <<< "$REPORT_B64" > metrics.txt
+          test -s metrics.txt
+          today="### Metrics — $(date -u +%Y-%m-%d)"
+          # Cheap idempotency guard: a rerun of a workflow whose comment actually posted (but the gh
+          # call then lost its response, or someone re-dispatched manually) would otherwise double-post
+          # today's report. Skip rather than dedupe after the fact. Best-effort, not tamper-proof: a
+          # raw substring match on the date header, so an intentional edit to a posted comment (not a
+          # threat this workflow defends against - the tracking issue isn't attacker-facing) could
+          # defeat it. Good enough for its actual purpose: accidental reruns, not adversarial replay.
+          # Captured into a variable rather than piped straight into grep -q: under pipefail, grep -q's
+          # early exit on a match sends gh SIGPIPE, and pipefail then reports THAT as the pipeline's
+          # exit status — so the guard could silently fail open (post again) on the exact case it
+          # exists to catch. Capturing first removes the live pipe entirely.
+          existing_comments=$(gh issue view "$TRACKING_ISSUE" -R "${{ github.repository }}" --json comments -q '.comments[].body')
+          if grep -qF "$today" <<< "$existing_comments"; then
+            echo "Already posted today's report to #$TRACKING_ISSUE — skipping duplicate."
+            exit 0
+          fi
+          {
+            echo "$today"
+            echo '```'
+            cat metrics.txt
+            echo '```'
+          } > comment.md
+          gh issue comment "$TRACKING_ISSUE" -R "${{ github.repository }}" --body-file comment.md

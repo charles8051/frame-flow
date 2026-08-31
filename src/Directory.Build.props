@@ -1,0 +1,126 @@
+<Project>
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <Authors>Charles Lee</Authors>
+    <Copyright>Copyright 2026 Charles Lee</Copyright>
+    <!--
+      The file form, not PackageLicenseExpression. This is a nuget.org
+      constraint and it is not reachable locally.
+
+      PolyForm-Small-Business-1.0.0 is a real SPDX identifier — current, not
+      deprecated, isOsiApproved: false — and `dotnet pack` accepts it, emitting
+      a nuspec with <license type="expression">. nuget.org then refuses the
+      push:
+
+        error: Response status code does not indicate success: 400 (License
+        expression must only contain licenses that are approved by Open Source
+        Initiative or Free Software Foundation. Unsupported licenses:
+        PolyForm-Small-Business-1.0.0.)
+
+      The approval check runs server-side, on push. Packing passes, and a
+      publish dry run passes too, because skipping the push is what makes it a
+      dry run. So neither can catch this; the expression form was only ever
+      going to fail on a real release tag.
+
+      What is lost is real. An SPDX identifier classifies automatically, and a
+      licence that restricts commercial use by company size is exactly the kind
+      a consumer's scanner most needs to flag; type="file" reads as "custom" to
+      most tooling. nuget.org does not offer the option. The per-file SPDX
+      headers across src/ are what carries that signal instead.
+
+      PackageLicenseFile and PackageLicenseExpression are mutually exclusive —
+      a project setting both fails to pack. The None/Pack item below is what
+      actually places LICENSE.md in the nupkg; this property names it.
+    -->
+    <PackageLicenseFile>LICENSE.md</PackageLicenseFile>
+    <PackageProjectUrl>https://github.com/charles8051/frame-flow</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/charles8051/frame-flow</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <Description>FrameFlow — clean, headless FFmpeg-based media playback for .NET</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+
+    <!-- MinVer: derive version from git tags like v0.1.0 -->
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+  </PropertyGroup>
+
+  <!-- Wire MinVer output into assembly versioning (runs after MinVer sets its properties) -->
+  <Target
+    Name="SetAssemblyVersionFromMinVer"
+    DependsOnTargets="MinVer"
+    BeforeTargets="GenerateAssemblyInfo;GetAssemblyVersion"
+  >
+    <PropertyGroup>
+      <_ResolvedMinVerMajor Condition="'$(MinVerMajor)' == ''">0</_ResolvedMinVerMajor>
+      <_ResolvedMinVerMajor Condition="'$(MinVerMajor)' != ''">$(MinVerMajor)</_ResolvedMinVerMajor>
+      <_ResolvedMinVerMinor Condition="'$(MinVerMinor)' == ''">0</_ResolvedMinVerMinor>
+      <_ResolvedMinVerMinor Condition="'$(MinVerMinor)' != ''">$(MinVerMinor)</_ResolvedMinVerMinor>
+      <_ResolvedMinVerPatch Condition="'$(MinVerPatch)' == ''">0</_ResolvedMinVerPatch>
+      <_ResolvedMinVerPatch Condition="'$(MinVerPatch)' != ''">$(MinVerPatch)</_ResolvedMinVerPatch>
+      <_ResolvedMinVerVersion Condition="'$(MinVerVersion)' == ''"
+        >0.0.0-local</_ResolvedMinVerVersion
+      >
+      <_ResolvedMinVerVersion Condition="'$(MinVerVersion)' != ''"
+        >$(MinVerVersion)</_ResolvedMinVerVersion
+      >
+
+      <AssemblyVersion>$(_ResolvedMinVerMajor).$(_ResolvedMinVerMinor).$(_ResolvedMinVerPatch).0</AssemblyVersion>
+      <FileVersion>$(_ResolvedMinVerMajor).$(_ResolvedMinVerMinor).$(_ResolvedMinVerPatch).0</FileVersion>
+      <InformationalVersion>$(_ResolvedMinVerVersion)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="MinVer" Version="7.0.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)../README.md" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../icon.png" Pack="true" PackagePath="/" />
+    <!-- PackageLicenseFile names the file; this is what puts it in the nupkg. -->
+    <None Include="$(MSBuildThisFileDirectory)../LICENSE.md" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <!--
+    ============================================================================
+    Local NuGet feed packaging.
+    ============================================================================
+
+    Every build of a packable src/ project emits a .nupkg into a shared
+    user-level local feed (`%USERPROFILE%\.nuget\local-feed` on Windows,
+    `$HOME/.nuget/local-feed` on Linux/macOS). Sibling repos in a local
+    multi-repo workspace reference FrameFlow via PackageReference against
+    that feed using a floating version range — typically
+    `Version="0.1.2-alpha.*"` — so each FrameFlow rebuild is automatically
+    picked up on the next `dotnet restore` without any cross-repo
+    ProjectReference plumbing. This is a developer convenience; it has no
+    effect on a published package.
+
+    Versioning is owned by MinVer above (tag-derived). A clean build N commits
+    past `v0.1.1` produces `0.1.2-alpha.0.N`; each new commit advances N so the
+    version is naturally unique per build. Local iterative builds on the SAME
+    commit produce the same version, which NuGet caches — if you need
+    cache-busting between rebuilds without a commit, either commit, or clear
+    the NuGet caches.
+
+    Test, benchmark, and example projects live OUTSIDE src/ and so do not pick
+    up this file — they remain unpackable by default. Anything inside src/
+    that should opt out can set `<IsPackable>false</IsPackable>`.
+
+    Override knobs:
+      $(FrameFlowLocalFeedDisable)=true skips the on-build pack (use when
+        producing release artifacts via a separate `dotnet pack` invocation,
+        e.g. CI/CD pushing a tagged version to a published feed).
+      $(FrameFlowLocalFeedPath)=... redirects the output folder.
+  -->
+  <PropertyGroup>
+    <FrameFlowLocalFeedPath Condition="'$(FrameFlowLocalFeedPath)' == ''">$([System.IO.Path]::Combine($([System.Environment]::GetFolderPath(SpecialFolder.UserProfile)), '.nuget', 'local-feed'))</FrameFlowLocalFeedPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(FrameFlowLocalFeedDisable)' != 'true'">
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageOutputPath>$(FrameFlowLocalFeedPath)</PackageOutputPath>
+  </PropertyGroup>
+</Project>

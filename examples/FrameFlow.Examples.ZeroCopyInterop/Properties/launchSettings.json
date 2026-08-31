@@ -1,0 +1,13 @@
+{
+  "profiles": {
+    "FrameFlow.Examples.ZeroCopyInterop": {
+      "commandName": "Project",
+      "commandLineArgs": "--log-file\r\nzero-copy-interop.log"
+    },
+    "ZeroCopyInterop-DComp": {
+      "commandName": "Project",
+      "commandLineArgs": "tests/corpus/files/test-1080p-h264-aac.mp4\r\n--surface\r\ndcomp\r\n--hw-mode\r\nrequired\r\n--log-file\r\ndcomp-overlay.log",
+      "workingDirectory": "../.."
+    }
+  }
+}

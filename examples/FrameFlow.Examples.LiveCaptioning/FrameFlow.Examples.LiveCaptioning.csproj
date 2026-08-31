@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Phase 4 (ADR-0043): the captioning demo now rides the Layer-2
+         FrameFlowPlayer fluent API and the consumer pipeline configurator
+         seam. YOLO joins via the same configurator — one chain expresses
+         caption transcription, object detection, and playback together. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Media\FrameFlow.Media.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Audio\FrameFlow.Audio.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Audio.OpenAL\FrameFlow.Audio.OpenAL.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Video\FrameFlow.Video.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Whisper\FrameFlow.Whisper.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Yolo\FrameFlow.Yolo.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Inference.Cuda\FrameFlow.Inference.Cuda.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
+    <!-- Zero-copy display mode: the Windows composition-interop presenter, plus
+         GpuVideoFrame for the AddRef fork (GPU frame to display, CPU readback to YOLO). -->
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia.Windows\FrameFlow.Avalonia.Windows.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Decoding\FrameFlow.Decoding.csproj" />
+    <!-- Migrated to MediaPlayer + the configurator-terminated
+         video path (Crossbar ADR-0014 Phase 3). Keeps the
+         FrameFlow.Whisper caption pipeline; only player
+         construction and video sink wiring moved. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Playback\FrameFlow.Playback.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Player\FrameFlow.Player.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.*" />
+    <PackageReference Include="Avalonia" Version="11.*" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.*" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared examples support (FileLoggerProvider), consolidated from the
+         former per-example copies into FrameFlow.Examples.Common. -->
+    <ProjectReference Include="..\FrameFlow.Examples.Common\FrameFlow.Examples.Common.csproj" />
+    <Using Include="FrameFlow.Examples.Common" />
+  </ItemGroup>
+</Project>

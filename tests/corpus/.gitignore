@@ -1,0 +1,21 @@
+# Ignore generated media files — regenerate with scripts/generate-test-corpus.cs
+files/
+
+# Subtitle sources. `subs/*` and not `subs/`, because git cannot re-include a
+# file whose parent directory is excluded — the negation below is silently
+# inert under a directory exclude, and `git add` drops the file.
+#
+# That distinction is invisible in this repository, where test-subtitles.srt is
+# already tracked and the ignore therefore never applies to it. It becomes
+# visible the moment a tree is rebuilt from `git archive` into a fresh repo:
+# `git add -A` then honours the ignore and quietly leaves the file behind.
+#
+# generate-test-corpus.cs reads it (`if (File.Exists(srtPath))`) to produce
+# test-with-subtitles.mkv, and skips that fixture without complaint when it is
+# missing — so the loss shows up as subtitle tests skipping, not as an error.
+subs/*
+!subs/test-subtitles.srt
+
+# Track metadata and scripts
+!manifest.json
+!.gitignore

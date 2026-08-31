@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="FrameFlow">
+  <title>FrameFlow</title>
+  <rect width="128" height="128" rx="26" fill="#163A29"/>
+  <!-- play triangle drawn as graph edges -->
+  <path d="M46 34 L46 94 L100 64 Z" fill="none" stroke="#40916C" stroke-width="6"
+        stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- nodes at the vertices -->
+  <g fill="#D8F3DC" stroke="#163A29" stroke-width="2.5">
+    <circle cx="46" cy="34" r="8"/>
+    <circle cx="46" cy="94" r="8"/>
+    <circle cx="100" cy="64" r="8"/>
+  </g>
+</svg>

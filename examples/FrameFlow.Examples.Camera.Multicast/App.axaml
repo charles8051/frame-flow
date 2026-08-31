@@ -1,0 +1,15 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="FrameFlow.Examples.Camera.Multicast.App"
+             RequestedThemeVariant="Dark">
+  <!--
+    Force Dark variant so Fluent renders the picker / Refresh / Disconnect
+    buttons with dark backgrounds and light text against the dark window
+    backdrop. Without this the variant follows the OS — on Windows Light
+    mode the buttons render light-gray with black text, jarring against
+    the #1a1a1a window. Mirrors the file Multicast sibling's choice.
+  -->
+  <Application.Styles>
+    <FluentTheme />
+  </Application.Styles>
+</Application>

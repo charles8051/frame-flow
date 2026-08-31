@@ -1,0 +1,176 @@
+name: Build and Test
+
+# Manual dispatch only — pick which OSes to run. Cross-platform runs are
+# expensive in runner-minutes, so we don't auto-trigger on push or PR.
+# The dispatched run still validates the full build + unit-test pipeline
+# on whichever subset of OSes you tick.
+on:
+  workflow_dispatch:
+    inputs:
+      windows:
+        description: 'Run on windows-latest'
+        type: boolean
+        default: true
+      linux:
+        description: 'Run on ubuntu-latest'
+        type: boolean
+        default: true
+      macos:
+        description: 'Run on macos-latest'
+        type: boolean
+        default: true
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+  NUGET_SOURCE: https://nuget.pkg.github.com/charles8051/index.json
+
+jobs:
+  # Build the OS matrix from the dispatch inputs. Fails fast if no OS
+  # was selected — the job log shows the error so the user knows why.
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.os.outputs.matrix }}
+    steps:
+      - id: os
+        shell: bash
+        run: |
+          OSES=()
+          [ "${{ inputs.windows }}" = "true" ] && OSES+=('"windows-latest"')
+          [ "${{ inputs.linux }}" = "true" ] && OSES+=('"ubuntu-latest"')
+          [ "${{ inputs.macos }}" = "true" ] && OSES+=('"macos-latest"')
+          if [ ${#OSES[@]} -eq 0 ]; then
+            echo "::error::No OS selected — tick at least one of windows / linux / macos."
+            exit 1
+          fi
+          ( IFS=,; echo "matrix={\"os\":[${OSES[*]}]}" >> "$GITHUB_OUTPUT" )
+
+  test:
+    needs: setup
+    strategy:
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # MinVer needs full history to derive version from tags.
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # The same reclaim publish.yml does, for the same reason. A full-solution
+      # Release build tips ubuntu-latest's stock ~14GB image over to "No space
+      # left on device"; publish.yml hit it during pack at v0.5.2-alpha.1 and
+      # build.yml hits it during Build.
+      #
+      # It is worth knowing how this presents, because it cost two dispatches to
+      # identify. The runner process dies writing its own diagnostic log, so the
+      # job reports failure with *no step conclusion*, uploads *no logs at all*,
+      # and `gh run view --log` has nothing for the leg. The cause appears only
+      # in the check-run annotation.
+      #
+      # Linux-only: these are the hosted Ubuntu image's preinstalled toolchains,
+      # none of which a .NET build uses. `|| true` so a missing dir is never
+      # fatal.
+      - name: Free disk space (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/local/.ghcup             /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift || true
+          df -h /
+
+      # This workflow has never had this step, which is why its last dispatch
+      # (2026-06-24) failed: Restore hit the private GitHub Packages feed
+      # unauthenticated, got 401 for periphery, periphery.camera and
+      # frameflow.native.runtime, and died NU1301. Only publish.yml authenticated,
+      # so only publish.yml was ever green.
+      #
+      # Periphery* is no longer the reason — 4.1.0-alpha.2 is on nuget.org, and
+      # nuget.config now maps nuget.org for it. FrameFlow.Native.Runtime is: it
+      # has only ever been published to GitHub Packages, and six projects
+      # reference it. Until it reaches nuget.org, a full-solution restore needs
+      # this credential.
+      #
+      # Safe on this workflow specifically: it is workflow_dispatch only, so no
+      # fork event can reach it. See publish.yml for the PAT's rationale.
+      - name: Authenticate GitHub Packages
+        # Single line + the job's default shell so this runs on every matrix leg:
+        # bash on Linux and macOS, Windows PowerShell on windows-latest.
+        run: dotnet nuget add source "${{ env.NUGET_SOURCE }}" --name github-charles8051 --username "${{ github.repository_owner }}" --password "${{ secrets.PACKAGES_READ_PAT }}" --store-password-in-clear-text --configfile nuget.config
+
+      - name: Restore
+        run: dotnet restore FrameFlow.slnx
+
+      # publish.yml's test job has always had this; build.yml never did, and it
+      # went unnoticed because build.yml died at Restore long before reaching a
+      # test. With the auth step above it gets far enough to run the suite, and
+      # BootstrapDiagnosticTests then fails outright — FfmpegBootstrap_Should
+      # BeSuccessful and FfmpegLibraryDirectory_ShouldBeDetectable are plain
+      # [Fact]s that assert the binaries are on disk, so on a runner with no
+      # FFmpeg they are failures rather than skips. That is the correct shape
+      # for them: they exist to catch a broken bootstrap, so making them skip
+      # would delete the check.
+      #
+      # Host RID only. The runtime package's all-RID fetch belongs to
+      # publish.yml; the tests look under <repo>/runtimes/{rid}/native for the
+      # runner's own RID.
+      # macOS has no pinned FFmpeg artifact. fetch-ffmpeg.cs copies from an
+      # already-installed Homebrew keg, because raw bottles carry unresolved
+      # @@HOMEBREW_PREFIX@@ / @@HOMEBREW_CELLAR@@ placeholders and produce
+      # dylibs that fail to load. So the keg has to exist before the fetch runs,
+      # and nothing installed it — which is why the macOS leg has never got past
+      # the next step. It failed with exactly the instruction below:
+      #
+      #   ffmpeg@7 not found at /opt/homebrew/opt/ffmpeg@7/lib.
+      #   Install it first: brew install ffmpeg@7
+      #
+      # Pinned to ffmpeg@7 rather than plain `ffmpeg`, which is whichever major
+      # Homebrew ships that week; the script looks for opt/ffmpeg@7 by name.
+      #
+      # Worth knowing: this is NOT the pinned LGPL build the other platforms
+      # download from BtbN. It is a separate Homebrew build with its own
+      # configuration. That only affects dev and CI machines — the published
+      # FrameFlow.Native.Runtime package ships the pinned binaries and no macOS
+      # RID — but do not read a green macOS leg as having tested the shipped
+      # FFmpeg.
+      - name: Install FFmpeg 7 (macOS only)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg@7
+
+      - name: Fetch FFmpeg binaries (host platform)
+        run: dotnet run scripts/fetch-ffmpeg.cs
+
+      - name: Build
+        # FrameFlowLocalFeedDisable suppresses the on-build local-feed write
+        # (the runner shouldn't scribble into ~/.nuget/local-feed).
+        run: dotnet build FrameFlow.slnx --configuration Release --no-restore -p:FrameFlowLocalFeedDisable=true
+
+      - name: Test
+        shell: bash
+        run: dotnet test FrameFlow.slnx --configuration Release --no-build --logger "trx;LogFileName=test-${{ matrix.os }}.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.os }}
+          path: "**/test-*.trx"
+          retention-days: 14
+
+      # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
+      # clear text — NuGet has no other way to hand a credential to a v3 source in
+      # a non-interactive job. This job runs on GitHub-hosted runners, which are
+      # discarded per job, so the cleanup is belt-and-braces here rather than
+      # load-bearing as it is in publish.yml. It also keeps the two workflows'
+      # auth blocks symmetrical, so a later move to a self-hosted runner does not
+      # silently drop the scrub. `remove source` drops the
+      # packageSourceCredentials entry along with the source; verified.
+      #
+      # if: always() so a failed build still scrubs the credential.
+      - name: Remove GitHub Packages credential
+        if: always()
+        run: dotnet nuget remove source github-charles8051 --configfile nuget.config

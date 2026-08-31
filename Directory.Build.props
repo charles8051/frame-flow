@@ -1,0 +1,20 @@
+<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+
+    <!--
+      Disable the .NET SDK workload resolver. FrameFlow does not reference any
+      workload-installed targets (no MAUI, no Mono iOS/Android, no WASM), so
+      the resolver's manifest probing is pure overhead — and was actively
+      breaking the build when the SDK's internal pointer referenced a manifest
+      version (10.0.107) that wasn't present on disk while neighbouring
+      versions (10.0.106, 10.0.108) were. Skipping resolution makes the build
+      deterministic regardless of which manifest revisions Visual Studio /
+      installer churn happens to have left in place. Remove this property
+      if a workload-dependent project is ever added to the solution.
+    -->
+    <MSBuildEnableWorkloadResolver>false</MSBuildEnableWorkloadResolver>
+  </PropertyGroup>
+</Project>

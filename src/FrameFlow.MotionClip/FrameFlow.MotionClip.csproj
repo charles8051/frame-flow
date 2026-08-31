@@ -1,0 +1,113 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!--
+      Console subsystem (Exe), NOT WinExe: MotionClip is dual-mode. Default is a
+      windowed Avalonia preview, but the headless run mode runs the pipeline
+      with no UI and needs a real console for stdout plus Ctrl+C. The tradeoff
+      (a console window alongside the preview) is fine for a dev tool.
+    -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>FrameFlow.MotionClip</RootNamespace>
+    <!-- Command/exe is `motionclip` (matches ToolCommandName). -->
+    <AssemblyName>MotionClip</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
+
+    <!-- dotnet tool packaging (mirrors Periphery.Cli). -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>motionclip</ToolCommandName>
+    <PackageId>FrameFlow.MotionClip</PackageId>
+    <!--
+      src/Directory.Build.props turns on GeneratePackageOnBuild for every src
+      project (auto-feeds the libs into the user-level local NuGet feed). That
+      is wrong for a tool: it makes `dotnet build` pack on every build and, worse,
+      races the explicit `dotnet pack` (the PackAsTool publish step trips MSB3030
+      "could not copy MotionClip.dll"). A tool is packed/installed explicitly, so
+      turn the on-build pack off here. `dotnet pack` still produces the nupkg.
+    -->
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <Description>Motion-triggered pre-roll clip recorder. Continuously buffers the most recent few seconds of camera video and, on motion, writes an H.264/MP4 clip that starts before the motion began. `motionclip scan` lists cameras; `motionclip run --IdStartsWith "&lt;id-prefix&gt;"` records, tracking the camera resiliently (starts whether or not it is plugged in). Install with `dotnet tool install -g FrameFlow.MotionClip`.</Description>
+    <PackageTags>camera;motion-detection;recording;security-camera;cli;dotnet-tool;frameflow</PackageTags>
+    <RepositoryUrl>https://github.com/charles8051/frame-flow</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/charles8051/frame-flow</PackageProjectUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FrameFlow.Encoding\FrameFlow.Encoding.csproj" />
+    <ProjectReference Include="..\FrameFlow.Media\FrameFlow.Media.csproj" />
+    <ProjectReference Include="..\FrameFlow.Video\FrameFlow.Video.csproj" />
+    <ProjectReference Include="..\FrameFlow.Graph\FrameFlow.Graph.csproj" />
+    <ProjectReference Include="..\FrameFlow.Native\FrameFlow.Native.csproj" />
+    <ProjectReference Include="..\FrameFlow.Camera\FrameFlow.Camera.csproj" />
+    <ProjectReference Include="..\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.*" />
+    <PackageReference Include="Avalonia" Version="11.*" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.*" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.*" />
+    <PackageReference Include="Periphery" Version="4.1.0-alpha.*" />
+    <PackageReference Include="Periphery.Camera" Version="4.1.0-alpha.*" />
+    <!--
+      Ships FFmpeg natives (avutil/avcodec/avformat/swscale/...) as runtime
+      assets so an installed tool / published exe carries them. Without this, a
+      MotionClip running outside the repo can't resolve FFmpeg —
+      NativeBootstrap's repo-relative path only works for in-repo dev runs, and
+      falls back to these bundled natives everywhere else.
+    -->
+    <PackageReference Include="FrameFlow.Native.Runtime" Version="0.1.1-alpha.*" />
+    <PackageReference Include="Velopack" Version="1.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FrameFlow.Graph" />
+  </ItemGroup>
+
+  <!--
+    Ship the kiosk task installer + paired uninstaller alongside the
+    published binaries so they're on the target without a separate
+    upload step. Land under `scripts/` at the install root. The pair is
+    the inventory of side-effects for cleanup. The installer creates
+    them; the uninstaller mirrors them. Edit together.
+  -->
+  <ItemGroup>
+    <None Include="scripts\install-kiosk-task.ps1">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="scripts\uninstall-kiosk-task.ps1">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+  <!--
+    This package packs no native binaries. It ships the licence texts anyway
+    because it pulls FFmpeg's natives in transitively at publish time, so a
+    recipient of a published application gets the terms with the bits.
+
+    All four texts, not just LGPL-2.1: the natives it receives are the same
+    `enable-version3` FFmpeg build the other two packages ship, so LGPL-3 plus
+    the GPL-3 it references are the operative terms, and the OpenCORE codecs
+    inside avcodec are Apache-2.0. Shipping only the 2.1 text here would hand a
+    recipient terms that do not govern what they received.
+
+    An earlier version of this comment claimed the set had been "determined
+    empirically by unpacking every nupkg" and named four packages as carrying
+    natives. Re-checked by reading the pack items: only FrameFlow.Native and
+    FrameFlow.Native.Runtime do. The claim was wrong for this project.
+  -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)../../LICENSE-LGPL-3.0.txt" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../../LICENSE-GPL-3.0.txt" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../../LICENSE-Apache-2.0.txt" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../../LICENSE-LGPL-2.1.txt" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

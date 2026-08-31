@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    Dead-simple single-pane camera inference demo: live camera to BGRA32
+    convert to a YOLOv8 detection overlay (one ObjectDetectionPreview
+    pane). DirectML EP (FrameFlow.Inference.Dml) so it runs on a low-power
+    Intel iGPU. The detector is model-shape-aware (ADR-0050), so the model
+    is selectable via a model-path argument at any input size / class
+    count; pair with scripts/mint_yolo.py output to A/B models on hardware.
+
+    Pass a face-model argument instead to run FrameFlow.Face (BlazeFace
+    box + 6 keypoints) rather than YOLO. BlazeFace ships no weights
+    (ADR-0051), so it must point at a supplied ONNX.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\FrameFlow.Media\FrameFlow.Media.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Video\FrameFlow.Video.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Camera\FrameFlow.Camera.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Yolo\FrameFlow.Yolo.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Face\FrameFlow.Face.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Inference.Dml\FrameFlow.Inference.Dml.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Graph\FrameFlow.Graph.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+    <PackageReference Include="Avalonia" Version="11.*" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.*" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.*" />
+    <PackageReference Include="Periphery" Version="4.1.0-alpha.*" />
+    <PackageReference Include="Periphery.Camera" Version="4.1.0-alpha.*" />
+    <!--
+      FFmpeg natives for the BGRA32 ConvertPixelFormat (libswscale) stage.
+      Shipped as a NuGet runtime asset so a self-contained kiosk publish
+      carries them (ADR-0051) instead of relying on the dev-time
+      Directory.Build.targets copy. DirectML.dll comes bundled via
+      FrameFlow.Inference.Dml.
+    -->
+    <PackageReference Include="FrameFlow.Native.Runtime" Version="0.1.1-alpha.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FrameFlow.Graph" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared examples support (FileLoggerProvider), consolidated from the
+         former per-example copies into FrameFlow.Examples.Common. -->
+    <ProjectReference Include="..\FrameFlow.Examples.Common\FrameFlow.Examples.Common.csproj" />
+    <Using Include="FrameFlow.Examples.Common" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Rebuilt against the Layer-2 Player API (docs/IDEAL_AVALONIA_PLAYER.md).
+         The example now references FrameFlow.Player as its primary surface,
+         with FrameFlow.Avalonia / FrameFlow.Audio.OpenAL for the concrete
+         sink implementations. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Media\FrameFlow.Media.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Native\FrameFlow.Native.csproj" />
+    <!-- Built on FrameFlow.Player.MediaPlayer. The Playback and
+         Player references are both needed:
+           - FrameFlow.Avalonia's sub-controls take IPlaybackController
+             from FrameFlow.Playback;
+           - IMediaPlayer lives in FrameFlow.Player. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Playback\FrameFlow.Playback.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Player\FrameFlow.Player.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
+    <!-- Windows-only zero-copy presenter, opt-in via the presenter CLI flag. Vortice
+         is AnyCPU so this still builds cross-platform; the GPU path is guarded by
+         OperatingSystem.IsWindows() at runtime. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia.Windows\FrameFlow.Avalonia.Windows.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Audio.OpenAL\FrameFlow.Audio.OpenAL.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.*" />
+    <PackageReference Include="Avalonia" Version="11.*" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.*" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.*" />
+    <!--
+      FrameFlow.Native.Runtime ships the FFmpeg natives (avutil / avcodec /
+      avformat / swscale / ...) as NuGet runtime assets under
+      runtimes/<rid>/native/. REQUIRED for any self-contained publish: the
+      dev-time Directory.Build.targets copy is CopyToPublishDirectory="Never",
+      so without this package a published app reaches the target with no
+      FFmpeg and MediaPlayer.CreateAsync throws on first decode (ADR-0014 /
+      ADR-0046). Mirrors examples/Multicast.Dml + Camera.Inference.Dml.
+    -->
+    <PackageReference Include="FrameFlow.Native.Runtime" Version="0.1.1-alpha.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared examples support (FileLoggerProvider), consolidated from the
+         former per-example copies into FrameFlow.Examples.Common. -->
+    <ProjectReference Include="..\FrameFlow.Examples.Common\FrameFlow.Examples.Common.csproj" />
+    <Using Include="FrameFlow.Examples.Common" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <!--
+    Tests for the pure CUDA path-resolution decision
+    (FrameFlow.Inference.Cuda.CudaPathResolution), exercised over a
+    synthetic file table (a fake isPresent) so the bootstrap verdict —
+    which root, which RID shape, found-or-missing — is deterministically
+    reproducible with NO real CUDA / cuDNN install and NO GPU. The decision
+    is internal; visibility is granted via InternalsVisibleTo in the Cuda
+    project's AssemblyInfo.cs.
+
+    Build with -p:FrameFlowLocalFeedDisable=true to avoid racing the shared
+    local NuGet feed when concurrent agents build.
+  -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+    <PackageReference Include="xunit" Version="2.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.*">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\FrameFlow.Inference.Cuda\FrameFlow.Inference.Cuda.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,64 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Camera-source variant of the multicast demo. Resurrects the
+      proven Periphery.Camera.Multicast.Example design (Refresh/
+      Disconnect UX, DeviceSessionHost-managed session lifetime,
+      fluent CameraSession.For builder) inside FrameFlow's graph
+      substrate. Source is a Periphery.Camera session bridged
+      through FrameFlow.Camera.AsVideoFrameSourceNode; topology
+      mirrors the file-source FrameFlow.Examples.Multicast sibling
+      (convert → count → 3-pane fan-out). No audio sink (cameras
+      here are silent); no playback chrome (live cameras can't seek).
+    -->
+    <ProjectReference Include="..\..\src\FrameFlow.Media\FrameFlow.Media.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Video\FrameFlow.Video.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Camera\FrameFlow.Camera.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Yolo\FrameFlow.Yolo.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Inference.Cuda\FrameFlow.Inference.Cuda.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Graph\FrameFlow.Graph.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+    <PackageReference Include="Avalonia" Version="11.*" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.*" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.*" />
+    <!-- Periphery (substrate-level) supplies DeviceSessionHost; the
+         camera package supplies CameraSession + the fluent builder. -->
+    <PackageReference Include="Periphery" Version="4.1.0-alpha.*" />
+    <PackageReference Include="Periphery.Camera" Version="4.1.0-alpha.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Visual controls (FilteredPreview, ObjectDetectionPreview) and
+         FileLoggerProvider were copied (not link-included) from
+         FrameFlow.Examples.Multicast: Avalonia's XAML compiler does
+         not reliably resolve linked-but-different-namespace types
+         across peer projects. The duplication cost is small; each
+         example now owns its own pane vocabulary cleanly. If the
+         visualisations diverge later, this isolation is a feature. -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FrameFlow.Graph" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared examples support (FileLoggerProvider), consolidated from the
+         former per-example copies into FrameFlow.Examples.Common. -->
+    <ProjectReference Include="..\FrameFlow.Examples.Common\FrameFlow.Examples.Common.csproj" />
+    <Using Include="FrameFlow.Examples.Common" />
+  </ItemGroup>
+</Project>

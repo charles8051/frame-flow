@@ -1,0 +1,16 @@
+{
+  "profiles": {
+    "DualPlayer (HW both, loop, wall vs audio clock)": {
+      "commandName": "Project",
+      "commandLineArgs": "--hw\r\nauto\r\n--loop\r\n--left-clock\r\nwall\r\n--right-clock\r\naudio\r\n--log-file\r\ndual-player.log"
+    },
+    "DualPlayer (software both, loop)": {
+      "commandName": "Project",
+      "commandLineArgs": "--hw\r\ndisabled\r\n--loop\r\n--left-clock\r\nwall\r\n--right-clock\r\naudio\r\n--log-file\r\ndual-player.log"
+    },
+    "DualPlayer (HW both, auto-exit 20s)": {
+      "commandName": "Project",
+      "commandLineArgs": "--hw\r\nauto\r\n--loop\r\n--left-clock\r\nwall\r\n--right-clock\r\naudio\r\n--exit-after\r\n20\r\n--log-file\r\ndual-player.log"
+    }
+  }
+}

@@ -1,0 +1,390 @@
+name: Release
+
+# Tag-driven release: pushing a `v*.*.*` tag runs the full cross-platform
+# test matrix and, on success:
+#   - fetches FFmpeg native binaries, packs every packable src/ project plus
+#     the separate FrameFlow.Native.Runtime package, and pushes everything to
+#     the private GitHub Packages feed (`publish` job).
+#   - publishes FrameFlow.MotionClip as a self-contained single-file binary,
+#     bundles Install-MotionClip.ps1, and attaches the zip to the matching
+#     GitHub Release (`release-binaries` job), so consumers can grab
+#     MotionClip.exe without a .NET SDK or `dotnet tool install`.
+# FrameFlow is NOT published to nuget.org — these are private packages.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  # Manual dry-run (workflow_dispatch, for consistency with the other CI workflows here, which
+  # expose workflow_dispatch). Validates the FULL pipeline on the self-hosted runners without a
+  # tag: the "Push to GitHub Packages" and "Attach to GitHub Release" steps are gated to real tag
+  # pushes, so a dispatch builds + tests + packs but publishes nothing.
+  workflow_dispatch:
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+  NUGET_SOURCE: https://nuget.pkg.github.com/charles8051/index.json
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # Validate before publishing — a release should not ship if tests
+  # fail. Windows-only matrix: FrameFlow is Windows-first by policy and
+  # several test fixtures rely on
+  # native deps the Linux/macOS runners don't have (FFmpeg via the
+  # bootstrap script, bundled OpenAL Soft, the local corpus). Re-add
+  # ubuntu-latest / macos-latest once those ports actually land and the
+  # corpus/native fetch is wired into the test job.
+  test:
+    strategy:
+      matrix:
+        # Naming label only — the runner comes from WINDOWS_RUNNER below. When
+        # the Linux/macOS ports land, switch this to a matrix.include with a
+        # per-leg runs-on.
+        os: [windows]
+      fail-fast: false
+    # Defaults to the maintainer's self-hosted Windows runner. Set the repo
+    # variable WINDOWS_RUNNER to a hosted label as JSON to run on GitHub's
+    # runners instead, e.g. ["windows-latest"].
+    runs-on: ${{ fromJSON(vars.WINDOWS_RUNNER || '["self-hosted","windows","x64"]') }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # MinVer needs full history.
+
+      # Hosted-only: the self-hosted Windows box has .NET 8/10 baked on the host
+      # (no global.json pin, so 10.0.x is satisfied by the baked SDK).
+      - uses: actions/setup-dotnet@v5
+        if: ${{ !contains(fromJSON(vars.WINDOWS_RUNNER || '["self-hosted","windows","x64"]'), 'self-hosted') }}
+        with:
+          dotnet-version: '10.0.x'
+
+      # nuget.config no longer defines the github-charles8051 source: it needs a
+      # credential, and an unauthenticated restore against it fails NU1301 rather
+      # than skipping it, which broke every public clone. Add it here, where the
+      # credential is, so Restore can resolve FrameFlow.Native.Runtime — the one
+      # package still published only to GitHub Packages. nuget.config already
+      # maps that source, so the mapping activates the moment this step runs.
+      #
+      # Periphery* no longer needs this: 4.1.0-alpha.2 is on nuget.org.
+      #
+      # PACKAGES_READ_PAT is a Personal Access Token with read:packages
+      # scope. The auto-generated GITHUB_TOKEN is scoped to this repo
+      # only and gets 403 when reading packages published by sibling
+      # repos under the same user (Periphery.* in our case).
+      # The same PAT secret is reused in the publish job and in
+      # periphery's publish workflow.
+      - name: Authenticate GitHub Packages
+        # Single line + the job's default shell so this runs on every runner: bash on the Linux
+        # job, Windows PowerShell on the self-hosted Windows box (which, unlike hosted
+        # windows-latest, has no bash — that mismatch failed the first self-hosted run).
+        run: dotnet nuget add source "${{ env.NUGET_SOURCE }}" --name github-charles8051 --username "${{ github.repository_owner }}" --password "${{ secrets.PACKAGES_READ_PAT }}" --store-password-in-clear-text --configfile nuget.config
+
+      - name: Restore
+        run: dotnet restore FrameFlow.slnx
+
+      - name: Fetch FFmpeg binaries (host platform)
+        # BootstrapDiagnosticTests + DemuxSessionIntegrationTests look
+        # for the host RID's FFmpeg DLLs under <repo>/runtimes/{rid}/native;
+        # without this step they fail-fast or skip-skip in the test runner.
+        # The publish job fetches --all for the runtime package; this step
+        # only needs the host runner's RID.
+        run: dotnet run scripts/fetch-ffmpeg.cs
+
+      - name: Build
+        run: dotnet build FrameFlow.slnx --configuration Release --no-restore -p:FrameFlowLocalFeedDisable=true
+
+      - name: Test
+        # Default shell (bash on Linux, Windows PowerShell on the self-hosted Windows box). The
+        # dotnet test invocation is a single command that runs identically in either.
+        # --blame-hang-timeout 5m: dump a stack trace + fail the test if
+        # any individual test hangs >5 min. Without this, a wedged test
+        # can pin the CI runner at the GitHub Actions 6-hour cap. The
+        # v0.1.0 first cut hung at 15+ min on the Test step with no
+        # visibility into which test was stuck.
+        run: dotnet test FrameFlow.slnx --configuration Release --no-build --blame-hang-timeout 5m --blame-crash --logger "trx;LogFileName=test-${{ matrix.os }}.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.os }}
+          path: "**/test-*.trx"
+          retention-days: 30
+
+      # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
+      # clear text — NuGet has no other way to hand a credential to a v3 source in
+      # a non-interactive job. On a self-hosted runner the workspace can outlive
+      # the job, so remove it explicitly rather than relying on the runner being
+      # torn down. `remove source` drops the packageSourceCredentials entry along
+      # with the source; verified, not assumed.
+      #
+      # if: always() so a failed build still scrubs the credential.
+      - name: Remove GitHub Packages credential
+        if: always()
+        run: dotnet nuget remove source github-charles8051 --configfile nuget.config
+
+  publish:
+    needs: test
+    # Defaults to the maintainer's self-hosted Linux runner. Set the repo
+    # variable LINUX_RUNNER to a hosted label as JSON to run entirely on
+    # GitHub's runners, e.g. ["ubuntu-latest"].
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]') }}
+    # The self-hosted Linux host has only Docker, so that job brings its SDK in
+    # a container; the hosted ubuntu runner has the SDK on the host and needs
+    # none (empty string = no container).
+    container: ${{ contains(fromJSON(vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]'), 'self-hosted') && 'mcr.microsoft.com/dotnet/sdk:10.0' || '' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # MinVer needs full history.
+
+      # Self-hosted container only: the job runs as root over runner-owned files,
+      # so git flags the checkout "dubious ownership" and MinVer's own git call
+      # falls back to 0.0.0-alpha.0 — every package would ship at that junk
+      # version. The SYSTEM git config is read regardless of HOME, unlike
+      # checkout's HOME-scoped safe.directory, which MinVer's call misses. (Hit
+      # live in charles8051/periphery v1.7.0-alpha.2.)
+      - name: Trust workspace for git (container)
+        if: ${{ contains(fromJSON(vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]'), 'self-hosted') }}
+        run: git config --system --add safe.directory '*'
+
+      # Self-hosted container only: the .NET SDK image (Debian) ships no xz, so extracting the
+      # linux-x64 FFmpeg .tar.xz in the fetch step fails ("xz: Cannot exec: No such file"). Hosted
+      # ubuntu-latest runs on the host (no container) with xz already present, so skip it there.
+      - name: Install xz for FFmpeg extraction (container)
+        if: ${{ contains(fromJSON(vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]'), 'self-hosted') }}
+        run: apt-get update && apt-get install -y --no-install-recommends xz-utils
+
+      # Hosted-only: the SDK container already ships .NET 10.
+      - uses: actions/setup-dotnet@v5
+        if: ${{ !contains(fromJSON(vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]'), 'self-hosted') }}
+        with:
+          dotnet-version: '10.0.x'
+
+      # Reclaim runner disk before the heavy steps. The publish job fetches
+      # FFmpeg natives for four RIDs (~1GB) and then builds the whole solution
+      # in Release — including the examples, which copy those natives into
+      # their bin via FrameFlow.Native.Runtime. On the stock ~14GB ubuntu-latest
+      # image that tipped over to "No space left on device" during pack
+      # (v0.5.2-alpha.1). Removing preinstalled toolchains a .NET build never
+      # uses frees ~15GB; `|| true` so a missing dir is never fatal.
+      #
+      # Hosted-only: the self-hosted runner builds on a 100GB docker disk (no
+      # pressure) and, running in a container, can't sudo the host anyway.
+      - name: Free disk space
+        if: ${{ !contains(fromJSON(vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]'), 'self-hosted') }}
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift || true
+          df -h /
+
+      # Mirror the test-job auth so Restore can resolve FrameFlow.Native.Runtime
+      # from GitHub Packages. See the test job's matching step for rationale.
+      - name: Authenticate GitHub Packages
+        # Single line + the job's default shell so this runs on every runner: bash on the Linux
+        # job, Windows PowerShell on the self-hosted Windows box (which, unlike hosted
+        # windows-latest, has no bash — that mismatch failed the first self-hosted run).
+        run: dotnet nuget add source "${{ env.NUGET_SOURCE }}" --name github-charles8051 --username "${{ github.repository_owner }}" --password "${{ secrets.PACKAGES_READ_PAT }}" --store-password-in-clear-text --configfile nuget.config
+
+      # Native binaries for all RIDs must exist before
+      # FrameFlow.Native.Runtime is packed — the runtime package's whole
+      # purpose is to ship those binaries downstream.
+      #
+      # osx-x64 / osx-arm64 are intentionally NOT fetched here:
+      # scripts/fetch-ffmpeg.cs resolves macOS binaries via a local
+      # ffmpeg@7 install (/usr/local/opt/ffmpeg@7/lib or
+      # /opt/homebrew/opt/ffmpeg@7/lib), which the ubuntu-latest publish
+      # runner doesn't have. v0.1.0 ships the runtime package without
+      # macOS native binaries; follow-up either matrixes the fetch
+      # across OSes (uploading artifacts) or installs Linuxbrew here.
+      - name: Fetch FFmpeg binaries (Windows + Linux)
+        run: |
+          dotnet run scripts/fetch-ffmpeg.cs -- --rid win-x64 --force
+          dotnet run scripts/fetch-ffmpeg.cs -- --rid win-arm64 --force
+          dotnet run scripts/fetch-ffmpeg.cs -- --rid linux-x64 --force
+          dotnet run scripts/fetch-ffmpeg.cs -- --rid linux-arm64 --force
+
+      - name: Restore
+        run: dotnet restore FrameFlow.slnx
+
+      - name: Pack solution
+        # Packs every project with <IsPackable>true</IsPackable> — that's
+        # all of src/* and none of tests/* or examples/*. FrameFlowLocalFeedDisable
+        # steers PackageOutputPath away from the user-level local feed so
+        # we end up with a clean ./packages folder under the workspace.
+        run: dotnet pack FrameFlow.slnx --configuration Release -p:FrameFlowLocalFeedDisable=true -o packages
+
+      - name: Pack native runtime package
+        # Native.Runtime lives outside the solution (it's a
+        # packaging-only project that ships the fetched FFmpeg binaries),
+        # so it needs an explicit pack invocation.
+        run: dotnet pack nuget/FrameFlow.Native.Runtime.csproj --configuration Release -o packages
+
+      - name: List packages
+        run: ls -lh packages/
+
+      - name: Push to GitHub Packages
+        # Only a real tag push publishes; a workflow_dispatch dry-run stops after pack.
+        if: github.event_name == 'push'
+        run: |
+          dotnet nuget push "packages/*.nupkg" \
+            --source "$NUGET_SOURCE" \
+            --api-key ${{ secrets.GITHUB_TOKEN }} \
+            --skip-duplicate
+
+      # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
+      # clear text — NuGet has no other way to hand a credential to a v3 source in
+      # a non-interactive job. On a self-hosted runner the workspace can outlive
+      # the job, so remove it explicitly rather than relying on the runner being
+      # torn down. `remove source` drops the packageSourceCredentials entry along
+      # with the source; verified, not assumed.
+      #
+      # if: always() so a failed build still scrubs the credential.
+      - name: Remove GitHub Packages credential
+        if: always()
+        run: dotnet nuget remove source github-charles8051 --configfile nuget.config
+
+  # Self-contained FrameFlow.MotionClip for consumers who want a portable
+  # .exe — no .NET SDK / runtime / `dotnet tool install` required on the
+  # target, just download, extract, and run Install-MotionClip.ps1 (the
+  # script handles fresh install, in-place upgrade, uninstall, and per-user
+  # PATH; see scripts/Install-MotionClip.ps1). Attached to the GitHub Release
+  # created automatically for the pushed tag.
+  #
+  # Windows-only: MotionClip's camera path is Periphery / Media Foundation.
+  # FFmpeg natives come from the FrameFlow.Native.Runtime PackageReference, so
+  # — unlike the test job — no FFmpeg fetch is needed; this job only compiles
+  # and bundles.
+  #
+  # IncludeNativeLibrariesForSelfExtract is deliberately FALSE. The managed side
+  # is still one file; the natives sit loose beside the exe. OpenAL Soft is
+  # LGPL-2.1; FFmpeg, in this build, is LGPL-3 (see the licence comment in
+  # nuget/FrameFlow.Native.Runtime.csproj for why). Embedding either in the
+  # executable would take away the recipient's ability to substitute their own
+  # build — the relinking freedom LGPL §6 exists to preserve, and which LGPL-3
+  # states through GPL-3 §6 rather than in its own text. Loose files keep it, and the
+  # delivered artifact is a zip with the installer either way, so this costs
+  # nothing a user sees. EnableCompressionInSingleFile still shrinks the
+  # managed bundle; the loose DLLs are compressed by the zip.
+  #
+  # See THIRD-PARTY-NOTICES.md. Do not set this back to true without deciding
+  # what LGPL §6 then requires of the release, under both versions.
+
+  release-binaries:
+    needs: test
+    # Defaults to the maintainer's self-hosted Windows runner; set WINDOWS_RUNNER to a hosted
+    # label as JSON (e.g. ["windows-latest"]) to fall back.
+    runs-on: ${{ fromJSON(vars.WINDOWS_RUNNER || '["self-hosted","windows","x64"]') }}
+    permissions:
+      contents: write   # needed to create/upload to the GitHub Release
+    strategy:
+      matrix:
+        rid: [win-x64]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # MinVer needs full history.
+
+      # Hosted-only: the self-hosted Windows box has .NET 8/10 baked on the host.
+      - uses: actions/setup-dotnet@v5
+        if: ${{ !contains(fromJSON(vars.WINDOWS_RUNNER || '["self-hosted","windows","x64"]'), 'self-hosted') }}
+        with:
+          dotnet-version: '10.0.x'
+
+      # Restore must resolve FrameFlow.Native.Runtime from GitHub Packages.
+      # See the test job's matching step for rationale.
+      - name: Authenticate GitHub Packages
+        # Single line + the job's default shell so this runs on every runner: bash on the Linux
+        # job, Windows PowerShell on the self-hosted Windows box (which, unlike hosted
+        # windows-latest, has no bash — that mismatch failed the first self-hosted run).
+        run: dotnet nuget add source "${{ env.NUGET_SOURCE }}" --name github-charles8051 --username "${{ github.repository_owner }}" --password "${{ secrets.PACKAGES_READ_PAT }}" --store-password-in-clear-text --configfile nuget.config
+
+      - name: Publish MotionClip (self-contained single-file)
+        shell: powershell
+        run: |
+          dotnet publish src/FrameFlow.MotionClip/FrameFlow.MotionClip.csproj `
+            --configuration Release `
+            --runtime ${{ matrix.rid }} `
+            --self-contained `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=false `
+            -p:EnableCompressionInSingleFile=true `
+            -p:FrameFlowLocalFeedDisable=true `
+            --output "artifacts/MotionClip-${{ matrix.rid }}"
+
+      # Ship the per-user installer alongside the binary so the zip is a
+      # self-contained "download, extract, run Install-MotionClip.ps1" bundle.
+      - name: Stage installer script
+        shell: powershell
+        run: |
+          Copy-Item `
+            -Path "scripts/Install-MotionClip.ps1" `
+            -Destination "artifacts/MotionClip-${{ matrix.rid }}/Install-MotionClip.ps1"
+
+      # The zip is a distribution in its own right, and it carries FFmpeg's LGPL
+      # DLLs. Without this step it shipped none of the terms: not the LGPL text,
+      # not the corresponding-source pointer, not FrameFlow's own licence.
+      #
+      # Every licence item in the repo is Pack="true" only, and nupkg-root files
+      # are never copied into a consumer's publish output - so nothing reached
+      # this artifact by accident. The `dotnet tool install` path is unaffected;
+      # it unpacks the nupkg root and always had them.
+      #
+      # LGPL-3 and GPL-3 because this build carries --enable-version3; see the
+      # licence comment in nuget/FrameFlow.Native.Runtime.csproj. LICENSE.md is
+      # PolyForm's own Notices section, which requires the terms travel with a
+      # distribution just as much as the LGPL does.
+      - name: Stage licence texts
+        shell: powershell
+        run: |
+          $dest = "artifacts/MotionClip-${{ matrix.rid }}"
+          foreach ($f in @(
+            "LICENSE.md",
+            "LICENSE-LGPL-3.0.txt",
+            "LICENSE-GPL-3.0.txt",
+            "LICENSE-Apache-2.0.txt",
+            "LICENSE-LGPL-2.1.txt",
+            "THIRD-PARTY-NOTICES.md")) {
+            if (-not (Test-Path $f)) { throw "Licence text '$f' is missing; the release zip must not ship without it." }
+            Copy-Item -Path $f -Destination (Join-Path $dest (Split-Path $f -Leaf))
+          }
+          Get-ChildItem $dest -Filter "LICENSE*" | ForEach-Object { "staged: $($_.Name)" }
+
+      - name: Package as zip
+        shell: powershell
+        run: |
+          $zipName = "MotionClip-${{ github.ref_name }}-${{ matrix.rid }}.zip"
+          Compress-Archive `
+            -Path "artifacts/MotionClip-${{ matrix.rid }}/*" `
+            -DestinationPath "artifacts/$zipName"
+          Get-Item "artifacts/$zipName" | Format-List Name, Length
+
+      - name: Attach to GitHub Release
+        # Only a real tag push has a Release to attach to; a dispatch dry-run still builds +
+        # zips the single-file binary (validating that path) but skips the attach.
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v3
+        with:
+          # The action auto-uses the tag that triggered the workflow.
+          # If the Release doesn't exist yet, it's created; if it does,
+          # the file is appended.
+          files: artifacts/MotionClip-*.zip
+          fail_on_unmatched_files: true
+
+      # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
+      # clear text — NuGet has no other way to hand a credential to a v3 source in
+      # a non-interactive job. On a self-hosted runner the workspace can outlive
+      # the job, so remove it explicitly rather than relying on the runner being
+      # torn down. `remove source` drops the packageSourceCredentials entry along
+      # with the source; verified, not assumed.
+      #
+      # if: always() so a failed build still scrubs the credential.
+      - name: Remove GitHub Packages credential
+        if: always()
+        run: dotnet nuget remove source github-charles8051 --configfile nuget.config

@@ -1,0 +1,113 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ff="clr-namespace:FrameFlow.Avalonia;assembly=FrameFlow.Avalonia"
+        xmlns:local="clr-namespace:FrameFlow.Examples.LiveCaptioning"
+        x:Class="FrameFlow.Examples.LiveCaptioning.MainWindow"
+        Title="FrameFlow — Live Captioning + Detection"
+        Width="1100" Height="720"
+        Background="#1a1a1a">
+  <Grid RowDefinitions="*,Auto,140">
+
+    <!-- Video surface + detection boxes + caption overlay all share the
+         same Grid cell. Z-order is XAML document order: video at the
+         bottom, detections on top of video, captions on top of all,
+         app-status pill on top of everything (it carries model-load
+         and captioning-only warnings the player chrome can't surface). -->
+    <Grid Grid.Row="0" Name="VideoLayer">
+      <ff:FrameFlowVideoView Name="VideoView"
+                             HorizontalAlignment="Stretch"
+                             VerticalAlignment="Stretch" />
+
+      <local:DetectionOverlay Name="DetectionOverlay"
+                              HorizontalAlignment="Stretch"
+                              VerticalAlignment="Stretch" />
+
+      <Border Name="CaptionBackdrop"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Bottom"
+              MaxWidth="900"
+              Margin="0,0,0,32"
+              Padding="16,10"
+              CornerRadius="6"
+              Background="#B0000000"
+              IsVisible="False">
+        <TextBlock Name="CaptionText"
+                   Foreground="White"
+                   FontSize="26"
+                   FontWeight="SemiBold"
+                   TextAlignment="Center"
+                   TextWrapping="Wrap" />
+      </Border>
+
+      <!-- App-level status pill (model loading, captioning-only mode,
+           etc.). Separate from FrameFlowStateBadge inside chrome which
+           tracks player state (Idle/Playing/Paused/Ended/Error). This
+           pill stays visible so cold-start messages and YOLO-fallback
+           warnings remain on screen during playback. -->
+      <Border Name="AppStatusPill"
+              HorizontalAlignment="Left"
+              VerticalAlignment="Top"
+              Margin="12"
+              Padding="10,4"
+              CornerRadius="4"
+              Background="#A0000000">
+        <TextBlock Name="AppStatusText"
+                   Text="Idle"
+                   Foreground="#888"
+                   FontFamily="Consolas,Menlo,monospace"
+                   FontSize="12" />
+      </Border>
+    </Grid>
+
+    <!-- Replaces the bespoke status badge + stream summary row. Chrome
+         contributes those (FrameFlowStateBadge + FrameFlowStreamSummary)
+         plus a seek bar, transport buttons, volume control, and an Open
+         button — capabilities the prior bespoke row didn't offer. Bound
+         to _player in code-behind after each PlayFileAsync build.
+
+         HasOpenButton="True": this example previously had no in-window
+         file picker (CLI args only, despite the misleading "Drop a media
+         file" status text). The chrome's Open button fixes that.
+
+         EnableKeyboardShortcuts="True" (default): Space pauses/resumes,
+         M mutes, ←/→ seek ±5 s, working window-wide. -->
+    <Border Grid.Row="1" Background="#1a1a1d" Padding="4">
+      <ff:FrameFlowPlayerChrome Name="PlayerChrome"
+                                HasOpenButton="True" />
+    </Border>
+
+    <TextBox Grid.Row="2"
+             Name="LogOutput"
+             IsReadOnly="True"
+             AcceptsReturn="True"
+             FontFamily="Consolas,Menlo,monospace"
+             FontSize="11"
+             Background="#0c0c0e"
+             Foreground="#bbb"
+             BorderBrush="#222"
+             TextWrapping="NoWrap"
+             VerticalContentAlignment="Top">
+      <!--
+        The Fluent TextBox theme swaps background/foreground via these
+        TextControl* resources on :pointerover / :focus. Defaults shift
+        to a near-white background which obliterates the log text on a
+        dark window. Pin every state to the same diagnostic palette so
+        the box is readable whether the pointer is over it or not.
+        (Same fix as AvaloniaPlayer — see its MainWindow.axaml.)
+      -->
+      <TextBox.Resources>
+        <SolidColorBrush x:Key="TextControlBackground" Color="#0c0c0e"/>
+        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#0c0c0e"/>
+        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#0c0c0e"/>
+        <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#0c0c0e"/>
+        <SolidColorBrush x:Key="TextControlForeground" Color="#bbb"/>
+        <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="#bbb"/>
+        <SolidColorBrush x:Key="TextControlForegroundFocused" Color="#bbb"/>
+        <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="#666"/>
+        <SolidColorBrush x:Key="TextControlBorderBrush" Color="#222"/>
+        <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#222"/>
+        <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#222"/>
+      </TextBox.Resources>
+    </TextBox>
+  </Grid>
+</Window>

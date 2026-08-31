@@ -1,0 +1,17 @@
+{
+  "profiles": {
+    "FrameFlow.Examples.AvaloniaPlayer": {
+      "commandName": "Project",
+      "commandLineArgs": "--log-file\r\navalonia-player.log"
+    },
+    "Repro-Signage-NoAudio-GPU": {
+      "commandName": "Project",
+      "commandLineArgs": "--presenter\r\ngpu\r\n--no-audio\r\n--log-file\r\navalonia-player-repro.log\r\ntests/corpus/files/test-1080p-h264-aac.mp4",
+      "workingDirectory": "../.."
+    },
+    "WSL": {
+      "commandName": "WSL2",
+      "distributionName": ""
+    }
+  }
+}

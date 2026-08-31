@@ -1,0 +1,15 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="FrameFlow.Examples.LiveCaptioning.App"
+             RequestedThemeVariant="Dark">
+  <!--
+    Force Dark variant so Fluent renders buttons with dark backgrounds
+    and light text (matching the dark video player chrome). Without
+    this the variant follows the OS — on Windows Light mode the
+    transport buttons get light-gray backgrounds with black text,
+    which is jarring against the dark window background.
+  -->
+  <Application.Styles>
+    <FluentTheme />
+  </Application.Styles>
+</Application>

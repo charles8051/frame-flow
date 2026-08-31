@@ -1,0 +1,20 @@
+{
+  "profiles": {
+    "FrameFlow.MotionClip": {
+      "commandName": "Project",
+      "commandLineArgs": "run\r\n--log-file\r\nmotionclip.log"
+    },
+    "FrameFlow.MotionClip (headless)": {
+      "commandName": "Project",
+      "commandLineArgs": "run\r\n--headless\r\n--log-file\r\nmotionclip.log"
+    },
+    "FrameFlow.MotionClip (synthetic)": {
+      "commandName": "Project",
+      "commandLineArgs": "run\r\n--synthetic\r\n--log-file\r\nmotionclip.log"
+    },
+    "FrameFlow.MotionClip (scan)": {
+      "commandName": "Project",
+      "commandLineArgs": "scan"
+    }
+  }
+}

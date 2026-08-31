@@ -1,0 +1,164 @@
+<Project>
+  <!--
+    Development-time FFmpeg native library copy (ADR-0014).
+
+    During development, FFmpeg shared libraries live in the repo root's
+    runtimes/{rid}/native/ directory (placed there by scripts/fetch-ffmpeg.cs).
+    This copies them to each project's BUILD OUTPUT so the bootstrapper's bundled
+    binary resolver finds them at AppContext.BaseDirectory/runtimes/{rid}/native/
+    for in-repo `dotnet run` / test runs.
+
+    Output-only on purpose (CopyToPublishDirectory="Never"). Publish natives must
+    come exclusively from the FrameFlow.Native.Runtime NuGet package, which any
+    publishable app references. Earlier this also set CopyToPublishDirectory and
+    so, in a self-contained publish, shipped FFmpeg TWICE: the package's copy
+    flattens to the app root while these dev copies flowed in (transitively, via
+    every referenced lib's output) to runtimes/{rid}/native/ — ~115 MB of
+    duplication on win-x64. Both roam-deployed apps (MotionClip, multicast-dml)
+    reference the runtime package, so dropping the publish copy loses nothing.
+
+    INVARIANT: any app that gets published (has a roamfile / ships a
+    self-contained build) MUST reference FrameFlow.Native.Runtime, or its publish
+    will have no FFmpeg natives. Dev `dotnet run` from build output is unaffected.
+  -->
+  <PropertyGroup>
+    <_FfmpegRid
+      Condition="$([MSBuild]::IsOSPlatform('Windows')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'"
+      >win-x64</_FfmpegRid
+    >
+    <_FfmpegRid
+      Condition="$([MSBuild]::IsOSPlatform('Windows')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'"
+      >win-arm64</_FfmpegRid
+    >
+    <_FfmpegRid
+      Condition="$([MSBuild]::IsOSPlatform('Linux')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'"
+      >linux-x64</_FfmpegRid
+    >
+    <_FfmpegRid
+      Condition="$([MSBuild]::IsOSPlatform('Linux')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'"
+      >linux-arm64</_FfmpegRid
+    >
+    <_FfmpegRid
+      Condition="$([MSBuild]::IsOSPlatform('OSX')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'"
+      >osx-x64</_FfmpegRid
+    >
+    <_FfmpegRid
+      Condition="$([MSBuild]::IsOSPlatform('OSX')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'"
+      >osx-arm64</_FfmpegRid
+    >
+
+    <_FfmpegNativeDir>$(MSBuildThisFileDirectory)runtimes\$(_FfmpegRid)\native\</_FfmpegNativeDir>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(_FfmpegNativeDir)')">
+    <None
+      Include="$(_FfmpegNativeDir)av*.dll;$(_FfmpegNativeDir)sw*.dll"
+      Condition="$([MSBuild]::IsOSPlatform('Windows'))"
+      Link="runtimes\$(_FfmpegRid)\native\%(Filename)%(Extension)"
+      CopyToOutputDirectory="PreserveNewest"
+      CopyToPublishDirectory="Never"
+      Visible="false"
+    />
+    <None
+      Include="$(_FfmpegNativeDir)*.so*"
+      Condition="$([MSBuild]::IsOSPlatform('Linux'))"
+      Link="runtimes\$(_FfmpegRid)\native\%(Filename)%(Extension)"
+      CopyToOutputDirectory="PreserveNewest"
+      CopyToPublishDirectory="Never"
+      Visible="false"
+    />
+    <None
+      Include="$(_FfmpegNativeDir)*.dylib"
+      Condition="$([MSBuild]::IsOSPlatform('OSX'))"
+      Link="runtimes\$(_FfmpegRid)\native\%(Filename)%(Extension)"
+      CopyToOutputDirectory="PreserveNewest"
+      CopyToPublishDirectory="Never"
+      Visible="false"
+    />
+  </ItemGroup>
+
+  <!--
+    Development-time CUDA redistributable copy (companion to the FFmpeg copy
+    above). CudaDllResolver.EnsureLoadable probes the app-local
+    runtimes/{rid}/native/ for cudart/cuDNN and its own XML doc states that
+    "the repo-root Directory.Build.targets copies [the fetch-cuda.cs redists]
+    into test/example output dirs at build time" — but the FFmpeg ItemGroup
+    above only globs av*/sw*, so that copy never actually happened and the ORT
+    CUDA execution provider threw "OrtSessionOptionsAppendExecutionProvider_Cuda:
+    Failed to load shared library" at first construction. This wires the copy
+    the resolver assumes.
+
+    scripts/fetch-cuda.cs drops the CUDA Toolkit + cuDNN redists into the
+    repo-root runtimes/win-x64/native/ alongside the FFmpeg DLLs (cu*.dll =
+    cudart/cublas/cudnn/cufft/curand/cusolver/cusparse; nv*.dll = nvJitLink/
+    nvblas). Copying them next to onnxruntime_providers_cuda.dll in the output's
+    runtimes/{rid}/native/ lets ORT's CUDA provider resolve its native deps via
+    the default DLL search (and the resolver's PATH prepend) during in-repo
+    `dotnet run` — no system-wide CUDA install required.
+
+    SCOPED BY REFERENCE: fires only for projects that ProjectReference
+    FrameFlow.Inference.Cuda, so the multi-hundred-MB payload never lands in
+    CPU-only example output (this repository's CUDA/cuDNN publish-bloat hazard).
+    Output-only (CopyToPublishDirectory="Never"): a published app's CUDA natives
+    come from the OnnxRuntime.Gpu package, never these dev redists — same
+    publish discipline the FFmpeg copy above enforces. Windows-x64 only (the
+    fetched redists are win-x64; the resolver's EnsureLoadable is Windows-only).
+  -->
+  <!--
+    Runs inside a Target (not a static ItemGroup) so the reference filter can
+    batch on %(Filename) of @(ProjectReference) — the same in-target pattern the
+    FFNATIVE001 check below uses; a static ItemGroup can't condition on item
+    metadata (MSB4190) or item lists (MSB4099). An explicit Copy to $(OutDir)
+    (rather than injecting late <None> items, which don't reliably feed the
+    copy-to-output pipeline) deterministically lands the redists for dev
+    `dotnet run` / tests. It never touches the publish dir, so the
+    CUDA/cuDNN payload-bloat invariant holds: a published app's CUDA natives
+    come from the OnnxRuntime.Gpu package, never these dev redists.
+  -->
+  <Target
+    Name="_CopyCudaNativesForConsumers"
+    AfterTargets="Build"
+    Condition="$([MSBuild]::IsOSPlatform('Windows')) And Exists('$(_FfmpegNativeDir)')"
+  >
+    <ItemGroup>
+      <_FfCudaConsumerRef Include="@(ProjectReference)" Condition="'%(Filename)' == 'FrameFlow.Inference.Cuda'" />
+      <_FfCudaNativeSrc Include="$(_FfmpegNativeDir)cu*.dll;$(_FfmpegNativeDir)nv*.dll" Condition="'@(_FfCudaConsumerRef)' != ''" />
+    </ItemGroup>
+    <Copy
+      SourceFiles="@(_FfCudaNativeSrc)"
+      DestinationFiles="@(_FfCudaNativeSrc->'$(OutDir)runtimes\$(_FfmpegRid)\native\%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true"
+      Condition="'@(_FfCudaNativeSrc)' != ''"
+    />
+  </Target>
+
+  <!--
+    FOREVER-FIX: enforce the INVARIANT above at publish time.
+
+    The dev-time copy is CopyToPublishDirectory="Never", so a published app's
+    FFmpeg natives come ONLY from the FrameFlow.Native.Runtime NuGet package.
+    Apps that pull in FrameFlow.Native (directly or transitively) but forget
+    that package publish silently WITHOUT FFmpeg and then throw on the target
+    at first decode (MediaPlayer.CreateAsync -> "Failed to load FFmpeg
+    library"). This has bitten multiple examples.
+
+    We check the REFERENCE (does the project reference FrameFlow.Native.Runtime?)
+    rather than the publish OUTPUT: single-file publishes
+    (IncludeNativeLibrariesForSelfExtract, e.g. MotionClip) embed the natives
+    into the exe, so there are no loose avcodec-*.dll files to look for — an
+    output check false-positives there. Fires only on Publish; dev build/run
+    and `dotnet pack` are unaffected. Opt out per project with
+    <_SkipFFmpegPublishCheck>true</_SkipFFmpegPublishCheck>.
+  -->
+  <Target Name="_AssertFFmpegRuntimeReferenced"
+          BeforeTargets="Publish"
+          Condition="'$(_SkipFFmpegPublishCheck)' != 'true'">
+    <ItemGroup>
+      <_FFNativeRef Include="@(ReferencePath)" Condition="'%(Filename)' == 'FrameFlow.Native'" />
+      <_FFRuntimePkg Include="@(PackageReference)" Condition="'%(Identity)' == 'FrameFlow.Native.Runtime'" />
+    </ItemGroup>
+    <Error Condition="'@(_FFNativeRef)' != '' And '@(_FFRuntimePkg)' == ''"
+           Code="FFNATIVE001"
+           Text="Publish of '$(MSBuildProjectName)' references FrameFlow.Native but not the FrameFlow.Native.Runtime package, so the published app ships without FFmpeg natives and throws at first decode on the target. Add &lt;PackageReference Include=&quot;FrameFlow.Native.Runtime&quot; Version=&quot;...&quot; /&gt; (see src/FrameFlow.MotionClip or examples/FrameFlow.Examples.Multicast.Dml). To bypass intentionally, set &lt;_SkipFFmpegPublishCheck&gt;true&lt;/_SkipFFmpegPublishCheck&gt;." />
+  </Target>
+</Project>

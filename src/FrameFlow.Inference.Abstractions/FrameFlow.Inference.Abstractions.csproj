@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!--
+    FrameFlow.Inference.Abstractions: the EP-agnostic inference contract.
+    Per ADR-0049 §3, every ORT EP wrapper (FrameFlow.Inference.Cuda,
+    FrameFlow.Inference.Dml, future FrameFlow.Inference.TensorRT)
+    implements IInferenceSession from this package. Consumer code
+    (FrameFlow.Yolo, future inference operators) references this
+    abstraction; the concrete EP package is the runtime dependency.
+
+    Host-memory binding only at the abstraction level — device-resident
+    OrtValue escape hatches are EP-specific and live on the concrete
+    session types (see CudaInferenceSession.Run(IReadOnlyDictionary&lt;string, OrtValue&gt;)).
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Microsoft.Extensions.Logging.Abstractions: required for the
+         optional ILoggerFactory parameter on
+         InferenceSessionFactoryBuilder.Create — logs EP selection and
+         fallback transitions. The dependency is on Abstractions only
+         (no concrete logging providers pulled in here). -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FrameFlow.Graph" />
+  </ItemGroup>
+</Project>

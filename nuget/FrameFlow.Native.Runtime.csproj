@@ -1,0 +1,223 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <NoBuild>true</NoBuild>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+
+    <PackageId>FrameFlow.Native.Runtime</PackageId>
+    <Authors>Charles Lee</Authors>
+    <Copyright>Copyright 2026 Charles Lee</Copyright>
+    <!--
+      This package contains FFmpeg's shared libraries and no FrameFlow code, so
+      its licence is FFmpeg's, not this project's PolyForm licence. An SPDX
+      expression rather than the file form the src/ packages use; NuGet permits
+      only one licence form per package.
+
+      Version 3, not 2.1, and that is a property of this BUILD rather than of
+      FFmpeg's source.
+
+      FFmpeg's own source is offered as "LGPL-2.1 or later" - a choice the
+      recipient makes. But the pinned build carries ``enable-version3``, which
+      exercises that choice at compile time because it links components that
+      cannot lawfully be combined with 2.1. Read off the shipped binary with
+      `ffmpeg -codecs`, not inferred from configure flags:
+
+        libopencore_amrnb / amrwb   decoder   -> avcodec    Apache-2.0
+        libaribb24                  decoder   -> avcodec    LGPL-3-only
+        rtmpe (gmp-backed)          protocol  -> avformat   LGPL-3
+
+      All three are inside the five libraries this package ships. Dropping
+      avfilter and avdevice removed libvmaf, which is also Apache-2.0, but not
+      these. Apache-2.0 and LGPL-3-only are both incompatible with LGPL-2.1;
+      LGPL-3 is the version written to accommodate them, which is the whole
+      reason the flag exists.
+
+      So declaring 2.1 would offer recipients a permission that does not exist
+      for these bytes, and it would understate their obligations rather than
+      overstate them: LGPL-3 pulls in GPL-3 section 6 Installation Information,
+      which matters to anyone shipping this inside a locked-down device, and
+      section 11's patent grant. That is why this is worth correcting before a
+      version is published rather than after - nuget.org unlists versions, it
+      does not amend them.
+
+      LGPL-3.0-or-later and not -only: the upstream grant is "2.1 or later", so
+      conveying under 3-or-later is exactly what that grant authorises.
+
+      AND Apache-2.0 because the OpenCORE AMR codecs listed above are inside
+      avcodec and stay under their own terms; LGPL-3 makes the combination
+      lawful, it does not relicense them. NuGet accepts the compound expression
+      (verified by packing), and it is the honest description of an aggregate:
+      a scanner reading LGPL-3.0-or-later alone would tell a consumer the whole
+      package is copyleft, which is not what the bytes are.
+
+      Both texts ship below. LGPL-3 is a short document that incorporates GPL-3
+      by reference, so GPL-3 is where the operative section 6 and 11 wording
+      physically lives - shipping LGPL-3 alone would not give a recipient the
+      terms. LICENSE-LGPL-2.1.txt stays: it documents the upstream grant these
+      binaries were built from.
+
+      THIRD-PARTY-NOTICES.md ships alongside with the attribution and the
+      corresponding-source pointer.
+    -->
+    <PackageLicenseExpression>LGPL-3.0-or-later AND Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/charles8051/frame-flow</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/charles8051/frame-flow</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <Description>FFmpeg 7.1 shared native libraries for FrameFlow. Provides pre-built binaries for win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, and osx-arm64.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- MinVer: derive version from git tags like v0.1.0 -->
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MinVer" Version="7.0.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../README.md" Pack="true" PackagePath="/" />
+    <None Include="../THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <!--
+    ============================================================================
+    Which natives ship.
+    ============================================================================
+
+    An allowlist of the five libraries FrameFlow actually calls, not "whatever
+    is in the directory". Both halves of that matter.
+
+    FIVE, NOT SEVEN. Every DllImport under src/ names avcodec, avformat,
+    avutil, swresample or swscale. Nothing references avfilter or avdevice —
+    fetch-ffmpeg.cs pulls those because they are load-time dependencies of the
+    bundled ffmpeg/ffprobe TOOLS, which are a develop-time need and have no
+    business in a runtime package. Dropping them takes this package from
+    195.5 MB to 141.4 MB: avfilter is 37.8 MB across the four RIDs and avdevice
+    is 15.9 MB. It also leaves room for the macOS RIDs, which have never fit.
+
+    ALLOWLIST, NOT A GLOB OVER THE DIRECTORY. runtimes/{rid}/native is shared:
+    scripts/fetch-cuda.cs writes CUDA and cuDNN redistributables into the same
+    folder. On a machine that has run it, `native/*.dll` evaluates to 28 items
+    totalling 3196.6 MB, of which 2995.5 MB is NVIDIA. Those must not be
+    redistributed — Directory.Build.targets is careful to mark them
+    CopyToPublishDirectory="Never" for exactly that reason — and a package that
+    large cannot be pushed anyway; nuget.org rejects over ~250 MB with a 413.
+    CI never hit it only because it does not run fetch-cuda.cs before packing,
+    which is an accident of ordering rather than a guard.
+
+    The patterns stay version-agnostic (`avcodec-*.dll`, not `avcodec-61.dll`)
+    so an FFmpeg soname bump does not silently drop a library, while still
+    matching nothing NVIDIA ships.
+
+    Linux previously globbed `native/*` where Windows globbed `native/*.dll`,
+    so the Linux RIDs alone carried the ffmpeg and ffprobe executables. That
+    asymmetry was not deliberate.
+  -->
+
+  <!-- Windows -->
+  <ItemGroup>
+    <Content Include="../runtimes/win-x64/native/avcodec-*.dll;../runtimes/win-x64/native/avformat-*.dll;../runtimes/win-x64/native/avutil-*.dll;../runtimes/win-x64/native/swresample-*.dll;../runtimes/win-x64/native/swscale-*.dll"
+      PackagePath="runtimes/win-x64/native"
+      Pack="true"
+      Rid="win-x64"
+    />
+    <Content Include="../runtimes/win-arm64/native/avcodec-*.dll;../runtimes/win-arm64/native/avformat-*.dll;../runtimes/win-arm64/native/avutil-*.dll;../runtimes/win-arm64/native/swresample-*.dll;../runtimes/win-arm64/native/swscale-*.dll"
+      PackagePath="runtimes/win-arm64/native"
+      Pack="true"
+      Rid="win-arm64"
+    />
+  </ItemGroup>
+
+  <!-- Linux -->
+  <ItemGroup>
+    <Content Include="../runtimes/linux-x64/native/libavcodec.so.*;../runtimes/linux-x64/native/libavformat.so.*;../runtimes/linux-x64/native/libavutil.so.*;../runtimes/linux-x64/native/libswresample.so.*;../runtimes/linux-x64/native/libswscale.so.*"
+      PackagePath="runtimes/linux-x64/native"
+      Pack="true"
+      Rid="linux-x64"
+    />
+    <Content Include="../runtimes/linux-arm64/native/libavcodec.so.*;../runtimes/linux-arm64/native/libavformat.so.*;../runtimes/linux-arm64/native/libavutil.so.*;../runtimes/linux-arm64/native/libswresample.so.*;../runtimes/linux-arm64/native/libswscale.so.*"
+      PackagePath="runtimes/linux-arm64/native"
+      Pack="true"
+      Rid="linux-arm64"
+    />
+  </ItemGroup>
+
+  <!-- macOS -->
+  <ItemGroup>
+    <Content Include="../runtimes/osx-x64/native/libavcodec.*.dylib;../runtimes/osx-x64/native/libavformat.*.dylib;../runtimes/osx-x64/native/libavutil.*.dylib;../runtimes/osx-x64/native/libswresample.*.dylib;../runtimes/osx-x64/native/libswscale.*.dylib"
+      PackagePath="runtimes/osx-x64/native"
+      Pack="true"
+      Rid="osx-x64"
+    />
+    <Content Include="../runtimes/osx-arm64/native/libavcodec.*.dylib;../runtimes/osx-arm64/native/libavformat.*.dylib;../runtimes/osx-arm64/native/libavutil.*.dylib;../runtimes/osx-arm64/native/libswresample.*.dylib;../runtimes/osx-arm64/native/libswscale.*.dylib"
+      PackagePath="runtimes/osx-arm64/native"
+      Pack="true"
+      Rid="osx-arm64"
+    />
+  </ItemGroup>
+
+  <!--
+    ============================================================================
+    Guards on what actually got matched.
+    ============================================================================
+
+    The package's whole purpose is the binaries, so shipping it without them is
+    worse than not shipping it, and an allowlist can quietly match less than it
+    should: a soname pattern that stops matching after an FFmpeg bump, or a
+    pack on a checkout where fetch-ffmpeg.cs was never run. Pack would
+    otherwise succeed and publish to a feed that does not allow deleting
+    versions.
+
+    Two guards, because "nothing at all" and "some of it" are different
+    failures and only the first is obvious.
+
+    A PARTIAL RID is the dangerous one. `fetch-ffmpeg.cs` defaults to the HOST
+    RID only, and fetching every RID is opt-in, so a developer who primes a
+    checkout the ordinary way and then packs has exactly one populated RID. Under a
+    whole-package emptiness check that packs happily. A consumer on any other
+    RID then gets a package that advertises their platform and resolves to
+    nothing, and finds out at DllNotFoundException rather than at restore.
+
+    Per RID, so the count must be 0 or 5, never in between. Zero is legitimate:
+    publish.yml deliberately fetches Windows and Linux but not macOS, because
+    the ubuntu runner cannot produce Homebrew dylibs. A guard demanding all six
+    would fail the release workflow it is meant to protect.
+  -->
+  <Target Name="AssertNativesPresent" BeforeTargets="GenerateNuspec">
+    <Error
+      Condition="'@(Content)' == ''"
+      Text="FrameFlow.Native.Runtime would pack no native libraries at all. Run `dotnet run scripts/fetch-ffmpeg.cs -- --all` first, or check the runtimes/{rid}/native patterns above against the current FFmpeg sonames."
+    />
+  </Target>
+
+  <Target
+    Name="AssertNativesCompletePerRid"
+    BeforeTargets="GenerateNuspec"
+    Outputs="%(Content.Rid)"
+    Condition="'@(Content)' != ''"
+  >
+    <PropertyGroup>
+      <_RidLibCount>@(Content->Count())</_RidLibCount>
+    </PropertyGroup>
+    <Error
+      Condition="'%(Content.Rid)' != '' and '$(_RidLibCount)' != '5'"
+      Text="FrameFlow.Native.Runtime: %(Content.Rid) matched $(_RidLibCount) of the 5 required libraries (avcodec, avformat, avutil, swresample, swscale). A RID must be complete or absent — packing a partial one publishes a package that advertises the platform and resolves to nothing. Run `dotnet run scripts/fetch-ffmpeg.cs -- --rid %(Content.Rid)`, or check the patterns above against the current FFmpeg sonames."
+    />
+  </Target>
+
+  <!--
+    This package redistributes LGPL-2.1 binaries, so it ships the licence text
+    itself rather than only a metadata link. Determined empirically by unpacking
+    every nupkg and looking for the natives, not by reasoning about references:
+    FrameFlow.Native, FrameFlow.Native.Runtime, FrameFlow.MotionClip and
+    FrameFlow.Audio.OpenAL are the four that do.
+  -->
+  <ItemGroup>
+    <None Include="../LICENSE-LGPL-3.0.txt" Pack="true" PackagePath="/" />
+    <None Include="../LICENSE-GPL-3.0.txt" Pack="true" PackagePath="/" />
+    <None Include="../LICENSE-Apache-2.0.txt" Pack="true" PackagePath="/" />
+    <None Include="../LICENSE-LGPL-2.1.txt" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

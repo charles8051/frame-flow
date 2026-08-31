@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Windows-only Avalonia zero-copy video presenter (ADR-0016 amendment).
+    Imports a hardware-decoded D3D11 surface straight into Avalonia's compositor
+    via ICompositionGpuInterop, with no GPU->CPU round-trip. Depends on Direct3D 11
+    (Vortice), so it is Windows-only at runtime even though the assembly is
+    platform-neutral; it deliberately lives outside the cross-platform
+    FrameFlow.Avalonia so Linux/macOS consumers never pull a D3D dependency. The
+    cross-platform analogue is a future FrameFlow.Avalonia.Vulkan presenter behind
+    the same IVideoSink seam.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FrameFlow.Media\FrameFlow.Media.csproj" />
+    <ProjectReference Include="..\FrameFlow.Decoding\FrameFlow.Decoding.csproj" />
+    <!-- For the IVideoSurface seam so FrameFlowPlayerView can host this presenter. -->
+    <ProjectReference Include="..\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.*" />
+    <PackageReference Include="Vortice.DXGI" Version="3.*" />
+    <!-- Runtime HLSL compile (D3DCompile) for the NV12->BGRA pixel-shader convert (ADR-0063). -->
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.*" />
+  </ItemGroup>
+
+</Project>

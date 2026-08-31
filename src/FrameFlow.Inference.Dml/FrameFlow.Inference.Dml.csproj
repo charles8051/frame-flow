@@ -1,0 +1,114 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!--
+    FrameFlow.Inference.Dml: ORT DirectML EP wrapper. Per ADR-0049 §3,
+    binds inputs / outputs via host memory (ICpuTensor). DirectML EP
+    stages internally through D3D12 upload buffers.
+
+    DirectML.dll is **bundled** via Microsoft.AI.DirectML (see the
+    PackageReference comment below). The OS-in-box DirectML on
+    older Windows builds (e.g. Win10 LTSC 2019 ships 10.0.17763.x)
+    is too old to satisfy modern ORT.DirectML's ABI requirements;
+    relying on it crashes session construction with SEHException.
+    DX12-only — does not support Linux or Mac.
+
+    Conflicts with FrameFlow.Inference.Cuda's onnxruntime.dll in a
+    single process — apps pick exactly one inference EP package at
+    the executable boundary.
+  -->
+
+  <ItemGroup>
+    <!-- FrameFlow.Inference.Ort: the shared host->ORT staging base
+         (OrtInferenceSessionBase). Per ADR-0049 §3 the binding pipeline
+         is uniform across EPs; this EP keeps only its DirectML
+         session-options. The base lives in its own project (not in
+         Abstractions, which stays ORT-free) so it can reference the ORT
+         *managed* API without dragging a native onnxruntime.dll into the
+         EP-agnostic contract. -->
+    <ProjectReference Include="../FrameFlow.Inference.Ort/FrameFlow.Inference.Ort.csproj" />
+    <ProjectReference Include="../FrameFlow.Inference.Abstractions/FrameFlow.Inference.Abstractions.csproj" />
+    <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+    <!--
+      Microsoft.AI.DirectML ships DirectML.dll. Microsoft.ML.OnnxRuntime.DirectML
+      pulls Microsoft.AI.DirectML in transitively but does NOT flow
+      the DLL through to consumers — apps that depend on
+      FrameFlow.Inference.Dml end up loading the OS-bundled
+      DirectML.dll instead. On older Windows builds (Win10 LTSC 2019
+      ships DirectML 10.0.17763.x) that's incompatible with modern
+      ORT.DirectML's ABI expectations and crashes at
+      AppendExecutionProvider_DML with SEHException, taking the entire
+      YOLO bootstrap with it.
+
+      Two wrinkles make this not a one-line `<PackageReference>` like
+      the Silk.NET.OpenAL.Soft.Native template (ADR-0046 §"OpenAL"):
+
+        1. Microsoft.AI.DirectML is a **vcxproj-targeted package** —
+           its build/Microsoft.AI.DirectML.targets gates the DLL
+           copy on `$(PlatformTarget)` (x64 / Win32 / ARM / ARM64 /
+           ARM64EC). csproj default $(PlatformTarget) = "AnyCPU",
+           which matches none of those branches, so no DLL gets
+           copied. We have to copy it ourselves.
+        2. The package's payload lives at `bin/x64-win/DirectML.dll`
+           (vcxproj naming), not the .NET-standard
+           `runtimes/win-x64/native/DirectML.dll`. .NET runtime asset
+           flow doesn't pick that up automatically.
+
+      Resolution: use `GeneratePathProperty` so the package's restore
+      path is reachable via $(PkgMicrosoft_AI_DirectML), then
+      explicitly emit DirectML.dll at the consumer's bin root via
+      `<None Include=... Link=DirectML.dll>` — bin-root placement
+      because ORT.DirectML's internal `LoadLibrary("DirectML.dll")`
+      goes through the OS loader (which searches the exe directory
+      and PATH, not .NET's `runtimes/<rid>/native/` resolution).
+
+      Verified 2026-05-27 on a reference kiosk (Intel HD
+      Graphics 620, Win10 LTSC 2019, Intel driver 27.20.100.8853):
+      DML EP loads cleanly and YOLOv8 warmup completes in ~100 ms
+      with the modern DirectML.dll at the exe root; without it,
+      AppendExecutionProvider_DML throws SEHException immediately.
+
+      Per ADR-0046's decision framework this is still the
+      upstream-package pattern (criteria 1-4 YES) — we own the bin
+      copy because the upstream package targets vcxproj, not
+      because the package itself is wrong.
+
+      Windows-only: DirectML doesn't exist on Linux / macOS. If we
+      ever target Linux x64 inference, the path is OpenVINO or
+      TensorRT, not DML.
+    -->
+    <PackageReference Include="Microsoft.AI.DirectML" Version="1.15.*" GeneratePathProperty="true" />
+  </ItemGroup>
+
+  <!-- Place DirectML.dll at the consumer's bin root. See the
+       PackageReference comment above for the why.
+
+       Pack=true / PackagePath ensures NuGet consumers of
+       FrameFlow.Inference.Dml also receive DirectML.dll inside the
+       .nupkg under the standard runtimes/<rid>/native/ layout — they
+       are responsible for their own runtimes→bin-root flatten if
+       they care about ORT-DML's OS-loader expectations. -->
+  <ItemGroup>
+    <None Include="$(PkgMicrosoft_AI_DirectML)\bin\x64-win\DirectML.dll"
+          Link="DirectML.dll"
+          CopyToOutputDirectory="PreserveNewest"
+          Pack="true"
+          PackagePath="runtimes\win-x64\native\DirectML.dll"
+          Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FrameFlow.Graph" />
+    <Using Include="FrameFlow.Inference" />
+  </ItemGroup>
+</Project>

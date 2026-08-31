@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "FrameFlow.Examples.Camera.Inference.Dml": {
+      "commandName": "Project",
+      "commandLineArgs": "--log-file\r\ncamera-inference-dml.log"
+    }
+  }
+}

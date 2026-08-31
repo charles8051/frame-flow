@@ -1,0 +1,58 @@
+# STATUS: grammar draft. Does not run yet.
+#
+# tools/FrameFlow.TestBench does not exist. This file was written to test the
+# script grammar in docs/adr/command-driven-testbench-host.md against a real
+# reproduction, and three of that grammar's rules changed because of it. The
+# invocation below is what it will be, not what works today.
+#
+# Signage shape: GPU zero-copy presenter, no audio sink.
+#
+# Converted from the Repro-Signage-NoAudio-GPU profile in
+# examples/FrameFlow.Examples.AvaloniaPlayer/Properties/launchSettings.json.
+#
+#   dotnet run --project tools/FrameFlow.TestBench -- \
+#       --presenter gpu --no-audio \
+#       --script scripts/repro/signage-gpu-noaudio.bench
+#
+# With no audio sink the player paces video off WallClockSource rather than the
+# audio sample counter (ADR-0003), while the composition-interop presenter keeps
+# D3D11VA frames on the GPU through present (ADR-0061). That pair is the signage
+# deployment's shape, and it is the pair this script pins.
+
+require presenter gpu
+require audio off
+
+load tests/corpus/files/test-1080p-h264-aac.mp4
+
+# 1920x1080, 30 fps, 3.0s — scripts/generate-test-corpus.cs
+expect duration == 3.0s +- 100ms
+
+play
+wait state == Playing
+wait sink.presented >= 15            # half a second of frames; let it settle
+
+# No audio sink, so there is nothing to drift against. Asserted rather than
+# assumed: a null drift read as zero would make an A/V assertion pass on a
+# pipeline that never produced timed audio at all.
+expect drift == null
+expect out.active == false
+
+# FramesCommitted stays zero on the WriteableBitmap path, so this catches a
+# silent fall back to the CPU surface — the failure where the repro runs green
+# because it stopped reproducing anything.
+expect sink.committed >= 1
+
+# Hardware decode without naming a backend, so the same line holds on Linux
+# under VAAPI.
+expect video.backend != null
+
+mark warm
+wait state == Ended timeout 8s
+
+expect since warm video.errors == 0
+expect since warm video.shed == 0
+expect since warm sync.dropped == 0
+expect since warm sink.dropped == 0
+expect since warm sink.presented >= 25/s
+
+diag

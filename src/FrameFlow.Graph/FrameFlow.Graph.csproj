@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!--
+    FrameFlow.Graph is a one-time verbatim fork of the Crossbar substrate
+    as of 2026-05-22 (see docs/adr/ADR-0049-frameflow-graph-fork-from-crossbar.md).
+    The fork's purpose: give FrameFlow a media-centric substrate that
+    diverges from Crossbar (which retains its Holoscan-class charter,
+    crossbar ADR-0024). No primitives were removed in the initial port;
+    slimming is deferred to per-primitive future ADRs.
+
+    Internal-only — consumed by sibling FrameFlow.* projects via
+    ProjectReference. No package metadata; not published to the local
+    feed. If a future external consumer needs FrameFlow.Graph as a
+    standalone package, package metadata can be added then.
+  -->
+
+</Project>

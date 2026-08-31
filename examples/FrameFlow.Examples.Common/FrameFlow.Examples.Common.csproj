@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Shared support code for the FrameFlow examples. Currently just the
+    file-backed logging provider that every example wires to the log-file
+    flag; previously copy-pasted into each example (10 identical copies). Keep this
+    project tiny and dependency-light — it is example scaffolding, not library
+    surface.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+  </ItemGroup>
+</Project>

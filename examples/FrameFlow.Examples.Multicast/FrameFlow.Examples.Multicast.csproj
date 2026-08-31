@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Rebuilt against the Layer-2 FrameFlowPlayer fluent API and the
+         consumer pipeline configurator seam (ADR-0043). The Broadcast
+         fan-out lives inside ConfigureVideoPipeline; the player's
+         required IVideoSink is a NullVideoSink (from FrameFlow.Playback)
+         since Broadcast is a terminal-shaped operator. -->
+    <!-- Migrated to MediaPlayer with a configurator-terminated
+         video pipeline, StorageNode fan-out via clone-and-dispatch
+         sink (Crossbar ADR-0014 Phase 3; fan-out per ADR-0054). -->
+    <ProjectReference Include="..\..\src\FrameFlow.Media\FrameFlow.Media.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Player\FrameFlow.Player.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Playback\FrameFlow.Playback.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
+    <!-- GPU multicast mode: the Windows zero-copy composition-interop presenter
+         for each pane, plus the GpuVideoFrame type the AddRef fan-out hands to
+         every pane (one decode, N zero-copy presenters). -->
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia.Windows\FrameFlow.Avalonia.Windows.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Decoding\FrameFlow.Decoding.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Audio.OpenAL\FrameFlow.Audio.OpenAL.csproj" />
+    <!-- For .ConvertPixelFormat() on the video pipeline. All three
+         preview sinks here expect BGRA32 packed pixels, not the
+         decoder's native YUV420P. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Video\FrameFlow.Video.csproj" />
+    <!-- YOLOv8 object detection for pane 2 (replaced the Haar cascade
+         face detector. Haar was slow + low quality; YOLO runs on GPU
+         when CUDA is available and on CPU otherwise, finds richer
+         classes and overlays labelled boxes. Also lets us probe the
+         resilience question: if YOLO bootstrap fails, do panes 1 and 3
+         keep working? See the BreakYolo CLI flag in App.axaml.cs. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Yolo\FrameFlow.Yolo.csproj" />
+    <!-- ADR-0049 §5: the FrameFlow.Yolo.Cuda detector merged into
+         FrameFlow.Yolo. The CUDA EP comes from FrameFlow.Inference.Cuda
+         (the host-bound ORT-CUDA-EP wrapper); the detector is
+         EP-agnostic. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Inference.Cuda\FrameFlow.Inference.Cuda.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.*" />
+    <PackageReference Include="Avalonia" Version="11.*" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.*" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FrameFlow.Graph" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/FrameFlow.Graph/FrameFlow.Graph.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared examples support (FileLoggerProvider), consolidated from the
+         former per-example copies into FrameFlow.Examples.Common. -->
+    <ProjectReference Include="..\FrameFlow.Examples.Common\FrameFlow.Examples.Common.csproj" />
+    <Using Include="FrameFlow.Examples.Common" />
+  </ItemGroup>
+</Project>
