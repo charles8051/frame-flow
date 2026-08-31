@@ -326,7 +326,13 @@ jobs:
       id-token: write
     steps:
       - name: Download packages
-        uses: actions/download-artifact@v6
+        # Pinned by commit (v6.0.0), for the same reason the login action below
+        # is: this runs inside the job that holds `id-token: write`, and it runs
+        # BEFORE the login step. A compromised mutable tag here could request the
+        # job's OIDC token and exchange it for a nuget.org credential without
+        # ever reaching the login step. Elsewhere in this workflow the artifact
+        # actions use tags; in this job they must not.
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
         with:
           name: nupkgs
           path: packages
