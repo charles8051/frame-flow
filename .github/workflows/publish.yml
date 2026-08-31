@@ -9,7 +9,9 @@ name: Release
 #     bundles Install-MotionClip.ps1, and attaches the zip to the matching
 #     GitHub Release (`release-binaries` job), so consumers can grab
 #     MotionClip.exe without a .NET SDK or `dotnet tool install`.
-# FrameFlow is NOT published to nuget.org — these are private packages.
+# FrameFlow packages go to GitHub Packages on every tag. Publishing the same
+# packages to nuget.org is wired but OFF by default — see the nuget.org block
+# in the publish job for the two preconditions and the variable that arms it.
 on:
   push:
     tags:
@@ -129,6 +131,11 @@ jobs:
 
   publish:
     needs: test
+    permissions:
+      contents: read
+      # id-token is what trusted publishing exchanges for a short-lived nuget.org
+      # key. Harmless when the nuget.org block below is disarmed: no step reads it.
+      id-token: write
     # Defaults to the maintainer's self-hosted Linux runner. Set the repo
     # variable LINUX_RUNNER to a hosted label as JSON to run entirely on
     # GitHub's runners, e.g. ["ubuntu-latest"].
@@ -235,6 +242,53 @@ jobs:
           dotnet nuget push "packages/*.nupkg" \
             --source "$NUGET_SOURCE" \
             --api-key ${{ secrets.GITHUB_TOKEN }} \
+            --skip-duplicate
+
+      # ── nuget.org ──────────────────────────────────────────────────────────
+      #
+      # DISARMED until `vars.PUBLISH_TO_NUGET_ORG` is exactly 'true'. Merging this
+      # changes nothing on the next tag push; arming it is a separate, deliberate
+      # act. That gate exists because a push to nuget.org cannot be taken back —
+      # a version can be unlisted, never replaced and never reused — so a
+      # mis-fire is permanent in a way the GitHub Packages push above is not.
+      #
+      # Two things must be true before arming it:
+      #
+      #   1. The `FrameFlow` ID prefix is reserved (mail account@nuget.org). Until
+      #      it is, every frameflow.* id is registrable by anyone. That is also
+      #      why nuget.config deliberately does NOT map `FrameFlow.*` to
+      #      nuget.org — see the dependency-confusion note in its
+      #      packageSourceMapping. Publishing before reserving leaves a window
+      #      where someone else can claim a sibling id.
+      #
+      #   2. A trusted-publishing policy exists on nuget.org for THIS repository.
+      #      The policy is keyed on the numeric repository id, and the reseed
+      #      changed it, so any policy created before the reseed will not match
+      #      and has to be deleted and recreated.
+      #
+      # Trusted publishing rather than a long-lived NUGET_API_KEY secret: the
+      # login action exchanges the job's OIDC token for a key that expires in
+      # minutes, so there is no publish credential at rest in this repository.
+      - name: Authenticate to nuget.org
+        id: nuget-login
+        if: github.event_name == 'push' && vars.PUBLISH_TO_NUGET_ORG == 'true'
+        # Pinned by commit (v1.2.0). This action mints a publishing credential —
+        # a mutable tag is the wrong risk to accept on that specific step.
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841
+        with:
+          user: ${{ vars.NUGET_ORG_USER }}
+
+      - name: Push to nuget.org
+        if: github.event_name == 'push' && vars.PUBLISH_TO_NUGET_ORG == 'true'
+        # NUGET_ORG_PACKAGE_GLOB narrows what goes public, so the first release
+        # can be staged. Setting it to 'packages/FrameFlow.Native.Runtime.*.nupkg'
+        # publishes only the package the six FrameFlow.Native.Runtime consumers
+        # need, proves the pipeline, and commits no other id permanently. The
+        # default publishes everything the pack steps produced.
+        run: |
+          dotnet nuget push "${{ vars.NUGET_ORG_PACKAGE_GLOB || 'packages/*.nupkg' }}" \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
             --skip-duplicate
 
       # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
