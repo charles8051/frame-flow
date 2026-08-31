@@ -247,8 +247,90 @@ jobs:
         # so it needs an explicit pack invocation.
         run: dotnet pack nuget/FrameFlow.Native.Runtime.csproj --configuration Release -o packages
 
-      - name: List packages
-        run: ls -lh packages/
+      - name: List packages and assert the family is complete
+        # Fail-loud completeness gate, ported from periphery. A release that
+        # silently ships 22 of 23 packages is worse than a release that fails,
+        # and a nuget.org version cannot be replaced once it exists.
+        #
+        # The expected set is DERIVED, not hardcoded: every project in
+        # FrameFlow.slnx whose evaluated $(IsPackable) is true, plus
+        # FrameFlow.Native.Runtime, which lives outside the solution and is packed
+        # by its own step above. Adding a packable project extends this gate
+        # automatically — there is no count to remember to bump.
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The SDK's own solution reader, not a regex over the .slnx XML: no
+          # chance of matching a commented-out <Project Path="…">, and no
+          # breakage if the format grows an attribute.
+          projects="$(dotnet sln FrameFlow.slnx list | tr '\\' '/' | grep '\.csproj$')"
+          projects="$projects
+          nuget/FrameFlow.Native.Runtime.csproj"
+
+          expected=()
+          while IFS= read -r proj; do
+            proj="$(echo "$proj" | xargs)"
+            [ -n "$proj" ] || continue
+            packable="$(dotnet msbuild "$proj" -nologo -getProperty:IsPackable \
+              -p:Configuration=Release -p:FrameFlowLocalFeedDisable=true | tr -d '[:space:]')"
+            # The shape `set -e` cannot see: msbuild exiting 0 having printed
+            # nothing usable. Unchecked it would quietly shrink the expected set
+            # and a short release would sail through this gate.
+            if [ -z "$packable" ]; then
+              echo "::error::Could not evaluate \$(IsPackable) for $proj — refusing to publish on a guess."
+              exit 1
+            fi
+            # MSBuild yields the literal text from the project file, so `True` is
+            # as valid as `true`. A capitalised spelling would otherwise drop a
+            # genuinely packable project and red-X a complete release.
+            [ "${packable,,}" = "true" ] || continue
+            id="$(dotnet msbuild "$proj" -nologo -getProperty:PackageId \
+              -p:Configuration=Release -p:FrameFlowLocalFeedDisable=true | tr -d '[:space:]')"
+            if [ -z "$id" ]; then
+              echo "::error::$proj is packable but has no evaluable \$(PackageId)."
+              exit 1
+            fi
+            expected+=("$id")
+          done <<< "$projects"
+
+          if [ "${#expected[@]}" -eq 0 ]; then
+            echo "::error::Derived zero packable projects — this step's MSBuild evaluation is broken, not the pack. Fix the step; do NOT publish."
+            exit 1
+          fi
+
+          found=(); for f in packages/*.nupkg; do [ -e "$f" ] && found+=("$f"); done
+
+          missing=()
+          for id in "${expected[@]}"; do
+            ok=0
+            for f in "${found[@]}"; do
+              case "$(basename "$f")" in "$id".[0-9]*) ok=1;; esac
+            done
+            [ "$ok" -eq 1 ] || missing+=("$id")
+          done
+
+          # The reverse direction: a .nupkg no expected project accounts for.
+          unexpected=()
+          for f in "${found[@]}"; do
+            owned=0
+            for id in "${expected[@]}"; do
+              case "$(basename "$f")" in "$id".[0-9]*) owned=1;; esac
+            done
+            [ "$owned" -eq 1 ] || unexpected+=("$f")
+          done
+
+          printf 'expected %d package(s):\n' "${#expected[@]}"; printf '  %s\n' "${expected[@]}"
+          printf 'found %d file(s):\n' "${#found[@]}"; printf '  %s\n' "${found[@]:-<none>}"
+
+          if [ "${#missing[@]}" -ne 0 ] || [ "${#unexpected[@]}" -ne 0 ]; then
+            [ "${#missing[@]}" -eq 0 ]    || { echo "missing:"; printf '  %s\n' "${missing[@]}"; }
+            [ "${#unexpected[@]}" -eq 0 ] || { echo "unexpected:"; printf '  %s\n' "${unexpected[@]}"; }
+            echo "::error::Package family incomplete: expected ${#expected[@]}, found ${#found[@]} (${#missing[@]} missing, ${#unexpected[@]} unexpected)."
+            exit 1
+          fi
+
+          echo "OK: all ${#expected[@]} expected packages are present."
 
       - name: Push to GitHub Packages
         # Only a real tag push publishes; a workflow_dispatch dry-run stops after pack.
@@ -268,7 +350,11 @@ jobs:
       # skipped the exchange would not tell you whether the policy is right.
       - name: NuGet login
         id: login
-        uses: NuGet/login@v1
+        # Pinned by commit (v1.2.0) rather than the mutable @v1 periphery uses.
+        # This step mints the credential that can publish every package id under
+        # the reserved prefix; a retagged @v1 could exfiltrate the OIDC token or
+        # the key it returns. The cost of pinning is one SHA bump per upgrade.
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841
         with:
           # A repo VARIABLE, not a secret. The nuget.org profile name is public,
           # and a secret would be masked to *** in the log precisely when a failed
