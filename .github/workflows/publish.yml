@@ -239,7 +239,14 @@ jobs:
         # all of src/* and none of tests/* or examples/*. FrameFlowLocalFeedDisable
         # steers PackageOutputPath away from the user-level local feed so
         # we end up with a clean ./packages folder under the workspace.
-        run: dotnet pack FrameFlow.slnx --configuration Release -p:FrameFlowLocalFeedDisable=true -o packages
+        # rm -rf first: this workflow's own credential-removal step notes that the
+        # workspace can outlive the job on a self-hosted runner, so a .nupkg left
+        # by an EARLIER tag would otherwise survive into the push glob below and
+        # be published alongside this release. periphery clears for the same
+        # reason.
+        run: |
+          rm -rf packages
+          dotnet pack FrameFlow.slnx --configuration Release -p:FrameFlowLocalFeedDisable=true -o packages
 
       - name: Pack native runtime package
         # Native.Runtime lives outside the solution (it's a
@@ -328,6 +335,32 @@ jobs:
             [ "${#unexpected[@]}" -eq 0 ] || { echo "unexpected:"; printf '  %s\n' "${unexpected[@]}"; }
             echo "::error::Package family incomplete: expected ${#expected[@]}, found ${#found[@]} (${#missing[@]} missing, ${#unexpected[@]} unexpected)."
             exit 1
+          fi
+
+          # On a tag push the version is not a free variable: MinVer derives it
+          # from the tag, so every .nupkg must be exactly <id>.<tag-without-v>.
+          # Checking it catches the two cases the ID match alone cannot — a stale
+          # file from an earlier tag, and a version/identity drift between what
+          # MinVer produced and what the tag claims. Skipped on a dispatch, where
+          # there is no tag and MinVer legitimately produces a height-based
+          # prerelease.
+          if [ "${GITHUB_EVENT_NAME:-}" = "push" ]; then
+            want="${GITHUB_REF_NAME#v}"
+            bad=()
+            for f in "${found[@]}"; do
+              b="$(basename "$f" .nupkg)"
+              matched=0
+              for id in "${expected[@]}"; do
+                [ "$b" = "$id.$want" ] && matched=1
+              done
+              [ "$matched" -eq 1 ] || bad+=("$(basename "$f")")
+            done
+            if [ "${#bad[@]}" -ne 0 ]; then
+              echo "not <id>.$want:"; printf '  %s\n' "${bad[@]}"
+              echo "::error::Tag $GITHUB_REF_NAME expects every package at version $want. Refusing to publish a set that does not match the tag."
+              exit 1
+            fi
+            echo "OK: every package is at $want, matching tag $GITHUB_REF_NAME."
           fi
 
           echo "OK: all ${#expected[@]} expected packages are present."
