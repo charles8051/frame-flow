@@ -102,9 +102,6 @@ jobs:
         # bash on Linux and macOS, Windows PowerShell on windows-latest.
         run: dotnet nuget add source "${{ env.NUGET_SOURCE }}" --name github-charles8051 --username "${{ github.repository_owner }}" --password "${{ secrets.PACKAGES_READ_PAT }}" --store-password-in-clear-text --configfile nuget.config
 
-      - name: Restore
-        run: dotnet restore FrameFlow.slnx
-
       # publish.yml's test job has always had this; build.yml never did, and it
       # went unnoticed because build.yml died at Restore long before reaching a
       # test. With the auth step above it gets far enough to run the suite, and
@@ -143,6 +140,28 @@ jobs:
 
       - name: Fetch FFmpeg binaries (host platform)
         run: dotnet run scripts/fetch-ffmpeg.cs
+
+      # Restore moved below the FFmpeg fetch, and a bootstrap pack added, for the
+      # reason publish.yml spells out at length: six projects reference
+      # FrameFlow.Native.Runtime, and that reference now names the version this
+      # repository builds rather than one that only ever existed in a private
+      # feed. Nothing serves that version, so it has to be built before restore
+      # can resolve it. MinVer gives it the same version as everything else here.
+      #
+      # Host RID only, which is fine: the pack asserts each RID is complete or
+      # absent, not that every RID is present, and nothing is published from this
+      # workflow.
+      - name: Pack the runtime package so restore can resolve it
+        run: |
+          rm -rf packages
+          dotnet pack nuget/FrameFlow.Native.Runtime.csproj --configuration Release -o packages
+
+      - name: Add the packed runtime as a restore source
+        run: |
+          dotnet nuget add source "${{ github.workspace }}/packages" --name bootstrap --configfile nuget.config
+
+      - name: Restore
+        run: dotnet restore FrameFlow.slnx
 
       - name: Build
         # FrameFlowLocalFeedDisable suppresses the on-build local-feed write

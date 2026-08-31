@@ -235,6 +235,46 @@ jobs:
           dotnet run scripts/fetch-ffmpeg.cs -- --rid linux-x64 --force
           dotnet run scripts/fetch-ffmpeg.cs -- --rid linux-arm64 --force
 
+      # Native.Runtime is packed FIRST, before the solution restores, and this
+      # ordering is load-bearing rather than cosmetic.
+      #
+      # Six projects take a PackageReference on FrameFlow.Native.Runtime, and
+      # `dotnet pack` writes the RESOLVED version of that reference into their
+      # nuspecs. If the reference resolves to a version that is not on nuget.org,
+      # the published package declares a dependency a public consumer cannot
+      # restore — and --skip-duplicate means that version can never be repaired,
+      # only superseded.
+      #
+      # The obvious fix, pointing the reference at the version about to be built,
+      # does not work on its own: restore runs before pack, so the version exists
+      # in no feed yet and restore fails before anything can publish. That is a
+      # genuine chicken-and-egg, and packing first is what breaks it. MinVer gives
+      # this package and the solution the same version from the same tag, so the
+      # reference resolves to exactly the build being published.
+      #
+      # Native.Runtime itself restores fine this early: its only PackageReference
+      # is MinVer, which comes from nuget.org.
+      #
+      # rm -rf here rather than before the solution pack, because the bootstrap
+      # package below must survive into it. This workflow's own credential-removal
+      # step notes the workspace can outlive the job on a self-hosted runner, so a
+      # .nupkg left by an EARLIER tag would otherwise be published alongside this
+      # release. periphery clears for the same reason.
+      - name: Pack native runtime package (before restore — see comment)
+        run: |
+          rm -rf packages
+          dotnet pack nuget/FrameFlow.Native.Runtime.csproj --configuration Release -o packages
+
+      # A local source so the solution's restore can see the package just built.
+      # nuget.config maps FrameFlow.* to local-feed and github-charles8051 only,
+      # and this adds a third mapped source rather than widening any pattern, so
+      # the dependency-confusion posture is unchanged: FrameFlow.* still cannot
+      # come from nuget.org.
+      - name: Add the packed runtime as a restore source
+        run: |
+          dotnet nuget add source "${{ github.workspace }}/packages" --name bootstrap --configfile nuget.config
+          dotnet nuget list source --configfile nuget.config
+
       - name: Restore
         run: dotnet restore FrameFlow.slnx
 
@@ -243,20 +283,8 @@ jobs:
         # all of src/* and none of tests/* or examples/*. FrameFlowLocalFeedDisable
         # steers PackageOutputPath away from the user-level local feed so
         # we end up with a clean ./packages folder under the workspace.
-        # rm -rf first: this workflow's own credential-removal step notes that the
-        # workspace can outlive the job on a self-hosted runner, so a .nupkg left
-        # by an EARLIER tag would otherwise survive into the push glob below and
-        # be published alongside this release. periphery clears for the same
-        # reason.
-        run: |
-          rm -rf packages
-          dotnet pack FrameFlow.slnx --configuration Release -p:FrameFlowLocalFeedDisable=true -o packages
-
-      - name: Pack native runtime package
-        # Native.Runtime lives outside the solution (it's a
-        # packaging-only project that ships the fetched FFmpeg binaries),
-        # so it needs an explicit pack invocation.
-        run: dotnet pack nuget/FrameFlow.Native.Runtime.csproj --configuration Release -o packages
+        # No rm here: it would delete the bootstrap package packed above.
+        run: dotnet pack FrameFlow.slnx --configuration Release -p:FrameFlowLocalFeedDisable=true -o packages
 
       - name: List packages and assert the family is complete
         # Fail-loud completeness gate, ported from periphery. A release that

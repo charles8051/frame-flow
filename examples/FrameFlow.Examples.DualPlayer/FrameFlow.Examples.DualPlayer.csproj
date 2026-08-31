@@ -36,7 +36,7 @@
       reaches the target with no FFmpeg (ADR-0014 / ADR-0046). Mirrors the
       AvaloniaPlayer / Multicast.Dml examples.
     -->
-    <PackageReference Include="FrameFlow.Native.Runtime" Version="0.1.1-alpha.*" />
+    <PackageReference Include="FrameFlow.Native.Runtime" Version="0.7.0-alpha.*" />
   </ItemGroup>
 
   <ItemGroup>
