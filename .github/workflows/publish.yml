@@ -9,7 +9,9 @@ name: Release
 #     bundles Install-MotionClip.ps1, and attaches the zip to the matching
 #     GitHub Release (`release-binaries` job), so consumers can grab
 #     MotionClip.exe without a .NET SDK or `dotnet tool install`.
-# FrameFlow is NOT published to nuget.org — these are private packages.
+# FrameFlow packages go to GitHub Packages on every tag. Publishing the same
+# packages to nuget.org is wired but OFF by default — see the nuget.org block
+# in the publish job for the two preconditions and the variable that arms it.
 on:
   push:
     tags:
@@ -237,6 +239,16 @@ jobs:
             --api-key ${{ secrets.GITHUB_TOKEN }} \
             --skip-duplicate
 
+      # Hand the packed .nupkg files to the publish-nuget-org job. That job holds
+      # the OIDC token and must not run repository code, so it takes the packages
+      # as an artifact rather than checking out and re-packing them.
+      - name: Upload packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: nupkgs
+          path: packages/*.nupkg
+          retention-days: 7
+
       # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
       # clear text — NuGet has no other way to hand a credential to a v3 source in
       # a non-interactive job. On a self-hosted runner the workspace can outlive
@@ -274,6 +286,82 @@ jobs:
   #
   # See THIRD-PARTY-NOTICES.md. Do not set this back to true without deciding
   # what LGPL §6 then requires of the release, under both versions.
+
+  # ── nuget.org ────────────────────────────────────────────────────────────
+  #
+  # A separate job for one reason: `id-token: write` is available to every step
+  # of whatever job holds it, regardless of any step-level `if`. Granting it to
+  # the publish job would mean restore, MSBuild targets and pack could each
+  # request an OIDC token from the runner endpoint and exchange it for a
+  # nuget.org publishing credential — without PUBLISH_TO_NUGET_ORG ever being
+  # true. So the token lives in a job that runs no repository code: no checkout,
+  # no restore, no build. It downloads the packages the publish job already
+  # produced and pushes them.
+  #
+  # DISARMED until `vars.PUBLISH_TO_NUGET_ORG` is exactly 'true'. The condition is
+  # on the job, so when it is unset this job does not exist and neither does its
+  # token. Merging changes nothing on the next tag push; arming it is a separate,
+  # deliberate act — a push to nuget.org cannot be taken back, since a version
+  # can be unlisted but never replaced and never reused.
+  #
+  # Two things must be true before arming it:
+  #
+  #   1. The `FrameFlow` ID prefix is reserved (mail account@nuget.org). Until it
+  #      is, every frameflow.* id is registrable by anyone. That is the same
+  #      dependency-confusion reasoning that keeps `FrameFlow.*` unmapped to
+  #      nuget.org in nuget.config. Publishing first leaves a window where a
+  #      sibling id can be claimed.
+  #
+  #   2. A trusted-publishing policy exists on nuget.org for THIS repository. The
+  #      policy is keyed on the numeric repository id, and the reseed changed it,
+  #      so a policy created before the reseed will not match.
+  publish-nuget-org:
+    needs: publish
+    if: github.event_name == 'push' && vars.PUBLISH_TO_NUGET_ORG == 'true'
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]') }}
+    container: ${{ contains(fromJSON(vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]'), 'self-hosted') && 'mcr.microsoft.com/dotnet/sdk:10.0' || '' }}
+    permissions:
+      # Deliberately no `contents` and no `packages`: this job reads an artifact
+      # and talks to nuget.org. It needs neither the repository nor the registry.
+      id-token: write
+    steps:
+      - name: Download packages
+        # Pinned by commit (v6.0.0), for the same reason the login action below
+        # is: this runs inside the job that holds `id-token: write`, and it runs
+        # BEFORE the login step. A compromised mutable tag here could request the
+        # job's OIDC token and exchange it for a nuget.org credential without
+        # ever reaching the login step. Elsewhere in this workflow the artifact
+        # actions use tags; in this job they must not.
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        with:
+          name: nupkgs
+          path: packages
+
+      - name: List what is about to be published
+        run: ls -lh packages/
+
+      # Trusted publishing rather than a long-lived NUGET_API_KEY secret: this
+      # exchanges the job's OIDC token for a key that expires in minutes, so no
+      # publish credential sits at rest in this repository.
+      - name: Authenticate to nuget.org
+        id: nuget-login
+        # Pinned by commit (v1.2.0). This action mints a publishing credential —
+        # a mutable tag is the wrong risk to accept on that specific step.
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841
+        with:
+          user: ${{ vars.NUGET_ORG_USER }}
+
+      - name: Push to nuget.org
+        # NUGET_ORG_PACKAGE_GLOB narrows what goes public, so the first release can
+        # be staged. Set it to 'packages/FrameFlow.Native.Runtime.*.nupkg' to
+        # publish only the package the six FrameFlow.Native.Runtime consumers need,
+        # prove the pipeline, and commit no other id permanently. Unset, it
+        # publishes everything the pack steps produced.
+        run: |
+          dotnet nuget push "${{ vars.NUGET_ORG_PACKAGE_GLOB || 'packages/*.nupkg' }}" \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
+            --skip-duplicate
 
   release-binaries:
     needs: test
