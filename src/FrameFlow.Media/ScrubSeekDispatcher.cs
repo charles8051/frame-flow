@@ -1,7 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-namespace FrameFlow.Avalonia;
+namespace FrameFlow.Media;
 
 /// <summary>
 /// Coalescing, single-in-flight dispatcher for scrub seeks. Separates the
@@ -30,7 +30,7 @@ namespace FrameFlow.Avalonia;
 /// </para>
 /// <para>
 /// <b>Threading.</b> Not thread-safe: every member must be touched from a
-/// single context (for the seek bar, the UI thread). The seek delegate is
+/// single context (for a UI seek bar, the UI thread). The seek delegate is
 /// awaited without <c>ConfigureAwait(false)</c>, so its continuations resume on
 /// the caller's synchronization context and the dispatcher's state never leaves
 /// that thread. A fault from one seek is swallowed so the pump keeps draining
@@ -38,7 +38,7 @@ namespace FrameFlow.Avalonia;
 /// machine, not here.
 /// </para>
 /// </remarks>
-internal sealed class ScrubSeekDispatcher
+public sealed class ScrubSeekDispatcher
 {
     private readonly Func<TimeSpan, Task> _seek;
     private bool _inFlight;

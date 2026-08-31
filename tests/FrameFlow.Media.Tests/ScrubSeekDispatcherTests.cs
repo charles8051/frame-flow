@@ -1,6 +1,6 @@
-using FrameFlow.Avalonia;
+using FrameFlow.Media;
 
-namespace FrameFlow.Avalonia.Tests;
+namespace FrameFlow.Media.Tests;
 
 /// <summary>
 /// Deterministic tests for <see cref="ScrubSeekDispatcher"/> — the

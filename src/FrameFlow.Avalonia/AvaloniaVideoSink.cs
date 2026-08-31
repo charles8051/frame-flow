@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using FrameFlow.Media;
 using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -36,52 +35,31 @@ namespace FrameFlow.Avalonia;
 /// </remarks>
 public sealed partial class AvaloniaVideoSink : IVideoSink
 {
-    private static readonly Meter AvSinkMeter = new("FrameFlow.Avalonia.Sink", "1.0.0");
-    private static readonly Counter<long> FramesPresentedCounter = AvSinkMeter.CreateCounter<long>(
-        "frameflow.avalonia.sink.frames_presented",
-        description: "Total video frames rendered to the Avalonia view via AvaloniaVideoSink."
-    );
-    private static readonly Counter<long> FramesDroppedCounter = AvSinkMeter.CreateCounter<long>(
-        "frameflow.avalonia.sink.frames_dropped",
-        description: "Total video frames dropped because the render thread did not consume the previous frame in time."
+    private static readonly VideoSinkMeters Meters = new(
+        "FrameFlow.Avalonia.Sink",
+        "frameflow.avalonia.sink",
+        nameof(AvaloniaVideoSink)
     );
 
     private readonly ILogger<AvaloniaVideoSink> _logger;
     private readonly LatestWinsFrameSlot _slot = new();
+    private readonly VideoSinkTelemetry _telemetry;
     private volatile bool _disposed;
-    private int _renderedFrameCount;
-
-    // ADR-0034: diagnostics state for the rendered frame's PTS and wallclock.
-    // Single writer (RenderPendingFrame on the UI/render thread) + multi-reader
-    // (GetDiagnostics from anywhere). Synchronized by Volatile read/write —
-    // each field is independent and we don't need coherent multi-field reads
-    // here (the snapshot captures both with separate Volatile.Read calls and
-    // the brief window where they're inconsistent is well under one frame).
-    private long _lastPresentedPtsTicks = -1;
-    private long _lastPresentedAtUtcTicks = -1;
 
     // Stall-detection state: timestamp of the most recent PresentAsync
     // call. Used to flag gaps > 500 ms as Warning logs so post-mortem
     // log inspection can see when the sink stopped receiving frames.
     private long _lastPresentTimestamp;
 
-    // Frames the view took but that never drew: overwritten in the back buffer before the UI
-    // thread swapped them in, or discarded while the buffers were the wrong size. With the
-    // copy moved off the UI thread the slot almost never supersedes (the view drains it
-    // synchronously on FrameArrived), and this is where the loss shows up instead. Counting
-    // it keeps FramesDropped honest; without it a wedged UI thread would read as zero drops
-    // while nothing reached the screen, which is the #128 failure on the other presenter.
-    private long _preSwapDrops;
-
     /// <summary>Gets the total number of frames that reached the screen via this sink.</summary>
-    public int RenderedFrameCount => Volatile.Read(ref _renderedFrameCount);
+    public int RenderedFrameCount => (int)_telemetry.PresentedCount;
 
     /// <summary>
     /// Gets the total number of frames that never reached the screen: superseded in the
     /// slot before anything took them, plus copied into the back buffer but overwritten
     /// before the UI thread swapped them in.
     /// </summary>
-    public int DroppedFrameCount => (int)(_slot.Dropped + Interlocked.Read(ref _preSwapDrops));
+    public int DroppedFrameCount => (int)_telemetry.DroppedCount;
 
     /// <inheritdoc />
     public IFramePool FramePool { get; }
@@ -119,13 +97,7 @@ public sealed partial class AvaloniaVideoSink : IVideoSink
     /// copied into the back buffer and then overwritten before the UI thread swapped it is a
     /// drop only.
     /// </remarks>
-    internal void RecordPresented(TimeSpan pts)
-    {
-        Interlocked.Increment(ref _renderedFrameCount);
-        FramesPresentedCounter.Add(1);
-        Volatile.Write(ref _lastPresentedPtsTicks, pts.Ticks);
-        Volatile.Write(ref _lastPresentedAtUtcTicks, DateTime.UtcNow.Ticks);
-    }
+    internal void RecordPresented(TimeSpan pts) => _telemetry.RecordPresented(pts);
 
     /// <summary>
     /// Records that a taken frame never drew — either overwritten in the back buffer before
@@ -135,9 +107,8 @@ public sealed partial class AvaloniaVideoSink : IVideoSink
     /// </summary>
     internal void RecordPreSwapDrop()
     {
-        Interlocked.Increment(ref _preSwapDrops);
-        FramesDroppedCounter.Add(1);
-        LogFrameDropped(_logger, _renderedFrameCount);
+        _telemetry.RecordExtraDrop();
+        LogFrameDropped(_logger, RenderedFrameCount);
     }
 
     /// <summary>
@@ -149,6 +120,7 @@ public sealed partial class AvaloniaVideoSink : IVideoSink
     {
         ArgumentNullException.ThrowIfNull(framePool);
         FramePool = framePool;
+        _telemetry = new VideoSinkTelemetry(Meters, _slot);
         _logger = logger ?? NullLogger<AvaloniaVideoSink>.Instance;
         LogSinkCreated(_logger);
     }
@@ -202,8 +174,8 @@ public sealed partial class AvaloniaVideoSink : IVideoSink
         // returned flag drives this sink's drop telemetry (meter + log) outside the slot.
         if (_slot.TrySet(frame))
         {
-            FramesDroppedCounter.Add(1);
-            LogFrameDropped(_logger, _renderedFrameCount);
+            _telemetry.RecordSupersededDrop();
+            LogFrameDropped(_logger, RenderedFrameCount);
         }
 
         // Hand off on THIS thread (ADR-0016 Decision 1). The view takes the frame and does
@@ -249,31 +221,13 @@ public sealed partial class AvaloniaVideoSink : IVideoSink
         // The PTS/wallclock stamp is this sink's render-tick diagnostics hook (ADR-0034);
         // SDL and the compositor presenter do not stamp here, so it stays a per-sink
         // callback rather than slot behavior. Runs only when a frame is actually taken.
-        var frame = _slot.Take(taken =>
-        {
-            _renderedFrameCount++;
-            FramesPresentedCounter.Add(1);
-
-            // Volatile.Write so cross-thread reads (GetDiagnostics) see fresh values.
-            Volatile.Write(ref _lastPresentedPtsTicks, taken.Pts.Ticks);
-            Volatile.Write(ref _lastPresentedAtUtcTicks, DateTime.UtcNow.Ticks);
-        });
+        var frame = _slot.Take(taken => _telemetry.RecordPresented(taken.Pts));
 
         return frame;
     }
 
     /// <inheritdoc/>
-    public VideoSinkDiagnosticsSnapshot GetDiagnostics()
-    {
-        var ptsTicks = Volatile.Read(ref _lastPresentedPtsTicks);
-        var wallTicks = Volatile.Read(ref _lastPresentedAtUtcTicks);
-        return new VideoSinkDiagnosticsSnapshot(
-            FramesPresented: Volatile.Read(ref _renderedFrameCount),
-            FramesDropped: _slot.Dropped + Interlocked.Read(ref _preSwapDrops),
-            LastPresentedPresentationTime: ptsTicks >= 0 ? TimeSpan.FromTicks(ptsTicks) : null,
-            LastPresentedAtUtc: wallTicks >= 0 ? new DateTime(wallTicks, DateTimeKind.Utc) : null
-        );
-    }
+    public VideoSinkDiagnosticsSnapshot GetDiagnostics() => _telemetry.Snapshot();
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()
@@ -282,7 +236,7 @@ public sealed partial class AvaloniaVideoSink : IVideoSink
 
         _slot.Take()?.Dispose();
 
-        LogSinkDisposed(_logger, _renderedFrameCount, DroppedFrameCount);
+        LogSinkDisposed(_logger, RenderedFrameCount, DroppedFrameCount);
         return ValueTask.CompletedTask;
     }
 
