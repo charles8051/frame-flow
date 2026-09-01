@@ -99,7 +99,7 @@ public sealed class VideoSinkMeters
 public sealed class VideoSinkTelemetry
 {
     private readonly VideoSinkMeters _meters;
-    private readonly LatestWinsFrameSlot _slot;
+    private readonly LatestWinsFrameSlot? _slot;
 
     private long _presented;
     private long _extraDrops;
@@ -122,14 +122,31 @@ public sealed class VideoSinkTelemetry
         _slot = slot;
     }
 
+    /// <summary>
+    /// Telemetry for a sink that has no latest-wins intake — one that presents every frame it
+    /// is handed rather than keeping only the newest for a render tick.
+    /// <see cref="DroppedCount"/> then counts exactly what the sink reports through
+    /// <see cref="RecordExtraDrop"/>, and <see cref="RecordSupersededDrop"/> has nothing to
+    /// pair with.
+    /// </summary>
+    /// <param name="meters">The sink type's shared meter and counters.</param>
+    public VideoSinkTelemetry(VideoSinkMeters meters)
+    {
+        ArgumentNullException.ThrowIfNull(meters);
+
+        _meters = meters;
+        _slot = null;
+    }
+
     /// <summary>Total frames that reached the screen through this sink.</summary>
     public long PresentedCount => Interlocked.Read(ref _presented);
 
     /// <summary>
     /// Total frames that never reached the screen: superseded in the slot before anything took
-    /// them, plus whatever the sink reported through <see cref="RecordExtraDrop"/>.
+    /// them, plus whatever the sink reported through <see cref="RecordExtraDrop"/>. With no slot,
+    /// the first term is zero.
     /// </summary>
-    public long DroppedCount => _slot.Dropped + Interlocked.Read(ref _extraDrops);
+    public long DroppedCount => (_slot?.Dropped ?? 0) + Interlocked.Read(ref _extraDrops);
 
     /// <summary>
     /// Records one frame as presented and stamps its PTS and the current wallclock. Call at the
