@@ -3,7 +3,7 @@
 
 using System.Diagnostics;
 
-namespace FrameFlow.Avalonia.Windows;
+namespace FrameFlow.Media.Diagnostics;
 
 /// <summary>
 /// One sample of the presenter's liveness counters, taken by <see cref="PresenterStallWatchdog"/>.

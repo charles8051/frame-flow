@@ -1,7 +1,7 @@
 using System.Diagnostics;
-using FrameFlow.Avalonia.Windows;
+using FrameFlow.Media.Diagnostics;
 
-namespace FrameFlow.Avalonia.Windows.Tests;
+namespace FrameFlow.Media.Tests;
 
 /// <summary>
 /// Unit tests for the pure <see cref="PresenterStallEvaluator"/> gate. These exist specifically to

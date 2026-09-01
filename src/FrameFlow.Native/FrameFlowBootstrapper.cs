@@ -409,17 +409,13 @@ public sealed class FrameFlowBootstrapper : IFrameFlowBootstrapper
     /// </summary>
     private static string? ResolveMacOsHomebrewPath()
     {
-        // Apple Silicon uses /opt/homebrew; Intel Macs use /usr/local.
-        var prefix =
-            RuntimeIdentifierHelper.Current == "osx-arm64" ? "/opt/homebrew" : "/usr/local";
-
         // ffmpeg@7 is keg-only so it is not symlinked into the main prefix lib.
-        var kegPath = Path.Combine(prefix, "opt", "ffmpeg@7", "lib");
+        var kegPath = HomebrewLayout.KegLibDirectory("ffmpeg@7");
         if (Directory.Exists(kegPath))
             return kegPath;
 
         // Also check the general Homebrew lib path for users who ran `brew link ffmpeg`.
-        var libPath = Path.Combine(prefix, "lib");
+        var libPath = HomebrewLayout.LinkedLibDirectory;
         if (Directory.Exists(libPath))
             return libPath;
 

@@ -1,16 +1,22 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-namespace FrameFlow.Audio.OpenAL;
+namespace FrameFlow.Media;
 
 /// <summary>
-/// The <b>pure core</b> of the OpenAL audio master clock (§5.2): an immutable
-/// value carrying the clock's threaded state — the source-time origin, whether
-/// that origin has been seated, and the cumulative processed-sample count — plus
-/// total transforms that reproduce <c>OpenAlAudioSink.GetPlaybackTimeUnderLock</c>'s
-/// arithmetic exactly. No IO, no OpenAL handle, no clock, no lock.
+/// The <b>pure core</b> of an audio master clock (§5.2): an immutable value carrying the
+/// clock's threaded state — the source-time origin, whether that origin has been seated,
+/// and the cumulative processed-sample count — plus total transforms over it.
+/// No IO, no device handle, no clock, no lock.
 /// </summary>
 /// <remarks>
+/// <para>
+/// <b>Backend-neutral.</b> The equation below needs a per-channel processed-sample count and
+/// a device playback cursor, and nothing else. Any sink that can report those two quantities
+/// drives this value: <c>OpenAlAudioSink</c> does today, and the SDL audio sink proposed in
+/// ADR-0018 §2 would. It lived inside <c>FrameFlow.Audio.OpenAL</c> only because OpenAL was
+/// the first backend to need it, which put it out of reach of the second.
+/// </para>
 /// <para>
 /// <b>Why a pure core.</b> The master clock is what <c>AudioMasterSyncStrategy</c>
 /// (and the presenter-side <c>ClockSelectVideoSink</c> pacer) reads to time every
@@ -31,12 +37,13 @@ namespace FrameFlow.Audio.OpenAL;
 /// <list type="bullet">
 /// <item><see cref="BaseSourceTime"/> — the source-stream origin, seated at
 /// activation (seek target or first-buffer PTS). Owned by this value.</item>
-/// <item><see cref="ProcessedSamplesPerChannel"/> — samples in buffers OpenAL has
+/// <item><see cref="ProcessedSamplesPerChannel"/> — samples in buffers the device has
 /// finished and the sink has recycled, accumulated across the session. Owned by
 /// this value; the shell advances it via <see cref="WithProcessed"/> as it
 /// recycles buffers.</item>
 /// <item><c>deviceSampleOffset</c> — the live per-buffer playback cursor read
-/// fresh from <c>AL_SAMPLE_OFFSET</c> on every clock read. Owned by the device;
+/// fresh from the device on every clock read (<c>AL_SAMPLE_OFFSET</c> under
+/// OpenAL). Owned by the device;
 /// the shell passes it into <see cref="Position"/> and it is never stored here
 /// (storing a device cursor in an immutable value would make it instantly
 /// stale).</item>
@@ -101,7 +108,7 @@ public readonly record struct AudioClockState
     public bool OriginSeated { get; init; }
 
     /// <summary>
-    /// Cumulative per-channel samples in buffers OpenAL has finished playing and the
+    /// Cumulative per-channel samples in buffers the device has finished playing and the
     /// sink has recycled — the sink's <c>_processedSamplesPerChannel</c>. The shell
     /// advances this via <see cref="WithProcessed"/> as <c>RecycleProcessedBuffers</c>
     /// returns buffers; the live in-flight cursor is added separately in
@@ -124,9 +131,9 @@ public readonly record struct AudioClockState
     /// it returns <c>BaseSourceTime + (ProcessedSamplesPerChannel + deviceSampleOffset) / sampleRate</c>.
     /// </summary>
     /// <param name="deviceSampleOffset">
-    /// The live per-buffer playback cursor (<c>AL_SAMPLE_OFFSET</c>, per channel) the
-    /// shell read fresh from the OpenAL source for this call. Never stored on the
-    /// value.
+    /// The live per-buffer playback cursor, per channel, that the shell read fresh from
+    /// the device for this call (<c>AL_SAMPLE_OFFSET</c> under OpenAL). Never stored on
+    /// the value.
     /// </param>
     /// <param name="sampleRate">
     /// The source sample rate in Hz (the sink's <c>_sampleRate</c>). A value &lt;= 0

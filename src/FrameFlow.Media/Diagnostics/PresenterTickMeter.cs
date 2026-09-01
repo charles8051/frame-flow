@@ -1,7 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-namespace FrameFlow.Avalonia.Windows;
+namespace FrameFlow.Media.Diagnostics;
 
 /// <summary>
 /// Accumulates render-tick timings and emits a summary every N ticks. Pure arithmetic over
@@ -49,7 +49,7 @@ namespace FrameFlow.Avalonia.Windows;
 /// report describes that window alone.
 /// </para>
 /// </remarks>
-internal sealed class PresenterTickMeter
+public sealed class PresenterTickMeter
 {
     private readonly double _ticksPerMs;
     private readonly int _reportEvery;
@@ -178,7 +178,7 @@ internal sealed class PresenterTickMeter
 /// <param name="GapMaxMs">Worst scheduler delay in the window.</param>
 /// <param name="WorkMeanMs">Mean time inside the handler, over frame-bearing ticks only.</param>
 /// <param name="WorkMaxMs">Worst time inside the handler, over frame-bearing ticks only.</param>
-internal readonly record struct PresenterTickReport(
+public readonly record struct PresenterTickReport(
     int Ticks,
     int TicksWithFrame,
     double WindowMs,

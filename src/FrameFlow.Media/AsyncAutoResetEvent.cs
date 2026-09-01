@@ -1,33 +1,43 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-namespace FrameFlow.Audio.OpenAL;
+namespace FrameFlow.Media;
 
 /// <summary>
-/// An async, auto-reset "a buffer came back" signal used by
-/// <see cref="OpenAlAudioSink"/> to wait for OpenAL to recycle a processed
-/// buffer without burning a pooled thread on a <c>Thread.Sleep</c> spin.
+/// An async auto-reset event with a single latched permit and a bounded wait.
+/// <see cref="Set"/> releases one pending <see cref="WaitAsync"/>, or latches a permit so
+/// the next wait returns immediately. Each successful wait consumes the permit and re-arms.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Semantics mirror an <c>AsyncAutoResetEvent</c>: <see cref="Set"/> releases a
-/// single pending <see cref="WaitAsync"/> (or, if none is waiting, latches one
-/// permit so the next wait returns immediately). Each successful wait consumes
-/// the permit and re-arms the gate. The same async-signal shape the camera frame
-/// pool and the playback pause gate (<c>AsyncManualResetEvent</c>) use — this
-/// is the OpenAL-assembly-local sibling, since those primitives live in
-/// assemblies this one does not reference.
+/// <b>Written for buffer-return backpressure.</b> <c>OpenAlAudioSink</c> waits here for
+/// OpenAL to recycle a processed buffer, rather than burning a pooled thread on a
+/// <c>Thread.Sleep</c> spin (perf survey A3). The SDL audio sink in ADR-0018 §2 needs the
+/// same wait once it takes backpressure from a real device instead of pacing on
+/// <c>Task.Delay</c>. It sat in <c>FrameFlow.Audio.OpenAL</c> as an assembly-local sibling
+/// of <see cref="AsyncManualResetEvent"/> precisely because that one was out of reach; both
+/// live here now, so the next backend finds them rather than writing a third.
 /// </para>
 /// <para>
-/// <b>Missed-wakeup safety.</b> The audio sink never relies on the signal alone
-/// for correctness: every wake re-checks the real <c>_freeBuffers</c> queue under
-/// the sink lock, and the wait is bounded by a timeout. A <see cref="Set"/> that
-/// races just ahead of a <see cref="WaitAsync"/> is preserved by the latched
-/// permit, and a spurious/timed-out wake simply re-polls — so a buffer can never
-/// be lost and the wait can never deadlock if the device stops draining.
+/// <b>Auto-reset, not manual.</b> <see cref="AsyncManualResetEvent"/> is a gate: open it and
+/// every waiter, present and future, passes until it is closed again. This is a handoff: one
+/// signal releases one waiter. They are not substitutable, which is why both exist.
+/// </para>
+/// <para>
+/// <b>Single waiter.</b> One waiter is parked at a time, which is what the backpressure loop
+/// needs. A second concurrent <see cref="WaitAsync"/> overwrites the first waiter's
+/// registration, and the displaced wait then runs to its timeout instead of being signalled.
+/// </para>
+/// <para>
+/// <b>Missed-wakeup safety.</b> The caller must not rely on the signal alone for correctness.
+/// The audio sink re-checks its real <c>_freeBuffers</c> queue under the sink lock on every
+/// wake, and the wait is bounded by a timeout. A <see cref="Set"/> that races just ahead of a
+/// <see cref="WaitAsync"/> is preserved by the latched permit, and a spurious or timed-out
+/// wake simply re-polls — so a buffer can never be lost and the wait can never deadlock if
+/// the device stops draining.
 /// </para>
 /// </remarks>
-internal sealed class BufferReturnSignal
+internal sealed class AsyncAutoResetEvent
 {
     private readonly Lock _gate = new();
 

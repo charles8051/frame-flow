@@ -3,14 +3,23 @@
 
 using System.Runtime.InteropServices;
 
-namespace FrameFlow.Native;
+namespace FrameFlow.Media;
 
 /// <summary>
 /// Provides the current .NET runtime identifier (RID) string.
 /// </summary>
 /// <remarks>
-/// The RID is used to locate platform-specific FFmpeg binaries in the
+/// <para>
+/// The RID locates platform-specific native binaries in the
 /// <c>runtimes/{rid}/native/</c> layout defined by ADR-0014.
+/// </para>
+/// <para>
+/// Lives here, beside <see cref="BundleExtractionHelper"/>, because both native bootstrappers
+/// probe that layout: <c>FrameFlowBootstrapper</c> for FFmpeg and <c>SdlBootstrapper</c> for
+/// SDL2. ADR-0019 keeps <c>FrameFlow.Sdl</c> from referencing <c>FrameFlow.Native</c>, so a
+/// helper both need belongs in the assembly both already reference. It sat in
+/// <c>FrameFlow.Native</c> until then, and <c>SdlBootstrapper</c> carried a verbatim copy.
+/// </para>
 /// </remarks>
 internal static class RuntimeIdentifierHelper
 {

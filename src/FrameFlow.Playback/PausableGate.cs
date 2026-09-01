@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using FrameFlow.Graph;
+using FrameFlow.Media;
 
 namespace FrameFlow.Playback;
 
@@ -36,10 +37,10 @@ namespace FrameFlow.Playback;
 /// Promotable to the substrate later without a public-surface change.
 /// </para>
 /// <para>
-/// <b>Reusing the existing event.</b> Wraps the existing
-/// <c>FrameFlow.Playback.AsyncManualResetEvent</c> (accessible via
-/// the <c>InternalsVisibleTo</c> declared in
-/// <c>FrameFlow.Playback/AssemblyInfo.cs</c>). No need to duplicate
+/// <b>Reusing the existing event.</b> Wraps
+/// <c>FrameFlow.Media.AsyncManualResetEvent</c> (accessible via the
+/// <c>InternalsVisibleTo</c> declared in
+/// <c>FrameFlow.Media/Properties/AssemblyInfo.cs</c>). No need to duplicate
 /// the gate primitive.
 /// </para>
 /// </remarks>

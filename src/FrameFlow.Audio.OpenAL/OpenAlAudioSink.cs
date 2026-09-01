@@ -143,8 +143,8 @@ public sealed partial class OpenAlAudioSink
     // instead of Thread.Sleep-spinning, so a pooled thread is freed (not blocked)
     // for the duration of a device-side stall. The signal is advisory: every wake
     // re-checks _freeBuffers under _stateLock and the wait is timeout-bounded, so a
-    // missed signal can never lose a buffer or deadlock (see BufferReturnSignal).
-    private readonly BufferReturnSignal _bufferReturned = new();
+    // missed signal can never lose a buffer or deadlock (see AsyncAutoResetEvent).
+    private readonly AsyncAutoResetEvent _bufferReturned = new();
 
     // Upper bound on a single async backpressure wait slice. Active draining wakes
     // the waiter via _bufferReturned the instant a buffer recycles; this cap only

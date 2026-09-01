@@ -1,6 +1,6 @@
-using FrameFlow.Avalonia.Windows;
+using FrameFlow.Media.Diagnostics;
 
-namespace FrameFlow.Avalonia.Windows.Tests;
+namespace FrameFlow.Media.Tests;
 
 /// <summary>
 /// Pins <see cref="PresenterTickMeter"/>, the diagnostic that separates the two explanations

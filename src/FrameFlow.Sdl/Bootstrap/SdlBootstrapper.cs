@@ -151,7 +151,7 @@ public sealed class SdlBootstrapper : ISdlBootstrapper
 
     private bool TryResolveLibrary(string sdlFileName, out string? resolvedPath, out nint handle)
     {
-        var rid = GetCurrentRid();
+        var rid = RuntimeIdentifierHelper.Current;
         var appBase = AppContext.BaseDirectory;
 
         _logger.LogDebug("Resolving SDL2 library. RID='{Rid}', AppBase='{AppBase}'", rid, appBase);
@@ -230,11 +230,10 @@ public sealed class SdlBootstrapper : ISdlBootstrapper
             // system library search path. Probe the well-known keg location first.
             if (OperatingSystem.IsMacOS())
             {
-                var homebrewPrefix =
-                    RuntimeInformation.OSArchitecture == Architecture.Arm64
-                        ? "/opt/homebrew"
-                        : "/usr/local";
-                var kegCandidate = Path.Combine(homebrewPrefix, "opt", "sdl2", "lib", sdlFileName);
+                var kegCandidate = Path.Combine(
+                    HomebrewLayout.KegLibDirectory("sdl2"),
+                    sdlFileName
+                );
                 _logger.LogDebug("Probing macOS Homebrew keg path: '{Candidate}'", kegCandidate);
                 if (NativeLibrary.TryLoad(kegCandidate, out handle))
                 {
@@ -278,26 +277,6 @@ public sealed class SdlBootstrapper : ISdlBootstrapper
         if (OperatingSystem.IsMacOS())
             return "libSDL2.dylib";
         return "libSDL2.so"; // Linux primary name
-    }
-
-    private static string GetCurrentRid()
-    {
-        var arch = RuntimeInformation.OSArchitecture switch
-        {
-            Architecture.X64 => "x64",
-            Architecture.Arm64 => "arm64",
-            Architecture.X86 => "x86",
-            Architecture.Arm => "arm",
-            _ => "unknown",
-        };
-
-        if (OperatingSystem.IsWindows())
-            return $"win-{arch}";
-        if (OperatingSystem.IsMacOS())
-            return $"osx-{arch}";
-        if (OperatingSystem.IsLinux())
-            return $"linux-{arch}";
-        return $"unknown-{arch}";
     }
 
     private SdlBootstrapResult BuildAlreadyInitializedResult()

@@ -361,7 +361,7 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
     // ── Backpressure (async wait) — end-to-end, device-gated ─────────────────
     //
     // Perf survey A3: FlushStagingBuffer's Thread.Sleep(1) backpressure spin was
-    // replaced with an awaited buffer-return signal (BufferReturnSignal). This
+    // replaced with an awaited buffer-return signal (AsyncAutoResetEvent). This
     // test drives the *real* sink into backpressure by feeding far more PCM than
     // the 16-buffer pool can hold faster than a real device drains it, so the
     // staging flush repeatedly finds no free buffer, parks on the async wait, and
@@ -371,7 +371,7 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
     // clock — i.e. the stalled flush was released by buffer recycles, not wedged.
     //
     // Device-gated (RequiresAudioDeviceFact): the deterministic proof of the
-    // release mechanism is BufferReturnSignalTests, which runs in CI without a
+    // release mechanism is AsyncAutoResetEventTests, which runs in CI without a
     // device. On a headless runner with no device the sink stays inert and this
     // returns trivially.
 

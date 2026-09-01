@@ -1,8 +1,8 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-using System.Diagnostics.Metrics;
 using FrameFlow.Media;
+using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Silk.NET.SDL;
@@ -31,14 +31,10 @@ namespace FrameFlow.SDL;
 /// </remarks>
 public sealed unsafe partial class SdlVideoSink : IVideoSink
 {
-    private static readonly Meter SdlSinkMeter = new("FrameFlow.SDL.Sink", "1.0.0");
-    private static readonly Counter<long> FramesPresentedCounter = SdlSinkMeter.CreateCounter<long>(
-        "frameflow.sdl.sink.frames_presented",
-        description: "Total video frames rendered to the SDL window via SdlVideoSink."
-    );
-    private static readonly Counter<long> FramesDroppedCounter = SdlSinkMeter.CreateCounter<long>(
-        "frameflow.sdl.sink.frames_dropped",
-        description: "Total video frames dropped because the SDL thread did not consume the previous frame in time."
+    private static readonly VideoSinkMeters Meters = new(
+        "FrameFlow.SDL.Sink",
+        "frameflow.sdl.sink",
+        nameof(SdlVideoSink)
     );
 
     private readonly Silk.NET.SDL.Sdl? _sdl;
@@ -48,18 +44,18 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     private Texture* _texture;
     private int _textureWidth;
     private int _textureHeight;
-    private int _renderedFrameCount;
 
     private readonly LatestWinsFrameSlot _slot = new();
+    private readonly VideoSinkTelemetry _telemetry;
     private volatile bool _destroyRequested;
     private int _resourcesDestroyedFlag;
     private int _sdlThreadId;
 
     /// <summary>Gets the total number of frames rendered to the SDL window.</summary>
-    public int RenderedFrameCount => _renderedFrameCount;
+    public int RenderedFrameCount => (int)_telemetry.PresentedCount;
 
     /// <summary>Gets the total number of frames dropped because the SDL thread lagged.</summary>
-    public int DroppedFrameCount => (int)_slot.Dropped;
+    public int DroppedFrameCount => (int)_telemetry.DroppedCount;
 
     /// <inheritdoc />
     public IFramePool FramePool { get; }
@@ -91,6 +87,7 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
 
         _sdl = sdl;
         FramePool = framePool;
+        _telemetry = new VideoSinkTelemetry(Meters, _slot);
         _logger = logger ?? NullLogger<SdlVideoSink>.Instance;
         _sdlThreadId = Environment.CurrentManagedThreadId;
 
@@ -127,6 +124,7 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     {
         _sdl = null;
         FramePool = framePool;
+        _telemetry = new VideoSinkTelemetry(Meters, _slot);
         _logger = logger ?? NullLogger<SdlVideoSink>.Instance;
         _sdlThreadId = Environment.CurrentManagedThreadId;
     }
@@ -156,8 +154,8 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
         // returned flag drives this sink's drop telemetry (meter + log) outside the slot.
         if (_slot.TrySet(frame))
         {
-            FramesDroppedCounter.Add(1);
-            LogFrameDropped(_logger, _renderedFrameCount);
+            _telemetry.RecordSupersededDrop();
+            LogFrameDropped(_logger, RenderedFrameCount);
         }
 
         return ValueTask.CompletedTask;
@@ -220,14 +218,16 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
                     _sdl.RenderCopy(_renderer, _texture, null, null);
                     _sdl.RenderPresent(_renderer);
 
-                    _renderedFrameCount++;
-                    FramesPresentedCounter.Add(1);
+                    // Counted here rather than at Take: a frame the texture path could not
+                    // draw never reached the screen and must not read as presented.
+                    _telemetry.RecordPresented(frame.Pts);
 
-                    if (_renderedFrameCount % 10 == 0 && _window != null)
+                    var presented = RenderedFrameCount;
+                    if (presented % 10 == 0 && _window != null)
                     {
                         _sdl.SetWindowTitle(
                             _window,
-                            $"FrameFlow — frame {_renderedFrameCount} | PTS {frame.Pts.TotalMilliseconds:F0}ms"
+                            $"FrameFlow — frame {presented} | PTS {frame.Pts.TotalMilliseconds:F0}ms"
                         );
                     }
                 }
@@ -238,6 +238,15 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
             frame.Dispose();
         }
     }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Before this existed the sink inherited the default <see cref="IVideoSink"/>
+    /// implementation, so every SDL session reported
+    /// <see cref="VideoSinkDiagnosticsSnapshot.Empty"/> into the playback pipeline snapshot —
+    /// zero frames presented and no A/V drift, whatever was actually on screen.
+    /// </remarks>
+    public VideoSinkDiagnosticsSnapshot GetDiagnostics() => _telemetry.Snapshot();
 
     /// <summary>
     /// Sets the SDL window title. Must be called on the SDL thread.
