@@ -20,12 +20,17 @@ public sealed class HeadlessVideoSinkTests
 {
     private static TimeSpan Pts(int n) => TimeSpan.FromMilliseconds(n * 40);
 
+    private static HeadlessVideoSink NewSink(
+        TimeSpan presentCost = default,
+        TimeProvider? time = null
+    ) => new(new TrackingPool(), presentCost, time);
+
     // ── Counting ──────────────────────────────────────────────────────────────────────────
 
     [Fact]
     public async Task FreshSink_ReportsNothingPresented()
     {
-        await using var sink = new HeadlessVideoSink();
+        await using var sink = NewSink();
 
         var snapshot = sink.GetDiagnostics();
 
@@ -38,7 +43,7 @@ public sealed class HeadlessVideoSinkTests
     public async Task PresentAsync_CountsAndStamps_UnlikeNullVideoSink()
     {
         // The whole reason this type exists: NullVideoSink reports Empty forever.
-        await using var sink = new HeadlessVideoSink();
+        await using var sink = NewSink();
 
         await sink.PresentAsync(new StubFrame(Pts(1)), default);
         await sink.PresentAsync(new StubFrame(Pts(2)), default);
@@ -59,7 +64,7 @@ public sealed class HeadlessVideoSinkTests
     [Fact]
     public async Task PresentAsync_DisposesEveryFrame()
     {
-        await using var sink = new HeadlessVideoSink();
+        await using var sink = NewSink();
         var frames = new[] { new StubFrame(Pts(1)), new StubFrame(Pts(2)) };
 
         foreach (var f in frames)
@@ -71,7 +76,7 @@ public sealed class HeadlessVideoSinkTests
     [Fact]
     public async Task NeverDrops_BecauseThereIsNoRenderTickToFallBehind()
     {
-        await using var sink = new HeadlessVideoSink();
+        await using var sink = NewSink();
 
         for (var i = 0; i < 20; i++)
             await sink.PresentAsync(new StubFrame(Pts(i)), default);
@@ -89,10 +94,7 @@ public sealed class HeadlessVideoSinkTests
         // after, the pool slot would free immediately and the cost would create no backpressure
         // — which measures nothing.
         var time = new FakeTimeProvider();
-        await using var sink = new HeadlessVideoSink(
-            presentCost: TimeSpan.FromMilliseconds(10),
-            timeProvider: time
-        );
+        await using var sink = NewSink(presentCost: TimeSpan.FromMilliseconds(10), time: time);
 
         var frame = new StubFrame(Pts(1));
         var present = sink.PresentAsync(frame, default);
@@ -111,7 +113,7 @@ public sealed class HeadlessVideoSinkTests
     [Fact]
     public async Task ZeroCost_CompletesSynchronously()
     {
-        await using var sink = new HeadlessVideoSink(presentCost: TimeSpan.Zero);
+        await using var sink = NewSink(presentCost: TimeSpan.Zero);
 
         var present = sink.PresentAsync(new StubFrame(Pts(1)), default);
 
@@ -125,10 +127,7 @@ public sealed class HeadlessVideoSinkTests
         // A frame abandoned to cancellation did not reach a surface. Counting it would be the
         // one lie a measurement sink cannot afford.
         var time = new FakeTimeProvider();
-        await using var sink = new HeadlessVideoSink(
-            presentCost: TimeSpan.FromMilliseconds(10),
-            timeProvider: time
-        );
+        await using var sink = NewSink(presentCost: TimeSpan.FromMilliseconds(10), time: time);
 
         using var cts = new CancellationTokenSource();
         var frame = new StubFrame(Pts(1));
@@ -139,34 +138,55 @@ public sealed class HeadlessVideoSinkTests
 
         Assert.Equal(1, frame.DisposeCount);
         Assert.Equal(0, sink.GetDiagnostics().FramesPresented);
+        Assert.Equal(1, sink.AbandonedCount);
+        // Not a drop: FramesDropped means the render path is the bottleneck, and the bench
+        // reads it as sink.dropped. Shutdown losses must not put a floor under it.
+        Assert.Equal(0, sink.GetDiagnostics().FramesDropped);
+    }
+
+    [Fact]
+    public async Task AlreadyCancelledToken_DoesNotCountAPresent_EvenAtZeroCost()
+    {
+        // The zero-cost path skips the delay, so cancellation has to be checked separately or
+        // the contract would depend on how the sink was configured.
+        await using var sink = NewSink(presentCost: TimeSpan.Zero);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var frame = new StubFrame(Pts(1));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await sink.PresentAsync(frame, cts.Token)
+        );
+
+        Assert.Equal(1, frame.DisposeCount);
+        Assert.Equal(0, sink.GetDiagnostics().FramesPresented);
+        Assert.Equal(1, sink.AbandonedCount);
     }
 
     [Fact]
     public void NegativeCost_IsRejected()
     {
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => new HeadlessVideoSink(presentCost: TimeSpan.FromMilliseconds(-1))
+            () => new HeadlessVideoSink(new TrackingPool(), TimeSpan.FromMilliseconds(-1))
         );
     }
 
     // ── Pool ownership ────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task DefaultPool_IsBounded_NotTheUnboundedNullPool()
+    public void PoolIsRequired()
     {
-        // A headless run behind an unbounded pool never blocks the decoder, which is another
-        // way the numbers come back better than the machine can do.
-        await using var sink = new HeadlessVideoSink();
-
-        Assert.IsType<CpuFramePool>(sink.FramePool);
+        Assert.Throws<ArgumentNullException>(() => new HeadlessVideoSink(null!));
     }
 
     [Fact]
-    public async Task InjectedPool_IsNotDisposedBySink()
+    public async Task PoolIsNeverDisposedBySink()
     {
+        // The sink does not own the pool, so it cannot tear one down under a present still
+        // waiting out PresentCost.
         var pool = new TrackingPool();
 
-        await using (var sink = new HeadlessVideoSink(framePool: pool))
+        await using (var sink = new HeadlessVideoSink(pool))
         {
             Assert.Same(pool, sink.FramePool);
         }
@@ -179,7 +199,7 @@ public sealed class HeadlessVideoSinkTests
     [Fact]
     public async Task DisposeAsync_IsIdempotent()
     {
-        var sink = new HeadlessVideoSink();
+        var sink = NewSink();
 
         await sink.DisposeAsync();
         await sink.DisposeAsync();
@@ -188,7 +208,7 @@ public sealed class HeadlessVideoSinkTests
     [Fact]
     public async Task PresentAfterDispose_DisposesTheFrameAndCountsNothing()
     {
-        var sink = new HeadlessVideoSink();
+        var sink = NewSink();
         await sink.DisposeAsync();
 
         var frame = new StubFrame(Pts(1));
@@ -196,6 +216,7 @@ public sealed class HeadlessVideoSinkTests
 
         Assert.Equal(1, frame.DisposeCount);
         Assert.Equal(0, sink.GetDiagnostics().FramesPresented);
+        Assert.Equal(1, sink.AbandonedCount);
     }
 
     // ── Doubles ───────────────────────────────────────────────────────────────────────────

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using FrameFlow.Media.Diagnostics;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Media;
 
@@ -43,6 +42,14 @@ namespace FrameFlow.Media;
 /// pacing chain is what gives up. A script asserting on this sink's own drop count will always
 /// see zero, and should watch the sync counter instead.
 /// </para>
+/// <para>
+/// <b>It does not own the pool.</b> <see cref="FramePool"/> is supplied, never created here,
+/// which is what <c>AvaloniaVideoSink</c> and <c>SdlVideoSink</c> also do. A sink that could
+/// dispose a pool out from under a present still waiting on
+/// <see cref="PresentCost"/> would be relying on that pool to tolerate a return after
+/// disposal. <see cref="CpuFramePool"/> does tolerate it, with a warning; an arbitrary
+/// <see cref="IFramePool"/> need not. Not owning it removes the question.
+/// </para>
 /// </remarks>
 public sealed class HeadlessVideoSink : IVideoSink
 {
@@ -54,17 +61,18 @@ public sealed class HeadlessVideoSink : IVideoSink
 
     private readonly VideoSinkTelemetry _telemetry;
     private readonly TimeProvider _time;
-    private readonly bool _ownsPool;
+    private long _abandoned;
     private volatile bool _disposed;
 
     /// <summary>
     /// Initializes a counting headless sink.
     /// </summary>
     /// <param name="framePool">
-    /// The pool the decoder rents from. Defaults to a <see cref="CpuFramePool"/> at its own
-    /// default capacity — a real bounded pool rather than an unbounded one, so the decoder
-    /// blocks when frames are in flight exactly as it would behind a real sink. A pool passed
-    /// in is not disposed by this sink; one created here is.
+    /// The pool the decoder rents from, owned by the caller and never disposed here. Use a
+    /// bounded pool such as <see cref="CpuFramePool"/> rather than an unbounded one, so the
+    /// decoder blocks when frames are in flight exactly as it would behind a real sink —
+    /// <see cref="NullVideoSink"/>'s unbounded pool is another way a headless run comes back
+    /// faster than the machine can actually go.
     /// </param>
     /// <param name="presentCost">
     /// How long to pretend presenting a frame takes. <see cref="TimeSpan.Zero"/> (the default)
@@ -77,15 +85,15 @@ public sealed class HeadlessVideoSink : IVideoSink
     /// </param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="presentCost"/> is negative.</exception>
     public HeadlessVideoSink(
-        IFramePool? framePool = null,
+        IFramePool framePool,
         TimeSpan presentCost = default,
         TimeProvider? timeProvider = null
     )
     {
+        ArgumentNullException.ThrowIfNull(framePool);
         ArgumentOutOfRangeException.ThrowIfLessThan(presentCost, TimeSpan.Zero);
 
-        _ownsPool = framePool is null;
-        FramePool = framePool ?? new CpuFramePool(NullLogger<CpuFramePool>.Instance);
+        FramePool = framePool;
         PresentCost = presentCost;
         _time = timeProvider ?? HighResolutionTimeProvider.Preferred;
         _telemetry = new VideoSinkTelemetry(Meters);
@@ -100,6 +108,19 @@ public sealed class HeadlessVideoSink : IVideoSink
     /// <summary>Total frames presented. Never decreases.</summary>
     public long PresentedCount => _telemetry.PresentedCount;
 
+    /// <summary>
+    /// Frames disposed without being presented: handed over after
+    /// <see cref="DisposeAsync"/>, or abandoned when the present was cancelled.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately <i>not</i> folded into the snapshot's <c>FramesDropped</c>. That field
+    /// means the render path is the bottleneck, and the bench exposes it as
+    /// <c>sink.dropped</c>; a handful of frames lost at shutdown is not that, and folding them
+    /// in would put a non-zero floor under the metric every run. Surfaced here instead so the
+    /// frames are accounted for rather than silently uncounted.
+    /// </remarks>
+    public long AbandonedCount => Interlocked.Read(ref _abandoned);
+
     /// <inheritdoc />
     /// <remarks>
     /// Charges <see cref="PresentCost"/> before disposing the frame, so the pool slot is held
@@ -113,19 +134,29 @@ public sealed class HeadlessVideoSink : IVideoSink
 
         if (_disposed)
         {
+            Interlocked.Increment(ref _abandoned);
             frame.Dispose();
             return;
         }
 
+        var presented = false;
         try
         {
             if (PresentCost > TimeSpan.Zero)
                 await Task.Delay(PresentCost, _time, ct).ConfigureAwait(false);
 
+            // Checked on both paths, not just after a delay: otherwise an already-cancelled
+            // token would count a present whenever PresentCost is zero, and the contract this
+            // sink advertises would depend on how it was configured.
+            ct.ThrowIfCancellationRequested();
+
             _telemetry.RecordPresented(frame.Pts);
+            presented = true;
         }
         finally
         {
+            if (!presented)
+                Interlocked.Increment(ref _abandoned);
             frame.Dispose();
         }
     }
@@ -149,9 +180,8 @@ public sealed class HeadlessVideoSink : IVideoSink
 
         _disposed = true;
 
-        if (_ownsPool)
-            FramePool.Dispose();
-
+        // Nothing to tear down: the pool belongs to the caller and a present still waiting on
+        // PresentCost holds nothing this sink owns.
         return ValueTask.CompletedTask;
     }
 }
