@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using FrameFlow.Media;
 using FrameFlow.Playback;
+using FrameFlow.Playback.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -60,9 +61,12 @@ public sealed class PlaybackDispatchProtocolTests
         Assert.Equal(1, controller.GetDiagnostics().SessionGeneration);
 
         // Load is accepted only from Idle and Unloaded, so a reload goes through unload.
-        // Unloading alone does not bump the generation -- only CreateSession does.
+        // Unloading alone does not bump the generation -- only CreateSession does -- but the
+        // disposed session must stop being what a poll reads.
         Assert.True((await controller.UnloadAsync()).IsSuccess);
-        Assert.Equal(1, controller.GetDiagnostics().SessionGeneration);
+        var unloaded = controller.GetDiagnostics();
+        Assert.Equal(1, unloaded.SessionGeneration);
+        Assert.Same(PipelineDiagnosticsSnapshot.Empty, unloaded.Pipeline);
 
         Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
         Assert.Equal(2, controller.GetDiagnostics().SessionGeneration);

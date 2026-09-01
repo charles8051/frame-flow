@@ -89,18 +89,37 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     private bool _loopWasStalled;
     private volatile bool _loopStalledNow;
 
-    // Which session produced the next snapshot. Incremented on every CreateSession so a
-    // consumer can tell that a load happened between two polls: the demux and decoder
-    // counters restart at zero there while the consumer's long-lived sink keeps climbing,
-    // and nothing else in the snapshot distinguishes that from a burst of activity.
-    // Written on the action pump, read by GetDiagnostics from any thread.
-    private int _sessionGeneration;
     private long _loopOverrunTicks;
     private IDisposable? _loopStallSubscription;
 
     // ── Session ────────────────────────────────────────────────────────
     private readonly IPlaybackSessionFactory _sessionFactory;
     private IPlaybackSession? _session;
+
+    /// <summary>
+    /// The session a diagnostics poll reads, paired with the generation that identifies it.
+    /// </summary>
+    /// <remarks>
+    /// One field, not two, and that is the whole point. <c>GetDiagnostics</c> runs on the
+    /// caller's thread while <c>CreateSession</c> runs on the action pump, so reading the
+    /// session and the generation separately lets a load land between them. Both orderings
+    /// are silently wrong: old counters stamped with the new generation, or new counters
+    /// stamped with the old one. Either way the next poll matches generations, is treated as
+    /// comparable, and the reset that <see cref="PlaybackDiagnosticsSnapshot.SessionGeneration"/>
+    /// exists to force never fires -- the counters went backwards instead, and
+    /// <c>DiagnosticsInterpreter</c> swallows that. Publishing both in a single reference
+    /// makes reading them apart impossible rather than merely discouraged.
+    /// </remarks>
+    private sealed record SessionBinding(IPlaybackSession? Session, int Generation)
+    {
+        /// <summary>No session loaded. Generation 0 is the never-loaded seed.</summary>
+        public static SessionBinding Unloaded { get; } = new(null, 0);
+    }
+
+    // Written only on the action pump (CreateSession / DisposeSessionAsync), read from any
+    // thread by GetDiagnostics. Volatile on both sides so the record's fields are visible
+    // before the reference is.
+    private SessionBinding _sessionBinding = SessionBinding.Unloaded;
     private IMediaSource? _loadedSource;
 
     // ── Loaded-media snapshot (captured after InitializeAsync succeeds) ──
@@ -312,7 +331,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// </remarks>
     public PlaybackDiagnosticsSnapshot GetDiagnostics()
     {
-        var pipeline = _session?.GetPipelineDiagnostics() ?? PipelineDiagnosticsSnapshot.Empty;
+        // One read: the counters below and the generation they are stamped with must
+        // describe the same session. See SessionBinding.
+        var binding = Volatile.Read(ref _sessionBinding);
+        var pipeline =
+            binding.Session?.GetPipelineDiagnostics() ?? PipelineDiagnosticsSnapshot.Empty;
 
         // A/V drift: positive = video ahead of audio. Null when either side
         // hasn't produced timed data yet. Computed from the snapshot fields
@@ -341,7 +364,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             AvSyncDrift: avSyncDrift,
             LoopStalled: loopStalled,
             LoopOverrun: loopOverrun,
-            SessionGeneration: Volatile.Read(ref _sessionGeneration)
+            SessionGeneration: binding.Generation
         );
     }
 
@@ -787,7 +810,12 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 // Per ADR-0028 §4, callbacks are injected at construction time so the
                 // callback channel is never partially wired.
                 _session = _sessionFactory.CreateSession(_clock, CreateSessionCallbacks());
-                Interlocked.Increment(ref _sessionGeneration);
+                // Publish the new session and its generation as one reference, after the
+                // session is fully constructed. See SessionBinding.
+                Volatile.Write(
+                    ref _sessionBinding,
+                    new SessionBinding(_session, _sessionBinding.Generation + 1)
+                );
                 LogSessionCreated();
                 break;
 
@@ -1392,6 +1420,12 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             LogSessionDisposing();
             await _session.DisposeAsync();
             _session = null;
+            // Unload is not a new session, so the generation does not advance -- but the
+            // disposed session must stop being what a poll reads.
+            Volatile.Write(
+                ref _sessionBinding,
+                new SessionBinding(null, _sessionBinding.Generation)
+            );
         }
 
         _loadedMediaInfo = null;
