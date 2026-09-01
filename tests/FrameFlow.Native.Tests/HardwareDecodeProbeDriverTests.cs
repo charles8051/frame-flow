@@ -8,93 +8,143 @@ using Xunit;
 namespace FrameFlow.Native.Tests;
 
 /// <summary>
-/// Tests for the driver pre-check that keeps <see cref="HardwareDecodeProbe"/> from
-/// attempting a backend whose driver library is absent.
+/// Tests for the gate that decides which hardware backends <see cref="HardwareDecodeProbe"/>
+/// is willing to attempt.
 /// </summary>
 /// <remarks>
-/// The probe itself needs FFmpeg and is not exercised here. What is testable, and what
-/// carries the decision, is which backends get pre-checked and with which libraries.
 /// <para>
-/// The failure being guarded is an abort, not an error: these FFmpeg builds bind optional
-/// drivers through <c>implib.so</c> stubs, and a stub that cannot <c>dlopen</c> its library
-/// calls abort. On a Linux runner that took down three test assemblies —
-/// <c>libcuda.so.1</c> first, then <c>libva-drm.so.2</c> once CUDA was guarded.
+/// The probe itself needs FFmpeg and is not exercised here. What is testable, and what
+/// carries the decision, is the gate: on Linux it is an allowlist, everywhere else it is a
+/// pre-check.
+/// </para>
+/// <para>
+/// The failure being guarded is an abort, not an error. The Linux FFmpeg builds bind
+/// optional drivers through <c>implib.so</c> stubs that call abort when a library is
+/// missing, which took down three test assemblies. Two narrower attempts failed first:
+/// guarding CUDA moved the abort to <c>libva-drm.so.2</c>, and guarding VAAPI too did not
+/// stop it, because the caller was a different backend whose own libraries were present.
 /// </para>
 /// </remarks>
 public sealed class HardwareDecodeProbeDriverTests
 {
-    [Fact]
-    public void EveryBackendWithAStubbedDriver_IsPreChecked()
-    {
-        // The set is platform-specific, so assert the platform this test is running on.
-        // Each entry is a backend whose driver FFmpeg binds through an implib stub.
-        HardwareDecodeBackendKind[] expected = OperatingSystem.IsLinux()
-            ?
-            [
-                HardwareDecodeBackendKind.Cuda,
-                HardwareDecodeBackendKind.VaApi,
-                HardwareDecodeBackendKind.Vdpau,
-                HardwareDecodeBackendKind.Vulkan,
-                HardwareDecodeBackendKind.OpenCl,
-                HardwareDecodeBackendKind.Drm,
-            ]
-            : OperatingSystem.IsWindows()
-                ? [HardwareDecodeBackendKind.Cuda, HardwareDecodeBackendKind.Vulkan]
-                : [];
+    private static readonly HardwareDecodeBackendKind[] AllKinds = Enum.GetValues<HardwareDecodeBackendKind>();
 
-        foreach (var kind in expected)
-        {
-            Assert.NotEmpty(HardwareDecodeProbe.DriverLibrariesFor(kind));
-        }
-    }
+    // ── The Linux allowlist ───────────────────────────────────────────────────────────────
 
     [Fact]
-    public void VaApi_ChecksBothLibraries_NotJustTheHeadlineOne()
+    public void OnLinux_AnUncataloguedBackendIsNotAttempted()
     {
-        // The one that actually aborted was libva-drm.so.2, which is absent on hosts that
-        // do have libva.so.2. Checking only the headline library would not have caught it.
         if (!OperatingSystem.IsLinux())
             return;
 
+        // QSV is the specific one believed to have aborted: it reaches libva through
+        // libmfx, so its own headline library being present proves nothing.
+        Assert.NotNull(
+            HardwareDecodeProbe.SkipReason(
+                HardwareDecodeBackendKind.Qsv,
+                probeUncatalogued: false
+            )
+        );
+        Assert.NotNull(
+            HardwareDecodeProbe.SkipReason(
+                HardwareDecodeBackendKind.Other,
+                probeUncatalogued: false
+            )
+        );
+    }
+
+    [Fact]
+    public void OnLinux_TheEscapeHatchAllowsUncataloguedBackends()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        // Without a way back in, a host with working QSV loses it permanently.
+        Assert.Null(
+            HardwareDecodeProbe.SkipReason(HardwareDecodeBackendKind.Qsv, probeUncatalogued: true)
+        );
+    }
+
+    [Fact]
+    public void OffLinux_AnUncataloguedBackendIsAttempted()
+    {
+        if (OperatingSystem.IsLinux())
+            return;
+
+        // No abort has been seen on Windows or macOS, and their important backends are
+        // OS-integrated with nothing separate to load. Skipping them would lose detection
+        // for no benefit.
+        Assert.Null(
+            HardwareDecodeProbe.SkipReason(
+                HardwareDecodeBackendKind.VideoToolbox,
+                probeUncatalogued: false
+            )
+        );
+        Assert.Null(
+            HardwareDecodeProbe.SkipReason(
+                HardwareDecodeBackendKind.D3D11Va,
+                probeUncatalogued: false
+            )
+        );
+    }
+
+    [Fact]
+    public void TheEscapeHatchChangesNothingOffLinux()
+    {
+        if (OperatingSystem.IsLinux())
+            return;
+
+        foreach (var kind in AllKinds)
+        {
+            Assert.Equal(
+                HardwareDecodeProbe.SkipReason(kind, probeUncatalogued: false),
+                HardwareDecodeProbe.SkipReason(kind, probeUncatalogued: true)
+            );
+        }
+    }
+
+    // ── The catalogue ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void TheCatalogueCoversTheBackendsWorthKeepingOnLinux()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        HardwareDecodeBackendKind[] catalogued =
+        [
+            HardwareDecodeBackendKind.Cuda,
+            HardwareDecodeBackendKind.VaApi,
+            HardwareDecodeBackendKind.Vdpau,
+            HardwareDecodeBackendKind.Vulkan,
+            HardwareDecodeBackendKind.OpenCl,
+            HardwareDecodeBackendKind.Drm,
+        ];
+
+        foreach (var kind in catalogued)
+            Assert.NotEmpty(HardwareDecodeProbe.DriverLibrariesFor(kind));
+    }
+
+    [Fact]
+    public void VaApi_ListsBothLibraries_NotJustTheHeadlineOne()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        // libva.so.2 is present on hosts that lack libva-drm.so.2, and the latter is what
+        // aborted. Checking only the headline library would not have caught it.
         var libraries = HardwareDecodeProbe.DriverLibrariesFor(HardwareDecodeBackendKind.VaApi);
 
         Assert.Contains("libva.so.2", libraries);
         Assert.Contains("libva-drm.so.2", libraries);
     }
 
-    [Theory]
-    [InlineData(HardwareDecodeBackendKind.D3D11Va)]
-    [InlineData(HardwareDecodeBackendKind.Dxva2)]
-    [InlineData(HardwareDecodeBackendKind.VideoToolbox)]
-    [InlineData(HardwareDecodeBackendKind.MediaCodec)]
-    [InlineData(HardwareDecodeBackendKind.Other)]
-    public void OsIntegratedBackends_KeepThePlainAttemptAndReportPath(
-        HardwareDecodeBackendKind kind
-    )
-    {
-        // Nothing separate to dlopen, so nothing to pre-check. Skipping these would lose
-        // detection on the platforms where they are the only backend that works.
-        Assert.Empty(HardwareDecodeProbe.DriverLibrariesFor(kind));
-    }
-
     [Fact]
-    public void MacOs_PreChecksNothing()
+    public void EveryCataloguedLibrary_LooksLikeAPlatformLoaderName()
     {
-        if (!OperatingSystem.IsMacOS())
-            return;
-
-        foreach (HardwareDecodeBackendKind kind in Enum.GetValues<HardwareDecodeBackendKind>())
-        {
-            Assert.Empty(HardwareDecodeProbe.DriverLibrariesFor(kind));
-        }
-    }
-
-    [Fact]
-    public void EveryListedLibrary_LooksLikeAPlatformLoaderName()
-    {
-        // A typo here would silently skip a working backend, since a name that cannot load
-        // is indistinguishable from a driver that is not installed.
-        foreach (HardwareDecodeBackendKind kind in Enum.GetValues<HardwareDecodeBackendKind>())
+        // A typo silently disables a working backend, since a name that cannot load is
+        // indistinguishable from a driver that is not installed.
+        foreach (var kind in AllKinds)
         {
             foreach (var library in HardwareDecodeProbe.DriverLibrariesFor(kind))
             {
@@ -105,6 +155,38 @@ public sealed class HardwareDecodeProbeDriverTests
                 else
                     Assert.Contains(".so", library, StringComparison.Ordinal);
             }
+        }
+    }
+
+    [Fact]
+    public void MacOs_CataloguesNothing()
+    {
+        if (!OperatingSystem.IsMacOS())
+            return;
+
+        // VideoToolbox is part of the OS and CUDA has not existed there since 10.14.
+        foreach (var kind in AllKinds)
+            Assert.Empty(HardwareDecodeProbe.DriverLibrariesFor(kind));
+    }
+
+    // ── Skip reasons are for humans ───────────────────────────────────────────────────────
+
+    [Fact]
+    public void ASkipReason_NamesWhatIsMissing()
+    {
+        foreach (var kind in AllKinds)
+        {
+            if (HardwareDecodeProbe.SkipReason(kind, probeUncatalogued: false) is not { } reason)
+                continue;
+
+            Assert.NotEmpty(reason);
+            // Either it names the library that would not load, or it says the backend is
+            // uncatalogued and points at the way back in.
+            var libraries = HardwareDecodeProbe.DriverLibrariesFor(kind);
+            if (libraries.Count > 0)
+                Assert.Contains(libraries.First(l => reason.Contains(l, StringComparison.Ordinal)), reason);
+            else
+                Assert.Contains("ProbeUncataloguedBackends", reason, StringComparison.Ordinal);
         }
     }
 }

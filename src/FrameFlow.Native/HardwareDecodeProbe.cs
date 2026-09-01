@@ -33,14 +33,33 @@ namespace FrameFlow.Native;
 /// attempt takes the process down.
 /// </para>
 /// <para>
-/// The mechanism is the FFmpeg build, not FFmpeg's hwdevice code. These builds bind
-/// their optional driver dependencies through <c>implib.so</c> lazy-loading stubs,
-/// and a stub that cannot <c>dlopen</c> its library aborts rather than returning an
-/// error:
+/// The mechanism is the FFmpeg build, not FFmpeg's hwdevice code. The Linux builds
+/// come from BtbN/FFmpeg-Builds, which bind optional driver dependencies through
+/// <c>implib.so</c> lazy-loading stubs so one binary works everywhere. A stub that
+/// cannot <c>dlopen</c> its library aborts rather than returning an error:
 /// <c>implib-gen: libva-drm.so.2: failed to load library ... via dlopen</c>.
-/// Nothing managed can catch that. It applies to every stubbed driver, which is why
-/// the table in <see cref="DriverLibrariesFor"/> covers each backend with a known
-/// one rather than only the first that was seen to abort.
+/// Nothing managed can catch that.
+/// </para>
+/// <para>
+/// <b>On Linux the walk is therefore an allowlist, not a denylist.</b> A backend is
+/// attempted only when <see cref="DriverLibrariesFor"/> catalogues its drivers and
+/// every one of them loads. Anything uncatalogued is reported unavailable without
+/// being attempted.
+/// </para>
+/// <para>
+/// That inversion is the lesson of two failed narrower attempts. Guarding CUDA moved
+/// the abort to <c>libva-drm.so.2</c>; guarding VAAPI as well did not stop it, because
+/// the caller reaching that stub was a <i>different</i> backend whose own libraries
+/// were present — QSV goes to libva through libmfx, and an unclassified type is
+/// attempted with no guard at all. Enumerating a native dependency graph from the
+/// outside does not converge. Refusing to attempt what is not catalogued does.
+/// </para>
+/// <para>
+/// The cost is a Linux host with a working uncatalogued backend losing it. Set
+/// <see cref="FrameFlowNativeOptions.ProbeUncataloguedBackends"/> on a host known to
+/// have its drivers installed; the default declines to trade a crash for a detection.
+/// Windows and macOS keep the full walk — no abort has been seen there, and their
+/// important backends are OS-integrated with nothing separate to load.
 /// </para>
 /// <para>
 /// For a library this matters more than it does for a test run. "Linux host with
@@ -56,7 +75,10 @@ internal static partial class HardwareDecodeProbe
     /// backend are captured in the corresponding
     /// <see cref="HardwareDecodeBackend.DiagnosticMessage"/>.
     /// </summary>
-    internal static HardwareDecodeCapabilities Run(ILogger? logger = null)
+    internal static HardwareDecodeCapabilities Run(
+        ILogger? logger = null,
+        bool probeUncatalogued = false
+    )
     {
         logger ??= NullLogger.Instance;
 
@@ -69,14 +91,12 @@ internal static partial class HardwareDecodeProbe
             var kind = ClassifyBackend(type);
             var display = DisplayNameFor(kind);
 
-            // Backends with known driver libraries are pre-checked, because attempting one
-            // whose driver is absent aborts the process rather than failing.
-            if (FirstMissingDriver(kind) is { } driver)
+            // Gate before attempting: on Linux an unattemptable backend aborts the
+            // process rather than failing, so the decision has to be made out here.
+            if (SkipReason(kind, probeUncatalogued) is { } reason)
             {
-                var missing =
-                    $"Skipped '{avName}': driver library '{driver}' is not loadable on this host, "
-                    + "so the backend cannot initialise.";
-                LogHwProbeDriverMissing(logger, avName, display, driver);
+                var missing = $"Skipped '{avName}': {reason}.";
+                LogHwProbeSkipped(logger, avName, display, reason);
 
                 backends.Add(
                     new HardwareDecodeBackend(
@@ -195,17 +215,46 @@ internal static partial class HardwareDecodeProbe
     }
 
     /// <summary>
-    /// The first library <paramref name="kind"/> needs that will not load here, or
-    /// <see langword="null"/> if they all load (or it needs none).
+    /// Why <paramref name="kind"/> must not be attempted on this host, or
+    /// <see langword="null"/> to attempt it.
+    /// </summary>
+    /// <param name="kind">The backend under consideration.</param>
+    /// <param name="probeUncatalogued">
+    /// When <see langword="true"/>, a backend with no catalogued drivers is attempted
+    /// anyway. Off by default on Linux, where that is how the process dies.
+    /// </param>
+    internal static string? SkipReason(HardwareDecodeBackendKind kind, bool probeUncatalogued)
+    {
+        var libraries = DriverLibrariesFor(kind);
+
+        if (libraries.Count == 0)
+        {
+            // Nothing catalogued. On Windows and macOS that means the OS supplies it and
+            // there is nothing to check. On Linux it means we cannot know whether the
+            // attempt aborts, and the attempt is the thing that kills the process.
+            return OperatingSystem.IsLinux() && !probeUncatalogued
+                ? "no catalogued driver libraries, and an uncatalogued backend cannot be "
+                    + "attempted safely on this platform (see ProbeUncataloguedBackends)"
+                : null;
+        }
+
+        return FirstMissingDriver(libraries) is { } missing
+            ? $"driver library '{missing}' is not loadable on this host"
+            : null;
+    }
+
+    /// <summary>
+    /// The first of <paramref name="libraries"/> that will not load here, or
+    /// <see langword="null"/> if they all load.
     /// </summary>
     /// <remarks>
     /// Each handle is released immediately — this asks a question, it does not take a
     /// dependency. FFmpeg loads its own afterwards, and <c>dlopen</c> is reference counted,
     /// so the probe and FFmpeg do not interfere.
     /// </remarks>
-    private static string? FirstMissingDriver(HardwareDecodeBackendKind kind)
+    private static string? FirstMissingDriver(IReadOnlyList<string> libraries)
     {
-        foreach (var library in DriverLibrariesFor(kind))
+        foreach (var library in libraries)
         {
             if (!NativeLibrary.TryLoad(library, out var handle))
                 return library;
@@ -307,12 +356,12 @@ internal static partial class HardwareDecodeProbe
 
     [LoggerMessage(
         Level = LogLevel.Debug,
-        Message = "Hardware decode probe: {AvName} ({DisplayName}) skipped — driver library '{Driver}' is not loadable on this host."
+        Message = "Hardware decode probe: {AvName} ({DisplayName}) not attempted — {Reason}."
     )]
-    private static partial void LogHwProbeDriverMissing(
+    private static partial void LogHwProbeSkipped(
         ILogger logger,
         string avName,
         string displayName,
-        string driver
+        string reason
     );
 }
