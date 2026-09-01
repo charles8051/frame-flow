@@ -123,6 +123,43 @@ public sealed class PlaybackDispatchProtocolTests
     }
 
     [Fact]
+    public async Task FailedDisposal_StillPublishesTheTeardownBoundary()
+    {
+        // The boundary is published before the disposal is awaited, so a throwing
+        // DisposeAsync cannot leave the controller serving a dead session's counters under
+        // the pre-teardown generation. Publishing afterwards would skip the write entirely.
+        var session = new FakeSession { DisposeThrows = new InvalidOperationException("stuck") };
+        var clock = new PlaybackClock(new ManualTimeSource());
+        await using var controller = new PlaybackControllerCore(
+            NullLogger<PlaybackControllerCore>.Instance,
+            new FakeSessionFactory(session),
+            clock,
+            Microsoft.Extensions.Options.Options.Create(new FrameFlowPlaybackOptions())
+        );
+
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+        var loaded = controller.GetDiagnostics();
+        Assert.Equal(1, loaded.SessionGeneration);
+
+        // Unload drives the throwing disposal. However the controller reports that, the
+        // diagnostics boundary must have moved.
+        try
+        {
+            await controller.UnloadAsync();
+        }
+        catch (InvalidOperationException)
+        {
+            // The disposal fault is the controller's business; this test is about the boundary.
+        }
+
+        var after = controller.GetDiagnostics();
+
+        Assert.Equal(2, after.SessionGeneration);
+        Assert.Same(PipelineDiagnosticsSnapshot.Empty, after.Pipeline);
+        Assert.True(Diagnostics.DiagnosticsInterpreter.Compare(loaded, after).IsReset);
+    }
+
+    [Fact]
     public async Task SnapshotsStraddlingALoad_CompareAsReset()
     {
         // The end-to-end shape of Decision 5: the generation the controller stamps is what
@@ -685,9 +722,14 @@ public sealed class PlaybackDispatchProtocolTests
             return ValueTask.CompletedTask;
         }
 
+        /// <summary>When set, <see cref="DisposeAsync"/> throws it.</summary>
+        public Exception? DisposeThrows;
+
         public ValueTask DisposeAsync()
         {
             Disposed = true;
+            if (DisposeThrows is { } ex)
+                throw ex;
             return ValueTask.CompletedTask;
         }
     }
