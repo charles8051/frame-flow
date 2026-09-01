@@ -155,6 +155,29 @@ presentation. The bench needs a counting sink with an optional synthetic present
 cost, or headless numbers will be optimistically wrong in the one direction that
 matters. That sink is part of this work, not a follow-up.
 
+**Landed** as `HeadlessVideoSink` in
+[`src/FrameFlow.Media/HeadlessVideoSink.cs`](../../src/FrameFlow.Media/HeadlessVideoSink.cs),
+beside `NullVideoSink` rather than inside the bench — see *Not settled here*,
+which this resolves. Three details are load-bearing and easy to get wrong:
+
+- **The frame is held for the whole cost**, not disposed first. The pool slot
+  stays occupied for the duration, so the cost propagates back through the frame
+  pool as real backpressure. Disposing first and then sleeping bills wall-clock
+  time while the decoder runs unimpeded, which measures nothing.
+- **The wait is high-resolution.** On the system timer a 5 ms synthetic cost
+  bills ~15.6 ms ([ADR-0067](ADR-0067-high-resolution-pacing-timers.md)), which
+  trades optimistically wrong for pessimistically wrong.
+- **The pool is required, not created by the sink.** A bounded pool is what
+  makes the decoder block when frames are in flight; `NullVideoSink`'s unbounded
+  one is a second way a headless run comes back faster than the machine can go.
+
+It never reports a drop of its own: with no render tick there is nothing to fall
+behind, so loss under a heavy synthetic cost appears upstream as `sync.dropped`
+rather than `sink.dropped`. A script asserting `sink.dropped` in headless will
+always pass. Frames abandoned at shutdown or to cancellation are on the sink's
+own `AbandonedCount`, deliberately outside `sink.dropped` so that metric keeps
+its "the render path is the bottleneck" meaning.
+
 ### Decision 5: the diagnostics interpretation moves into the library
 
 Popcorn's delta-to-sentence mapping moves next to the ADR-0034 snapshot types in
@@ -197,6 +220,25 @@ Neither available shortcut is acceptable:
 Making the reset a value the caller has to handle is what stops both. It also
 gives the bench the error text for `since` across a `load`, so the rule under
 Decision 6 and the library's behaviour are the same rule rather than two.
+
+**Landed.** `PlaybackDiagnosticsSnapshot.SessionGeneration` carries the
+generation, and `DiagnosticsInterpreter.Compare` in
+[`src/FrameFlow.Playback/Diagnostics`](../../src/FrameFlow.Playback/Diagnostics)
+returns either observations or an explicit reset.
+
+Two notes for whoever writes the bench against it. The generation is published
+with the session as one reference rather than as a separate counter: reading
+them apart lets a `load` land between the two reads, and both interleavings
+produce a snapshot whose counters and generation disagree, which defeats the
+reset for the exact poll-straddles-load case it exists to catch.
+
+And the observation set is positive deltas and rising edges only. "Nothing
+decoded" and "nothing reached the screen" are absent because whether that is a
+freeze or a normal gap between two fast polls depends on the interval, and the
+snapshots carry no wallclock. Those questions already have answers that do carry
+a timeout — `loop.stalled` on the snapshot, and `PresenterStallWatchdog` for the
+presenter — so `wait` and `expect` should reach for those rather than expecting
+the interpreter to grow a liveness rule.
 
 ### Decision 6: the script language is declarative and has no control flow
 
@@ -269,6 +311,10 @@ guessed.
 | `out.rate` | gauge | `AudioSink.SampleRate` |
 | `out.channels` | gauge | `AudioSink.Channels` |
 | `out.active` | bool | `AudioSink.IsActive` |
+
+`sink.committed` is only populated by the zero-copy compositor presenter; every
+other sink reports `0`, which currently cannot be told apart from "nothing
+committed". See *Not settled here*.
 
 The kind constrains the language rather than merely describing it. It decides which operators
 are legal, and an illegal pairing is rejected when the script parses:
@@ -512,7 +558,23 @@ reports and continues; it never exits on a failed `expect`.
 ## Not settled here
 
 - Whether the project lives at `tools/` or `testbench/`.
-- Whether the counting sink belongs in the bench or beside `NullVideoSink` in
-  `FrameFlow.Media`.
+- ~~Whether the counting sink belongs in the bench or beside `NullVideoSink` in
+  `FrameFlow.Media`.~~ **Settled:** `FrameFlow.Media`. It keeps the bench thin,
+  it is where the sink telemetry shell already lives, and it makes the sink
+  testable without a bench. See Decision 4.
 - Whether `set` gains knobs beyond `timeout`, and whether `set` belongs in a
   script at all rather than on the command line.
+- Whether `sink.committed` should be nullable. The field behind it,
+  `VideoSinkDiagnosticsSnapshot.FramesCommitted`, is a `long` that only the
+  zero-copy compositor presenter ever populates; every other sink reports `0`.
+  Under Decision 6 that is indistinguishable from a presenter that enqueued
+  nothing, so `expect sink.committed > 0` fails on the CPU and SDL paths for a
+  reason that has nothing to do with the run. The metric-kind rules already
+  handle this shape for `drift`, `video.backend`, `sink.last-pts`, and
+  `loop.overrun` — a nullable metric compares against `null` explicitly and any
+  other comparison fails as "not yet available" rather than being treated as
+  zero. Making `FramesCommitted` a `long?` would put `sink.committed` in that
+  group and let a script distinguish "this sink does not track commit" from
+  "nothing committed". It is a change to an ADR-0034 snapshot record with
+  existing consumers, so it belongs to whoever implements Decision 6 rather than
+  being smuggled in ahead of it.
