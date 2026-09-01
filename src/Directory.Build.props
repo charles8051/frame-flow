@@ -37,7 +37,7 @@
     <PackageProjectUrl>https://github.com/charles8051/frame-flow</PackageProjectUrl>
     <RepositoryUrl>https://github.com/charles8051/frame-flow</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <Description>FrameFlow — clean, headless FFmpeg-based media playback for .NET</Description>
+    <Description>FrameFlow — cross-platform FFmpeg-based media playback for .NET, with a UI-agnostic core</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
 

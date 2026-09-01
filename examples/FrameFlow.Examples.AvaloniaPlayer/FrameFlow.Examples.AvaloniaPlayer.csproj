@@ -44,7 +44,7 @@
       FFmpeg and MediaPlayer.CreateAsync throws on first decode (ADR-0014 /
       ADR-0046). Mirrors examples/Multicast.Dml + Camera.Inference.Dml.
     -->
-    <PackageReference Include="FrameFlow.Native.Runtime" Version="0.1.1-alpha.*" />
+    <PackageReference Include="FrameFlow.Native.Runtime" Version="0.7.0-alpha.*" />
   </ItemGroup>
 
   <ItemGroup>

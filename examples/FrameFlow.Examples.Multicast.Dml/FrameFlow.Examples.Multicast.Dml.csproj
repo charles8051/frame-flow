@@ -56,7 +56,7 @@
       that consumers — including shipping examples and downstream
       signage or kiosk apps — should use.
     -->
-    <PackageReference Include="FrameFlow.Native.Runtime" Version="0.1.1-alpha.*" />
+    <PackageReference Include="FrameFlow.Native.Runtime" Version="0.7.0-alpha.*" />
   </ItemGroup>
 
   <ItemGroup>
