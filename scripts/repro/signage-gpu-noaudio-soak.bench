@@ -1,4 +1,4 @@
-# STATUS: grammar draft. Does not run yet.
+# STATUS: grammar draft. Does not run yet. WINDOWS ONLY (see the sibling script).
 #
 # tools/FrameFlow.TestBench does not exist. This file was written to test the
 # script grammar in docs/adr/command-driven-testbench-host.md against a real

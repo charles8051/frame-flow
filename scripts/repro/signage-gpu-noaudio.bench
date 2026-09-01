@@ -1,4 +1,9 @@
-# STATUS: grammar draft. Does not run yet.
+# STATUS: grammar draft. Does not run yet. WINDOWS ONLY.
+#
+# `require presenter gpu` below binds this script to the zero-copy compositor
+# presenter, which is FrameFlow.Avalonia.Windows. On Linux and macOS it exits 2
+# without playing, by design. A cross-platform comparison needs a separate
+# software-path script; this one cannot be that.
 #
 # tools/FrameFlow.TestBench does not exist. This file was written to test the
 # script grammar in docs/adr/command-driven-testbench-host.md against a real
@@ -35,7 +40,13 @@ wait sink.presented >= 15            # half a second of frames; let it settle
 # assumed: a null drift read as zero would make an A/V assertion pass on a
 # pipeline that never produced timed audio at all.
 expect drift == null
-expect out.active == false
+#
+# There was an `expect out.active == false` here. It could not fail: with no
+# audio sink the snapshot serves AudioSinkDiagnosticsSnapshot.Empty, so every
+# out.* metric is frozen at zero or false whatever the run does. `require audio
+# off` above already asserts the thing it was reaching for, and against the
+# resolved configuration rather than a counter. Under the capability rule in
+# Decision 6 the line is now a parse error, which is the point.
 
 # FramesCommitted stays zero on the WriteableBitmap path, so this catches a
 # silent fall back to the CPU surface — the failure where the repro runs green
