@@ -389,6 +389,44 @@ jobs:
       # package publicly, the follow-up bumps those six references and drops the
       # read, the PACKAGES_READ_PAT secret and the github-charles8051 source.
 
+      # v0.7.0-alpha.3 published PARTIALLY: the push walks the glob one package at
+      # a time, five were accepted, and FrameFlow.MotionClip was rejected 413
+      # (exceeds the size limit). Five ids are permanently public at a version the
+      # other eighteen never reached. The completeness gate above could not have
+      # caught it — it proves every package was BUILT, and size is only knowable
+      # against the registry's limit.
+      #
+      # MotionClip is held back rather than shrunk: it is PackAsTool, so the nupkg
+      # is the entire self-contained tool (Avalonia, SkiaSharp, FFmpeg natives per
+      # RID) at ~253 MB against nuget.org's 250 MB cap. docs/DEFERRED_WORK.md
+      # tracks the reduction levers; until one lands it cannot go to nuget.org at
+      # any version. It still ships — release-binaries attaches the self-contained
+      # executable to the GitHub Release.
+      #
+      # Moved rather than deleted, so the run's uploaded artifact still carries it.
+      - name: Hold back what nuget.org cannot take, and assert the rest fit
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIMIT_MB=250
+
+          mkdir -p not-published
+          # [0-9] pins the match to a version boundary, matching the completeness
+          # gate above. A bare .* would also catch a future sibling id such as
+          # FrameFlow.MotionClip.Extensions and hold it back silently.
+          mv packages/FrameFlow.MotionClip.[0-9]*.nupkg not-published/ 2>/dev/null || true
+
+          fail=0
+          for f in packages/*.nupkg; do
+            mb=$(( $(stat -c%s "$f") / 1000000 ))
+            printf '%6s MB  %s\n' "$mb" "$(basename "$f")"
+            if [ "$mb" -ge "$LIMIT_MB" ]; then
+              echo "::error::$(basename "$f") is ${mb}MB, at or over nuget.org's ${LIMIT_MB}MB limit. Pushing would publish the packages before it and then fail, leaving a partial release that cannot be undone."
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ]
+
       # Requested immediately before the push, not earlier in the job: the key
       # nuget.org returns is valid for one hour.
       #
@@ -432,7 +470,12 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: packages
-          path: packages/*.nupkg
+          # Both directories: not-published/ holds what the size gate held back,
+          # and an artifact that silently omitted it would make the run harder to
+          # reason about, not easier.
+          path: |
+            packages/*.nupkg
+            not-published/*.nupkg
           if-no-files-found: warn
 
       # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
