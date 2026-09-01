@@ -173,8 +173,15 @@ which this resolves. Three details are load-bearing and easy to get wrong:
 
 It never reports a drop of its own: with no render tick there is nothing to fall
 behind, so loss under a heavy synthetic cost appears upstream as `sync.dropped`
-rather than `sink.dropped`. A script asserting `sink.dropped` in headless will
-always pass. Frames abandoned at shutdown or to cancellation are on the sink's
+rather than `sink.dropped`, in one of two places depending on where the pressure
+lands. A bounded pool blocks the decoder once frames are in flight, which fills
+the channel and shows up as `video.shed`; frames that do get through and arrive
+late are discarded by the pacing chain as `sync.dropped`. A heavy cost can move
+either counter, and a headless script watching for loss has to watch both.
+
+`sink.dropped` itself stays at zero throughout, so a windowed assertion on it —
+the only form Decision 6 allows for a `count` — passes regardless of how badly
+the run went. Frames abandoned at shutdown or to cancellation are on the sink's
 own `AbandonedCount`, deliberately outside `sink.dropped` so that metric keeps
 its "the render path is the bottleneck" meaning.
 
@@ -235,10 +242,17 @@ reset for the exact poll-straddles-load case it exists to catch.
 And the observation set is positive deltas and rising edges only. "Nothing
 decoded" and "nothing reached the screen" are absent because whether that is a
 freeze or a normal gap between two fast polls depends on the interval, and the
-snapshots carry no wallclock. Those questions already have answers that do carry
-a timeout — `loop.stalled` on the snapshot, and `PresenterStallWatchdog` for the
-presenter — so `wait` and `expect` should reach for those rather than expecting
-the interpreter to grow a liveness rule.
+snapshots carry no wallclock. That question already has an answer that carries a
+timeout, so `wait` and `expect` should reach for it rather than expecting the
+interpreter to grow a liveness rule.
+
+For the loop that answer is `loop.stalled`, which is on the snapshot and in the
+namespace below. For the presenter there is no answer a script can reach:
+`PresenterStallWatchdog` is a host-side component that raises events, and
+nothing it decides reaches `PlaybackDiagnosticsSnapshot`, so there is no dotted
+path for it. Decision 6 may want one; until then a bench script cannot assert on
+a presenter freeze at all, which is worth knowing before writing a script that
+looks like it can.
 
 ### Decision 6: the script language is declarative and has no control flow
 
@@ -312,9 +326,11 @@ guessed.
 | `out.channels` | gauge | `AudioSink.Channels` |
 | `out.active` | bool | `AudioSink.IsActive` |
 
-`sink.committed` is only populated by the zero-copy compositor presenter; every
-other sink reports `0`, which currently cannot be told apart from "nothing
-committed". See *Not settled here*.
+`sink.committed` is only populated by the zero-copy compositor presenter. Every
+other sink reports `0`, which cannot be told apart from "committed nothing", so
+`expect sink.committed == 0` is green and meaningless on the CPU and SDL paths.
+Until the field is nullable, treat it as assertable only under
+`require presenter gpu`. See *Not settled here*.
 
 The kind constrains the language rather than merely describing it. It decides which operators
 are legal, and an illegal pairing is rejected when the script parses:
