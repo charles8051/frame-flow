@@ -117,6 +117,10 @@ logs cannot produce it without clock correlation.
 
 `--script <file>` runs a command file non-interactively and sets the exit code
 from the first failed assertion, so a bench session can run in CI or over SSH.
+(What a script *is* is under challenge — see the proposed revision at the head of
+Decision 6. If assertions move to C#, `--script` reduces to reading commands from
+a file instead of the console, and the exit code comes from the C# repro rather
+than from the bench.)
 
 The pipe is not ruled out. If driving a long-lived window from a second terminal
 turns out to matter, popcorn's `PipeAddress` and line protocol are roughly 120
@@ -306,6 +310,103 @@ a host-side component that raises events, and nothing it decides reaches
 `PlaybackDiagnosticsSnapshot` — but that closes one route, not the question.
 
 ### Decision 6: the script language is declarative and has no control flow
+
+> **PROPOSED REVISION — the script language should not exist.**
+>
+> Everything below this block describes a bespoke assertion language. This block
+> argues it should be replaced by C#, and that the interactive command set should
+> survive unchanged. The reasoning below is left in place because it is sound
+> reasoning *about a language*; the question is whether the language earns its
+> place. That is an open call, not a settled one.
+>
+> #### What splits apart
+>
+> The decision fuses three things that are separable:
+>
+> | | Verdict |
+> | --- | --- |
+> | A console host that keeps the pipeline warm and takes typed commands | Keep. Nothing else does this — a run config cannot seek-then-ask, and a test tears down between cases |
+> | A file that drives a sequence non-interactively | Keep, and it is nearly free (see below) |
+> | A declarative assertion grammar with kinds, windows, operators and gates | Drop |
+>
+> The transport commands — `load`, `play`, `pause`, `seek`, `volume`, `repeat`,
+> `status`, `diag` — are typed by a human at a prompt. Words are right for that,
+> and a file of those same words is stdin redirection rather than a language.
+> `--script` becomes "read commands from this file instead of the console",
+> which needs no grammar the REPL does not already have.
+>
+> The assertions are the part that needs a language, and they are the part C#
+> already does.
+>
+> #### The evidence against the grammar
+>
+> **Every defect found in review has been in the language, not the pipeline.**
+> Operators were never enumerated while a shipped script used `!=`. `count`
+> admitted contradictory rules in two sections. Exit code 2 means both "did not
+> parse" and "wrong invocation". Eight metrics read zero when their subsystem is
+> absent, which required inventing a third parse-time constraint. None of these
+> are problems with driving a player; all of them are problems with having built
+> a language to do it.
+>
+> **The rejection of embedded C# does not cover the actual alternative.** The
+> *Alternatives considered* section rejects "Lua, or C# scripting via Roslyn" on
+> the grounds that the bench "inherits a language runtime, a packaging problem".
+> True of Roslyn scripting. Not true of .NET file-based apps, where the script
+> *is* a program and there is no host runtime to inherit.
+>
+> The repo already does this. `scripts/generate-test-corpus.cs` — cited by line
+> number elsewhere in this ADR — opens with `#!/usr/bin/env dotnet` and
+> `#:property TargetFramework=net10.0`, as do `fetch-cuda.cs` and
+> `fetch-ffmpeg.cs`. The convention for "a runnable, reviewable, diffable file of
+> logic" is established and it is C#.
+>
+> #### What the grammar's hard problems become
+>
+> | Grammar concept | In C# |
+> | --- | --- |
+> | The metric namespace | property access, with IDE completion |
+> | Metric kinds constraining operators | the type system |
+> | Nullable metrics (`drift`, `sink.last-pts`) | `TimeSpan?` |
+> | Capability gating (`sink.committed`, `out.*`) | a nullable field, or an explicit check |
+> | `mark` / `since` | a local holding a snapshot, and `DiagnosticsInterpreter.Compare` |
+> | `require presenter gpu` | an `if` over the resolved sink, and `return 2` |
+> | "Parse first, run second" | compilation, which catches strictly more |
+>
+> The capability problem is the sharpest case. It exists only because a dotted
+> string cannot express "this metric may be unavailable". The nullable option was
+> rejected because null-as-capability reads wrong *in the grammar*; in C# there is
+> no ambiguity, because a nullable field is checked rather than compared.
+>
+> #### The argument for the grammar, and why it does not hold
+>
+> Non-Turing-complete is deliberate: it stops the bench "growing into a second
+> test framework with its own debugger". A C# repro can grow logic, and that risk
+> is real.
+>
+> It is a review norm, not a language property, and this ADR already relies on
+> review norms for the same class of drift — "the line to hold is that it drives,
+> observes, and asserts". A hand-rolled parser is an expensive way to enforce a
+> convention that a reviewer enforces anyway.
+>
+> #### What this does not resolve
+>
+> How a C# repro takes a dependency on FrameFlow. .NET file-based apps support
+> `#:package`, which would make a repro consume the *packaged* surface and so
+> sharpen Decision 3's ergonomics check rather than weakening it — but no script
+> in `scripts/` has exercised that directive, so it wants a spike before being
+> written into a decision.
+>
+> #### What it collapses
+>
+> Adopting this closes, without further design: the operator table, the exit-code
+> split, capability gating, the metric-kind rules, `set`, and what kind the
+> wallclock fields get. Those are six of the open questions below and in this
+> section.
+>
+> ---
+>
+> The superseded design follows.
+
 
 Three groups of statement: the transport commands (`load`, `play`, `pause`,
 `seek`, `volume`, `repeat`, `status`, `diag`), the assertions (`mark`, `wait`,
@@ -696,6 +797,13 @@ reports and continues; it never exits on a failed `expect`.
   the human-readable heartbeat.
 
 ## Not settled here
+
+**The largest open question is at the head of Decision 6**: whether the script
+language should exist at all, or whether repro files should be C# and the bench
+should keep only its interactive command set. Adopting that revision closes six
+of the entries below and in Decision 6 — the operator table, the exit-code split,
+capability gating, the metric-kind rules, `set`, and the wallclock kinds — so it
+should be decided before any of them are.
 
 - ~~Whether the project lives at `tools/` or `testbench/`.~~ **Settled:** `tools/`.
   Three places outside this ADR already say so — `docs/adr/README.md` and the
