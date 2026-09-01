@@ -389,6 +389,70 @@ jobs:
       # package publicly, the follow-up bumps those six references and drops the
       # read, the PACKAGES_READ_PAT secret and the github-charles8051 source.
 
+      # Select what goes public, and refuse to start if anything is too big.
+      #
+      # Both halves exist because v0.7.0-alpha.3 published PARTIALLY: the push
+      # walks the glob one package at a time, five were accepted, and
+      # FrameFlow.MotionClip was rejected 413 (exceeds the size limit). Five ids
+      # are permanently public at a version the other eighteen never reached, and
+      # nothing can un-publish them. The completeness gate above could not have
+      # caught it — it proves every package was BUILT, and size is only knowable
+      # against the registry's limit.
+      #
+      # MotionClip is excluded deliberately, not worked around. It is PackAsTool,
+      # so the nupkg carries the whole self-contained tool: Avalonia, SkiaSharp
+      # and the FFmpeg natives for every fetched RID, ~253 MB against nuget.org's
+      # 250 MB cap. docs/DEFERRED_WORK.md tracks the reduction work and ranks the
+      # levers; until one lands, this package cannot go to nuget.org at any
+      # version. It is still published: release-binaries attaches the
+      # self-contained executable to the GitHub Release, which is how a consumer
+      # gets it without a .NET SDK anyway.
+      #
+      # The size assertion is the general guard. It runs over the exact set about
+      # to be pushed, before the OIDC exchange, so a package that grows past the
+      # cap fails the release instead of publishing half of one.
+      - name: Select the nuget.org set and assert every package fits
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # nuget.org's documented per-package limit.
+          LIMIT_MB=250
+          # Packages that cannot go to nuget.org, with the reason they cannot.
+          EXCLUDE="FrameFlow.MotionClip"
+
+          rm -rf nuget-org && mkdir -p nuget-org
+          for f in packages/*.nupkg; do
+            b="$(basename "$f")"
+            skip=0
+            for e in $EXCLUDE; do
+              case "$b" in "$e".[0-9]*) skip=1;; esac
+            done
+            if [ "$skip" -eq 1 ]; then
+              echo "excluded: $b"
+              continue
+            fi
+            cp "$f" nuget-org/
+          done
+
+          echo
+          over=()
+          for f in nuget-org/*.nupkg; do
+            mb=$(( $(stat -c%s "$f") / 1000000 ))
+            printf '%6s MB  %s\n' "$mb" "$(basename "$f")"
+            [ "$mb" -ge "$LIMIT_MB" ] && over+=("$(basename "$f") = ${mb}MB")
+          done
+
+          if [ "${#over[@]}" -ne 0 ]; then
+            echo
+            printf '  %s\n' "${over[@]}"
+            echo "::error::At or over nuget.org's ${LIMIT_MB} MB limit. Pushing would publish the packages before it and then fail, leaving a partial release that cannot be undone. Shrink the package or add it to EXCLUDE with a reason."
+            exit 1
+          fi
+
+          echo
+          echo "OK: $(ls -1 nuget-org/*.nupkg | wc -l) package(s) to publish, all under ${LIMIT_MB} MB."
+
       # Requested immediately before the push, not earlier in the job: the key
       # nuget.org returns is valid for one hour.
       #
@@ -414,7 +478,7 @@ jobs:
       - name: Push to nuget.org
         if: ${{ github.event_name == 'push' }}
         run: >
-          dotnet nuget push "packages/*.nupkg"
+          dotnet nuget push "nuget-org/*.nupkg"
           --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
           --source https://api.nuget.org/v3/index.json
           --skip-duplicate
@@ -425,7 +489,7 @@ jobs:
         run: |
           echo "Dry run: the OIDC exchange with nuget.org succeeded and the"
           echo "packages below were built. NOTHING WAS PUSHED."
-          ls -1 packages/*.nupkg
+          ls -1 nuget-org/*.nupkg
 
       - name: Upload packages
         if: always()

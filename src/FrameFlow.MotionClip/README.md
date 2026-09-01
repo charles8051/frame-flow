@@ -13,15 +13,22 @@ runs **headless** and against a **synthetic** scene (no camera needed).
 
 ## Install
 
-```bash
-# As a global dotnet tool — gives you the `motionclip` command:
-dotnet tool install -g FrameFlow.MotionClip
+**Not on nuget.org**, so `dotnet tool install -g FrameFlow.MotionClip` does not
+work. The package is the whole self-contained tool — Avalonia, SkiaSharp and the
+FFmpeg natives for every RID — at roughly 253 MB against nuget.org's 250 MB
+limit. `docs/DEFERRED_WORK.md` tracks the size-reduction work; until one of those
+levers lands, this cannot be published there at any version.
 
-# Or use the published self-contained exe + install script (ships in the
-# release next to MotionClip.exe; no .NET SDK needed on the target):
-#   ./Install-MotionClip.ps1               # → %LOCALAPPDATA%\Programs\MotionClip + PATH
-#   ./Install-MotionClip.ps1 -Uninstall
+Use the self-contained executable from the GitHub Release instead. It needs no
+.NET SDK on the target, which is the better fit for this tool anyway:
+
+```powershell
+# Ships in the release next to MotionClip.exe:
+./Install-MotionClip.ps1               # → %LOCALAPPDATA%\Programs\MotionClip + PATH
+./Install-MotionClip.ps1 -Uninstall
 ```
+
+Or run it from source: `dotnet run --project src/FrameFlow.MotionClip -- …`
 
 Installed, the command is `motionclip` (`motionclip scan`,
 `motionclip run --IdStartsWith "…"`). The examples below show the
