@@ -50,6 +50,61 @@
   </ItemGroup>
 
   <!--
+    ============================================================================
+    Guard: a pack must never silently drop the natives.
+    ============================================================================
+
+    The Condition on the ItemGroup above is what keeps ordinary src/ builds
+    working on a checkout where scripts/fetch-ffmpeg.cs has never been run. Its
+    cost is that packing on such a checkout emits a structurally valid package
+    containing only lib/net10.0/FrameFlow.Native.dll — 68 KB where a real one is
+    ~40 MB. Nothing fails. The package publishes, a consumer floating a
+    prerelease range picks it up on the next restore, and the first symptom is a
+    DllNotFoundException for 'avformat' at run time, in a different repo, from a
+    call site that has nothing to do with packaging.
+
+    That is exactly what shipped as 0.6.4-alpha.1.63 and took video decode dark
+    in shred-vault.
+
+    So the Condition stays for building, and this makes packing loud. It runs
+    BeforeTargets="GenerateNuspec", which only executes on a pack — the same
+    hook, and the same reasoning, as AssertNativesPresent /
+    AssertNativesCompletePerRid in nuget/FrameFlow.Native.Runtime.csproj.
+
+    Note that src/Directory.Build.props sets GeneratePackageOnBuild=true to feed
+    the local feed, so for projects under src/ every build IS a pack. That is
+    the point: the empty package was produced by an ordinary build, so an
+    ordinary build is where this has to fire.
+
+    Checks all five, not just avutil-59 as the ItemGroup Condition does. A
+    partial runtimes/ directory — an interrupted fetch, or an FFmpeg soname bump
+    that moves some libraries and not others — otherwise satisfies the
+    Condition, packs whatever it matched, and reintroduces the same class of
+    failure in a form that is harder to see than an empty package.
+
+    Escape hatches, both deliberate and greppable:
+      -p:FrameFlowAllowNativelessPack=true   pack anyway, natives absent
+      -p:FrameFlowLocalFeedDisable=true      skip the local-feed pack entirely
+  -->
+  <Target
+    Name="AssertFFmpegNativesPacked"
+    BeforeTargets="GenerateNuspec"
+    Condition="'$(FrameFlowAllowNativelessPack)' != 'true'"
+  >
+    <ItemGroup>
+      <_ExpectedFFmpegNative Include="avutil-59.dll;avcodec-61.dll;avformat-61.dll;swscale-8.dll;swresample-5.dll" />
+      <_MissingFFmpegNative
+        Include="@(_ExpectedFFmpegNative)"
+        Condition="!Exists('$(MSBuildThisFileDirectory)../../runtimes/win-x64/native/%(Identity)')"
+      />
+    </ItemGroup>
+    <Error
+      Condition="'@(_MissingFFmpegNative)' != ''"
+      Text="FrameFlow.Native would pack without its FFmpeg native libraries, producing a package that fails at run time with DllNotFoundException rather than at restore. Missing from runtimes/win-x64/native/: @(_MissingFFmpegNative, ', '). Run `dotnet run scripts/fetch-ffmpeg.cs` to stage them. To build without packing, set -p:FrameFlowLocalFeedDisable=true; to pack anyway and accept a nativeless package, set -p:FrameFlowAllowNativelessPack=true."
+    />
+  </Target>
+
+  <!--
     This package redistributes FFmpeg's LGPL binaries, so it ships the licence
     texts themselves rather than only a metadata link.
 
