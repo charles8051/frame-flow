@@ -32,13 +32,14 @@ thing it is named after. Nothing about a `commandLineArgs` string invites the
 question of whether the fixture is long enough; writing the same run as a script
 with a rate assertion over a named window surfaced it immediately.
 
-A census of the argument surface across the twelve example projects:
+A census of the argument surface across the eleven runnable example projects
+(`FrameFlow.Examples.Common` is a shared library with no entry point):
 
 | Flag | Projects parsing it | What it is for |
 | --- | --- | --- |
-| `--log-file` | 11 of 12 | capture output the `WinExe` subsystem discards |
+| `--log-file` | 11 of 11 | capture output to a file, and on `WinExe` the only way to see it |
 | `--exit-after` | 7 | self-terminate so an unattended run ends |
-| `--hw-mode` | 3 | A/B hardware decode selection |
+| `--hw-mode` | 2 | A/B hardware decode selection |
 | `--break-yolo` | 3 | fault injection |
 | `--presenter`, `--gpu` | 3 | A/B presenter selection |
 | `--left-clock`, `--right-clock` | 1 (DualPlayer) | A/B clock mastering |
@@ -123,8 +124,13 @@ lines to add behind a flag. Nothing here blocks that.
 
 ### Decision 2: console subsystem, not `WinExe`
 
-Every Avalonia example is `WinExe`, which on Windows means no console, which is
-why eleven of twelve of them grew a `--log-file` parser. The bench sets
+Every Avalonia example is `WinExe`, which on Windows means no console. That
+explains most of the `--log-file` parsers but not all of them: `AudioOnlyPlayer`,
+`HostedServicePlayer`, and `SdlPlayer` are already `<OutputType>Exe</OutputType>`
+and hand-roll the parser anyway, because a log on disk is wanted for reasons
+unrelated to the subsystem. Console output is still the right default, and it is
+what makes an interleaved command/reply/log stream possible at all — it just
+buys less example cleanup than "eleven of twelve" implies. The bench sets
 `<OutputType>Exe</OutputType>` and writes to stdout. A window still opens when a
 presenter needs one; the console is attached alongside it.
 
@@ -142,6 +148,41 @@ than worked around locally.
 
 The bench then doubles as a standing ergonomics check. It breaks when the public
 surface breaks, which is the intended behaviour.
+
+#### Which public type, and why it is not `IMediaPlayer`
+
+The bench builds on `IPlaybackController`, plus the audio sink's
+`IVolumeControl` for the `volume` command. Not `IMediaPlayer`, despite the
+citation in the Context section — and this needs saying, because the obvious
+reading of "builds a real player" is the wrong one.
+
+`IMediaPlayer` has no load. Its source is fixed at construction by
+`MediaPlayer.CreateAsync`, which fuses the source with the graph configuration
+(`hardwareDecodeMode`, `yieldHardwareFrames`, `configureVideo`, `configureAudio`).
+That is correct rather than an oversight: a load on that facade would have to
+re-answer all of them per call, since the next source might be audio-only or need
+a frame memory domain the sink was not built for. Load-as-a-command lives one
+level down, on `IPlaybackController`, which is where ADR-0024 put it precisely
+because the state machine outlives the demuxer.
+
+Neither type alone covers Decision 6's command set: `IPlaybackController` has
+`LoadAsync`/`UnloadAsync` and no volume; `IMediaPlayer` has volume and no load.
+The bench composes both, which is what `MediaPlayer` does internally when it
+type-tests the audio sink for `IVolumeControl`.
+
+**This is a semantic choice, not just a plumbing one.** `load` has three possible
+implementations with different diagnostics:
+
+| Implementation | What resets |
+| --- | --- |
+| `IPlaybackController.LoadAsync` | the session; sink counters keep climbing |
+| dispose + `MediaPlayer.CreateAsync` | everything, sink included |
+| `IMediaPlaylistPlayer.SetNextAsync` + `SkipToNextAsync` | decode source only; warm presenter |
+
+Decision 5's premise — sink counters "owned by the consumer's long-lived sink,
+keep climbing" — holds for the first and third and is false for the second. The
+bench's `load` is the first. A future `next` command would be the third, and
+would need its own note here.
 
 ### Decision 4: `--headless` runs with no window
 
@@ -179,9 +220,9 @@ the channel and shows up as `video.shed`; frames that do get through and arrive
 late are discarded by the pacing chain as `sync.dropped`. A heavy cost can move
 either counter, and a headless script watching for loss has to watch both.
 
-`sink.dropped` itself stays at zero throughout, so a windowed assertion on it —
-the only form Decision 6 allows for a `count` — passes regardless of how badly
-the run went. Frames abandoned at shutdown or to cancellation are on the sink's
+`sink.dropped` itself stays at zero throughout, so any assertion that it stayed
+at zero passes regardless of how badly the run went — the windowed form Decision 6
+requires for a `count`, and the absolute inequalities it also permits. Frames abandoned at shutdown or to cancellation are on the sink's
 own `AbandonedCount`, deliberately outside `sink.dropped` so that metric keeps
 its "the render path is the bottleneck" meaning.
 
@@ -201,7 +242,7 @@ do.
 
 The interpretation is a function of two snapshots, and two snapshots are not
 always subtractable. `load` builds a fresh session
-([`PlaybackControllerCore.cs:781`](../../src/FrameFlow.Playback/PlaybackControllerCore.cs)),
+([`PlaybackControllerCore.cs:809`](../../src/FrameFlow.Playback/PlaybackControllerCore.cs)),
 so demux and decoder counters restart at zero while sink counters, owned by the
 consumer's long-lived sink, keep climbing. Any poll straddling a `load` is
 comparing two different sessions on half its fields.
@@ -233,8 +274,15 @@ generation, and `DiagnosticsInterpreter.Compare` in
 [`src/FrameFlow.Playback/Diagnostics`](../../src/FrameFlow.Playback/Diagnostics)
 returns either observations or an explicit reset.
 
-Two notes for whoever writes the bench against it. The generation is published
-with the session as one reference rather than as a separate counter: reading
+Three notes for whoever writes the bench against it. The generation advances on
+**both** session boundaries — creation and teardown — so a reload moves it twice
+and a poll landing between the two is comparable to neither side. An earlier
+revision advanced it only on creation, which meant a pair straddling an unload or
+a fatal error compared as subtractable while every counter had silently gone to
+zero.
+
+The generation is published with the session as one reference rather than as a
+separate counter: reading
 them apart lets a `load` land between the two reads, and both interleavings
 produce a snapshot whose counters and generation disagree, which defeats the
 reset for the exact poll-straddles-load case it exists to catch.
@@ -242,17 +290,20 @@ reset for the exact poll-straddles-load case it exists to catch.
 And the observation set is positive deltas and rising edges only. "Nothing
 decoded" and "nothing reached the screen" are absent because whether that is a
 freeze or a normal gap between two fast polls depends on the interval, and the
-snapshots carry no wallclock. That question already has an answer that carries a
-timeout, so `wait` and `expect` should reach for it rather than expecting the
-interpreter to grow a liveness rule.
+*interpretation function* has no clock — it is documented as pure and total, and
+should stay that way.
 
-For the loop that answer is `loop.stalled`, which is on the snapshot and in the
-namespace below. For the presenter there is no answer a script can reach:
-`PresenterStallWatchdog` is a host-side component that raises events, and
-nothing it decides reaches `PlaybackDiagnosticsSnapshot`, so there is no dotted
-path for it. Decision 6 may want one; until then a bench script cannot assert on
-a presenter freeze at all, which is worth knowing before writing a script that
-looks like it can.
+The bench is not so constrained, and an earlier revision of this section
+overstated the limit. `VideoSinkDiagnosticsSnapshot` carries `LastPresentedAtUtc`
+and `LastCommittedAtUtc`, both reachable on every poll and both missing from the
+namespace table below. A bench that already timestamps its own marks for the `/s`
+rule can compare either against now, which is a presenter-liveness assertion. Two
+table rows would make presenter freezes assertable; they should be added.
+
+For the loop the answer is simpler still: `loop.stalled` is on the snapshot and
+carries its own timeout. `PresenterStallWatchdog` genuinely is unreachable — it is
+a host-side component that raises events, and nothing it decides reaches
+`PlaybackDiagnosticsSnapshot` — but that closes one route, not the question.
 
 ### Decision 6: the script language is declarative and has no control flow
 
@@ -280,9 +331,26 @@ presenter for a `WriteableBitmap` one underneath a live player.
 So a reproduction is a pair — an invocation and a script — and the half that
 lives on the command line is exactly the half that got lost when these were
 launch profiles. `require presenter gpu` and `require audio off` are assertions
-against the bench's own startup configuration, checked during the parse pass. A
-script run under the wrong invocation exits 2 without playing anything, rather
-than producing a green run that measured the wrong pipeline.
+against the bench's own startup configuration. A script run under the wrong
+invocation exits 2 without playing anything, rather than producing a green run
+that measured the wrong pipeline.
+
+**`require` checks the resolved configuration, not the flag string**, which means
+it runs after startup rather than in the parse pass. The distinction is
+load-bearing: `--presenter gpu` silently falls back to the CPU surface off
+Windows and the flag still reads `gpu`, so a string check would let through
+exactly the failure this rule exists to prevent. Evaluating it against the sink
+the bench actually constructed still happens before the first command, so the
+exit-2-without-playing contract is unchanged.
+
+**Consequence for the shipped scripts.** Both `scripts/repro/*.bench` open with
+`require presenter gpu`, and the zero-copy presenter is Windows-only, so under
+this rule they exit 2 on Linux and macOS. That is correct, and an uncomfortable
+fit with the cross-platform motivation in the Context section: the reproductions
+most worth comparing across platforms are the ones that cannot be. A
+cross-platform script has to skip `require presenter gpu` and confine itself to
+metrics the software path populates. Nothing here fixes that — it is a limit of
+what a GPU reproduction can mean on a machine with no GPU path.
 
 #### The metric namespace
 
@@ -290,10 +358,14 @@ Every assertable value is a dotted path over the ADR-0034 snapshot tree.
 `diag --all` prints the namespace with current values, so a name never has to be
 guessed.
 
+The Source column names the leaf field, not the full path. Decode rows sit under
+`Pipeline.Stream.` (`DecodedMediaStreamDiagnosticsSnapshot`), sink and sync rows
+under `Pipeline.`, and the rest on the snapshot root.
+
 | Path | Kind | Source |
 | --- | --- | --- |
 | `state` | enum | `PlaybackState` |
-| `seek.state` | enum | `SeekState` |
+| `seek.state` | enum | `SeekingState` |
 | `repeat` | enum | `RepeatMode` |
 | `position` | time | `Position` |
 | `duration` | time | `Duration` |
@@ -326,11 +398,40 @@ guessed.
 | `out.channels` | gauge | `AudioSink.Channels` |
 | `out.active` | bool | `AudioSink.IsActive` |
 
+#### Metrics that read zero because the thing does not exist
+
 `sink.committed` is only populated by the zero-copy compositor presenter. Every
 other sink reports `0`, which cannot be told apart from "committed nothing", so
 `expect sink.committed == 0` is green and meaningless on the CPU and SDL paths.
-Until the field is nullable, treat it as assertable only under
-`require presenter gpu`. See *Not settled here*.
+
+That is not one metric's problem. `SubstrateSession.GetPipelineDiagnostics`
+substitutes a zero-valued snapshot whenever a subsystem is absent — `?? AudioSinkDiagnosticsSnapshot.Empty`
+for the audio sink, `_videoPacer?.DroppedLate ?? 0` for the sync counter — so
+under `--no-audio` **all seven `out.*` metrics are structurally frozen** at zero
+or false, and `sync.dropped` is zero whenever no pacer exists. Nine metrics in
+this table can read zero for a reason that has nothing to do with the run.
+
+`scripts/repro/signage-gpu-noaudio.bench` already contains the proof: it declares
+`require audio off` and then asserts `expect out.active == false`, which cannot
+fail. The dangerous direction is the mirror — in a script *with* audio,
+`expect since m1 out.underruns == 0` goes green when the audio sink was never
+constructed at all. Windowing does not save it; zero minus zero is zero.
+
+**Resolution: capability gating, as a third parse-time constraint beside kind and
+operator.** A metric resolves only in a script that carries the `require` its
+subsystem depends on. `sink.committed` needs `require presenter gpu`; the `out.*`
+prefix needs a new `require audio on`. Anywhere else the path is a parse error,
+exit 2, nothing runs. This is a better message than a nullable value could give —
+it names the missing `require`, at parse time, instead of reporting "not yet
+available" twelve seconds into a thirty-second run.
+
+It also rejects the `expect out.active == false` line above, which is the
+demonstration that the rule works.
+
+The operators are `==`, `!=`, `>`, `>=`, `<`, `<=`. Ordering comparisons are legal
+on `count`, `gauge`, and `time`; `enum` and `bool` admit only `==` and `!=`, since
+there is no order to compare on. (`!=` was in use in
+`scripts/repro/signage-gpu-noaudio.bench` before it appeared in this list.)
 
 The kind constrains the language rather than merely describing it. It decides which operators
 are legal, and an illegal pairing is rejected when the script parses:
@@ -376,11 +477,14 @@ language free of call syntax. Against the same ten-second window,
 
 Several marks can be live at once. `mark` with an existing name replaces it.
 
-**`load` invalidates every live mark.** `PlaybackControllerCore` builds a fresh
-session per load (`PlaybackActionKind.CreateSession` at
-`src/FrameFlow.Playback/PlaybackControllerCore.cs:781`, with the previous one
+**`load` invalidates every live mark, and so does anything else that tears a
+session down.** `PlaybackControllerCore` builds a fresh session per load
+(`PlaybackActionKind.CreateSession` at
+`src/FrameFlow.Playback/PlaybackControllerCore.cs:809`, with the previous one
 disposed first), so the demux and decoder counters restart at zero while the
-bench's own sink counters keep climbing. A `since` spanning a `load` would
+bench's own sink counters keep climbing. Teardown on its own is worse: once the
+session is gone every counter reads zero, including the sink's. `Unload` from any
+state and a fatal error from any non-terminal one both go through it. A `since` spanning a `load` would
 subtract across that discontinuity and report a negative delta on some paths and
 a plausible-looking wrong one on others. Rather than give the snapshot two reset
 semantics and expect a script author to track which is which, `since` on a mark
@@ -484,7 +588,13 @@ reports and continues; it never exits on a failed `expect`.
   [`scripts/repro/signage-gpu-noaudio.bench`](../../scripts/repro/signage-gpu-noaudio.bench)
   is the `Repro-Signage-NoAudio-GPU` profile written out, and
   [`signage-gpu-noaudio-soak.bench`](../../scripts/repro/signage-gpu-noaudio-soak.bench)
-  is the same shape on a fixture long enough to fail. Both are reviewable,
+  is the same shape over a longer window. It is not yet on the right fixture: it
+  loops a 10-second `testsrc2` clip ~36 times, and
+  `scripts/generate-test-corpus.cs` argues against both halves of that — testsrc2
+  "encodes to almost nothing" and reproduced #145 at ~30% severity, and looping a
+  short file "introduces restart bursts that confound the counters".
+  `bench-1080p60-h264-aac.mp4` (45s, `noise`, 15 Mbps) exists for exactly this and
+  the soak should move to it and drop `repeat one`. Both are reviewable,
   diffable, and runnable by someone else. A launch profile in an example's
   `Properties/` is none of those. The two scripts predate the bench on purpose:
   they were written to test the grammar in Decision 6 against a real
@@ -573,14 +683,46 @@ reports and continues; it never exits on a failed `expect`.
 
 ## Not settled here
 
-- Whether the project lives at `tools/` or `testbench/`.
+- ~~Whether the project lives at `tools/` or `testbench/`.~~ **Settled:** `tools/`.
+  Three places outside this ADR already say so — `docs/adr/README.md` and the
+  invocation line in both repro scripts. The layout is category-per-directory and
+  every other top-level holds N projects, so a directory named after one project
+  is the odd one out.
+  <br>One correction to the reasoning that goes with it: the bench must be **in**
+  `FrameFlow.slnx` with `<IsPackable>false</IsPackable>`, not outside it. The
+  "like `spikes/`" framing below is misleading — `spikes/` is excluded from the
+  solution, and `build.yml` builds and tests the solution and nothing else, so a
+  bench outside it would never be compiled by CI and Decision 3's API-drift alarm
+  would never fire. The `tests/` shape is the right one. Note also that
+  `src/Directory.Build.props` claims projects outside `src/` are unpackable by
+  default; that is false, which is why `examples/Directory.Build.props` exists.
 - ~~Whether the counting sink belongs in the bench or beside `NullVideoSink` in
   `FrameFlow.Media`.~~ **Settled:** `FrameFlow.Media`. It keeps the bench thin,
   it is where the sink telemetry shell already lives, and it makes the sink
   testable without a bench. See Decision 4.
-- Whether `set` gains knobs beyond `timeout`, and whether `set` belongs in a
-  script at all rather than on the command line.
-- Whether `sink.committed` should be nullable. The field behind it,
+- ~~Whether `set` gains knobs beyond `timeout`, and whether `set` belongs in a
+  script at all rather than on the command line.~~ **Settled:** it stays in the
+  script, keeps `timeout`, and gains nothing, under this rule — *`set` may change
+  only how the bench interprets the remainder of the script; never how the
+  pipeline is built, and never how the run is reported.*
+  <br>That admits `timeout` and rejects the three obvious proposals.
+  `present-cost` is construction-time (`HeadlessVideoSink.PresentCost` is
+  get-only, and the sink is built before the script is read), so it is a
+  `require`, not a `set`. `--keep-going` changes the exit-code contract CI owns.
+  `set poll` would let a script reintroduce the latency the Waits section already
+  priced. Moving `timeout` to the command line loses the thing the pair principle
+  exists to protect: `set timeout 30s` sits three lines above the fixture that
+  needs it and is self-documenting there.
+- ~~Whether `sink.committed` should be nullable.~~ **Settled: no** — capability
+  gating instead, which covers all nine affected metrics rather than one. See
+  *Metrics that read zero because the thing does not exist* under Decision 6. The
+  reasoning below is kept because its diagnosis is right even though its proposed
+  fix is not; note also that its stated cost is wrong — nothing in the tree reads
+  `VideoSinkDiagnosticsSnapshot.FramesCommitted`, so "existing consumers" was
+  never the obstacle. The real objection is that the existing nullable rule means
+  null-as-*not-yet*, which resolves forward, while this would be
+  null-as-*capability*, which never does.
+  <br><br>The original entry: the field behind it,
   `VideoSinkDiagnosticsSnapshot.FramesCommitted`, is a `long` that only the
   zero-copy compositor presenter ever populates; every other sink reports `0`.
   Under Decision 6 that is indistinguishable from a presenter that enqueued
@@ -594,3 +736,19 @@ reports and continues; it never exits on a failed `expect`.
   "nothing committed". It is a change to an ADR-0034 snapshot record with
   existing consumers, so it belongs to whoever implements Decision 6 rather than
   being smuggled in ahead of it.
+- What kind `LastPresentedAtUtc` and `LastCommittedAtUtc` get when they join the
+  metric namespace. Decision 5 now says they should — they exist on
+  `VideoSinkDiagnosticsSnapshot` and are what makes a presenter freeze assertable
+  — but they are wallclocks, not media time, so the existing `time` kind is wrong
+  for them. Comparing one against `now` is the only useful operation, and no kind
+  in the table expresses that.
+- Whether exit code 2 should split. It currently means both "the script did not
+  parse" and "the invocation did not satisfy a `require`" — a script-author error
+  and an operator error, which a CI job cannot tell apart. Related and also
+  unspecified: how `--keep-going` composes with a command failure, and which code
+  wins when both an assertion and a command fail.
+- Whether a `next` command belongs in the grammar, for
+  `IMediaPlaylistPlayer.SetNextAsync` + `SkipToNextAsync`. It is the warm-presenter
+  path — the one that swaps decode source without rebuilding the sink — and the
+  gapless signage case is what the repro scripts are about. It would need its own
+  entry in the `load` semantics table under Decision 3.
