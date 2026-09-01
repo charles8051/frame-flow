@@ -149,28 +149,13 @@ copies into every project's output. Then:
 dotnet build ./FrameFlow.slnx --nologo
 ```
 
-**Six projects do not restore from a fresh clone**, so the whole-solution build
-fails on them:
-
-```
-error NU1100: Unable to resolve 'FrameFlow.Native.Runtime (>= 0.1.1-alpha)'.
-PackageSourceMapping is enabled, the following source(s) were not considered:
-nuget.org.
-```
-
-They are `FrameFlow.MotionClip` and the `AvaloniaPlayer`,
-`Camera.Inference.Dml`, `DualPlayer`, `Multicast.Dml` and `ZeroCopyInterop`
-examples. All six take a `PackageReference` on `FrameFlow.Native.Runtime`. That
-package is published now, but `nuget.config` maps `FrameFlow.*` away from
-nuget.org as a dependency-confusion guard, and these references still pin the
-old `0.1.1-alpha.*` range. Until both are updated, build a single project:
-
-```bash
-dotnet build ./src/FrameFlow.Playback/FrameFlow.Playback.csproj --nologo
-```
-
-Everything else — all 21 libraries, the tests, and the other examples —
-restores from nuget.org alone.
+The whole solution restores from nuget.org alone. Six projects take a
+`PackageReference` on `FrameFlow.Native.Runtime` for self-contained publish —
+`FrameFlow.MotionClip` and the `AvaloniaPlayer`, `Camera.Inference.Dml`,
+`DualPlayer`, `Multicast.Dml` and `ZeroCopyInterop` examples. That package is
+mapped to nuget.org by exact id in `nuget.config`; the `FrameFlow.*` prefix is
+deliberately not mapped there, so a new FrameFlow `PackageReference` needs its
+id added.
 
 `scripts/fetch-cuda.cs` (CUDA execution provider) and
 `scripts/generate-test-corpus.cs` (integration-test media) are documented in
