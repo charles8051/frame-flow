@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Runtime.InteropServices;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
@@ -26,6 +27,15 @@ namespace FrameFlow.Native;
 /// rise on systems with multiple GPUs or contested device files; consumers can
 /// disable probing via <see cref="FrameFlowNativeOptions.SkipHardwareProbe"/>.
 /// </para>
+/// <para>
+/// <b>Some backends are checked before they are attempted.</b> A compiled-in
+/// backend whose driver library is not installed is not merely a probe failure —
+/// <c>av_hwdevice_ctx_create</c> can take the process down. Observed on a Linux
+/// host with no NVIDIA driver: FFmpeg logs
+/// <c>[AVHWDeviceContext] Cannot load libcuda.so.1</c> and the process dies,
+/// which for a library means the consumer's application dies at startup for
+/// owning a machine without a GPU. See <see cref="DriverLibraryFor"/>.
+/// </para>
 /// </remarks>
 internal static partial class HardwareDecodeProbe
 {
@@ -47,6 +57,29 @@ internal static partial class HardwareDecodeProbe
             var avName = FFAvUtil.AvHwDeviceGetTypeName(type);
             var kind = ClassifyBackend(type);
             var display = DisplayNameFor(kind);
+
+            // Backends with a known driver library are pre-checked, because attempting
+            // one whose driver is absent can kill the process rather than fail.
+            if (DriverLibraryFor(kind) is { } driver && !CanLoad(driver))
+            {
+                var missing =
+                    $"Skipped '{avName}': driver library '{driver}' is not loadable on this host, "
+                    + "so the backend cannot initialise.";
+                LogHwProbeDriverMissing(logger, avName, display, driver);
+
+                backends.Add(
+                    new HardwareDecodeBackend(
+                        Kind: kind,
+                        DisplayName: display,
+                        AvDeviceTypeName: avName,
+                        Initialized: false,
+                        DiagnosticMessage: missing
+                    )
+                );
+
+                type = FFAvUtil.av_hwdevice_iterate_types(type);
+                continue;
+            }
 
             // Attempt to create a temporary device context. NULL device → use the
             // platform default (default GPU, default render node, etc.). We do not
@@ -96,6 +129,52 @@ internal static partial class HardwareDecodeProbe
         }
 
         return new HardwareDecodeCapabilities(backends);
+    }
+
+    /// <summary>
+    /// The driver library a backend needs before <c>av_hwdevice_ctx_create</c> could
+    /// possibly succeed, or <see langword="null"/> when there is no single such library
+    /// or the OS supplies it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Skipping a backend whose driver will not load costs nothing: the create could not
+    /// have succeeded either way. What it buys is not crashing while finding that out.
+    /// </para>
+    /// <para>
+    /// Only CUDA is listed, because CUDA is the only backend observed to take the process
+    /// down. The others are left to the ordinary attempt-and-report path rather than
+    /// guessing at loader names — add a case here if one of them is ever seen to crash,
+    /// with the platform and the message that identified it.
+    /// </para>
+    /// </remarks>
+    internal static string? DriverLibraryFor(HardwareDecodeBackendKind kind)
+    {
+        if (kind != HardwareDecodeBackendKind.Cuda)
+            return null;
+
+        if (OperatingSystem.IsWindows())
+            return "nvcuda.dll";
+        if (OperatingSystem.IsLinux())
+            return "libcuda.so.1";
+
+        // No CUDA on macOS since 10.14; nothing to pre-check.
+        return null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="library"/> can be loaded here. The handle is released
+    /// immediately — this asks a question, it does not take a dependency. FFmpeg loads its
+    /// own copy afterwards, and <c>dlopen</c> is reference counted, so the probe and FFmpeg
+    /// do not interfere.
+    /// </summary>
+    private static bool CanLoad(string library)
+    {
+        if (!NativeLibrary.TryLoad(library, out var handle))
+            return false;
+
+        NativeLibrary.Free(handle);
+        return true;
     }
 
     /// <summary>
@@ -185,5 +264,16 @@ internal static partial class HardwareDecodeProbe
         string avName,
         string displayName,
         int returnCode
+    );
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Hardware decode probe: {AvName} ({DisplayName}) skipped — driver library '{Driver}' is not loadable on this host."
+    )]
+    private static partial void LogHwProbeDriverMissing(
+        ILogger logger,
+        string avName,
+        string displayName,
+        string driver
     );
 }
