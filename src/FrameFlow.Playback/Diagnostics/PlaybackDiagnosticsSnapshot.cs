@@ -43,6 +43,18 @@ namespace FrameFlow.Playback.Diagnostics;
 /// How long the position has been past the item duration with no restart while
 /// <paramref name="LoopStalled"/> is set; <see langword="null"/> otherwise.
 /// </param>
+/// <param name="SessionGeneration">
+/// Which playback session produced this snapshot. Starts at <c>0</c> while unloaded and
+/// increments on every <c>CreateSession</c>, so two snapshots are subtractable only when
+/// their generations match.
+/// <para>
+/// A <c>load</c> builds a fresh session, which restarts the demux and decoder counters at
+/// zero while the sink counters — owned by the consumer's long-lived sink — keep climbing.
+/// A pair straddling that is comparing two different sessions on half its fields, and
+/// nothing else in the snapshot reveals it. <see cref="DiagnosticsInterpreter.Compare"/>
+/// checks this first and returns a reset rather than a delta.
+/// </para>
+/// </param>
 public sealed record PlaybackDiagnosticsSnapshot(
     PlaybackState State,
     SeekState SeekingState,
@@ -53,7 +65,8 @@ public sealed record PlaybackDiagnosticsSnapshot(
     PipelineDiagnosticsSnapshot Pipeline,
     TimeSpan? AvSyncDrift,
     bool LoopStalled = false,
-    TimeSpan? LoopOverrun = null
+    TimeSpan? LoopOverrun = null,
+    int SessionGeneration = 0
 )
 {
     /// <summary>

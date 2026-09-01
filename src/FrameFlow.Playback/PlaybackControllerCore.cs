@@ -88,6 +88,13 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     );
     private bool _loopWasStalled;
     private volatile bool _loopStalledNow;
+
+    // Which session produced the next snapshot. Incremented on every CreateSession so a
+    // consumer can tell that a load happened between two polls: the demux and decoder
+    // counters restart at zero there while the consumer's long-lived sink keeps climbing,
+    // and nothing else in the snapshot distinguishes that from a burst of activity.
+    // Written on the action pump, read by GetDiagnostics from any thread.
+    private int _sessionGeneration;
     private long _loopOverrunTicks;
     private IDisposable? _loopStallSubscription;
 
@@ -333,7 +340,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             Pipeline: pipeline,
             AvSyncDrift: avSyncDrift,
             LoopStalled: loopStalled,
-            LoopOverrun: loopOverrun
+            LoopOverrun: loopOverrun,
+            SessionGeneration: Volatile.Read(ref _sessionGeneration)
         );
     }
 
@@ -779,6 +787,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 // Per ADR-0028 §4, callbacks are injected at construction time so the
                 // callback channel is never partially wired.
                 _session = _sessionFactory.CreateSession(_clock, CreateSessionCallbacks());
+                Interlocked.Increment(ref _sessionGeneration);
                 LogSessionCreated();
                 break;
 
