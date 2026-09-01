@@ -230,11 +230,10 @@ public sealed class SdlBootstrapper : ISdlBootstrapper
             // system library search path. Probe the well-known keg location first.
             if (OperatingSystem.IsMacOS())
             {
-                var homebrewPrefix =
-                    RuntimeInformation.OSArchitecture == Architecture.Arm64
-                        ? "/opt/homebrew"
-                        : "/usr/local";
-                var kegCandidate = Path.Combine(homebrewPrefix, "opt", "sdl2", "lib", sdlFileName);
+                var kegCandidate = Path.Combine(
+                    HomebrewLayout.KegLibDirectory("sdl2"),
+                    sdlFileName
+                );
                 _logger.LogDebug("Probing macOS Homebrew keg path: '{Candidate}'", kegCandidate);
                 if (NativeLibrary.TryLoad(kegCandidate, out handle))
                 {
