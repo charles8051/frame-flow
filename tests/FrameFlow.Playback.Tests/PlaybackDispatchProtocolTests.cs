@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using FrameFlow.Media;
 using FrameFlow.Playback;
+using FrameFlow.Playback.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -43,6 +44,57 @@ public sealed class PlaybackDispatchProtocolTests
             options
         );
         return (controller, session);
+    }
+
+    [Fact]
+    public async Task SessionGeneration_StartsAtZero_AndIncrementsOnEveryLoad()
+    {
+        // The counter that tells a diagnostics consumer whether two polls straddle a load.
+        // Nothing else in the snapshot reveals it: a load restarts the demux and decoder
+        // counters at zero while the consumer's long-lived sink keeps climbing.
+        var (controller, _) = NewController();
+        await using var _d = controller;
+
+        Assert.Equal(0, controller.GetDiagnostics().SessionGeneration);
+
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+        Assert.Equal(1, controller.GetDiagnostics().SessionGeneration);
+
+        // Load is accepted only from Idle and Unloaded, so a reload goes through unload.
+        // Unloading alone does not bump the generation -- only CreateSession does -- but the
+        // disposed session must stop being what a poll reads.
+        Assert.True((await controller.UnloadAsync()).IsSuccess);
+        var unloaded = controller.GetDiagnostics();
+        Assert.Equal(1, unloaded.SessionGeneration);
+        Assert.Same(PipelineDiagnosticsSnapshot.Empty, unloaded.Pipeline);
+
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+        Assert.Equal(2, controller.GetDiagnostics().SessionGeneration);
+    }
+
+    [Fact]
+    public async Task SnapshotsStraddlingALoad_CompareAsReset()
+    {
+        // The end-to-end shape of Decision 5: the generation the controller stamps is what
+        // makes DiagnosticsInterpreter refuse to subtract across a session change. Asserted
+        // here rather than only in DiagnosticsInterpreterTests, which supplies the generation
+        // by hand and so cannot catch the controller failing to increment it.
+        var (controller, _) = NewController();
+        await using var _d = controller;
+
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+        var before = controller.GetDiagnostics();
+
+        var within = Diagnostics.DiagnosticsInterpreter.Compare(before, controller.GetDiagnostics());
+        Assert.False(within.IsReset);
+
+        Assert.True((await controller.UnloadAsync()).IsSuccess);
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+        var across = Diagnostics.DiagnosticsInterpreter.Compare(before, controller.GetDiagnostics());
+
+        Assert.True(across.IsReset);
+        Assert.Equal(1, across.FromGeneration);
+        Assert.Equal(2, across.ToGeneration);
     }
 
     [Fact]
