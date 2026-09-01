@@ -1420,11 +1420,13 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             LogSessionDisposing();
             await _session.DisposeAsync();
             _session = null;
-            // Unload is not a new session, so the generation does not advance -- but the
-            // disposed session must stop being what a poll reads.
+            // Teardown advances the generation too. Every counter in the snapshot goes to
+            // zero here -- GetDiagnostics serves PipelineDiagnosticsSnapshot.Empty once the
+            // binding has no session -- so a poll taken after this is not subtractable from
+            // one taken before it, and holding the generation would say it was.
             Volatile.Write(
                 ref _sessionBinding,
-                new SessionBinding(null, _sessionBinding.Generation)
+                new SessionBinding(null, _sessionBinding.Generation + 1)
             );
         }
 

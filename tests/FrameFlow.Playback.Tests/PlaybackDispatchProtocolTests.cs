@@ -60,16 +60,66 @@ public sealed class PlaybackDispatchProtocolTests
         Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
         Assert.Equal(1, controller.GetDiagnostics().SessionGeneration);
 
-        // Load is accepted only from Idle and Unloaded, so a reload goes through unload.
-        // Unloading alone does not bump the generation -- only CreateSession does -- but the
-        // disposed session must stop being what a poll reads.
+        // Load is accepted only from Idle and Unloaded, so a reload goes through unload --
+        // and the teardown advances the generation in its own right, because it zeroes every
+        // counter in the snapshot.
         Assert.True((await controller.UnloadAsync()).IsSuccess);
         var unloaded = controller.GetDiagnostics();
-        Assert.Equal(1, unloaded.SessionGeneration);
+        Assert.Equal(2, unloaded.SessionGeneration);
         Assert.Same(PipelineDiagnosticsSnapshot.Empty, unloaded.Pipeline);
 
         Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
-        Assert.Equal(2, controller.GetDiagnostics().SessionGeneration);
+        Assert.Equal(3, controller.GetDiagnostics().SessionGeneration);
+    }
+
+    [Fact]
+    public async Task SnapshotsStraddlingAnUnload_CompareAsReset()
+    {
+        // The teardown case, which the create-only generation missed. Unload serves
+        // PipelineDiagnosticsSnapshot.Empty, so every counter drops to zero at once. Holding
+        // the generation across that would make the pair look subtractable, every counter
+        // would read as having gone backwards, and Compare ignores backwards movement -- so a
+        // torn-down pipeline would report as an unremarkable interval.
+        var (controller, _) = NewController();
+        await using var _d = controller;
+
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+        var loaded = controller.GetDiagnostics();
+
+        Assert.True((await controller.UnloadAsync()).IsSuccess);
+        var afterUnload = controller.GetDiagnostics();
+
+        Assert.Same(PipelineDiagnosticsSnapshot.Empty, afterUnload.Pipeline);
+        Assert.True(
+            Diagnostics.DiagnosticsInterpreter.Compare(loaded, afterUnload).IsReset
+        );
+    }
+
+    [Fact]
+    public async Task SnapshotsStraddlingAFatalError_CompareAsReset()
+    {
+        // Same teardown, reached the other way. A load failure disposes the session and lands
+        // in Error, which is the path a diagnostics consumer most needs to see honestly.
+        var session = new FakeSession { WarmUpThrows = new InvalidOperationException("cold") };
+        var clock = new PlaybackClock(new ManualTimeSource());
+        await using var controller = new PlaybackControllerCore(
+            NullLogger<PlaybackControllerCore>.Instance,
+            new FakeSessionFactory(session),
+            clock,
+            Microsoft.Extensions.Options.Options.Create(new FrameFlowPlaybackOptions())
+        );
+
+        var before = controller.GetDiagnostics();
+
+        Assert.False((await controller.LoadAsync(new FakeSource())).IsSuccess);
+        Assert.Equal(PlaybackState.Error, controller.State);
+
+        var after = controller.GetDiagnostics();
+
+        // Create bumped it, the teardown bumped it again.
+        Assert.Equal(0, before.SessionGeneration);
+        Assert.Equal(2, after.SessionGeneration);
+        Assert.True(Diagnostics.DiagnosticsInterpreter.Compare(before, after).IsReset);
     }
 
     [Fact]
@@ -94,7 +144,8 @@ public sealed class PlaybackDispatchProtocolTests
 
         Assert.True(across.IsReset);
         Assert.Equal(1, across.FromGeneration);
-        Assert.Equal(2, across.ToGeneration);
+        // 1 -> 2 on the unload's teardown, 2 -> 3 on the new session.
+        Assert.Equal(3, across.ToGeneration);
     }
 
     [Fact]
