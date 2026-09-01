@@ -26,8 +26,8 @@ public sealed class FrameFlowNativeOptions
 
     /// <summary>
     /// On Linux, attempt hardware backends whose driver libraries FrameFlow does not
-    /// catalogue. Off by default. Ignored on Windows and macOS, which always attempt
-    /// every compiled-in backend.
+    /// catalogue. Off by default. Has no effect on Windows or macOS, which attempt every
+    /// uncatalogued backend regardless.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -40,6 +40,12 @@ public sealed class FrameFlowNativeOptions
     /// Set this on a host whose drivers are known to be installed, when a backend
     /// FrameFlow does not catalogue is wanted (Intel QSV is the likely one). The
     /// catalogued set already covers CUDA, VAAPI, VDPAU, Vulkan, OpenCL and DRM.
+    /// </para>
+    /// <para>
+    /// It does not disable the driver check for backends that <i>are</i> catalogued, on
+    /// any platform: one whose libraries will not load is still skipped, because it could
+    /// not have initialised. This option is about the backends FrameFlow knows nothing
+    /// about, not about overriding what it does know.
     /// </para>
     /// </remarks>
     public bool ProbeUncataloguedBackends { get; set; }

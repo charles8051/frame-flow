@@ -58,8 +58,26 @@ namespace FrameFlow.Native;
 /// The cost is a Linux host with a working uncatalogued backend losing it. Set
 /// <see cref="FrameFlowNativeOptions.ProbeUncataloguedBackends"/> on a host known to
 /// have its drivers installed; the default declines to trade a crash for a detection.
-/// Windows and macOS keep the full walk — no abort has been seen there, and their
-/// important backends are OS-integrated with nothing separate to load.
+/// Windows and macOS keep the full walk for uncatalogued backends — no abort has been
+/// seen there, and their important backends are OS-integrated with nothing separate to
+/// load. A backend that <i>is</i> catalogued is pre-checked on every platform; that
+/// costs nothing, since a driver that will not load cannot initialise either.
+/// </para>
+/// <para>
+/// <b>This narrows the window; it does not close it.</b> A library that loads is not a
+/// library that works. A damaged, mismatched, or half-installed driver can pass
+/// <c>dlopen</c> and still abort inside <c>av_hwdevice_ctx_create</c>, and there is a
+/// gap between the check and the create in which the installation can change. What the
+/// gate removes is the common case — the driver is simply not there — which is what a
+/// container or a GPU-less server actually looks like.
+/// </para>
+/// <para>
+/// The complete answer is to run the walk in a child process, so any abort costs a
+/// process rather than the application. That was weighed against this and deferred: it
+/// needs a probe executable shipped inside the package and discovered at runtime, which
+/// is a packaging change to a library that ships as pure managed assemblies. If a host
+/// is ever seen to abort with its drivers present, that is the finding that should
+/// reopen it.
 /// </para>
 /// <para>
 /// For a library this matters more than it does for a test run. "Linux host with
