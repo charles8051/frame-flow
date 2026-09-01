@@ -44,15 +44,30 @@ namespace FrameFlow.Playback.Diagnostics;
 /// <paramref name="LoopStalled"/> is set; <see langword="null"/> otherwise.
 /// </param>
 /// <param name="SessionGeneration">
-/// Which playback session produced this snapshot. Starts at <c>0</c> while unloaded and
-/// increments on every <c>CreateSession</c>, so two snapshots are subtractable only when
-/// their generations match.
+/// Which playback session produced this snapshot. Starts at <c>0</c> before anything is
+/// loaded and advances on <b>every</b> session boundary — both the creation of a session and
+/// the teardown of one — so two snapshots are subtractable exactly when their generations
+/// match.
 /// <para>
-/// A <c>load</c> builds a fresh session, which restarts the demux and decoder counters at
-/// zero while the sink counters — owned by the consumer's long-lived sink — keep climbing.
-/// A pair straddling that is comparing two different sessions on half its fields, and
-/// nothing else in the snapshot reveals it. <see cref="DiagnosticsInterpreter.Compare"/>
-/// checks this first and returns a reset rather than a delta.
+/// Both halves of that matter, and only the first is obvious. A <c>load</c> builds a fresh
+/// session, which restarts the demux and decoder counters at zero while the sink counters —
+/// owned by the consumer's long-lived sink — keep climbing, so a pair straddling it compares
+/// two different sessions on half its fields.
+/// </para>
+/// <para>
+/// A teardown is worse, because it zeroes <i>everything</i>: once the session is gone the
+/// controller serves <see cref="PipelineDiagnosticsSnapshot.Empty"/>, so every counter reads
+/// <c>0</c>. If the generation were held across that, the pair would compare as subtractable,
+/// each counter would look like it went backwards, and
+/// <see cref="DiagnosticsInterpreter.Compare"/> — which ignores backwards movement — would
+/// report an unremarkable interval. Teardown happens on <c>Unload</c> from every state and on
+/// a fatal error from every non-terminal one, which is the path a diagnostics consumer most
+/// needs to see.
+/// </para>
+/// <para>
+/// Nothing else in the snapshot reveals either boundary.
+/// <see cref="DiagnosticsInterpreter.Compare"/> checks this first and returns a reset rather
+/// than a delta.
 /// </para>
 /// </param>
 public sealed record PlaybackDiagnosticsSnapshot(

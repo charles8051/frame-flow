@@ -1415,21 +1415,35 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// </summary>
     private async ValueTask DisposeSessionAsync()
     {
-        if (_session is not null)
-        {
-            LogSessionDisposing();
-            await _session.DisposeAsync();
-            _session = null;
-            // Unload is not a new session, so the generation does not advance -- but the
-            // disposed session must stop being what a poll reads.
-            Volatile.Write(
-                ref _sessionBinding,
-                new SessionBinding(null, _sessionBinding.Generation)
-            );
-        }
+        var session = _session;
 
+        // Publish the teardown boundary BEFORE awaiting disposal, not after. Two reasons,
+        // and the second is the one that bites:
+        //
+        //  - During the await, a poll on another thread would otherwise still read the old
+        //    binding and call GetPipelineDiagnostics on a session that is being torn down.
+        //    Whatever that returns gets stamped with the pre-teardown generation, so the pair
+        //    compares as subtractable across a boundary it straddles.
+        //  - If DisposeAsync throws, the publish never happens at all. The controller would go
+        //    on serving a dead session's counters under the old generation indefinitely.
+        //
+        // Publishing first makes the boundary hold whatever the disposal does. Every counter
+        // reads zero from here (GetDiagnostics serves PipelineDiagnosticsSnapshot.Empty once
+        // the binding has no session), and the new generation says so.
+        _session = null;
         _loadedMediaInfo = null;
         _loadedDuration = TimeSpan.Zero;
+
+        if (session is null)
+            return;
+
+        Volatile.Write(
+            ref _sessionBinding,
+            new SessionBinding(null, _sessionBinding.Generation + 1)
+        );
+
+        LogSessionDisposing();
+        await session.DisposeAsync();
     }
 
     private async Task<Result> LoadSourceAsync(IMediaSource source)
