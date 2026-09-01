@@ -1,14 +1,19 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-namespace FrameFlow.Playback;
+namespace FrameFlow.Media;
 
 /// <summary>
 /// An async-friendly manual reset event. When set (open), <see cref="WaitAsync"/>
 /// returns immediately. When reset (closed), <see cref="WaitAsync"/> blocks until
 /// <see cref="Set"/> is called. Used as the pause gate for long-lived worker tasks
-/// per ADR-0022.
+/// per ADR-0022, and by <c>ClockSelectVideoSink</c> for its arrival and settled gates.
 /// </summary>
+/// <remarks>
+/// A gate, not a handoff: one <see cref="Set"/> releases every waiter, present and
+/// future, until <see cref="Reset"/> closes it again. Use <see cref="AsyncAutoResetEvent"/>
+/// when one signal should release exactly one waiter.
+/// </remarks>
 internal sealed class AsyncManualResetEvent
 {
     private volatile TaskCompletionSource<bool> _tcs;

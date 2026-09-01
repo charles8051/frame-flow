@@ -1,18 +1,20 @@
 using System.Diagnostics;
-using FrameFlow.Audio.OpenAL;
+using FrameFlow.Media;
 
-namespace FrameFlow.Audio.Tests;
+namespace FrameFlow.Media.Tests;
 
 /// <summary>
-/// Tests for <see cref="BufferReturnSignal"/>, the async "a buffer came back"
-/// signal that replaced the OpenAL sink's <c>Thread.Sleep(1)</c> backpressure
-/// spin (perf survey A3). These are deterministic and device-independent — they
-/// model the exact stalled-then-drained sequence the sink's
-/// <c>FlushStagingBufferAsync</c> loop depends on, without needing a real OpenAL
-/// device (which the end-to-end backpressure test gates behind
-/// <c>RequiresAudioDeviceFact</c>).
+/// Tests for <see cref="AsyncAutoResetEvent"/>, the latched-permit handoff that replaced the
+/// OpenAL sink's <c>Thread.Sleep(1)</c> backpressure spin (perf survey A3).
 /// </summary>
-public sealed class BufferReturnSignalTests
+/// <remarks>
+/// Deterministic and device-independent: they model the stalled-then-drained sequence
+/// <c>OpenAlAudioSink.FlushStagingBufferAsync</c> depends on without needing a real OpenAL
+/// device, which is what the end-to-end backpressure test gates behind
+/// <c>RequiresAudioDeviceFact</c>. They moved here with the primitive; the sequence they pin
+/// is the one any buffer-return backpressure loop needs, not an OpenAL-specific one.
+/// </remarks>
+public sealed class AsyncAutoResetEventTests
 {
     private static readonly TimeSpan ShortTimeout = TimeSpan.FromMilliseconds(50);
     private static readonly TimeSpan GenerousTimeout = TimeSpan.FromSeconds(5);
@@ -27,7 +29,7 @@ public sealed class BufferReturnSignalTests
         // Set() → the awaiter must wake and report a real signal (true), not a
         // timeout. This is the survey's acceptance criterion: "a stalled-then-
         // drained buffer recycle releases the awaiter."
-        var signal = new BufferReturnSignal();
+        var signal = new AsyncAutoResetEvent();
 
         // Park the awaiter first (no latched permit yet), with a generous timeout
         // so a pass can only come from Set(), never from the timeout elapsing.
@@ -49,7 +51,7 @@ public sealed class BufferReturnSignalTests
         // the sink would busy-loop re-polling an empty queue (the exact CPU waste
         // the async conversion removes). Verify it is still pending after a real
         // delay, then released by Set().
-        var signal = new BufferReturnSignal();
+        var signal = new AsyncAutoResetEvent();
         var waitTask = signal.WaitAsync(GenerousTimeout, CancellationToken.None);
 
         await Task.Delay(100);
@@ -70,7 +72,7 @@ public sealed class BufferReturnSignalTests
         // synchronously, so the sink re-polls the (now non-empty) queue instead of
         // sleeping out the full timeout. A lost signal here would add up-to-one-
         // slice of latency per occurrence; never a deadlock, but worth pinning.
-        var signal = new BufferReturnSignal();
+        var signal = new AsyncAutoResetEvent();
 
         signal.Set(); // recycle raced ahead of the wait
 
@@ -84,7 +86,7 @@ public sealed class BufferReturnSignalTests
         // One recycle == one permit. After a latched Set() is consumed by a wait,
         // the following wait must block again (until the next recycle) rather than
         // spuriously returning. Auto-reset semantics: the permit does not persist.
-        var signal = new BufferReturnSignal();
+        var signal = new AsyncAutoResetEvent();
         signal.Set();
 
         // First wait consumes the permit immediately.
@@ -110,7 +112,7 @@ public sealed class BufferReturnSignalTests
         // The device-never-drains case: if no buffer ever recycles, WaitAsync must
         // still return (false) after the slice so FlushStagingBufferAsync re-polls
         // source state (catching a Pause/Stop) instead of hanging forever.
-        var signal = new BufferReturnSignal();
+        var signal = new AsyncAutoResetEvent();
 
         var sw = Stopwatch.StartNew();
         var releasedBySignal = await signal.WaitAsync(ShortTimeout, CancellationToken.None);
@@ -132,7 +134,7 @@ public sealed class BufferReturnSignalTests
         // DisposeAsync mid-backpressure must surface as cancellation (which the loop
         // catches to abandon the flush). A timed-out-vs-cancelled distinction matters:
         // cancellation throws, timeout returns false.
-        var signal = new BufferReturnSignal();
+        var signal = new AsyncAutoResetEvent();
         using var cts = new CancellationTokenSource();
 
         var waitTask = signal.WaitAsync(GenerousTimeout, cts.Token);
@@ -146,7 +148,7 @@ public sealed class BufferReturnSignalTests
     [Fact]
     public async Task Wait_Throws_WhenTokenAlreadyCancelled()
     {
-        var signal = new BufferReturnSignal();
+        var signal = new AsyncAutoResetEvent();
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
@@ -163,7 +165,7 @@ public sealed class BufferReturnSignalTests
         // The backpressure loop can wait → wake → wait → wake many times within one
         // sustained stall. Each Set() must release exactly the awaiter that followed
         // it, with the gate re-arming cleanly between cycles.
-        var signal = new BufferReturnSignal();
+        var signal = new AsyncAutoResetEvent();
 
         for (int i = 0; i < 50; i++)
         {
@@ -183,7 +185,7 @@ public sealed class BufferReturnSignalTests
         // FlushStagingBufferAsync; Set() is fired from a *different* path
         // (RecycleProcessedBuffers, invoked under _stateLock by another call). Prove
         // the cross-thread set→release works and the result is observed.
-        var signal = new BufferReturnSignal();
+        var signal = new AsyncAutoResetEvent();
         var waitTask = Task.Run(() => signal.WaitAsync(GenerousTimeout, CancellationToken.None));
 
         // Give the waiter time to park, then signal from this thread.
