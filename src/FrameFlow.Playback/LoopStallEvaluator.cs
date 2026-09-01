@@ -38,7 +38,7 @@ public readonly record struct LoopStallOutcome(
 /// <summary>
 /// Pure detector for a <b>failed single-item loop restart</b> — the functional
 /// core of the loop-stall watchdog (mirrors
-/// <c>FrameFlow.Avalonia.Windows.PresenterStallEvaluator</c>).
+/// <c>FrameFlow.Media.Diagnostics.PresenterStallEvaluator</c>).
 /// </summary>
 /// <remarks>
 /// <para>

@@ -621,7 +621,14 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         _sink?.FramesAccepted ?? 0,
         Volatile.Read(ref _lastBltStartedTicks));
 
-    private void OnStallDetected(PresenterStallInfo info) => PresenterStalled?.Invoke(this, info);
+    private void OnStallDetected(PresenterStallInfo info)
+    {
+        // The stalls counter lives on this presenter's own FrameFlow.Presenter meter, so it is
+        // recorded here rather than inside the watchdog, which is presenter-agnostic and in
+        // FrameFlow.Media. Still the rising edge: the watchdog raises Stalled once per stall.
+        PresenterTeardownMetrics.RecordStall();
+        PresenterStalled?.Invoke(this, info);
+    }
 
     private void OnStallRecovered(PresenterRecoveryInfo info) => PresenterRecovered?.Invoke(this, info);
 

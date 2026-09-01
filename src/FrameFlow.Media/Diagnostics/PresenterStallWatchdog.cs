@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Diagnostics;
-using FrameFlow.Avalonia.Windows.Diagnostics;
 using Microsoft.Extensions.Logging;
 
-namespace FrameFlow.Avalonia.Windows;
+namespace FrameFlow.Media.Diagnostics;
 
 /// <summary>
 /// Diagnostic payload for a detected presenter stall — handed to
@@ -35,16 +34,32 @@ public readonly record struct PresenterRecoveryInfo(
 /// <summary>
 /// Imperative shell around <see cref="PresenterStallEvaluator"/>: a background timer that samples
 /// the presenter's liveness counters and, on the <b>rising edge</b> of a stall, logs a critical
-/// event, increments the <c>frameflow.presenter.stalls</c> counter, and raises <see cref="Stalled"/>.
+/// event and raises <see cref="Stalled"/>.
 /// </summary>
 /// <remarks>
-/// Runs on its own thread-pool timer, reads only volatile counters, and never touches the Avalonia
-/// dispatcher or any D3D object — so it keeps firing and detects the freeze <i>even when the UI
-/// thread is wedged inside a hung <c>VideoProcessorBlt</c></i> (investigation 2026-06-12 §9). It
-/// only <b>detects</b>; recovery is the host's job, because the wedged producer cannot be rebuilt
-/// in-process (the borrowed FFmpeg decode device is unreachable from the presenter).
+/// <para>
+/// Runs on its own thread-pool timer, reads only the counters its sampler hands back, and touches
+/// no UI dispatcher and no GPU object — so it keeps firing and detects the freeze <i>even when the
+/// presenting thread is wedged</i>. It only <b>detects</b>; recovery is the host's job, because the
+/// wedged producer usually cannot be rebuilt in-process.
+/// </para>
+/// <para>
+/// <b>Presenter-agnostic.</b> The sampler is injected as a <c>Func&lt;PresenterSample&gt;</c>, so
+/// nothing here knows which presenter it is watching. The zero-copy compositor presenter in
+/// <c>FrameFlow.Avalonia.Windows</c> is the caller it was written for, and the case that motivates
+/// the wording of the critical log — a UI thread hung inside <c>VideoProcessorBlt</c>
+/// (investigation 2026-06-12 §9), and the compositor-queue signature from ADR-0064
+/// §Observability. Those strings are left verbatim: they are what a field incident is grepped for.
+/// A presenter with a different failure mode reports the same
+/// <see cref="PresenterStalledReason"/> with a different cause behind it.
+/// </para>
+/// <para>
+/// <b>Stall telemetry belongs to the caller.</b> The watchdog does not own a meter. The compositor
+/// presenter records <c>frameflow.presenter.stalls</c> from its own <see cref="Stalled"/> handler,
+/// which is the same rising edge.
+/// </para>
 /// </remarks>
-internal sealed class PresenterStallWatchdog : IDisposable
+public sealed class PresenterStallWatchdog : IDisposable
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan DefaultInterval = TimeSpan.FromMilliseconds(500);
@@ -125,7 +140,8 @@ internal sealed class PresenterStallWatchdog : IDisposable
                         + "(ADR-0063: the VideoProcessorBlt hang this replaces). Frozen at {FramesPresented} presented. The presenter "
                         + "cannot self-recover; the host must rebuild the decode pipeline.",
                     outcome.Reason, ms, sample.FramesPresented);
-            PresenterTeardownMetrics.RecordStall();
+            // The stall counter itself belongs to whichever presenter owns this watchdog, so it
+            // is recorded by the Stalled subscriber rather than here. Same rising edge either way.
             Stalled?.Invoke(new PresenterStallInfo(ms, sample.FramesPresented, outcome.Reason));
         }
         else if (outcome.Recovered)
