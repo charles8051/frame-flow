@@ -1,6 +1,6 @@
-using FrameFlow.Audio.OpenAL;
+using FrameFlow.Media;
 
-namespace FrameFlow.Audio.Tests;
+namespace FrameFlow.Media.Tests;
 
 /// <summary>
 /// Device-free tests for <see cref="AudioClockState"/>, the pure core of the

@@ -1,6 +1,6 @@
-using FrameFlow.Audio.OpenAL;
+using FrameFlow.Media;
 
-namespace FrameFlow.Audio.Tests;
+namespace FrameFlow.Media.Tests;
 
 /// <summary>
 /// Pins <see cref="AudioClockInterpolation"/>, which smooths the audio master clock between

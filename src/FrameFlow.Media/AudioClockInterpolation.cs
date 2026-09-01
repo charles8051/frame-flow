@@ -1,7 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-namespace FrameFlow.Audio.OpenAL;
+namespace FrameFlow.Media;
 
 /// <summary>
 /// The last device-reported clock value and when it was observed. Threaded through
@@ -10,7 +10,7 @@ namespace FrameFlow.Audio.OpenAL;
 /// <param name="RawPosition">The most recent position the device actually reported.</param>
 /// <param name="ObservedAtTicks">Monotonic timestamp of that observation.</param>
 /// <param name="Valid">False before any observation, and after a discontinuity.</param>
-internal readonly record struct AudioClockAnchor(
+public readonly record struct AudioClockAnchor(
     TimeSpan RawPosition,
     long ObservedAtTicks,
     TimeSpan LastPublished,
@@ -52,8 +52,15 @@ internal readonly record struct AudioClockAnchor(
 /// <b>Discontinuities</b> — seek, deactivate — invalidate the anchor rather than smoothing
 /// across, so the clock jumps with the device as it should.
 /// </para>
+/// <para>
+/// <b>Sizing the cap per backend.</b> <see cref="DefaultMaxExtrapolation"/> is the OpenAL Soft
+/// mixing period measured above. The value is a property of the device's refresh rate, not of
+/// this algorithm, so a backend with a different period passes its own to
+/// <see cref="Read"/> rather than taking the default. A cap set shorter than the real period
+/// makes the clock stall between updates; longer, and it leads the device by the difference.
+/// </para>
 /// </remarks>
-internal static class AudioClockInterpolation
+public static class AudioClockInterpolation
 {
     /// <summary>
     /// Default extrapolation ceiling: exactly the 20 ms mixing period measured on this
