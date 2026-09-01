@@ -411,7 +411,10 @@ jobs:
           LIMIT_MB=250
 
           mkdir -p not-published
-          mv packages/FrameFlow.MotionClip.*.nupkg not-published/ 2>/dev/null || true
+          # [0-9] pins the match to a version boundary, matching the completeness
+          # gate above. A bare .* would also catch a future sibling id such as
+          # FrameFlow.MotionClip.Extensions and hold it back silently.
+          mv packages/FrameFlow.MotionClip.[0-9]*.nupkg not-published/ 2>/dev/null || true
 
           fail=0
           for f in packages/*.nupkg; do
