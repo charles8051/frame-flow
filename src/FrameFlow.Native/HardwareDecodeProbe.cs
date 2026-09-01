@@ -28,13 +28,24 @@ namespace FrameFlow.Native;
 /// disable probing via <see cref="FrameFlowNativeOptions.SkipHardwareProbe"/>.
 /// </para>
 /// <para>
-/// <b>Some backends are checked before they are attempted.</b> A compiled-in
-/// backend whose driver library is not installed is not merely a probe failure —
-/// <c>av_hwdevice_ctx_create</c> can take the process down. Observed on a Linux
-/// host with no NVIDIA driver: FFmpeg logs
-/// <c>[AVHWDeviceContext] Cannot load libcuda.so.1</c> and the process dies,
-/// which for a library means the consumer's application dies at startup for
-/// owning a machine without a GPU. See <see cref="DriverLibraryFor"/>.
+/// <b>Backends are checked before they are attempted.</b> A compiled-in backend
+/// whose driver library is not installed is not merely a probe failure — the
+/// attempt takes the process down.
+/// </para>
+/// <para>
+/// The mechanism is the FFmpeg build, not FFmpeg's hwdevice code. These builds bind
+/// their optional driver dependencies through <c>implib.so</c> lazy-loading stubs,
+/// and a stub that cannot <c>dlopen</c> its library aborts rather than returning an
+/// error:
+/// <c>implib-gen: libva-drm.so.2: failed to load library ... via dlopen</c>.
+/// Nothing managed can catch that. It applies to every stubbed driver, which is why
+/// the table in <see cref="DriverLibrariesFor"/> covers each backend with a known
+/// one rather than only the first that was seen to abort.
+/// </para>
+/// <para>
+/// For a library this matters more than it does for a test run. "Linux host with
+/// FFmpeg and no GPU driver" describes most servers, and without the pre-check the
+/// consumer's application dies during bootstrap for owning such a machine.
 /// </para>
 /// </remarks>
 internal static partial class HardwareDecodeProbe
@@ -58,9 +69,9 @@ internal static partial class HardwareDecodeProbe
             var kind = ClassifyBackend(type);
             var display = DisplayNameFor(kind);
 
-            // Backends with a known driver library are pre-checked, because attempting
-            // one whose driver is absent can kill the process rather than fail.
-            if (DriverLibraryFor(kind) is { } driver && !CanLoad(driver))
+            // Backends with known driver libraries are pre-checked, because attempting one
+            // whose driver is absent aborts the process rather than failing.
+            if (FirstMissingDriver(kind) is { } driver)
             {
                 var missing =
                     $"Skipped '{avName}': driver library '{driver}' is not loadable on this host, "
@@ -132,49 +143,77 @@ internal static partial class HardwareDecodeProbe
     }
 
     /// <summary>
-    /// The driver library a backend needs before <c>av_hwdevice_ctx_create</c> could
-    /// possibly succeed, or <see langword="null"/> when there is no single such library
-    /// or the OS supplies it.
+    /// The driver libraries a backend needs before <c>av_hwdevice_ctx_create</c> could
+    /// possibly succeed. Empty when the OS supplies the backend and there is nothing
+    /// separate to check.
     /// </summary>
     /// <remarks>
     /// <para>
     /// Skipping a backend whose driver will not load costs nothing: the create could not
-    /// have succeeded either way. What it buys is not crashing while finding that out.
+    /// have succeeded either way. What it buys is not aborting while finding that out.
     /// </para>
     /// <para>
-    /// Only CUDA is listed, because CUDA is the only backend observed to take the process
-    /// down. The others are left to the ordinary attempt-and-report path rather than
-    /// guessing at loader names — add a case here if one of them is ever seen to crash,
-    /// with the platform and the message that identified it.
+    /// <b>Every library a backend needs is listed, not just its headline one.</b> VAAPI is
+    /// the reason: <c>libva.so.2</c> is present on hosts that lack <c>libva-drm.so.2</c>,
+    /// and it was the latter that aborted. A host carrying the X11 backend but not the DRM
+    /// one is therefore skipped when it might have worked — the diagnostic names which
+    /// library was missing, and not running is recoverable where aborting is not.
+    /// </para>
+    /// <para>
+    /// Windows and macOS backends that the OS integrates (D3D11VA, DXVA2, VideoToolbox)
+    /// have nothing separate to load, so they keep the plain attempt-and-report path.
     /// </para>
     /// </remarks>
-    internal static string? DriverLibraryFor(HardwareDecodeBackendKind kind)
+    internal static IReadOnlyList<string> DriverLibrariesFor(HardwareDecodeBackendKind kind)
     {
-        if (kind != HardwareDecodeBackendKind.Cuda)
-            return null;
+        if (OperatingSystem.IsLinux())
+        {
+            return kind switch
+            {
+                HardwareDecodeBackendKind.Cuda => ["libcuda.so.1"],
+                HardwareDecodeBackendKind.VaApi => ["libva.so.2", "libva-drm.so.2"],
+                HardwareDecodeBackendKind.Vdpau => ["libvdpau.so.1"],
+                HardwareDecodeBackendKind.Vulkan => ["libvulkan.so.1"],
+                HardwareDecodeBackendKind.OpenCl => ["libOpenCL.so.1"],
+                HardwareDecodeBackendKind.Drm => ["libdrm.so.2"],
+                _ => [],
+            };
+        }
 
         if (OperatingSystem.IsWindows())
-            return "nvcuda.dll";
-        if (OperatingSystem.IsLinux())
-            return "libcuda.so.1";
+        {
+            return kind switch
+            {
+                HardwareDecodeBackendKind.Cuda => ["nvcuda.dll"],
+                HardwareDecodeBackendKind.Vulkan => ["vulkan-1.dll"],
+                _ => [],
+            };
+        }
 
-        // No CUDA on macOS since 10.14; nothing to pre-check.
-        return null;
+        // macOS: VideoToolbox is part of the OS, and CUDA has not existed since 10.14.
+        return [];
     }
 
     /// <summary>
-    /// Whether <paramref name="library"/> can be loaded here. The handle is released
-    /// immediately — this asks a question, it does not take a dependency. FFmpeg loads its
-    /// own copy afterwards, and <c>dlopen</c> is reference counted, so the probe and FFmpeg
-    /// do not interfere.
+    /// The first library <paramref name="kind"/> needs that will not load here, or
+    /// <see langword="null"/> if they all load (or it needs none).
     /// </summary>
-    private static bool CanLoad(string library)
+    /// <remarks>
+    /// Each handle is released immediately — this asks a question, it does not take a
+    /// dependency. FFmpeg loads its own afterwards, and <c>dlopen</c> is reference counted,
+    /// so the probe and FFmpeg do not interfere.
+    /// </remarks>
+    private static string? FirstMissingDriver(HardwareDecodeBackendKind kind)
     {
-        if (!NativeLibrary.TryLoad(library, out var handle))
-            return false;
+        foreach (var library in DriverLibrariesFor(kind))
+        {
+            if (!NativeLibrary.TryLoad(library, out var handle))
+                return library;
 
-        NativeLibrary.Free(handle);
-        return true;
+            NativeLibrary.Free(handle);
+        }
+
+        return null;
     }
 
     /// <summary>
