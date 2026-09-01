@@ -1,6 +1,6 @@
 # FrameFlow
 
-FrameFlow is a .NET media playback library built around a clean, headless FFmpeg-based core with platform presenters and audio backends at the edges. It is pre-1.0 with no external consumers yet, so its public surface is still free to change.
+FrameFlow is a .NET media playback library built around a clean, UI-agnostic FFmpeg-based core with platform presenters and audio backends at the edges. It is pre-1.0 with no external consumers yet, so its public surface is still free to change.
 
 The design goals are:
 
