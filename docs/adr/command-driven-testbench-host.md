@@ -408,8 +408,13 @@ That is not one metric's problem. `SubstrateSession.GetPipelineDiagnostics`
 substitutes a zero-valued snapshot whenever a subsystem is absent — `?? AudioSinkDiagnosticsSnapshot.Empty`
 for the audio sink, `_videoPacer?.DroppedLate ?? 0` for the sync counter — so
 under `--no-audio` **all seven `out.*` metrics are structurally frozen** at zero
-or false, and `sync.dropped` is zero whenever no pacer exists. Nine metrics in
-this table can read zero for a reason that has nothing to do with the run.
+or false. With `sink.committed` that is eight metrics in this table that can read
+zero for a reason unrelated to the run.
+
+`sync.dropped` looks like a ninth and is not. Its backing read is
+`_videoPacer?.DroppedLate ?? 0`, and the pacer is constructed whenever a video
+sink is, which the bench always provides — headless included. Zero there means
+zero.
 
 `scripts/repro/signage-gpu-noaudio.bench` already contains the proof: it declares
 `require audio off` and then asserts `expect out.active == false`, which cannot
@@ -421,12 +426,17 @@ constructed at all. Windowing does not save it; zero minus zero is zero.
 operator.** A metric resolves only in a script that carries the `require` its
 subsystem depends on. `sink.committed` needs `require presenter gpu`; the `out.*`
 prefix needs a new `require audio on`. Anywhere else the path is a parse error,
-exit 2, nothing runs. This is a better message than a nullable value could give —
+exit 2, nothing runs. Two metrics and one prefix is the whole table today — if it
+grows past that, the mapping wants to move onto the snapshot rather than staying
+in the bench. This is a better message than a nullable value could give —
 it names the missing `require`, at parse time, instead of reporting "not yet
 available" twelve seconds into a thirty-second run.
 
-It also rejects the `expect out.active == false` line above, which is the
-demonstration that the rule works.
+It rejected the `expect out.active == false` line in
+`scripts/repro/signage-gpu-noaudio.bench`, which is the demonstration that the
+rule works. That line has been removed: `require audio off` already asserts what
+it was reaching for, and does it against the resolved configuration rather than a
+counter that cannot move.
 
 The operators are `==`, `!=`, `>`, `>=`, `<`, `<=`. Ordering comparisons are legal
 on `count`, `gauge`, and `time`; `enum` and `bool` admit only `==` and `!=`, since
@@ -599,9 +609,13 @@ reports and continues; it never exits on a failed `expect`.
   `Properties/` is none of those. The two scripts predate the bench on purpose:
   they were written to test the grammar in Decision 6 against a real
   reproduction, and three of its rules changed as a result.
-- **Cross-platform comparison becomes mechanical.** The same script on three
-  operating systems, diffing the diagnostics line, is a thing a person can do in
-  an afternoon and a thing CI could do later.
+- **Cross-platform comparison becomes mechanical, for scripts written to be
+  portable.** The same script on three operating systems, diffing the diagnostics
+  line, is a thing a person can do in an afternoon and a thing CI could do later.
+  A script is portable when it avoids `require presenter gpu` and confines itself
+  to metrics the software path populates. Neither script in `scripts/repro/`
+  qualifies — both are marked Windows-only — so this consequence is a capability
+  the bench has, not one it currently demonstrates. See *Not settled here*.
 - **The examples shrink back to examples.** `--break-yolo`, `--exit-after`,
   `--left-clock` / `--right-clock`, the repro launch profiles, and two of the
   three `TextBoxLoggerProvider` copies have somewhere else to live.
@@ -747,6 +761,13 @@ reports and continues; it never exits on a failed `expect`.
   and an operator error, which a CI job cannot tell apart. Related and also
   unspecified: how `--keep-going` composes with a command failure, and which code
   wins when both an assertion and a command fail.
+- What the portable reproduction is. The cross-platform motivation in the Context
+  section is the strongest argument for building this, and both shipped scripts
+  are Windows-only because the presenter they pin is. A third script exercising
+  the CPU or SDL path under `--headless`, asserting only on metrics the software
+  path populates, is what would make that motivation actionable. Nothing about the
+  design blocks it; it has simply not been written, and the ADR should not read as
+  though the existing pair covers it.
 - Whether a `next` command belongs in the grammar, for
   `IMediaPlaylistPlayer.SetNextAsync` + `SkipToNextAsync`. It is the warm-presenter
   path — the one that swaps decode source without rebuilding the sink — and the
