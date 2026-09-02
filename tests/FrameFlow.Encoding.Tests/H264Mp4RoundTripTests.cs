@@ -310,6 +310,10 @@ public sealed class H264Mp4RoundTripTests : IClassFixture<FfmpegBootstrapFixture
         // Only for the staged copy. Doing it for a PATH ffprobe would put its directory
         // ahead of the system loader path, so anything sitting beside /usr/bin/ffprobe
         // could shadow a real system library and quietly change what is being tested.
+        //
+        // Redundant for a tree staged by the current fetch-ffmpeg.cs, which now sets an
+        // $ORIGIN rpath on the ELF tools. Kept for trees staged by an older copy of it.
+        // StagedFfmpegToolTests is what fails when the staging itself regresses.
         var probeDir = Path.GetDirectoryName(ffprobe);
         if (IsStagedBinary(probeDir))
         {

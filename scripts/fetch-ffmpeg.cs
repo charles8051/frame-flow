@@ -22,10 +22,12 @@
 //   dotnet run scripts/fetch-ffmpeg.cs -- --rid linux-x64 --force   — force re-download
 //   dotnet run scripts/fetch-ffmpeg.cs -- --license gpl             — GPL build instead of LGPL
 
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 var force = args.Contains("--force", StringComparer.OrdinalIgnoreCase);
@@ -317,6 +319,33 @@ foreach (var rid in ridsToProcess)
             }
         }
 
+        // The tools are staged by the same run, so a tree missing one is not a
+        // complete tree. Presence only, not checksum: the Linux copies are rewritten
+        // below and deliberately no longer hash to their manifest entry.
+        var stagedTools = ToolFileNames(rid);
+        if (stagedTools.Any(t => !File.Exists(Path.Combine(nativeDir, t))))
+            allPresent = false;
+
+        // A tree staged before this script learned to set the rpath has matching
+        // libraries and broken tools, and would otherwise be skipped and left broken --
+        // only --force would ever repair it. Repairing is a byte edit rather than a
+        // download, so it costs nothing to redo on every run, and SetElfRunPathToOrigin
+        // is a no-op on a tool that already reads $ORIGIN. Where it cannot be done,
+        // fall through to a full re-fetch rather than skip.
+        if (allPresent && allChecksumMatch && rid.StartsWith("linux-", StringComparison.Ordinal))
+        {
+            foreach (var tool in stagedTools)
+            {
+                if (SetElfRunPathToOrigin(Path.Combine(nativeDir, tool)) is { } staleRpath)
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"  {tool}: rpath not repairable ({staleRpath}) — re-fetching.");
+                    Console.ResetColor();
+                    allPresent = false;
+                }
+            }
+        }
+
         if (allPresent && allChecksumMatch)
         {
             Console.ForegroundColor = ConsoleColor.Green;
@@ -377,7 +406,7 @@ foreach (var rid in ridsToProcess)
         }
 
         // Copy ffmpeg and ffprobe executables from the keg bin/ directory.
-        foreach (var tool in new[] { "ffmpeg", "ffprobe" })
+        foreach (var tool in ToolFileNames(rid))
         {
             var src = Path.Combine(kegBinDir, tool);
             if (File.Exists(src))
@@ -553,10 +582,8 @@ foreach (var rid in ridsToProcess)
 
     // Also copy ffmpeg and ffprobe executables
     var isWindows = rid.StartsWith("win-", StringComparison.Ordinal);
-    var exeExt = isWindows ? ".exe" : "";
-    foreach (var tool in new[] { "ffmpeg", "ffprobe" })
+    foreach (var toolName in ToolFileNames(rid))
     {
-        var toolName = $"{tool}{exeExt}";
         var src = Directory
             .EnumerateFiles(extractDir, toolName, SearchOption.AllDirectories)
             .FirstOrDefault();
@@ -591,6 +618,29 @@ foreach (var rid in ridsToProcess)
             // Make executable on Unix
             if (!isWindows)
                 SetExecutable(dest);
+
+            // The libraries and the tools land in the same flat directory, but only
+            // two of three platforms let a tool find them from there. Windows resolves
+            // DLLs beside the exe and macOS is patched to @loader_path above. An ELF
+            // binary has to be told, and BtbN's own rpath does not tell it: theirs
+            // reads "-Wl:../lib", a build-script quoting slip that the loader reads as
+            // two entries, "-Wl" and "../lib", both relative to the working directory.
+            //
+            // This runs after the checksum above, so a staged Linux tool no longer
+            // hashes to its manifest entry. The verification still covers the bytes
+            // that were downloaded; only the copy on disk differs, and nothing
+            // re-checks it — the skip-if-present pass hashes libraries, not tools.
+            if (
+                rid.StartsWith("linux-", StringComparison.Ordinal)
+                && SetElfRunPathToOrigin(dest) is { } rpathProblem
+            )
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"    {toolName, -25} RPATH NOT SET: {rpathProblem}");
+                Console.ResetColor();
+                failed++;
+                continue;
+            }
 
             Console.ForegroundColor = ConsoleColor.Green;
             Console.Write($"    {toolName, -25} ");
@@ -662,6 +712,16 @@ static string FindRepoRoot()
     }
     return Environment.CurrentDirectory;
 }
+
+/// <summary>
+/// The FFmpeg command-line tools staged alongside the libraries, as file names for
+/// <paramref name="rid"/>. One list, because the copy loops and the up-to-date check
+/// have to agree on what a complete staging contains.
+/// </summary>
+static string[] ToolFileNames(string rid) =>
+    rid.StartsWith("win-", StringComparison.Ordinal)
+        ? ["ffmpeg.exe", "ffprobe.exe"]
+        : ["ffmpeg", "ffprobe"];
 
 static string ComputeSha256(string filePath)
 {
@@ -809,6 +869,164 @@ static void FixMacOsDylibInstallNames(string nativeDir, string[] libs)
         // Re-apply an ad-hoc signature after modifying the binary.
         RunTool("codesign", ["--force", "--sign", "-", dylibPath]);
     }
+}
+
+/// <summary>
+/// Points a staged Linux ELF executable at its own directory, by rewriting every
+/// <c>DT_RPATH</c> string in place to <c>$ORIGIN</c>. The Linux counterpart of
+/// <see cref="FixMacOsDylibInstallNames"/>. Idempotent: a tool that already reads
+/// <c>$ORIGIN</c> is left untouched, so this can be re-run over a staged tree.
+/// </summary>
+/// <returns><see langword="null"/> on success, otherwise why it could not be done.</returns>
+/// <remarks>
+/// <para>
+/// Only the two tools are patched. The .so files carry no rpath entry and need none:
+/// <c>DT_RPATH</c>, unlike <c>DT_RUNPATH</c>, is inherited by the dependencies of
+/// dependencies, so the executable's entry is what resolves libavcodec's reference to
+/// libavutil. The tag is therefore rewritten and never retyped. FrameFlow's own
+/// P/Invoke relies on neither; FfmpegNativeLibraryLoader loads by absolute path.
+/// </para>
+/// <para>
+/// The edit is in place and so can only shrink: growing <c>.dynstr</c> would mean
+/// relocating segments. <c>$ORIGIN</c> is 7 bytes against BtbN's 10, which fits. A
+/// build carrying no rpath entry cannot be fixed this way, and is reported as a
+/// failure rather than passed over -- the tool would be staged but unusable.
+/// </para>
+/// <para>
+/// Byte editing rather than <c>patchelf</c>, because <c>--rid linux-x64</c> and
+/// <c>--all</c> stage Linux binaries from Windows and macOS machines, where patchelf
+/// does not exist. A fix that only ran on Linux hosts would leave exactly the trees
+/// that nobody exercises until CI.
+/// </para>
+/// </remarks>
+static string? SetElfRunPathToOrigin(string path)
+{
+    const string Origin = "$ORIGIN";
+
+    // ELF64 header: e_ident[16], e_phoff at 0x20, e_phentsize at 0x36, e_phnum at
+    // 0x38. Program header: p_type at 0x00, p_offset 0x08, p_vaddr 0x10, p_filesz
+    // 0x20. Dynamic entries are (d_tag, d_un) pairs of 8 bytes each.
+    var bytes = File.ReadAllBytes(path);
+    if (
+        bytes.Length < 64
+        || bytes[0] != 0x7F
+        || bytes[1] != 'E'
+        || bytes[2] != 'L'
+        || bytes[3] != 'F'
+    )
+        return "not an ELF file";
+    if (bytes[4] != 2)
+        return "not a 64-bit ELF";
+    if (bytes[5] != 1)
+        return "not a little-endian ELF";
+
+    var phOffset = (long)BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(0x20));
+    var phEntrySize = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(0x36));
+    var phCount = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(0x38));
+    if (phEntrySize < 0x38 || phOffset < 0 || phOffset + (long)phCount * phEntrySize > bytes.Length)
+        return "program header table is out of bounds";
+
+    long dynamicOffset = -1;
+    long dynamicSize = 0;
+    var loads = new List<(ulong VAddr, ulong Offset, ulong Size)>();
+
+    for (var i = 0; i < phCount; i++)
+    {
+        var o = (int)(phOffset + (long)i * phEntrySize);
+        var type = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(o));
+        var offset = BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(o + 0x08));
+        var vaddr = BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(o + 0x10));
+        var fileSize = BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(o + 0x20));
+
+        if (type == 2) // PT_DYNAMIC
+            (dynamicOffset, dynamicSize) = ((long)offset, (long)fileSize);
+        else if (type == 1) // PT_LOAD
+            loads.Add((vaddr, offset, fileSize));
+    }
+
+    if (dynamicOffset < 0)
+        return "no PT_DYNAMIC segment";
+
+    var entries = new List<(long Tag, ulong Value)>();
+    var dynamicEnd = Math.Min(dynamicOffset + dynamicSize, bytes.Length);
+    for (var o = dynamicOffset; o >= 0 && o + 16 <= dynamicEnd; o += 16)
+    {
+        var tag = BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan((int)o));
+        entries.Add((tag, BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan((int)o + 8))));
+        if (tag == 0) // DT_NULL
+            break;
+    }
+
+    // DT_STRTAB is a virtual address; map it back to a file offset through PT_LOAD.
+    var strTab = entries.Where(e => e.Tag == 5).Select(e => (ulong?)e.Value).FirstOrDefault();
+    if (strTab is null)
+        return "no DT_STRTAB entry";
+
+    long stringTableOffset = -1;
+    foreach (var (vaddr, offset, size) in loads)
+    {
+        if (strTab.Value >= vaddr && strTab.Value < vaddr + size)
+        {
+            stringTableOffset = (long)(offset + (strTab.Value - vaddr));
+            break;
+        }
+    }
+
+    if (stringTableOffset < 0)
+        return "DT_STRTAB does not fall inside any PT_LOAD segment";
+
+    // DT_RPATH only, and refused outright when a DT_RUNPATH is present. A DT_RUNPATH
+    // makes glibc ignore DT_RPATH and is not inherited by the dependencies of
+    // dependencies, so no rewriting of strings can fix such a binary: $ORIGIN would
+    // resolve the tool's own NEEDED entries and still leave libavcodec unable to find
+    // libavutil. No BtbN build has one. Reporting that beats reporting a success that
+    // does not hold.
+    if (entries.Any(e => e.Tag == 29)) // DT_RUNPATH
+        return "DT_RUNPATH is present, which overrides DT_RPATH and is not inherited "
+            + "by transitive dependencies";
+
+    var rpaths = entries.Where(e => e.Tag == 15).ToList(); // DT_RPATH
+    if (rpaths.Count == 0)
+        return "no DT_RPATH entry to rewrite";
+
+    var rewrote = false;
+    foreach (var (_, value) in rpaths)
+    {
+        var start = stringTableOffset + (long)value;
+        if (start < 0 || start >= bytes.Length)
+            return "rpath string index points outside the file";
+
+        var terminator = Array.IndexOf(bytes, (byte)0, (int)start);
+        if (terminator < 0)
+            return "unterminated rpath string in .dynstr";
+
+        var length = terminator - (int)start;
+        if (length < Origin.Length)
+            return $"existing rpath is {length} bytes and '{Origin}' needs {Origin.Length}";
+
+        // .dynstr suffix-merges identical tails, so a shorter string can share the back
+        // of this one, and truncating would then corrupt the other entry. No BtbN build
+        // does this today. Refusing is cheaper than discovering it in a loader error.
+        var stringEnd = (ulong)(terminator - stringTableOffset);
+        foreach (var (tag, other) in entries)
+        {
+            if (tag is 1 or 14 or 15 or 29 && other > value && other <= stringEnd)
+                return "the rpath string is shared with another .dynstr entry";
+        }
+
+        // Already pointed at $ORIGIN. Leaving the file alone is what makes re-running
+        // over a staged tree free, rather than a rewrite that only changes the mtime.
+        if (Encoding.ASCII.GetString(bytes, (int)start, length) == Origin)
+            continue;
+
+        Encoding.ASCII.GetBytes(Origin, bytes.AsSpan((int)start));
+        bytes.AsSpan((int)start + Origin.Length, length - Origin.Length).Clear();
+        rewrote = true;
+    }
+
+    if (rewrote)
+        File.WriteAllBytes(path, bytes);
+    return null;
 }
 
 static void RunTool(string tool, string[] args)
