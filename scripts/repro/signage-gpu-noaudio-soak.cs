@@ -371,6 +371,9 @@ internal static class Soak
         report.Check($"no {what}", delta == 0, $"{delta} (total {read(after)})");
     }
 
+    /// <summary>The longest duration a soak argument may name.</summary>
+    private const double MaxDurationMs = 24 * 60 * 60 * 1_000;
+
     /// <summary>
     /// Reads a duration argument such as <c>--window 30s</c>, or reports it.
     /// </summary>
@@ -378,9 +381,6 @@ internal static class Soak
     /// <see langword="false"/> only when the flag was given and its value is not a
     /// duration. An absent flag takes <paramref name="fallback"/> and succeeds.
     /// </returns>
-    /// <summary>The longest duration a soak argument may name.</summary>
-    private const double MaxDurationMs = 24 * 60 * 60 * 1_000;
-
     internal static bool TryArgument(
         string[] args,
         string flag,
