@@ -389,8 +389,16 @@ a host-side component that raises events, and nothing it decides reaches
 > to the target only once the pipeline presents at the new point. Everything the
 > bench drives is asynchronous, so a repro that asserts immediately after an
 > action asserts against a pipeline that has not caught up. In C# that is a
-> polling loop of about five lines. It should be written once, in a helper beside
-> the repro files, rather than copied into each.
+> polling loop of about five lines.
+>
+> ~~It should be written once, in a helper beside the repro files, rather than
+> copied into each.~~ **Wrong, and corrected by writing the repros.** A .NET
+> file-based app is one file. A shared helper would have to be a `#:project`
+> reference, which makes a reproduction need a checkout and gives up the property
+> that made `#:package` worth having — that one file plus the SDK is the whole
+> thing. The harness is inlined in each repro instead, at about sixty lines. That
+> is the cheaper side of the trade at two reproductions; if it stops being so, the
+> answer is a packed helper rather than a project reference.
 >
 > **The metric namespace table.** No longer a language, still the documentation of
 > what `diag --all` prints and which snapshot field each value comes from. That is
@@ -447,14 +455,31 @@ a host-side component that raises events, and nothing it decides reaches
 > or two, which is the spike's own cycle and is not the thirty-second
 > rebuild-relaunch-read loop this ADR exists to kill.
 >
-> #### What this requires
+> #### What this required — done
 >
-> Both shipped reproductions are `.bench` files against the deleted grammar.
-> `scripts/repro/signage-gpu-noaudio.bench` and `signage-gpu-noaudio-soak.bench`
-> have to be rewritten as `.cs`. They were written to test the grammar against a
-> real reproduction and three of its rules changed as a result, so they did their
-> job; the fixture correction recorded under *Consequences* still applies to their
-> replacements.
+> Both shipped reproductions were `.bench` files against the deleted grammar.
+> They are now `scripts/repro/signage-gpu-noaudio.cs` and
+> `signage-gpu-noaudio-soak.cs`, and both run. The fixture correction recorded
+> under *Consequences* was applied in the rewrite: the soak moved to
+> `bench-1080p60-h264-aac.mp4` and kept `RepeatMode.One`.
+>
+> Four things the rewrite settled that the grammar drafts could only assert:
+>
+> - **`#:package` takes a floating version.** `FrameFlow.Player@0.7.0-alpha.*`
+>   resolves from the local feed, so a repro keeps running as MinVer advances. The
+>   exact build it was observed against goes in a comment. Pinning it exactly would
+>   have recorded the observation and broken the file for everyone else.
+> - **The UI thread is not optional.** `AttachSink` initialises the compositor
+>   surface and throws `"Call from invalid thread"` off the dispatcher. A repro
+>   that builds its own window has to attach on the thread that owns it and drive
+>   from another — the same shape the bench uses.
+> - **A soak needs two windows and a comparison between them, not two thresholds.**
+>   Each window checked against an absolute rate passes a run that halved. The
+>   rewrite compares them, which is the check the original `.bench` was reaching
+>   for and could not express.
+> - **A long run has to report as it goes.** Six minutes of silence is
+>   indistinguishable from a hang. The harness prints each check live and recaps
+>   only the failures.
 >
 > ---
 >
@@ -827,10 +852,9 @@ reports and continues; it never exits on a failed `expect`.
   so state that took thirty seconds to reach is not thrown away to ask the next
   one.
 - **A reproduction becomes a file.**
-  [`scripts/repro/signage-gpu-noaudio.bench`](../../scripts/repro/signage-gpu-noaudio.bench)
-  is the `Repro-Signage-NoAudio-GPU` profile written out, and
-  [`signage-gpu-noaudio-soak.bench`](../../scripts/repro/signage-gpu-noaudio-soak.bench)
-  is the same shape over a longer window. It is not yet on the right fixture: it
+  `signage-gpu-noaudio.bench` was the `Repro-Signage-NoAudio-GPU` profile written
+  out, and `signage-gpu-noaudio-soak.bench` the same shape over a longer window.
+  (Both are now `.cs` — see the note at the end of this bullet.) It is not yet on the right fixture: it
   loops a 10-second `testsrc2` clip ~36 times, and
   `scripts/generate-test-corpus.cs` argues against both halves of that — testsrc2
   "encodes to almost nothing" and reproduced #145 at ~30% severity, and looping a
@@ -841,9 +865,19 @@ reports and continues; it never exits on a failed `expect`.
   `Properties/` is none of those. The two scripts predate the bench on purpose:
   they were written to test the grammar in Decision 6 against a real
   reproduction, and three of its rules changed as a result.
-  <br>**Both are `.bench` files against a grammar Decision 6 deleted, and have to
-  be rewritten as `.cs`.** They did the job they were written for. The fixture
-  correction above applies to their replacements unchanged.
+  <br>**Both were `.bench` files against a grammar Decision 6 deleted, and are now
+  [`signage-gpu-noaudio.cs`](../../scripts/repro/signage-gpu-noaudio.cs) and
+  [`signage-gpu-noaudio-soak.cs`](../../scripts/repro/signage-gpu-noaudio-soak.cs).**
+  They did the job they were written for.
+  <br>The fixture correction above was applied: the soak is on
+  `bench-1080p60-h264-aac.mp4`. **`repeat one` stayed, against the advice above,
+  and the advice was written for the old fixture.** Dropping it ends playback at
+  45 seconds, and a soak whose whole point is a second measurement four minutes
+  later cannot end at 45 seconds. What the longer fixture actually bought is the
+  restart *rate*: a 10s clip restarts every 10 seconds, a 45s clip every 45. The
+  measurement window is 30s to sit inside one lap, which usually avoids a restart
+  and is not guaranteed to — so the rate threshold tolerates one rather than
+  pretending none can occur.
 - **Cross-platform comparison becomes mechanical, for scripts written to be
   portable.** The same script on three operating systems, diffing the diagnostics
   line, is a thing a person can do in an afternoon and a thing CI could do later.

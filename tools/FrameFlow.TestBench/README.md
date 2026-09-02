@@ -66,8 +66,7 @@ reproduction that asserts is a C# file-based app under `scripts/repro/`, which t
 `#:package FrameFlow.Player`, builds its own sinks, and returns its own exit code. See
 the resolution at the head of Decision 6 in
 [the ADR](../../docs/adr/command-driven-testbench-host.md), and
-[`spikes/package-directive-repro.cs`](../../spikes/package-directive-repro.cs) for the
-shape.
+[`scripts/repro/`](../../scripts/repro/README.md) for two that exist.
 
 ## Presenters
 
