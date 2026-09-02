@@ -18,7 +18,11 @@ public sealed class EncodingContractTests
         Assert.Equal(1, options.FrameRateDenominator);
         Assert.True(options.BitRate > 0);
         Assert.True(options.GopSize > 0);
-        Assert.Equal("libopenh264", options.EncoderName);
+        // No encoder is pinned by default -- it is resolved against the loaded FFmpeg.
+        // libopenh264 is still what resolves wherever FrameFlow ships its own build; it
+        // stopped being a hard default because macOS uses a Homebrew FFmpeg that has none.
+        Assert.Null(options.EncoderName);
+        Assert.Equal("libopenh264", H264EncoderOptions.DefaultEncoderPreference[0]);
     }
 
     [Fact]

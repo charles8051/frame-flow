@@ -41,6 +41,11 @@ namespace FrameFlow.Encoding.Internal;
 internal sealed class H264VideoEncoder : IVideoEncoder, INativeVideoEncoder, IEncodeCodec<EncodedPacket>
 {
     private readonly H264EncoderOptions _options;
+
+    // The encoder Open actually found. Null until Open runs; Info reports the pinned
+    // name (or "unresolved") before that, so a caller inspecting a closed encoder is
+    // not told a name that may turn out not to exist here.
+    private string? _resolvedEncoderName;
     private readonly ILogger _logger;
 
     private CodecContextHandle? _codecCtx;
@@ -75,7 +80,7 @@ internal sealed class H264VideoEncoder : IVideoEncoder, INativeVideoEncoder, IEn
     /// <inheritdoc/>
     public EncoderInfo Info =>
         new(
-            _options.EncoderName,
+            _resolvedEncoderName ?? _options.EncoderName ?? "unresolved",
             _codedWidth,
             _codedHeight,
             _options.FrameRateNumerator,
@@ -166,11 +171,8 @@ internal sealed class H264VideoEncoder : IVideoEncoder, INativeVideoEncoder, IEn
                 $"Coded dimensions {_codedWidth}x{_codedHeight} are invalid after even-rounding."
             );
 
-        nint codec = FFAvCodec.avcodec_find_encoder_by_name(_options.EncoderName);
-        if (codec == nint.Zero)
-            throw new InvalidOperationException(
-                $"H.264 encoder '{_options.EncoderName}' is not available in the loaded FFmpeg build."
-            );
+        nint codec = ResolveEncoder(out var resolvedName);
+        _resolvedEncoderName = resolvedName;
 
         nint ctxPtr = FFAvCodec.avcodec_alloc_context3(codec);
         if (ctxPtr == nint.Zero)
@@ -193,8 +195,10 @@ internal sealed class H264VideoEncoder : IVideoEncoder, INativeVideoEncoder, IEn
         int openRc = FFAvCodec.avcodec_open2(ctxPtr, codec, nint.Zero);
         if (openRc < 0)
             throw new InvalidOperationException(
-                $"avcodec_open2 failed for '{_options.EncoderName}': {DescribeError(openRc)}"
+                $"avcodec_open2 failed for '{_resolvedEncoderName}': {DescribeError(openRc)}"
             );
+
+        // (resolver lives below Open; see ResolveEncoder)
 
         // Reusable YUV420P source frame, buffer-allocated to the coded geometry.
         nint framePtr = FFAvUtil.av_frame_alloc();
@@ -237,7 +241,7 @@ internal sealed class H264VideoEncoder : IVideoEncoder, INativeVideoEncoder, IEn
         _opened = true;
         LogOpened(
             _logger,
-            _options.EncoderName,
+            _resolvedEncoderName!,
             _codedWidth,
             _codedHeight,
             _options.FrameRateNumerator,
@@ -362,6 +366,51 @@ internal sealed class H264VideoEncoder : IVideoEncoder, INativeVideoEncoder, IEn
             _options.FrameRateNumerator,
             key,
             streamIndex: 0
+        );
+    }
+
+    /// <summary>
+    /// Finds the encoder to open: the pinned <see cref="H264EncoderOptions.EncoderName"/>
+    /// if one is set, otherwise the first of
+    /// <see cref="H264EncoderOptions.DefaultEncoderPreference"/> the loaded FFmpeg carries.
+    /// </summary>
+    /// <param name="resolvedName">The name that matched.</param>
+    /// <returns>A non-null <c>AVCodec*</c>.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Nothing matched. The message names every candidate tried, because "encoder not
+    /// available" naming one name reads as a typo when it is actually a platform gap —
+    /// which is how the macOS case went unnoticed.
+    /// </exception>
+    private nint ResolveEncoder(out string resolvedName)
+    {
+        // A pinned name is used as given. Substituting another encoder for one the caller
+        // named would defeat the point of naming it.
+        if (_options.EncoderName is { } pinned)
+        {
+            nint pinnedCodec = FFAvCodec.avcodec_find_encoder_by_name(pinned);
+            if (pinnedCodec == nint.Zero)
+                throw new InvalidOperationException(
+                    $"H.264 encoder '{pinned}' is not available in the loaded FFmpeg build."
+                );
+
+            resolvedName = pinned;
+            return pinnedCodec;
+        }
+
+        foreach (var candidate in H264EncoderOptions.DefaultEncoderPreference)
+        {
+            nint codec = FFAvCodec.avcodec_find_encoder_by_name(candidate);
+            if (codec == nint.Zero)
+                continue;
+
+            resolvedName = candidate;
+            return codec;
+        }
+
+        throw new InvalidOperationException(
+            "No H.264 encoder is available in the loaded FFmpeg build. Tried "
+                + string.Join(", ", H264EncoderOptions.DefaultEncoderPreference)
+                + ". Set H264EncoderOptions.EncoderName to pin one this build carries."
         );
     }
 
