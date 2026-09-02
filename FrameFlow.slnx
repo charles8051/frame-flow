@@ -42,6 +42,9 @@
     <Project Path="examples/FrameFlow.Examples.SdlPlayer/FrameFlow.Examples.SdlPlayer.csproj" />
     <Project Path="examples/FrameFlow.Examples.ZeroCopyInterop/FrameFlow.Examples.ZeroCopyInterop.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/FrameFlow.TestBench/FrameFlow.TestBench.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/FrameFlow.Audio.Tests/FrameFlow.Audio.Tests.csproj" />
     <Project Path="tests/FrameFlow.Avalonia.Tests/FrameFlow.Avalonia.Tests.csproj" />
@@ -57,6 +60,7 @@
     <Project Path="tests/FrameFlow.MotionClip.Tests/FrameFlow.MotionClip.Tests.csproj" />
     <Project Path="tests/FrameFlow.Native.Tests/FrameFlow.Native.Tests.csproj" />
     <Project Path="tests/FrameFlow.Playback.Tests/FrameFlow.Playback.Tests.csproj" />
+    <Project Path="tests/FrameFlow.TestBench.Tests/FrameFlow.TestBench.Tests.csproj" />
     <Project Path="tests/FrameFlow.Player.Tests/FrameFlow.Player.Tests.csproj" />
     <Project Path="tests/FrameFlow.Video.Tests/FrameFlow.Video.Tests.csproj" />
     <Project Path="tests/FrameFlow.Face.Tests/FrameFlow.Face.Tests.csproj" />

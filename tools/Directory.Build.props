@@ -1,0 +1,22 @@
+<Project>
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <!--
+    Tools are applications, not library packages — the same reasoning as
+    examples/Directory.Build.props, and for the same reason it exists.
+
+    .NET's default for a project is packable, and src/Directory.Build.props
+    only *claims* that projects outside src/ are unpackable by default. They
+    are not. Without this, `dotnet pack FrameFlow.slnx` would produce a
+    .nupkg for the bench, and .github/workflows/publish.yml packs the
+    solution and pushes packages/*.nupkg — so a release would publish it.
+
+    The bench is nonetheless IN the solution rather than beside it like
+    spikes/. build.yml builds and tests the solution and nothing else, so a
+    bench outside it would never be compiled by CI, and the API-drift alarm
+    that is half the point of Decision 3 would never fire.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>
