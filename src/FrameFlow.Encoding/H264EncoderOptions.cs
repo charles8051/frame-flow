@@ -1,6 +1,8 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Collections.ObjectModel;
+
 namespace FrameFlow.Encoding;
 
 /// <summary>
@@ -15,11 +17,31 @@ namespace FrameFlow.Encoding;
 /// the resolution up front.
 /// </para>
 /// <para>
-/// The default <see cref="EncoderName"/> is <c>libopenh264</c> — the software
-/// H.264 encoder statically linked into FrameFlow's LGPL FFmpeg build. It is
-/// deterministic and hardware-independent. Override it to target a hardware
-/// encoder (e.g. <c>"h264_nvenc"</c>, <c>"h264_qsv"</c>, <c>"h264_mf"</c>) when
-/// one is available and desired.
+/// <see cref="EncoderName"/> is unset by default, and the encoder is resolved
+/// against what the loaded FFmpeg actually has: <c>libopenh264</c> first, then
+/// <c>h264_videotoolbox</c>. Set it to pin one explicitly — a hardware encoder
+/// (<c>"h264_nvenc"</c>, <c>"h264_qsv"</c>, <c>"h264_mf"</c>) or anything else the
+/// build carries.
+/// </para>
+/// <para>
+/// <b>Why resolution rather than a fixed default.</b> <c>libopenh264</c> is
+/// statically linked into the FFmpeg that FrameFlow ships for Windows and Linux,
+/// and on those platforms it is what resolves — deterministic, hardware-independent,
+/// and the same encoder on both. FrameFlow ships no FFmpeg for macOS: the
+/// bootstrapper resolves a Homebrew <c>ffmpeg@7</c> keg instead, and that build has
+/// no <c>libopenh264</c>. A fixed default therefore threw on every Mac, while
+/// <c>h264_videotoolbox</c> was sitting there unused.
+/// </para>
+/// <para>
+/// <b>On <c>libx264</c>.</b> It is not in the resolution order, and that is a
+/// deliberate omission rather than a licence guarantee. Homebrew's <c>ffmpeg@7</c>
+/// is configured <c>--enable-gpl --enable-libx264</c>, so a macOS consumer on the
+/// bring-your-own path is already running a GPL FFmpeg whatever encoder is chosen;
+/// FrameFlow's LGPL statement covers the builds it ships, not the one it finds.
+/// The reason to prefer VideoToolbox there is practical: it is present on every
+/// Mac, it is hardware-accelerated, and it does not depend on which optional
+/// formulae the consumer's FFmpeg happened to be built against. Pin
+/// <c>"libx264"</c> explicitly if it suits you.
 /// </para>
 /// </remarks>
 public sealed record H264EncoderOptions
@@ -52,7 +74,44 @@ public sealed record H264EncoderOptions
     public int GopSize { get; init; } = 30;
 
     /// <summary>
-    /// The FFmpeg encoder to use. Default <c>"libopenh264"</c> (software).
+    /// Pins the FFmpeg encoder by name. Leave <see langword="null"/> (the default) to
+    /// resolve against the loaded build, in the order given by
+    /// <see cref="DefaultEncoderPreference"/>.
     /// </summary>
-    public string EncoderName { get; init; } = "libopenh264";
+    /// <remarks>
+    /// <para>
+    /// A name set here is used as given: if the build does not carry it, opening fails
+    /// rather than falling back. Pinning is a statement that this encoder is the one
+    /// that matters, and silently substituting another would defeat the point.
+    /// </para>
+    /// <para>
+    /// <b>This is a breaking change from the non-null <c>string</c> it used to be.</b>
+    /// A nullable-enabled caller doing <c>string name = options.EncoderName;</c> now
+    /// warns, and anything binding or serialising the defaults sees <see langword="null"/>
+    /// where it saw <c>"libopenh264"</c>. Taken deliberately, pre-1.0, because the
+    /// alternative is keeping a default that names an encoder which does not exist on one
+    /// of the three supported platforms — and a caller reading that name would be reading
+    /// a value the encoder was never going to use. Read
+    /// <see cref="DefaultEncoderPreference"/> for what will be tried instead.
+    /// </para>
+    /// </remarks>
+    public string? EncoderName { get; init; }
+
+    /// <summary>
+    /// The encoders tried in order when <see cref="EncoderName"/> is unset. The first
+    /// the loaded FFmpeg carries wins.
+    /// </summary>
+    /// <remarks>
+    /// <c>libopenh264</c> is what FrameFlow's own Windows and Linux builds carry.
+    /// <c>h264_videotoolbox</c> covers macOS, where FrameFlow ships no FFmpeg and the
+    /// Homebrew build has no openh264. A name absent from a build simply does not match,
+    /// so the list needs no platform conditionals.
+    /// <para>
+    /// Genuinely read-only, not an array behind a read-only interface. Every encoder open
+    /// reads this, so a caller casting it back and reordering — or emptying — it would make
+    /// resolution depend on whoever ran first.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> DefaultEncoderPreference { get; } =
+        new ReadOnlyCollection<string>(["libopenh264", "h264_videotoolbox"]);
 }
