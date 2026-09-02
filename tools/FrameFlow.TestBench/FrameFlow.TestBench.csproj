@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Console, not WinExe. The interleaved command/reply/log stream is the
+         artifact this tool exists to produce, and WinExe has no console to
+         write it to. -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>FrameFlow.TestBench</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Public API only: no InternalsVisibleTo, and nothing reaching past the
+         packaged surface. The bench doubles as a standing ergonomics check,
+         so it is meant to break when that surface breaks. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Media\FrameFlow.Media.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Native\FrameFlow.Native.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Playback\FrameFlow.Playback.csproj" />
+    <!-- OpenAlAudioSink is the production audio sink and supplies IVolumeControl,
+         which IPlaybackController does not carry. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Audio.OpenAL\FrameFlow.Audio.OpenAL.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="FrameFlow.TestBench.Tests" />
+  </ItemGroup>
+</Project>
