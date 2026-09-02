@@ -1024,6 +1024,13 @@ What remains is two questions the resolution does not touch, and one it created.
   `FramesCommitted` a `long?` — rejected once already, for a reason that was about
   the grammar's nullable rule and no longer applies — or surfacing which presenter
   resolved, which `LastCommittedAtUtc` being non-null already half does.
+  <br>**Partly mitigated, not closed.** The bench knows which surface it constructed,
+  so it prints `committed <n>` under `--presenter gpu` and `committed n/a` otherwise
+  rather than a zero that reads as a measurement. That works because the *host* chose
+  the presenter. It does not help a consumer handed a snapshot, which is still the
+  case the field has to answer for itself, and it does not distinguish the compositor's
+  own zero-copy path from its CPU-upload fallback — `CompositionInteropVideoView` keeps
+  that in a private field and surfaces it only as a log line.
 - What the portable reproduction is. The cross-platform motivation in the Context
   section is the strongest argument for building this, and both shipped scripts
   are Windows-only because the presenter they pin is. A third script exercising

@@ -20,6 +20,21 @@
     <!-- OpenAlAudioSink is the production audio sink and supplies IVolumeControl,
          which IPlaybackController does not carry. -->
     <ProjectReference Include="..\..\src\FrameFlow.Audio.OpenAL\FrameFlow.Audio.OpenAL.csproj" />
+    <!-- The windowed presenters. FrameFlow.Avalonia.Windows carries no platform
+         gate of its own: it is platform-neutral by construction and simply
+         depends on Direct3D at run time. So referencing it on every platform is
+         correct, and PresenterSelection makes the Windows-only call. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia.Windows\FrameFlow.Avalonia.Windows.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Avalonia.Desktop supplies UsePlatformDetect and
+         StartWithClassicDesktopLifetime, which an OutputType=Exe host needs
+         just as much as a WinExe one. -->
+    <PackageReference Include="Avalonia" Version="11.*" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.*" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.*" />
   </ItemGroup>
 
   <ItemGroup>
