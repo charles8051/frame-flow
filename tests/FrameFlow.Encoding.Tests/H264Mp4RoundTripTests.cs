@@ -280,13 +280,41 @@ public sealed class H264Mp4RoundTripTests : IClassFixture<FfmpegBootstrapFixture
         psi.ArgumentList.Add("csv=p=0");
         psi.ArgumentList.Add(path);
 
+        // A staged ffprobe under runtimes/{rid}/native/ has to find its sibling FFmpeg
+        // libraries. macOS binaries are patched to @loader_path by fetch-ffmpeg.cs and
+        // Windows resolves DLLs beside the exe, but ELF binaries get neither: without
+        // this the loader fails before ffprobe prints anything, which reads as "empty
+        // output" and says nothing about why.
+        var probeDir = Path.GetDirectoryName(ffprobe);
+        if (!string.IsNullOrEmpty(probeDir))
+        {
+            foreach (var variable in new[] { "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH" })
+            {
+                var existing = Environment.GetEnvironmentVariable(variable);
+                psi.Environment[variable] = string.IsNullOrEmpty(existing)
+                    ? probeDir
+                    : probeDir + Path.PathSeparator + existing;
+            }
+        }
+
         using var proc = Process.Start(psi)!;
-        string stdout = await proc.StandardOutput.ReadToEndAsync();
+
+        // Both pipes are drained before waiting. Reading one and leaving the other
+        // buffered deadlocks as soon as the unread pipe fills.
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+        string stdout = await stdoutTask;
+        string stderr = await stderrTask;
         await proc.WaitForExitAsync();
 
         // Example: "h264,320,240,30"
         var parts = stdout.Trim().Split(',', StringSplitOptions.TrimEntries);
-        Assert.True(parts.Length >= 4, $"Unexpected ffprobe output: '{stdout}'.");
+        Assert.True(
+            parts.Length >= 4,
+            $"ffprobe '{ffprobe}' exited {proc.ExitCode} and did not describe the stream.\n"
+                + $"  stdout: '{stdout.Trim()}'\n"
+                + $"  stderr: '{stderr.Trim()}'"
+        );
         return (
             parts[0],
             int.Parse(parts[1], CultureInfo.InvariantCulture),
