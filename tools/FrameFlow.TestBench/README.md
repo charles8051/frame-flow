@@ -69,11 +69,44 @@ the resolution at the head of Decision 6 in
 [`spikes/package-directive-repro.cs`](../../spikes/package-directive-repro.cs) for the
 shape.
 
+## Presenters
+
+`--presenter headless|cpu|gpu`, default `headless`.
+
+| | |
+|---|---|
+| `headless` | no window; counts frames, with an optional synthetic present cost |
+| `cpu` | a window, presenting through `WriteableBitmap` |
+| `gpu` | a window, presenting through the zero-copy compositor path |
+
+**The bench reports the presenter it resolved, not the one you asked for.** `gpu` falls
+back to `cpu` off Windows and the flag still reads `gpu`, so a bench that echoed the
+request would produce a transcript claiming a pipeline the run did not measure:
+
+```
+presenter cpu — requested gpu, the zero-copy compositor surface is Windows-only
+```
+
+`committed` follows the same rule. `VideoSink.FramesCommitted` is populated only by the
+compositor presenter, and every other sink leaves it at `0` — which cannot be told apart
+from a compositor that committed nothing. The bench cannot fix the field, but it knows
+which surface it built:
+
+```
+--presenter gpu    committed 58  last=10:24:16.941
+--presenter cpu    committed n/a — only the gpu presenter populates it (this run is cpu)
+```
+
+A window has no chrome: no transport bar, no seek bar. The bench is driven from the
+console, and a control that could also drive it would make a transcript an incomplete
+record of what happened to the session.
+
 ## Headless is not the same run
 
-The bench presents to `HeadlessVideoSink`. Different sink, no compositor, no vsync. It
-records what the software path does and **will not reproduce a DXGI or DComp defect**. A
-green headless run is not evidence that the presenter is fine.
+`--presenter headless` presents to `HeadlessVideoSink`. Different sink, no compositor,
+no vsync. It records what the software path does and **will not reproduce a DXGI or
+DComp defect**. A green headless run is not evidence that the presenter is fine — that
+is what `--presenter gpu` is for, and it needs Windows and a display.
 
 `--present-cost <duration>` gives each frame a synthetic cost so a headless run is not
 optimistically fast. The frame is held for the whole cost, so the pool slot stays
@@ -101,6 +134,7 @@ meaning.
 | | |
 |---|---|
 | `--script <file>` | run commands from a file instead of the console |
+| `--presenter <kind>` | `headless` (default), `cpu`, or `gpu` |
 | `--no-audio` | build no audio sink; `volume` and `mute` then fail |
 | `--present-cost <dur>` | synthetic per-frame cost for the headless sink |
 | `--pool-capacity <n>` | frame pool slots, default 3 |
@@ -122,3 +156,8 @@ ergonomics check: it breaks when the public surface breaks, which is intended.
 It is in `FrameFlow.slnx` with `IsPackable=false` rather than outside the solution like
 `spikes/`. CI builds and tests the solution and nothing else, so a bench outside it
 would never be compiled and that alarm would never fire.
+
+`OutputType` is `Exe`, not `WinExe`, even though it opens a window for the `cpu` and
+`gpu` presenters. `FrameFlow.MotionClip` is the precedent. The cost is a console window
+beside the video one; the gain is that the command, the reply, and every log line the
+pipeline emitted in between arrive in one stream.

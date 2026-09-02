@@ -26,12 +26,14 @@ internal sealed class CommandRunner(
     IPlaybackController controller,
     IVolumeControl? volume,
     HeadlessVideoSink? headlessSink,
+    PresenterSelection presenter,
     TextWriter output
 )
 {
     private readonly IPlaybackController _controller = controller;
     private readonly IVolumeControl? _volume = volume;
     private readonly HeadlessVideoSink? _headlessSink = headlessSink;
+    private readonly PresenterSelection _presenter = presenter;
     private readonly TextWriter _out = output;
 
     /// <summary>The last snapshot <c>diag</c> printed, for the interval it reports next.</summary>
@@ -128,12 +130,12 @@ internal sealed class CommandRunner(
 
         if (all)
         {
-            _out.WriteLine(DiagnosticsRenderer.Full(snapshot, _headlessSink));
+            _out.WriteLine(DiagnosticsRenderer.Full(snapshot, _presenter, _headlessSink));
             _lastDiag = snapshot;
             return;
         }
 
-        _out.WriteLine(DiagnosticsRenderer.Summary(snapshot, _headlessSink));
+        _out.WriteLine(DiagnosticsRenderer.Summary(snapshot, _presenter, _headlessSink));
 
         // The interval since the previous `diag`, interpreted rather than dumped.
         // This is the counter-delta knowledge Decision 5 moved out of popcorn and into

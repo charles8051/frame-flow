@@ -29,6 +29,7 @@ internal static class DiagnosticsRenderer
     /// </remarks>
     internal static string Summary(
         PlaybackDiagnosticsSnapshot snapshot,
+        PresenterSelection presenter,
         HeadlessVideoSink? headless = null
     )
     {
@@ -60,6 +61,24 @@ internal static class DiagnosticsRenderer
                 + $"sync-dropped={snapshot.Pipeline.VideoFramesDroppedForSync}"
         );
 
+        // FramesCommitted is populated only by the zero-copy compositor presenter, and
+        // every other sink leaves it at 0 — which cannot be told apart from a compositor
+        // that committed nothing. The ADR carries that as an open question against the
+        // snapshot. The bench cannot fix the field, but it does know which surface it
+        // built, so it prints the number where the number means something and says
+        // nothing where it would only mislead.
+        text.AppendLine(
+            presenter.Resolved == PresenterKind.Gpu
+                ? $"  committed {sink.FramesCommitted}"
+                    + (
+                        sink.LastCommittedAtUtc is { } at
+                            ? $"  last={at:HH:mm:ss.fff}"
+                            : "  (nothing committed yet)"
+                    )
+                : $"  committed n/a — only the gpu presenter populates it"
+                    + $" (this run is {presenter.Resolved.ToString().ToLowerInvariant()})"
+        );
+
         // The headless sink's abandoned count is deliberately not FramesDropped: dropped
         // means the render path was the bottleneck, and there is no render tick here to
         // fall behind. Printing it beside them keeps that distinction visible rather
@@ -76,13 +95,22 @@ internal static class DiagnosticsRenderer
     /// <summary>The whole snapshot, for when the summary has left something out.</summary>
     internal static string Full(
         PlaybackDiagnosticsSnapshot snapshot,
+        PresenterSelection presenter,
         HeadlessVideoSink? headless = null
     ) =>
-        Summary(snapshot, headless)
+        Summary(snapshot, presenter, headless)
         + Environment.NewLine
         + Environment.NewLine
         + "  "
         + snapshot;
+
+    /// <summary>The presenter line printed at startup and by <c>status</c>.</summary>
+    internal static string Presenter(PresenterSelection presenter) =>
+        presenter.FellBack
+            ? $"presenter {presenter.Resolved.ToString().ToLowerInvariant()} "
+                + $"— requested {presenter.Requested.ToString().ToLowerInvariant()}, "
+                + $"{presenter.Reason}"
+            : $"presenter {presenter.Resolved.ToString().ToLowerInvariant()}";
 
     /// <summary>
     /// What moved between two <c>diag</c> polls, in sentences rather than numbers.

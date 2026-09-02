@@ -1,7 +1,10 @@
-using FrameFlow.Audio.OpenAL;
+using Avalonia;
 using FrameFlow.Media;
+// FrameFlow.Avalonia shadows the Avalonia root namespace inside FrameFlow.*, so a
+// fully-qualified Avalonia.Controls.* below would bind to FrameFlow.Avalonia.Controls
+// and fail to resolve. The alias pins it to the real one.
+using DesktopLifetime = global::Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime;
 using FrameFlow.Native;
-using FrameFlow.Playback;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.TestBench;
@@ -22,213 +25,207 @@ namespace FrameFlow.TestBench;
 /// stream possible: the command, the reply, and every log line the pipeline emitted in
 /// between, in the order they happened. That ordering is the artifact worth pasting into
 /// an issue, and two processes writing two logs cannot produce it without clock
-/// correlation.
+/// correlation. <c>FrameFlow.MotionClip</c> is the precedent — an <c>Exe</c> that also
+/// opens an Avalonia window, and pays a console window beside it.
 /// </para>
 /// </remarks>
 internal static class Program
 {
-    private const int ExitOk = 0;
-    private const int ExitCommandFailed = 1;
-    private const int ExitDidNotParse = 2;
-
-    internal static async Task<int> Main(string[] args)
+    [STAThread]
+    internal static int Main(string[] args)
     {
         var (options, message, isHelp) = BenchOptions.Parse(args);
         if (options is null)
         {
-            Console.Error.WriteLine(message);
+            Console.Error.WriteLine(isHelp ? BenchOptions.HelpText : message);
             if (!isHelp)
+            {
                 Console.Error.WriteLine();
-            Console.Error.WriteLine(isHelp ? "" : BenchOptions.HelpText);
-            return isHelp ? ExitOk : ExitDidNotParse;
+                Console.Error.WriteLine(BenchOptions.HelpText);
+            }
+            return isHelp ? BenchSession.ExitOk : BenchSession.ExitDidNotParse;
         }
 
         // Parse the whole script before building anything. A typo on line 40 is not
         // worth discovering after a thirty-second run, and it is certainly not worth
-        // opening an audio device to find out about.
-        List<BenchCommand>? scripted = null;
-        if (options.ScriptPath is { } scriptPath)
-        {
-            if (!File.Exists(scriptPath))
-            {
-                Console.Error.WriteLine($"script not found: {scriptPath}");
-                return ExitDidNotParse;
-            }
-
-            var lines = await File.ReadAllLinesAsync(scriptPath);
-            if (!CommandParser.TryParseScript(lines, out scripted, out var errors))
-            {
-                Console.Error.WriteLine($"{scriptPath}: {errors.Count} line(s) did not parse.");
-                foreach (var error in errors)
-                    Console.Error.WriteLine($"  {error}");
-                return ExitDidNotParse;
-            }
-        }
+        // opening a window and an audio device to find out about.
+        if (!TryReadScript(options, out var scripted, out var scriptExit))
+            return scriptExit;
 
         using var log = options.LogFile is { } logFile
             ? new StreamWriter(logFile, append: false) { AutoFlush = true }
             : null;
-        using TextWriter output =
-            log is null ? Console.Out : new TeeTextWriter(Console.Out, log);
+        using TextWriter output = log is null ? Console.Out : new TeeTextWriter(Console.Out, log);
 
         var bootstrap = new FrameFlowBootstrapper(new FrameFlowNativeOptions());
         var loaded = bootstrap.Initialize();
         if (!loaded.IsSuccess)
         {
             output.WriteLine($"FAIL  FFmpeg did not load: {loaded.Message}");
-            return ExitCommandFailed;
+            return BenchSession.ExitCommandFailed;
         }
 
         output.WriteLine(loaded.Message);
 
+        var presenter = PresenterSelection.Resolve(options.Presenter);
+        output.WriteLine(DiagnosticsRenderer.Presenter(presenter));
+
+        // These two shape the headless sink and reach nothing else. Silently ignoring
+        // them would let a windowed run be read as having had a synthetic cost applied.
+        if (presenter.NeedsWindow && options.PresentCost > TimeSpan.Zero)
+            output.WriteLine(
+                "note      --present-cost applies to the headless sink only, and is "
+                    + "ignored by a windowed presenter."
+            );
+
+        var session = new BenchSession(options, presenter, loaded.Capabilities, output);
+
+        return presenter.NeedsWindow
+            ? RunWindowed(options, presenter, session, scripted, output)
+            : RunHeadless(options, session, scripted);
+    }
+
+    /// <summary>
+    /// No window: the command loop owns the main thread, as it did before presenters
+    /// existed.
+    /// </summary>
+    private static int RunHeadless(
+        BenchOptions options,
+        BenchSession session,
+        List<BenchCommand>? scripted
+    )
+    {
         // A bounded pool on purpose: it is what makes the decoder block once frames are
         // in flight, so a --present-cost propagates back as real backpressure.
-        using var pool = new CpuFramePool(
-            NullLogger<CpuFramePool>.Instance,
-            options.PoolCapacity
-        );
-        await using var videoSink = new HeadlessVideoSink(pool, options.PresentCost);
+        using var pool = new CpuFramePool(NullLogger<CpuFramePool>.Instance, options.PoolCapacity);
+        var sink = new HeadlessVideoSink(pool, options.PresentCost);
 
-        OpenAlAudioSink? audioSink = options.NoAudio ? null : new OpenAlAudioSink();
+        using var ctrlC = CancelOnCtrlC();
         try
         {
-            // The probed capabilities have to be handed over. PlaybackController.Create
-            // defaults them to null, and a null capability set resolves every stream to
-            // software decode -- so a bench that skipped this would report
-            // backend=software on a machine that plays back on D3D11VA, and measure the
-            // wrong pipeline while looking like it worked. MediaPlayer.CreateAsync does
-            // the same at MediaPlayer.cs:116; the bench composes the controller itself
-            // and so has to repeat it.
-            await using var controller = PlaybackController.Create(
-                videoSink: videoSink,
-                audioSink: audioSink,
-                hardwareDecodeCapabilities: loaded.Capabilities
-            );
-
-            var runner = new CommandRunner(
-                controller,
-                audioSink as IVolumeControl,
-                videoSink,
-                output
-            );
-
-            using var ctrlC = new CancellationTokenSource();
-            Console.CancelKeyPress += (_, e) =>
-            {
-                e.Cancel = true;
-                ctrlC.Cancel();
-            };
-
-            var failed = false;
-
-            if (options.InitialSource is { } initial)
-                failed |= !await runner.RunAsync(new BenchCommand.Load(initial), ctrlC.Token);
-
-            try
-            {
-                failed |= scripted is not null
-                    ? !await RunScriptAsync(runner, scripted, output, ctrlC.Token)
-                    : !await RunInteractiveAsync(runner, output, ctrlC.Token);
-            }
-            catch (OperationCanceledException) when (ctrlC.IsCancellationRequested)
-            {
-                output.WriteLine();
-                output.WriteLine("cancelled.");
-            }
-
-            return failed ? ExitCommandFailed : ExitOk;
+            return session
+                .RunAsync(sink, sink, scripted, ctrlC.Token)
+                .GetAwaiter()
+                .GetResult();
         }
         finally
         {
-            if (audioSink is not null)
-                await audioSink.DisposeAsync();
+            sink.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
     }
 
     /// <summary>
-    /// Runs a parsed script. Every command runs; a failure is remembered rather than
-    /// thrown, so the run still reaches the state the later commands were about.
+    /// A window: Avalonia owns the main thread, so the command loop runs on a worker.
     /// </summary>
-    private static async Task<bool> RunScriptAsync(
-        CommandRunner runner,
-        List<BenchCommand> commands,
-        TextWriter output,
-        CancellationToken ct
-    )
-    {
-        var allOk = true;
-        foreach (var command in commands)
-        {
-            output.WriteLine($"> {Describe(command)}");
-            allOk &= await runner.RunAsync(command, ct);
-            if (runner.ShouldExit)
-                break;
-        }
-        return allOk;
-    }
-
-    private static async Task<bool> RunInteractiveAsync(
-        CommandRunner runner,
-        TextWriter output,
-        CancellationToken ct
-    )
-    {
-        var allOk = true;
-        output.WriteLine("Type 'quit' to exit, '--help' was printed at startup.");
-
-        while (!ct.IsCancellationRequested && !runner.ShouldExit)
-        {
-            Console.Write("> ");
-            var line = Console.ReadLine();
-            if (line is null) // stdin closed
-                break;
-
-            var parsed = CommandParser.Parse(line);
-            if (parsed.IsError)
-            {
-                // Interactive mode reports and continues. A typo at a prompt is not a
-                // reason to tear down a session, and the exit code belongs to scripts.
-                output.WriteLine($"FAIL  {parsed.Error}");
-                continue;
-            }
-
-            if (parsed.Command is { } command)
-                allOk &= await runner.RunAsync(command, ct);
-        }
-
-        return allOk;
-    }
-
-    /// <summary>Echoes a command back the way it was typed, for the script transcript.</summary>
-    private static string Describe(BenchCommand command) =>
-        command switch
-        {
-            BenchCommand.Load load => $"load {load.Path}",
-            BenchCommand.Unload => "unload",
-            BenchCommand.Play => "play",
-            BenchCommand.Pause => "pause",
-            BenchCommand.Seek seek => $"seek {Duration(seek.Position)}",
-            BenchCommand.Volume volume => $"volume {volume.Level:0.##}",
-            BenchCommand.Mute mute => $"mute {(mute.On ? "on" : "off")}",
-            BenchCommand.Repeat repeat => $"repeat {repeat.Mode}",
-            BenchCommand.Status => "status",
-            BenchCommand.Diag diag => diag.All ? "diag --all" : "diag",
-            BenchCommand.Wait wait => $"wait {Duration(wait.Duration)}",
-            BenchCommand.Quit => "quit",
-            _ => command.GetType().Name,
-        };
-
-    /// <summary>Renders a duration back in the form the parser accepts.</summary>
     /// <remarks>
-    /// The transcript is the artifact worth pasting into an issue, and
-    /// <c>wait 00:00:02</c> is not a line this bench would accept back. Round-tripping
-    /// keeps a pasted transcript runnable.
+    /// <para>
+    /// <c>StartWithClassicDesktopLifetime</c> blocks until the last window closes, and
+    /// the video surfaces are UI-thread affine — both presenters marshal their own work
+    /// onto the dispatcher. So the loop cannot have the main thread, and the exit code
+    /// has to outlive the call rather than be returned by it.
+    /// </para>
+    /// <para>
+    /// Closing the window ends the run, and so does <c>quit</c>. Both paths converge on
+    /// the same teardown: whichever happens first cancels the other.
+    /// </para>
     /// </remarks>
-    private static string Duration(TimeSpan value) =>
-        value.TotalMilliseconds < 1_000 ? $"{value.TotalMilliseconds:0.##}ms"
-        : value.TotalSeconds < 60 ? $"{value.TotalSeconds:0.###}s"
-        : value.TotalMinutes < 60 ? $"{value.TotalMinutes:0.###}m"
-        : $"{value.TotalHours:0.###}h";
+    private static int RunWindowed(
+        BenchOptions options,
+        PresenterSelection presenter,
+        BenchSession session,
+        List<BenchCommand>? scripted,
+        TextWriter output
+    )
+    {
+        var exitCode = BenchSession.ExitOk;
+        var closing = new CancellationTokenSource();
+
+        var app = AppBuilder.Configure<BenchApp>().UsePlatformDetect().LogToTrace();
+
+        app.AfterSetup(_ =>
+        {
+            var lifetime = (DesktopLifetime)app.Instance!.ApplicationLifetime!;
+
+            var window = new BenchWindow(presenter);
+            lifetime.MainWindow = window;
+
+            window.Opened += async (_, _) =>
+            {
+                // AttachSink has to run here: the surface is UI-thread affine and the
+                // compositor one needs to be in a window before it can be initialised.
+                var sink = window.Surface.AttachSink(BenchSession.Loggers);
+
+                try
+                {
+                    exitCode = await Task.Run(
+                        () => session.RunAsync(sink, null, scripted, closing.Token),
+                        closing.Token
+                    );
+                }
+                catch (OperationCanceledException)
+                {
+                    // The window was closed under a running command. Not a failure.
+                }
+                catch (Exception ex)
+                {
+                    output.WriteLine($"FAIL  {ex.Message}");
+                    exitCode = BenchSession.ExitCommandFailed;
+                }
+                finally
+                {
+                    if (sink is IAsyncDisposable disposable)
+                        await disposable.DisposeAsync();
+                    window.Close();
+                }
+            };
+
+            window.Closing += (_, _) => closing.Cancel();
+        });
+
+        app.StartWithClassicDesktopLifetime([]);
+        return exitCode;
+    }
+
+    private static bool TryReadScript(
+        BenchOptions options,
+        out List<BenchCommand>? scripted,
+        out int exitCode
+    )
+    {
+        scripted = null;
+        exitCode = BenchSession.ExitOk;
+
+        if (options.ScriptPath is not { } scriptPath)
+            return true;
+
+        if (!File.Exists(scriptPath))
+        {
+            Console.Error.WriteLine($"script not found: {scriptPath}");
+            exitCode = BenchSession.ExitDidNotParse;
+            return false;
+        }
+
+        var lines = File.ReadAllLines(scriptPath);
+        if (CommandParser.TryParseScript(lines, out scripted, out var errors))
+            return true;
+
+        Console.Error.WriteLine($"{scriptPath}: {errors.Count} line(s) did not parse.");
+        foreach (var error in errors)
+            Console.Error.WriteLine($"  {error}");
+        exitCode = BenchSession.ExitDidNotParse;
+        return false;
+    }
+
+    private static CancellationTokenSource CancelOnCtrlC()
+    {
+        var source = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+            source.Cancel();
+        };
+        return source;
+    }
 }
 
 /// <summary>Writes to the console and to a log file at once.</summary>

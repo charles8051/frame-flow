@@ -28,6 +28,13 @@ internal sealed record BenchOptions
     /// <summary>Build no audio sink. <c>volume</c> and <c>mute</c> then fail.</summary>
     internal bool NoAudio { get; init; }
 
+    /// <summary>Which video surface to present to. Default is no window.</summary>
+    /// <remarks>
+    /// A request, not an outcome — see <see cref="PresenterSelection"/>, which applies
+    /// the platform rule and keeps both.
+    /// </remarks>
+    internal PresenterKind Presenter { get; init; } = PresenterKind.Headless;
+
     /// <summary>Synthetic per-frame present cost for the headless sink.</summary>
     internal TimeSpan PresentCost { get; init; }
 
@@ -63,6 +70,16 @@ internal sealed record BenchOptions
                         break;
                     case "--no-audio":
                         options = options with { NoAudio = true };
+                        break;
+                    case "--presenter":
+                        var presenterText = Next(argument)!;
+                        var kind =
+                            PresenterSelection.ParseKind(presenterText)
+                            ?? throw new BadUsage(
+                                "--presenter takes 'headless', 'cpu' or 'gpu', got "
+                                    + $"'{presenterText}'"
+                            );
+                        options = options with { Presenter = kind };
                         break;
                     case "--log-file":
                         options = options with { LogFile = Next(argument) };
@@ -128,6 +145,7 @@ internal sealed record BenchOptions
 
         Options:
           --script <file>        run commands from a file instead of the console
+          --presenter <kind>     headless (default), cpu, or gpu
           --no-audio             build no audio sink
           --present-cost <dur>   synthetic per-frame cost for the headless sink
           --pool-capacity <n>    frame pool slots (default 3)
@@ -151,6 +169,10 @@ internal sealed record BenchOptions
 
         Exit codes: 0 every command succeeded, 1 a command failed,
         2 a script line did not parse and nothing ran.
+
+        --presenter gpu falls back to cpu off Windows. The bench reports the
+        presenter it resolved rather than the one requested, so a transcript
+        never claims a pipeline the run did not measure.
 
         The bench drives, observes, and reports. It does not assert — a
         reproduction that asserts is a C# file-based app under scripts/repro/.
