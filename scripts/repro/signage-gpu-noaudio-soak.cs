@@ -54,8 +54,14 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 const string Fixture = "tests/corpus/files/bench-1080p60-h264-aac.mp4";
 
-var window = Soak.Argument(args, "--window") ?? TimeSpan.FromSeconds(30);
-var gap = Soak.Argument(args, "--gap") ?? TimeSpan.FromSeconds(240);
+// Absent and malformed are different. Falling back to the default on a typo is
+// how `--gap 20` — no unit — turns a twenty-second smoke test into a five-minute
+// soak that looks like it did what was asked.
+if (
+    !Soak.TryArgument(args, "--window", TimeSpan.FromSeconds(30), out var window)
+    || !Soak.TryArgument(args, "--gap", TimeSpan.FromSeconds(240), out var gap)
+)
+    return 2;
 
 if (!OperatingSystem.IsWindows())
 {
@@ -115,7 +121,24 @@ AppBuilder
             // On the UI thread, deliberately. AttachSink initialises the compositor
             // surface, and doing it from the worker throws "Call from invalid thread"
             // out of Avalonia's dispatcher.
-            var videoSink = ((IVideoSurface)surface).AttachSink(NullLoggerFactory.Instance);
+            //
+            // Guarded separately from the run below, because the exit codes mean
+            // different things. A compositor that will not initialise is "could not
+            // run at all" (2), not "ran and something was wrong" (1). Left outside a
+            // try it escaped the async handler entirely and the process exited on
+            // whatever the host decided.
+            IVideoSink videoSink;
+            try
+            {
+                videoSink = ((IVideoSurface)surface).AttachSink(NullLoggerFactory.Instance);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Could not initialise the compositor surface: {ex}");
+                exitCode = 2;
+                host.Close();
+                return;
+            }
 
             try
             {
@@ -165,6 +188,16 @@ internal static class Soak
             player.Duration.ToString(@"mm\:ss\.fff")
         );
 
+        // Subscribed before play, so no restart can happen before anyone is listening.
+        var stalls = new List<string>();
+        using var stallWatch = player.LoopStalled.Subscribe(
+            new ActionObserver<LoopStalled>(s =>
+            {
+                lock (stalls)
+                    stalls.Add($"lap {s.LoopCount} overran by {s.Overrun}");
+            })
+        );
+
         await player.PlayAsync();
 
         // Two seconds of frames, past the warm-up. Measuring from the first frame
@@ -181,6 +214,7 @@ internal static class Soak
             return 1;
         }
 
+        var warm = player.PollDiagnostics();
         var first = await MeasureAsync(player, window, report, "first");
 
         Console.WriteLine($"  … waiting {gap.TotalSeconds:0}s between windows");
@@ -200,10 +234,44 @@ internal static class Soak
             );
         }
 
+        // Everything between the two windows, so a burst inside the four-minute gap
+        // is not invisible. The per-window deltas cannot see it: the counters are
+        // cumulative, so a gap burst raises the totals without touching either
+        // window's difference.
+        var ended = player.PollDiagnostics();
+        if (warm.SessionGeneration == ended.SessionGeneration)
+        {
+            Delta(report, "whole run: decode errors", warm, ended,
+                s => s.Pipeline.Stream.VideoDecoder.DecodeErrors);
+            Delta(report, "whole run: packets shed", warm, ended,
+                s => s.Pipeline.Stream.VideoDecoder.PacketsDroppedForBackpressure);
+            Delta(report, "whole run: frames dropped for sync", warm, ended,
+                s => s.Pipeline.VideoFramesDroppedForSync);
+            Delta(report, "whole run: frames dropped by the sink", warm, ended,
+                s => s.Pipeline.VideoSink.FramesDropped);
+        }
+        else
+        {
+            report.Fail(
+                "the run stayed inside one session",
+                $"generation {warm.SessionGeneration} → {ended.SessionGeneration}"
+            );
+        }
+
         // RepeatMode.One restarts have their own stall detector (ADR-0034). A stalled
         // loop presents as a frozen last frame while the clock keeps advancing, which
         // reads as choppiness rather than as a stop.
-        report.Check("no stalled loop restart", !player.PollDiagnostics().LoopStalled);
+        //
+        // Counted from the EDGE-triggered observable, not read off the snapshot at the
+        // end. PlaybackDiagnosticsSnapshot.LoopStalled is level-triggered — "currently
+        // appears stalled" — so a stall that recovered before the last poll leaves it
+        // false, and a single end-of-run read would report a clean soak on exactly the
+        // symptom this file exists to catch.
+        report.Check(
+            "no stalled loop restart",
+            stalls.Count == 0,
+            stalls.Count == 0 ? null : $"{stalls.Count}: {string.Join("; ", stalls)}"
+        );
 
         return report.Failures == 0 ? 0 : 1;
     }
@@ -296,22 +364,50 @@ internal static class Soak
         report.Check($"no {what}", delta == 0, $"{delta} (total {read(after)})");
     }
 
-    /// <summary>Reads a duration argument such as <c>--window 30s</c>.</summary>
-    internal static TimeSpan? Argument(string[] args, string flag)
+    /// <summary>
+    /// Reads a duration argument such as <c>--window 30s</c>, or reports it.
+    /// </summary>
+    /// <returns>
+    /// <see langword="false"/> only when the flag was given and its value is not a
+    /// duration. An absent flag takes <paramref name="fallback"/> and succeeds.
+    /// </returns>
+    internal static bool TryArgument(
+        string[] args,
+        string flag,
+        TimeSpan fallback,
+        out TimeSpan value
+    )
     {
+        value = fallback;
+
         var index = Array.IndexOf(args, flag);
-        if (index < 0 || index + 1 >= args.Length)
-            return null;
+        if (index < 0)
+            return true;
+
+        if (index + 1 >= args.Length)
+        {
+            Console.Error.WriteLine($"{flag} needs a duration, e.g. {flag} 30s");
+            return false;
+        }
 
         var text = args[index + 1];
+        // "ms" before "m", or every millisecond value is wrong by a factor of 60,000.
         foreach (var (suffix, perUnitMs) in new[] { ("ms", 1.0), ("s", 1_000.0), ("m", 60_000.0) })
         {
             if (!text.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
                 continue;
-            if (double.TryParse(text[..^suffix.Length], out var value) && value >= 0)
-                return TimeSpan.FromMilliseconds(value * perUnitMs);
+            if (double.TryParse(text[..^suffix.Length], out var number) && number >= 0)
+            {
+                value = TimeSpan.FromMilliseconds(number * perUnitMs);
+                return true;
+            }
+            break;
         }
-        return null;
+
+        Console.Error.WriteLine(
+            $"{flag}: '{text}' is not a duration. A number and a unit: 250ms, 30s, 2m."
+        );
+        return false;
     }
 
     internal static string RepoRoot()
@@ -370,6 +466,16 @@ internal sealed class Report
         foreach (var line in _failures)
             Console.WriteLine(line);
     }
+}
+
+/// <summary>Minimal <see cref="IObserver{T}"/> over an action.</summary>
+internal sealed class ActionObserver<T>(Action<T> onNext) : IObserver<T>
+{
+    public void OnCompleted() { }
+
+    public void OnError(Exception error) { }
+
+    public void OnNext(T value) => onNext(value);
 }
 
 internal sealed class SoakApp : Application

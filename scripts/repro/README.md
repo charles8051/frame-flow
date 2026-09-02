@@ -37,7 +37,7 @@ See the resolution at the head of Decision 6 in
 The bench (`tools/FrameFlow.TestBench`) is still there and still useful — it
 keeps a pipeline warm and takes typed commands. It just does not assert.
 
-## Four things worth knowing before writing another one
+## Seven things worth knowing before writing another one
 
 **Take a floating package version.** `#:package FrameFlow.Player@0.7.0-alpha.*`
 resolves from the local feed and keeps working as MinVer advances. Record the
@@ -53,6 +53,21 @@ another.
 frame arrives and `Position` is clock-driven — it settles to a seek target rather
 than stepping to it. This is the one part of the deleted grammar that was a real
 need rather than an artefact of having built a language.
+
+**Level-triggered diagnostics need the edge-triggered observable.**
+`PlaybackDiagnosticsSnapshot.LoopStalled` means "currently appears stalled". A
+stall that recovers before your next poll leaves it `false`, so reading it once
+at the end reports a clean run on exactly the symptom you were watching for.
+Subscribe to `IMediaPlayer.LoopStalled` — it fires once on the rising edge — and
+count.
+
+**Distinguish an absent flag from a malformed one.** `--gap 20` has no unit.
+Falling back to the default on a typo turns a twenty-second smoke test into a
+five-minute soak that looks like it ran what you asked for. Exit 2 instead.
+
+**Setup failure is exit 2, not exit 1.** A compositor that will not initialise
+is "could not run at all", and it has to be caught: an exception out of the
+`Opened` handler escapes and the process exits on whatever the host decides.
 
 **The harness is inlined on purpose.** A file-based app is one file. A shared
 helper would have to be a `#:project` reference, which makes a reproduction need

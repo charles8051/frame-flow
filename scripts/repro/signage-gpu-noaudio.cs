@@ -107,7 +107,24 @@ AppBuilder
             // surface, and doing it from the worker throws "Call from invalid thread"
             // out of Avalonia's dispatcher — the reproduction has to be built on the
             // thread that owns the window, then driven from another.
-            var videoSink = ((IVideoSurface)surface).AttachSink(NullLoggerFactory.Instance);
+            //
+            // Guarded separately from the run below, because the exit codes mean
+            // different things. A compositor that will not initialise is "could not
+            // run at all" (2), not "ran and something was wrong" (1). Left outside a
+            // try it escaped the async handler entirely and the process exited on
+            // whatever the host decided.
+            IVideoSink videoSink;
+            try
+            {
+                videoSink = ((IVideoSurface)surface).AttachSink(NullLoggerFactory.Instance);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Could not initialise the compositor surface: {ex}");
+                exitCode = 2;
+                window.Close();
+                return;
+            }
 
             try
             {
