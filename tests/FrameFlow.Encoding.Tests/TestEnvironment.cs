@@ -16,6 +16,26 @@ internal static class TestEnvironment
 
     private static readonly Lazy<string?> CachedNativeDir = new(FindNativeRuntimeDir);
 
+    /// <summary>
+    /// The repository's own <c>runtimes/{rid}/native</c> directory, whether or not
+    /// anything has been staged into it. Unlike <see cref="NativeRuntimeDir"/> this
+    /// never falls back to PATH, so a test that is about how the staging is built can
+    /// tell the two apart.
+    /// </summary>
+    internal static string StagedNativeDir =>
+        Path.Combine(CachedRepoRoot.Value, "runtimes", Rid(), "native");
+
+    /// <summary>
+    /// Path to a staged FFmpeg command-line tool, or null when it has not been fetched.
+    /// </summary>
+    /// <param name="tool">Bare tool name, <c>ffmpeg</c> or <c>ffprobe</c>.</param>
+    internal static string? StagedToolPath(string tool)
+    {
+        var exe = OperatingSystem.IsWindows() ? $"{tool}.exe" : tool;
+        var path = Path.Combine(StagedNativeDir, exe);
+        return File.Exists(path) ? path : null;
+    }
+
     /// <summary><see langword="true"/> when FFmpeg shared libraries are loadable.</summary>
     internal static bool HasFfmpegSharedLibraries => NativeRuntimeDir is not null;
 
@@ -53,7 +73,7 @@ internal static class TestEnvironment
 
     private static string? FindNativeRuntimeDir()
     {
-        var nativeDir = Path.Combine(CachedRepoRoot.Value, "runtimes", Rid(), "native");
+        var nativeDir = StagedNativeDir;
         if (File.Exists(Path.Combine(nativeDir, LibName())))
             return nativeDir;
 
@@ -90,5 +110,21 @@ internal sealed class RequiresFfmpegFactAttribute : FactAttribute
             Skip =
                 "FFmpeg shared libraries not available. "
                 + "Run scripts/fetch-ffmpeg.cs or install FFmpeg with shared libraries.";
+    }
+}
+
+/// <summary>
+/// XUnit fact that is skipped unless <c>scripts/fetch-ffmpeg.cs</c> has staged the
+/// named tool into the repository. A system FFmpeg on PATH does not satisfy it: these
+/// facts are about what the fetch script produces.
+/// </summary>
+internal sealed class RequiresStagedToolFactAttribute : FactAttribute
+{
+    public RequiresStagedToolFactAttribute(string tool)
+    {
+        if (TestEnvironment.StagedToolPath(tool) is null)
+            Skip =
+                $"'{tool}' has not been staged under runtimes/{{rid}}/native. "
+                + "Run scripts/fetch-ffmpeg.cs.";
     }
 }
