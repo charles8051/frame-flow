@@ -42,9 +42,18 @@ internal sealed class H264VideoEncoder : IVideoEncoder, INativeVideoEncoder, IEn
 {
     private readonly H264EncoderOptions _options;
 
-    // The encoder Open actually found. Null until Open runs; Info reports the pinned
-    // name (or "unresolved") before that, so a caller inspecting a closed encoder is
-    // not told a name that may turn out not to exist here.
+    /// <summary>
+    /// What <see cref="Info"/> reports for the codec before <c>Open</c> has run and no
+    /// name was pinned. Deliberately not a valid encoder name: the alternative is naming
+    /// a candidate that may not be the one that resolves.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="EncoderInfo"/> is only meaningful after the first frame either way —
+    /// the coded dimensions are 0 until <c>Open</c> infers them from that frame.
+    /// </remarks>
+    internal const string NotYetResolved = "(not yet resolved)";
+
+    // The encoder Open actually found. Null until Open runs.
     private string? _resolvedEncoderName;
     private readonly ILogger _logger;
 
@@ -78,9 +87,16 @@ internal sealed class H264VideoEncoder : IVideoEncoder, INativeVideoEncoder, IEn
     }
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// Meaningful after the first frame has been encoded. Before that the coded
+    /// dimensions are 0 (they are inferred from that frame), and the codec name is the
+    /// pinned <see cref="H264EncoderOptions.EncoderName"/> if there is one, otherwise
+    /// <see cref="NotYetResolved"/> — resolution needs the loaded FFmpeg, which is not
+    /// consulted until <c>Open</c>.
+    /// </remarks>
     public EncoderInfo Info =>
         new(
-            _resolvedEncoderName ?? _options.EncoderName ?? "unresolved",
+            _resolvedEncoderName ?? _options.EncoderName ?? NotYetResolved,
             _codedWidth,
             _codedHeight,
             _options.FrameRateNumerator,

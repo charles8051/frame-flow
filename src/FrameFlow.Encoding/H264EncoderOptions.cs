@@ -1,6 +1,8 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Collections.ObjectModel;
+
 namespace FrameFlow.Encoding;
 
 /// <summary>
@@ -77,9 +79,21 @@ public sealed record H264EncoderOptions
     /// <see cref="DefaultEncoderPreference"/>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A name set here is used as given: if the build does not carry it, opening fails
     /// rather than falling back. Pinning is a statement that this encoder is the one
     /// that matters, and silently substituting another would defeat the point.
+    /// </para>
+    /// <para>
+    /// <b>This is a breaking change from the non-null <c>string</c> it used to be.</b>
+    /// A nullable-enabled caller doing <c>string name = options.EncoderName;</c> now
+    /// warns, and anything binding or serialising the defaults sees <see langword="null"/>
+    /// where it saw <c>"libopenh264"</c>. Taken deliberately, pre-1.0, because the
+    /// alternative is keeping a default that names an encoder which does not exist on one
+    /// of the three supported platforms — and a caller reading that name would be reading
+    /// a value the encoder was never going to use. Read
+    /// <see cref="DefaultEncoderPreference"/> for what will be tried instead.
+    /// </para>
     /// </remarks>
     public string? EncoderName { get; init; }
 
@@ -92,7 +106,12 @@ public sealed record H264EncoderOptions
     /// <c>h264_videotoolbox</c> covers macOS, where FrameFlow ships no FFmpeg and the
     /// Homebrew build has no openh264. A name absent from a build simply does not match,
     /// so the list needs no platform conditionals.
+    /// <para>
+    /// Genuinely read-only, not an array behind a read-only interface. Every encoder open
+    /// reads this, so a caller casting it back and reordering — or emptying — it would make
+    /// resolution depend on whoever ran first.
+    /// </para>
     /// </remarks>
     public static IReadOnlyList<string> DefaultEncoderPreference { get; } =
-        ["libopenh264", "h264_videotoolbox"];
+        new ReadOnlyCollection<string>(["libopenh264", "h264_videotoolbox"]);
 }

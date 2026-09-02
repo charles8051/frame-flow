@@ -78,6 +78,17 @@ public sealed class H264EncoderResolutionTests
     }
 
     [Fact]
+    public void ThePreferenceOrderCannotBeMutatedByCallers()
+    {
+        // Every encoder open reads this. An array behind IReadOnlyList can be cast back
+        // and reordered -- or emptied -- making resolution depend on whoever ran first.
+        Assert.IsNotType<string[]>(H264EncoderOptions.DefaultEncoderPreference);
+
+        if (H264EncoderOptions.DefaultEncoderPreference is IList<string> mutable)
+            Assert.True(mutable.IsReadOnly);
+    }
+
+    [Fact]
     public void APinnedNameSurvivesTheRecordCopy()
     {
         var options = new H264EncoderOptions { EncoderName = "h264_nvenc" };
