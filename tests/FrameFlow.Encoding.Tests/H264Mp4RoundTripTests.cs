@@ -258,6 +258,27 @@ public sealed class H264Mp4RoundTripTests : IClassFixture<FfmpegBootstrapFixture
         }
     }
 
+    /// <summary>
+    /// Whether <paramref name="directory"/> is the staged <c>runtimes/{rid}/native/</c>
+    /// copy rather than something found on PATH.
+    /// </summary>
+    private static bool IsStagedBinary(string? directory)
+    {
+        if (string.IsNullOrEmpty(directory))
+            return false;
+
+        if (TestEnvironment.NativeRuntimeDir is not { } staged)
+            return false;
+
+        return string.Equals(
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)),
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(staged)),
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal
+        );
+    }
+
     private static async Task<(string Codec, int Width, int Height, int Frames)> ProbeVideoStreamAsync(
         string ffprobe,
         string path
@@ -285,8 +306,12 @@ public sealed class H264Mp4RoundTripTests : IClassFixture<FfmpegBootstrapFixture
         // Windows resolves DLLs beside the exe, but ELF binaries get neither: without
         // this the loader fails before ffprobe prints anything, which reads as "empty
         // output" and says nothing about why.
+        //
+        // Only for the staged copy. Doing it for a PATH ffprobe would put its directory
+        // ahead of the system loader path, so anything sitting beside /usr/bin/ffprobe
+        // could shadow a real system library and quietly change what is being tested.
         var probeDir = Path.GetDirectoryName(ffprobe);
-        if (!string.IsNullOrEmpty(probeDir))
+        if (IsStagedBinary(probeDir))
         {
             foreach (var variable in new[] { "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH" })
             {
@@ -307,11 +332,21 @@ public sealed class H264Mp4RoundTripTests : IClassFixture<FfmpegBootstrapFixture
         string stderr = await stderrTask;
         await proc.WaitForExitAsync();
 
+        // Checked before parsing, and separately from it: ffprobe can print a usable
+        // row and still exit nonzero, and a helper that returned that row would report a
+        // failed probe as a passing test.
+        Assert.True(
+            proc.ExitCode == 0,
+            $"ffprobe '{ffprobe}' exited {proc.ExitCode}.\n"
+                + $"  stdout: '{stdout.Trim()}'\n"
+                + $"  stderr: '{stderr.Trim()}'"
+        );
+
         // Example: "h264,320,240,30"
         var parts = stdout.Trim().Split(',', StringSplitOptions.TrimEntries);
         Assert.True(
             parts.Length >= 4,
-            $"ffprobe '{ffprobe}' exited {proc.ExitCode} and did not describe the stream.\n"
+            $"ffprobe '{ffprobe}' succeeded but did not describe the stream.\n"
                 + $"  stdout: '{stdout.Trim()}'\n"
                 + $"  stderr: '{stderr.Trim()}'"
         );
