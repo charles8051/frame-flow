@@ -267,10 +267,17 @@ internal static class Soak
         // appears stalled" — so a stall that recovered before the last poll leaves it
         // false, and a single end-of-run read would report a clean soak on exactly the
         // symptom this file exists to catch.
+        // Copied under the same lock the callback takes. Reading Count and then
+        // joining without it races a notification arriving during reporting, which
+        // is a torn report at best and a concurrent-modification throw at worst.
+        string[] seen;
+        lock (stalls)
+            seen = [.. stalls];
+
         report.Check(
             "no stalled loop restart",
-            stalls.Count == 0,
-            stalls.Count == 0 ? null : $"{stalls.Count}: {string.Join("; ", stalls)}"
+            seen.Length == 0,
+            seen.Length == 0 ? null : $"{seen.Length}: {string.Join("; ", seen)}"
         );
 
         return report.Failures == 0 ? 0 : 1;
@@ -371,6 +378,9 @@ internal static class Soak
     /// <see langword="false"/> only when the flag was given and its value is not a
     /// duration. An absent flag takes <paramref name="fallback"/> and succeeds.
     /// </returns>
+    /// <summary>The longest duration a soak argument may name.</summary>
+    private const double MaxDurationMs = 24 * 60 * 60 * 1_000;
+
     internal static bool TryArgument(
         string[] args,
         string flag,
@@ -396,12 +406,24 @@ internal static class Soak
         {
             if (!text.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
                 continue;
-            if (double.TryParse(text[..^suffix.Length], out var number) && number >= 0)
+            if (!double.TryParse(text[..^suffix.Length], out var number) || number < 0)
+                break;
+
+            // Range-checked before converting. double.TryParse accepts 1e300, and
+            // TimeSpan.FromMilliseconds then throws OverflowException — which would
+            // escape as an unhandled exception rather than the exit 2 this method
+            // exists to produce. A day is far past any soak worth running.
+            var milliseconds = number * perUnitMs;
+            if (double.IsNaN(milliseconds) || milliseconds > MaxDurationMs)
             {
-                value = TimeSpan.FromMilliseconds(number * perUnitMs);
-                return true;
+                Console.Error.WriteLine(
+                    $"{flag}: '{text}' is out of range. The longest accepted value is 24h."
+                );
+                return false;
             }
-            break;
+
+            value = TimeSpan.FromMilliseconds(milliseconds);
+            return true;
         }
 
         Console.Error.WriteLine(
