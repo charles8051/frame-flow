@@ -319,6 +319,33 @@ foreach (var rid in ridsToProcess)
             }
         }
 
+        // The tools are staged by the same run, so a tree missing one is not a
+        // complete tree. Presence only, not checksum: the Linux copies are rewritten
+        // below and deliberately no longer hash to their manifest entry.
+        var stagedTools = ToolFileNames(rid);
+        if (stagedTools.Any(t => !File.Exists(Path.Combine(nativeDir, t))))
+            allPresent = false;
+
+        // A tree staged before this script learned to set the rpath has matching
+        // libraries and broken tools, and would otherwise be skipped and left broken --
+        // only --force would ever repair it. Repairing is a byte edit rather than a
+        // download, so it costs nothing to redo on every run, and SetElfRunPathToOrigin
+        // is a no-op on a tool that already reads $ORIGIN. Where it cannot be done,
+        // fall through to a full re-fetch rather than skip.
+        if (allPresent && allChecksumMatch && rid.StartsWith("linux-", StringComparison.Ordinal))
+        {
+            foreach (var tool in stagedTools)
+            {
+                if (SetElfRunPathToOrigin(Path.Combine(nativeDir, tool)) is { } staleRpath)
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"  {tool}: rpath not repairable ({staleRpath}) — re-fetching.");
+                    Console.ResetColor();
+                    allPresent = false;
+                }
+            }
+        }
+
         if (allPresent && allChecksumMatch)
         {
             Console.ForegroundColor = ConsoleColor.Green;
@@ -379,7 +406,7 @@ foreach (var rid in ridsToProcess)
         }
 
         // Copy ffmpeg and ffprobe executables from the keg bin/ directory.
-        foreach (var tool in new[] { "ffmpeg", "ffprobe" })
+        foreach (var tool in ToolFileNames(rid))
         {
             var src = Path.Combine(kegBinDir, tool);
             if (File.Exists(src))
@@ -555,10 +582,8 @@ foreach (var rid in ridsToProcess)
 
     // Also copy ffmpeg and ffprobe executables
     var isWindows = rid.StartsWith("win-", StringComparison.Ordinal);
-    var exeExt = isWindows ? ".exe" : "";
-    foreach (var tool in new[] { "ffmpeg", "ffprobe" })
+    foreach (var toolName in ToolFileNames(rid))
     {
-        var toolName = $"{tool}{exeExt}";
         var src = Directory
             .EnumerateFiles(extractDir, toolName, SearchOption.AllDirectories)
             .FirstOrDefault();
@@ -687,6 +712,16 @@ static string FindRepoRoot()
     }
     return Environment.CurrentDirectory;
 }
+
+/// <summary>
+/// The FFmpeg command-line tools staged alongside the libraries, as file names for
+/// <paramref name="rid"/>. One list, because the copy loops and the up-to-date check
+/// have to agree on what a complete staging contains.
+/// </summary>
+static string[] ToolFileNames(string rid) =>
+    rid.StartsWith("win-", StringComparison.Ordinal)
+        ? ["ffmpeg.exe", "ffprobe.exe"]
+        : ["ffmpeg", "ffprobe"];
 
 static string ComputeSha256(string filePath)
 {
@@ -838,8 +873,9 @@ static void FixMacOsDylibInstallNames(string nativeDir, string[] libs)
 
 /// <summary>
 /// Points a staged Linux ELF executable at its own directory, by rewriting every
-/// <c>DT_RPATH</c> and <c>DT_RUNPATH</c> string in place to <c>$ORIGIN</c>.
-/// The Linux counterpart of <see cref="FixMacOsDylibInstallNames"/>.
+/// <c>DT_RPATH</c> string in place to <c>$ORIGIN</c>. The Linux counterpart of
+/// <see cref="FixMacOsDylibInstallNames"/>. Idempotent: a tool that already reads
+/// <c>$ORIGIN</c> is left untouched, so this can be re-run over a staged tree.
 /// </summary>
 /// <returns><see langword="null"/> on success, otherwise why it could not be done.</returns>
 /// <remarks>
@@ -939,10 +975,21 @@ static string? SetElfRunPathToOrigin(string path)
     if (stringTableOffset < 0)
         return "DT_STRTAB does not fall inside any PT_LOAD segment";
 
-    var rpaths = entries.Where(e => e.Tag is 15 or 29).ToList(); // DT_RPATH, DT_RUNPATH
-    if (rpaths.Count == 0)
-        return "no DT_RPATH or DT_RUNPATH entry to rewrite";
+    // DT_RPATH only, and refused outright when a DT_RUNPATH is present. A DT_RUNPATH
+    // makes glibc ignore DT_RPATH and is not inherited by the dependencies of
+    // dependencies, so no rewriting of strings can fix such a binary: $ORIGIN would
+    // resolve the tool's own NEEDED entries and still leave libavcodec unable to find
+    // libavutil. No BtbN build has one. Reporting that beats reporting a success that
+    // does not hold.
+    if (entries.Any(e => e.Tag == 29)) // DT_RUNPATH
+        return "DT_RUNPATH is present, which overrides DT_RPATH and is not inherited "
+            + "by transitive dependencies";
 
+    var rpaths = entries.Where(e => e.Tag == 15).ToList(); // DT_RPATH
+    if (rpaths.Count == 0)
+        return "no DT_RPATH entry to rewrite";
+
+    var rewrote = false;
     foreach (var (_, value) in rpaths)
     {
         var start = stringTableOffset + (long)value;
@@ -967,11 +1014,18 @@ static string? SetElfRunPathToOrigin(string path)
                 return "the rpath string is shared with another .dynstr entry";
         }
 
+        // Already pointed at $ORIGIN. Leaving the file alone is what makes re-running
+        // over a staged tree free, rather than a rewrite that only changes the mtime.
+        if (Encoding.ASCII.GetString(bytes, (int)start, length) == Origin)
+            continue;
+
         Encoding.ASCII.GetBytes(Origin, bytes.AsSpan((int)start));
         bytes.AsSpan((int)start + Origin.Length, length - Origin.Length).Clear();
+        rewrote = true;
     }
 
-    File.WriteAllBytes(path, bytes);
+    if (rewrote)
+        File.WriteAllBytes(path, bytes);
     return null;
 }
 
