@@ -4,6 +4,10 @@
 
 Proposed (2026-08-31). Draft pending number assignment.
 
+Decision 6 was reopened and resolved on 2026-09-02: the assertion grammar is
+dropped and repro files are C#. The superseded design is kept in place under the
+resolution, because it is what six of the open questions were about.
+
 Supersedes nothing. It narrows the scope of `examples/`, adds an instrument
 alongside the five testing layers in
 [ADR-0007](ADR-0007-testing-and-validation-strategy.md) without becoming one of
@@ -117,10 +121,10 @@ logs cannot produce it without clock correlation.
 
 `--script <file>` runs a command file non-interactively and sets the exit code
 from the first failed assertion, so a bench session can run in CI or over SSH.
-(What a script *is* is under challenge — see the proposed revision at the head of
-Decision 6. If assertions move to C#, `--script` reduces to reading commands from
-a file instead of the console, and the exit code comes from the C# repro rather
-than from the bench.)
+(Resolved in Decision 6: assertions moved to C#, so `--script` is now exactly
+"read commands from this file instead of the console". The exit code comes from
+whether a command failed, not from an assertion; a repro that asserts is a C#
+file with its own exit code.)
 
 The pipe is not ruled out. If driving a long-lived window from a second terminal
 turns out to matter, popcorn's `PipeAddress` and line protocol are roughly 120
@@ -309,15 +313,157 @@ carries its own timeout. `PresenterStallWatchdog` genuinely is unreachable — i
 a host-side component that raises events, and nothing it decides reaches
 `PlaybackDiagnosticsSnapshot` — but that closes one route, not the question.
 
-### Decision 6: the script language is declarative and has no control flow
+### Decision 6: the bench has a command set, not a language; repro files are C#
 
-> **PROPOSED REVISION — the script language should not exist.**
+> **RESOLVED (2026-09-02) — the script language does not exist.**
 >
-> Everything below this block describes a bespoke assertion language. This block
-> argues it should be replaced by C#, and that the interactive command set should
-> survive unchanged. The reasoning below is left in place because it is sound
-> reasoning *about a language*; the question is whether the language earns its
-> place. That is an open call, not a settled one.
+> Everything below this block described a bespoke assertion language. The
+> argument against it is adopted. The reasoning below is kept because it is sound
+> reasoning *about a language*, and because six of the open questions were
+> questions about it; it is superseded, not wrong.
+>
+> #### What the bench is
+>
+> A console host that keeps a real pipeline warm and takes typed verbs.
+>
+> | Command | |
+> | --- | --- |
+> | `load <path>` | build a session on this source |
+> | `play`, `pause` | |
+> | `seek <duration>` | |
+> | `volume <0..1>`, `mute on\|off` | |
+> | `repeat off\|one\|all` | |
+> | `status` | one line: state, position, duration |
+> | `diag [--all]` | the ADR-0034 snapshot |
+> | `wait <duration>` | a sleep |
+> | `quit` | |
+>
+> No operators, no metric paths, no metric kinds, no `mark`, `since`, `expect`,
+> `require`, or `set`. Every line is a verb and its arguments, which is what a
+> human types at a prompt and what a file of the same lines replays.
+>
+> `--script <file>` reads those commands from a file rather than the console. It
+> exits 0, or 1 when a command failed, or 2 when a line did not parse. There is
+> no assertion outcome for it to report.
+>
+> #### What a repro is
+>
+> A file-based C# app in `scripts/repro/`, alongside the `scripts/*.cs` the repo
+> already runs that way. It takes `#:package FrameFlow.Player`, constructs its own
+> sinks, drives `IMediaPlayer`, asserts in C#, and returns its own exit code.
+>
+> Version pinning comes free and the grammar never had it: `#:package
+> FrameFlow.Player@0.7.0-alpha.4.11` records which FrameFlow a reproduction was
+> observed against, in the file, next to the reproduction.
+>
+> #### The one thing that could have stopped it
+>
+> Whether a single `.cs` file can consume FrameFlow *including its FFmpeg
+> natives*. .NET file-based apps support `#:package`, but no script in `scripts/`
+> had exercised the directive, so this was untested rather than known.
+>
+> `spikes/package-directive-repro.cs` tests that and nothing else. It declares
+> `#:package FrameFlow.Player` and `#:package FrameFlow.Native`, references no
+> project, and is shaped the way a repro would be. On Windows against the local
+> feed:
+>
+> ```
+> PASS  managed assemblies resolved from the package
+> PASS  FFmpeg natives loaded — FFmpeg avutil 59.39.100 loaded from Bundled.
+> PASS  video stream present — h264 320x240, 00:05.000
+> PASS  seek moved the position — immediately 00:00.000, settled 00:01.000
+> PASS  frames reached the sink — presented 61, abandoned 0
+> ```
+>
+> `Bundled` is the decisive word: the loader resolved the package's own
+> `runtimes/{rid}/native` payload rather than a system FFmpeg. The hardware probe
+> ran and selected D3D11Va, `HeadlessVideoSink` counted frames, and
+> `PollDiagnostics()` returned the full snapshot including `SeeksPerformed = 1`.
+> A repro can consume the packaged surface, which sharpens Decision 3's
+> ergonomics check rather than weakening it.
+>
+> #### What survives from the grammar
+>
+> **`wait`, as a concept.** The spike's first assertion failed on it. `Position`
+> is clock-driven: it still reads `00:00.000` when `SeekAsync` returns and settles
+> to the target only once the pipeline presents at the new point. Everything the
+> bench drives is asynchronous, so a repro that asserts immediately after an
+> action asserts against a pipeline that has not caught up. In C# that is a
+> polling loop of about five lines. It should be written once, in a helper beside
+> the repro files, rather than copied into each.
+>
+> **The metric namespace table.** No longer a language, still the documentation of
+> what `diag --all` prints and which snapshot field each value comes from. That is
+> the half of it that was doing work.
+>
+> **"Failure output is the deliverable."** The trajectory print on a timed-out
+> wait — *`position` unchanged for 8.7s while `demux.packets` climbed* — is the
+> one thing C# does not give for free, and it is the part worth having. It belongs
+> in the same helper as the polling loop.
+>
+> **"Parse first, run second"** becomes compilation, which catches strictly more
+> and earlier.
+>
+> #### What this collapses
+>
+> | Open question | How it closes |
+> | --- | --- |
+> | The operator table | C#'s operators |
+> | Metric-kind rules constraining operators | the type system |
+> | What kind the wallclock fields get | none: `LastPresentedAtUtc` and `LastCommittedAtUtc` are already `DateTime?`. The question existed only because the grammar needed a kind per metric |
+> | Whether exit code 2 should split | the bench no longer asserts, so "did not parse" and "did not satisfy a `require`" are not two things it can confuse |
+> | `set` | it kept exactly one knob, `timeout`, which governed conditional waits. Those are gone from the bench, so `set` has nothing left to configure. This supersedes the settlement recorded below |
+> | Capability gating | mostly dissolves — see the residue |
+>
+> #### The residue: `sink.committed`
+>
+> Capability gating existed to stop a script asserting on a metric its run cannot
+> populate — nine metrics, by the count below. Eight of those dissolve. The seven
+> `out.*` metrics are frozen at zero when no audio sink was constructed, and a
+> repro *wrote the line* that did or did not construct one, so it does not assert
+> on audio it never built.
+>
+> `sink.committed` does not dissolve. It is populated only by the zero-copy
+> compositor presenter, and which presenter Avalonia resolves is decided at
+> runtime — a repro asks for one and is silently given the CPU surface off
+> Windows. `FramesCommitted == 0` still means both "no compositor" and "committed
+> nothing".
+>
+> That is a snapshot problem rather than a language problem, and it is now one
+> metric rather than nine. Carried to *Not settled here* in its own right.
+>
+> #### What is given up
+>
+> **A repro can no longer be written by someone who does not write C#.** The
+> audience is this repository's maintainers, so the cost is small here and would
+> not be somewhere else.
+>
+> **Non-Turing-complete stops being a guarantee and becomes a review norm** — the
+> line to hold is that a repro drives, observes, and asserts, and does not grow a
+> framework. This ADR already relies on a review norm for the same class of drift
+> in Decision 3.
+>
+> **A repro costs a compile.** `dotnet run` on a warm file-based app is a second
+> or two, which is the spike's own cycle and is not the thirty-second
+> rebuild-relaunch-read loop this ADR exists to kill.
+>
+> #### What this requires
+>
+> Both shipped reproductions are `.bench` files against the deleted grammar.
+> `scripts/repro/signage-gpu-noaudio.bench` and `signage-gpu-noaudio-soak.bench`
+> have to be rewritten as `.cs`. They were written to test the grammar against a
+> real reproduction and three of its rules changed as a result, so they did their
+> job; the fixture correction recorded under *Consequences* still applies to their
+> replacements.
+>
+> ---
+>
+> #### The argument, kept
+>
+> What follows is the case that produced the resolution above, as it was written
+> before it was decided. It is kept because the reasoning is the record of why,
+> and because a later reader wanting to reopen the call needs it rather than the
+> verdict alone.
 >
 > #### What splits apart
 >
@@ -387,47 +533,6 @@ a host-side component that raises events, and nothing it decides reaches
 > review norms for the same class of drift — "the line to hold is that it drives,
 > observes, and asserts". A hand-rolled parser is an expensive way to enforce a
 > convention that a reviewer enforces anyway.
->
-> #### How a C# repro takes its dependency — settled by spike
->
-> This was the one unknown: .NET file-based apps support `#:package`, but no
-> script in `scripts/` had exercised the directive, so whether a single `.cs`
-> file could consume FrameFlow *including its FFmpeg natives* was untested.
->
-> `spikes/package-directive-repro.cs` tests exactly that and nothing else. It
-> declares `#:package FrameFlow.Player` and `#:package FrameFlow.Native`,
-> references no project, and is shaped like a repro would be — drive, observe,
-> assert, exit non-zero. On Windows against the local feed:
->
-> ```
-> PASS  managed assemblies resolved from the package
-> PASS  FFmpeg natives loaded — FFmpeg avutil 59.39.100 loaded from Bundled.
-> PASS  video stream present — h264 320x240, 00:05.000
-> PASS  seek moved the position — immediately 00:00.000, settled 00:01.000
-> PASS  frames reached the sink — presented 61, abandoned 0
-> ```
->
-> `Bundled` is the decisive word: the loader resolved the package's own
-> `runtimes/{rid}/native` payload rather than a system FFmpeg. The hardware
-> probe ran and selected D3D11Va, `HeadlessVideoSink` counted frames, and
-> `PollDiagnostics()` returned the full snapshot including `SeeksPerformed = 1`.
-> A repro can therefore consume the packaged surface, which sharpens Decision
-> 3's ergonomics check rather than weakening it.
->
-> One finding that cuts the other way, and belongs here rather than buried.
-> `Position` is clock-driven: immediately after `SeekAsync` returns it still
-> reads `00:00.000`, and only settles to the target once the pipeline presents
-> at the new point. A repro has to poll for it. That is precisely what the
-> grammar's `wait` command exists to express, so `wait` is a real need and not
-> an artefact of having built a language — whatever the repro is written in, the
-> concept survives.
->
-> #### What it collapses
->
-> Adopting this closes, without further design: the operator table, the exit-code
-> split, capability gating, the metric-kind rules, `set`, and what kind the
-> wallclock fields get. Those are six of the open questions below and in this
-> section.
 >
 > ---
 >
@@ -736,6 +841,9 @@ reports and continues; it never exits on a failed `expect`.
   `Properties/` is none of those. The two scripts predate the bench on purpose:
   they were written to test the grammar in Decision 6 against a real
   reproduction, and three of its rules changed as a result.
+  <br>**Both are `.bench` files against a grammar Decision 6 deleted, and have to
+  be rewritten as `.cs`.** They did the job they were written for. The fixture
+  correction above applies to their replacements unchanged.
 - **Cross-platform comparison becomes mechanical, for scripts written to be
   portable.** The same script on three operating systems, diffing the diagnostics
   line, is a thing a person can do in an afternoon and a thing CI could do later.
@@ -824,14 +932,13 @@ reports and continues; it never exits on a failed `expect`.
 
 ## Not settled here
 
-**The largest open question is at the head of Decision 6**: whether the script
-language should exist at all, or whether repro files should be C# and the bench
-should keep only its interactive command set. Adopting that revision closes six
-of the entries below and in Decision 6 — the operator table, the exit-code split,
-capability gating, the metric-kind rules, `set`, and the wallclock kinds — so it
-should be decided before any of them are. The one unknown that block recorded —
-whether `#:package` gives a single `.cs` file FrameFlow *and* its natives — is
-now answered yes by `spikes/package-directive-repro.cs`.
+**The largest open question is closed.** Decision 6 resolved on 2026-09-02:
+the assertion grammar is dropped, repro files are C#, and the bench keeps a
+command set of verbs. That closed six entries — the operator table, the
+exit-code split, the metric-kind rules, the wallclock kinds, `set`, and most of
+capability gating — and left one residue, which is now its own entry below.
+
+What remains is two questions the resolution does not touch, and one it created.
 
 - ~~Whether the project lives at `tools/` or `testbench/`.~~ **Settled:** `tools/`.
   Three places outside this ADR already say so — `docs/adr/README.md` and the
@@ -851,8 +958,13 @@ now answered yes by `spikes/package-directive-repro.cs`.
   it is where the sink telemetry shell already lives, and it makes the sink
   testable without a bench. See Decision 4.
 - ~~Whether `set` gains knobs beyond `timeout`, and whether `set` belongs in a
-  script at all rather than on the command line.~~ **Settled:** it stays in the
-  script, keeps `timeout`, and gains nothing, under this rule — *`set` may change
+  script at all rather than on the command line.~~ **Superseded by Decision 6:
+  there is no `set`.** Its one knob governed conditional waits, which left the
+  bench with the assertions; a repro's timeout is a C# constant. The settlement
+  below is kept because its rule is why `set` was already down to one knob, which
+  is most of why removing it costs nothing.
+  <br>The original settlement: it stays in the script, keeps `timeout`, and gains
+  nothing, under this rule — *`set` may change
   only how the bench interprets the remainder of the script; never how the
   pipeline is built, and never how the run is reported.*
   <br>That admits `timeout` and rejects the three obvious proposals.
@@ -864,7 +976,10 @@ now answered yes by `spikes/package-directive-repro.cs`.
   exists to protect: `set timeout 30s` sits three lines above the fixture that
   needs it and is self-documenting there.
 - ~~Whether `sink.committed` should be nullable.~~ **Settled: no** — capability
-  gating instead, which covers all nine affected metrics rather than one. See
+  gating instead, which covers all nine affected metrics rather than one.
+  **Reopened by Decision 6**, which removed capability gating along with the rest
+  of the grammar; see the `sink.committed` entry above for what is left of it. The
+  reasoning here still diagnoses the problem correctly. See
   *Metrics that read zero because the thing does not exist* under Decision 6. The
   reasoning below is kept because its diagnosis is right even though its proposed
   fix is not; note also that its stated cost is wrong — nothing in the tree reads
@@ -886,17 +1001,29 @@ now answered yes by `spikes/package-directive-repro.cs`.
   "nothing committed". It is a change to an ADR-0034 snapshot record with
   existing consumers, so it belongs to whoever implements Decision 6 rather than
   being smuggled in ahead of it.
-- What kind `LastPresentedAtUtc` and `LastCommittedAtUtc` get when they join the
-  metric namespace. Decision 5 now says they should — they exist on
-  `VideoSinkDiagnosticsSnapshot` and are what makes a presenter freeze assertable
-  — but they are wallclocks, not media time, so the existing `time` kind is wrong
-  for them. Comparing one against `now` is the only useful operation, and no kind
-  in the table expresses that.
-- Whether exit code 2 should split. It currently means both "the script did not
-  parse" and "the invocation did not satisfy a `require`" — a script-author error
-  and an operator error, which a CI job cannot tell apart. Related and also
-  unspecified: how `--keep-going` composes with a command failure, and which code
-  wins when both an assertion and a command fail.
+- ~~What kind `LastPresentedAtUtc` and `LastCommittedAtUtc` get when they join
+  the metric namespace.~~ **Closed by Decision 6**, which removed metric kinds.
+  Both fields are already `DateTime?` on `VideoSinkDiagnosticsSnapshot`, and
+  comparing one against `now` — the only useful operation, and the one no kind in
+  the old table expressed — is ordinary C#.
+- ~~Whether exit code 2 should split.~~ **Closed by Decision 6.** The bench no
+  longer asserts, so "the script did not parse" and "the invocation did not
+  satisfy a `require`" are not two meanings it can conflate: `require` is gone
+  and a repro returns its own code. `--keep-going` went with the assertions.
+- **New, and the residue of capability gating: `sink.committed` cannot be told
+  apart from a presenter that committed nothing.** `VideoSink.FramesCommitted` is
+  populated only by the zero-copy compositor presenter, and which presenter
+  Avalonia resolves is a runtime outcome — a repro asks for one and is silently
+  handed the CPU surface off Windows. So `0` means both "no compositor" and
+  "committed nothing", in C# exactly as in the grammar.
+  <br>The other eight metrics that had this shape dissolved with the grammar: the
+  seven `out.*` are frozen only when no audio sink was constructed, and a repro
+  wrote the line that did or did not construct one. This one does not, because the
+  repro does not decide it.
+  <br>It is a snapshot problem, not a language problem. The candidates are making
+  `FramesCommitted` a `long?` — rejected once already, for a reason that was about
+  the grammar's nullable rule and no longer applies — or surfacing which presenter
+  resolved, which `LastCommittedAtUtc` being non-null already half does.
 - What the portable reproduction is. The cross-platform motivation in the Context
   section is the strongest argument for building this, and both shipped scripts
   are Windows-only because the presenter they pin is. A third script exercising
@@ -904,8 +1031,10 @@ now answered yes by `spikes/package-directive-repro.cs`.
   path populates, is what would make that motivation actionable. Nothing about the
   design blocks it; it has simply not been written, and the ADR should not read as
   though the existing pair covers it.
-- Whether a `next` command belongs in the grammar, for
+- Whether a `next` command belongs in the bench's command set, for
   `IMediaPlaylistPlayer.SetNextAsync` + `SkipToNextAsync`. It is the warm-presenter
   path — the one that swaps decode source without rebuilding the sink — and the
-  gapless signage case is what the repro scripts are about. It would need its own
-  entry in the `load` semantics table under Decision 3.
+  gapless signage case is what the repro files are about. It would need its own
+  entry in the `load` semantics table under Decision 3. Narrower after Decision 6:
+  a C# repro already reaches those methods, so this is only about whether a human
+  at the prompt can drive them, not about whether a reproduction can.
