@@ -200,7 +200,10 @@ public sealed class FrameFlowBootstrapper : IFrameFlowBootstrapper
                 }
                 else
                 {
-                    capabilities = HardwareDecodeProbe.Run(_logger);
+                    capabilities = HardwareDecodeProbe.Run(
+                        _logger,
+                        _options.ProbeUncataloguedBackends
+                    );
                     var initializedCount = 0;
                     foreach (var b in capabilities.Available)
                     {
