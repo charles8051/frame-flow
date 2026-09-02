@@ -388,13 +388,39 @@ a host-side component that raises events, and nothing it decides reaches
 > observes, and asserts". A hand-rolled parser is an expensive way to enforce a
 > convention that a reviewer enforces anyway.
 >
-> #### What this does not resolve
+> #### How a C# repro takes its dependency — settled by spike
 >
-> How a C# repro takes a dependency on FrameFlow. .NET file-based apps support
-> `#:package`, which would make a repro consume the *packaged* surface and so
-> sharpen Decision 3's ergonomics check rather than weakening it — but no script
-> in `scripts/` has exercised that directive, so it wants a spike before being
-> written into a decision.
+> This was the one unknown: .NET file-based apps support `#:package`, but no
+> script in `scripts/` had exercised the directive, so whether a single `.cs`
+> file could consume FrameFlow *including its FFmpeg natives* was untested.
+>
+> `spikes/package-directive-repro.cs` tests exactly that and nothing else. It
+> declares `#:package FrameFlow.Player` and `#:package FrameFlow.Native`,
+> references no project, and is shaped like a repro would be — drive, observe,
+> assert, exit non-zero. On Windows against the local feed:
+>
+> ```
+> PASS  managed assemblies resolved from the package
+> PASS  FFmpeg natives loaded — FFmpeg avutil 59.39.100 loaded from Bundled.
+> PASS  video stream present — h264 320x240, 00:05.000
+> PASS  seek moved the position — immediately 00:00.000, settled 00:01.000
+> PASS  frames reached the sink — presented 61, abandoned 0
+> ```
+>
+> `Bundled` is the decisive word: the loader resolved the package's own
+> `runtimes/{rid}/native` payload rather than a system FFmpeg. The hardware
+> probe ran and selected D3D11Va, `HeadlessVideoSink` counted frames, and
+> `PollDiagnostics()` returned the full snapshot including `SeeksPerformed = 1`.
+> A repro can therefore consume the packaged surface, which sharpens Decision
+> 3's ergonomics check rather than weakening it.
+>
+> One finding that cuts the other way, and belongs here rather than buried.
+> `Position` is clock-driven: immediately after `SeekAsync` returns it still
+> reads `00:00.000`, and only settles to the target once the pipeline presents
+> at the new point. A repro has to poll for it. That is precisely what the
+> grammar's `wait` command exists to express, so `wait` is a real need and not
+> an artefact of having built a language — whatever the repro is written in, the
+> concept survives.
 >
 > #### What it collapses
 >
@@ -803,7 +829,9 @@ language should exist at all, or whether repro files should be C# and the bench
 should keep only its interactive command set. Adopting that revision closes six
 of the entries below and in Decision 6 — the operator table, the exit-code split,
 capability gating, the metric-kind rules, `set`, and the wallclock kinds — so it
-should be decided before any of them are.
+should be decided before any of them are. The one unknown that block recorded —
+whether `#:package` gives a single `.cs` file FrameFlow *and* its natives — is
+now answered yes by `spikes/package-directive-repro.cs`.
 
 - ~~Whether the project lives at `tools/` or `testbench/`.~~ **Settled:** `tools/`.
   Three places outside this ADR already say so — `docs/adr/README.md` and the
