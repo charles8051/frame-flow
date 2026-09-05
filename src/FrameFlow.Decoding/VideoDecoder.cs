@@ -445,13 +445,21 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
             if (receiveRet >= 0)
             {
+                var onHardware = HwAccelEngagement.IsHardwareFrame(
+                    new AvFrameAccessor(framePtr).Format,
+                    _hwPixelFormat
+                );
+
+                // Whether the bound backend is decoding is answered by the frames it
+                // does or does not produce. avcodec_open2 succeeding only proves the
+                // device opened; FFmpeg decides per stream in get_format, which runs
+                // here. Tracked before the frame is built, because BuildGpuFrame stamps
+                // HardwareBackend onto the frame.
+                TrackHardwareEngagement(onHardware, framePtr);
+
                 // ADR-0038: yield a GpuVideoFrame when hardware-active and the frame is in
                 // the hardware pixel format; otherwise the CPU readback path.
-                if (
-                    YieldHardwareFrames
-                    && _hwPixelFormat >= 0
-                    && new AvFrameAccessor(framePtr).Format == _hwPixelFormat
-                )
+                if (YieldHardwareFrames && onHardware)
                 {
                     _builtFrame = BuildGpuFrame(framePtr);
                 }
@@ -468,6 +476,46 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
             return DecodeDriver.Classify(receiveRet);
         }
+    }
+
+    /// <summary>
+    /// Tracks <see cref="HardwareBackend"/> against each decoded frame, so it names the
+    /// backend that produced the frame rather than the one <c>Open</c> bound.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every frame, not just the first. FFmpeg calls <c>get_format</c> again when a
+    /// stream changes coded format or dimensions and can choose differently, so a value
+    /// fixed on the first frame goes stale in both directions.
+    /// </para>
+    /// <para>
+    /// It does not flap in practice: the decision is derived from the frame's pixel
+    /// format, which is constant within one negotiation. It changes when the answer
+    /// changed.
+    /// </para>
+    /// </remarks>
+    private void TrackHardwareEngagement(bool onHardware, nint framePtr)
+    {
+        // Software-only decoder: nothing was bound, so there is nothing to track.
+        if (_boundBackend == NoHardwareBackend)
+            return;
+
+        var next = onHardware ? _boundBackend : NoHardwareBackend;
+        if (_hardwareBackend == next)
+            return;
+
+        var backend = ((HardwareDecodeBackendKind)_boundBackend).ToString();
+        if (onHardware)
+            LogHwEngaged(_logger, backend, _hwPixelFormat);
+        else
+            LogHwDisengaged(
+                _logger,
+                backend,
+                new AvFrameAccessor(framePtr).Format,
+                _hwPixelFormat
+            );
+
+        _hardwareBackend = next;
     }
 
     /// <summary>

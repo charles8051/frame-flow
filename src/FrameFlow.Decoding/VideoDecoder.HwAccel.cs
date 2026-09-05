@@ -18,13 +18,52 @@ namespace FrameFlow.Decoding;
 /// </summary>
 public sealed partial class VideoDecoder
 {
+    /// <summary>No hardware backend. Sentinel for <see cref="_hardwareBackend"/>.</summary>
+    private const int NoHardwareBackend = -1;
+
     /// <summary>
-    /// Identifies the hardware backend the decoder is currently bound to, or
-    /// <see langword="null"/> when the software decoder is in use. Available
-    /// after <see cref="Open(nint, int, HardwareDecodeOptions, HardwareDecodeCapabilities, ILoggerFactory?)"/>
-    /// returns.
+    /// The backend that <c>Open</c> bound, kept so engagement can be restored if
+    /// FFmpeg renegotiates back onto it. Written once, before any frame is decoded.
     /// </summary>
-    public HardwareDecodeBackendKind? HardwareBackend { get; private set; }
+    private int _boundBackend = NoHardwareBackend;
+
+    /// <summary>
+    /// The backend currently producing frames, as an <see cref="int"/> so it can be
+    /// written and read across threads without tearing.
+    /// <see cref="NoHardwareBackend"/> means software.
+    /// </summary>
+    private volatile int _hardwareBackend = NoHardwareBackend;
+
+    /// <summary>
+    /// Identifies the hardware backend that is <b>decoding</b>, or
+    /// <see langword="null"/> when the software decoder is in use.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Set when <see cref="Open(nint, int, HardwareDecodeOptions, HardwareDecodeCapabilities, ILoggerFactory?)"/>
+    /// binds a backend, then tracked against every decoded frame. Binding is not
+    /// engagement: FFmpeg accepts the device at open and can still refuse the hwaccel
+    /// per stream in <c>get_format</c>, falling back to software. See
+    /// <see cref="HwAccelEngagement"/>.
+    /// </para>
+    /// <para>
+    /// Tracked rather than latched because FFmpeg calls <c>get_format</c> again when a
+    /// stream changes coded format or dimensions, and can select differently the second
+    /// time. A value fixed on the first frame would keep reporting software after a
+    /// later renegotiation onto hardware, and hardware after a renegotiation off it.
+    /// </para>
+    /// </remarks>
+    public HardwareDecodeBackendKind? HardwareBackend
+    {
+        get
+        {
+            // One read. Two would let a concurrent write land between the sentinel test
+            // and the cast, returning (HardwareDecodeBackendKind)(-1) — a non-null value
+            // outside the enum.
+            var backend = _hardwareBackend;
+            return backend == NoHardwareBackend ? null : (HardwareDecodeBackendKind)backend;
+        }
+    }
 
     /// <summary>
     /// Creates and opens a <see cref="VideoDecoder"/> applying the given
@@ -204,7 +243,8 @@ public sealed partial class VideoDecoder
 
         if (hwBinding is not null)
         {
-            decoder.HardwareBackend = hwBinding.Backend;
+            decoder._boundBackend = (int)hwBinding.Backend;
+            decoder._hardwareBackend = (int)hwBinding.Backend;
             decoder._hwDeviceCtxRef = hwBinding.DeviceCtxRef; // ownership transfers
             decoder._hwPixelFormat = hwBinding.HwPixelFormat;
             decoder._swFrame = swFrame;
@@ -558,6 +598,23 @@ public sealed partial class VideoDecoder
         Message = "Hardware decode requested for codec '{Codec}' but no backend bound after {AttemptCount} attempt(s); falling back to software."
     )]
     private static partial void LogHwBindFellBack(ILogger logger, string codec, int attemptCount);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Hardware decode bound to {Backend} but a frame arrived in format {FrameFormat}, not the backend's {HwFormat}; FFmpeg refused the hwaccel for this stream and is decoding in software. Reporting software."
+    )]
+    private static partial void LogHwDisengaged(
+        ILogger logger,
+        string backend,
+        int frameFormat,
+        int hwFormat
+    );
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Hardware decode on {Backend} engaged; frames are arriving in format {HwFormat}."
+    )]
+    private static partial void LogHwEngaged(ILogger logger, string backend, int hwFormat);
 
     /// <summary>
     /// Internal candidate descriptor for hwaccel binding.
