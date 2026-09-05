@@ -32,7 +32,7 @@ problem") does not describe .NET file-based apps, where the script *is* a
 program.
 
 See the resolution at the head of Decision 6 in
-[the ADR](../../docs/adr/command-driven-testbench-host.md).
+[the ADR](../../docs/adr/ADR-0068-command-driven-test-bench-host.md).
 
 The bench (`tools/FrameFlow.TestBench`) is still there and still useful — it
 keeps a pipeline warm and takes typed commands. It just does not assert.

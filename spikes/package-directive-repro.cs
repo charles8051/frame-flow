@@ -7,7 +7,7 @@
 // Spike: can a .NET file-based app consume FrameFlow through #:package?
 //
 // The open question at the head of Decision 6 in
-// docs/adr/command-driven-testbench-host.md is whether test-bench repro files
+// docs/adr/ADR-0068-command-driven-test-bench-host.md is whether test-bench repro files
 // should be C# rather than a bespoke assertion grammar. That argument turns on
 // file-based apps being self-contained — "the script IS a program, and there is
 // no host runtime to inherit" — which only holds if one .cs file can take a
