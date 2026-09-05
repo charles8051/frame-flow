@@ -65,7 +65,7 @@ There is no `expect`, no `require`, no metric namespace, and no operators. A
 reproduction that asserts is a C# file-based app under `scripts/repro/`, which takes
 `#:package FrameFlow.Player`, builds its own sinks, and returns its own exit code. See
 the resolution at the head of Decision 6 in
-[the ADR](../../docs/adr/command-driven-testbench-host.md), and
+[the ADR](../../docs/adr/ADR-0068-command-driven-test-bench-host.md), and
 [`scripts/repro/`](../../scripts/repro/README.md) for two that exist.
 
 ## Presenters

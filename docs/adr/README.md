@@ -173,16 +173,17 @@ ADRs are numbered at merge, not at authoring, so parallel branches never collide
 on the same number. Drafts in flight live here under a slug filename until they
 land.
 
-- [A command-driven test-bench host, separate from the examples](command-driven-testbench-host.md)
-  — a console host under `tools/` that drives a real player from stdin and from
-  script files, so reproductions stop living in example launch profiles and the
-  same command sequence can be run and compared across platforms. Also moves
-  popcorn's diagnostics delta interpretation into `FrameFlow.Playback.Diagnostics`.
+None in flight.
 
-(Most recently, the pacing-clock timer-resolution decision landed as
+(Most recently, the command-driven test-bench host landed as
+[ADR-0068](ADR-0068-command-driven-test-bench-host.md) — a console host under `tools/` that
+drives a real player from typed commands, so reproductions stop living in example launch
+profiles; its Decision 6 was reopened mid-flight and the bespoke assertion grammar dropped in
+favour of C# file-based repro apps, which closed six of its own open questions. Before it, the
+pacing-clock timer-resolution decision landed as
 [ADR-0067](ADR-0067-high-resolution-pacing-timers.md), moving the Windows high-resolution timer
 from a thing every host had to ask for into the library's own default and superseding the
-consumer guidance in ADR-0018 and the deferral in ADR-0057; before it, the zero-copy converter
+consumer guidance in ADR-0018 and the deferral in ADR-0057; before that, the zero-copy converter
 decode-device identity / ownership decision landed as
 [ADR-0064](ADR-0064-zero-copy-converter-device-ownership.md), fixing the warm-sink player-swap
 presenter freeze (Decision 1) and then — Decision 2, implemented 2026-06-21 — making the swap

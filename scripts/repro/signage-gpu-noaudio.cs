@@ -14,7 +14,7 @@
 // Converted from the Repro-Signage-NoAudio-GPU profile in
 // examples/FrameFlow.Examples.AvaloniaPlayer/Properties/launchSettings.json, by
 // way of a .bench script against a grammar that was dropped — see the resolution
-// at the head of Decision 6 in docs/adr/command-driven-testbench-host.md.
+// at the head of Decision 6 in docs/adr/ADR-0068-command-driven-test-bench-host.md.
 //
 // With no audio sink the player paces video off WallClockSource rather than the
 // audio sample counter (ADR-0003), while the composition-interop presenter keeps

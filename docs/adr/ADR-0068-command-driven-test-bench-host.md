@@ -1,12 +1,29 @@
-# ADR-XXXX: A command-driven test-bench host, separate from the examples
+# ADR-0068: A command-driven test-bench host, separate from the examples
 
 ## Status
 
-Proposed (2026-08-31). Draft pending number assignment.
+Accepted (2026-09-05). Proposed 2026-08-31; numbered and accepted once the
+implementation landed.
 
 Decision 6 was reopened and resolved on 2026-09-02: the assertion grammar is
 dropped and repro files are C#. The superseded design is kept in place under the
 resolution, because it is what six of the open questions were about.
+
+### What shipped
+
+| | |
+| --- | --- |
+| `HeadlessVideoSink` (Decision 4) | `src/FrameFlow.Media/HeadlessVideoSink.cs` |
+| Diagnostics delta interpretation (Decision 5) | `src/FrameFlow.Playback/Diagnostics/` |
+| The bench, command set, `--script`, exit codes | `tools/FrameFlow.TestBench/` |
+| Windowed presenters, and reporting the resolved one | same |
+| Both reproductions as C# file-based apps | `scripts/repro/*.cs` |
+| The `#:package` spike the Decision 6 resolution turned on | `spikes/package-directive-repro.cs` |
+
+Three questions are still open, listed under *Not settled here*. None blocks
+use: `sink.committed` cannot be told apart from a compositor that committed
+nothing, what the portable reproduction is, and whether `next` belongs in the
+command set.
 
 Supersedes nothing. It narrows the scope of `examples/`, adds an instrument
 alongside the five testing layers in
