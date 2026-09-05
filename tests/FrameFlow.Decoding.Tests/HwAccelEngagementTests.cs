@@ -68,4 +68,17 @@ public sealed class HwAccelEngagementTests
         // the backend produced the frame.
         Assert.False(HwAccelEngagement.IsHardwareFrame(-1, Vulkan));
     }
+
+    [Fact]
+    public void TheRuleIsPerFrameAndReversible()
+    {
+        // The caller tracks this on every frame rather than latching the first answer.
+        // FFmpeg calls get_format again when a stream changes coded format or
+        // dimensions and can select differently, so a decision fixed on frame one goes
+        // stale in both directions: software forever after a later engagement, or
+        // hardware forever after a later fallback.
+        Assert.True(HwAccelEngagement.IsHardwareFrame(Vulkan, Vulkan));
+        Assert.False(HwAccelEngagement.IsHardwareFrame(Yuv420p, Vulkan));
+        Assert.True(HwAccelEngagement.IsHardwareFrame(Vulkan, Vulkan));
+    }
 }

@@ -33,9 +33,15 @@ namespace FrameFlow.Decoding.Diagnostics;
 /// that backend did not produce it, which is the only point the answer is known.
 /// </para>
 /// <para>
-/// Stable from the second decoded frame onward. Written at most twice — once at
-/// open, once on the first frame — through a volatile field, so it is safe to read
-/// from another thread without further synchronization.
+/// Tracked against every decoded frame, not fixed on the first. FFmpeg calls
+/// <c>get_format</c> again when a stream changes coded format or dimensions and can
+/// choose differently, so a value settled once goes stale in both directions. In
+/// practice it changes only when the negotiated mode does, since it is derived from
+/// the frame's pixel format.
+/// </para>
+/// <para>
+/// Written through a volatile field and read in one load, so it is safe to read from
+/// another thread without further synchronization.
 /// </para>
 /// </param>
 /// <param name="PacketsDroppedForBackpressure">

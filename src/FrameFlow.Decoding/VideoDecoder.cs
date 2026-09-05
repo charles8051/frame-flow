@@ -450,11 +450,12 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                     _hwPixelFormat
                 );
 
-                // The first frame settles whether the bound backend is decoding at all.
-                // avcodec_open2 succeeding only proves the device opened; FFmpeg decides
-                // per stream in get_format, which runs here. Checked before the frame is
-                // built, because BuildGpuFrame stamps HardwareBackend onto the frame.
-                ConfirmHardwareEngagement(onHardware, framePtr);
+                // Whether the bound backend is decoding is answered by the frames it
+                // does or does not produce. avcodec_open2 succeeding only proves the
+                // device opened; FFmpeg decides per stream in get_format, which runs
+                // here. Tracked before the frame is built, because BuildGpuFrame stamps
+                // HardwareBackend onto the frame.
+                TrackHardwareEngagement(onHardware, framePtr);
 
                 // ADR-0038: yield a GpuVideoFrame when hardware-active and the frame is in
                 // the hardware pixel format; otherwise the CPU readback path.
@@ -478,30 +479,43 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     }
 
     /// <summary>
-    /// Settles <see cref="HardwareBackend"/> against the first decoded frame, clearing it
-    /// when the bound backend did not produce that frame.
+    /// Tracks <see cref="HardwareBackend"/> against each decoded frame, so it names the
+    /// backend that produced the frame rather than the one <c>Open</c> bound.
     /// </summary>
     /// <remarks>
-    /// Once, not per frame. The snapshot's contract is that the field is stable after the
-    /// decoder is running, and a value that flapped would be useless to assert on. A
-    /// backend that engages and is then lost mid-stream surfaces as decode errors instead.
+    /// <para>
+    /// Every frame, not just the first. FFmpeg calls <c>get_format</c> again when a
+    /// stream changes coded format or dimensions and can choose differently, so a value
+    /// fixed on the first frame goes stale in both directions.
+    /// </para>
+    /// <para>
+    /// It does not flap in practice: the decision is derived from the frame's pixel
+    /// format, which is constant within one negotiation. It changes when the answer
+    /// changed.
+    /// </para>
     /// </remarks>
-    private void ConfirmHardwareEngagement(bool onHardware, nint framePtr)
+    private void TrackHardwareEngagement(bool onHardware, nint framePtr)
     {
-        if (_engagementSettled || _hwPixelFormat < 0)
+        // Software-only decoder: nothing was bound, so there is nothing to track.
+        if (_boundBackend == NoHardwareBackend)
             return;
 
-        _engagementSettled = true;
+        var next = onHardware ? _boundBackend : NoHardwareBackend;
+        if (_hardwareBackend == next)
+            return;
+
+        var backend = ((HardwareDecodeBackendKind)_boundBackend).ToString();
         if (onHardware)
-            return;
+            LogHwEngaged(_logger, backend, _hwPixelFormat);
+        else
+            LogHwDisengaged(
+                _logger,
+                backend,
+                new AvFrameAccessor(framePtr).Format,
+                _hwPixelFormat
+            );
 
-        LogHwDidNotEngage(
-            _logger,
-            HardwareBackend?.ToString() ?? "none",
-            new AvFrameAccessor(framePtr).Format,
-            _hwPixelFormat
-        );
-        _hardwareBackend = NoHardwareBackend;
+        _hardwareBackend = next;
     }
 
     /// <summary>
