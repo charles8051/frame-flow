@@ -445,13 +445,20 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
             if (receiveRet >= 0)
             {
+                var onHardware = HwAccelEngagement.IsHardwareFrame(
+                    new AvFrameAccessor(framePtr).Format,
+                    _hwPixelFormat
+                );
+
+                // The first frame settles whether the bound backend is decoding at all.
+                // avcodec_open2 succeeding only proves the device opened; FFmpeg decides
+                // per stream in get_format, which runs here. Checked before the frame is
+                // built, because BuildGpuFrame stamps HardwareBackend onto the frame.
+                ConfirmHardwareEngagement(onHardware, framePtr);
+
                 // ADR-0038: yield a GpuVideoFrame when hardware-active and the frame is in
                 // the hardware pixel format; otherwise the CPU readback path.
-                if (
-                    YieldHardwareFrames
-                    && _hwPixelFormat >= 0
-                    && new AvFrameAccessor(framePtr).Format == _hwPixelFormat
-                )
+                if (YieldHardwareFrames && onHardware)
                 {
                     _builtFrame = BuildGpuFrame(framePtr);
                 }
@@ -468,6 +475,33 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
             return DecodeDriver.Classify(receiveRet);
         }
+    }
+
+    /// <summary>
+    /// Settles <see cref="HardwareBackend"/> against the first decoded frame, clearing it
+    /// when the bound backend did not produce that frame.
+    /// </summary>
+    /// <remarks>
+    /// Once, not per frame. The snapshot's contract is that the field is stable after the
+    /// decoder is running, and a value that flapped would be useless to assert on. A
+    /// backend that engages and is then lost mid-stream surfaces as decode errors instead.
+    /// </remarks>
+    private void ConfirmHardwareEngagement(bool onHardware, nint framePtr)
+    {
+        if (_engagementSettled || _hwPixelFormat < 0)
+            return;
+
+        _engagementSettled = true;
+        if (onHardware)
+            return;
+
+        LogHwDidNotEngage(
+            _logger,
+            HardwareBackend?.ToString() ?? "none",
+            new AvFrameAccessor(framePtr).Format,
+            _hwPixelFormat
+        );
+        _hardwareBackend = NoHardwareBackend;
     }
 
     /// <summary>

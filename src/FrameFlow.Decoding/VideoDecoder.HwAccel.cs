@@ -18,13 +18,34 @@ namespace FrameFlow.Decoding;
 /// </summary>
 public sealed partial class VideoDecoder
 {
+    /// <summary>No hardware backend. Sentinel for <see cref="_hardwareBackend"/>.</summary>
+    private const int NoHardwareBackend = -1;
+
     /// <summary>
-    /// Identifies the hardware backend the decoder is currently bound to, or
-    /// <see langword="null"/> when the software decoder is in use. Available
-    /// after <see cref="Open(nint, int, HardwareDecodeOptions, HardwareDecodeCapabilities, ILoggerFactory?)"/>
-    /// returns.
+    /// The backend, as an <see cref="int"/> so it can be written and read across
+    /// threads without tearing. <see cref="NoHardwareBackend"/> means software.
     /// </summary>
-    public HardwareDecodeBackendKind? HardwareBackend { get; private set; }
+    private volatile int _hardwareBackend = NoHardwareBackend;
+
+    /// <summary>Set once the first decoded frame has settled the question.</summary>
+    private volatile bool _engagementSettled;
+
+    /// <summary>
+    /// Identifies the hardware backend that is <b>decoding</b>, or
+    /// <see langword="null"/> when the software decoder is in use.
+    /// </summary>
+    /// <remarks>
+    /// Set when <see cref="Open(nint, int, HardwareDecodeOptions, HardwareDecodeCapabilities, ILoggerFactory?)"/>
+    /// binds a backend, and cleared on the first decoded frame if that backend turns
+    /// out not to be producing it. Binding is not engagement: FFmpeg accepts the
+    /// device at open and can still refuse the hwaccel per stream in
+    /// <c>get_format</c>, falling back to software. See
+    /// <see cref="HwAccelEngagement"/>.
+    /// </remarks>
+    public HardwareDecodeBackendKind? HardwareBackend =>
+        _hardwareBackend == NoHardwareBackend
+            ? null
+            : (HardwareDecodeBackendKind)_hardwareBackend;
 
     /// <summary>
     /// Creates and opens a <see cref="VideoDecoder"/> applying the given
@@ -204,7 +225,7 @@ public sealed partial class VideoDecoder
 
         if (hwBinding is not null)
         {
-            decoder.HardwareBackend = hwBinding.Backend;
+            decoder._hardwareBackend = (int)hwBinding.Backend;
             decoder._hwDeviceCtxRef = hwBinding.DeviceCtxRef; // ownership transfers
             decoder._hwPixelFormat = hwBinding.HwPixelFormat;
             decoder._swFrame = swFrame;
@@ -558,6 +579,17 @@ public sealed partial class VideoDecoder
         Message = "Hardware decode requested for codec '{Codec}' but no backend bound after {AttemptCount} attempt(s); falling back to software."
     )]
     private static partial void LogHwBindFellBack(ILogger logger, string codec, int attemptCount);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Hardware decode bound to {Backend} but the first frame arrived in format {FrameFormat}, not the backend's {HwFormat}; FFmpeg refused the hwaccel for this stream and is decoding in software. Reporting software."
+    )]
+    private static partial void LogHwDidNotEngage(
+        ILogger logger,
+        string backend,
+        int frameFormat,
+        int hwFormat
+    );
 
     /// <summary>
     /// Internal candidate descriptor for hwaccel binding.

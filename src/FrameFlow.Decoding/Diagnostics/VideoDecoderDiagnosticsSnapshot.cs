@@ -21,10 +21,22 @@ namespace FrameFlow.Decoding.Diagnostics;
 /// dropped frame but did not terminate the decode loop.
 /// </param>
 /// <param name="HardwareBackend">
-/// The hardware-decode backend currently bound to this decoder, or
-/// <see langword="null"/> when running software-only (ADR-0033). Set once
-/// when the decoder opens and immutable thereafter — safe to read without
-/// synchronization.
+/// The hardware-decode backend that is <b>decoding</b>, or <see langword="null"/>
+/// when running software-only (ADR-0033).
+/// <para>
+/// Not the same as the backend that was bound. <c>avcodec_open2</c> succeeding
+/// proves only that the device opened; FFmpeg decides whether the hwaccel can
+/// handle a given stream later, in <c>get_format</c> on the first decoded frame,
+/// and falls back to software by returning a software pixel format. A Vulkan
+/// device without <c>VK_KHR_video_decode_queue</c> opens and cannot decode. So
+/// this is set when the decoder binds a backend and cleared on the first frame if
+/// that backend did not produce it, which is the only point the answer is known.
+/// </para>
+/// <para>
+/// Stable from the second decoded frame onward. Written at most twice — once at
+/// open, once on the first frame — through a volatile field, so it is safe to read
+/// from another thread without further synchronization.
+/// </para>
 /// </param>
 /// <param name="PacketsDroppedForBackpressure">
 /// Cumulative count of raw video packets <c>SendPacketAsync</c> shed
