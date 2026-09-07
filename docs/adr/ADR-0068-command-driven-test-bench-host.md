@@ -101,17 +101,18 @@ what the counters say.
 ### Reading the snapshot correctly is not obvious
 
 `IMediaPlayer.PollDiagnostics()` returns counters. Knowing which counter blames
-what is a second thing, and it is not in the library. Polling once a second and
-turning the deltas into sentences separates a bad file from a struggling
-presenter: `DecodeErrors` rising means a corrupt packet or a hardware-transfer
+what is a second thing, and at the time of writing it was nowhere in the library
+— Decision 5 below is what moved it there. Polling once a second and turning the
+deltas into sentences separates a bad file from a struggling presenter:
+`DecodeErrors` rising means a corrupt packet or a hardware-transfer
 failure. `PacketsDroppedForBackpressure` rising means the player is shedding
 compressed video, which presents as a freeze on the last good frame.
 `VideoFramesDroppedForSync` rising means frames were discarded to keep A/V lock.
 `VideoSink.FramesDropped` rising means the render thread lagged.
 
 That mapping is knowledge about FrameFlow's own counters, derived from ADR-0034
-and the decoder snapshot documentation. Shipping the snapshot without it leaves
-every consumer that wants a diagnosis rather than a number to rederive it.
+and the decoder snapshot documentation. Shipping the snapshot without it left
+every consumer that wanted a diagnosis rather than a number to rederive it.
 
 ## Decision
 
