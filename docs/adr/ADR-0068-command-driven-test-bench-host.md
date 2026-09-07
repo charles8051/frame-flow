@@ -98,26 +98,21 @@ Diagnosing them today means a person sits at the machine and clicks. There is no
 way to run the same sequence of operations on Windows and on Linux and compare
 what the counters say.
 
-### There is a working precedent in the workspace
+### Reading the snapshot correctly is not obvious
 
-`popcorn` is a sibling application that consumes FrameFlow as a package. Its GUI
-holds the window and the player and listens on a named pipe; a separate CLI
-binary sends one JSON line and prints the reply. It has driven a running
-FrameFlow player from a terminal since 2026-08-27.
-
-Two parts of it are relevant here, and only one of them is the transport.
-
-`Popcorn.Gui/Services/PlaybackProbe.cs` polls `IMediaPlayer.PollDiagnostics()`
-once a second and turns counter deltas into sentences that separate a bad file
-from a struggling presenter. `DecodeErrors` rising means a corrupt packet or a
-hardware-transfer failure. `PacketsDroppedForBackpressure` rising means the
-player is shedding compressed video, which presents as a freeze on the last good
-frame. `VideoFramesDroppedForSync` rising means frames were discarded to keep
-A/V lock. `VideoSink.FramesDropped` rising means the render thread lagged.
+`IMediaPlayer.PollDiagnostics()` returns counters. Knowing which counter blames
+what is a second thing, and at the time of writing it was nowhere in the library
+— Decision 5 below is what moved it there. Polling once a second and turning the
+deltas into sentences separates a bad file from a struggling presenter:
+`DecodeErrors` rising means a corrupt packet or a hardware-transfer
+failure. `PacketsDroppedForBackpressure` rising means the player is shedding
+compressed video, which presents as a freeze on the last good frame.
+`VideoFramesDroppedForSync` rising means frames were discarded to keep A/V lock.
+`VideoSink.FramesDropped` rising means the render thread lagged.
 
 That mapping is knowledge about FrameFlow's own counters, derived from ADR-0034
-and the decoder snapshot documentation, and it currently lives in a downstream
-application.
+and the decoder snapshot documentation. Shipping the snapshot without it left
+every consumer that wanted a diagnosis rather than a number to rederive it.
 
 ## Decision
 
@@ -127,9 +122,9 @@ stdout.
 
 ### Decision 1: one process with a stdin loop, not a pipe and a second binary
 
-Popcorn splits into two processes because its GUI is the product and its CLI is
-an operator tool reaching a window that is already running. The bench has no
-such constraint. It starts when the session starts and ends when it ends.
+A two-process split earns its cost when the GUI is the product and the CLI is an
+operator tool reaching a window that is already running. The bench has no such
+constraint. It starts when the session starts and ends when it ends.
 
 A single process gives one interleaved stream: the command, the reply, and every
 log line the pipeline emitted in between, in the order they happened. That
@@ -144,8 +139,8 @@ whether a command failed, not from an assertion; a repro that asserts is a C#
 file with its own exit code.)
 
 The pipe is not ruled out. If driving a long-lived window from a second terminal
-turns out to matter, popcorn's `PipeAddress` and line protocol are roughly 120
-lines to add behind a flag. Nothing here blocks that.
+turns out to matter, a named pipe and a line protocol are a small addition
+behind a flag. Nothing here blocks that.
 
 ### Decision 2: console subsystem, not `WinExe`
 
@@ -253,15 +248,14 @@ its "the render path is the bottleneck" meaning.
 
 ### Decision 5: the diagnostics interpretation moves into the library
 
-Popcorn's delta-to-sentence mapping moves next to the ADR-0034 snapshot types in
+The delta-to-sentence mapping moves next to the ADR-0034 snapshot types in
 `FrameFlow.Playback.Diagnostics`, as a function from two snapshots to a list of
 observations. The bench formats what the library interprets, and so does every
 other consumer.
 
 Reading `PollDiagnostics()` correctly requires knowing which counter blames the
 file and which blames the presenter. Shipping the snapshot without shipping that
-knowledge means each consumer rediscovers it. Popcorn is the evidence that they
-do.
+knowledge means each consumer rediscovers it.
 
 #### A snapshot pair has to be known-comparable
 
@@ -284,8 +278,8 @@ Neither available shortcut is acceptable:
 
 - **Subtracting anyway** produces negative deltas, and reports a session restart
   as an error or drop burst.
-- **Only reporting increases**, which is what popcorn's `ReportDeltas` does
-  today, avoids the false alarm by accident and buys a false negative: after a
+- **Only reporting increases** avoids the false alarm by accident and buys a
+  false negative: after a
   `load` the new session's counters climb from zero back toward the old
   session's values, and every genuine error in that first interval is silently
   swallowed until the count passes the previous session's high-water mark.
@@ -938,12 +932,12 @@ reports and continues; it never exits on a failed `expect`.
   the flag census above: fault injection in demonstration code, a saved
   reproduction in a launch profile, and eleven hand-rolled `--log-file` parsers.
   The workflow it supports is open-loop and cannot fail. Rejected.
-- **Port popcorn into the repository as it stands.** Its `AppState` /
-  `AppEvent` / `AppReducer` / `Wire` core is roughly 1,100 lines of machinery
-  whose purpose is to let two processes agree on state without sharing memory. A
-  single-process bench does not have that problem. Rejected. The command
-  vocabulary and `PlaybackProbe` are worth taking; the transport and the reducer
-  are not.
+- **A two-process design with a state-synchronising reducer.** Reducer, event
+  and wire machinery exists so two processes can agree on state without sharing
+  memory. A single-process bench does not have that problem, so the machinery is
+  cost with no matching benefit. Rejected. The command vocabulary and the
+  diagnostics interpretation are worth having; the transport and the reducer are
+  not.
 - **Extend `tests/FrameFlow.Integration.Tests` instead.** It already has capture
   sinks and a harness, and it is the right home for anything assertable and
   hardware-independent. It is the wrong instrument for "this looks wrong on that
@@ -953,9 +947,9 @@ reports and continues; it never exits on a failed `expect`.
 - **A diagnostics panel inside `FrameFlowPlayerView`.** Puts the counters where
   the eyes already are. It is not scriptable, not diffable across platforms, and
   it grows a shipping control to serve a development need. Rejected.
-- **Localhost HTTP instead of stdin**, which popcorn's own ADR-0001 also
-  considered. Binds a port, needs a Windows firewall exception, and buys
-  reachability from another machine that nothing here asks for. Rejected.
+- **Localhost HTTP instead of stdin.** Binds a port, needs a Windows firewall
+  exception, and buys reachability from another machine that nothing here asks
+  for. Rejected.
 
 ### On the script language specifically
 

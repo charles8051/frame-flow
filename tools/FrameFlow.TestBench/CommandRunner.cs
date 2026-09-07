@@ -138,8 +138,8 @@ internal sealed class CommandRunner(
         _out.WriteLine(DiagnosticsRenderer.Summary(snapshot, _presenter, _headlessSink));
 
         // The interval since the previous `diag`, interpreted rather than dumped.
-        // This is the counter-delta knowledge Decision 5 moved out of popcorn and into
-        // the library; the bench is its first consumer in this tree.
+        // Decision 5 put the counter-delta knowledge in the library rather than
+        // leaving each consumer to rederive it; the bench is its first consumer.
         if (_lastDiag is { } previous)
             _out.WriteLine(DiagnosticsRenderer.Interval(previous, snapshot));
 
