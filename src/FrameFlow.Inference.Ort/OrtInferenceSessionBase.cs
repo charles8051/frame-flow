@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Buffers;
 using System.Collections.ObjectModel;
 using FrameFlow.Graph;
 using Microsoft.ML.OnnxRuntime;
@@ -139,29 +140,26 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         ValidateNames(outputs.Keys, OutputNames, "output");
 
         using var binding = _session.CreateIoBinding();
-        var pinnedValues = new List<OrtValue>(inputs.Count + outputs.Count);
+        var capacity = inputs.Count + outputs.Count;
+        var boundValues = new List<OrtValue>(capacity);
+        var pins = new List<MemoryHandle>(capacity);
 
         try
         {
             foreach (var (name, tensor) in inputs)
-            {
-                var value = BindCpuTensor(tensor);
-                pinnedValues.Add(value);
-                binding.BindInput(name, value);
-            }
+                binding.BindInput(name, BindCpuTensor(tensor, boundValues, pins));
             foreach (var (name, tensor) in outputs)
-            {
-                var value = BindCpuTensor(tensor);
-                pinnedValues.Add(value);
-                binding.BindOutput(name, value);
-            }
+                binding.BindOutput(name, BindCpuTensor(tensor, boundValues, pins));
 
             _session.RunWithBinding(_runOptions, binding);
         }
         finally
         {
-            foreach (var value in pinnedValues)
+            foreach (var value in boundValues)
                 value.Dispose();
+            // After the OrtValues: they hold the addresses these pins protect.
+            foreach (var pin in pins)
+                pin.Dispose();
         }
     }
 
@@ -185,23 +183,60 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         );
     }
 
-    private OrtValue BindCpuTensor(ICpuTensor tensor)
+    /// <summary>
+    /// Binds one host tensor as an <see cref="OrtValue"/> over its own
+    /// buffer, registering both the value and the pin that keeps that
+    /// buffer in place with the caller's lifetime lists.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The pin must outlive the value.</b>
+    /// <c>OrtValue.CreateTensorValueWithData</c> does not copy and does not
+    /// own the buffer — it stores the raw address and dereferences it later,
+    /// inside <c>RunWithBinding</c>. Keeping the buffer valid until then is
+    /// the caller's obligation.
+    /// </para>
+    /// <para>
+    /// A <c>fixed</c> block cannot discharge that obligation: it releases at
+    /// its closing brace, which is before this method even returns.
+    /// <see cref="ICpuTensor.Bytes"/> is backed by a pooled <c>byte[]</c> —
+    /// an ordinary movable managed array — so between binding and running,
+    /// the allocations made by the remaining binds are enough to trigger a
+    /// compacting GC that relocates an already-bound buffer and leaves ORT
+    /// reading freed memory. So the pin is taken here and released by
+    /// <see cref="Run(IReadOnlyDictionary{string, ICpuTensor}, IReadOnlyDictionary{string, ICpuTensor})"/>
+    /// once the run has completed.
+    /// </para>
+    /// </remarks>
+    private OrtValue BindCpuTensor(
+        ICpuTensor tensor,
+        List<OrtValue> boundValues,
+        List<MemoryHandle> pins
+    )
     {
         var elementType = MapDType(tensor.Dtype);
         var shape = ToLongShape(tensor.Shape);
+
+        // Registered before anything below can throw, so the pin is
+        // released even if constructing the OrtValue fails.
+        var pin = tensor.Bytes.Pin();
+        pins.Add(pin);
+
+        IntPtr address;
         unsafe
         {
-            fixed (byte* ptr = tensor.Bytes.Span)
-            {
-                return OrtValue.CreateTensorValueWithData(
-                    CpuMemoryInfo,
-                    elementType,
-                    shape,
-                    (IntPtr)ptr,
-                    tensor.ByteCount
-                );
-            }
+            address = (IntPtr)pin.Pointer;
         }
+
+        var value = OrtValue.CreateTensorValueWithData(
+            CpuMemoryInfo,
+            elementType,
+            shape,
+            address,
+            tensor.ByteCount
+        );
+        boundValues.Add(value);
+        return value;
     }
 
     /// <summary>
