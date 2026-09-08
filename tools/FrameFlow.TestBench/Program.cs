@@ -138,7 +138,9 @@ internal static class Program
     )
     {
         var exitCode = BenchSession.ExitOk;
-        var closing = new CancellationTokenSource();
+        // Disposed once StartWithClassicDesktopLifetime returns, which is after the
+        // last window has closed and neither handler below can fire again.
+        using var closing = new CancellationTokenSource();
 
         var app = AppBuilder.Configure<BenchApp>().UsePlatformDetect().LogToTrace();
 
