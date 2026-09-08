@@ -217,16 +217,9 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         var elementType = MapDType(tensor.Dtype);
         var shape = ToLongShape(tensor.Shape);
 
-        // Registered before anything below can throw, so the pin is
-        // released even if constructing the OrtValue fails.
-        var pin = PinForBinding(tensor);
-        pins.Add(pin);
-
-        IntPtr address;
-        unsafe
-        {
-            address = (IntPtr)pin.Pointer;
-        }
+        // Pinned and registered before the value exists, so a throw below
+        // still leaves the pin owned by the caller's finally.
+        var address = PinAndRegister(tensor, pins);
 
         var value = OrtValue.CreateTensorValueWithData(
             CpuMemoryInfo,
@@ -235,8 +228,60 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
             address,
             tensor.ByteCount
         );
-        boundValues.Add(value);
+        try
+        {
+            boundValues.Add(value);
+        }
+        catch
+        {
+            // Ownership never reached the caller's list; nothing else will
+            // free the native value.
+            value.Dispose();
+            throw;
+        }
         return value;
+    }
+
+    /// <summary>
+    /// Pins <paramref name="tensor"/>, hands the pin to
+    /// <paramref name="pins"/>, and returns the address to give ORT — which
+    /// is the pinned address itself, read off the registered handle.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the ownership handoff the bug got wrong, isolated so it can
+    /// be tested without an <c>InferenceSession</c>. The address is derived
+    /// from the same handle that was just registered, so an address can
+    /// only escape this method if the pin protecting it is already owned by
+    /// the caller.
+    /// </para>
+    /// <para>
+    /// The pin is disposed if registration throws. Today the lists are
+    /// preallocated to the exact number of binds and cannot grow, but that
+    /// rests on <c>IReadOnlyDictionary.Count</c> agreeing with what
+    /// enumeration yields, which is the caller's type to choose and not
+    /// ours to assume.
+    /// </para>
+    /// </remarks>
+    internal static IntPtr PinAndRegister(ICpuTensor tensor, List<MemoryHandle> pins)
+    {
+        ArgumentNullException.ThrowIfNull(pins);
+
+        var pin = PinForBinding(tensor);
+        try
+        {
+            pins.Add(pin);
+        }
+        catch
+        {
+            pin.Dispose();
+            throw;
+        }
+
+        unsafe
+        {
+            return (IntPtr)pin.Pointer;
+        }
     }
 
     /// <summary>

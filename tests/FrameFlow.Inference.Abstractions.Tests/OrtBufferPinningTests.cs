@@ -123,6 +123,40 @@ public sealed class OrtBufferPinningTests
         Assert.Equal(address, AddressOf(alias));
     }
 
+    // ── PinAndRegister: the ownership handoff BindCpuTensor performs ─────
+
+    [Fact]
+    public void PinAndRegisterHandsTheCallerThePinBehindTheAddressItReturns()
+    {
+        using var pool = new CpuTensorPool();
+        using var tensor = pool.Rent<float>(new TensorShape(1, 896, 1));
+        var pins = new List<MemoryHandle>(1);
+
+        var address = OrtInferenceSessionBase.PinAndRegister(tensor, pins);
+
+        // The address ORT would be given must be the address of the pin the
+        // caller now owns — not a second, unregistered pin, and not an
+        // address whose pin was dropped on the way out.
+        var registered = Assert.Single(pins);
+        Assert.Equal(AddressOf(registered), address);
+        Assert.NotEqual(IntPtr.Zero, address);
+
+        try
+        {
+            ChurnTheHeapAndCompact();
+
+            // Still the buffer's address, because the pin in `pins` held it.
+            Assert.Equal(address, AddressOf(registered));
+            using var alias = tensor.Bytes.Pin();
+            Assert.Equal(address, AddressOf(alias));
+        }
+        finally
+        {
+            foreach (var pin in pins)
+                pin.Dispose();
+        }
+    }
+
     [Fact]
     public void PinForBindingRejectsATensorReportingMoreBytesThanItExposes()
     {
