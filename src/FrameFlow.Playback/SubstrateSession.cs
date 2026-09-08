@@ -221,7 +221,12 @@ internal sealed class SubstrateSession : IPlaybackSession
             // zero (PaceUntil's reserved VideoFramesDroppedForSync counter was
             // never populated).
             VideoFramesDroppedForSync: _videoPacer?.DroppedLate ?? 0
-        );
+        )
+        {
+            // Null without a pacer: there is no master clock to measure against, so
+            // "no lag" would be a claim this session cannot make.
+            VideoPresentationLag = _videoPacer?.PresentationLag,
+        };
     }
 
     private FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot BuildStreamSnapshot()
