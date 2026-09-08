@@ -29,31 +29,42 @@ namespace FrameFlow.Playback.Diagnostics;
 /// Distinct from <see cref="VideoSinkDiagnosticsSnapshot.FramesDropped"/>,
 /// which counts frames the sink itself superseded.
 /// </param>
-/// <param name="VideoPresentationLag">
-/// How far the master clock has run past the end of the frame most recently
-/// presented, or <see langword="null"/> when the run has presented none (and on
-/// sessions with no clock-selecting pacer).
-/// <para>
-/// Zero on a pipeline that is keeping up. A sustained non-zero value means the
-/// reported <c>Position</c> describes a point in the media that the pipeline has
-/// not reached, because the clock advances on its own schedule and nothing is
-/// discarding the backlog to catch up.
-/// </para>
-/// <para>
-/// Read it alongside the two counters that hold it down:
-/// <see cref="VideoFramesDroppedForSync"/> and the decoder's shed count. Lag
-/// climbing while both stay flat is the signature of a pipeline that is falling
-/// behind with no mechanism to compensate, rather than one paying to keep up.
-/// </para>
-/// </param>
 public sealed record PipelineDiagnosticsSnapshot(
     DecodedMediaStreamDiagnosticsSnapshot Stream,
     VideoSinkDiagnosticsSnapshot VideoSink,
     AudioSinkDiagnosticsSnapshot AudioSink,
-    long VideoFramesDroppedForSync,
-    TimeSpan? VideoPresentationLag = null
+    long VideoFramesDroppedForSync
 )
 {
+    /// <summary>
+    /// How far the master clock has run past the end of the frame most recently
+    /// presented, or <see langword="null"/> when the run has presented none (and on
+    /// sessions with no clock-selecting pacer).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Zero on a pipeline that is keeping up. A sustained non-zero value means the
+    /// reported <c>Position</c> describes a point in the media that the pipeline has
+    /// not reached, because the clock advances on its own schedule and nothing is
+    /// discarding the backlog to catch up.
+    /// </para>
+    /// <para>
+    /// Read it alongside the two counters that hold it down:
+    /// <see cref="VideoFramesDroppedForSync"/> and the decoder's shed count. Lag
+    /// climbing while both stay flat is the signature of a pipeline that is falling
+    /// behind with no mechanism to compensate, rather than one paying to keep up.
+    /// </para>
+    /// <para>
+    /// Deliberately not a positional parameter. This record is public and shipped,
+    /// and a fifth positional value — optional or not — replaces the generated
+    /// four-argument constructor and four-output <c>Deconstruct</c> rather than
+    /// adding to them, so a binary compiled against the old shape would fail at
+    /// runtime and source using four-value deconstruction would stop compiling. An
+    /// init-only property is additive on both counts.
+    /// </para>
+    /// </remarks>
+    public TimeSpan? VideoPresentationLag { get; init; }
+
     /// <summary>
     /// Empty pipeline snapshot used as the rollup seed when the
     /// controller has no live session.

@@ -273,10 +273,14 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// bound (#82).
     /// </para>
     /// <para>
-    /// The clock is read outside the lock, on purpose. Holding <c>_gate</c> across a
-    /// clock read would put a diagnostics caller in the delivery loop's way, and the
-    /// value is a drift estimate — a read that straddles one frame is off by at most
-    /// that frame's duration, which does not change what the number is for.
+    /// The clock is read outside the lock, so the run is re-checked after it. Holding
+    /// <c>_gate</c> across a clock read would put a diagnostics caller in the delivery
+    /// loop's way, but letting the read straddle a <see cref="BeginRun"/> is not the
+    /// same harmless imprecision: a seek reseats the clock by an arbitrary amount, so
+    /// pairing the old run's frame with the new run's clock reports a drift the size of
+    /// the seek. Ordinary jitter inside one run is left alone — a read that straddles a
+    /// frame is off by that frame's duration, which does not change what the number is
+    /// for.
     /// </para>
     /// </remarks>
     public TimeSpan? PresentationLag
@@ -284,13 +288,28 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         get
         {
             TimeSpan? end;
+            long runId;
             lock (_gate)
+            {
                 end = _presentedEndPts;
+                runId = _runId;
+            }
 
             if (end is not { } presentedEnd)
                 return null;
 
-            var lag = _clock.Latest - presentedEnd;
+            var now = _clock.Latest;
+
+            lock (_gate)
+            {
+                // A run change between the two reads means this clock belongs to a
+                // different timeline than that frame. The new run has presented
+                // nothing yet, and null is what that is.
+                if (runId != _runId)
+                    return null;
+            }
+
+            var lag = now - presentedEnd;
             return lag > TimeSpan.Zero ? lag : TimeSpan.Zero;
         }
     }

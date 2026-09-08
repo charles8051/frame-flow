@@ -694,15 +694,49 @@ public sealed class ClockSelectVideoSinkTests
         Assert.Null(pacer.PresentationLag);
     }
 
+    [Fact]
+    public async Task PresentationLagIsNullWhenTheRunChangesUnderTheRead()
+    {
+        // The getter reads the frame under the gate, then the clock outside it. A seek
+        // landing between the two reseats the clock by the size of the seek, so pairing
+        // the old run's frame with the new run's clock would report that seek as drift.
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        await using var pacer = new ClockSelectVideoSink(sink, clock, capacity: 4);
+
+        pacer.BeginRun(holdForSettle: false);
+        clock.Advance(TimeSpan.FromMilliseconds(100));
+        await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromMilliseconds(100)), default);
+        await sink.WaitForCountAsync(1);
+
+        clock.OnLatestRead = () =>
+        {
+            // Exactly the interleaving the re-check exists for: the run advances while
+            // the getter holds a frame from the previous one.
+            clock.OnLatestRead = null;
+            pacer.BeginRun(TimeSpan.FromSeconds(20), holdForSettle: false);
+        };
+
+        Assert.Null(pacer.PresentationLag);
+    }
+
     private sealed class FakeClock : IClockSource
     {
         private readonly object _lock = new();
         private TimeSpan _now = TimeSpan.Zero;
         private TaskCompletionSource _pulse = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        /// <summary>Runs once inside a Latest read, to interleave deterministically.</summary>
+        public Action? OnLatestRead { get; set; }
+
         public TimeSpan Latest
         {
-            get { lock (_lock) return _now; }
+            get
+            {
+                OnLatestRead?.Invoke();
+                lock (_lock)
+                    return _now;
+            }
         }
 
         public void Advance(TimeSpan to)
