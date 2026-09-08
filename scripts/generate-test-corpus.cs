@@ -349,8 +349,9 @@ if (File.Exists(srtPath))
 // ═════════════════════════════════════════════════════════════════════════════
 //
 // These exist to measure throughput under a realistic decode load, not to check
-// conformance. They are skipped by default because they are ~80 MB and take about
-// a minute each to encode, against ~1s and <1 MB for every other corpus file.
+// conformance. They are skipped by default because they are large and slow: ~84 MB
+// and ~50s for the 1080p entry, ~109 MB and ~55s for the 2160p one, against ~1s and
+// <1 MB for every other corpus file. Roughly 200 MB and two minutes for the pair.
 //
 // When skipped they contribute NO test-expectations entry either, so a default
 // corpus stays exactly as complete as it was before this category existed.
@@ -399,6 +400,50 @@ if (includeBenchmarks)
         ),
         // ~50s to encode here; the 60s default would be a coin flip on a slower box.
         timeoutMs: 600_000
+    );
+
+    // The 4K sibling, and it measures something the 1080p one cannot reach.
+    //
+    // At 1080p60 the headless sink keeps up on this box — 1800 of 1800 frames,
+    // clean EOS. At 2160p60 it does not, and the reason is not decode: it is that
+    // the headless path runs with yieldHardwareFrames false, so every hardware
+    // frame is copied GPU->CPU. 4K yuv420p is 12.44 MB a frame, so 60 fps wants
+    // ~746 MB/s of readback. The same file through --presenter gpu, which is
+    // zero-copy, decodes all 2700 frames and drops four.
+    //
+    // That gap is the point of the fixture. It is the smallest standard format
+    // that puts the readback path over its ceiling, which is where frame-flow#82
+    // shows up: on the wallclock clock path the shortfall is not shed and not
+    // counted, while the same file with its audio stream sheds and reports it.
+    //
+    // 20 Mbps, not the 80 Mbps that scaling 1080p's 15 Mbps by pixel count would
+    // give. Measured both: 20M decoded 1021 / shed 737, 60M decoded 1053 / shed
+    // 684 over the same 30s window. Within run-to-run noise, so this takes the
+    // cheaper one — 109 MB against 323 MB, and ~55s to encode against ~81s. Same
+    // reasoning as the 1080p entry above, and the same conclusion.
+    //
+    // Bitrate does not move it because the bottleneck is bytes per *frame*, which
+    // is a function of resolution alone. That is also why the noise filter matters
+    // less here than at 1080p: it is kept for consistency and for the decode load,
+    // not because the readback ceiling needs it.
+    //
+    // 45s for the same reason as the 1080p entry: the measurement window is 30s
+    // and looping a shorter file adds restart bursts that confound the counters.
+    Gen(
+        "bench-2160p60-h264-aac.mp4",
+        "-f lavfi -i testsrc2=size=3840x2160:rate=60:duration=45,noise=alls=14:allf=t:all_seed=12345 -f lavfi -i sine=frequency=440:sample_rate=48000:duration=45",
+        "-c:v libopenh264 -rc_mode bitrate -b:v 20M -maxrate 20M -bufsize 40M -pix_fmt yuv420p -c:a aac -b:a 128k -ac 2 -shortest",
+        new(
+            Width: 3840,
+            Height: 2160,
+            Fps: 60,
+            DurationSec: 45.0,
+            AudioSampleRate: 48000,
+            AudioChannels: 2
+        ),
+        // ~55s here. Four times the pixels of the 1080p entry, so a slower box has
+        // further to fall — 15 minutes rather than 10.
+        timeoutMs: 900_000
     );
 }
 
