@@ -138,7 +138,19 @@ internal static class Program
     )
     {
         var exitCode = BenchSession.ExitOk;
+
+        // CA2000: deliberately not disposed. Opened is an async handler and the
+        // lifetime call does not await it, so closing the window from the title bar
+        // returns from StartWithClassicDesktopLifetime while session teardown is
+        // still on a pool thread holding closing.Token — and CancellationTokenSource
+        // .Dispose is not safe alongside that. Avalonia surfaces no completion for
+        // the handler to wait on, and awaiting one after the dispatcher has stopped
+        // risks a hang in a CLI tool. A source the process is about to release is
+        // the cheaper of the two. RunHeadless owns the main thread and has no such
+        // race, which is why it does dispose its source.
+#pragma warning disable CA2000
         var closing = new CancellationTokenSource();
+#pragma warning restore CA2000
 
         var app = AppBuilder.Configure<BenchApp>().UsePlatformDetect().LogToTrace();
 

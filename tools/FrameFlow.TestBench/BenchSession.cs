@@ -40,58 +40,53 @@ internal sealed class BenchSession(
         CancellationToken ct
     )
     {
-        OpenAlAudioSink? audioSink = options.NoAudio ? null : new OpenAlAudioSink();
+        // Declared before the controller so it outlives it: disposal runs in reverse,
+        // and the controller pushes to the sink during its own teardown.
+        await using var audioSink = options.NoAudio ? null : new OpenAlAudioSink();
+
+        // The probed capabilities have to be handed over. PlaybackController.Create
+        // defaults them to null, and a null capability set resolves every stream to
+        // software decode — so a bench that skipped this would report
+        // backend=software on a machine that plays back on D3D11VA, and measure the
+        // wrong pipeline while looking like it worked. MediaPlayer.CreateAsync does
+        // the same at MediaPlayer.cs:116; the bench composes the controller itself
+        // and so has to repeat it.
+        await using var controller = PlaybackController.Create(
+            videoSink: videoSink,
+            audioSink: audioSink,
+            hardwareDecodeCapabilities: capabilities,
+            // Only the compositor surface wants hardware frames. Yielding them to a
+            // presenter that cannot map them costs a download per frame and quietly
+            // turns a zero-copy measurement into a copying one.
+            yieldHardwareFrames: presenter.Resolved == PresenterKind.Gpu
+        );
+
+        var runner = new CommandRunner(
+            controller,
+            audioSink as IVolumeControl,
+            headlessSink,
+            presenter,
+            output
+        );
+
+        var failed = false;
+
+        if (options.InitialSource is { } initial)
+            failed |= !await runner.RunAsync(new BenchCommand.Load(initial), ct);
+
         try
         {
-            // The probed capabilities have to be handed over. PlaybackController.Create
-            // defaults them to null, and a null capability set resolves every stream to
-            // software decode — so a bench that skipped this would report
-            // backend=software on a machine that plays back on D3D11VA, and measure the
-            // wrong pipeline while looking like it worked. MediaPlayer.CreateAsync does
-            // the same at MediaPlayer.cs:116; the bench composes the controller itself
-            // and so has to repeat it.
-            await using var controller = PlaybackController.Create(
-                videoSink: videoSink,
-                audioSink: audioSink,
-                hardwareDecodeCapabilities: capabilities,
-                // Only the compositor surface wants hardware frames. Yielding them to a
-                // presenter that cannot map them costs a download per frame and quietly
-                // turns a zero-copy measurement into a copying one.
-                yieldHardwareFrames: presenter.Resolved == PresenterKind.Gpu
-            );
-
-            var runner = new CommandRunner(
-                controller,
-                audioSink as IVolumeControl,
-                headlessSink,
-                presenter,
-                output
-            );
-
-            var failed = false;
-
-            if (options.InitialSource is { } initial)
-                failed |= !await runner.RunAsync(new BenchCommand.Load(initial), ct);
-
-            try
-            {
-                failed |= scripted is not null
-                    ? !await RunScriptAsync(runner, scripted, ct)
-                    : !await RunInteractiveAsync(runner, ct);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                output.WriteLine();
-                output.WriteLine("cancelled.");
-            }
-
-            return failed ? ExitCommandFailed : ExitOk;
+            failed |= scripted is not null
+                ? !await RunScriptAsync(runner, scripted, ct)
+                : !await RunInteractiveAsync(runner, ct);
         }
-        finally
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            if (audioSink is not null)
-                await audioSink.DisposeAsync();
+            output.WriteLine();
+            output.WriteLine("cancelled.");
         }
+
+        return failed ? ExitCommandFailed : ExitOk;
     }
 
     /// <summary>
