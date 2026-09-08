@@ -220,7 +220,10 @@ internal sealed class SubstrateSession : IPlaybackSession
             // counts frames dropped as late at delivery time. Previously always
             // zero (PaceUntil's reserved VideoFramesDroppedForSync counter was
             // never populated).
-            VideoFramesDroppedForSync: _videoPacer?.DroppedLate ?? 0
+            VideoFramesDroppedForSync: _videoPacer?.DroppedLate ?? 0,
+            // Null without a pacer: there is no master clock to measure against, so
+            // "no lag" would be a claim this session cannot make.
+            VideoPresentationLag: _videoPacer?.PresentationLag
         );
     }
 

@@ -614,6 +614,86 @@ public sealed class ClockSelectVideoSinkTests
     /// completes as soon as Latest reaches the target (re-checked on each Advance).
     /// Deterministic — no wall-clock, so tests don't race real time.
     /// </summary>
+    // ── PresentationLag (#82) ────────────────────────────────────────────
+
+    [Fact]
+    public async Task PresentationLagIsNullUntilTheRunHasPresentedAFrame()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        await using var pacer = new ClockSelectVideoSink(sink, clock, capacity: 4);
+
+        Assert.Null(pacer.PresentationLag);
+
+        // A clock that has run is still not a measurement: with nothing presented
+        // there is no picture for the position to be ahead OF.
+        clock.Advance(TimeSpan.FromSeconds(5));
+        Assert.Null(pacer.PresentationLag);
+    }
+
+    [Fact]
+    public async Task PresentationLagIsZeroWhileTheClockIsInsideThePresentedFramesWindow()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        await using var pacer = new ClockSelectVideoSink(sink, clock, capacity: 4);
+
+        pacer.BeginRun(holdForSettle: false);
+        clock.Advance(TimeSpan.FromMilliseconds(100));
+        await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromMilliseconds(100)), default);
+        await sink.WaitForCountAsync(1);
+
+        // The frame occupies [100ms, 133ms). A clock anywhere in there has not run
+        // past it, so a keeping-up pipeline reads exactly zero rather than jittering
+        // across a frame duration.
+        Assert.Equal(TimeSpan.Zero, pacer.PresentationLag);
+
+        clock.Advance(TimeSpan.FromMilliseconds(132));
+        Assert.Equal(TimeSpan.Zero, pacer.PresentationLag);
+    }
+
+    [Fact]
+    public async Task PresentationLagMeasuresHowFarTheClockRanPastTheFrameOnScreen()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        await using var pacer = new ClockSelectVideoSink(sink, clock, capacity: 4);
+
+        pacer.BeginRun(holdForSettle: false);
+        clock.Advance(TimeSpan.FromMilliseconds(100));
+        await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromMilliseconds(100)), default);
+        await sink.WaitForCountAsync(1);
+
+        // Nothing further arrives — the decoder is the bottleneck — while the clock
+        // keeps going. That is the #82 shape, and this is the number that reveals it.
+        clock.Advance(TimeSpan.FromSeconds(10));
+
+        // 10s minus the frame's own 133ms window.
+        Assert.Equal(TimeSpan.FromMilliseconds(9867), pacer.PresentationLag);
+    }
+
+    [Fact]
+    public async Task PresentationLagResetsWithTheRunRatherThanReadingAsTheSeekTarget()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        await using var pacer = new ClockSelectVideoSink(sink, clock, capacity: 4);
+
+        pacer.BeginRun(holdForSettle: false);
+        clock.Advance(TimeSpan.FromMilliseconds(100));
+        await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromMilliseconds(100)), default);
+        await sink.WaitForCountAsync(1);
+
+        // A seek: new run, and both clocks reseat onto the target (#164).
+        pacer.BeginRun(TimeSpan.FromSeconds(20), holdForSettle: false);
+        clock.Advance(TimeSpan.FromSeconds(20));
+
+        // Null, not 20 seconds. The drain gate resets its own copy to Zero so a fresh
+        // run drains immediately; measuring lag against that Zero would report the
+        // whole seek target as drift until the first frame of the new run landed.
+        Assert.Null(pacer.PresentationLag);
+    }
+
     private sealed class FakeClock : IClockSource
     {
         private readonly object _lock = new();

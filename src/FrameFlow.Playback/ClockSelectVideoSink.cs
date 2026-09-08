@@ -193,6 +193,13 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     // run by BeginRun.
     private TimeSpan _lastFrameEndPts;
 
+    // Same instant as _lastFrameEndPts, but null until a frame has actually been
+    // presented in THIS run. PresentationLag needs that distinction and the drain
+    // gate does not: the gate resets to Zero so a fresh run drains immediately,
+    // whereas a lag measured against Zero would read as the whole seek target
+    // until the first frame of the new run landed.
+    private TimeSpan? _presentedEndPts;
+
     /// <summary>
     /// Wraps <paramref name="inner"/> with select-by-clock delivery against
     /// <paramref name="clock"/>.
@@ -245,6 +252,48 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
 
     /// <summary>Total frames dropped because a fresher due frame superseded them.</summary>
     public int DroppedLate => Volatile.Read(ref _droppedLate);
+
+    /// <summary>
+    /// How far the master clock has run past the end of the frame most recently
+    /// presented, or <see langword="null"/> before this run has presented one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Zero while healthy, and that is exact rather than approximate: the frame on
+    /// screen occupies <c>[Pts, Pts + Duration)</c>, so a clock inside that window
+    /// has not run past anything. Measuring from the window's end rather than its
+    /// start is what makes a keeping-up pipeline read 0 instead of jittering across
+    /// a frame duration.
+    /// </para>
+    /// <para>
+    /// It climbs when the pipeline cannot deliver at the rate the clock advances and
+    /// nothing drops to compensate. Frames dropped as late (<see cref="DroppedLate"/>)
+    /// and packets shed at the decoder both hold it near zero by discarding the
+    /// backlog; the configuration with neither is the one where it grows without
+    /// bound (#82).
+    /// </para>
+    /// <para>
+    /// The clock is read outside the lock, on purpose. Holding <c>_gate</c> across a
+    /// clock read would put a diagnostics caller in the delivery loop's way, and the
+    /// value is a drift estimate — a read that straddles one frame is off by at most
+    /// that frame's duration, which does not change what the number is for.
+    /// </para>
+    /// </remarks>
+    public TimeSpan? PresentationLag
+    {
+        get
+        {
+            TimeSpan? end;
+            lock (_gate)
+                end = _presentedEndPts;
+
+            if (end is not { } presentedEnd)
+                return null;
+
+            var lag = _clock.Latest - presentedEnd;
+            return lag > TimeSpan.Zero ? lag : TimeSpan.Zero;
+        }
+    }
 
     /// <summary>
     /// Frames discarded for carrying a PTS below a seek target — the reference frames
@@ -442,6 +491,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                 : Completed();
             _inputComplete = false;
             _lastFrameEndPts = TimeSpan.Zero;
+            _presentedEndPts = null;
             if (_drained.Task.IsCompleted)
                 _drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         }
@@ -747,6 +797,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                         var end = present.Pts + present.Duration;
                         if (end > _lastFrameEndPts)
                             _lastFrameEndPts = end;
+                        _presentedEndPts = end;
                     }
                 }
 
