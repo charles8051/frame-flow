@@ -157,6 +157,122 @@ public sealed class OrtBufferPinningTests
         }
     }
 
+    // ── BindPinned: the whole bind body, minus the ORT call ──────────────
+
+    [Fact]
+    public void BindPinnedBuildsTheValueOverTheAddressTheRegisteredPinProtects()
+    {
+        using var pool = new CpuTensorPool();
+        using var tensor = pool.Rent<float>(new TensorShape(1, 896, 1));
+        var boundValues = new List<IntPtr>(1);
+        var pins = new List<MemoryHandle>(1);
+
+        // The value stands in for the OrtValue: it records exactly the
+        // address that would have gone to CreateTensorValueWithData.
+        var value = OrtInferenceSessionBase.BindPinned(
+            tensor,
+            boundValues,
+            pins,
+            createValue: address => address,
+            disposeValue: static _ => { }
+        );
+
+        try
+        {
+            var registered = Assert.Single(pins);
+            Assert.Equal(AddressOf(registered), value);
+            Assert.Equal(value, Assert.Single(boundValues));
+            Assert.NotEqual(IntPtr.Zero, value);
+
+            ChurnTheHeapAndCompact();
+
+            // The address ORT was given still names this tensor's buffer.
+            Assert.Equal(value, AddressOf(registered));
+            using var alias = tensor.Bytes.Pin();
+            Assert.Equal(value, AddressOf(alias));
+        }
+        finally
+        {
+            foreach (var pin in pins)
+                pin.Dispose();
+        }
+    }
+
+    [Fact]
+    public void BindPinnedLeavesThePinRegisteredWhenValueCreationThrows()
+    {
+        using var pool = new CpuTensorPool();
+        using var tensor = pool.Rent<float>(new TensorShape(1, 896, 1));
+        var boundValues = new List<IntPtr>(1);
+        var pins = new List<MemoryHandle>(1);
+
+        Assert.Throws<InvalidOperationException>(
+            () =>
+                OrtInferenceSessionBase.BindPinned<IntPtr>(
+                    tensor,
+                    boundValues,
+                    pins,
+                    createValue: _ => throw new InvalidOperationException("ORT said no."),
+                    disposeValue: static _ => { }
+                )
+        );
+
+        // The pin must already be the caller's, or Run's finally cannot
+        // free it and the buffer stays pinned for the process's life.
+        Assert.Single(pins);
+        Assert.Empty(boundValues);
+        foreach (var pin in pins)
+            pin.Dispose();
+    }
+
+    [Fact]
+    public void BindPinnedDisposesTheValueWhenRegisteringItThrows()
+    {
+        using var pool = new CpuTensorPool();
+        using var tensor = pool.Rent<float>(new TensorShape(1, 896, 1));
+        var pins = new List<MemoryHandle>(1);
+        var disposed = new List<IntPtr>();
+
+        Assert.Throws<NotSupportedException>(
+            () =>
+                OrtInferenceSessionBase.BindPinned(
+                    tensor,
+                    new RefusingList<IntPtr>(),
+                    pins,
+                    createValue: address => address,
+                    disposeValue: disposed.Add
+                )
+        );
+
+        // Nothing else knows about the value, so this is its only chance.
+        Assert.Single(disposed);
+        Assert.Single(pins);
+        foreach (var pin in pins)
+            pin.Dispose();
+    }
+
+    /// <summary>A registry that refuses, standing in for an Add that throws.</summary>
+    private sealed class RefusingList<T> : ICollection<T>
+    {
+        public void Add(T item) => throw new NotSupportedException();
+
+        public int Count => 0;
+        public bool IsReadOnly => false;
+
+        public void Clear() { }
+
+        public bool Contains(T item) => false;
+
+        public void CopyTo(T[] array, int arrayIndex) { }
+
+        public bool Remove(T item) => false;
+
+        public IEnumerator<T> GetEnumerator() => Enumerable.Empty<T>().GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
+            GetEnumerator();
+    }
+
     [Fact]
     public void PinForBindingRejectsATensorReportingMoreBytesThanItExposes()
     {

@@ -217,17 +217,51 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         var elementType = MapDType(tensor.Dtype);
         var shape = ToLongShape(tensor.Shape);
 
+        return BindPinned(
+            tensor,
+            boundValues,
+            pins,
+            address =>
+                OrtValue.CreateTensorValueWithData(
+                    CpuMemoryInfo,
+                    elementType,
+                    shape,
+                    address,
+                    tensor.ByteCount
+                ),
+            static value => value.Dispose()
+        );
+    }
+
+    /// <summary>
+    /// The whole of a bind except the ORT call: pin, register, build the
+    /// value over the pinned address, register that too.
+    /// </summary>
+    /// <remarks>
+    /// Generic over the value so the sequence can be driven in a test with
+    /// no <c>InferenceSession</c> — constructing a real <see cref="OrtValue"/>
+    /// needs the native runtime, and the property worth pinning down is that
+    /// the address handed to <paramref name="createValue"/> is the one the
+    /// registered pin protects. That is what the bug got wrong, and it is
+    /// checkable without ORT.
+    /// </remarks>
+    internal static TValue BindPinned<TValue>(
+        ICpuTensor tensor,
+        ICollection<TValue> boundValues,
+        ICollection<MemoryHandle> pins,
+        Func<IntPtr, TValue> createValue,
+        Action<TValue> disposeValue
+    )
+    {
+        ArgumentNullException.ThrowIfNull(boundValues);
+        ArgumentNullException.ThrowIfNull(createValue);
+        ArgumentNullException.ThrowIfNull(disposeValue);
+
         // Pinned and registered before the value exists, so a throw below
         // still leaves the pin owned by the caller's finally.
         var address = PinAndRegister(tensor, pins);
 
-        var value = OrtValue.CreateTensorValueWithData(
-            CpuMemoryInfo,
-            elementType,
-            shape,
-            address,
-            tensor.ByteCount
-        );
+        var value = createValue(address);
         try
         {
             boundValues.Add(value);
@@ -236,7 +270,7 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         {
             // Ownership never reached the caller's list; nothing else will
             // free the native value.
-            value.Dispose();
+            disposeValue(value);
             throw;
         }
         return value;
@@ -256,14 +290,15 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
     /// the caller.
     /// </para>
     /// <para>
-    /// The pin is disposed if registration throws. Today the lists are
-    /// preallocated to the exact number of binds and cannot grow, but that
-    /// rests on <c>IReadOnlyDictionary.Count</c> agreeing with what
-    /// enumeration yields, which is the caller's type to choose and not
-    /// ours to assume.
+    /// The pin is disposed if registration throws. <c>Run</c> preallocates
+    /// its lists to the exact number of binds, so today they cannot grow,
+    /// but that rests on <c>IReadOnlyDictionary.Count</c> agreeing with what
+    /// enumeration yields — the caller's type to choose, not ours to assume.
+    /// The registries are <see cref="ICollection{T}"/> so this path is
+    /// reachable from a test.
     /// </para>
     /// </remarks>
-    internal static IntPtr PinAndRegister(ICpuTensor tensor, List<MemoryHandle> pins)
+    internal static IntPtr PinAndRegister(ICpuTensor tensor, ICollection<MemoryHandle> pins)
     {
         ArgumentNullException.ThrowIfNull(pins);
 
