@@ -84,6 +84,73 @@ public sealed class OrtBufferPinningTests
         }
     }
 
+    // ── PinForBinding: the seam BindCpuTensor actually calls ─────────────
+
+    [Fact]
+    public void PinForBindingReturnsAHandleThatIsHoldingTheBuffer()
+    {
+        using var pool = new CpuTensorPool();
+        using var tensor = pool.Rent<float>(new TensorShape(1, 896, 1));
+
+        using var pin = OrtInferenceSessionBase.PinForBinding(tensor);
+
+        // A released pin — what `fixed` leaves behind, and what
+        // default(MemoryHandle) would be — carries a null pointer.
+        Assert.NotEqual(IntPtr.Zero, AddressOf(pin));
+
+        // A second pin of the same buffer must land on the same address:
+        // proof the handle refers to this tensor's memory and not a copy.
+        using var alias = tensor.Bytes.Pin();
+        Assert.Equal(AddressOf(alias), AddressOf(pin));
+    }
+
+    [Fact]
+    public void TheAddressFromPinForBindingSurvivesACompactingGc()
+    {
+        using var pool = new CpuTensorPool();
+        using var tensor = pool.Rent<float>(new TensorShape(1, 896, 1));
+
+        // The bug's shape: take the address, return, let the caller keep
+        // allocating, then dereference. Here the pin comes back with the
+        // address, so the buffer cannot move under it.
+        using var pin = OrtInferenceSessionBase.PinForBinding(tensor);
+        var address = AddressOf(pin);
+
+        ChurnTheHeapAndCompact();
+
+        Assert.Equal(address, AddressOf(pin));
+        using var alias = tensor.Bytes.Pin();
+        Assert.Equal(address, AddressOf(alias));
+    }
+
+    [Fact]
+    public void PinForBindingRejectsATensorReportingMoreBytesThanItExposes()
+    {
+        // ORT is told it may read ByteCount bytes from the address. A tensor
+        // that over-reports would have it read off the end of the pin.
+        var lying = new OverReportingTensor(exposed: 64, reported: 4096);
+
+        var ex = Assert.Throws<ArgumentException>(
+            () => OrtInferenceSessionBase.PinForBinding(lying)
+        );
+        Assert.Contains("past the end", ex.Message, StringComparison.Ordinal);
+    }
+
+    private sealed class OverReportingTensor(int exposed, long reported) : ICpuTensor
+    {
+        private readonly byte[] _buffer = new byte[exposed];
+
+        public DType Dtype => DType.UInt8;
+        public TensorShape Shape => new(exposed);
+        public FrameMemoryDomain MemoryDomain => FrameMemoryDomain.Cpu;
+        public long ByteCount => reported;
+        public ReadOnlyMemory<byte> Bytes => _buffer;
+
+        public ITensor AddRef() => this;
+
+        public void Dispose() { }
+    }
+
     private static IntPtr AddressOf(MemoryHandle handle)
     {
         unsafe

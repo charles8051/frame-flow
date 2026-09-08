@@ -219,7 +219,7 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
 
         // Registered before anything below can throw, so the pin is
         // released even if constructing the OrtValue fails.
-        var pin = tensor.Bytes.Pin();
+        var pin = PinForBinding(tensor);
         pins.Add(pin);
 
         IntPtr address;
@@ -237,6 +237,46 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         );
         boundValues.Add(value);
         return value;
+    }
+
+    /// <summary>
+    /// Pins one host tensor's buffer and hands the pin back to the caller,
+    /// who owns it. The address ORT is given is <c>Pointer</c> on the
+    /// returned handle, so the pin and the address cannot be separated.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Returning the pin is the point.</b> The bug this replaced took
+    /// the address inside a <c>fixed</c> block, which releases at its
+    /// closing brace — before the method returned, and long before ORT
+    /// dereferenced the address. A <c>fixed</c> block cannot be expressed
+    /// through this signature: there is no handle for it to return.
+    /// </para>
+    /// <para>
+    /// The buffer must also be at least <see cref="ICpuTensor.ByteCount"/>
+    /// long, because that is the length ORT is told it may read.
+    /// <c>CpuTensor</c> establishes this at construction, but
+    /// <see cref="ICpuTensor"/> is an interface and an implementation that
+    /// reports more than it exposes would have ORT read off the end of a
+    /// pinned buffer. Checked here rather than trusted.
+    /// </para>
+    /// </remarks>
+    internal static MemoryHandle PinForBinding(ICpuTensor tensor)
+    {
+        ArgumentNullException.ThrowIfNull(tensor);
+
+        var bytes = tensor.Bytes;
+        if (bytes.Length < tensor.ByteCount)
+        {
+            throw new ArgumentException(
+                $"Tensor exposes {bytes.Length} bytes but reports a ByteCount "
+                    + $"of {tensor.ByteCount}; ORT would be told it may read "
+                    + "past the end of the pinned buffer.",
+                nameof(tensor)
+            );
+        }
+
+        return bytes.Pin();
     }
 
     /// <summary>
