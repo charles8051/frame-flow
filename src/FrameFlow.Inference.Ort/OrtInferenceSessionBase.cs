@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Buffers;
 using System.Collections.ObjectModel;
 using FrameFlow.Graph;
 using Microsoft.ML.OnnxRuntime;
@@ -139,29 +140,37 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         ValidateNames(outputs.Keys, OutputNames, "output");
 
         using var binding = _session.CreateIoBinding();
-        var pinnedValues = new List<OrtValue>(inputs.Count + outputs.Count);
+        var capacity = inputs.Count + outputs.Count;
+        var boundValues = new List<OrtValue>(capacity);
+        var pins = new List<MemoryHandle>(capacity);
 
         try
         {
+            // CA2000: BindCpuTensor transfers the value to boundValues, which
+            // the finally below disposes. The add happens inside BindPinned,
+            // one frame down, and the analyzer does not follow it there.
+#pragma warning disable CA2000
             foreach (var (name, tensor) in inputs)
             {
-                var value = BindCpuTensor(tensor);
-                pinnedValues.Add(value);
+                var value = BindCpuTensor(tensor, boundValues, pins);
                 binding.BindInput(name, value);
             }
             foreach (var (name, tensor) in outputs)
             {
-                var value = BindCpuTensor(tensor);
-                pinnedValues.Add(value);
+                var value = BindCpuTensor(tensor, boundValues, pins);
                 binding.BindOutput(name, value);
             }
+#pragma warning restore CA2000
 
             _session.RunWithBinding(_runOptions, binding);
         }
         finally
         {
-            foreach (var value in pinnedValues)
+            foreach (var value in boundValues)
                 value.Dispose();
+            // After the OrtValues: they hold the addresses these pins protect.
+            foreach (var pin in pins)
+                pin.Dispose();
         }
     }
 
@@ -185,23 +194,180 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         );
     }
 
-    private OrtValue BindCpuTensor(ICpuTensor tensor)
+    /// <summary>
+    /// Binds one host tensor as an <see cref="OrtValue"/> over its own
+    /// buffer, registering both the value and the pin that keeps that
+    /// buffer in place with the caller's lifetime lists.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The pin must outlive the value.</b>
+    /// <c>OrtValue.CreateTensorValueWithData</c> does not copy and does not
+    /// own the buffer — it stores the raw address and dereferences it later,
+    /// inside <c>RunWithBinding</c>. Keeping the buffer valid until then is
+    /// the caller's obligation.
+    /// </para>
+    /// <para>
+    /// A <c>fixed</c> block cannot discharge that obligation: it releases at
+    /// its closing brace, which is before this method even returns.
+    /// <see cref="ICpuTensor.Bytes"/> is backed by a pooled <c>byte[]</c> —
+    /// an ordinary movable managed array — so between binding and running,
+    /// the allocations made by the remaining binds are enough to trigger a
+    /// compacting GC that relocates an already-bound buffer and leaves ORT
+    /// reading freed memory. So the pin is taken here and released by
+    /// <see cref="Run(IReadOnlyDictionary{string, ICpuTensor}, IReadOnlyDictionary{string, ICpuTensor})"/>
+    /// once the run has completed.
+    /// </para>
+    /// </remarks>
+    private OrtValue BindCpuTensor(
+        ICpuTensor tensor,
+        List<OrtValue> boundValues,
+        List<MemoryHandle> pins
+    )
     {
         var elementType = MapDType(tensor.Dtype);
         var shape = ToLongShape(tensor.Shape);
-        unsafe
-        {
-            fixed (byte* ptr = tensor.Bytes.Span)
-            {
-                return OrtValue.CreateTensorValueWithData(
+
+        return BindPinned(
+            tensor,
+            boundValues,
+            pins,
+            address =>
+                OrtValue.CreateTensorValueWithData(
                     CpuMemoryInfo,
                     elementType,
                     shape,
-                    (IntPtr)ptr,
+                    address,
                     tensor.ByteCount
-                );
-            }
+                ),
+            static value => value.Dispose()
+        );
+    }
+
+    /// <summary>
+    /// The whole of a bind except the ORT call: pin, register, build the
+    /// value over the pinned address, register that too.
+    /// </summary>
+    /// <remarks>
+    /// Generic over the value so the sequence can be driven in a test with
+    /// no <c>InferenceSession</c> — constructing a real <see cref="OrtValue"/>
+    /// needs the native runtime, and the property worth pinning down is that
+    /// the address handed to <paramref name="createValue"/> is the one the
+    /// registered pin protects. That is what the bug got wrong, and it is
+    /// checkable without ORT.
+    /// </remarks>
+    internal static TValue BindPinned<TValue>(
+        ICpuTensor tensor,
+        ICollection<TValue> boundValues,
+        ICollection<MemoryHandle> pins,
+        Func<IntPtr, TValue> createValue,
+        Action<TValue> disposeValue
+    )
+    {
+        ArgumentNullException.ThrowIfNull(boundValues);
+        ArgumentNullException.ThrowIfNull(createValue);
+        ArgumentNullException.ThrowIfNull(disposeValue);
+
+        // Pinned and registered before the value exists, so a throw below
+        // still leaves the pin owned by the caller's finally.
+        var address = PinAndRegister(tensor, pins);
+
+        var value = createValue(address);
+        try
+        {
+            boundValues.Add(value);
         }
+        catch
+        {
+            // Ownership never reached the caller's list; nothing else will
+            // free the native value.
+            disposeValue(value);
+            throw;
+        }
+        return value;
+    }
+
+    /// <summary>
+    /// Pins <paramref name="tensor"/>, hands the pin to
+    /// <paramref name="pins"/>, and returns the address to give ORT — which
+    /// is the pinned address itself, read off the registered handle.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the ownership handoff the bug got wrong, isolated so it can
+    /// be tested without an <c>InferenceSession</c>. The address is derived
+    /// from the same handle that was just registered, so an address can
+    /// only escape this method if the pin protecting it is already owned by
+    /// the caller.
+    /// </para>
+    /// <para>
+    /// The pin is disposed if registration throws. <c>Run</c> preallocates
+    /// its lists to the exact number of binds, so today they cannot grow,
+    /// but that rests on <c>IReadOnlyDictionary.Count</c> agreeing with what
+    /// enumeration yields — the caller's type to choose, not ours to assume.
+    /// The registries are <see cref="ICollection{T}"/> so this path is
+    /// reachable from a test.
+    /// </para>
+    /// </remarks>
+    internal static IntPtr PinAndRegister(ICpuTensor tensor, ICollection<MemoryHandle> pins)
+    {
+        ArgumentNullException.ThrowIfNull(pins);
+
+        var pin = PinForBinding(tensor);
+        try
+        {
+            pins.Add(pin);
+        }
+        catch
+        {
+            pin.Dispose();
+            throw;
+        }
+
+        unsafe
+        {
+            return (IntPtr)pin.Pointer;
+        }
+    }
+
+    /// <summary>
+    /// Pins one host tensor's buffer and hands the pin back to the caller,
+    /// who owns it. The address ORT is given is <c>Pointer</c> on the
+    /// returned handle, so the pin and the address cannot be separated.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Returning the pin is the point.</b> The bug this replaced took
+    /// the address inside a <c>fixed</c> block, which releases at its
+    /// closing brace — before the method returned, and long before ORT
+    /// dereferenced the address. A <c>fixed</c> block cannot be expressed
+    /// through this signature: there is no handle for it to return.
+    /// </para>
+    /// <para>
+    /// The buffer must also be at least <see cref="ICpuTensor.ByteCount"/>
+    /// long, because that is the length ORT is told it may read.
+    /// <c>CpuTensor</c> establishes this at construction, but
+    /// <see cref="ICpuTensor"/> is an interface and an implementation that
+    /// reports more than it exposes would have ORT read off the end of a
+    /// pinned buffer. Checked here rather than trusted.
+    /// </para>
+    /// </remarks>
+    internal static MemoryHandle PinForBinding(ICpuTensor tensor)
+    {
+        ArgumentNullException.ThrowIfNull(tensor);
+
+        var bytes = tensor.Bytes;
+        if (bytes.Length < tensor.ByteCount)
+        {
+            throw new ArgumentException(
+                $"Tensor exposes {bytes.Length} bytes but reports a ByteCount "
+                    + $"of {tensor.ByteCount}; ORT would be told it may read "
+                    + "past the end of the pinned buffer.",
+                nameof(tensor)
+            );
+        }
+
+        return bytes.Pin();
     }
 
     /// <summary>
