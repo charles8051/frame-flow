@@ -146,10 +146,21 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
 
         try
         {
+            // CA2000: BindCpuTensor transfers the value to boundValues, which
+            // the finally below disposes. The add happens inside BindPinned,
+            // one frame down, and the analyzer does not follow it there.
+#pragma warning disable CA2000
             foreach (var (name, tensor) in inputs)
-                binding.BindInput(name, BindCpuTensor(tensor, boundValues, pins));
+            {
+                var value = BindCpuTensor(tensor, boundValues, pins);
+                binding.BindInput(name, value);
+            }
             foreach (var (name, tensor) in outputs)
-                binding.BindOutput(name, BindCpuTensor(tensor, boundValues, pins));
+            {
+                var value = BindCpuTensor(tensor, boundValues, pins);
+                binding.BindOutput(name, value);
+            }
+#pragma warning restore CA2000
 
             _session.RunWithBinding(_runOptions, binding);
         }
