@@ -181,9 +181,10 @@ land.
   its second condition is settled too: the escalation middle is a proportional skip
   of the GPU-to-CPU readback rather than a `skip_frame` level, recovering fully at
   1 in 4 while keeping four times the frames keyframes-only would, on an exactly
-  even cadence. The two mechanisms are one path ordered by damage, and thinning
-  ceasing to help is what identifies a decode-bound pipeline, so nothing has to
-  classify one up front. Its rejected alternative F
+  even cadence — including on reordered video, since `avcodec_receive_frame` hands
+  back frames in presentation order. The two mechanisms are one path ordered by
+  damage, and thinning ceasing to help is what identifies a decode-bound pipeline,
+  so nothing has to classify one up front. Its rejected alternative F
   records the packet-pacing design this replaced, and the measurement that ruled it
   out.
 

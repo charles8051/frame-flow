@@ -299,25 +299,33 @@ delivered in bursts. Tracing the PTS of every kept frame settles it:
 a modulo counter over frames arriving at a constant rate, so even spacing is what
 it produces.
 
-**So the rule is keyed to presentation time, not to arrival order.** A frame is
-kept when its PTS reaches the next multiple of N frame durations; frames between
-those points are skipped.
+**The rule is keyed to presentation time**: a frame is kept when its PTS reaches
+the next multiple of N frame durations. That is the specification, and it is
+robust to how frames arrive.
 
-The measurement above used a modulo counter over received frames, and that is
-sound evidence *because on this fixture the two are the same rule*. Nothing in
-this corpus has B-frames, so decode order is presentation order and the Nth
-arrival is the Nth picture.
+The measurement used a modulo counter over received frames, which raised an
+obvious worry — reordered video would surely cluster the pictures actually shown,
+even while the count and the aggregate lag looked right. It does not, and the
+reason is worth stating because it is easy to get backwards.
 
-They are not the same on reordered video, and there the counter is the wrong one:
-B-frames arrive out of presentation order, so keeping every Nth arrival clusters
-and gaps the pictures actually shown even while the aggregate count and lag look
-right. Specifying the counter would have shipped that. The PTS rule is what the
-decision states; the counter is what was measured, on the case where they
-coincide.
+Measured on a 2160p60 fixture encoded with `h264_nvenc -bf 3 -b_ref_mode middle`,
+which `ffprobe` shows as 445 B-frames, 150 P and 5 I in its first ten seconds:
 
-**Unvalidated on reordered video**, for the same reason the `skip_frame` middle
-steps are: the pinned LGPL FFmpeg cannot produce a B-frame fixture. In
-*Validation*.
+| | |
+| --- | --- |
+| kept frames at 1 in 3 | 596 |
+| PTS monotonic | yes |
+| intervals not equal to 768 | **0 of 595** |
+
+Identical to the no-B-frame result. **`avcodec_receive_frame` returns frames in
+presentation order, not decode order** — the reorder buffer is the decoder's job,
+and packets arriving in decode order is not the same as frames coming out that
+way. So the counter and the PTS rule agree here too, and they agree for a
+structural reason rather than a coincidence of content.
+
+The PTS rule stays the specification anyway. It states the intent directly instead
+of relying on a property of the API that a reader would have to know to check, and
+it costs nothing to say.
 
 #### The `skip_frame` steps, and their limit
 
@@ -337,11 +345,32 @@ so the two middle rows sit inside the run-to-run spread. `NONKEY` matches its
 arithmetic — 36 I per 10 s is ~108 in 30 s, against 114, repeating at exactly 114
 across three runs.
 
-So on such content steps 2 and 3 are no-ops and step 4 is a cliff. That is
-accepted rather than solved: there is no proportional way to decode part of a
-reference chain. What makes it tolerable is the ordering — a pipeline only reaches
-step 4 after the harmless rung has failed to recover it, which on a readback-bound
-pipeline never happens.
+So on such content steps 2 and 3 are no-ops and step 4 is a cliff.
+
+**On content that does have B-frames the middle steps work**, which the corpus
+could not show. Same NVENC fixture as the cadence measurement above, one run each:
+
+| level | read back | lag |
+| --- | --- | --- |
+| `NONE` | 968 | `13.898` |
+| `NONREF` | 788 | `4.185` |
+| `BIDIR` | 472 | **`0.013`** |
+| `NONKEY` | 23 | `0.010` |
+
+`NONREF` cuts lag by more than three times while keeping 788 frames; `BIDIR`
+recovers completely at 472. That is the graduated behaviour the ladder was
+specified for, measured rather than assumed — and note how much worse the cliff is
+on this stream, where `NONKEY` leaves 23 frames against `BIDIR`'s 472.
+
+So the ladder degenerates exactly where its categories are empty and works
+where they are not. What makes the degenerate case tolerable is the ordering: a
+pipeline only reaches step 4 after the readback rungs have failed to recover it,
+which on a readback-bound pipeline never happens.
+
+Both measurements above use a fixture generated locally with
+`h264_nvenc -bf 3 -b_ref_mode middle`, not one from the corpus. The corpus
+generator is deliberately portable and LGPL-only, and adding an NVIDIA-encoder
+fixture to it would trade that away for a case only these two measurements need.
 
 #### Hysteresis
 
@@ -630,11 +659,16 @@ would have to hold:
 - ~~**That the readback skip spaces frames evenly, not in bursts.**~~ **Done** —
   PTS traced for every kept frame: 582 of 582 intervals exactly three frame
   durations at 1 in 3, zero deviation. Decision §2.
-- **That the PTS-keyed rule stays even on reordered video.** What was measured is
-  the receive-order counter, which is the same rule on this corpus because nothing
-  in it has B-frames. The decision specifies the PTS rule precisely because they
-  diverge on reordered streams, and that divergence is exactly what is unmeasured.
-  Blocked by the same missing B-frame fixture as the `skip_frame` middle steps.
+- ~~**That the skip stays even on reordered video.**~~ **Done** — 596 kept frames
+  on a 445-B-frame fixture, 595 of 595 intervals exactly three frame durations,
+  PTS monotonic. `avcodec_receive_frame` returns frames in presentation order, so
+  the counter and the PTS rule agree. Decision §2.
+- **That a transient improvement cannot mislead the walk.** A decode-bound
+  pipeline can improve briefly when a readback rung reduces contention, which the
+  rule would read as "thinning is working" and sit on. The settle window is what
+  has to be long enough to tell a transient from a trend, and it is unmeasured.
+  This is the specific way the improvement rule fails, and it is a better
+  statement of the risk than "the constants are unchosen".
 - **That "thinning stopped helping" is a usable signal at runtime.** It replaced a
   fixed 1-in-8 cap, which measured well here and would have misclassified a slower
   machine that was still recovering at that rung. The rule needs no constant, but
@@ -647,12 +681,11 @@ would have to hold:
 - **That a decode-bound pipeline shows no improvement at the first rung**, so it
   leaves the readback steps quickly rather than walking all four. Reasoned from
   every frame still being decoded; no decode-bound fixture has been run.
-- **`NONREF` and `BIDIR` on content that actually contains those frames.** Not
-  possible on this corpus: the pinned FFmpeg is an LGPL build without libx264, and
-  libopenh264 emits no B-frames, so every fixture is all-reference P plus I. The
-  generator already records two fixtures as unavailable for the same reason.
-  Validating the ladder's middle needs a GPL FFmpeg, and until someone runs it
-  those two rungs are unexercised rather than working.
+- ~~**`NONREF` and `BIDIR` on content that actually contains those frames.**~~
+  **Done** — on a B-frame fixture, `NONREF` cuts lag 13.9 s to 4.2 s and `BIDIR`
+  recovers fully at 0.013 s. Decision §2. The corpus still cannot produce such a
+  fixture; this used a locally generated NVENC one, so the measurement is
+  repeatable on an NVIDIA machine and not in CI.
 - **How much decode work the hardware path actually saves**, separately from the
   downstream saving. Tuning — it changes how fast escalation recovers, not whether
   it does.
