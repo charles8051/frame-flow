@@ -262,4 +262,34 @@ public sealed record LatenessRecoveryOptions
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value, TimeSpan.Zero);
         return value;
     }
+
+    /// <summary>
+    /// Checks the one rule a per-property setter cannot: that the two thresholds
+    /// still form a band.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The gap between <see cref="RelaxBelow"/> and <see cref="EscalateAbove"/> is
+    /// the hysteresis, and nothing about setting either one alone can tell whether
+    /// the pair is ordered — an init accessor sees its own value and whatever the
+    /// other happened to be at the time, which depends on the order the caller
+    /// wrote them in.
+    /// </para>
+    /// <para>
+    /// Inverted, the bands overlap and lateness inside the overlap satisfies both
+    /// directions at once: <c>Decide</c> takes the relax branch first, so a
+    /// pipeline late enough to need escalating is given a rung back instead.
+    /// </para>
+    /// </remarks>
+    public void Validate()
+    {
+        if (RelaxBelow >= EscalateAbove)
+        {
+            throw new ArgumentException(
+                $"RelaxBelow ({RelaxBelow}) must be below EscalateAbove ({EscalateAbove}); "
+                    + "the gap between them is the hysteresis, and inverted they overlap.",
+                nameof(RelaxBelow)
+            );
+        }
+    }
 }

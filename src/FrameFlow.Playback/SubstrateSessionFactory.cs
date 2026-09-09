@@ -51,6 +51,10 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory
         LatenessRecoveryOptions? latenessRecovery = null
     )
     {
+        // Checked here rather than in the worker: this runs on the caller's thread,
+        // inside PlaybackController.Create, so a contradictory pair fails next to the
+        // line that wrote it instead of surfacing later as a playback fault.
+        latenessRecovery?.Validate();
         _latenessRecovery = latenessRecovery;
         _videoSink = videoSink;
         _audioSink = audioSink;

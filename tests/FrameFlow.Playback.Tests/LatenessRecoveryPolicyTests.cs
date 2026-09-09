@@ -183,6 +183,57 @@ public sealed class LatenessRecoveryPolicyTests
         Assert.Equal(RecoveryMove.Hold, decision.Move);
     }
 
+    // ── The options ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void InvertedThresholdsAreRejected()
+    {
+        // No per-property setter can catch this: an init accessor sees its own value
+        // and whatever the other happened to be, which depends on the order the
+        // caller wrote them in. Inverted, the bands overlap and lateness inside the
+        // overlap takes the relax branch — a pipeline late enough to need escalating
+        // is handed a rung back instead.
+        var inverted = new LatenessRecoveryOptions
+        {
+            EscalateAbove = TimeSpan.FromMilliseconds(400),
+            RelaxBelow = TimeSpan.FromMilliseconds(500),
+        };
+
+        Assert.Throws<ArgumentException>(inverted.Validate);
+    }
+
+    [Fact]
+    public void EqualThresholdsAreRejectedToo()
+    {
+        // No gap is no hysteresis, which is the whole reason there are two numbers.
+        var flat = new LatenessRecoveryOptions
+        {
+            EscalateAbove = TimeSpan.FromMilliseconds(400),
+            RelaxBelow = TimeSpan.FromMilliseconds(400),
+        };
+
+        Assert.Throws<ArgumentException>(flat.Validate);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void NonPositiveDurationsAreRejectedWhereTheyAreWritten(int ms)
+    {
+        // A zero settle window reaches PeriodicTimer inside the worker, where the
+        // catch that stops a recovery fault taking playback down would report it as
+        // a playback fault.
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new LatenessRecoveryOptions { SettleWindow = TimeSpan.FromMilliseconds(ms) }
+        );
+    }
+
+    [Fact]
+    public void TheDefaultsFormABand()
+    {
+        new LatenessRecoveryOptions().Validate();
+    }
+
     // ── The path itself ──────────────────────────────────────────────────
 
     [Fact]
