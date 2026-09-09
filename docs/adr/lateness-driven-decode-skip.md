@@ -4,6 +4,10 @@
 
 Proposed (2026-09-08). Draft pending number assignment.
 
+Not to be accepted before the prerequisite in Decision §4 is confirmed: that
+`skip_frame` suppresses frame output on the hardware path. The central saving
+depends on it.
+
 Narrows the video-only fallback [ADR-0003](ADR-0003-audio-master-sync-policy.md)
 left open, and implements the drop responsibility ADR-0003 already assigns to the
 playback layer. Leaves [ADR-0060](ADR-0060-video-send-backpressure-policy.md)'s
@@ -186,10 +190,22 @@ at all. A pipeline that is genuinely decode-bound rather than downstream-bound
 therefore may not recover, and that is observable: lag stays high after
 escalation reaches `AVDISCARD_NONKEY`.
 
-The ADR does not assume the second. Measuring it is a Validation item, and if a
-hardware configuration turns out not to honour `skip_frame`, the fallback is the
-lateness-driven discard applied at the decoder's *output* instead — the same
-policy, one stage later, paying the decode cost but not the downstream one.
+The ADR does not assume the second, and it does not merely note the first either.
+The guarantee rests on a specific claim about libavcodec — that `skip_frame` is
+enforced where frames are output, not delegated to the hardware decoder, so a
+frame matching the level is not returned whoever did the work. That claim is what
+makes the readback saving hold on D3D11VA, and it is the load-bearing one.
+
+**So it is a prerequisite, not an open question.** This ADR is not accepted until
+that behaviour is confirmed on the D3D11VA path this failure was found on. If it
+does not hold, the decision changes rather than degrades: the discard moves to the
+decoder's *output*, which pays the decode cost and saves the downstream one, and
+that is a different mechanism deserving its own argument rather than a fallback
+bolted on here.
+
+Stating it this way rather than as a hedge is deliberate. A decision whose
+central saving is conditional should say what would falsify it and refuse to be
+adopted until someone has looked.
 
 ### 5. Nothing changes in the pump or the queue
 
@@ -320,10 +336,14 @@ would have to hold:
   destructive and it needs its own fixture; the corpus has none today.
 - **Escalation as a pure function** of lateness, current level and hysteresis —
   testable without FFmpeg, a decoder, or a clock.
-- **Whether hardware decode honours `skip_frame`**, measured rather than assumed,
-  on the D3D11VA path this failure was found on. The downstream saving is
-  structural and needs no measurement; this measures the decode-side one, and its
-  answer decides whether the output-stage fallback in Decision §4 is needed.
+- **That `skip_frame` suppresses frame output on the D3D11VA path — the
+  prerequisite.** Not a tuning measurement: if a skipped frame is still returned
+  and still read back, the mechanism does not address the demonstrated bottleneck
+  and this ADR should not be accepted as written. Check it first, before the
+  threshold and the hysteresis, because everything else is downstream of the
+  answer.
+- **How much decode work the hardware path actually saves**, separately. This one
+  is tuning — it changes how fast escalation recovers, not whether it does.
 - **The policy switched off yields today's behaviour exactly** — every frame
   decoded, lag free to grow. The opt-out is only worth having if it is the
   complete-but-slow path and not a degraded version of it.
@@ -337,7 +357,8 @@ would have to hold:
   when measured. `VideoPresentationLag` is how they get chosen.
 - **How much of the saving is decode-side on hardware paths.** Decision §4 splits
   the guaranteed part from the driver-dependent part; this is the size of the
-  second, and Validation measures it.
+  second. Tuning, not a prerequisite — the prerequisite is that output suppression
+  holds at all, which Validation puts first.
 - **What a richer non-realtime mode would offer** beyond the off switch in
   Consequences — rate control, completion guarantees. Out of scope; the switch is
   not.
