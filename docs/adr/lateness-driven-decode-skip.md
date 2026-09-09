@@ -132,6 +132,16 @@ layer. ADR-0009 put timing outside it, and a decoder that read the master clock
 to make its own skip decisions would widen that boundary for no gain: the layer
 that already owns the policy also already has the number.
 
+**The level is a command, not a field write.** `AVCodecContext` is not a
+thread-safe control surface, and the decode worker is inside
+`avcodec_send_packet` / `avcodec_receive_frame` on it continuously. Playback
+posts the requested level; the decoder's own worker applies it to the codec
+context between packets, where it already owns the context exclusively. So the
+setter is asynchronous by contract — a caller sets a level and it takes effect on
+the next packet boundary, not on return — and that is the only ordering the
+policy needs, because lateness is measured over seconds and a packet is
+milliseconds.
+
 ### 2. The decoder's discard level escalates and de-escalates
 
 FFmpeg's own lever, `AVCodecContext.skip_frame`, in the order that costs least
@@ -160,15 +170,36 @@ The `AVDiscard` enum is already bound and used —
 (ADR-0059). `AVCodecContext.skip_frame` is not bound yet. That is new work, and it
 is small.
 
-### 4. Nothing changes in the pump or the queue
+### 4. What the skip saves, and what is not guaranteed
+
+`skip_frame` has two effects and they carry different weight.
+
+**Guaranteed:** the frames are not returned from the decoder API. Everything
+downstream of it — the GPU-to-CPU readback on the hardware path, pool traffic,
+the pacer, the sink — does not run for a skipped frame, on any decoder,
+regardless of who did the decoding. In the failure this ADR exists for, that
+readback *is* the bottleneck, so the guaranteed half is the half that matters.
+
+**Not guaranteed:** that the decode work itself shrinks. With D3D11VA the GPU
+does the decoding and a driver may honour `skip_frame` fully, partially, or not
+at all. A pipeline that is genuinely decode-bound rather than downstream-bound
+therefore may not recover, and that is observable: lag stays high after
+escalation reaches `AVDISCARD_NONKEY`.
+
+The ADR does not assume the second. Measuring it is a Validation item, and if a
+hardware configuration turns out not to honour `skip_frame`, the fallback is the
+lateness-driven discard applied at the decoder's *output* instead — the same
+policy, one stage later, paying the decode cost but not the downstream one.
+
+### 5. Nothing changes in the pump or the queue
 
 No read-ahead gate, no change to `DropNewestWhenQueueFull`, no change to
 `ReadAheadCapacity`. A decoder that skips forward drains its queue, which lets
 ADR-0060's existing backpressure pace the pump at realtime again on the video-only
 path, and reduces shedding on the audio path.
 
-The whole change is a discard level, a policy that sets it, and the binding it
-needs.
+The whole change is a discard level, a policy that sets it, the binding it needs,
+and a switch to turn the policy off.
 
 ## Consequences
 
@@ -192,10 +223,15 @@ needs.
 - **Video-only playback on a machine that cannot keep up now loses frames where
   it used to lose time.** The intended trade, and a behaviour change for anything
   relying on complete-but-slow.
-- Analysis and transcode passes want every frame. This ADR gives them no way to
-  ask for it. An explicit non-realtime mode is the obvious follow-on and is
-  deliberately not decided here — a mode is easier to add once one coherent policy
-  exists than while two incoherent halves do.
+- Analysis and transcode passes want every frame, and dropping cannot be the only
+  contract available to them. **The policy is a session-level setting, realtime by
+  default and switchable off**; a consumer that needs every frame turns it off and
+  gets today's complete-but-slow behaviour, now as a stated choice rather than as
+  the only behaviour. Deferring the knob was the earlier plan and it was wrong:
+  making frame-dropping the default contract with no way out is a larger
+  commitment than this decision needs, and naming the setting costs a property.
+  What is still deferred is any richer non-realtime *mode* — rate control,
+  completion guarantees — which stays out of scope.
 - Discard levels are visible as motion artefacts before they are visible as
   stutter. `AVDISCARD_BIDIR` on high-motion content looks worse than its frame
   count suggests.
@@ -284,6 +320,13 @@ would have to hold:
   destructive and it needs its own fixture; the corpus has none today.
 - **Escalation as a pure function** of lateness, current level and hysteresis —
   testable without FFmpeg, a decoder, or a clock.
+- **Whether hardware decode honours `skip_frame`**, measured rather than assumed,
+  on the D3D11VA path this failure was found on. The downstream saving is
+  structural and needs no measurement; this measures the decode-side one, and its
+  answer decides whether the output-stage fallback in Decision §4 is needed.
+- **The policy switched off yields today's behaviour exactly** — every frame
+  decoded, lag free to grow. The opt-out is only worth having if it is the
+  complete-but-slow path and not a degraded version of it.
 - **`RunDemuxPump_RealVideoDecoder_AudioDiscarded_LongClip_DoesNotPrematurelyEof`
   keeps passing**, unchanged. This decision does not touch the pump, so ADR-0060's
   regression test should be untouched by it; if it moves, something is wrong.
@@ -292,12 +335,12 @@ would have to hold:
 
 - **The threshold and the hysteresis.** Both are empirical and both go in this ADR
   when measured. `VideoPresentationLag` is how they get chosen.
-- **Whether hardware decode honours `skip_frame` usefully.** With D3D11VA the GPU
-  does the decoding, so the saving may come mostly from the frames not produced
-  rather than the work not done. On the readback-bound case that is still the
-  saving that matters, but it should be measured rather than assumed.
-- **Whether an explicit non-realtime mode follows** for analysis consumers.
-  Deliberately out of scope; see Consequences.
+- **How much of the saving is decode-side on hardware paths.** Decision §4 splits
+  the guaranteed part from the driver-dependent part; this is the size of the
+  second, and Validation measures it.
+- **What a richer non-realtime mode would offer** beyond the off switch in
+  Consequences — rate control, completion guarantees. Out of scope; the switch is
+  not.
 - **Whether `AVDISCARD_BIDIR` earns its place** between NONREF and NONKEY, or
   whether two levels are enough. Three is proposed on the grounds that the jump
   from NONREF to keyframes-only is very large.
