@@ -147,6 +147,15 @@ internal sealed class SubstrateSession : IPlaybackSession
     private CancellationTokenSource? _sessionCts;
     private Task? _pumpTask;
     private Task? _graphTask;
+    private Task? _recoveryTask;
+
+    /// <summary>
+    /// Lateness-recovery policy. Off unless a caller opts in — the ADR gates
+    /// shipping this on the selection rule being measured, so the default has to
+    /// leave every existing pipeline byte-identical.
+    /// </summary>
+    public LatenessRecoveryOptions? LatenessRecovery { get; init; }
+
     private bool _renderersActivated;
 
     // The graph topology built by BuildGraph. A graph instance is re-runnable:
@@ -227,6 +236,111 @@ internal sealed class SubstrateSession : IPlaybackSession
             // "no lag" would be a claim this session cannot make.
             VideoPresentationLag = _videoPacer?.PresentationLag,
         };
+    }
+
+    /// <summary>
+    /// Walks <see cref="LatenessRecoveryPolicy.Path"/> from measured lateness, one settle
+    /// window at a time, applying each rung to the decoder.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Lives here rather than in the decoder because ADR-0003 puts timing policy in
+    /// the playback layer, and this session already holds both halves — the pacer
+    /// that measures lateness and the decoder that acts on it. Neither has to learn
+    /// about the other.
+    /// </para>
+    /// <para>
+    /// One window of lateness is compared against the window before it, so the
+    /// judgement is "did this rung help", not "is the pipeline late". That is the
+    /// whole selection rule, and it is the thing the ADR's third acceptance
+    /// condition is about.
+    /// </para>
+    /// </remarks>
+    private async Task RunRecoveryWalkAsync(
+        LatenessRecoveryOptions options,
+        CancellationToken cancellationToken
+    )
+    {
+        var step = 0;
+        TimeSpan? lagAtWindowStart = null;
+        var recoveredWindows = 0;
+
+        try
+        {
+            using var timer = new PeriodicTimer(options.SettleWindow);
+            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            {
+                // Null while nothing has been presented in this run. No picture means
+                // no lateness to read, and a seek is the common way to get here.
+                if (_videoPacer?.PresentationLag is not { } lag)
+                {
+                    lagAtWindowStart = null;
+                    recoveredWindows = 0;
+                    continue;
+                }
+
+                recoveredWindows = lag <= options.RelaxBelow ? recoveredWindows + 1 : 0;
+
+                var decision = LatenessRecoveryPolicy.Decide(
+                    step,
+                    lag,
+                    lagAtWindowStart,
+                    recoveredWindows,
+                    options
+                );
+
+                // Whatever happens next, this reading is the baseline the rung about
+                // to run gets judged against.
+                lagAtWindowStart = lag;
+
+                // Every window, not only the ones that moved. A walk is judged by the
+                // readings it decided on, and a transcript of moves alone hides the
+                // evidence each move was made from.
+                _logger.LogDebug(
+                    "Lateness recovery window: step {Step}, lag {LagMs} ms, {Move}.",
+                    step,
+                    lag.TotalMilliseconds,
+                    decision.Move
+                );
+
+                if (decision.StepIndex == step)
+                    continue;
+
+                step = decision.StepIndex;
+                var rung = LatenessRecoveryPolicy.Path[step];
+
+                if (_videoDecoder is { } decoder)
+                {
+                    decoder.ReadbackEveryN = rung.ReadbackEveryN;
+                    decoder.SetDiscardLevel(rung.Discard);
+                }
+
+                _logger.LogInformation(
+                    "Lateness recovery {Move} to step {Step} "
+                        + "(readback 1 in {ReadbackEveryN}, discard {Discard}) at lag {LagMs} ms.",
+                    decision.Move,
+                    step,
+                    rung.ReadbackEveryN,
+                    rung.Discard,
+                    lag.TotalMilliseconds
+                );
+
+                // A rung needs its own window before it can be judged. Comparing the
+                // next reading against the one taken under the previous rung would
+                // credit or blame the wrong one; Decide holds for one window when it
+                // sees this, rather than moving again on no evidence.
+                lagAtWindowStart = null;
+                recoveredWindows = 0;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            // The walk is an optimisation. A fault in it must not take playback with
+            // it, so it is reported and the pipeline carries on at whatever rung it
+            // had reached.
+            _callbacks.OnWorkerFaulted(ex);
+        }
     }
 
     private FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot BuildStreamSnapshot()
@@ -1387,6 +1501,9 @@ internal sealed class SubstrateSession : IPlaybackSession
             },
             CancellationToken.None
         );
+
+        if (LatenessRecovery is { Enabled: true } recovery)
+            _recoveryTask = Task.Run(() => RunRecoveryWalkAsync(recovery, ct), CancellationToken.None);
 
         _graphTask = Task.Run(
             async () =>
