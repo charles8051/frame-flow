@@ -15,8 +15,8 @@ decision twice over. The middle rung is not a `skip_frame` level: it is a
 proportional skip of the GPU-to-CPU readback, which is where the cost actually is
 on the pipeline this ADR was built around. And the two mechanisms are one ordered
 path rather than two levers needing a classification the runtime cannot make.
-Decision §2 carries the measurements, including that the readback rung's cadence
-is exactly even.
+Decision §2 carries the measurements: recovery completes at 1 in 4, keeping four
+times the frames `NONKEY` would, on an exactly even cadence.
 
 Narrows the video-only fallback [ADR-0003](ADR-0003-audio-master-sync-policy.md)
 left open, and implements the drop responsibility ADR-0003 already assigns to the
@@ -176,60 +176,75 @@ first**, and the policy walks it until lateness recovers:
 
 | step | mechanism | what it costs |
 | --- | --- | --- |
-| 1 | readback 1 in 2, 3, 4, … | nothing decoded is lost; only the copy is skipped |
-| 2 | `AVDISCARD_NONREF` | frames nothing references |
-| 3 | `AVDISCARD_BIDIR` | B-frames |
-| 4 | `AVDISCARD_NONKEY` | everything but keyframes |
+| 1–4 | readback 1 in 2, 3, 4, 8 | nothing decoded is lost; only the copy is skipped |
+| 5 | `AVDISCARD_NONREF` | frames nothing references |
+| 6 | `AVDISCARD_BIDIR` | B-frames |
+| 7 | `AVDISCARD_NONKEY` | everything but keyframes |
 
-Selection falls out of the walk. A readback-bound pipeline recovers in step 1 and
-never reaches the rest. A decode-bound one does not — increasing N leaves lateness
-where it was, because every frame is still decoded — so the policy keeps going and
-reaches the `skip_frame` levels that shrink decode work. A pipeline limited by
-both recovers partway through and stops there. **Nothing has to know which kind it
-is; not recovering is the signal to keep walking.**
+Walked one step at a time. Each is held for a settle window, and if lateness has
+not fallen by the end of it the policy advances. Recovery de-escalates the same
+way. The window's length is part of the threshold-and-hysteresis question below;
+what matters structurally is that a step which does not help is left rather than
+sat on.
 
-The ordering is by damage, and it is not arbitrary. Skipping a readback discards a
-copy. Skipping a decode discards a frame other frames may reference. The harmless
-lever is exhausted before the destructive one is touched, and on the pipeline #82
-was found on the destructive one is never reached.
+**The readback rungs are bounded at 1 in 8, and that bound is the transition.**
+Beyond it, sparser copying buys no further recovery — see the sweep, where lag is
+flat from 1 in 4 onward — so a pipeline still late at 1 in 8 is not readback-bound,
+and continuing to thin the copy would only shed picture for nothing. That is the
+observable the earlier two-lever version lacked: exhausting the readback rungs
+without recovering *is* the finding that decode is the constraint, and step 5 is
+what follows from it.
 
-#### The readback rung, measured
+Selection falls out of the walk. A readback-bound pipeline recovers within the
+first four steps and never reaches the rest. A decode-bound one does not — every
+frame is still decoded, so N rising changes nothing — runs out of readback rungs,
+and continues into the levels that shrink decode work. A pipeline limited by both
+recovers partway and stops there. **Nothing has to know which kind it is.**
+
+The ordering is by damage. Skipping a readback discards a copy; skipping a decode
+discards a frame other frames may reference. The harmless steps are exhausted
+before the destructive ones are touched.
+
+#### The readback rungs, measured
 
 Skipping `BuildManagedFrame` for (N−1) of every N received frames — the frame is
-still decoded, so the decoder's reference state is untouched:
+still decoded, so the decoder's reference state is untouched. Three runs at each
+N, same session, no tracing:
 
 | readback | received | read back | lag |
 | --- | --- | --- | --- |
-| 1 in 1 (today) | 837 | 836 | `16.097` |
-| 1 in 3 | **1747** | 581 | `0.972` |
+| 1 in 1 (today) | 895, 904, 908 | 894, 903, 907 | `15.130`, `14.972`, `14.906` |
+| 1 in 2 | 1304, 1280, 1270 | 651, 639, 634 | `8.322`, `8.726`, `8.895` |
+| 1 in 3 | 1686, 1722, 1704 | 561, 572, 567 | `1.974`, `1.429`, `1.680` |
+| 1 in 4 | 1832, 1832, 1832 | 457, 457, 457 | `0.032`, `0.023`, `0.032` |
+| 1 in 6 | 1848, 1848, 1848 | 307, 307, 307 | `0.024`, `0.024`, `0.029` |
+| 1 in 8 | 1864, 1864, 1864 | 232, 232, 232 | `0.020`, `0.034`, `0.031` |
 
 `received` counts `avcodec_receive_frame` returning a frame; `read back` counts
-frames that reached `BuildFrame`, which is `_framesDecoded` and sits after the
-copy. The two columns are the point: at 1 in 3 the codec produces 1747 frames in
-30 s — 58 fps, essentially the source rate — while 581 are copied. The deficit was
-the copy, and the earlier sweep shows it moving continuously rather than in a
-step:
+frames reaching `BuildFrame`, which is `_framesDecoded` and sits after the copy.
 
-| readback | read back | lag |
-| --- | --- | --- |
-| 1 in 1 | 978 | `13.703` |
-| 1 in 2 | 724 | `5.899` |
-| 1 in 3 | 600 | `0.029` |
-| 1 in 4 | 450 | `0.023` |
-| 1 in 6 | 300 | `0.028` |
-| GPU presenter, no readback at all | — | `0.003` |
+**Recovery completes at 1 in 4**, not before. Lag falls 15.0 → 8.6 → 1.7 → 0.03
+and is flat thereafter. The transition is visible in the counts as well as the
+lag: from 1 in 4 on, `read back` is exactly deterministic (457, 307, 232 —
+total/N), while at 1 in 3 it wanders (561/572/567) because the pipeline is still
+marginally over budget and timing decides how many make it.
 
-(Two sweeps on different runs; the 1-in-1 and 1-in-3 lag figures differ between
-them by the ~15 % run-to-run spread Decision §4 records. The shape is what is
-being claimed, not the third decimal.)
+**At full recovery it keeps 457 frames against `NONKEY`'s 114** — four times the
+picture, at lower lag (0.03 against 0.265). That is the argument for putting these
+rungs first.
 
-**1 in 3 reaches the lag `NONKEY` reaches while keeping roughly five times the
-frames** — ~600 against 114 over the same window. That is the argument for putting
-it first.
+`received` climbing with N — 900, 1285, 1704, 1832, 1848, 1864 — is the readback
+stealing decode throughput. Freed of the copy the decoder converges on ~1865 in
+30 s, which is 62 fps against a 60 fps source.
+
+> An earlier revision of this ADR reported 1 in 3 at `0.029` and claimed it matched
+> `NONKEY`. That was a single favourable run and it did not reproduce: three runs
+> put 1 in 3 at 1.4–2.0 s. The corrected claim is 1 in 4 and four times the frames,
+> not 1 in 3 and five times.
 
 #### Its cadence is even, measured rather than assumed
 
-A count and an end-of-window lag cannot tell an even 20 fps from the same frames
+A count and an end-of-window lag cannot tell an even 15 fps from the same frames
 delivered in bursts. Tracing the PTS of every kept frame settles it:
 
 | run | kept frames | PTS deltas |
@@ -245,7 +260,7 @@ it produces.
 order here because the stream has no B-frames. On reordered video a modulo counter
 over *received* frames is not evenly spaced in *presentation* time. Keying the
 skip to presentation timestamps instead would fix that, and is the obvious shape,
-but it is unmeasured for the same reason the `skip_frame` middle rungs are: the
+but it is unmeasured for the same reason the `skip_frame` middle steps are: the
 pinned LGPL FFmpeg cannot produce a B-frame fixture. Recorded in *Validation*.
 
 #### The `skip_frame` steps, and their limit
@@ -432,11 +447,12 @@ step is a third arm on a branch that is already there.
   playlist without a watchdog around them.
 - Helps the audio path too, which today sheds 704 packets and still runs 9.2 s
   behind. The same escalation lets the decoder close that gap.
-- Graduated where it counts, and self-selecting. The readback rung is proportional
-  at any 1-in-N and its cadence is exactly even; 1 in 3 reaches the lag
-  keyframes-only reaches while keeping five times the frames. Because the steps are
-  ordered by damage and walked until lateness recovers, no classification of the
-  pipeline is needed — not recovering is the signal to keep walking.
+- Graduated where it counts, and self-selecting. The readback rungs are
+  proportional and their cadence is exactly even; recovery completes at 1 in 4,
+  keeping four times the frames `NONKEY` would at lower lag. Because the steps are
+  ordered by damage and each is abandoned when it does not help, no classification
+  of the pipeline is needed — running out of readback rungs is the finding that
+  decode is the constraint.
 - No new coupling. Playback already owns the policy and already has the number;
   the decoder gains a setter.
 
@@ -564,10 +580,17 @@ would have to hold:
   Keying the skip to presentation timestamps is the obvious answer and is
   unvalidated, blocked by the same missing B-frame fixture as the `skip_frame`
   middle steps.
-- **That a decode-bound pipeline actually walks past the readback rung.** The
+- **That a decode-bound pipeline actually walks past the readback rungs.** The
   ordering assumes increasing N leaves lateness unmoved when decode is the
-  constraint. That follows from every frame still being decoded, but it is reasoned
-  rather than measured — no decode-bound fixture has been run.
+  constraint, so the pipeline reaches 1 in 8 and advances. That follows from every
+  frame still being decoded, but it is reasoned rather than measured — no
+  decode-bound fixture has been run. It is the load-bearing assumption behind
+  dropping the classification, and it should be measured before implementation.
+- **That 1 in 8 is the right bound.** Chosen because lag is flat from 1 in 4
+  onward on this fixture, so the last two rungs already buy nothing. A slower
+  machine or a heavier frame might still be recovering at 1 in 8, in which case the
+  bound cuts off a rung that would have worked and sends the pipeline to
+  `skip_frame` early. One fixture on one machine is thin evidence for a constant.
 - **`NONREF` and `BIDIR` on content that actually contains those frames.** Not
   possible on this corpus: the pinned FFmpeg is an LGPL build without libx264, and
   libopenh264 emits no B-frames, so every fixture is all-reference P plus I. The

@@ -179,10 +179,11 @@ land.
   to the playback layer. Its acceptance prerequisite is confirmed — `skip_frame`
   suppresses frame output on the hardware path, ~15 s of lag down to ~0.26 s — and
   its second condition is settled too: the escalation middle is a proportional skip
-  of the GPU-to-CPU readback rather than a `skip_frame` level, reaching the same lag
-  as keyframes-only while keeping five times the frames, on an exactly even cadence.
-  The two mechanisms are one path ordered by damage, so nothing has to classify the
-  pipeline. Its rejected alternative F
+  of the GPU-to-CPU readback rather than a `skip_frame` level, recovering fully at
+  1 in 4 while keeping four times the frames keyframes-only would, on an exactly
+  even cadence. The two mechanisms are one path ordered by damage and bounded at
+  1 in 8, so running out of readback rungs is what identifies a decode-bound
+  pipeline and nothing has to classify one up front. Its rejected alternative F
   records the packet-pacing design this replaced, and the measurement that ruled it
   out.
 
