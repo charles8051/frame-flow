@@ -70,7 +70,7 @@ internal sealed class BenchSession(
             hardwareDecodeMode: options.SoftwareDecode
                 ? HardwareDecodeMode.Disabled
                 : HardwareDecodeMode.Auto,
-            latenessRecovery: options.Recover ? new LatenessRecoveryOptions { Enabled = true } : null,
+            latenessRecovery: options.Recover ? BuildRecoveryOptions(options) : null,
             // Only when the walk is on: its every move is a log line, and that is the
             // observable the run exists to produce. Everything else stays on the null
             // factory, because a 60 fps decode loop logs enough to change what is
@@ -104,6 +104,28 @@ internal sealed class BenchSession(
         }
 
         return failed ? ExitCommandFailed : ExitOk;
+    }
+
+    /// <summary>
+    /// Applies whichever recovery constants the command line overrode, leaving the
+    /// policy's own defaults for the rest.
+    /// </summary>
+    private static LatenessRecoveryOptions BuildRecoveryOptions(BenchOptions options)
+    {
+        var recovery = new LatenessRecoveryOptions { Enabled = true };
+
+        if (options.EscalateAbove is { } escalate)
+            recovery = recovery with { EscalateAbove = escalate };
+        if (options.RelaxBelow is { } relax)
+            recovery = recovery with { RelaxBelow = relax };
+        if (options.MinImprovement is { } improvement)
+            recovery = recovery with { MinImprovement = improvement };
+        if (options.SettleWindow is { } window)
+            recovery = recovery with { SettleWindow = window };
+        if (options.RelaxAfter is { } after)
+            recovery = recovery with { RelaxAfter = after };
+
+        return recovery;
     }
 
     /// <summary>

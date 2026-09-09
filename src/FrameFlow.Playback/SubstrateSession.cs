@@ -263,7 +263,7 @@ internal sealed class SubstrateSession : IPlaybackSession
     {
         var step = 0;
         TimeSpan? lagAtWindowStart = null;
-        var recoveredWindows = 0;
+        var recoveredFor = TimeSpan.Zero;
 
         try
         {
@@ -284,17 +284,20 @@ internal sealed class SubstrateSession : IPlaybackSession
                 if (_videoPacer?.PresentationLag is not { } lag)
                 {
                     lagAtWindowStart = null;
-                    recoveredWindows = 0;
+                    recoveredFor = TimeSpan.Zero;
                     continue;
                 }
 
-                recoveredWindows = lag <= options.RelaxBelow ? recoveredWindows + 1 : 0;
+                recoveredFor =
+                    lag <= options.RelaxBelow
+                        ? recoveredFor + options.SettleWindow
+                        : TimeSpan.Zero;
 
                 var decision = LatenessRecoveryPolicy.Decide(
                     step,
                     lag,
                     lagAtWindowStart,
-                    recoveredWindows,
+                    recoveredFor,
                     options
                 );
 
@@ -334,7 +337,7 @@ internal sealed class SubstrateSession : IPlaybackSession
                 // credit or blame the wrong one; Decide holds for one window when it
                 // sees this, rather than moving again on no evidence.
                 lagAtWindowStart = null;
-                recoveredWindows = 0;
+                recoveredFor = TimeSpan.Zero;
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
