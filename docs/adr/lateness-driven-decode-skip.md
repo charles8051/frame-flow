@@ -176,7 +176,7 @@ first**, and the policy walks it until lateness recovers:
 
 | step | mechanism | what it costs |
 | --- | --- | --- |
-| 1–4 | readback 1 in 2, 3, 4, 8 | nothing decoded is lost; only the copy is skipped |
+| 1–4 | readback 1 in 2, 3, 4, 8 (backstop) | nothing decoded is lost; only the copy is skipped |
 | 5 | `AVDISCARD_NONREF` | frames nothing references |
 | 6 | `AVDISCARD_BIDIR` | B-frames |
 | 7 | `AVDISCARD_NONKEY` | everything but keyframes |
@@ -187,19 +187,28 @@ way. The window's length is part of the threshold-and-hysteresis question below;
 what matters structurally is that a step which does not help is left rather than
 sat on.
 
-**The readback rungs are bounded at 1 in 8, and that bound is the transition.**
-Beyond it, sparser copying buys no further recovery — see the sweep, where lag is
-flat from 1 in 4 onward — so a pipeline still late at 1 in 8 is not readback-bound,
-and continuing to thin the copy would only shed picture for nothing. That is the
-observable the earlier two-lever version lacked: exhausting the readback rungs
-without recovering *is* the finding that decode is the constraint, and step 5 is
-what follows from it.
+**The transition is that thinning stopped helping, not that N hit a number.** A
+rung advances to the next when its settle window ends with lateness unimproved.
+The readback rungs are left for step 5 when a *further* rung fails to improve on
+the one before it — the copy is no longer what binds, so thinning it further only
+sheds picture.
 
-Selection falls out of the walk. A readback-bound pipeline recovers within the
-first four steps and never reaches the rest. A decode-bound one does not — every
-frame is still decoded, so N rising changes nothing — runs out of readback rungs,
-and continues into the levels that shrink decode work. A pipeline limited by both
-recovers partway and stops there. **Nothing has to know which kind it is.**
+That rule is platform-independent, which a fixed cap is not. This fixture recovers
+by 1 in 4 on this machine; a slower box or a heavier frame recovers later, and a
+cap chosen from this sweep would push it into destructive steps that a sparser
+cadence would have avoided. 1 in 8 is kept only as a backstop against thinning
+without limit, not as the classification.
+
+That is the observable the earlier two-lever version lacked: **readback thinning
+ceasing to help *is* the finding that decode is the constraint**, and it is
+measured on the pipeline in front of you rather than assumed from its shape.
+
+Selection falls out of the walk. A readback-bound pipeline improves with each rung
+and stops when it recovers. A decode-bound one shows no improvement at the first
+rung, let alone the second — every frame is still decoded — so it leaves them
+almost immediately and continues into the levels that shrink decode work. A
+pipeline limited by both improves for a while, stalls, and moves on. **Nothing has
+to know which kind it is.**
 
 The ordering is by damage. Skipping a readback discards a copy; skipping a decode
 discards a frame other frames may reference. The harmless steps are exhausted
@@ -224,10 +233,21 @@ N, same session, no tracing:
 frames reaching `BuildFrame`, which is `_framesDecoded` and sits after the copy.
 
 **Recovery completes at 1 in 4**, not before. Lag falls 15.0 → 8.6 → 1.7 → 0.03
-and is flat thereafter. The transition is visible in the counts as well as the
-lag: from 1 in 4 on, `read back` is exactly deterministic (457, 307, 232 —
-total/N), while at 1 in 3 it wanders (561/572/567) because the pipeline is still
-marginally over budget and timing decides how many make it.
+and is flat thereafter.
+
+The counts say the same thing a second way. From 1 in 4 on, `read back` is
+identical across all three runs (457, 307, 232) — the pipeline is comfortably
+under budget, so exactly the frames the modulo selects are the frames that arrive.
+At 1 in 3 it wanders (561, 572, 567), because the pipeline is still marginally
+over and timing decides how many make it. **Determinism appearing is the recovery
+signal**, and it appears at the same rung the lag does.
+
+Those counts are `received / N` to within a frame — 1832/4 is 458 against 457
+measured, 1848/6 is 308 against 307, 1864/8 is 233 against 232. The consistent
+one-frame shortfall is the sample: `received` is incremented before the modulo
+decision, so a frame in flight at the instant `diag` runs is counted as received
+and not yet as read back. It is an artefact of when the counters are read, not a
+property of the selection.
 
 **At full recovery it keeps 457 frames against `NONKEY`'s 114** — four times the
 picture, at lower lag (0.03 against 0.265). That is the argument for putting these
@@ -256,12 +276,25 @@ delivered in bursts. Tracing the PTS of every kept frame settles it:
 a modulo counter over frames arriving at a constant rate, so even spacing is what
 it produces.
 
-**With one caveat this corpus cannot close.** Decode order equals presentation
-order here because the stream has no B-frames. On reordered video a modulo counter
-over *received* frames is not evenly spaced in *presentation* time. Keying the
-skip to presentation timestamps instead would fix that, and is the obvious shape,
-but it is unmeasured for the same reason the `skip_frame` middle steps are: the
-pinned LGPL FFmpeg cannot produce a B-frame fixture. Recorded in *Validation*.
+**So the rule is keyed to presentation time, not to arrival order.** A frame is
+kept when its PTS reaches the next multiple of N frame durations; frames between
+those points are skipped.
+
+The measurement above used a modulo counter over received frames, and that is
+sound evidence *because on this fixture the two are the same rule*. Nothing in
+this corpus has B-frames, so decode order is presentation order and the Nth
+arrival is the Nth picture.
+
+They are not the same on reordered video, and there the counter is the wrong one:
+B-frames arrive out of presentation order, so keeping every Nth arrival clusters
+and gaps the pictures actually shown even while the aggregate count and lag look
+right. Specifying the counter would have shipped that. The PTS rule is what the
+decision states; the counter is what was measured, on the case where they
+coincide.
+
+**Unvalidated on reordered video**, for the same reason the `skip_frame` middle
+steps are: the pinned LGPL FFmpeg cannot produce a B-frame fixture. In
+*Validation*.
 
 #### The `skip_frame` steps, and their limit
 
@@ -574,23 +607,19 @@ would have to hold:
 - ~~**That the readback skip spaces frames evenly, not in bursts.**~~ **Done** —
   PTS traced for every kept frame: 582 of 582 intervals exactly three frame
   durations at 1 in 3, zero deviation. Decision §2.
-- **That it stays even on reordered video.** Decode order equals presentation order
-  on this corpus because nothing in it has B-frames, so a modulo counter over
-  received frames is trivially even here and would not be on a reordered stream.
-  Keying the skip to presentation timestamps is the obvious answer and is
-  unvalidated, blocked by the same missing B-frame fixture as the `skip_frame`
-  middle steps.
-- **That a decode-bound pipeline actually walks past the readback rungs.** The
-  ordering assumes increasing N leaves lateness unmoved when decode is the
-  constraint, so the pipeline reaches 1 in 8 and advances. That follows from every
-  frame still being decoded, but it is reasoned rather than measured — no
-  decode-bound fixture has been run. It is the load-bearing assumption behind
-  dropping the classification, and it should be measured before implementation.
-- **That 1 in 8 is the right bound.** Chosen because lag is flat from 1 in 4
-  onward on this fixture, so the last two rungs already buy nothing. A slower
-  machine or a heavier frame might still be recovering at 1 in 8, in which case the
-  bound cuts off a rung that would have worked and sends the pipeline to
-  `skip_frame` early. One fixture on one machine is thin evidence for a constant.
+- **That the PTS-keyed rule stays even on reordered video.** What was measured is
+  the receive-order counter, which is the same rule on this corpus because nothing
+  in it has B-frames. The decision specifies the PTS rule precisely because they
+  diverge on reordered streams, and that divergence is exactly what is unmeasured.
+  Blocked by the same missing B-frame fixture as the `skip_frame` middle steps.
+- **That "thinning stopped helping" is a usable signal at runtime.** It replaced a
+  fixed 1-in-8 cap, which measured well here and would have misclassified a slower
+  machine that was still recovering at that rung. The rule needs no constant, but
+  it does need lateness to be readable accurately enough to tell an improving rung
+  from a stalled one — which is a question about the settle window, and unmeasured.
+- **That a decode-bound pipeline shows no improvement at the first rung**, so it
+  leaves the readback steps quickly rather than walking all four. Reasoned from
+  every frame still being decoded; no decode-bound fixture has been run.
 - **`NONREF` and `BIDIR` on content that actually contains those frames.** Not
   possible on this corpus: the pinned FFmpeg is an LGPL build without libx264, and
   libopenh264 emits no B-frames, so every fixture is all-reference P plus I. The
