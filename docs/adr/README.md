@@ -184,7 +184,8 @@ land.
   even cadence — including on reordered video, since `avcodec_receive_frame` hands
   back frames in presentation order. The two mechanisms are one path ordered by
   damage, and thinning ceasing to help is what identifies a decode-bound pipeline,
-  so nothing has to classify one up front. Its rejected alternative F
+  so nothing has to classify one up front — a rule that is itself gated on being
+  measured against a running policy before the default changes. Its rejected alternative F
   records the packet-pacing design this replaced, and the measurement that ruled it
   out.
 

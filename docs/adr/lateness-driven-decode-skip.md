@@ -18,6 +18,20 @@ path rather than two levers needing a classification the runtime cannot make.
 Decision §2 carries the measurements: recovery completes at 1 in 4, keeping four
 times the frames `NONKEY` would, on an exactly even cadence.
 
+**A third condition stands, on the selection rule.** The walk decides which lever
+binds by whether a readback rung improved lateness, and that is reasoning, not a
+measurement. It has a named way to fail — a decode-bound pipeline improving
+briefly because a rung reduced contention, read as thinning working — and the
+settle window that would have to tell a transient from a trend is one of the
+unmeasured constants.
+
+**Not to be shipped before that rule is measured on a decode-bound pipeline.**
+Unlike the first two conditions this one cannot be discharged ahead of an
+implementation: the question is whether a running policy converges on the right
+lever, and there is no way to observe that without the policy. So the gate is on
+shipping rather than on writing it — a prototype behind the off switch is how it
+gets answered, and the answer belongs in this ADR before the default changes.
+
 Narrows the video-only fallback [ADR-0003](ADR-0003-audio-master-sync-policy.md)
 left open, and implements the drop responsibility ADR-0003 already assigns to the
 playback layer. Leaves [ADR-0060](ADR-0060-video-send-backpressure-policy.md)'s
@@ -663,12 +677,18 @@ would have to hold:
   on a 445-B-frame fixture, 595 of 595 intervals exactly three frame durations,
   PTS monotonic. `avcodec_receive_frame` returns frames in presentation order, so
   the counter and the PTS rule agree. Decision §2.
-- **That a transient improvement cannot mislead the walk.** A decode-bound
+- **That the selection rule converges on the right lever — the third acceptance
+  condition.** Two failures to rule out, in both directions. A decode-bound
   pipeline can improve briefly when a readback rung reduces contention, which the
-  rule would read as "thinning is working" and sit on. The settle window is what
-  has to be long enough to tell a transient from a trend, and it is unmeasured.
-  This is the specific way the improvement rule fails, and it is a better
-  statement of the risk than "the constants are unchosen".
+  rule reads as thinning working and sits on. A readback-bound one can have a real
+  improvement obscured by noise, and be sent into the destructive steps that a
+  further rung would have avoided. The settle window has to separate a transient
+  from a trend in the first case and signal from noise in the second, and it is
+  unmeasured.
+  <br>This is the one condition that cannot be answered before an implementation
+  exists, because the question is about a running policy's behaviour. A prototype
+  behind the off switch, on a decode-bound fixture and a readback-bound one, is
+  what settles it.
 - **That "thinning stopped helping" is a usable signal at runtime.** It replaced a
   fixed 1-in-8 cap, which measured well here and would have misclassified a slower
   machine that was still recovering at that rung. The rule needs no constant, but
