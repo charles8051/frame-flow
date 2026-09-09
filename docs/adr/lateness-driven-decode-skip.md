@@ -270,9 +270,13 @@ frames were discarded later. Downstream dropping would leave `decoded` at its
 baseline and show up in `dropped` / `sync-dropped`, which stayed at 0 and 1.
 
 **Run conditions.** RTX 3080 Ti, driver 32.0.16.1047, Threadripper PRO 5945WX,
-Windows 11. Headless presenter, default pool capacity. `decoded` and `lag` come
-from the single `diag` at the end of the 30 s window, so each row is one sample of
-a cumulative counter and one instantaneous lag reading, not an average.
+Windows 11. Headless presenter, default pool capacity, and the decoder must
+resolve to D3D11VA — that is the whole point of the measurement, and `diag`
+reports it as `backend=D3D11Va` on the `video` line. A run that falls back to
+software, or to a different hwaccel, is measuring something else and its numbers
+do not belong beside these. `decoded` and `lag` come from the single `diag` at the
+end of the 30 s window, so each row is one sample of a cumulative counter and one
+instantaneous lag reading, not an average.
 
 **Reproducing it.** The fixture is generated, not committed, and its input is
 seeded (`all_seed=12345`), so it is the same pixels on any machine:
