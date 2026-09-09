@@ -176,7 +176,7 @@ first**, and the policy walks it until lateness recovers:
 
 | step | mechanism | what it costs |
 | --- | --- | --- |
-| 1–4 | readback 1 in 2, 3, 4, 8 (backstop) | nothing decoded is lost; only the copy is skipped |
+| 1–n | readback 1 in 2, 3, 4, … to a picture-rate floor | nothing decoded is lost; only the copy is skipped |
 | 5 | `AVDISCARD_NONREF` | frames nothing references |
 | 6 | `AVDISCARD_BIDIR` | B-frames |
 | 7 | `AVDISCARD_NONKEY` | everything but keyframes |
@@ -196,12 +196,35 @@ sheds picture.
 That rule is platform-independent, which a fixed cap is not. This fixture recovers
 by 1 in 4 on this machine; a slower box or a heavier frame recovers later, and a
 cap chosen from this sweep would push it into destructive steps that a sparser
-cadence would have avoided. 1 in 8 is kept only as a backstop against thinning
-without limit, not as the classification.
+cadence would have avoided.
 
 That is the observable the earlier two-lever version lacked: **readback thinning
 ceasing to help *is* the finding that decode is the constraint**, and it is
 measured on the pipeline in front of you rather than assumed from its shape.
+
+#### The floor, and what it overrides
+
+The improvement rule alone does not terminate the readback rungs. A pipeline that
+improves a little at every N would thin indefinitely, and past some point the
+output stops being playback: 1 in 16 on a 60 fps source is 3.75 fps, which is
+already what `AVDISCARD_NONKEY` yields on the measured fixture, and 1 in 64 is
+under one.
+
+So the rungs stop at a **picture-rate floor** — a lower bound on presented frames
+per second, not a bound on N. Reaching it while still improving is not a
+misclassification and the policy is not confused about which cost binds. It is a
+decision that thinning can no longer buy recovery at a frame rate worth having,
+and that the next step should be tried instead.
+
+**This overrides the improvement rule, deliberately, and it can fire while
+thinning is still helping.** Stating it as an override rather than folding it into
+the transition is the point: two rules that can disagree should say which wins.
+
+Where the floor sits is unmeasured and belongs with the threshold and the settle
+window in *Open questions* — it is the same kind of constant, chosen from the same
+kind of evidence, and inventing a number for it here would be inventing a number.
+The sweep below stops at 1 in 8 because that is where measuring stopped being
+informative on this fixture, not because it proposes a floor there.
 
 Selection falls out of the walk. A readback-bound pipeline improves with each rung
 and stops when it recovers. A decode-bound one shows no improvement at the first
@@ -617,6 +640,10 @@ would have to hold:
   machine that was still recovering at that rung. The rule needs no constant, but
   it does need lateness to be readable accurately enough to tell an improving rung
   from a stalled one — which is a question about the settle window, and unmeasured.
+- **Where the picture-rate floor sits.** It overrides the improvement rule and can
+  fire while thinning is still helping, so it decides how much picture a pipeline
+  is allowed to shed before trying the destructive steps instead. Unmeasured, and
+  in *Open questions* with the other constants.
 - **That a decode-bound pipeline shows no improvement at the first rung**, so it
   leaves the readback steps quickly rather than walking all four. Reasoned from
   every frame still being decoded; no decode-bound fixture has been run.
@@ -638,8 +665,11 @@ would have to hold:
 
 ## Open questions
 
-- **The threshold and the hysteresis.** Both are empirical and both go in this ADR
-  when measured. `VideoPresentationLag` is how they get chosen.
+- **The threshold, the hysteresis, the settle window, and the picture-rate floor.**
+  All empirical, all chosen from `VideoPresentationLag`, and all going in this ADR
+  when measured rather than now. The floor is the one with a visible trade in it:
+  set high, a pipeline reaches the destructive steps sooner; set low, it presents
+  almost nothing before it gets there.
 - **How much of the saving is decode-side on hardware paths.** Output suppression
   is confirmed and is the half that matters on a readback-bound pipeline; this is
   the size of the other half. Tuning — it changes how fast escalation recovers,
