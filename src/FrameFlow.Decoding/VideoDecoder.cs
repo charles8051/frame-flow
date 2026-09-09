@@ -124,6 +124,11 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     // ADR-0034: diagnostics counters. Single-writer (decode worker) so
     // Interlocked is sufficient for cross-thread snapshot reads.
     private long _framesDecoded;
+
+    // Lateness recovery (the lateness-driven-decode-skip ADR). Both are set by the
+    // playback layer, which owns the policy; the decoder only obeys.
+    private int _readbackEveryN = 1;
+    private long _receivedSinceRun;
     private long _decodeErrors;
 
     // Fires when the decode worker emits its first frame. Used by the
@@ -457,6 +462,19 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 // HardwareBackend onto the frame.
                 TrackHardwareEngagement(onHardware, framePtr);
 
+                // Lateness recovery, cheapest rung. Skipping the copy costs a picture and
+                // nothing else: the frame was decoded, so the codec's reference state is
+                // untouched and no later frame is harmed. Counted on received frames,
+                // which avcodec_receive_frame hands back in presentation order, so the
+                // kept frames are evenly spaced in time and not merely in arrival.
+                var everyN = Volatile.Read(ref _readbackEveryN);
+                if (everyN > 1 && (++_receivedSinceRun % everyN) != 0)
+                {
+                    _builtFrame = null;
+                    FFAvUtil.av_frame_unref(framePtr);
+                    return CodecReturn.Ok;
+                }
+
                 // ADR-0038: yield a GpuVideoFrame when hardware-active and the frame is in
                 // the hardware pixel format; otherwise the CPU readback path.
                 if (YieldHardwareFrames && onHardware)
@@ -612,6 +630,61 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         return ValueTask.CompletedTask;
     }
 
+    /// <summary>
+    /// Copy one received frame in N to host memory; skip the rest. 1 copies every
+    /// frame, which is the normal state.
+    /// </summary>
+    /// <remarks>
+    /// Only the copy is skipped — every frame is still decoded — so this costs
+    /// picture and never correctness. On the hardware path it is the expensive
+    /// half: a skipped frame does not pay the GPU-to-CPU transfer, which at
+    /// 2160p60 is 12.44 MB a frame.
+    /// </remarks>
+    public int ReadbackEveryN
+    {
+        get => Volatile.Read(ref _readbackEveryN);
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
+            Volatile.Write(ref _readbackEveryN, value);
+        }
+    }
+
+    /// <summary>
+    /// How much of the decode to skip. Applied to the codec context immediately.
+    /// </summary>
+    /// <remarks>
+    /// Synchronous, and safe because it takes the lock the decode calls already
+    /// hold. <c>AVCodecContext</c> is not a thread-safe control surface, but
+    /// <c>_codecSync</c> already serialises <c>avcodec_send_packet</c>,
+    /// <c>avcodec_receive_frame</c> and <c>Flush</c> against each other, so a
+    /// write under it lands while no decode call is inside the context.
+    /// </remarks>
+    public void SetDiscardLevel(DecodeDiscardLevel level)
+    {
+        var discard = level switch
+        {
+            DecodeDiscardLevel.None => AVDiscard.AVDISCARD_NONE,
+            DecodeDiscardLevel.NonReference => AVDiscard.AVDISCARD_NONREF,
+            DecodeDiscardLevel.Bidirectional => AVDiscard.AVDISCARD_BIDIR,
+            DecodeDiscardLevel.KeyframesOnly => AVDiscard.AVDISCARD_NONKEY,
+            _ => throw new ArgumentOutOfRangeException(nameof(level), level, null),
+        };
+
+        lock (_codecSync)
+        {
+            if (_disposed)
+                return;
+            unsafe
+            {
+                ref AVCodecContext ctx = ref Unsafe.AsRef<AVCodecContext>(
+                    (void*)_codecCtx.DangerousGetHandle()
+                );
+                ctx.skip_frame = discard;
+            }
+        }
+    }
+
     /// <summary>Signals end-of-stream to flush buffered frames.</summary>
     public ValueTask FlushAsync(CancellationToken cancellationToken = default)
     {
@@ -703,6 +776,12 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
             nint codecPtr = _codecCtx.DangerousGetHandle();
             FFAvCodec.avcodec_flush_buffers(codecPtr);
+
+            // Restart the readback cadence with the run. Carrying the count across a
+            // seek would phase the kept frames against wherever the old run happened
+            // to stop, which is arbitrary; the discard level is deliberately left
+            // alone, because how late the pipeline is does not change at a seek.
+            _receivedSinceRun = 0;
 
             // Defence-in-depth residual-frame drain: avcodec_flush_buffers is not guaranteed
             // to empty every decoder's output queue across every codec/version combination.

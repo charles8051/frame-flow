@@ -108,7 +108,8 @@ public static class PlaybackController
         IPlaybackClock? clock = null,
         ILoggerFactory? loggerFactory = null,
         Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? configureVideo = null,
-        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? configureAudio = null
+        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? configureAudio = null,
+        LatenessRecoveryOptions? latenessRecovery = null
     )
     {
         loggerFactory ??= NullLoggerFactory.Instance;
@@ -122,7 +123,8 @@ public static class PlaybackController
             loggerFactory,
             configureVideo,
             configureAudio,
-            yieldHardwareFrames
+            yieldHardwareFrames,
+            latenessRecovery
         );
 
         var options = Options.Create(

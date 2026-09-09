@@ -49,6 +49,20 @@ internal sealed record BenchOptions
     /// <summary>Also write the session to this file.</summary>
     internal string? LogFile { get; init; }
 
+    /// <summary>
+    /// Turn on the lateness-recovery walk. Off by default, because the ADR gates
+    /// shipping it on the selection rule being measured and this bench is how that
+    /// measurement is taken.
+    /// </summary>
+    internal bool Recover { get; init; }
+
+    /// <summary>
+    /// Force software decode. The decode-bound half of the recovery measurement —
+    /// the walk should abandon the readback rungs almost at once here, where on the
+    /// hardware path it should recover inside them.
+    /// </summary>
+    internal bool SoftwareDecode { get; init; }
+
     internal static ParseOutcome Parse(string[] args)
     {
         var options = new BenchOptions();
@@ -67,6 +81,12 @@ internal sealed record BenchOptions
                 {
                     case "--script":
                         options = options with { ScriptPath = Next(argument) };
+                        break;
+                    case "--recover":
+                        options = options with { Recover = true };
+                        break;
+                    case "--software-decode":
+                        options = options with { SoftwareDecode = true };
                         break;
                     case "--no-audio":
                         options = options with { NoAudio = true };
@@ -147,6 +167,8 @@ internal sealed record BenchOptions
           --script <file>        run commands from a file instead of the console
           --presenter <kind>     headless (default), cpu, or gpu
           --no-audio             build no audio sink
+          --recover              walk the lateness-recovery path when the pipeline is late
+          --software-decode      never attach a hardware decoder
           --present-cost <dur>   synthetic per-frame cost for the headless sink
           --pool-capacity <n>    frame pool slots (default 3)
           --log-file <file>      also write the session to this file

@@ -37,6 +37,8 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory
     >? _audioConfigurator;
     private readonly bool _yieldHardwareFrames;
 
+    private readonly LatenessRecoveryOptions? _latenessRecovery;
+
     public SubstrateSessionFactory(
         IVideoSink? videoSink = null,
         IAudioSink? audioSink = null,
@@ -45,9 +47,15 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory
         ILoggerFactory? loggerFactory = null,
         Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? videoConfigurator = null,
         Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? audioConfigurator = null,
-        bool yieldHardwareFrames = false
+        bool yieldHardwareFrames = false,
+        LatenessRecoveryOptions? latenessRecovery = null
     )
     {
+        // Checked here rather than in the worker: this runs on the caller's thread,
+        // inside PlaybackController.Create, so a contradictory pair fails next to the
+        // line that wrote it instead of surfacing later as a playback fault.
+        latenessRecovery?.Validate();
+        _latenessRecovery = latenessRecovery;
         _videoSink = videoSink;
         _audioSink = audioSink;
         _hwMode = hwMode;
@@ -73,6 +81,9 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory
             _videoConfigurator,
             _audioConfigurator,
             _yieldHardwareFrames
-        );
+        )
+        {
+            LatenessRecovery = _latenessRecovery,
+        };
     }
 }

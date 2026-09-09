@@ -40,6 +40,14 @@ internal sealed class BenchSession(
         CancellationToken ct
     )
     {
+        // Declared before the controller so it outlives it: the controller logs
+        // during its own teardown, and disposal runs in reverse.
+        using var logs = options.Recover
+            // A literal because the type is internal to the library. The walk's
+            // category is the only one this run wants verbose.
+            ? new BenchLoggerFactory(output, LogLevel.Debug, ["SubstrateSession"])
+            : null;
+
         // Declared before the controller so it outlives it: disposal runs in reverse,
         // and the controller pushes to the sink during its own teardown.
         await using var audioSink = options.NoAudio ? null : new OpenAlAudioSink();
@@ -58,7 +66,16 @@ internal sealed class BenchSession(
             // Only the compositor surface wants hardware frames. Yielding them to a
             // presenter that cannot map them costs a download per frame and quietly
             // turns a zero-copy measurement into a copying one.
-            yieldHardwareFrames: presenter.Resolved == PresenterKind.Gpu
+            yieldHardwareFrames: presenter.Resolved == PresenterKind.Gpu,
+            hardwareDecodeMode: options.SoftwareDecode
+                ? HardwareDecodeMode.Disabled
+                : HardwareDecodeMode.Auto,
+            latenessRecovery: options.Recover ? new LatenessRecoveryOptions { Enabled = true } : null,
+            // Only when the walk is on: its every move is a log line, and that is the
+            // observable the run exists to produce. Everything else stays on the null
+            // factory, because a 60 fps decode loop logs enough to change what is
+            // being measured.
+            loggerFactory: logs
         );
 
         var runner = new CommandRunner(
