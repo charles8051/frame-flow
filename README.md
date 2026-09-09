@@ -186,8 +186,8 @@ deliberately, on a machine with a display:
 FRAMEFLOW_VISUAL_TESTS=1 dotnet test ./tests/FrameFlow.Integration.Tests --nologo
 ```
 
-`frameflow.runsettings` pins the gate to `0` and injects it into the test host,
-so passing `-settings frameflow.runsettings` overrides an ambient
+`tests/frameflow.runsettings` pins the gate to `0` and injects it into the test host,
+so passing `-settings tests/frameflow.runsettings` overrides an ambient
 `FRAMEFLOW_VISUAL_TESTS=1`. Use one or the other.
 
 ## Documentation

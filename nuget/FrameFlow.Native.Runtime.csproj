@@ -215,9 +215,9 @@
     FrameFlow.Audio.OpenAL are the four that do.
   -->
   <ItemGroup>
-    <None Include="../LICENSE-LGPL-3.0.txt" Pack="true" PackagePath="/" />
-    <None Include="../LICENSE-GPL-3.0.txt" Pack="true" PackagePath="/" />
-    <None Include="../LICENSE-Apache-2.0.txt" Pack="true" PackagePath="/" />
-    <None Include="../LICENSE-LGPL-2.1.txt" Pack="true" PackagePath="/" />
+    <None Include="../licenses/LICENSE-LGPL-3.0.txt" Pack="true" PackagePath="/" />
+    <None Include="../licenses/LICENSE-GPL-3.0.txt" Pack="true" PackagePath="/" />
+    <None Include="../licenses/LICENSE-Apache-2.0.txt" Pack="true" PackagePath="/" />
+    <None Include="../licenses/LICENSE-LGPL-2.1.txt" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>
