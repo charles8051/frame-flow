@@ -173,7 +173,11 @@ ADRs are numbered at merge, not at authoring, so parallel branches never collide
 on the same number. Drafts in flight live here under a slug filename until they
 land.
 
-None in flight.
+- [The demux pump reads against the master clock](clock-paced-demux-read-ahead.md) —
+  video-only playback stays realtime and drops, instead of blocking the pump on a
+  consumer slower than realtime and letting the reported position walk away from the
+  picture. Takes up the alternative ADR-0060 deferred, on the condition it set for
+  revisiting.
 
 (Most recently, the command-driven test-bench host landed as
 [ADR-0068](ADR-0068-command-driven-test-bench-host.md) — a console host under `tools/` that
