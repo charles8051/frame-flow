@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Diagnostics;
 using FrameFlow.Media;
 using FrameFlow.Decoding;
 using FrameFlow.Media.Diagnostics;
@@ -263,7 +264,8 @@ internal sealed class SubstrateSession : IPlaybackSession
     {
         var step = 0;
         TimeSpan? lagAtWindowStart = null;
-        var recoveredWindows = 0;
+        var recoveredFor = TimeSpan.Zero;
+        var lastTick = Stopwatch.GetTimestamp();
 
         try
         {
@@ -284,17 +286,26 @@ internal sealed class SubstrateSession : IPlaybackSession
                 if (_videoPacer?.PresentationLag is not { } lag)
                 {
                     lagAtWindowStart = null;
-                    recoveredWindows = 0;
+                    recoveredFor = TimeSpan.Zero;
                     continue;
                 }
 
-                recoveredWindows = lag <= options.RelaxBelow ? recoveredWindows + 1 : 0;
+                // Real elapsed time, not the nominal period. A PeriodicTimer tick can
+                // arrive late or be coalesced, and RelaxAfter is a duration now, so
+                // crediting a full window per observation would let a twelve-second
+                // dwell be satisfied by rather less than twelve seconds.
+                var now = Stopwatch.GetTimestamp();
+                var sinceLastTick = Stopwatch.GetElapsedTime(lastTick, now);
+                lastTick = now;
+
+                recoveredFor =
+                    lag <= options.RelaxBelow ? recoveredFor + sinceLastTick : TimeSpan.Zero;
 
                 var decision = LatenessRecoveryPolicy.Decide(
                     step,
                     lag,
                     lagAtWindowStart,
-                    recoveredWindows,
+                    recoveredFor,
                     options
                 );
 
@@ -334,7 +345,7 @@ internal sealed class SubstrateSession : IPlaybackSession
                 // credit or blame the wrong one; Decide holds for one window when it
                 // sees this, rather than moving again on no evidence.
                 lagAtWindowStart = null;
-                recoveredWindows = 0;
+                recoveredFor = TimeSpan.Zero;
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }

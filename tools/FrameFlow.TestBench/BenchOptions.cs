@@ -63,6 +63,25 @@ internal sealed record BenchOptions
     /// </summary>
     internal bool SoftwareDecode { get; init; }
 
+    /// <summary>
+    /// Overrides for the recovery constants, so a run can sweep them. Null leaves
+    /// the policy's own default in place. These are the ADR's open questions, which
+    /// is the whole reason they are reachable from a command line.
+    /// </summary>
+    internal TimeSpan? EscalateAbove { get; init; }
+
+    /// <inheritdoc cref="EscalateAbove"/>
+    internal TimeSpan? RelaxBelow { get; init; }
+
+    /// <inheritdoc cref="EscalateAbove"/>
+    internal TimeSpan? MinImprovement { get; init; }
+
+    /// <inheritdoc cref="EscalateAbove"/>
+    internal TimeSpan? SettleWindow { get; init; }
+
+    /// <inheritdoc cref="EscalateAbove"/>
+    internal TimeSpan? RelaxAfter { get; init; }
+
     internal static ParseOutcome Parse(string[] args)
     {
         var options = new BenchOptions();
@@ -74,6 +93,26 @@ internal sealed record BenchOptions
 
             string? Next(string flag) =>
                 i + 1 < args.Length ? args[++i] : throw new BadUsage($"{flag} needs a value");
+
+            TimeSpan Duration(string flag)
+            {
+                var raw = Next(flag)!;
+                var parsed =
+                    CommandParser.ParseDuration(raw)
+                    ?? throw new BadUsage(
+                        $"{flag} needs a duration, got '{raw}'. " + CommandParser.DurationHelp
+                    );
+
+                // Rejected here rather than by LatenessRecoveryOptions. The options
+                // record throws while the controller is being built, which is past
+                // the point where a usage error can still be reported as one — the
+                // bench would exit on an unhandled exception instead of printing the
+                // usage line and returning 2.
+                if (parsed <= TimeSpan.Zero)
+                    throw new BadUsage($"{flag} needs a positive duration, got '{raw}'");
+
+                return parsed;
+            }
 
             try
             {
@@ -87,6 +126,21 @@ internal sealed record BenchOptions
                         break;
                     case "--software-decode":
                         options = options with { SoftwareDecode = true };
+                        break;
+                    case "--escalate-above":
+                        options = options with { EscalateAbove = Duration(argument) };
+                        break;
+                    case "--relax-below":
+                        options = options with { RelaxBelow = Duration(argument) };
+                        break;
+                    case "--min-improvement":
+                        options = options with { MinImprovement = Duration(argument) };
+                        break;
+                    case "--settle-window":
+                        options = options with { SettleWindow = Duration(argument) };
+                        break;
+                    case "--relax-after":
+                        options = options with { RelaxAfter = Duration(argument) };
                         break;
                     case "--no-audio":
                         options = options with { NoAudio = true };
@@ -169,6 +223,11 @@ internal sealed record BenchOptions
           --no-audio             build no audio sink
           --recover              walk the lateness-recovery path when the pipeline is late
           --software-decode      never attach a hardware decoder
+          --escalate-above <dur>   recovery: lateness that starts the walk
+          --relax-below <dur>      recovery: lateness that gives a rung back
+          --min-improvement <dur>  recovery: movement that counts as a rung helping
+          --settle-window <dur>    recovery: how long a rung runs before it is judged
+          --relax-after <dur>      recovery: how long recovery holds before a rung is returned
           --present-cost <dur>   synthetic per-frame cost for the headless sink
           --pool-capacity <n>    frame pool slots (default 3)
           --log-file <file>      also write the session to this file

@@ -22,6 +22,9 @@ public sealed class LatenessRecoveryPolicyTests
 
     private static TimeSpan Ms(int ms) => TimeSpan.FromMilliseconds(ms);
 
+    /// <summary>Recovered for this many settle windows.</summary>
+    private static TimeSpan Recovered(int windows) => Options.SettleWindow * windows;
+
     // ── The band ─────────────────────────────────────────────────────────
 
     [Fact]
@@ -29,7 +32,7 @@ public sealed class LatenessRecoveryPolicyTests
     {
         // Between RelaxBelow and EscalateAbove is the whole point of having two
         // numbers: a pipeline sitting near the line must not alternate every window.
-        var decision = LatenessRecoveryPolicy.Decide(2, Ms(300), Ms(310), 0, Options);
+        var decision = LatenessRecoveryPolicy.Decide(2, Ms(300), Ms(310), Recovered(0), Options);
 
         Assert.Equal(2, decision.StepIndex);
         Assert.Equal(RecoveryMove.Hold, decision.Move);
@@ -38,7 +41,7 @@ public sealed class LatenessRecoveryPolicyTests
     [Fact]
     public void RecoveredLatenessGivesARungBack()
     {
-        var decision = LatenessRecoveryPolicy.Decide(3, Ms(50), Ms(2000), 3, Options);
+        var decision = LatenessRecoveryPolicy.Decide(3, Ms(50), Ms(2000), Options.RelaxAfter, Options);
 
         Assert.Equal(2, decision.StepIndex);
         Assert.Equal(RecoveryMove.Relax, decision.Move);
@@ -47,7 +50,7 @@ public sealed class LatenessRecoveryPolicyTests
     [Fact]
     public void AHealthyPipelineNeverLeavesStepZero()
     {
-        var decision = LatenessRecoveryPolicy.Decide(0, TimeSpan.Zero, null, 9, Options);
+        var decision = LatenessRecoveryPolicy.Decide(0, TimeSpan.Zero, null, Options.RelaxAfter, Options);
 
         Assert.Equal(0, decision.StepIndex);
         Assert.Equal(RecoveryMove.Hold, decision.Move);
@@ -60,7 +63,7 @@ public sealed class LatenessRecoveryPolicyTests
     {
         // Nothing to have improved on yet, and the cheapest rung costs no decoded
         // frames, so there is nothing to weigh.
-        var decision = LatenessRecoveryPolicy.Decide(0, Ms(5000), null, 0, Options);
+        var decision = LatenessRecoveryPolicy.Decide(0, Ms(5000), null, Recovered(0), Options);
 
         Assert.Equal(1, decision.StepIndex);
         Assert.Equal(RecoveryMove.Advance, decision.Move);
@@ -73,7 +76,7 @@ public sealed class LatenessRecoveryPolicyTests
     {
         // 5 s down to 3 s: the copy is clearly part of the cost, so keep thinning it
         // rather than start discarding decoded frames.
-        var decision = LatenessRecoveryPolicy.Decide(1, Ms(3000), Ms(5000), 0, Options);
+        var decision = LatenessRecoveryPolicy.Decide(1, Ms(3000), Ms(5000), Recovered(0), Options);
 
         Assert.Equal(2, decision.StepIndex);
         Assert.Equal(RecoveryMove.Advance, decision.Move);
@@ -90,7 +93,7 @@ public sealed class LatenessRecoveryPolicyTests
         // wrong lever: measured, 1 in 2 recovered this pipeline from a small deficit
         // and lost ground against a large one. Jumping on that reading sent a
         // readback-bound pipeline into the destructive steps with 1 in 4 untried.
-        var decision = LatenessRecoveryPolicy.Decide(1, Ms(5000), Ms(5010), 0, Options);
+        var decision = LatenessRecoveryPolicy.Decide(1, Ms(5000), Ms(5010), Recovered(0), Options);
 
         Assert.Equal(2, decision.StepIndex);
         Assert.Equal(RecoveryMove.Advance, decision.Move);
@@ -102,7 +105,7 @@ public sealed class LatenessRecoveryPolicyTests
     {
         // Running out of the harmless section is the evidence about the section.
         var last = LatenessRecoveryPolicy.FirstDiscardStep - 1;
-        var decision = LatenessRecoveryPolicy.Decide(last, Ms(5000), Ms(5010), 0, Options);
+        var decision = LatenessRecoveryPolicy.Decide(last, Ms(5000), Ms(5010), Recovered(0), Options);
 
         Assert.Equal(LatenessRecoveryPolicy.FirstDiscardStep, decision.StepIndex);
         Assert.Equal(RecoveryMove.SwitchToDiscard, decision.Move);
@@ -116,7 +119,7 @@ public sealed class LatenessRecoveryPolicyTests
     public void AnImprovementUnderTheBarCountsAsNotHelping()
     {
         // 40 ms of movement against a 150 ms bar, mid-section: try sparser.
-        var decision = LatenessRecoveryPolicy.Decide(2, Ms(4960), Ms(5000), 0, Options);
+        var decision = LatenessRecoveryPolicy.Decide(2, Ms(4960), Ms(5000), Recovered(0), Options);
 
         Assert.Equal(3, decision.StepIndex);
         Assert.Equal(RecoveryMove.Advance, decision.Move);
@@ -129,7 +132,7 @@ public sealed class LatenessRecoveryPolicyTests
         // reading is judged against a window that ran under the PREVIOUS rung, so
         // every move begets another and the improvement rule never executes — the
         // walk climbed the whole readback section blind.
-        var decision = LatenessRecoveryPolicy.Decide(2, Ms(5000), null, 0, Options);
+        var decision = LatenessRecoveryPolicy.Decide(2, Ms(5000), null, Recovered(0), Options);
 
         Assert.Equal(2, decision.StepIndex);
         Assert.Equal(RecoveryMove.Hold, decision.Move);
@@ -142,11 +145,11 @@ public sealed class LatenessRecoveryPolicyTests
         // lateness rebuild mid-descent, and the walk hunts instead of settling —
         // measured on the first prototype run, which cycled 0 to 8 and back twice in
         // thirty seconds.
-        var early = LatenessRecoveryPolicy.Decide(3, Ms(50), Ms(60), 1, Options);
+        var early = LatenessRecoveryPolicy.Decide(3, Ms(50), Ms(60), Recovered(1), Options);
         Assert.Equal(3, early.StepIndex);
         Assert.Equal(RecoveryMove.Hold, early.Move);
 
-        var held = LatenessRecoveryPolicy.Decide(3, Ms(50), Ms(60), 3, Options);
+        var held = LatenessRecoveryPolicy.Decide(3, Ms(50), Ms(60), Options.RelaxAfter, Options);
         Assert.Equal(2, held.StepIndex);
         Assert.Equal(RecoveryMove.Relax, held.Move);
     }
@@ -160,7 +163,7 @@ public sealed class LatenessRecoveryPolicyTests
             LatenessRecoveryPolicy.FirstDiscardStep,
             Ms(5000),
             Ms(5000),
-            0,
+            TimeSpan.Zero,
             Options
         );
 
@@ -175,7 +178,7 @@ public sealed class LatenessRecoveryPolicyTests
             LatenessRecoveryPolicy.LastStep,
             Ms(60_000),
             Ms(60_000),
-            0,
+            TimeSpan.Zero,
             Options
         );
 
