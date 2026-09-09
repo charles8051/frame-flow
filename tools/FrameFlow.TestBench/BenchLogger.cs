@@ -16,10 +16,27 @@ namespace FrameFlow.TestBench;
 /// want a specific library decision explained — the lateness-recovery walk, whose
 /// every move is a log line and whose behaviour is the thing under test.
 /// </remarks>
-internal sealed class BenchLoggerFactory(TextWriter output, LogLevel minimum) : ILoggerFactory
+internal sealed class BenchLoggerFactory(
+    TextWriter output,
+    LogLevel minimum,
+    IReadOnlyCollection<string>? verboseCategories = null
+) : ILoggerFactory
 {
-    public ILogger CreateLogger(string categoryName) =>
-        new BenchLogger(output, minimum, categoryName);
+    // Everything outside the named categories stays at Information. A decode loop
+    // logs per frame, and a run that formats and writes a line for each one under a
+    // lock is measuring the logger as much as the pipeline. Today those lines are
+    // Trace and would not print at Debug anyway — but "would not print" is a fact
+    // about the levels the library happens to use, and this is a property of the
+    // bench, which is where the measurement's integrity should live.
+    public ILogger CreateLogger(string categoryName)
+    {
+        var verbose =
+            verboseCategories is not null
+            && verboseCategories.Any(c =>
+                categoryName.EndsWith(c, StringComparison.Ordinal)
+            );
+        return new BenchLogger(output, verbose ? minimum : LogLevel.Information, categoryName);
+    }
 
     public void AddProvider(ILoggerProvider provider) { }
 

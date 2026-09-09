@@ -267,6 +267,15 @@ internal sealed class SubstrateSession : IPlaybackSession
 
         try
         {
+            // Put the decoder where this walk believes it is. A previous run can have
+            // left it discarding — Flush resets the readback cadence but not the
+            // discard level, because how late a pipeline is does not change at a seek
+            // — and a fresh walk starting at step 0 against a decoder still on
+            // KeyframesOnly would believe playback was untouched while the picture
+            // stayed frozen, and would never correct it: Decide only moves when
+            // lateness leaves the band, and a recovered stream never does.
+            ApplyStep(step);
+
             using var timer = new PeriodicTimer(options.SettleWindow);
             while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
             {
@@ -308,12 +317,7 @@ internal sealed class SubstrateSession : IPlaybackSession
 
                 step = decision.StepIndex;
                 var rung = LatenessRecoveryPolicy.Path[step];
-
-                if (_videoDecoder is { } decoder)
-                {
-                    decoder.ReadbackEveryN = rung.ReadbackEveryN;
-                    decoder.SetDiscardLevel(rung.Discard);
-                }
+                ApplyStep(step);
 
                 _logger.LogInformation(
                     "Lateness recovery {Move} to step {Step} "
@@ -340,6 +344,15 @@ internal sealed class SubstrateSession : IPlaybackSession
             // it, so it is reported and the pipeline carries on at whatever rung it
             // had reached.
             _callbacks.OnWorkerFaulted(ex);
+        }
+
+        void ApplyStep(int index)
+        {
+            if (_videoDecoder is not { } decoder)
+                return;
+            var rung = LatenessRecoveryPolicy.Path[index];
+            decoder.ReadbackEveryN = rung.ReadbackEveryN;
+            decoder.SetDiscardLevel(rung.Discard);
         }
     }
 

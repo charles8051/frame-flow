@@ -42,7 +42,11 @@ internal sealed class BenchSession(
     {
         // Declared before the controller so it outlives it: the controller logs
         // during its own teardown, and disposal runs in reverse.
-        using var logs = options.Recover ? new BenchLoggerFactory(output, LogLevel.Debug) : null;
+        using var logs = options.Recover
+            // A literal because the type is internal to the library. The walk's
+            // category is the only one this run wants verbose.
+            ? new BenchLoggerFactory(output, LogLevel.Debug, ["SubstrateSession"])
+            : null;
 
         // Declared before the controller so it outlives it: disposal runs in reverse,
         // and the controller pushes to the sink during its own teardown.

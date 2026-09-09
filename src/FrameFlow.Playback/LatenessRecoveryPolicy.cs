@@ -189,26 +189,50 @@ public sealed record LatenessRecoveryOptions
     public bool Enabled { get; init; }
 
     /// <summary>Lateness at or above which the walk escalates.</summary>
-    public TimeSpan EscalateAbove { get; init; } = TimeSpan.FromMilliseconds(400);
+    public TimeSpan EscalateAbove
+    {
+        get => _escalateAbove;
+        init => _escalateAbove = Positive(value);
+    }
+
+    private readonly TimeSpan _escalateAbove = TimeSpan.FromMilliseconds(400);
 
     /// <summary>
     /// Lateness at or below which a rung is given back. Below
     /// <see cref="EscalateAbove"/> on purpose: the gap is the hysteresis.
     /// </summary>
-    public TimeSpan RelaxBelow { get; init; } = TimeSpan.FromMilliseconds(120);
+    public TimeSpan RelaxBelow
+    {
+        get => _relaxBelow;
+        init => _relaxBelow = Positive(value);
+    }
+
+    private readonly TimeSpan _relaxBelow = TimeSpan.FromMilliseconds(120);
 
     /// <summary>
     /// How much a rung has to move lateness to count as having helped. The bar
     /// that separates a rung that worked from noise, and the one most likely to
     /// be wrong here.
     /// </summary>
-    public TimeSpan MinImprovement { get; init; } = TimeSpan.FromMilliseconds(150);
+    public TimeSpan MinImprovement
+    {
+        get => _minImprovement;
+        init => _minImprovement = Positive(value);
+    }
+
+    private readonly TimeSpan _minImprovement = TimeSpan.FromMilliseconds(150);
 
     /// <summary>
     /// How long a rung runs before it is judged. Has to outlast a transient, or a
     /// decode-bound pipeline that dips briefly reads as recovering.
     /// </summary>
-    public TimeSpan SettleWindow { get; init; } = TimeSpan.FromSeconds(2);
+    public TimeSpan SettleWindow
+    {
+        get => _settleWindow;
+        init => _settleWindow = Positive(value);
+    }
+
+    private readonly TimeSpan _settleWindow = TimeSpan.FromSeconds(2);
 
     /// <summary>
     /// Consecutive recovered windows before a rung is given back. Escalation is
@@ -216,5 +240,26 @@ public sealed record LatenessRecoveryOptions
     /// lateness rebuild before the walk has finished stepping down, and the
     /// pipeline hunts instead of settling.
     /// </summary>
-    public int RelaxAfterWindows { get; init; } = 3;
+    public int RelaxAfterWindows
+    {
+        get => _relaxAfterWindows;
+        init
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
+            _relaxAfterWindows = value;
+        }
+    }
+
+    private readonly int _relaxAfterWindows = 3;
+
+    // Rejected where the caller sets them, not where the walk reads them. A zero
+    // SettleWindow reaches PeriodicTimer and throws inside the worker, where the
+    // catch that exists to keep a recovery fault from taking playback down would
+    // report it as a playback fault instead — a configuration mistake surfacing as
+    // a pipeline failure, one layer away from the line that caused it.
+    private static TimeSpan Positive(TimeSpan value)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(value, TimeSpan.Zero);
+        return value;
+    }
 }
