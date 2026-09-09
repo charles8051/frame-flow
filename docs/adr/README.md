@@ -178,9 +178,14 @@ land.
   rather than losing time. Implements the drop responsibility ADR-0003 already assigns
   to the playback layer. Its acceptance prerequisite is confirmed — `skip_frame`
   suppresses frame output on the hardware path, ~15 s of lag down to ~0.26 s — and
-  the same measurement opened the question it now carries, and gates implementation
-  on: on content with no B-frames the escalation ladder has no usable middle, so
-  escalation would jump straight to keyframes-only. Its rejected alternative F
+  its second condition is settled too: the escalation middle is a proportional skip
+  of the GPU-to-CPU readback rather than a `skip_frame` level, recovering fully at
+  1 in 4 while keeping four times the frames keyframes-only would, on an exactly
+  even cadence — including on reordered video, since `avcodec_receive_frame` hands
+  back frames in presentation order. The two mechanisms are one path ordered by
+  damage, and thinning ceasing to help is what identifies a decode-bound pipeline,
+  so nothing has to classify one up front — a rule that is itself gated on being
+  measured against a running policy before the default changes. Its rejected alternative F
   records the packet-pacing design this replaced, and the measurement that ruled it
   out.
 
