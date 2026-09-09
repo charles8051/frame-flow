@@ -176,8 +176,12 @@ land.
 - [A video-only pipeline that falls behind skips decode work](lateness-driven-decode-skip.md) —
   it stays realtime by shrinking decode cost under a lateness-driven discard level,
   rather than losing time. Implements the drop responsibility ADR-0003 already assigns
-  to the playback layer. Its rejected alternative F records the packet-pacing design
-  this replaced, and the measurement that ruled it out.
+  to the playback layer. Its acceptance prerequisite is confirmed — `skip_frame`
+  suppresses frame output on the hardware path, 14.9 s of lag down to 0.265 s — and
+  the same measurement opened the question it now carries: on content with no
+  B-frames the escalation ladder has no usable middle. Its rejected alternative F
+  records the packet-pacing design this replaced, and the measurement that ruled it
+  out.
 
 (Most recently, the command-driven test-bench host landed as
 [ADR-0068](ADR-0068-command-driven-test-bench-host.md) — a console host under `tools/` that
