@@ -173,11 +173,11 @@ ADRs are numbered at merge, not at authoring, so parallel branches never collide
 on the same number. Drafts in flight live here under a slug filename until they
 land.
 
-- [The demux pump reads against the master clock](clock-paced-demux-read-ahead.md) —
-  video-only playback stays realtime and drops, instead of blocking the pump on a
-  consumer slower than realtime and letting the reported position walk away from the
-  picture. Takes up the alternative ADR-0060 deferred, on the condition it set for
-  revisiting.
+- [A video-only pipeline that falls behind skips decode work](lateness-driven-decode-skip.md) —
+  it stays realtime by shrinking decode cost under a lateness-driven discard level,
+  rather than losing time. Implements the drop responsibility ADR-0003 already assigns
+  to the playback layer. Its rejected alternative F records the packet-pacing design
+  this replaced, and the measurement that ruled it out.
 
 (Most recently, the command-driven test-bench host landed as
 [ADR-0068](ADR-0068-command-driven-test-bench-host.md) — a console host under `tools/` that
