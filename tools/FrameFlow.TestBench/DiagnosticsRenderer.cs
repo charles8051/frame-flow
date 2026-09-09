@@ -14,6 +14,11 @@ namespace FrameFlow.TestBench;
 /// </remarks>
 internal static class DiagnosticsRenderer
 {
+    // Above one frame of any sane source (a 10 fps clip has 100 ms frames), so this
+    // cannot fire on a clock read that merely straddled a frame boundary. Sized to be
+    // obviously-not-jitter rather than tuned; the number beside it is the real signal.
+    private static readonly TimeSpan LagWorthSaying = TimeSpan.FromMilliseconds(100);
+
     /// <summary>One line: where the session is.</summary>
     internal static string Status(IPlaybackController controller) =>
         $"{controller.State} {Time(controller.Position)}/{Time(controller.Duration)}"
@@ -85,6 +90,19 @@ internal static class DiagnosticsRenderer
         // than letting a reader assume zero drops means nothing was lost.
         if (headless is not null)
             text.AppendLine($"  headless  abandoned={headless.AbandonedCount}");
+
+        // Its own line rather than a field on `sink`, because it is the one number
+        // here that says whether `state` above can be believed. Zero means the frame
+        // on screen is the one the position names; anything else is how far apart
+        // they have got. The number always prints; only the remark is gated, because
+        // a millisecond of it is a clock read landing between two frames and saying
+        // "position is ahead of the picture" about that would cry wolf.
+        text.AppendLine(
+            snapshot.Pipeline.VideoPresentationLag is { } lag
+                ? $"  lag       {Time(lag)}"
+                    + (lag >= LagWorthSaying ? "  — position is ahead of the picture" : "")
+                : "  lag       n/a — nothing presented yet this run"
+        );
 
         if (snapshot.AvSyncDrift is { } drift)
             text.AppendLine($"  drift     {Time(drift)}");
