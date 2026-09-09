@@ -176,8 +176,18 @@ land.
 - [A video-only pipeline that falls behind skips decode work](lateness-driven-decode-skip.md) —
   it stays realtime by shrinking decode cost under a lateness-driven discard level,
   rather than losing time. Implements the drop responsibility ADR-0003 already assigns
-  to the playback layer. Its rejected alternative F records the packet-pacing design
-  this replaced, and the measurement that ruled it out.
+  to the playback layer. Its acceptance prerequisite is confirmed — `skip_frame`
+  suppresses frame output on the hardware path, ~15 s of lag down to ~0.26 s — and
+  its second condition is settled too: the escalation middle is a proportional skip
+  of the GPU-to-CPU readback rather than a `skip_frame` level, recovering fully at
+  1 in 4 while keeping four times the frames keyframes-only would, on an exactly
+  even cadence — including on reordered video, since `avcodec_receive_frame` hands
+  back frames in presentation order. The two mechanisms are one path ordered by
+  damage, and thinning ceasing to help is what identifies a decode-bound pipeline,
+  so nothing has to classify one up front — a rule that is itself gated on being
+  measured against a running policy before the default changes. Its rejected alternative F
+  records the packet-pacing design this replaced, and the measurement that ruled it
+  out.
 - [Sync-window join for media-time correlation](sync-window-join.md) — the substrate
   fans out and cannot rejoin, so four consumers hand-roll the same correlation outside
   the graph. Adds a two-input node that pairs a slow secondary onto a fast primary by

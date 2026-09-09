@@ -41,6 +41,6 @@
     FrameFlow.Native.Runtime do. The claim was wrong for this project.
   -->
   <ItemGroup>
-    <None Include="$(MSBuildThisFileDirectory)../../LICENSE-LGPL-2.1.txt" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../../licenses/LICENSE-LGPL-2.1.txt" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>

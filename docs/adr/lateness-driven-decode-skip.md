@@ -4,9 +4,33 @@
 
 Proposed (2026-09-08). Draft pending number assignment.
 
-Not to be accepted before the prerequisite in Decision §4 is confirmed: that
-`skip_frame` suppresses frame output on the hardware path. The central saving
-depends on it.
+The prerequisite is **confirmed** (2026-09-09): `skip_frame` suppresses frame
+output on the D3D11VA path. On the 2160p60 fixture, lag falls from ~15 s to
+~0.26 s at `AVDISCARD_NONKEY` — about 58x — over three runs at each level.
+Measurements and conditions in Decision §4.
+
+The second acceptance condition — that escalation has a usable middle on content
+without B-frames — is **also settled** (2026-09-09), and settling it changed the
+decision twice over. The middle rung is not a `skip_frame` level: it is a
+proportional skip of the GPU-to-CPU readback, which is where the cost actually is
+on the pipeline this ADR was built around. And the two mechanisms are one ordered
+path rather than two levers needing a classification the runtime cannot make.
+Decision §2 carries the measurements: recovery completes at 1 in 4, keeping four
+times the frames `NONKEY` would, on an exactly even cadence.
+
+**A third condition stands, on the selection rule.** The walk decides which lever
+binds by whether a readback rung improved lateness, and that is reasoning, not a
+measurement. It has a named way to fail — a decode-bound pipeline improving
+briefly because a rung reduced contention, read as thinning working — and the
+settle window that would have to tell a transient from a trend is one of the
+unmeasured constants.
+
+**Not to be shipped before that rule is measured on a decode-bound pipeline.**
+Unlike the first two conditions this one cannot be discharged ahead of an
+implementation: the question is whether a running policy converges on the right
+lever, and there is no way to observe that without the policy. So the gate is on
+shipping rather than on writing it — a prototype behind the off switch is how it
+gets answered, and the answer belongs in this ADR before the default changes.
 
 Narrows the video-only fallback [ADR-0003](ADR-0003-audio-master-sync-policy.md)
 left open, and implements the drop responsibility ADR-0003 already assigns to the
@@ -49,7 +73,7 @@ The consumer is below realtime, so the pipeline is below realtime. Nothing is
 lost — letting the run continue reaches EOF with 2609 of 2700 decoded — but for
 thirteen seconds the player reports a position no viewer is looking at.
 
-### It is not about resolution, and not about readback
+### It is not about resolution, and it is about being upstream of the ring
 
 `--present-cost` makes the consumer slow at a chosen point in the chain:
 
@@ -64,9 +88,14 @@ something older to discard and the clock holds. A slow decoder means the ring
 never holds more than one frame — nothing droppable, every frame presented late,
 clock walks away.
 
-Any per-frame consumer below realtime reaches the same place: inference on every
-frame, software decode on a weak box, a slow presenter. The readback is what
-triggered it here, not what causes it.
+So the failure is not "a slow consumer" — a slow presenter is a slow consumer and
+it behaves. It is a bottleneck **upstream of the ring**, where nothing compares
+frames against the clock. Readback is one way to be there; software decode on a
+weak box, or inference run before the sink, are others. Resolution only matters
+because it sets how many bytes each readback moves.
+
+Naming that precisely matters for the mechanism: Decision §2 turns on *which*
+upstream cost is binding, and the answer decides which lever applies.
 
 ### Dropping packets at the queue cannot fix this
 
@@ -121,7 +150,7 @@ paid. The lesson is the comparison it makes, not the place it makes it.
 work.** It does not play slowly, and it does not report a position the picture
 has not reached.
 
-### 1. The playback layer drives a decode discard level from measured lateness
+### 1. The playback layer drives a discard level from measured lateness
 
 [ADR-0003](ADR-0003-audio-master-sync-policy.md) already assigns "when to drop or
 skip a late frame" to the playback orchestration layer. This implements that
@@ -136,43 +165,250 @@ layer. ADR-0009 put timing outside it, and a decoder that read the master clock
 to make its own skip decisions would widen that boundary for no gain: the layer
 that already owns the policy also already has the number.
 
-**The level is a command, not a field write.** `AVCodecContext` is not a
-thread-safe control surface, and the decode worker is inside
-`avcodec_send_packet` / `avcodec_receive_frame` on it continuously. Playback
-posts the requested level; the decoder's own worker applies it to the codec
-context between packets, where it already owns the context exclusively. So the
-setter is asynchronous by contract — a caller sets a level and it takes effect on
-the next packet boundary, not on return — and that is the only ordering the
-policy needs, because lateness is measured over seconds and a packet is
-milliseconds.
+**The setter is synchronous and takes the decoder's existing lock.**
+`AVCodecContext` is not a thread-safe control surface and the decode worker is on
+it continuously, but that problem is already solved: `VideoDecoder` serialises
+`avcodec_send_packet`, `avcodec_receive_frame` and `Flush` under `_codecSync`, so
+a setter taking the same lock writes the field while no decode call is in it. The
+level is in effect when the call returns.
 
-### 2. The decoder's discard level escalates and de-escalates
+An earlier draft specified a posted command applied between packets, and an
+asynchronous-by-contract setter to go with it. That was machinery for a race the
+existing lock already prevents. See Decision §3.
 
-FFmpeg's own lever, `AVCodecContext.skip_frame`, in the order that costs least
-first:
+### 2. One escalation path, ordered by damage
 
-| level | discards | cost |
+An earlier version of this section split the policy into two levers and asked the
+implementation to classify a pipeline as readback-bound or decode-bound. There is
+no observable that makes that call: `YieldHardwareFrames == false` proves a copy
+happens, not that the copy is what binds, and a hardware decoder feeding a CPU
+consumer on a weak device can be limited by either. Escalation would have had to
+guess.
+
+It does not need to. The two mechanisms go on **one ordered path, cheapest damage
+first**, and the policy walks it until lateness recovers:
+
+| step | mechanism | what it costs |
 | --- | --- | --- |
-| `AVDISCARD_NONE` | nothing | the normal state |
-| `AVDISCARD_NONREF` | non-reference frames | nothing references them; no GOP damage |
-| `AVDISCARD_BIDIR` | B-frames | more saved, more motion lost |
-| `AVDISCARD_NONKEY` | everything but keyframes | recovers fastest, visibly stutters |
+| 1–n | readback 1 in 2, 3, 4, … to a picture-rate floor | nothing decoded is lost; only the copy is skipped |
+| 5 | `AVDISCARD_NONREF` | frames nothing references |
+| 6 | `AVDISCARD_BIDIR` | B-frames |
+| 7 | `AVDISCARD_NONKEY` | everything but keyframes |
+
+Walked one step at a time. Each is held for a settle window, and if lateness has
+not fallen by the end of it the policy advances. Recovery de-escalates the same
+way. The window's length is part of the threshold-and-hysteresis question below;
+what matters structurally is that a step which does not help is left rather than
+sat on.
+
+**The transition is that thinning stopped helping, not that N hit a number.** A
+rung advances to the next when its settle window ends with lateness unimproved.
+The readback rungs are left for step 5 when a *further* rung fails to improve on
+the one before it — the copy is no longer what binds, so thinning it further only
+sheds picture.
+
+That rule is platform-independent, which a fixed cap is not. This fixture recovers
+by 1 in 4 on this machine; a slower box or a heavier frame recovers later, and a
+cap chosen from this sweep would push it into destructive steps that a sparser
+cadence would have avoided.
+
+That is the observable the earlier two-lever version lacked: **readback thinning
+ceasing to help *is* the finding that decode is the constraint**, and it is
+measured on the pipeline in front of you rather than assumed from its shape.
+
+#### The floor, and what it overrides
+
+The improvement rule alone does not terminate the readback rungs. A pipeline that
+improves a little at every N would thin indefinitely, and past some point the
+output stops being playback: 1 in 16 on a 60 fps source is 3.75 fps, which is
+already what `AVDISCARD_NONKEY` yields on the measured fixture, and 1 in 64 is
+under one.
+
+So the rungs stop at a **picture-rate floor** — a lower bound on presented frames
+per second, not a bound on N. Reaching it while still improving is not a
+misclassification and the policy is not confused about which cost binds. It is a
+decision that thinning can no longer buy recovery at a frame rate worth having,
+and that the next step should be tried instead.
+
+**This overrides the improvement rule, deliberately, and it can fire while
+thinning is still helping.** Stating it as an override rather than folding it into
+the transition is the point: two rules that can disagree should say which wins.
+
+Where the floor sits is unmeasured and belongs with the threshold and the settle
+window in *Open questions* — it is the same kind of constant, chosen from the same
+kind of evidence, and inventing a number for it here would be inventing a number.
+The sweep below stops at 1 in 8 because that is where measuring stopped being
+informative on this fixture, not because it proposes a floor there.
+
+Selection falls out of the walk. A readback-bound pipeline improves with each rung
+and stops when it recovers. A decode-bound one shows no improvement at the first
+rung, let alone the second — every frame is still decoded — so it leaves them
+almost immediately and continues into the levels that shrink decode work. A
+pipeline limited by both improves for a while, stalls, and moves on. **Nothing has
+to know which kind it is.**
+
+The ordering is by damage. Skipping a readback discards a copy; skipping a decode
+discards a frame other frames may reference. The harmless steps are exhausted
+before the destructive ones are touched.
+
+#### The readback rungs, measured
+
+Skipping `BuildManagedFrame` for (N−1) of every N received frames — the frame is
+still decoded, so the decoder's reference state is untouched. Three runs at each
+N, same session, no tracing:
+
+| readback | received | read back | lag |
+| --- | --- | --- | --- |
+| 1 in 1 (today) | 895, 904, 908 | 894, 903, 907 | `15.130`, `14.972`, `14.906` |
+| 1 in 2 | 1304, 1280, 1270 | 651, 639, 634 | `8.322`, `8.726`, `8.895` |
+| 1 in 3 | 1686, 1722, 1704 | 561, 572, 567 | `1.974`, `1.429`, `1.680` |
+| 1 in 4 | 1832, 1832, 1832 | 457, 457, 457 | `0.032`, `0.023`, `0.032` |
+| 1 in 6 | 1848, 1848, 1848 | 307, 307, 307 | `0.024`, `0.024`, `0.029` |
+| 1 in 8 | 1864, 1864, 1864 | 232, 232, 232 | `0.020`, `0.034`, `0.031` |
+
+`received` counts `avcodec_receive_frame` returning a frame; `read back` counts
+frames reaching `BuildFrame`, which is `_framesDecoded` and sits after the copy.
+
+**Recovery completes at 1 in 4**, not before. Lag falls 15.0 → 8.6 → 1.7 → 0.03
+and is flat thereafter.
+
+The counts say the same thing a second way. From 1 in 4 on, `read back` is
+identical across all three runs (457, 307, 232) — the pipeline is comfortably
+under budget, so exactly the frames the modulo selects are the frames that arrive.
+At 1 in 3 it wanders (561, 572, 567), because the pipeline is still marginally
+over and timing decides how many make it. **Determinism appearing is the recovery
+signal**, and it appears at the same rung the lag does.
+
+Those counts are `received / N` to within a frame — 1832/4 is 458 against 457
+measured, 1848/6 is 308 against 307, 1864/8 is 233 against 232. The consistent
+one-frame shortfall is the sample: `received` is incremented before the modulo
+decision, so a frame in flight at the instant `diag` runs is counted as received
+and not yet as read back. It is an artefact of when the counters are read, not a
+property of the selection.
+
+**At full recovery it keeps 457 frames against `NONKEY`'s 114** — four times the
+picture, at lower lag (0.03 against 0.265). That is the argument for putting these
+rungs first.
+
+`received` climbing with N — 900, 1285, 1704, 1832, 1848, 1864 — is the readback
+stealing decode throughput. Freed of the copy the decoder converges on ~1865 in
+30 s, which is 62 fps against a 60 fps source.
+
+> An earlier revision of this ADR reported 1 in 3 at `0.029` and claimed it matched
+> `NONKEY`. That was a single favourable run and it did not reproduce: three runs
+> put 1 in 3 at 1.4–2.0 s. The corrected claim is 1 in 4 and four times the frames,
+> not 1 in 3 and five times.
+
+#### Its cadence is even, measured rather than assumed
+
+A count and an end-of-window lag cannot tell an even 15 fps from the same frames
+delivered in bursts. Tracing the PTS of every kept frame settles it:
+
+| run | kept frames | PTS deltas |
+| --- | --- | --- |
+| 1 in 1 | 838 | 837 intervals, **all** exactly 256 |
+| 1 in 3 | 583 | 582 intervals, **all** exactly 768 |
+
+768 is exactly three frame intervals, and not one of the 582 deviates. The skip is
+a modulo counter over frames arriving at a constant rate, so even spacing is what
+it produces.
+
+**The rule is keyed to presentation time**: a frame is kept when its PTS reaches
+the next multiple of N frame durations. That is the specification, and it is
+robust to how frames arrive.
+
+The measurement used a modulo counter over received frames, which raised an
+obvious worry — reordered video would surely cluster the pictures actually shown,
+even while the count and the aggregate lag looked right. It does not, and the
+reason is worth stating because it is easy to get backwards.
+
+Measured on a 2160p60 fixture encoded with `h264_nvenc -bf 3 -b_ref_mode middle`,
+which `ffprobe` shows as 445 B-frames, 150 P and 5 I in its first ten seconds:
+
+| | |
+| --- | --- |
+| kept frames at 1 in 3 | 596 |
+| PTS monotonic | yes |
+| intervals not equal to 768 | **0 of 595** |
+
+Identical to the no-B-frame result. **`avcodec_receive_frame` returns frames in
+presentation order, not decode order** — the reorder buffer is the decoder's job,
+and packets arriving in decode order is not the same as frames coming out that
+way. So the counter and the PTS rule agree here too, and they agree for a
+structural reason rather than a coincidence of content.
+
+The PTS rule stays the specification anyway. It states the intent directly instead
+of relying on a property of the API that a reader would have to know to check, and
+it costs nothing to say.
+
+#### The `skip_frame` steps, and their limit
+
+`AVDISCARD_NONREF` first among them, because non-reference frames are the ones
+nothing else decodes from. On content with no B-frames those two steps discard
+nothing at all — measured, one run each:
+
+| level | read back | lag |
+| --- | --- | --- |
+| `NONE` | 908 | `00:14.902` |
+| `NONREF` | 917 | `00:14.749` |
+| `BIDIR` | 997 | `00:13.408` |
+| `NONKEY` | **114** | **`00:00.265`** |
+
+`ffprobe` over the first 10 s finds 564 P-frames and 36 I-frames and no B-frames,
+so the two middle rows sit inside the run-to-run spread. `NONKEY` matches its
+arithmetic — 36 I per 10 s is ~108 in 30 s, against 114, repeating at exactly 114
+across three runs.
+
+So on such content steps 2 and 3 are no-ops and step 4 is a cliff.
+
+**On content that does have B-frames the middle steps work**, which the corpus
+could not show. Same NVENC fixture as the cadence measurement above, one run each:
+
+| level | read back | lag |
+| --- | --- | --- |
+| `NONE` | 968 | `13.898` |
+| `NONREF` | 788 | `4.185` |
+| `BIDIR` | 472 | **`0.013`** |
+| `NONKEY` | 23 | `0.010` |
+
+`NONREF` cuts lag by more than three times while keeping 788 frames; `BIDIR`
+recovers completely at 472. That is the graduated behaviour the ladder was
+specified for, measured rather than assumed — and note how much worse the cliff is
+on this stream, where `NONKEY` leaves 23 frames against `BIDIR`'s 472.
+
+So the ladder degenerates exactly where its categories are empty and works
+where they are not. What makes the degenerate case tolerable is the ordering: a
+pipeline only reaches step 4 after the readback rungs have failed to recover it,
+which on a readback-bound pipeline never happens.
+
+Both measurements above use a fixture generated locally with
+`h264_nvenc -bf 3 -b_ref_mode middle`, not one from the corpus. The corpus
+generator is deliberately portable and LGPL-only, and adding an NVIDIA-encoder
+fixture to it would trade that away for a case only these two measurements need.
+
+#### Hysteresis
 
 Escalate while lateness exceeds the threshold, de-escalate as it recovers, with
-hysteresis wide enough that a pipeline sitting near the boundary does not
-oscillate between levels.
+hysteresis wide enough that a pipeline sitting near a boundary does not oscillate
+across it. The path is walked in one direction at a time; the steps are ordered, so
+"escalate" and "de-escalate" are a single index moving.
 
-`AVDISCARD_NONREF` first is what makes this safe by default. Non-reference frames
-are exactly the ones nothing else decodes from, so the cheapest step damages
-nothing. The destructive levels are reached only when the cheap one has not
-recovered the deficit.
+### 3. No binding work is required
 
-### 3. `skip_frame` gets bound
+An earlier draft of this ADR said `AVCodecContext.skip_frame` needed binding. It
+does not. `FFmpeg.AutoGen.Abstractions` already exposes the field and all four
+`AVDiscard` levels, and the write compiles against the project unchanged, in the
+same shape `VideoDecoder.HwAccel` already uses for `hw_device_ctx`:
 
-The `AVDiscard` enum is already bound and used —
-`DemuxSession` sets `stream->discard = AVDISCARD_ALL` for streams with no consumer
-(ADR-0059). `AVCodecContext.skip_frame` is not bound yet. That is new work, and it
-is small.
+```csharp
+ref AVCodecContext ctx = ref Unsafe.AsRef<AVCodecContext>((void*)ctxPtr);
+ctx.skip_frame = level;
+```
+
+Nor does the setter need the command-and-apply-between-packets machinery an
+earlier draft specified. `VideoDecoder` already serialises every codec-context
+call — `avcodec_send_packet`, `avcodec_receive_frame`, `Flush` — under
+`_codecSync`. A setter taking that lock is safe, synchronous, and needs no queue.
 
 ### 4. What the skip saves, and what is not guaranteed
 
@@ -196,16 +432,94 @@ enforced where frames are output, not delegated to the hardware decoder, so a
 frame matching the level is not returned whoever did the work. That claim is what
 makes the readback saving hold on D3D11VA, and it is the load-bearing one.
 
-**So it is a prerequisite, not an open question.** This ADR is not accepted until
-that behaviour is confirmed on the D3D11VA path this failure was found on. If it
-does not hold, the decision changes rather than degrades: the discard moves to the
-decoder's *output*, which pays the decode cost and saves the downstream one, and
-that is a different mechanism deserving its own argument rather than a fallback
-bolted on here.
+**This was held as a prerequisite, and it is now confirmed.** Measured on the
+D3D11VA path this failure was found on, with `skip_frame` pinned and everything
+else unchanged:
 
-Stating it this way rather than as a hedge is deliberate. A decision whose
-central saving is conditional should say what would falsify it and refuse to be
-adopted until someone has looked.
+Three runs at each level, alternating, same process configuration:
+
+| `skip_frame` | decoded / 30 s | lag |
+| --- | --- | --- |
+| `NONE` | 863, 906, 901 | `15.641`, `14.925`, `15.014` |
+| `NONKEY` | 114, 114, 114 | `0.263`, `0.259`, `0.257` |
+
+**About 58x less lag**, and eight times fewer frames returned. `NONKEY` is
+deterministic to the frame across runs, which is what decoding exactly the
+keyframes looks like.
+
+**Why this shows suppression at the decoder and not dropping downstream.**
+`decoded` is `VideoDecoder._framesDecoded`, incremented in `BuildFrame` — which
+returns the frame `ReceiveFrame` stashed, *after* the hardware readback that
+`ReceiveFrame` performs. It is a post-readback counter. 114 rather than ~900
+therefore means ~900 readbacks did not happen, not that they happened and the
+frames were discarded later. Downstream dropping would leave `decoded` at its
+baseline and show up in `dropped` / `sync-dropped`, which stayed at 0 and 1.
+
+**Run conditions.** RTX 3080 Ti, driver 32.0.16.1047, Threadripper PRO 5945WX,
+Windows 11. Headless presenter, default pool capacity, and the decoder must
+resolve to D3D11VA — that is the whole point of the measurement, and `diag`
+reports it as `backend=D3D11Va` on the `video` line. A run that falls back to
+software, or to a different hwaccel, is measuring something else and its numbers
+do not belong beside these. `decoded` and `lag` come from the single `diag` at the
+end of the 30 s window, so each row is one sample of a cumulative counter and one
+instantaneous lag reading, not an average.
+
+**Reproducing it.** The fixture is generated, not committed, and its input is
+seeded (`all_seed=12345`), so it is the same pixels on any machine:
+
+```bash
+dotnet run scripts/fetch-ffmpeg.cs
+dotnet run scripts/generate-test-corpus.cs -- --include-benchmarks
+```
+
+The script, `p.bench`, is four lines — `play`, `wait 30s`, `diag`, `quit`:
+
+```bash
+FRAMEFLOW_PROBE_SKIP_FRAME=NONKEY dotnet run --project tools/FrameFlow.TestBench   -c Release -- tests/corpus/files/bench-2160p60-h264-aac.mp4   --no-audio --script p.bench
+```
+
+That env var does not exist in the tree. `skip_frame` was pinned by a temporary
+probe in `VideoDecoder`'s constructor, reverted afterwards because a debug hook in
+a decoder hot path is not worth committing for a one-off. It is fifteen lines, and
+this is all of it:
+
+```csharp
+var probe = Environment.GetEnvironmentVariable("FRAMEFLOW_PROBE_SKIP_FRAME");
+if (!string.IsNullOrWhiteSpace(probe))
+{
+    var level = probe.Trim().ToUpperInvariant() switch
+    {
+        "NONREF" => AVDiscard.AVDISCARD_NONREF,
+        "BIDIR" => AVDiscard.AVDISCARD_BIDIR,
+        "NONKEY" => AVDiscard.AVDISCARD_NONKEY,
+        _ => AVDiscard.AVDISCARD_NONE,
+    };
+    unsafe
+    {
+        ref AVCodecContext c = ref Unsafe.AsRef<AVCodecContext>(
+            (void*)codecCtx.DangerousGetHandle()
+        );
+        c.skip_frame = level;
+    }
+}
+```
+
+Dropped in after `_codecCtx = codecCtx;`, it reproduces every row above. It is
+also the whole of the `skip_frame` plumbing this decision needs, which is the
+other thing it demonstrates.
+
+**On the baseline moving.** Context above records 1017 decoded for the same
+nominal scenario, against 863–906 here. Different worktree and a machine that had
+just generated the corpus; the decode-bound baseline is sensitive to load in a way
+`NONKEY` is not. Both are the same phenomenon and the spread is roughly 15%, which
+is why the comparison is drawn against the three runs in this table rather than
+across sessions. The effect being claimed is 8x in frames and 58x in lag, so it
+survives that spread by a wide margin — but it is measured on one machine and one
+fixture, and nothing here establishes the factor generalises.
+
+The decode-side saving is still not separated from the downstream one by this
+measurement, and does not need to be: on a readback-bound pipeline the downstream
+saving is the whole of it. That split stays a tuning question.
 
 ### 5. Nothing changes in the pump or the queue
 
@@ -214,23 +528,30 @@ No read-ahead gate, no change to `DropNewestWhenQueueFull`, no change to
 ADR-0060's existing backpressure pace the pump at realtime again on the video-only
 path, and reduces shedding on the audio path.
 
-The whole change is a discard level, a policy that sets it, the binding it needs,
-and a switch to turn the policy off.
+The whole change is one ordered escalation path, a policy that walks it from
+measured lateness, and a switch to turn the policy off. No binding and no new
+synchronisation — both already exist, as Decision §3 records — and the readback
+step is a third arm on a branch that is already there.
 
 ## Consequences
 
 ### Positive
 
-- Attacks the cost that is actually over budget. The decoder is what cannot
-  sustain the rate, so decode work is what has to shrink; every mechanism that
-  moves packets around leaves that untouched.
+- Attacks the cost that is actually over budget, and picks the lever by which
+  cost that is. On a readback-bound pipeline the copy shrinks and the decode does
+  not; on a decode-bound one the reverse. Every mechanism that moves packets
+  around leaves both untouched.
 - The reported position describes content the pipeline has reached, on every
   configuration. `Position` and `Ended` become usable by a caller driving a
   playlist without a watchdog around them.
 - Helps the audio path too, which today sheds 704 packets and still runs 9.2 s
   behind. The same escalation lets the decoder close that gap.
-- Graduated rather than binary. A pipeline 200 ms behind loses B-frames; only one
-  that stays badly behind reaches keyframes-only.
+- Graduated where it counts, and self-selecting. The readback rungs are
+  proportional and their cadence is exactly even; recovery completes at 1 in 4,
+  keeping four times the frames `NONKEY` would at lower lag. Because the steps are
+  ordered by damage and each is abandoned when it does not help, no classification
+  of the pipeline is needed — running out of readback rungs is the finding that
+  decode is the constraint.
 - No new coupling. Playback already owns the policy and already has the number;
   the decoder gains a setter.
 
@@ -250,7 +571,11 @@ and a switch to turn the policy off.
   completion guarantees — which stays out of scope.
 - Discard levels are visible as motion artefacts before they are visible as
   stutter. `AVDISCARD_BIDIR` on high-motion content looks worse than its frame
-  count suggests.
+  count suggests, and a readback skip at 1 in 6 is 10 fps however evenly spaced.
+- The escalation path is longer than a single lever would be, and a reader has to
+  hold four steps rather than one. The alternative was worse: one lever is either
+  useless on a readback-bound pipeline or unavailable on a decode-bound one, and
+  two levers behind a classification needs an observable that does not exist.
 - Escalation is a feedback loop against a measurement that already lags reality.
   The hysteresis is what keeps it stable, and hysteresis chosen badly is its own
   failure mode.
@@ -320,7 +645,9 @@ does not deliver.
 
 ## Validation
 
-Not yet performed — this ADR proposes the change, it does not record it. What
+Two items are done and struck through below with their results: the D3D11VA
+prerequisite, and whether the ladder has a usable middle. Everything else is
+unperformed, because this ADR proposes the change and does not record it. What
 would have to hold:
 
 - **2160p60 fixture, video-only, 30 s window:** lag falls from 13.1 s to inside
@@ -336,14 +663,52 @@ would have to hold:
   destructive and it needs its own fixture; the corpus has none today.
 - **Escalation as a pure function** of lateness, current level and hysteresis —
   testable without FFmpeg, a decoder, or a clock.
-- **That `skip_frame` suppresses frame output on the D3D11VA path — the
-  prerequisite.** Not a tuning measurement: if a skipped frame is still returned
-  and still read back, the mechanism does not address the demonstrated bottleneck
-  and this ADR should not be accepted as written. Check it first, before the
-  threshold and the hysteresis, because everything else is downstream of the
-  answer.
-- **How much decode work the hardware path actually saves**, separately. This one
-  is tuning — it changes how fast escalation recovers, not whether it does.
+- ~~**That `skip_frame` suppresses frame output on the D3D11VA path.**~~
+  **Done** — ~15 s to ~0.26 s at `NONKEY`, three runs each, Decision §4. On one
+  machine and one fixture; the mechanism is established, the factor is not
+  claimed to generalise.
+- ~~**That escalation has a usable middle on B-frame-free content.**~~ **Done** —
+  a proportional readback skip gives 13.7 s / 5.9 s / 0.029 s at 1-in-1 / 1-in-2 /
+  1-in-3, against `NONKEY`'s single step to 0.265 s. Decision §2.
+- ~~**That the readback skip spaces frames evenly, not in bursts.**~~ **Done** —
+  PTS traced for every kept frame: 582 of 582 intervals exactly three frame
+  durations at 1 in 3, zero deviation. Decision §2.
+- ~~**That the skip stays even on reordered video.**~~ **Done** — 596 kept frames
+  on a 445-B-frame fixture, 595 of 595 intervals exactly three frame durations,
+  PTS monotonic. `avcodec_receive_frame` returns frames in presentation order, so
+  the counter and the PTS rule agree. Decision §2.
+- **That the selection rule converges on the right lever — the third acceptance
+  condition.** Two failures to rule out, in both directions. A decode-bound
+  pipeline can improve briefly when a readback rung reduces contention, which the
+  rule reads as thinning working and sits on. A readback-bound one can have a real
+  improvement obscured by noise, and be sent into the destructive steps that a
+  further rung would have avoided. The settle window has to separate a transient
+  from a trend in the first case and signal from noise in the second, and it is
+  unmeasured.
+  <br>This is the one condition that cannot be answered before an implementation
+  exists, because the question is about a running policy's behaviour. A prototype
+  behind the off switch, on a decode-bound fixture and a readback-bound one, is
+  what settles it.
+- **That "thinning stopped helping" is a usable signal at runtime.** It replaced a
+  fixed 1-in-8 cap, which measured well here and would have misclassified a slower
+  machine that was still recovering at that rung. The rule needs no constant, but
+  it does need lateness to be readable accurately enough to tell an improving rung
+  from a stalled one — which is a question about the settle window, and unmeasured.
+- **Where the picture-rate floor sits.** It overrides the improvement rule and can
+  fire while thinning is still helping, so it decides how much picture a pipeline
+  is allowed to shed before trying the destructive steps instead. Unmeasured, and
+  in *Open questions* with the other constants.
+- **That a decode-bound pipeline shows no improvement at the first rung**, so it
+  leaves the readback steps quickly rather than walking all four. Reasoned from
+  every frame still being decoded; no decode-bound fixture has been run.
+- ~~**`NONREF` and `BIDIR` on content that actually contains those frames.**~~
+  **Done** — on a B-frame fixture, `NONREF` cuts lag 13.9 s to 4.2 s and `BIDIR`
+  recovers fully at 0.013 s. Decision §2. The corpus still cannot produce such a
+  fixture; this used a locally generated NVENC one, so the measurement is
+  repeatable on an NVIDIA machine and not in CI.
+- **How much decode work the hardware path actually saves**, separately from the
+  downstream saving. Tuning — it changes how fast escalation recovers, not whether
+  it does.
 - **The policy switched off yields today's behaviour exactly** — every frame
   decoded, lag free to grow. The opt-out is only worth having if it is the
   complete-but-slow path and not a degraded version of it.
@@ -353,18 +718,23 @@ would have to hold:
 
 ## Open questions
 
-- **The threshold and the hysteresis.** Both are empirical and both go in this ADR
-  when measured. `VideoPresentationLag` is how they get chosen.
-- **How much of the saving is decode-side on hardware paths.** Decision §4 splits
-  the guaranteed part from the driver-dependent part; this is the size of the
-  second. Tuning, not a prerequisite — the prerequisite is that output suppression
-  holds at all, which Validation puts first.
+- **The threshold, the hysteresis, the settle window, and the picture-rate floor.**
+  All empirical, all chosen from `VideoPresentationLag`, and all going in this ADR
+  when measured rather than now. The floor is the one with a visible trade in it:
+  set high, a pipeline reaches the destructive steps sooner; set low, it presents
+  almost nothing before it gets there.
+- **How much of the saving is decode-side on hardware paths.** Output suppression
+  is confirmed and is the half that matters on a readback-bound pipeline; this is
+  the size of the other half. Tuning — it changes how fast escalation recovers,
+  not whether it does.
 - **What a richer non-realtime mode would offer** beyond the off switch in
   Consequences — rate control, completion guarantees. Out of scope; the switch is
   not.
-- **Whether `AVDISCARD_BIDIR` earns its place** between NONREF and NONKEY, or
-  whether two levels are enough. Three is proposed on the grounds that the jump
-  from NONREF to keyframes-only is very large.
+- ~~**What the ladder does on content with no B-frames.**~~ **Settled** — the
+  middle rung is a proportional readback skip, not a `skip_frame` level, and it
+  applies to the pipeline #82 was found on. Decision §2. The `skip_frame` ladder
+  keeps its cliff on the decode-bound path, accepted there rather than solved,
+  because no proportional way exists to decode part of a reference chain.
 - **What happens across a seek** while escalated. The level should reset with the
   run, on the same reasoning that `PresentationLag` reports null on a fresh run.
 

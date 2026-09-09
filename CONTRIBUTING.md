@@ -113,7 +113,7 @@ dotnet test ./FrameFlow.slnx --nologo
 `scripts/run-tests.sh` is the faster path — it fans one `dotnet test` process out
 per project, and expects a prior `dotnet build`.
 
-`frameflow.runsettings` carries the timeouts and the `FRAMEFLOW_VISUAL_TESTS` gate.
+`tests/frameflow.runsettings` carries the timeouts and the `FRAMEFLOW_VISUAL_TESTS` gate.
 The SDL tests open a real window and stay skipped unless you set it to `1`.
 
 Two corpus fixtures cannot be produced by the pinned FFmpeg build, because x264 and

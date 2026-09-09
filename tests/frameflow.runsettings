@@ -3,7 +3,7 @@
   FrameFlow test run configuration.
 
   Usage:
-    dotnet test -settings frameflow.runsettings
+    dotnet test -settings tests/frameflow.runsettings
 
   Visual SDL tests are skipped by default because they require a display and
   a real SDL window.  Set FRAMEFLOW_VISUAL_TESTS=1 in your environment (or edit
