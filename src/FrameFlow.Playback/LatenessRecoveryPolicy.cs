@@ -13,10 +13,10 @@ namespace FrameFlow.Playback;
 /// Copy one frame in N from the decoder to host memory. 1 copies every frame.
 /// </param>
 /// <param name="Discard">What the decoder itself stops producing.</param>
-public readonly record struct RecoveryStep(int ReadbackEveryN, DecodeDiscardLevel Discard);
+internal readonly record struct RecoveryStep(int ReadbackEveryN, DecodeDiscardLevel Discard);
 
 /// <summary>Why <see cref="LatenessRecoveryPolicy"/> moved, for the transcript.</summary>
-public enum RecoveryMove
+internal enum RecoveryMove
 {
     /// <summary>Lateness is inside the band; nothing changed.</summary>
     Hold,
@@ -36,11 +36,20 @@ public enum RecoveryMove
 }
 
 /// <summary>A decision, and the reason, so a run can be read back afterwards.</summary>
-public readonly record struct RecoveryDecision(int StepIndex, RecoveryMove Move);
+internal readonly record struct RecoveryDecision(int StepIndex, RecoveryMove Move);
 
 /// <summary>
 /// The ordered path a late pipeline walks, and the rule that walks it. Pure: no
 /// clock, no decoder, no I/O. Every input is a parameter.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Internal, along with <see cref="RecoveryStep"/>, <see cref="RecoveryMove"/> and
+/// <see cref="RecoveryDecision"/>. A caller configures the walk through
+/// <see cref="LatenessRecoveryOptions"/> and never needs to reach the rungs
+/// themselves, and the shape of the path is still moving — two of its rules
+/// changed while the prototype was being measured. Publishing it would fix that
+/// shape before it has earned the right to be fixed.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -68,7 +77,7 @@ public readonly record struct RecoveryDecision(int StepIndex, RecoveryMove Move)
 /// decision so a run can be replayed and the wrong turns found.
 /// </para>
 /// </remarks>
-public static class LatenessRecoveryPolicy
+internal static class LatenessRecoveryPolicy
 {
     /// <summary>
     /// The path. Index 0 is untouched playback; the readback rungs run to
@@ -81,7 +90,7 @@ public static class LatenessRecoveryPolicy
     /// switch rather than reset — a pipeline limited by both costs keeps whatever
     /// the copy skipping bought it.
     /// </remarks>
-    public static readonly IReadOnlyList<RecoveryStep> Path =
+    internal static readonly IReadOnlyList<RecoveryStep> Path =
     [
         new(1, DecodeDiscardLevel.None),
         new(2, DecodeDiscardLevel.None),
@@ -94,10 +103,10 @@ public static class LatenessRecoveryPolicy
     ];
 
     /// <summary>First index that costs decoded frames rather than copies.</summary>
-    public static readonly int FirstDiscardStep = 5;
+    internal static readonly int FirstDiscardStep = 5;
 
     /// <summary>Last index on the path.</summary>
-    public static int LastStep => Path.Count - 1;
+    internal static int LastStep => Path.Count - 1;
 
     /// <summary>
     /// Decides the next rung from the current one and how lateness moved over the
@@ -119,7 +128,7 @@ public static class LatenessRecoveryPolicy
     /// and the whole climb repeating.
     /// </param>
     /// <param name="options">The band, the improvement bar, and the dwell.</param>
-    public static RecoveryDecision Decide(
+    internal static RecoveryDecision Decide(
         int stepIndex,
         TimeSpan lag,
         TimeSpan? lagAtWindowStart,

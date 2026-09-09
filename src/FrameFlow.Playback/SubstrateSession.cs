@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Diagnostics;
 using FrameFlow.Media;
 using FrameFlow.Decoding;
 using FrameFlow.Media.Diagnostics;
@@ -264,6 +265,7 @@ internal sealed class SubstrateSession : IPlaybackSession
         var step = 0;
         TimeSpan? lagAtWindowStart = null;
         var recoveredFor = TimeSpan.Zero;
+        var lastTick = Stopwatch.GetTimestamp();
 
         try
         {
@@ -288,10 +290,16 @@ internal sealed class SubstrateSession : IPlaybackSession
                     continue;
                 }
 
+                // Real elapsed time, not the nominal period. A PeriodicTimer tick can
+                // arrive late or be coalesced, and RelaxAfter is a duration now, so
+                // crediting a full window per observation would let a twelve-second
+                // dwell be satisfied by rather less than twelve seconds.
+                var now = Stopwatch.GetTimestamp();
+                var sinceLastTick = Stopwatch.GetElapsedTime(lastTick, now);
+                lastTick = now;
+
                 recoveredFor =
-                    lag <= options.RelaxBelow
-                        ? recoveredFor + options.SettleWindow
-                        : TimeSpan.Zero;
+                    lag <= options.RelaxBelow ? recoveredFor + sinceLastTick : TimeSpan.Zero;
 
                 var decision = LatenessRecoveryPolicy.Decide(
                     step,

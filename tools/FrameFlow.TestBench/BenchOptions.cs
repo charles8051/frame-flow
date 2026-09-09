@@ -97,10 +97,21 @@ internal sealed record BenchOptions
             TimeSpan Duration(string flag)
             {
                 var raw = Next(flag)!;
-                return CommandParser.ParseDuration(raw)
+                var parsed =
+                    CommandParser.ParseDuration(raw)
                     ?? throw new BadUsage(
                         $"{flag} needs a duration, got '{raw}'. " + CommandParser.DurationHelp
                     );
+
+                // Rejected here rather than by LatenessRecoveryOptions. The options
+                // record throws while the controller is being built, which is past
+                // the point where a usage error can still be reported as one — the
+                // bench would exit on an unhandled exception instead of printing the
+                // usage line and returning 2.
+                if (parsed <= TimeSpan.Zero)
+                    throw new BadUsage($"{flag} needs a positive duration, got '{raw}'");
+
+                return parsed;
             }
 
             try
