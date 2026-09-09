@@ -122,9 +122,9 @@
     they receive them transitively at publish time.
   -->
   <ItemGroup>
-    <None Include="$(MSBuildThisFileDirectory)../../LICENSE-LGPL-3.0.txt" Pack="true" PackagePath="/" />
-    <None Include="$(MSBuildThisFileDirectory)../../LICENSE-GPL-3.0.txt" Pack="true" PackagePath="/" />
-    <None Include="$(MSBuildThisFileDirectory)../../LICENSE-Apache-2.0.txt" Pack="true" PackagePath="/" />
-    <None Include="$(MSBuildThisFileDirectory)../../LICENSE-LGPL-2.1.txt" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../../licenses/LICENSE-LGPL-3.0.txt" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../../licenses/LICENSE-GPL-3.0.txt" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../../licenses/LICENSE-Apache-2.0.txt" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../../licenses/LICENSE-LGPL-2.1.txt" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>
