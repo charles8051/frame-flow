@@ -5,8 +5,9 @@
 Proposed (2026-09-08). Draft pending number assignment.
 
 The prerequisite is **confirmed** (2026-09-09): `skip_frame` suppresses frame
-output on the D3D11VA path, and lag on the 2160p60 fixture falls from 14.9 s to
-0.265 s at `AVDISCARD_NONKEY`. Measurements in Decision §4.
+output on the D3D11VA path. On the 2160p60 fixture, lag falls from ~15 s to
+~0.26 s at `AVDISCARD_NONKEY` — about 58x — over three runs at each level.
+Measurements and conditions in Decision §4.
 
 What that measurement also found is a gap in Decision §2 rather than in the
 prerequisite: on content without B-frames the ladder has no usable middle. See
@@ -140,15 +141,16 @@ layer. ADR-0009 put timing outside it, and a decoder that read the master clock
 to make its own skip decisions would widen that boundary for no gain: the layer
 that already owns the policy also already has the number.
 
-**The level is a command, not a field write.** `AVCodecContext` is not a
-thread-safe control surface, and the decode worker is inside
-`avcodec_send_packet` / `avcodec_receive_frame` on it continuously. Playback
-posts the requested level; the decoder's own worker applies it to the codec
-context between packets, where it already owns the context exclusively. So the
-setter is asynchronous by contract — a caller sets a level and it takes effect on
-the next packet boundary, not on return — and that is the only ordering the
-policy needs, because lateness is measured over seconds and a packet is
-milliseconds.
+**The setter is synchronous and takes the decoder's existing lock.**
+`AVCodecContext` is not a thread-safe control surface and the decode worker is on
+it continuously, but that problem is already solved: `VideoDecoder` serialises
+`avcodec_send_packet`, `avcodec_receive_frame` and `Flush` under `_codecSync`, so
+a setter taking the same lock writes the field while no decode call is in it. The
+level is in effect when the call returns.
+
+An earlier draft specified a posted command applied between packets, and an
+asynchronous-by-contract setter to go with it. That was machinery for a race the
+existing lock already prevents. See Decision §3.
 
 ### 2. The decoder's discard level escalates and de-escalates
 
@@ -181,10 +183,15 @@ rather than exotic. Measured on the 2160p60 fixture, whose encoder emits none:
 | `BIDIR` | 997 | `00:13.408` |
 | `NONKEY` | **114** | **`00:00.265`** |
 
+One run each, under the conditions in Decision §4; the two middle rows sit inside
+the ~15% run-to-run spread that section records for the baseline, so read them as
+"no effect" rather than as small effects.
+
 `ffprobe` over the first 10 s finds 564 P-frames and 36 I-frames and no B-frames
 at all. Every P-frame is a reference frame, so `NONREF` and `BIDIR` have nothing
-to discard and both rows are noise. `NONKEY` matches its own arithmetic — 36 I per
-10 s is ~108 in 30 s, against 114 measured.
+to discard, which is why those rows move nothing. `NONKEY` matches its own
+arithmetic — 36 I per 10 s is ~108 in 30 s, against 114 measured, and it repeats
+at exactly 114 across three runs.
 
 So on such content escalation is a binary choice between decoding everything and
 decoding one frame in eight. `skip_frame` cannot offer anything between, because
@@ -235,14 +242,42 @@ makes the readback saving hold on D3D11VA, and it is the load-bearing one.
 D3D11VA path this failure was found on, with `skip_frame` pinned and everything
 else unchanged:
 
-| `skip_frame` | decoded / 30 s | presented | lag |
-| --- | --- | --- | --- |
-| `NONE` | 908 | 907 | `00:14.902` |
-| `NONKEY` | 114 | 106 | `00:00.265` |
+Three runs at each level, alternating, same process configuration:
 
-Lag falls by two orders of magnitude and the decoder walks the whole 30 s of
-content instead of falling 15 s behind it. Frames suppressed at the decoder are
-not read back, on the hardware path, which is the guarantee the saving rests on.
+| `skip_frame` | decoded / 30 s | lag |
+| --- | --- | --- |
+| `NONE` | 863, 906, 901 | `15.641`, `14.925`, `15.014` |
+| `NONKEY` | 114, 114, 114 | `0.263`, `0.259`, `0.257` |
+
+**About 58x less lag**, and eight times fewer frames returned. `NONKEY` is
+deterministic to the frame across runs, which is what decoding exactly the
+keyframes looks like.
+
+**Why this shows suppression at the decoder and not dropping downstream.**
+`decoded` is `VideoDecoder._framesDecoded`, incremented in `BuildFrame` — which
+returns the frame `ReceiveFrame` stashed, *after* the hardware readback that
+`ReceiveFrame` performs. It is a post-readback counter. 114 rather than ~900
+therefore means ~900 readbacks did not happen, not that they happened and the
+frames were discarded later. Downstream dropping would leave `decoded` at its
+baseline and show up in `dropped` / `sync-dropped`, which stayed at 0 and 1.
+
+**Run conditions.** RTX 3080 Ti, driver 32.0.16.1047, Threadripper PRO 5945WX,
+Windows 11. `bench-2160p60-h264-aac.mp4` via
+`FrameFlow.TestBench -c Release -- <fixture> --no-audio --script` running
+`play` / `wait 30s` / `diag` / `quit`, headless presenter, default pool capacity.
+The only variable is `skip_frame`, pinned at construction by a temporary probe on
+`VideoDecoder`; the probe was reverted and is not in the tree. `decoded` and `lag`
+are read from the single `diag` at the end of the 30 s window, so each row is one
+sample of a cumulative counter and one instantaneous lag reading, not an average.
+
+**On the baseline moving.** Context above records 1017 decoded for the same
+nominal scenario, against 863–906 here. Different worktree and a machine that had
+just generated the corpus; the decode-bound baseline is sensitive to load in a way
+`NONKEY` is not. Both are the same phenomenon and the spread is roughly 15%, which
+is why the comparison is drawn against the three runs in this table rather than
+across sessions. The effect being claimed is 8x in frames and 58x in lag, so it
+survives that spread by a wide margin — but it is measured on one machine and one
+fixture, and nothing here establishes the factor generalises.
 
 The decode-side saving is still not separated from the downstream one by this
 measurement, and does not need to be: on a readback-bound pipeline the downstream
@@ -362,8 +397,9 @@ does not deliver.
 
 ## Validation
 
-Not yet performed — this ADR proposes the change, it does not record it. What
-would have to hold:
+One item is done: the D3D11VA prerequisite, struck through below with its result.
+Everything else is unperformed, because this ADR proposes the change and does not
+record it. What would have to hold:
 
 - **2160p60 fixture, video-only, 30 s window:** lag falls from 13.1 s to inside
   the escalation threshold; presented frame count falls; position tracks content;
@@ -379,7 +415,9 @@ would have to hold:
 - **Escalation as a pure function** of lateness, current level and hysteresis —
   testable without FFmpeg, a decoder, or a clock.
 - ~~**That `skip_frame` suppresses frame output on the D3D11VA path.**~~
-  **Done** — 14.9 s to 0.265 s at `NONKEY`, Decision §4.
+  **Done** — ~15 s to ~0.26 s at `NONKEY`, three runs each, Decision §4. On one
+  machine and one fixture; the mechanism is established, the factor is not
+  claimed to generalise.
 - **`NONREF` and `BIDIR` on content that actually contains those frames.** Not
   possible on this corpus: the pinned FFmpeg is an LGPL build without libx264, and
   libopenh264 emits no B-frames, so every fixture is all-reference P plus I. The
