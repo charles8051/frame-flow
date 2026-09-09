@@ -9,7 +9,7 @@ namespace FrameFlow.Graph.Tests;
 
 /// <summary>
 /// Behaviour and ownership tests for <see cref="SyncJoinNode{TPrimary, TSecondary, TOut}"/>
-/// (ADR-0069). Covers both match policies, the no-match path, window eviction,
+/// (the sync-window-join ADR). Covers both match policies, the no-match path,
 /// the two termination rules, and refcount balance across all of them.
 /// </summary>
 /// <remarks>
@@ -388,9 +388,10 @@ public sealed class SyncJoinTests
     [Fact]
     public async Task PrimaryEos_TerminatesAgainstAnUnboundedSecondary()
     {
-        // The regression this node's termination rule exists for. Draining the
-        // secondary to completion would wait for a writer that never completes,
-        // so RunAsync would never return even after cancellation.
+        // An unbounded secondary keeps the join pump alive past primary EOS, by
+        // design: it must keep draining or the secondary's upstream blocks. The
+        // graph therefore ends on cancellation, and must actually end — a pump
+        // that waited on the secondary's writer completing would hang here.
         var join = Join(SyncMatch.MostRecentAtOrBefore, window: Ms(10_000));
 
         var emitted = 0;
@@ -436,11 +437,22 @@ public sealed class SyncJoinTests
 
         var run = graph.RunAsync(cts.Token);
 
-        await allSeen.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        try
+        {
+            await allSeen.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch
+        {
+            // Cancel before the CTS is disposed, or a timeout here leaves the
+            // graph running against a disposed token for the rest of the run.
+            cts.Cancel();
+            throw;
+        }
         Assert.Equal(2, got.Count);
 
-        // The join pump has now exited (primary EOS). Cancel so the unbounded
-        // source stops, and assert the graph actually winds up.
+        // Both primaries are out. Cancel so the unbounded source stops, and
+        // assert the graph actually winds up rather than hanging on the
+        // secondary.
         cts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => run.WaitAsync(TimeSpan.FromSeconds(10))
@@ -448,6 +460,238 @@ public sealed class SyncJoinTests
 
         Assert.Equal(0, join.RetainedCount);
         Assert.All(ticks, t => Assert.Equal(0, t.RefCount));
+    }
+
+    [Fact]
+    public async Task PrimaryEos_DrainsALaggingSecondarySoTheGraphCompletes()
+    {
+        // A finite secondary with more pending items than the edge's free
+        // capacity. If the pump stopped reading at primary EOS, that upstream
+        // would block in WriteAsync and RunAsync would never return — which is
+        // what SubstrateSession waits on before raising OnEndOfStream.
+        var join = Join(SyncMatch.MostRecentAtOrBefore, window: Ms(10_000));
+
+        var spans = Enumerable
+            .Range(0, 12)
+            .Select(i => RefBox.Of(new Span(Ms(i * 10), Ms(i * 10), $"s{i}")))
+            .ToArray();
+
+        int s = 0;
+        var lagging = new SourceNode<RefBox<Span>>(
+            "lagging-secondary",
+            async ct =>
+            {
+                await Task.Delay(5, ct).ConfigureAwait(false);
+                return s < spans.Length ? spans[s++] : null;
+            }
+        );
+
+        var ticks = new[] { RefBox.Of(new Tick(Ms(0))), RefBox.Of(new Tick(Ms(10))) };
+
+        var got = new List<string>();
+        var graph = new GraphRunner();
+        graph.Pipeline(lagging).ToSecondary(join, EdgeOptions.Buffered(4));
+        graph.Pipeline(EmitAfterRetained(join, 1, ticks)).ToPrimary(join);
+        graph.Pipeline(join.Output).To(CollectInto(got));
+
+        await graph.RunAsync().WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.Equal(2, got.Count);
+        Assert.Equal(0, join.RetainedCount);
+        // Every secondary is accounted for, admitted or discarded post-EOS.
+        Assert.All(spans, x => Assert.Equal(0, x.RefCount));
+        Assert.All(ticks, t => Assert.Equal(0, t.RefCount));
+    }
+
+    // ── Failure policy ──────────────────────────────────────────────────
+
+    private sealed class BoomException : Exception { }
+
+    [Theory]
+    [InlineData(FailureResponse.Propagate)]
+    [InlineData(FailureResponse.Discard)]
+    public async Task BodyThrow_HonoursTheFailurePolicy(FailureResponse policy)
+    {
+        var ticks = new[] { RefBox.Of(new Tick(Ms(10))), RefBox.Of(new Tick(Ms(20))) };
+        var calls = 0;
+
+        var join = new SyncJoinNode<RefBox<Tick>, RefBox<Span>, RefBox<string>>(
+            "join",
+            (_, _, _) =>
+            {
+                Interlocked.Increment(ref calls);
+                throw new BoomException();
+            },
+            Keys,
+            SyncMatch.Within,
+            Ms(10_000),
+            onError: policy
+        );
+
+        var got = new List<string>();
+        var graph = new GraphRunner();
+        graph.Pipeline(Emit("secondary", Array.Empty<RefBox<Span>>())).ToSecondary(join);
+        graph.Pipeline(Emit("primary", ticks)).ToPrimary(join);
+        graph.Pipeline(join.Output).To(CollectInto(got));
+
+        if (policy == FailureResponse.Propagate)
+        {
+            await Assert.ThrowsAsync<BoomException>(() => graph.RunAsync());
+            Assert.Equal(1, calls);
+        }
+        else
+        {
+            await graph.RunAsync();
+            Assert.Equal(2, calls);
+        }
+
+        Assert.Empty(got);
+        Assert.All(ticks, t => Assert.Equal(0, t.RefCount));
+    }
+
+    [Fact]
+    public async Task SecondaryKeySelectorThrow_FaultsPromptlyUnderPropagate()
+    {
+        // The fault must reach the caller even though the primary never EOSes
+        // on its own: cancelling at the fault site is what stops the primary,
+        // and the secondary's exception has to survive that cancellation.
+        var spans = new[] { RefBox.Of(new Span(Ms(0), Ms(10), "bad")) };
+
+        var join = new SyncJoinNode<RefBox<Tick>, RefBox<Span>, RefBox<string>>(
+            "join",
+            Record(),
+            new SyncJoinKeys<RefBox<Tick>, RefBox<Span>>(
+                p => p.Value.At,
+                _ => throw new BoomException()
+            ),
+            SyncMatch.MostRecentAtOrBefore,
+            Ms(10_000)
+        );
+
+        var endless = new SourceNode<RefBox<Tick>>(
+            "endless-primary",
+            async ct =>
+            {
+                await Task.Delay(5, ct).ConfigureAwait(false);
+                return RefBox.Of(new Tick(Ms(0)));
+            }
+        );
+
+        var got = new List<string>();
+        var graph = new GraphRunner();
+        graph.Pipeline(Emit("secondary", spans)).ToSecondary(join, EdgeOptions.Buffered(4));
+        graph.Pipeline(endless).ToPrimary(join);
+        graph.Pipeline(join.Output).To(CollectInto(got));
+
+        await Assert.ThrowsAsync<BoomException>(
+            () => graph.RunAsync().WaitAsync(TimeSpan.FromSeconds(15))
+        );
+
+        Assert.All(spans, x => Assert.Equal(0, x.RefCount));
+    }
+
+    // ── Pass-through ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task BodyReturningTheSecondary_ForwardsItRatherThanDisposingIt()
+    {
+        // The example relies on primary pass-through; this is the other half of
+        // the same rule. Disposing the returned secondary here would release the
+        // window's own ref, and the next Evict would throw on a live entry.
+        var join = new SyncJoinNode<RefBox<Tick>, RefBox<Span>, RefBox<Span>>(
+            "join",
+            (_, secondary, _) => ValueTask.FromResult(secondary),
+            Keys,
+            SyncMatch.MostRecentAtOrBefore,
+            Ms(10_000)
+        );
+
+        var spans = new[] { RefBox.Of(new Span(Ms(0), Ms(0), "shared")) };
+        var ticks = new[] { RefBox.Of(new Tick(Ms(10))), RefBox.Of(new Tick(Ms(20))) };
+
+        var seen = new List<string>();
+        var sink = new SinkNode<RefBox<Span>>(
+            "collect",
+            (item, _) =>
+            {
+                lock (seen)
+                    seen.Add(item.Value.Tag);
+                return ValueTask.CompletedTask;
+            }
+        );
+
+        var graph = new GraphRunner();
+        graph.Pipeline(Emit("secondary", spans)).ToSecondary(join, EdgeOptions.Buffered(8));
+        graph.Pipeline(EmitAfterRetained(join, 1, ticks)).ToPrimary(join);
+        graph.Pipeline(join.Output).To(sink);
+
+        await graph.RunAsync();
+
+        Assert.Equal(new[] { "shared", "shared" }, seen);
+        Assert.All(spans, x => Assert.Equal(0, x.RefCount));
+        Assert.All(ticks, t => Assert.Equal(0, t.RefCount));
+    }
+
+    // ── Window ordering ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Eviction_DoesNotLetALongIntervalShieldExpiredEntries()
+    {
+        // Entries are ordered by From, not by To. A long span admitted first
+        // must not stop the eviction scan and keep later, expired entries alive.
+        var join = Join(SyncMatch.MostRecentAtOrBefore, window: Ms(100));
+
+        var spans = new[]
+        {
+            RefBox.Of(new Span(Ms(0), Ms(100_000), "long")),  // To is far ahead
+            RefBox.Of(new Span(Ms(10), Ms(20), "short")),     // aged out at t=500
+        };
+        var ticks = new[] { RefBox.Of(new Tick(Ms(500))) };
+
+        var got = new List<string>();
+        var graph = new GraphRunner();
+        graph.Pipeline(Emit("secondary", spans)).ToSecondary(join, EdgeOptions.Buffered(8));
+        graph.Pipeline(EmitAfterRetained(join, 2, ticks)).ToPrimary(join);
+        graph.Pipeline(join.Output).To(CollectInto(got));
+
+        await graph.RunAsync();
+
+        // "short" is evicted despite sitting behind "long"; only "long" remains
+        // to match, and it is the newest entry at-or-before 500ms that survives.
+        Assert.Equal(new[] { "500=long" }, got);
+        Assert.All(spans, x => Assert.Equal(0, x.RefCount));
+    }
+
+    // ── Re-run ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SecondRunAsync_StartsFromAnEmptyWindow()
+    {
+        // RepeatMode.One rewinds by re-running the graph instance. A join must
+        // not match post-rewind primaries against pre-rewind secondaries.
+        var join = Join(SyncMatch.MostRecentAtOrBefore, window: Ms(10_000));
+
+        var spans = new[] { RefBox.Of(new Span(Ms(0), Ms(0), "first-run")) };
+        var ticks = new[] { RefBox.Of(new Tick(Ms(10))) };
+
+        var got = new List<string>();
+        var graph = new GraphRunner();
+        graph.Pipeline(Emit("secondary", spans)).ToSecondary(join, EdgeOptions.Buffered(8));
+        graph.Pipeline(EmitAfterRetained(join, 1, ticks)).ToPrimary(join);
+        graph.Pipeline(join.Output).To(CollectInto(got));
+
+        await graph.RunAsync();
+        Assert.Equal(new[] { "10=first-run" }, got);
+        Assert.Equal(0, join.RetainedCount);
+
+        // Both sources are exhausted, so the second run has no secondary at all.
+        // The primary must still be emitted, unmatched.
+        got.Clear();
+        await graph.RunAsync();
+
+        Assert.Empty(got);
+        Assert.Equal(0, join.RetainedCount);
+        Assert.All(spans, x => Assert.Equal(0, x.RefCount));
     }
 
     // ── Ownership ───────────────────────────────────────────────────────

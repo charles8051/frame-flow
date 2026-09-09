@@ -152,10 +152,11 @@ public sealed class Graph
         }
 
         // Pumps handle fault-propagation internally: each pump's
-        // finally cancels graphCts if it exits via exception (and the
-        // join pump cancels even on clean exit, to stop upstream
-        // sources from producing into a dead consumer). Sibling pumps
-        // observe cancellation and exit cleanly.
+        // finally cancels graphCts if it exits via exception. Sibling
+        // pumps observe cancellation and exit cleanly. No pump cancels
+        // on a clean exit — one branch reaching EOS says nothing about
+        // the others, so a pump that has nothing left to do drains its
+        // inputs instead of tearing the graph down.
         //
         // The OCE-suppression below distinguishes "caller cancelled
         // the graph" (legitimate, propagate) from "a pump triggered

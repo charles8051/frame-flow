@@ -20,16 +20,17 @@ using FrameFlow.Graph;
 namespace FrameFlow.Examples.LiveCaptioning;
 
 /// <summary>
-/// Live-captioning + multicast object-detection demo on the
-/// player surface (<see cref="MediaPlayer"/>).
-/// The decoded video stream fans out (via a configurator-terminated
-/// SinkNode that clones each frame) into two independent consumers
-/// at different rates: a presenter branch that renders frames at
-/// display rate with overlaid captions, and an inference branch
-/// that runs YOLOv8 at its own (much slower) rate via a skip-while-
-/// busy worker. Captions come from the existing
-/// <see cref="FrameFlow.Whisper"/> caption pipeline, fed from a
-/// <see cref="PipelineBridge{T}"/> on the audio side.
+/// Live-captioning + object-detection demo on the player surface
+/// (<see cref="MediaPlayer"/>).
+/// The decoded video stream fans out at the edge into two consumers
+/// running at their own rates: a display branch carrying frames to the
+/// presenter with overlaid captions, and an inference branch running
+/// YOLOv8 behind a <c>LatestWins(1)</c> edge that drops whatever
+/// arrives mid-detection. Detections rejoin the display path by frame
+/// PTS through a <see cref="SyncJoinNode{TPrimary, TSecondary, TOut}"/>
+/// (the sync-window-join ADR). Captions come from the existing
+/// <see cref="FrameFlow.Whisper"/> caption pipeline, fed over a bounded
+/// channel from a tap on the audio side.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -64,7 +65,7 @@ namespace FrameFlow.Examples.LiveCaptioning;
 ///     arriving during a detection are dropped and disposed by the
 ///     channel. Detections rejoin the display path through a
 ///     <see cref="SyncJoinNode{TPrimary, TSecondary, TOut}"/> keyed on
-///     frame PTS (ADR-0069), so the overlay tracks the picture rather
+///     frame PTS (the sync-window-join ADR), so the overlay tracks the
 ///     than whenever inference happened to finish.</item>
 ///   <item><b>Terminal sink.</b> Per frame: reads
 ///     <see cref="CaptionTimeline"/> for the frame's PTS, marshals the
@@ -73,10 +74,12 @@ namespace FrameFlow.Examples.LiveCaptioning;
 /// </list>
 /// <para>
 /// <b>Three concurrent rates preserved.</b> Audio runs at decode rate
-/// through OpenAL. Video runs at decode rate to the terminal sink, so
-/// the detection branch sees frames as fast as they are produced.
-/// Detection runs at its own much slower rate, bounded by the
-/// LatestWins edge rather than by a flag.
+/// through OpenAL. Video is clock-paced before the configurator sees
+/// it — <c>SubstrateSession.BuildGraph</c> inserts <c>PaceUntil</c>
+/// ahead of the configurator-only path — so both the display branch and
+/// the detection branch see frames at presentation rate. Detection then
+/// runs at its own much slower rate, bounded by the LatestWins edge
+/// rather than by a flag.
 /// </para>
 /// </remarks>
 public partial class MainWindow : Window
@@ -100,7 +103,7 @@ public partial class MainWindow : Window
 
     // YOLO detection runs as a graph branch on a LatestWins(1) edge; the
     // edge's drop-oldest gives one-detection-at-a-time for free, so there is
-    // no busy flag here any more (ADR-0069). Results rejoin the display path
+    // no busy flag here any more. Results rejoin the display path
     // through a sync join keyed on frame PTS.
     private static readonly TimeSpan DetectionWindow = TimeSpan.FromSeconds(2);
 
@@ -429,9 +432,9 @@ public partial class MainWindow : Window
             // AddRef'd ref into the bridge; the original passes through
             // unchanged to OpenAL.
             //
-            // configureVideo: configurator-terminated. The video sink
-            // is null because the terminal SinkNode handles both the
-            // presenter (view) and inference (YOLO) branches itself.
+            // configureVideo: configurator-terminated. The video sink is null
+            // because the configurator wires its own topology — the detection
+            // branch, the join, and the terminal sink that presents.
             _player = await MediaPlayer.CreateAsync(
                 source: MediaSource.FromFile(path),
                 videoSink: null, // configurator-terminated — see below
@@ -468,7 +471,7 @@ public partial class MainWindow : Window
                         return chain;
                     }
 
-                    // ── Detection branch and rejoin (ADR-0069) ──
+                    // ── Detection branch and rejoin ──
                     //
                     // YOLO is a sibling branch on a LatestWins(1) edge. That edge's
                     // drop-oldest IS the skip-while-busy behaviour the hand-rolled
@@ -528,14 +531,6 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 1→1 audio operator that taps each decoded PCM buffer for the
-    /// Whisper graph. Wraps the buffer in a fresh AddRef'd
-    /// <see cref="PcmAudioBufferRef"/> and writes it to the bridge
-    /// channel; the original buffer ref continues downstream to the
-    /// OpenAL sink. The bridge channel's DropOldest policy means
-    /// Whisper-side back-pressure can't stall the OpenAL audio path.
-    /// </summary>
-    /// <summary>
     /// One frame's YOLO detections, keyed by that frame's PTS. Point-valued on
     /// the media timeline, which is why the join matches it with
     /// <see cref="SyncMatch.MostRecentAtOrBefore"/> rather than
@@ -578,12 +573,30 @@ public partial class MainWindow : Window
             {
                 try
                 {
+                    // In --gpu mode the terminal sink presents nothing unless the
+                    // decoder actually yielded a GpuVideoFrame. Skip inference on
+                    // the software-fallback path for the same reason: detections
+                    // over a view that never draws are worse than none, and
+                    // before this branch existed the sink's guard sat ahead of
+                    // both present and inference. The sink logs the one warning.
+                    if (_useGpu && item.Frame is not GpuVideoFrame)
+                        return null;
+
                     // YOLO preprocesses on the CPU, so a GPU picture reads back
                     // first. ADR-0038 Phase B removes this round-trip.
-                    if (item.Frame is GpuVideoFrame gpu)
+                    //
+                    // Detach and release the GPU frame as soon as the readback
+                    // has its copy: holding it across the whole Detect would pin
+                    // a second hwframe-pool slice for the duration, where the
+                    // display branch already holds one. ADR-0057 ties one extra
+                    // held lease to pool exhaustion.
+                    if (item.Frame is GpuVideoFrame)
                     {
-                        using var cpu = gpu.ReadbackToCpuBgra32();
-                        return await DetectAsync(detector, cpu, ct).ConfigureAwait(false);
+                        CpuVideoFrame cpu;
+                        using (var gpu = (GpuVideoFrame)item.Detach()!)
+                            cpu = gpu.ReadbackToCpuBgra32();
+                        using (cpu)
+                            return await DetectAsync(detector, cpu, ct).ConfigureAwait(false);
                     }
                     return await DetectAsync(detector, item.Frame, ct).ConfigureAwait(false);
                 }
@@ -594,8 +607,8 @@ public partial class MainWindow : Window
                 catch (Exception ex)
                 {
                     // Drop this frame's detections rather than faulting playback.
-                    // The overlay keeps showing the previous set until it ages
-                    // out of the join's window.
+                    // The overlay keeps the previous set until it ages past
+                    // MaxStaleness, at which point the join's null match clears it.
                     _logger?.LogWarning(ex, "YOLO inference faulted on a frame.");
                     return null;
                 }
@@ -620,24 +633,43 @@ public partial class MainWindow : Window
     /// <summary>
     /// Rejoins the detection branch onto the display path. Every frame fires
     /// the body exactly once, paired with the newest detection at or before its
-    /// PTS, or with <see langword="null"/> before the first detection lands.
+    /// PTS, or with <see langword="null"/> when none is in the window — before
+    /// the first detection lands, or after the last one ages past
+    /// <see cref="SyncJoinNode{TPrimary, TSecondary, TOut}.MaxStaleness"/>.
     /// The frame passes through untouched; the only side effect is posting the
     /// detections to the overlay.
     /// </summary>
+    /// <remarks>
+    /// The body posts only when the matched set changes. The join fires per
+    /// frame and detection is several times slower, so posting unconditionally
+    /// would re-marshal the same set to the UI thread for every frame in
+    /// between. A null match posts an empty set once, which clears the boxes
+    /// rather than leaving the last ones drawn over frames they do not
+    /// describe.
+    /// </remarks>
     private SyncJoinNode<VideoFrameRef, RefBox<DetectionSet>, VideoFrameRef>
-        CreateDetectionJoin() =>
-        new(
+        CreateDetectionJoin()
+    {
+        // Owned by the join's pump, which is single-threaded, so no interlock.
+        DetectionSet? lastPosted = null;
+
+        return new(
             "detection-overlay",
             (frame, detected, _) =>
             {
-                if (detected is not null)
+                var set = detected?.Value;
+                if (!ReferenceEquals(set, lastPosted))
                 {
-                    var set = detected.Value;
+                    lastPosted = set;
+                    var detections = set?.Detections ?? Array.Empty<Detection>();
+                    var width = set?.Width ?? frame.Frame.Width;
+                    var height = set?.Height ?? frame.Frame.Height;
                     Dispatcher.UIThread.Post(
-                        () => DetectionOverlay.Update(set.Detections, set.Width, set.Height),
+                        () => DetectionOverlay.Update(detections, width, height),
                         DispatcherPriority.Background
                     );
                 }
+
                 // Pass-through: the substrate forwards this same ref downstream
                 // rather than disposing and re-wrapping.
                 return ValueTask.FromResult<VideoFrameRef?>(frame);
@@ -650,6 +682,7 @@ public partial class MainWindow : Window
             window: DetectionWindow,
             maxStaleness: DetectionWindow
         );
+    }
 
     /// <summary>
     /// CPU-mode terminal sink: caption timeline upkeep plus a skip-while-busy
@@ -670,15 +703,26 @@ public partial class MainWindow : Window
                 // Fire-and-forget, skip-while-busy. Awaiting the present here
                 // would let UI-thread bursts back-pressure the shared demux pump
                 // and starve audio — see the _presentBusy field comment.
+                //
+                // Detach rather than CloneCpu: this sink is now the sole holder
+                // of the converter's one-shot frame, so ownership transfers to
+                // PresentAsync with no copy — 8.3 MB per frame at 1080p. The
+                // clone was there for the old in-sink fan-out, which the
+                // detection branch replaced.
                 if (Interlocked.CompareExchange(ref _presentBusy, 1, 0) == 0)
                 {
+                    IVideoFrame? presented = null;
                     try
                     {
-                        var viewClone = item.Frame.CloneCpu();
-                        _ = Task.Run(() => RunPresentAsync(viewSink, viewClone, ct), ct);
+                        presented = item.Detach()!;
+                        var toPresent = presented;
+                        _ = Task.Run(() => RunPresentAsync(viewSink, toPresent, ct), ct);
                     }
                     catch
                     {
+                        // The frame is detached from the wrapper, so the
+                        // substrate will not dispose it for us.
+                        presented?.Dispose();
                         Interlocked.Exchange(ref _presentBusy, 0);
                         Interlocked.Increment(ref _droppedPresentBusyCount);
                     }
@@ -746,6 +790,14 @@ public partial class MainWindow : Window
         Dispatcher.UIThread.Post(() => UpdateCaptionsUi(active), DispatcherPriority.Background);
     }
 
+    /// <summary>
+    /// 1→1 audio operator that taps each decoded PCM buffer for the
+    /// Whisper graph. Wraps the buffer in a fresh AddRef'd
+    /// <see cref="PcmAudioBufferRef"/> and writes it to the bridge
+    /// channel; the original buffer ref continues downstream to the
+    /// OpenAL sink. The bridge channel's DropOldest policy means
+    /// Whisper-side back-pressure can't stall the OpenAL audio path.
+    /// </summary>
     private static OperatorNode<PcmAudioBufferRef, PcmAudioBufferRef> CreateWhisperTapOperator(
         Channel<PcmAudioBufferRef> bridge
     )
@@ -806,7 +858,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Presenter-side UI hook invoked by the fan-out sink for each
+    /// Presenter-side UI hook invoked by the terminal sink for each
     /// video frame: receives the captions currently active for that
     /// frame's PTS, already marshalled to the UI thread via
     /// <see cref="Dispatcher.UIThread.Post"/>.

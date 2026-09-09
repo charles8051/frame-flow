@@ -65,8 +65,15 @@ public sealed record SyncJoinKeys<TPrimary, TSecondary>(
 /// <remarks>
 /// <para>
 /// <b>Ownership.</b> The substrate holds a ref on both arguments across the
-/// call and disposes both when it returns or throws. The operator disposes
+/// call and disposes them when it returns or throws. The operator disposes
 /// neither. Returning <see langword="null"/> drops the primary.
+/// </para>
+/// <para>
+/// <b>Returning an input forwards it.</b> A body may return
+/// <paramref name="primary"/> or <paramref name="secondary"/> as its output;
+/// the substrate detects that and forwards the same ref downstream rather than
+/// releasing it. Any other return value must be freshly built or
+/// <c>AddRef</c>'d, because both inputs are released once the body returns.
 /// </para>
 /// <para>
 /// <b>No match emits.</b> <paramref name="secondary"/> being
@@ -107,16 +114,21 @@ public delegate ValueTask<TOut?> SyncJoinOperator<in TPrimary, in TSecondary, TO
 /// <see cref="SyncMatch.MostRecentAtOrBefore"/>.
 /// </para>
 /// <para>
-/// <b>Termination.</b> Primary EOS ends the join: the pump cancels its
-/// secondary reader rather than draining it to completion, because an unbounded
-/// secondary (a live camera) never completes. Secondary EOS does *not* end the
-/// join — retained entries stay matchable until they age out of the window.
+/// <b>Termination.</b> Primary EOS stops the join emitting, but the pump keeps
+/// reading the secondary and discarding what arrives. It has to: a secondary
+/// upstream holding more than the edge's free capacity blocks in
+/// <c>WriteAsync</c> forever if nobody drains it, and the graph would never
+/// complete. A finite secondary therefore ends this pump on its own; an
+/// unbounded one keeps it alive until the graph token fires.
 /// </para>
 /// <para>
-/// Note that cancelling the secondary reader leaves that branch's upstream
-/// blocked on a full channel until the graph itself is cancelled. Whether the
-/// whole graph then terminates is a property of the consumer's topology, not of
-/// this node.
+/// The pump does not cancel the graph on clean primary EOS. The join sits on
+/// one branch of a wider topology and its primary ending says nothing about the
+/// others — in a media graph, video EOS is not audio EOS.
+/// </para>
+/// <para>
+/// Secondary EOS does not end the join. Retained entries stay matchable until
+/// they age out of the window.
 /// </para>
 /// </remarks>
 public sealed class SyncJoinNode<TPrimary, TSecondary, TOut> : IPumpableNode
@@ -187,7 +199,7 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut> : IPumpableNode
     /// <see cref="FrameFlow.Graph"/> sits below <c>FrameFlow.Decoding</c> and so
     /// cannot implement its <c>ISeekResettable</c> without inverting the
     /// layering. The session registers an adapter over this method instead. See
-    /// ADR-0069 §6.
+    /// the sync-window-join ADR §6.
     /// </remarks>
     public void ResetWindow() => _retained.Clear();
 
@@ -314,13 +326,27 @@ internal sealed class SecondaryWindow<T>
             return;
 
         var cutoff = _highWater - window;
-        int drop = 0;
-        while (drop < _entries.Count && _entries[drop].To < cutoff)
+
+        // Scan the whole list rather than stopping at the first survivor.
+        // Entries are ordered by From, not by To, so one long or open-ended
+        // interval admitted early otherwise shields every later entry whose To
+        // has aged out — under Within a long span would pin per-second cues
+        // behind it for its whole duration, and under MostRecentAtOrBefore a
+        // shielded entry stays matchable past Window, making this property's
+        // documented meaning false. The list is window-bounded, so one pass
+        // and a single compaction is cheap.
+        int keep = 0;
+        for (int i = 0; i < _entries.Count; i++)
         {
-            _entries[drop].Item.Dispose();
-            drop++;
+            var e = _entries[i];
+            if (e.To < cutoff)
+            {
+                e.Item.Dispose();
+                continue;
+            }
+            _entries[keep++] = e;
         }
-        if (drop > 0)
-            _entries.RemoveRange(0, drop);
+        if (keep < _entries.Count)
+            _entries.RemoveRange(keep, _entries.Count - keep);
     }
 }

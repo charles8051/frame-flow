@@ -1,16 +1,16 @@
-# ADR-0069: Sync-window join for media-time correlation
+# Sync-window join for media-time correlation
 
-**Status:** Proposed (2026-09-09), implemented with one of its two migrations
-shipped and measured.
+**Status:** Draft, pending number assignment at merge. Implemented, with one of
+its two migrations shipped and measured.
 
 ### What exists
 
 | | |
 | --- | --- |
 | The node, both match policies, the window | [`src/FrameFlow.Graph/SyncJoin.cs`](../../src/FrameFlow.Graph/SyncJoin.cs) |
-| `PumpSyncJoinAsync`, `DrainBuffered` | [`src/FrameFlow.Graph/NodePumps.cs`](../../src/FrameFlow.Graph/NodePumps.cs) |
+| `PumpSyncJoinAsync` | [`src/FrameFlow.Graph/NodePumps.cs`](../../src/FrameFlow.Graph/NodePumps.cs) |
 | `ToPrimary` / `ToSecondary` chain terminators | [`src/FrameFlow.Graph/GraphChain.cs`](../../src/FrameFlow.Graph/GraphChain.cs) |
-| 10 tests covering everything under *Testing* | [`tests/FrameFlow.Graph.Tests/SyncJoinTests.cs`](../../tests/FrameFlow.Graph.Tests/SyncJoinTests.cs) |
+| 17 tests covering everything under *Testing* | [`tests/FrameFlow.Graph.Tests/SyncJoinTests.cs`](../../tests/FrameFlow.Graph.Tests/SyncJoinTests.cs) |
 | Migration 2, the detection overlay | [`examples/.../LiveCaptioning/MainWindow.axaml.cs`](../../examples/FrameFlow.Examples.LiveCaptioning/MainWindow.axaml.cs) |
 
 Migration 1, the caption overlay, is **not** done. The example still carries its
@@ -31,7 +31,8 @@ translation of the same behaviour the timeline already implements, so it waits.
   MotionClip recorder runs motion detection inline in one sink node for want of
   this primitive.
 - [ADR-0056](ADR-0056-seek-invalidation-via-iseekresettable.md) — the seek-reset
-  registration this node's retained state has to join.
+  registration a consumer would wrap `ResetWindow()` in. The playback path
+  does not need it (§6).
 
 ## Context
 
@@ -166,28 +167,47 @@ window's worth of latency on the display path, which no consumer wants.
 Consumers whose secondary lags use `MostRecentAtOrBefore`. That covers three of
 the four.
 
-### 5. Primary EOS cancels the secondary reader
+### 5. Primary EOS stops matching but keeps draining
 
-On primary EOS the pump cancels the secondary reader, drains what the channel
-already holds, and completes the output. Draining an unbounded secondary to
-completion would hang, and every camera-fed graph has one.
+On primary EOS the pump stops emitting and completes its output, but keeps
+reading the secondary and discarding what arrives.
+
+It has to. A secondary upstream holding more than the edge's free capacity
+blocks in `WriteAsync` forever if nobody drains it, and `Graph.RunAsync` never
+returns — which on the playback path means `SubstrateSession` never raises
+`OnEndOfStream`, so a file never reaches Ended and `RepeatMode.One` never
+rewinds. A finite secondary therefore ends the pump on its own; an unbounded one
+keeps it alive until the graph token fires, which is the deal every consumer of
+an unbounded source gets.
+
+The pump does **not** cancel the graph on clean primary EOS, which would be the
+other way to unblock that producer. The join sits on one branch of a wider
+topology and its primary ending says nothing about the others: in a media graph,
+video EOS is not audio EOS, and cancelling there would truncate the audio.
 
 Secondary EOS does not end the join. Retained entries stay matchable until they
 age out of the window.
 
-Sibling pumps are not cancelled on clean exit. A join finishing is not a reason
-to tear down branches that are still working.
+### 6. `ResetWindow()` exists for the topologies a rebuild does not cover
 
-### 6. Seek resets the window
+Retained secondaries are pre-seek state. On the playback path that is already
+handled without this node doing anything: `SubstrateSession.SeekAsync` uses
+`GraphPolicy.Rebuild`, `BuildGraph` re-invokes the video configurator, and a
+configurator that constructs its join per call — as the migrated example does —
+gets a fresh, empty window on every seek.
 
-Retained secondaries are pre-seek state. `FrameFlow.Graph` sits below
-`FrameFlow.Decoding` and cannot implement `ISeekResettable`
-([ADR-0056](ADR-0056-seek-invalidation-via-iseekresettable.md)) without
-inverting the layering.
+So the node exposes `void ResetWindow()` for the cases a rebuild does not
+reach: a join held across rebuilds, a graph re-run in place
+(`GraphPolicy.Reuse`), or a non-playback consumer with its own discontinuity.
+The pump also clears the window at the top of every `RunAsync`, so a re-run
+never matches post-rewind primaries against pre-rewind secondaries.
 
-The node exposes `void ResetWindow()` and `SubstrateSession` registers a small
-adapter alongside the other resettables. Moving `ISeekResettable` down into
-`FrameFlow.Graph` is the cleaner answer and is left open below.
+`FrameFlow.Graph` sits below `FrameFlow.Decoding` and cannot implement
+`ISeekResettable` ([ADR-0056](ADR-0056-seek-invalidation-via-iseekresettable.md))
+without inverting the layering, so a consumer that needs registration wraps
+`ResetWindow()` in its own adapter. Whether that interface should move down is
+left open below, on its own merits rather than on a forcing case this migration
+does not actually present.
 
 ### 7. Wiring
 
@@ -255,16 +275,26 @@ back-pressuring the shared demux pump into starving audio. That is what
 
 ## Testing
 
-All of the below are covered by the 10 tests in
+All of the below are covered by the 17 tests in
 [`SyncJoinTests.cs`](../../tests/FrameFlow.Graph.Tests/SyncJoinTests.cs); the
-project is green at 24 tests.
+project is green at 31 tests.
 
 - One end-to-end graph test per match policy.
 - The no-match path: body receives `null`, output is emitted, primary is not
   dropped.
 - Secondary EOS with the primary still running, matches continuing from the
   retained window until they age out.
-- Primary EOS against an unbounded secondary, asserting the pump terminates.
+- Primary EOS against an unbounded secondary, asserting the graph winds up on
+  cancellation rather than hanging.
+- Primary EOS against a finite secondary that lags with more pending items
+  than the edge can buffer, asserting `RunAsync` completes on its own.
+- A body throw under each `FailureResponse`, and a secondary key-selector
+  throw under `Propagate` against a primary that never ends on its own.
+- A body that returns its secondary, asserting the ref is forwarded rather
+  than released.
+- A long interval admitted ahead of a short one, asserting eviction does not
+  stop at the first survivor.
+- A second `RunAsync` on the same graph, asserting the window starts empty.
 - Refcount balance across all of the above, following
   [the 2026-05-30 fan-out review](../investigations/2026-05-30-graph-fanout-cloner-refcount-review.md):
   every retained, evicted, matched and unmatched secondary disposed exactly once.
@@ -304,15 +334,12 @@ project is green at 24 tests.
   works and keeps the layering. It also means a substrate node with pre-seek
   state relies on a registration living two layers up, which is the shape
   ADR-0056 was written to eliminate.
-- **The shipped migration does not register that adapter.** `ResetWindow()` is
-  implemented and unit-tested, and has no caller: the example builds its join
-  inside `configureVideo`, where `SubstrateSession` cannot see it. Seek
-  therefore degrades rather than resets — post-seek frames find pre-seek
-  detections outside the staleness bound, match nothing, and the overlay clears
-  until fresh detections arrive. Acceptable for a demo overlay, and not
-  acceptable for a consumer whose join body has side effects. Wiring it needs a
-  way for a configurator-built node to reach the session's resettable
-  registration, which is the §6 question with a concrete forcing case attached.
+- **`ResetWindow()` has no caller in this repository.** The playback path gets
+  its invalidation from the graph rebuild (§6) and the re-run clear, so nothing
+  here needs the method yet. It is public because a consumer holding a join
+  across rebuilds has no other way to invalidate, and untested-through-a-caller
+  API is exactly what got the previous two-input primitive deleted. If no
+  consumer appears, it should go.
 - **Index-paired joins.** Stereo rigs and encode-verify comparisons need pairing
   by sequence index, not by time. That needs a per-item sequence number the
   substrate does not carry. Its own ADR, and its own decision about whether
