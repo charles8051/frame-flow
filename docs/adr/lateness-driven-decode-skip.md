@@ -10,8 +10,16 @@ output on the D3D11VA path. On the 2160p60 fixture, lag falls from ~15 s to
 Measurements and conditions in Decision §4.
 
 What that measurement also found is a gap in Decision §2 rather than in the
-prerequisite: on content without B-frames the ladder has no usable middle. See
-*Open questions*.
+prerequisite: on content without B-frames the ladder has no usable middle, so
+escalation would take ordinary playback straight to roughly 114 frames per 30 s.
+
+**Not to be implemented until that is settled.** The first acceptance condition
+asked whether the mechanism works; this one asks whether the mechanism as
+specified is fit to ship, and the answer today is no — a policy whose only
+effective rung on common content is keyframes-only degrades by falling off a
+cliff, not gracefully. Settling it means choosing one of the shapes in *Open
+questions*, or establishing that the jump is acceptable. Either is an argument
+this ADR does not yet make.
 
 Narrows the video-only fallback [ADR-0003](ADR-0003-audio-master-sync-policy.md)
 left open, and implements the drop responsibility ADR-0003 already assigns to the
@@ -262,13 +270,53 @@ frames were discarded later. Downstream dropping would leave `decoded` at its
 baseline and show up in `dropped` / `sync-dropped`, which stayed at 0 and 1.
 
 **Run conditions.** RTX 3080 Ti, driver 32.0.16.1047, Threadripper PRO 5945WX,
-Windows 11. `bench-2160p60-h264-aac.mp4` via
-`FrameFlow.TestBench -c Release -- <fixture> --no-audio --script` running
-`play` / `wait 30s` / `diag` / `quit`, headless presenter, default pool capacity.
-The only variable is `skip_frame`, pinned at construction by a temporary probe on
-`VideoDecoder`; the probe was reverted and is not in the tree. `decoded` and `lag`
-are read from the single `diag` at the end of the 30 s window, so each row is one
-sample of a cumulative counter and one instantaneous lag reading, not an average.
+Windows 11. Headless presenter, default pool capacity. `decoded` and `lag` come
+from the single `diag` at the end of the 30 s window, so each row is one sample of
+a cumulative counter and one instantaneous lag reading, not an average.
+
+**Reproducing it.** The fixture is generated, not committed, and its input is
+seeded (`all_seed=12345`), so it is the same pixels on any machine:
+
+```bash
+dotnet run scripts/fetch-ffmpeg.cs
+dotnet run scripts/generate-test-corpus.cs -- --include-benchmarks
+```
+
+The script, `p.bench`, is four lines — `play`, `wait 30s`, `diag`, `quit`:
+
+```bash
+FRAMEFLOW_PROBE_SKIP_FRAME=NONKEY dotnet run --project tools/FrameFlow.TestBench   -c Release -- tests/corpus/files/bench-2160p60-h264-aac.mp4   --no-audio --script p.bench
+```
+
+That env var does not exist in the tree. `skip_frame` was pinned by a temporary
+probe in `VideoDecoder`'s constructor, reverted afterwards because a debug hook in
+a decoder hot path is not worth committing for a one-off. It is fifteen lines, and
+this is all of it:
+
+```csharp
+var probe = Environment.GetEnvironmentVariable("FRAMEFLOW_PROBE_SKIP_FRAME");
+if (!string.IsNullOrWhiteSpace(probe))
+{
+    var level = probe.Trim().ToUpperInvariant() switch
+    {
+        "NONREF" => AVDiscard.AVDISCARD_NONREF,
+        "BIDIR" => AVDiscard.AVDISCARD_BIDIR,
+        "NONKEY" => AVDiscard.AVDISCARD_NONKEY,
+        _ => AVDiscard.AVDISCARD_NONE,
+    };
+    unsafe
+    {
+        ref AVCodecContext c = ref Unsafe.AsRef<AVCodecContext>(
+            (void*)codecCtx.DangerousGetHandle()
+        );
+        c.skip_frame = level;
+    }
+}
+```
+
+Dropped in after `_codecCtx = codecCtx;`, it reproduces every row above. It is
+also the whole of the `skip_frame` plumbing this decision needs, which is the
+other thing it demonstrates.
 
 **On the baseline moving.** Context above records 1017 decoded for the same
 nominal scenario, against 863–906 here. Different worktree and a machine that had

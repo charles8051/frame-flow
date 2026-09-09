@@ -178,8 +178,9 @@ land.
   rather than losing time. Implements the drop responsibility ADR-0003 already assigns
   to the playback layer. Its acceptance prerequisite is confirmed — `skip_frame`
   suppresses frame output on the hardware path, ~15 s of lag down to ~0.26 s — and
-  the same measurement opened the question it now carries: on content with no
-  B-frames the escalation ladder has no usable middle. Its rejected alternative F
+  the same measurement opened the question it now carries, and gates implementation
+  on: on content with no B-frames the escalation ladder has no usable middle, so
+  escalation would jump straight to keyframes-only. Its rejected alternative F
   records the packet-pacing design this replaced, and the measurement that ruled it
   out.
 
