@@ -266,6 +266,213 @@ internal static class NodePumps
     }
 
     // ─────────────────────────────────────────────────────────────
+    // Sync join (2→0..1, primary-driven)
+    // ─────────────────────────────────────────────────────────────
+
+    public static async Task PumpSyncJoinAsync<TPrimary, TSecondary, TOut>(
+        SyncJoinNode<TPrimary, TSecondary, TOut> node,
+        CancellationTokenSource graphCts
+    )
+        where TPrimary : class, IRefCounted
+        where TSecondary : class, IRefCounted
+        where TOut : class, IRefCounted
+    {
+        var ct = graphCts.Token;
+        var primary = RequireConnected(node.Primary);
+        var secondary = RequireConnected(node.Secondary);
+        var outputs = node.Output.Writers;
+        var retained = node.Retained;
+        bool faulted = false;
+
+        // Clear any window left from a previous run, so a re-run of the graph
+        // (RepeatMode.One's cheap rewind) doesn't match post-rewind primaries
+        // against pre-rewind secondaries.
+        retained.Clear();
+
+        // After primary EOS the secondary loop keeps reading, but discards
+        // instead of admitting. It must keep reading: a secondary upstream with
+        // more pending items than the edge's free capacity blocks in WriteAsync
+        // forever if nobody drains it, and Graph.RunAsync would never return.
+        // Cancelling graphCts here instead would be wrong the other way — the
+        // join sits on one branch, and video EOS is not audio EOS.
+        //
+        // A finite secondary therefore completes its writer and ends this loop
+        // on its own. An unbounded one (a live camera) keeps it alive until the
+        // graph token fires, which is the same deal every consumer of an
+        // unbounded source gets.
+        var primaryDone = false;
+        Exception? secondaryFault = null;
+
+        var secondaryLoop = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    await foreach (
+                        var item in secondary.ReadAllAsync(ct).ConfigureAwait(false)
+                    )
+                    {
+                        if (Volatile.Read(ref primaryDone))
+                        {
+                            item.Dispose();
+                            continue;
+                        }
+
+                        try
+                        {
+                            var (from, to) = node.Keys.SecondaryInterval(item);
+                            retained.Admit(item, from, to);
+                        }
+                        catch (Exception ex)
+                        {
+                            // The key selector threw. The window never took
+                            // ownership, so this ref is still ours.
+                            item.Dispose();
+                            if (node.OnError == FailureResponse.Propagate)
+                            {
+                                // Cancel at the fault site, the way every other
+                                // pump's finally does. Deferring to the primary's
+                                // exit means "never" while the primary is live:
+                                // nobody reads this edge any more, so its upstream
+                                // blocks once the edge fills, and the join emits
+                                // every primary unmatched in the meantime.
+                                secondaryFault ??= ex;
+                                TryCancel(graphCts);
+                                return;
+                            }
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Primary ended, or the graph is tearing down.
+                }
+            },
+            CancellationToken.None
+        );
+
+        try
+        {
+            await foreach (var item in primary.ReadAllAsync(ct).ConfigureAwait(false))
+            {
+                TSecondary? match;
+                try
+                {
+                    var t = node.Keys.PrimaryTime(item);
+                    match = retained.AdvanceAndMatch(
+                        t,
+                        node.MatchPolicy,
+                        node.Window,
+                        node.MaxStaleness
+                    );
+                }
+                catch
+                {
+                    item.Dispose();
+                    if (node.OnError == FailureResponse.Propagate)
+                    {
+                        faulted = true;
+                        throw;
+                    }
+                    continue;
+                }
+
+                TOut? result;
+                try
+                {
+                    result = await node.Body(item, match, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    item.Dispose();
+                    match?.Dispose();
+                    throw;
+                }
+                catch
+                {
+                    item.Dispose();
+                    match?.Dispose();
+                    if (node.OnError == FailureResponse.Propagate)
+                    {
+                        faulted = true;
+                        throw;
+                    }
+                    continue;
+                }
+
+                // Pass-through applies to either input: a body may return the
+                // primary, or the secondary, and the substrate then forwards
+                // that same ref instead of releasing it here.
+                if (!ReferenceEquals(match, result))
+                    match?.Dispose();
+                if (!ReferenceEquals(item, result))
+                    item.Dispose();
+
+                if (result is null)
+                    continue;
+
+                await ForwardAsync(result, outputs, ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            faulted = true;
+            // When the secondary faulted, this cancellation is its consequence.
+            // Surface the cause rather than the symptom; the post-finally
+            // rethrow below is unreachable on this path.
+            if (secondaryFault is not null && node.OnError == FailureResponse.Propagate)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                    .Capture(secondaryFault)
+                    .Throw();
+            }
+            throw;
+        }
+        catch
+        {
+            // A genuine primary fault wins over a secondary one.
+            faulted = true;
+            throw;
+        }
+        finally
+        {
+            if (faulted)
+                TryCancel(graphCts);
+
+            // Flip the secondary loop to discard-only, then let it run to the
+            // secondary's own EOS (or graph cancellation). Completing the
+            // output first would be premature: downstream EOS is signalled
+            // below, once nothing else can be emitted.
+            Volatile.Write(ref primaryDone, true);
+            try
+            {
+                await secondaryLoop.ConfigureAwait(false);
+            }
+            catch
+            {
+                // Best-effort; the primary's fault (if any) is the cause worth
+                // surfacing.
+            }
+
+            await DrainUntilCompletedAsync(primary).ConfigureAwait(false);
+            retained.Clear();
+
+            foreach (var edge in outputs)
+                edge.Writer.TryComplete();
+        }
+
+        // A secondary-side fault has to be surfaced here or not at all: the
+        // pump's observable result is the primary loop's, and the primary may
+        // have exited through the cancellation the secondary itself requested.
+        if (secondaryFault is not null && node.OnError == FailureResponse.Propagate)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                .Capture(secondaryFault)
+                .Throw();
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // Shared infrastructure
     // ─────────────────────────────────────────────────────────────
 

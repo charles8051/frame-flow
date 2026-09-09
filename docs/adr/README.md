@@ -188,6 +188,12 @@ land.
   measured against a running policy before the default changes. Its rejected alternative F
   records the packet-pacing design this replaced, and the measurement that ruled it
   out.
+- [Sync-window join for media-time correlation](sync-window-join.md) — the substrate
+  fans out and cannot rejoin, so four consumers hand-roll the same correlation outside
+  the graph. Adds a two-input node that pairs a slow secondary onto a fast primary by
+  media time, with two match policies sized to those four. Ships with the LiveCaptioning
+  detection overlay migrated onto it, which deletes the `_inferenceBusy` gating in
+  favour of a `LatestWins(1)` edge; the caption overlay waits on ADR-0047's lookahead.
 
 (Most recently, the command-driven test-bench host landed as
 [ADR-0068](ADR-0068-command-driven-test-bench-host.md) — a console host under `tools/` that
