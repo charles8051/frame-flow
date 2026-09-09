@@ -4,9 +4,22 @@
 
 Proposed (2026-09-08). Draft pending number assignment.
 
-Not to be accepted before the prerequisite in Decision §4 is confirmed: that
-`skip_frame` suppresses frame output on the hardware path. The central saving
-depends on it.
+The prerequisite is **confirmed** (2026-09-09): `skip_frame` suppresses frame
+output on the D3D11VA path. On the 2160p60 fixture, lag falls from ~15 s to
+~0.26 s at `AVDISCARD_NONKEY` — about 58x — over three runs at each level.
+Measurements and conditions in Decision §4.
+
+What that measurement also found is a gap in Decision §2 rather than in the
+prerequisite: on content without B-frames the ladder has no usable middle, so
+escalation would take ordinary playback straight to roughly 114 frames per 30 s.
+
+**Not to be implemented until that is settled.** The first acceptance condition
+asked whether the mechanism works; this one asks whether the mechanism as
+specified is fit to ship, and the answer today is no — a policy whose only
+effective rung on common content is keyframes-only degrades by falling off a
+cliff, not gracefully. Settling it means choosing one of the shapes in *Open
+questions*, or establishing that the jump is acceptable. Either is an argument
+this ADR does not yet make.
 
 Narrows the video-only fallback [ADR-0003](ADR-0003-audio-master-sync-policy.md)
 left open, and implements the drop responsibility ADR-0003 already assigns to the
@@ -136,15 +149,16 @@ layer. ADR-0009 put timing outside it, and a decoder that read the master clock
 to make its own skip decisions would widen that boundary for no gain: the layer
 that already owns the policy also already has the number.
 
-**The level is a command, not a field write.** `AVCodecContext` is not a
-thread-safe control surface, and the decode worker is inside
-`avcodec_send_packet` / `avcodec_receive_frame` on it continuously. Playback
-posts the requested level; the decoder's own worker applies it to the codec
-context between packets, where it already owns the context exclusively. So the
-setter is asynchronous by contract — a caller sets a level and it takes effect on
-the next packet boundary, not on return — and that is the only ordering the
-policy needs, because lateness is measured over seconds and a packet is
-milliseconds.
+**The setter is synchronous and takes the decoder's existing lock.**
+`AVCodecContext` is not a thread-safe control surface and the decode worker is on
+it continuously, but that problem is already solved: `VideoDecoder` serialises
+`avcodec_send_packet`, `avcodec_receive_frame` and `Flush` under `_codecSync`, so
+a setter taking the same lock writes the field while no decode call is in it. The
+level is in effect when the call returns.
+
+An earlier draft specified a posted command applied between packets, and an
+asynchronous-by-contract setter to go with it. That was machinery for a race the
+existing lock already prevents. See Decision §3.
 
 ### 2. The decoder's discard level escalates and de-escalates
 
@@ -167,12 +181,48 @@ are exactly the ones nothing else decodes from, so the cheapest step damages
 nothing. The destructive levels are reached only when the cheap one has not
 recovered the deficit.
 
-### 3. `skip_frame` gets bound
+**The ladder has no middle on content that has no B-frames**, and that is common
+rather than exotic. Measured on the 2160p60 fixture, whose encoder emits none:
 
-The `AVDiscard` enum is already bound and used —
-`DemuxSession` sets `stream->discard = AVDISCARD_ALL` for streams with no consumer
-(ADR-0059). `AVCodecContext.skip_frame` is not bound yet. That is new work, and it
-is small.
+| level | decoded / 30 s | lag |
+| --- | --- | --- |
+| `NONE` | 908 | `00:14.902` |
+| `NONREF` | 917 | `00:14.749` |
+| `BIDIR` | 997 | `00:13.408` |
+| `NONKEY` | **114** | **`00:00.265`** |
+
+One run each, under the conditions in Decision §4; the two middle rows sit inside
+the ~15% run-to-run spread that section records for the baseline, so read them as
+"no effect" rather than as small effects.
+
+`ffprobe` over the first 10 s finds 564 P-frames and 36 I-frames and no B-frames
+at all. Every P-frame is a reference frame, so `NONREF` and `BIDIR` have nothing
+to discard, which is why those rows move nothing. `NONKEY` matches its own
+arithmetic — 36 I per 10 s is ~108 in 30 s, against 114 measured, and it repeats
+at exactly 114 across three runs.
+
+So on such content escalation is a binary choice between decoding everything and
+decoding one frame in eight. `skip_frame` cannot offer anything between, because
+it discards by frame category and the category is empty. The ladder is still
+correct where B-frames exist; it is the *only* rung that fires elsewhere that is
+the problem, and it is the destructive one. Unresolved — see *Open questions*.
+
+### 3. No binding work is required
+
+An earlier draft of this ADR said `AVCodecContext.skip_frame` needed binding. It
+does not. `FFmpeg.AutoGen.Abstractions` already exposes the field and all four
+`AVDiscard` levels, and the write compiles against the project unchanged, in the
+same shape `VideoDecoder.HwAccel` already uses for `hw_device_ctx`:
+
+```csharp
+ref AVCodecContext ctx = ref Unsafe.AsRef<AVCodecContext>((void*)ctxPtr);
+ctx.skip_frame = level;
+```
+
+Nor does the setter need the command-and-apply-between-packets machinery an
+earlier draft specified. `VideoDecoder` already serialises every codec-context
+call — `avcodec_send_packet`, `avcodec_receive_frame`, `Flush` — under
+`_codecSync`. A setter taking that lock is safe, synchronous, and needs no queue.
 
 ### 4. What the skip saves, and what is not guaranteed
 
@@ -196,16 +246,94 @@ enforced where frames are output, not delegated to the hardware decoder, so a
 frame matching the level is not returned whoever did the work. That claim is what
 makes the readback saving hold on D3D11VA, and it is the load-bearing one.
 
-**So it is a prerequisite, not an open question.** This ADR is not accepted until
-that behaviour is confirmed on the D3D11VA path this failure was found on. If it
-does not hold, the decision changes rather than degrades: the discard moves to the
-decoder's *output*, which pays the decode cost and saves the downstream one, and
-that is a different mechanism deserving its own argument rather than a fallback
-bolted on here.
+**This was held as a prerequisite, and it is now confirmed.** Measured on the
+D3D11VA path this failure was found on, with `skip_frame` pinned and everything
+else unchanged:
 
-Stating it this way rather than as a hedge is deliberate. A decision whose
-central saving is conditional should say what would falsify it and refuse to be
-adopted until someone has looked.
+Three runs at each level, alternating, same process configuration:
+
+| `skip_frame` | decoded / 30 s | lag |
+| --- | --- | --- |
+| `NONE` | 863, 906, 901 | `15.641`, `14.925`, `15.014` |
+| `NONKEY` | 114, 114, 114 | `0.263`, `0.259`, `0.257` |
+
+**About 58x less lag**, and eight times fewer frames returned. `NONKEY` is
+deterministic to the frame across runs, which is what decoding exactly the
+keyframes looks like.
+
+**Why this shows suppression at the decoder and not dropping downstream.**
+`decoded` is `VideoDecoder._framesDecoded`, incremented in `BuildFrame` — which
+returns the frame `ReceiveFrame` stashed, *after* the hardware readback that
+`ReceiveFrame` performs. It is a post-readback counter. 114 rather than ~900
+therefore means ~900 readbacks did not happen, not that they happened and the
+frames were discarded later. Downstream dropping would leave `decoded` at its
+baseline and show up in `dropped` / `sync-dropped`, which stayed at 0 and 1.
+
+**Run conditions.** RTX 3080 Ti, driver 32.0.16.1047, Threadripper PRO 5945WX,
+Windows 11. Headless presenter, default pool capacity, and the decoder must
+resolve to D3D11VA — that is the whole point of the measurement, and `diag`
+reports it as `backend=D3D11Va` on the `video` line. A run that falls back to
+software, or to a different hwaccel, is measuring something else and its numbers
+do not belong beside these. `decoded` and `lag` come from the single `diag` at the
+end of the 30 s window, so each row is one sample of a cumulative counter and one
+instantaneous lag reading, not an average.
+
+**Reproducing it.** The fixture is generated, not committed, and its input is
+seeded (`all_seed=12345`), so it is the same pixels on any machine:
+
+```bash
+dotnet run scripts/fetch-ffmpeg.cs
+dotnet run scripts/generate-test-corpus.cs -- --include-benchmarks
+```
+
+The script, `p.bench`, is four lines — `play`, `wait 30s`, `diag`, `quit`:
+
+```bash
+FRAMEFLOW_PROBE_SKIP_FRAME=NONKEY dotnet run --project tools/FrameFlow.TestBench   -c Release -- tests/corpus/files/bench-2160p60-h264-aac.mp4   --no-audio --script p.bench
+```
+
+That env var does not exist in the tree. `skip_frame` was pinned by a temporary
+probe in `VideoDecoder`'s constructor, reverted afterwards because a debug hook in
+a decoder hot path is not worth committing for a one-off. It is fifteen lines, and
+this is all of it:
+
+```csharp
+var probe = Environment.GetEnvironmentVariable("FRAMEFLOW_PROBE_SKIP_FRAME");
+if (!string.IsNullOrWhiteSpace(probe))
+{
+    var level = probe.Trim().ToUpperInvariant() switch
+    {
+        "NONREF" => AVDiscard.AVDISCARD_NONREF,
+        "BIDIR" => AVDiscard.AVDISCARD_BIDIR,
+        "NONKEY" => AVDiscard.AVDISCARD_NONKEY,
+        _ => AVDiscard.AVDISCARD_NONE,
+    };
+    unsafe
+    {
+        ref AVCodecContext c = ref Unsafe.AsRef<AVCodecContext>(
+            (void*)codecCtx.DangerousGetHandle()
+        );
+        c.skip_frame = level;
+    }
+}
+```
+
+Dropped in after `_codecCtx = codecCtx;`, it reproduces every row above. It is
+also the whole of the `skip_frame` plumbing this decision needs, which is the
+other thing it demonstrates.
+
+**On the baseline moving.** Context above records 1017 decoded for the same
+nominal scenario, against 863–906 here. Different worktree and a machine that had
+just generated the corpus; the decode-bound baseline is sensitive to load in a way
+`NONKEY` is not. Both are the same phenomenon and the spread is roughly 15%, which
+is why the comparison is drawn against the three runs in this table rather than
+across sessions. The effect being claimed is 8x in frames and 58x in lag, so it
+survives that spread by a wide margin — but it is measured on one machine and one
+fixture, and nothing here establishes the factor generalises.
+
+The decode-side saving is still not separated from the downstream one by this
+measurement, and does not need to be: on a readback-bound pipeline the downstream
+saving is the whole of it. That split stays a tuning question.
 
 ### 5. Nothing changes in the pump or the queue
 
@@ -214,8 +342,9 @@ No read-ahead gate, no change to `DropNewestWhenQueueFull`, no change to
 ADR-0060's existing backpressure pace the pump at realtime again on the video-only
 path, and reduces shedding on the audio path.
 
-The whole change is a discard level, a policy that sets it, the binding it needs,
-and a switch to turn the policy off.
+The whole change is a discard level, a policy that sets it, and a switch to turn
+the policy off. No binding, no new synchronisation — both already exist, as
+Decision §3 records.
 
 ## Consequences
 
@@ -320,8 +449,9 @@ does not deliver.
 
 ## Validation
 
-Not yet performed — this ADR proposes the change, it does not record it. What
-would have to hold:
+One item is done: the D3D11VA prerequisite, struck through below with its result.
+Everything else is unperformed, because this ADR proposes the change and does not
+record it. What would have to hold:
 
 - **2160p60 fixture, video-only, 30 s window:** lag falls from 13.1 s to inside
   the escalation threshold; presented frame count falls; position tracks content;
@@ -336,14 +466,19 @@ would have to hold:
   destructive and it needs its own fixture; the corpus has none today.
 - **Escalation as a pure function** of lateness, current level and hysteresis —
   testable without FFmpeg, a decoder, or a clock.
-- **That `skip_frame` suppresses frame output on the D3D11VA path — the
-  prerequisite.** Not a tuning measurement: if a skipped frame is still returned
-  and still read back, the mechanism does not address the demonstrated bottleneck
-  and this ADR should not be accepted as written. Check it first, before the
-  threshold and the hysteresis, because everything else is downstream of the
-  answer.
-- **How much decode work the hardware path actually saves**, separately. This one
-  is tuning — it changes how fast escalation recovers, not whether it does.
+- ~~**That `skip_frame` suppresses frame output on the D3D11VA path.**~~
+  **Done** — ~15 s to ~0.26 s at `NONKEY`, three runs each, Decision §4. On one
+  machine and one fixture; the mechanism is established, the factor is not
+  claimed to generalise.
+- **`NONREF` and `BIDIR` on content that actually contains those frames.** Not
+  possible on this corpus: the pinned FFmpeg is an LGPL build without libx264, and
+  libopenh264 emits no B-frames, so every fixture is all-reference P plus I. The
+  generator already records two fixtures as unavailable for the same reason.
+  Validating the ladder's middle needs a GPL FFmpeg, and until someone runs it
+  those two rungs are unexercised rather than working.
+- **How much decode work the hardware path actually saves**, separately from the
+  downstream saving. Tuning — it changes how fast escalation recovers, not whether
+  it does.
 - **The policy switched off yields today's behaviour exactly** — every frame
   decoded, lag free to grow. The opt-out is only worth having if it is the
   complete-but-slow path and not a degraded version of it.
@@ -355,16 +490,27 @@ would have to hold:
 
 - **The threshold and the hysteresis.** Both are empirical and both go in this ADR
   when measured. `VideoPresentationLag` is how they get chosen.
-- **How much of the saving is decode-side on hardware paths.** Decision §4 splits
-  the guaranteed part from the driver-dependent part; this is the size of the
-  second. Tuning, not a prerequisite — the prerequisite is that output suppression
-  holds at all, which Validation puts first.
+- **How much of the saving is decode-side on hardware paths.** Output suppression
+  is confirmed and is the half that matters on a readback-bound pipeline; this is
+  the size of the other half. Tuning — it changes how fast escalation recovers,
+  not whether it does.
 - **What a richer non-realtime mode would offer** beyond the off switch in
   Consequences — rate control, completion guarantees. Out of scope; the switch is
   not.
-- **Whether `AVDISCARD_BIDIR` earns its place** between NONREF and NONKEY, or
-  whether two levels are enough. Three is proposed on the grounds that the jump
-  from NONREF to keyframes-only is very large.
+- **What the ladder does on content with no B-frames — the open problem this
+  decision now carries.** Measured, not hypothetical: `NONREF` and `BIDIR` discard
+  nothing there, so escalation jumps from decoding everything to decoding one
+  frame in eight with nothing in between. All-reference P-frame output is ordinary,
+  so this is the common case rather than the edge.
+  <br>`skip_frame` cannot fix it, because it selects by frame category and the
+  intermediate categories are empty. Two shapes that could, neither argued for
+  here: a proportional discard at the decoder's *output* — present one frame in
+  N, which the pacer is already positioned to do — or accepting the binary and
+  making the threshold that reaches `NONKEY` conservative enough that the jump is
+  rare. The first is more machinery; the second admits that the recovery, when it
+  happens, is coarse.
+  <br>Worth settling before implementation, because it decides whether the
+  escalation policy has three states or two plus a fraction.
 - **What happens across a seek** while escalated. The level should reset with the
   run, on the same reasoning that `PresentationLag` reports null on a fresh run.
 
