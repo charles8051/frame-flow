@@ -266,6 +266,173 @@ internal static class NodePumps
     }
 
     // ─────────────────────────────────────────────────────────────
+    // Sync join (2→0..1, primary-driven)
+    // ─────────────────────────────────────────────────────────────
+
+    public static async Task PumpSyncJoinAsync<TPrimary, TSecondary, TOut>(
+        SyncJoinNode<TPrimary, TSecondary, TOut> node,
+        CancellationTokenSource graphCts
+    )
+        where TPrimary : class, IRefCounted
+        where TSecondary : class, IRefCounted
+        where TOut : class, IRefCounted
+    {
+        var ct = graphCts.Token;
+        var primary = RequireConnected(node.Primary);
+        var secondary = RequireConnected(node.Secondary);
+        var outputs = node.Output.Writers;
+        var retained = node.Retained;
+        bool faulted = false;
+
+        // Clear any window left from a previous run, so a re-run of the graph
+        // (RepeatMode.One's cheap rewind) doesn't match post-rewind primaries
+        // against pre-rewind secondaries.
+        retained.Clear();
+
+        // Primary EOS cancels this, rather than draining the secondary to
+        // completion: an unbounded secondary never completes its writer, and
+        // DrainUntilCompletedAsync would wait for exactly that.
+        using var secondaryCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        Exception? secondaryFault = null;
+
+        var secondaryLoop = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    await foreach (
+                        var item in secondary
+                            .ReadAllAsync(secondaryCts.Token)
+                            .ConfigureAwait(false)
+                    )
+                    {
+                        try
+                        {
+                            var (from, to) = node.Keys.SecondaryInterval(item);
+                            retained.Admit(item, from, to);
+                        }
+                        catch (Exception ex)
+                        {
+                            // The key selector threw. The window never took
+                            // ownership, so this ref is still ours.
+                            item.Dispose();
+                            secondaryFault ??= ex;
+                            if (node.OnError == FailureResponse.Propagate)
+                                return;
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Primary ended, or the graph is tearing down.
+                }
+            },
+            CancellationToken.None
+        );
+
+        try
+        {
+            await foreach (var item in primary.ReadAllAsync(ct).ConfigureAwait(false))
+            {
+                TSecondary? match;
+                try
+                {
+                    var t = node.Keys.PrimaryTime(item);
+                    match = retained.AdvanceAndMatch(
+                        t,
+                        node.MatchPolicy,
+                        node.Window,
+                        node.MaxStaleness
+                    );
+                }
+                catch
+                {
+                    item.Dispose();
+                    if (node.OnError == FailureResponse.Propagate)
+                    {
+                        faulted = true;
+                        throw;
+                    }
+                    continue;
+                }
+
+                TOut? result;
+                try
+                {
+                    result = await node.Body(item, match, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    item.Dispose();
+                    match?.Dispose();
+                    throw;
+                }
+                catch
+                {
+                    item.Dispose();
+                    match?.Dispose();
+                    if (node.OnError == FailureResponse.Propagate)
+                    {
+                        faulted = true;
+                        throw;
+                    }
+                    continue;
+                }
+
+                match?.Dispose();
+                if (!ReferenceEquals(item, result))
+                    item.Dispose();
+
+                if (result is null)
+                    continue;
+
+                await ForwardAsync(result, outputs, ct).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            faulted = true;
+            throw;
+        }
+        finally
+        {
+            if (faulted)
+                TryCancel(graphCts);
+
+            secondaryCts.Cancel();
+            try
+            {
+                await secondaryLoop.ConfigureAwait(false);
+            }
+            catch
+            {
+                // Best-effort; the primary's fault (if any) is the cause worth
+                // surfacing.
+            }
+
+            // Buffered-only drain. Waiting for the secondary's writer to
+            // complete is the hang this node exists to avoid.
+            DrainBuffered(secondary);
+            await DrainUntilCompletedAsync(primary).ConfigureAwait(false);
+            retained.Clear();
+
+            foreach (var edge in outputs)
+                edge.Writer.TryComplete();
+        }
+
+        // Reached only when the primary loop exited cleanly. A secondary-side
+        // key-selector fault would otherwise be swallowed, since the pump's
+        // observable result is the primary loop's.
+        if (secondaryFault is not null && node.OnError == FailureResponse.Propagate)
+        {
+            TryCancel(graphCts);
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                .Capture(secondaryFault)
+                .Throw();
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // Shared infrastructure
     // ─────────────────────────────────────────────────────────────
 
@@ -408,6 +575,18 @@ internal static class NodePumps
             // Best-effort cleanup. Swallow secondary exceptions so the
             // primary cause surfaces.
         }
+    }
+
+    /// <summary>
+    /// Disposes what a channel already holds without waiting for its writer to
+    /// complete. Used where waiting would hang: the sync join's secondary input
+    /// may be fed by an unbounded source that never EOSes.
+    /// </summary>
+    private static void DrainBuffered<T>(ChannelReader<T> reader)
+        where T : class, IRefCounted
+    {
+        while (reader.TryRead(out var item))
+            item.Dispose();
     }
 
     private static void TryCancel(CancellationTokenSource cts)

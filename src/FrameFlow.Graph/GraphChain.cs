@@ -68,6 +68,40 @@ public readonly struct GraphChain<T>
     {
         _graph.Connect(_head, sink.Input, options);
     }
+
+    /// <summary>
+    /// Terminates by wiring the head into a sync join's primary input. The
+    /// primary sets the join's firing cadence.
+    /// </summary>
+    public void ToPrimary<TSecondary, TOut>(
+        SyncJoinNode<T, TSecondary, TOut> join,
+        EdgeOptions? options = null
+    )
+        where TSecondary : class, IRefCounted
+        where TOut : class, IRefCounted
+    {
+        ArgumentNullException.ThrowIfNull(join);
+        _graph.Connect(_head, join.Primary, options);
+    }
+
+    /// <summary>
+    /// Terminates by wiring the head into a sync join's secondary input.
+    /// </summary>
+    /// <remarks>
+    /// Give this edge a real buffer. <see cref="EdgeOptions.LatestWins(int)"/>,
+    /// the habit carried over from fan-out, discards secondaries that a
+    /// <see cref="SyncMatch.Within"/> window still needs.
+    /// </remarks>
+    public void ToSecondary<TPrimary, TOut>(
+        SyncJoinNode<TPrimary, T, TOut> join,
+        EdgeOptions? options = null
+    )
+        where TPrimary : class, IRefCounted
+        where TOut : class, IRefCounted
+    {
+        ArgumentNullException.ThrowIfNull(join);
+        _graph.Connect(_head, join.Secondary, options);
+    }
 }
 
 /// <summary>Fluent-chain entry points on <see cref="Graph"/>.</summary>
