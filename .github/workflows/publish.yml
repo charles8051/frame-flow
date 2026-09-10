@@ -617,6 +617,12 @@ jobs:
           # the file is appended.
           files: artifacts/MotionClip-*.zip
           fail_on_unmatched_files: true
+          # The action does not infer this from the tag, and its default is false,
+          # so every alpha so far was created as a full release and took the
+          # "Latest" badge. SemVer puts the prerelease identifier after a hyphen
+          # following the patch, and this tag glob is `v*.*.*`, so a hyphen
+          # anywhere in the ref name is that identifier and nothing else.
+          prerelease: ${{ contains(github.ref_name, '-') }}
 
       # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
       # clear text — NuGet has no other way to hand a credential to a v3 source in
