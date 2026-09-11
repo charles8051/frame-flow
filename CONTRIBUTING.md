@@ -212,7 +212,7 @@ the closest thing to a design record for changes too small to earn an ADR.
 
 ## Architecture decisions
 
-`docs/adr/` holds 67 decision records, indexed in
+`docs/adr/` holds 68 decision records, indexed in
 [docs/adr/README.md](docs/adr/README.md). Read the relevant one before changing a
 subsystem's shape — several explain why an obvious-looking simplification was
 already tried and rejected.

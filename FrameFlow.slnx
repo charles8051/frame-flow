@@ -50,6 +50,7 @@
     <Project Path="tests/FrameFlow.Avalonia.Tests/FrameFlow.Avalonia.Tests.csproj" />
     <Project Path="tests/FrameFlow.Avalonia.Windows.Tests/FrameFlow.Avalonia.Windows.Tests.csproj" />
     <Project Path="tests/FrameFlow.Camera.Tests/FrameFlow.Camera.Tests.csproj" />
+    <Project Path="tests/FrameFlow.ColdStart.Tests/FrameFlow.ColdStart.Tests.csproj" />
     <Project Path="tests/FrameFlow.Decoding.Tests/FrameFlow.Decoding.Tests.csproj" />
     <Project Path="tests/FrameFlow.Encoding.Tests/FrameFlow.Encoding.Tests.csproj" />
     <Project Path="tests/FrameFlow.Graph.Tests/FrameFlow.Graph.Tests.csproj" />
