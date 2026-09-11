@@ -18,19 +18,53 @@ namespace FrameFlow.Player;
 /// polymorphic dependency.
 /// </para>
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Error model (ADR-0069).</b> Transport commands return
+/// <see cref="Result"/> rather than throwing, matching
+/// <see cref="IPlaybackController"/>. A command that the state machine
+/// refuses — a seek on a non-seekable source, a play on a disposed player —
+/// is an expected outcome, and <see cref="Result.Error"/> carries the
+/// <see cref="ErrorCategory"/> the controller produced.
+/// </para>
+/// <para>
+/// Exceptions are still thrown, for the cases that are not expected
+/// outcomes: <see cref="ArgumentException"/> and friends for a caller that
+/// passed something invalid, and whatever escapes a sink or the decode
+/// stack. Failures that arise mid-playback rather than in answer to a
+/// command surface on <see cref="ErrorOccurred"/>.
+/// </para>
+/// </remarks>
 public interface IMediaPlayer : IAsyncDisposable
 {
     /// <summary>Begin or resume playback.</summary>
-    Task PlayAsync(CancellationToken cancellationToken = default);
+    /// <returns>
+    /// A successful <see cref="Result"/>, or one whose
+    /// <see cref="Result.Error"/> says why the command was refused.
+    /// </returns>
+    Task<Result> PlayAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Pause playback at the current position.</summary>
-    Task PauseAsync(CancellationToken cancellationToken = default);
+    /// <returns>
+    /// A successful <see cref="Result"/>, or one whose
+    /// <see cref="Result.Error"/> says why the command was refused.
+    /// </returns>
+    Task<Result> PauseAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Seek to the given position in media time.</summary>
-    Task SeekAsync(TimeSpan position, CancellationToken cancellationToken = default);
+    /// <returns>
+    /// A successful <see cref="Result"/>, or one whose
+    /// <see cref="Result.Error"/> says why the command was refused —
+    /// seeking a non-seekable source is the common case.
+    /// </returns>
+    Task<Result> SeekAsync(TimeSpan position, CancellationToken cancellationToken = default);
 
     /// <summary>Change repeat/loop behavior.</summary>
-    Task SetRepeatModeAsync(RepeatMode mode, CancellationToken cancellationToken = default);
+    /// <returns>
+    /// A successful <see cref="Result"/>, or one whose
+    /// <see cref="Result.Error"/> says why the command was refused.
+    /// </returns>
+    Task<Result> SetRepeatModeAsync(RepeatMode mode, CancellationToken cancellationToken = default);
 
     /// <summary>Current primary playback state.</summary>
     PlaybackState State { get; }
@@ -56,6 +90,18 @@ public interface IMediaPlayer : IAsyncDisposable
     /// the clock kept advancing). Hosts can surface this to health/telemetry.
     /// </summary>
     IObservable<LoopStalled> LoopStalled { get; }
+
+    /// <summary>
+    /// Fires when a failure arises during playback rather than in answer to a
+    /// command. A command's own failure comes back on its <see cref="Result"/>
+    /// and is not repeated here.
+    /// </summary>
+    /// <remarks>
+    /// Forwarded from <see cref="IPlaybackController.ErrorOccurred"/>. Without
+    /// it a consumer holding only the player surface has no structured error
+    /// channel for anything the decode stack reports mid-stream.
+    /// </remarks>
+    IObservable<PlaybackError> ErrorOccurred { get; }
 
     /// <summary>Stream of diagnostics snapshots.</summary>
     IObservable<PlaybackDiagnosticsSnapshot> Diagnostics { get; }

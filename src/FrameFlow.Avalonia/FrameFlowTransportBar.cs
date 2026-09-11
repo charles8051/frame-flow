@@ -131,7 +131,11 @@ public sealed class FrameFlowTransportBar : StackPanel
         _loopButton.IsChecked = LoopByDefault;
         // Apply the initial loop preference to the freshly-bound player.
         if (LoopByDefault)
-            FireAndForget(() => player.SetRepeatModeAsync(RepeatMode.One));
+            PlayerCommand.FireAndForget(
+                this,
+                nameof(IMediaPlayer.SetRepeatModeAsync),
+                () => player.SetRepeatModeAsync(RepeatMode.One)
+            );
 
         UpdateButtonsForState(player.State);
         _stateSubscription = player
@@ -146,55 +150,49 @@ public sealed class FrameFlowTransportBar : StackPanel
         _stopButton.IsEnabled = state is PlaybackState.Playing or PlaybackState.Paused;
     }
 
-    private async void OnPlayClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnPlayClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (MediaPlayer is { } p)
-            try
-            {
-                await p.PlayAsync();
-            }
-            catch { }
+            PlayerCommand.FireAndForget(this, nameof(IMediaPlayer.PlayAsync), () => p.PlayAsync());
     }
 
-    private async void OnPauseClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnPauseClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (MediaPlayer is { } p)
-            try
-            {
-                await p.PauseAsync();
-            }
-            catch { }
+            PlayerCommand.FireAndForget(this, nameof(IMediaPlayer.PauseAsync), () => p.PauseAsync());
     }
 
-    private async void OnStopClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnStopClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (MediaPlayer is { } p)
-            try
+        if (MediaPlayer is not { } p)
+            return;
+
+        // Stop is a pause followed by a rewind. If the pause is refused there
+        // is nothing to rewind to, so its Result is what the caller hears
+        // about. Under the old exception model the throw skipped the seek
+        // implicitly; this says so.
+        PlayerCommand.FireAndForget(
+            this,
+            "Stop",
+            async () =>
             {
-                await p.PauseAsync();
-                await p.SeekAsync(TimeSpan.Zero);
+                var paused = await p.PauseAsync().ConfigureAwait(true);
+                return paused.IsSuccess
+                    ? await p.SeekAsync(TimeSpan.Zero).ConfigureAwait(true)
+                    : paused;
             }
-            catch { }
+        );
     }
 
-    private async void OnLoopClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnLoopClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (MediaPlayer is not { } p)
             return;
         var mode = _loopButton.IsChecked == true ? RepeatMode.One : RepeatMode.Off;
-        try
-        {
-            await p.SetRepeatModeAsync(mode);
-        }
-        catch { }
-    }
-
-    private static async void FireAndForget(Func<Task> work)
-    {
-        try
-        {
-            await work();
-        }
-        catch { }
+        PlayerCommand.FireAndForget(
+            this,
+            nameof(IMediaPlayer.SetRepeatModeAsync),
+            () => p.SetRepeatModeAsync(mode)
+        );
     }
 }

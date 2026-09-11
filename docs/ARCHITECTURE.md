@@ -651,6 +651,11 @@ Use:
 
 The UI layer can simplify those into user-facing messages, but the core should preserve detail.
 
+Where that line falls on the playback stack is settled in
+[ADR-0069](adr/ADR-0069-one-error-model-across-the-playback-stack.md): transport commands on
+`IPlaybackController` and `IMediaPlayer` return `Result`, because a refused command is an
+expected outcome; construction, argument validation, and anything escaping a sink still throw.
+
 ## Resource ownership rules
 
 This part should be strict from day one.

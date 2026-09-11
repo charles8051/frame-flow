@@ -315,25 +315,32 @@ public sealed class FrameFlowPlayerChrome : UserControl
                 e.Handled = true;
                 break;
             case Key.Left:
-                FireAndForget(() => player.SeekAsync(SeekBy(player, -5)));
+                PlayerCommand.FireAndForget(
+                    this,
+                    nameof(IMediaPlayer.SeekAsync),
+                    () => player.SeekAsync(SeekBy(player, -5))
+                );
                 e.Handled = true;
                 break;
             case Key.Right:
-                FireAndForget(() => player.SeekAsync(SeekBy(player, +5)));
+                PlayerCommand.FireAndForget(
+                    this,
+                    nameof(IMediaPlayer.SeekAsync),
+                    () => player.SeekAsync(SeekBy(player, +5))
+                );
                 e.Handled = true;
                 break;
         }
     }
 
-    private static void TogglePlayPause(IMediaPlayer player)
+    private void TogglePlayPause(IMediaPlayer player)
     {
-        FireAndForget(async () =>
-        {
-            if (player.State == PlaybackState.Playing)
-                await player.PauseAsync();
-            else
-                await player.PlayAsync();
-        });
+        var playing = player.State == PlaybackState.Playing;
+        PlayerCommand.FireAndForget(
+            this,
+            playing ? nameof(IMediaPlayer.PauseAsync) : nameof(IMediaPlayer.PlayAsync),
+            () => playing ? player.PauseAsync() : player.PlayAsync()
+        );
     }
 
     private static TimeSpan SeekBy(IMediaPlayer player, double seconds)
@@ -354,14 +361,5 @@ public sealed class FrameFlowPlayerChrome : UserControl
         if (duration > TimeSpan.Zero && target > ceiling)
             target = ceiling;
         return target;
-    }
-
-    private static async void FireAndForget(Func<Task> work)
-    {
-        try
-        {
-            await work();
-        }
-        catch { }
     }
 }

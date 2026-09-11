@@ -80,6 +80,12 @@ public static class MediaPlayer
     /// Cancels the load. The returned player is not created if this
     /// fires before <c>LoadAsync</c> completes.
     /// </param>
+    /// <exception cref="InvalidOperationException">
+    /// The FFmpeg bootstrap failed, or the source could not be loaded.
+    /// Construction throws rather than returning a <see cref="Result"/>: a
+    /// factory that fails has no player to hand back (ADR-0069). The
+    /// player's own transport commands do return <see cref="Result"/>.
+    /// </exception>
     public static async Task<IMediaPlayer> CreateAsync(
         IMediaSource source,
         IVideoSink? videoSink = null,

@@ -195,7 +195,13 @@ land.
   detection overlay migrated onto it, which deletes the `_inferenceBusy` gating in
   favour of a `LatestWins(1)` edge; the caption overlay waits on ADR-0047's lookahead.
 
-(Most recently, the command-driven test-bench host landed as
+(Most recently, the playback stack's two error models were collapsed into one as
+[ADR-0069](ADR-0069-one-error-model-across-the-playback-stack.md) — `IMediaPlayer`'s
+transport commands return `Result` like the controller under them, instead of flattening
+`ErrorCategory` into an `InvalidOperationException` message, and gain the `ErrorOccurred`
+channel the player surface never had; the deciding evidence was on the consuming side, where
+every chrome call site wrapped the player in a bare `catch { }` that discarded refusals and
+chrome bugs alike. Before it, the command-driven test-bench host landed as
 [ADR-0068](ADR-0068-command-driven-test-bench-host.md) — a console host under `tools/` that
 drives a real player from typed commands, so reproductions stop living in example launch
 profiles; its Decision 6 was reopened mid-flight and the bespoke assertion grammar dropped in
