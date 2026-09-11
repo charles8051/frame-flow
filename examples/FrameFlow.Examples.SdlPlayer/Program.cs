@@ -271,7 +271,7 @@ static IPlaybackController? ReplaceController(
     if (!loadResult.IsSuccess)
     {
         Console.Error.WriteLine(
-            $"Load failed [{Path.GetFileName(filePath)}]: {loadResult.Error?.Message}"
+            $"Load failed [{Path.GetFileName(filePath)}]: {loadResult.Error.Message}"
         );
         subscriptions.Dispose();
         controller.DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -283,7 +283,7 @@ static IPlaybackController? ReplaceController(
     if (!playResult.IsSuccess)
     {
         Console.Error.WriteLine(
-            $"Play failed [{Path.GetFileName(filePath)}]: {playResult.Error?.Message}"
+            $"Play failed [{Path.GetFileName(filePath)}]: {playResult.Error.Message}"
         );
         subscriptions.Dispose();
         controller.DisposeAsync().AsTask().GetAwaiter().GetResult();
