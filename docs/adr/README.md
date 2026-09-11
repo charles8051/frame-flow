@@ -173,6 +173,23 @@ ADRs are numbered at merge, not at authoring, so parallel branches never collide
 on the same number. Drafts in flight live here under a slug filename until they
 land.
 
+- [Stream-backed media sources, via a custom AVIO context](stream-backed-media-sources.md) —
+  there is no way to hand FrameFlow bytes. An in-memory clip, an embedded resource or a
+  decrypted blob has to be written to a temp file first, which needs a writable filesystem
+  and leaves plaintext on disk. Proposes `MediaSource.FromStream` over a custom
+  `AVIOContext`, taking seekability from `Stream.CanSeek` rather than from the caller.
+  The reason it is an ADR rather than a PR is the lifetime rules: FFmpeg holds raw
+  function pointers into managed callbacks, reallocates the buffer it was given, and calls
+  back from the demux thread. It also has to give `IsSeekable` its first consumer — nothing
+  in `src/` reads that property today — and declines the implicit `string` conversion #108
+  also asks for, because a path and a URL are indistinguishable at the call site. Two
+  acceptance conditions stand, neither measured: whether a forward-only stream probes
+  completely, and how teardown behaves when the read callback throws. Revised once after
+  an independent review, which caught that the draft's way of marking a stream
+  non-seekable did not work — FFmpeg reads seekability off whether the seek pointer is
+  non-NULL, so the draft would have run its own gating experiment against a configuration
+  where the mechanism under test could not engage. Its Revision history keeps the
+  superseded reasoning, which is what three of the open questions are about.
 - [A video-only pipeline that falls behind skips decode work](lateness-driven-decode-skip.md) —
   it stays realtime by shrinking decode cost under a lateness-driven discard level,
   rather than losing time. Implements the drop responsibility ADR-0003 already assigns
