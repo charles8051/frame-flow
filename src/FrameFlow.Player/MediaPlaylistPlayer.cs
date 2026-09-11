@@ -124,8 +124,8 @@ public static class MediaPlaylistPlayer
                 .ConfigureAwait(false);
             if (!load.IsSuccess)
                 throw new InvalidOperationException(
-                    $"LoadAsync failed: {load.Error?.Category} — {load.Error?.Message}",
-                    load.Error?.Inner
+                    $"LoadAsync failed: {load.Error.Category} — {load.Error.Message}",
+                    load.Error.Inner
                 );
 
             var logger = loggerFactory.CreateLogger<PlaylistMediaPlayerCore>();

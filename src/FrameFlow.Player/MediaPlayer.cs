@@ -146,8 +146,8 @@ public static class MediaPlayer
             if (!load.IsSuccess)
             {
                 throw new InvalidOperationException(
-                    $"LoadAsync failed: {load.Error?.Category} — {load.Error?.Message}",
-                    load.Error?.Inner
+                    $"LoadAsync failed: {load.Error.Category} — {load.Error.Message}",
+                    load.Error.Inner
                 );
             }
 
