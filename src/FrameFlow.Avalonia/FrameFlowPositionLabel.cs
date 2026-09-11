@@ -18,9 +18,13 @@ namespace FrameFlow.Avalonia;
 /// <remarks>
 /// <para>
 /// Position polling uses a <see cref="DispatcherTimer"/> rather than
-/// <see cref="IMediaPlayer.PositionChanged"/> because that observable
-/// can fire many times per second during playback — for a
-/// human-readable label, 4 Hz is plenty and avoids redundant UI work.
+/// <see cref="IMediaPlayer.PositionTick"/>, and not for the cadence: that
+/// observable is itself a 250 ms tick, the same 4 Hz this timer runs at.
+/// The reason is that it is bound to <see cref="FrameFlow.Media.PlaybackState.Playing"/>
+/// and silent otherwise, so a seek while paused moves
+/// <see cref="IMediaPlayer.Position"/> without emitting. A label driven
+/// off the stream would keep showing the pre-seek time until playback
+/// resumed; polling shows the new one.
 /// </para>
 /// </remarks>
 public sealed class FrameFlowPositionLabel : TextBlock

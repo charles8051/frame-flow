@@ -152,13 +152,13 @@ public sealed class FrameFlowVolumeControlTests
         public MediaInfo MediaInfo => default!;
 
         public IObservable<PlaybackState> StateChanged { get; } = new Never<PlaybackState>();
-        public IObservable<TimeSpan> PositionChanged { get; } = new Never<TimeSpan>();
+        public IObservable<TimeSpan> PositionTick { get; } = new Never<TimeSpan>();
         public IObservable<LoopStalled> LoopStalled { get; } = new Never<LoopStalled>();
         public IObservable<PlaybackError> ErrorOccurred { get; } = new Never<PlaybackError>();
         public IObservable<PlaybackDiagnosticsSnapshot> Diagnostics { get; } =
             new Never<PlaybackDiagnosticsSnapshot>();
 
-        public PlaybackDiagnosticsSnapshot PollDiagnostics() => PlaybackDiagnosticsSnapshot.Empty;
+        public PlaybackDiagnosticsSnapshot GetDiagnostics() => PlaybackDiagnosticsSnapshot.Empty;
 
         public Task<Result> PlayAsync(CancellationToken ct = default) =>
             Task.FromResult(Result.Ok());

@@ -106,6 +106,11 @@ public sealed class FrameFlowSeekBar : Slider
     // on the Avalonia context.
     private bool _seekRefusalReported;
 
+    // Bumped on every MediaPlayer rebind. A scrub callback captures the value
+    // it was created under so a pump still draining against the previous
+    // player cannot touch the latch above.
+    private int _playerGeneration;
+
     public FrameFlowSeekBar()
     {
         Minimum = 0;
@@ -194,6 +199,14 @@ public sealed class FrameFlowSeekBar : Slider
         // seeking indistinguishable from one that works. The latch gives the
         // first refusal and then stays quiet until a seek succeeds, which
         // re-arms it for the next thing that goes wrong.
+        //
+        // The latch belongs to one binding, not to the control. The old pump
+        // is still draining per the note above, and now that its callback
+        // reports, a late result from it could log against a player that is no
+        // longer attached, eat the new player's first refusal, or clear a latch
+        // it does not own. Each callback captures the generation it was built
+        // for and does nothing once that is stale.
+        var generation = ++_playerGeneration;
         _seekRefusalReported = false;
         _scrub =
             player is null
@@ -201,6 +214,9 @@ public sealed class FrameFlowSeekBar : Slider
                 : new ScrubSeekDispatcher(async t =>
                 {
                     var result = await player.SeekAsync(t).ConfigureAwait(true);
+                    if (generation != _playerGeneration)
+                        return;
+
                     if (result.IsSuccess)
                     {
                         _seekRefusalReported = false;

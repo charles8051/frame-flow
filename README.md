@@ -9,7 +9,8 @@ presenters ship in the box, and you can write your own.
 
 > **Pre-1.0.** Public surface and internal contracts change freely between
 > releases. There are no external consumers yet, so the bias is toward getting
-> the shape right rather than staying compatible.
+> the shape right rather than staying compatible. Each change is listed with
+> its fix in [docs/BREAKING-CHANGES.md](docs/BREAKING-CHANGES.md).
 
 ## Install
 
@@ -217,6 +218,7 @@ so passing `-settings tests/frameflow.runsettings` overrides an ambient
 
 ## Documentation
 
+- [docs/BREAKING-CHANGES.md](docs/BREAKING-CHANGES.md) — what moved in each release and what to write instead
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the layering and the reasoning behind it
 - [docs/adr/](docs/adr/) — architectural decision records, the authority on what was decided and why
 - [CONTRIBUTING.md](CONTRIBUTING.md) — build prerequisites, test corpus, commit convention

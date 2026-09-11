@@ -546,7 +546,8 @@ public partial class MainWindow : Window
             return;
         var requested = LoopButton.IsChecked == true;
         var mode = requested ? RepeatMode.One : RepeatMode.Off;
-        var set = await _player.SetRepeatModeAsync(mode);
+        var player = _player;
+        var set = await player.SetRepeatModeAsync(mode);
         if (!set.IsSuccess)
         {
             _logger?.LogWarning(
@@ -556,8 +557,13 @@ public partial class MainWindow : Window
             );
             // Click already flipped the toggle and repeat mode has no
             // observable to resynchronise from, so put it back rather than
-            // leave it advertising a mode the player refused.
-            LoopButton.IsChecked = !requested;
+            // leave it advertising a mode the player refused. Two guards: the
+            // button stays live while the command runs, so a later click owns
+            // the state after that, and opening another file rebinds _player,
+            // after which this refusal is about a player the window no longer
+            // shows.
+            if (ReferenceEquals(_player, player) && LoopButton.IsChecked == requested)
+                LoopButton.IsChecked = !requested;
         }
     }
 
