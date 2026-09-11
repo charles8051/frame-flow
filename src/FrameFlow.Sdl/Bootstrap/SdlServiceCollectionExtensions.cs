@@ -4,7 +4,6 @@
 using FrameFlow.Media;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -14,7 +13,7 @@ namespace FrameFlow.SDL.Bootstrap;
 
 /// <summary>
 /// Extension methods for registering SDL2 bootstrap services with
-/// <see cref="IServiceCollection"/>.
+/// <see cref="IFrameFlowBuilder"/>.
 /// </summary>
 public static class SdlServiceCollectionExtensions
 {
@@ -23,44 +22,54 @@ public static class SdlServiceCollectionExtensions
     /// <see cref="Sdl"/> as a singleton whose factory calls
     /// <see cref="ISdlBootstrapper.CreateSdlApi"/>.
     /// </summary>
+    /// <param name="builder">
+    /// The <see cref="IFrameFlowBuilder"/> returned from
+    /// <see cref="FrameFlowServiceCollectionExtensions.AddFrameFlow"/>.
+    /// </param>
+    /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
     /// <remarks>
     /// <see cref="ISdlBootstrapper.Initialize"/> is not called automatically.
     /// Either call it manually before resolving <see cref="Sdl"/>, or chain
     /// <see cref="AddHostedSdlBootstrap"/> to initialize at hosted startup.
     /// </remarks>
-    public static IServiceCollection AddFrameFlowSdl(this IServiceCollection services)
+    public static IFrameFlowBuilder AddFrameFlowSdl(this IFrameFlowBuilder builder)
     {
-        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(builder);
 
-        services.TryAddSingleton<ISdlBootstrapper>(sp =>
+        builder.Services.TryAddSingleton<ISdlBootstrapper>(sp =>
         {
             var opts = sp.GetService<IOptions<SdlNativeOptions>>()?.Value ?? new SdlNativeOptions();
             var loggerFactory = sp.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
             return new SdlBootstrapper(opts, loggerFactory);
         });
 
-        services.TryAddSingleton<Sdl>(sp =>
+        builder.Services.TryAddSingleton<Sdl>(sp =>
         {
             var bootstrapper = sp.GetRequiredService<ISdlBootstrapper>();
             return bootstrapper.CreateSdlApi();
         });
 
-        return services;
+        return builder;
     }
 
     /// <summary>
     /// Adds a hosted service that calls <see cref="ISdlBootstrapper.Initialize"/> at
     /// application startup, ensuring SDL2 is resolved before any hosted component runs.
     /// </summary>
+    /// <param name="builder">
+    /// The <see cref="IFrameFlowBuilder"/> returned from
+    /// <see cref="FrameFlowServiceCollectionExtensions.AddFrameFlow"/>.
+    /// </param>
+    /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
     /// <remarks>
     /// Must be chained after <see cref="AddFrameFlowSdl"/>:
-    /// <code>services.AddFrameFlowSdl().AddHostedSdlBootstrap();</code>
+    /// <code>builder.AddFrameFlowSdl().AddHostedSdlBootstrap();</code>
     /// </remarks>
-    public static IServiceCollection AddHostedSdlBootstrap(this IServiceCollection services)
+    public static IFrameFlowBuilder AddHostedSdlBootstrap(this IFrameFlowBuilder builder)
     {
-        ArgumentNullException.ThrowIfNull(services);
-        services.AddHostedService<SdlHostedService>();
-        return services;
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.Services.AddHostedService<SdlHostedService>();
+        return builder;
     }
 
     /// <summary>
@@ -71,6 +80,12 @@ public static class SdlServiceCollectionExtensions
     /// from the SDL render loop). The sink's <see cref="SdlVideoSink.FramePool"/>
     /// is also registered as <see cref="IFramePool"/>.
     /// </summary>
+    /// <param name="builder">
+    /// The <see cref="IFrameFlowBuilder"/> returned from
+    /// <see cref="FrameFlowServiceCollectionExtensions.AddFrameFlow"/>.
+    /// </param>
+    /// <param name="sink">The sink to register.</param>
+    /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
     /// <remarks>
     /// <para>
     /// Use this overload when the consumer constructs the sink themselves
@@ -80,26 +95,26 @@ public static class SdlServiceCollectionExtensions
     /// </para>
     /// <para>
     /// For the simple-case where you just want a window with default
-    /// dimensions, use the <see cref="AddFrameFlowSdlVideoSink(IServiceCollection, Sdl, string, int, int, out SdlVideoSink, ILogger{SdlVideoSink}?)"/>
+    /// dimensions, use the <see cref="AddFrameFlowSdlVideoSink(IFrameFlowBuilder, Sdl, string, int, int, out SdlVideoSink, ILogger{SdlVideoSink}?)"/>
     /// overload instead — it constructs the sink internally and outputs
     /// it for the caller.
     /// </para>
     /// </remarks>
-    public static IServiceCollection AddFrameFlowSdlVideoSink(
-        this IServiceCollection services,
+    public static IFrameFlowBuilder AddFrameFlowSdlVideoSink(
+        this IFrameFlowBuilder builder,
         SdlVideoSink sink
     )
     {
-        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(sink);
 
-        services.TryAddSingleton<IFramePool>(sink.FramePool);
-        services.TryAddSingleton<IVideoSink>(sink);
+        builder.Services.TryAddSingleton<IFramePool>(sink.FramePool);
+        builder.Services.TryAddSingleton<IVideoSink>(sink);
         // Also register the concrete type so the SDL event loop can
         // resolve it for RenderPendingFrame() calls without an
         // upcast to IVideoSink.
-        services.TryAddSingleton(sink);
-        return services;
+        builder.Services.TryAddSingleton(sink);
+        return builder;
     }
 
     /// <summary>
@@ -109,23 +124,29 @@ public static class SdlServiceCollectionExtensions
     /// can pass it to <see cref="SdlEventLoop.Run"/> (or invoke
     /// <see cref="SdlVideoSink.RenderPendingFrame"/> directly).
     /// </summary>
-    /// <param name="services">The service collection.</param>
+    /// <param name="builder">
+    /// The <see cref="IFrameFlowBuilder"/> returned from
+    /// <see cref="FrameFlowServiceCollectionExtensions.AddFrameFlow"/>.
+    /// </param>
     /// <param name="sdl">The bootstrapped SDL2 wrapper.</param>
     /// <param name="windowTitle">Initial window title.</param>
     /// <param name="width">Initial window width in pixels.</param>
     /// <param name="height">Initial window height in pixels.</param>
     /// <param name="sink">The created <see cref="SdlVideoSink"/>.</param>
     /// <param name="logger">Optional sink logger.</param>
+    /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
     /// <example>
     /// <code>
-    /// services.AddFrameFlowSdl();
-    /// services.AddFrameFlowSdlVideoSink(sdl, "Player", 1280, 720, out var videoSink);
+    /// services
+    ///     .AddFrameFlow()
+    ///     .AddFrameFlowSdl()
+    ///     .AddFrameFlowSdlVideoSink(sdl, "Player", 1280, 720, out var videoSink);
     /// // ...
     /// SdlEventLoop.Run(sdl, videoSink, onEvent: ...);
     /// </code>
     /// </example>
-    public static IServiceCollection AddFrameFlowSdlVideoSink(
-        this IServiceCollection services,
+    public static IFrameFlowBuilder AddFrameFlowSdlVideoSink(
+        this IFrameFlowBuilder builder,
         Sdl sdl,
         string windowTitle,
         int width,
@@ -134,7 +155,7 @@ public static class SdlServiceCollectionExtensions
         ILogger<SdlVideoSink>? logger = null
     )
     {
-        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(sdl);
         ArgumentException.ThrowIfNullOrEmpty(windowTitle);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(width, 0);
@@ -142,6 +163,6 @@ public static class SdlServiceCollectionExtensions
 
         var framePool = new CpuFramePool(NullLogger<CpuFramePool>.Instance);
         sink = new SdlVideoSink(sdl, framePool, windowTitle, width, height, logger);
-        return AddFrameFlowSdlVideoSink(services, sink);
+        return AddFrameFlowSdlVideoSink(builder, sink);
     }
 }
