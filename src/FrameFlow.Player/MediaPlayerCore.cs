@@ -57,6 +57,7 @@ internal sealed class MediaPlayerCore : IMediaPlayer
     public IObservable<PlaybackState> StateChanged => _stateChanged;
     public IObservable<TimeSpan> PositionChanged => _controller.PositionTick;
     public IObservable<LoopStalled> LoopStalled => _controller.LoopStalled;
+    public IObservable<PlaybackError> ErrorOccurred => _controller.ErrorOccurred;
     public IObservable<PlaybackDiagnosticsSnapshot> Diagnostics => DiagnosticsObservable.Instance;
 
     public PlaybackDiagnosticsSnapshot PollDiagnostics() => _controller.GetDiagnostics();
@@ -113,45 +114,24 @@ internal sealed class MediaPlayerCore : IMediaPlayer
         }
     }
 
-    public async Task PlayAsync(CancellationToken cancellationToken = default)
-    {
-        var result = await _controller.PlayAsync(cancellationToken).ConfigureAwait(false);
-        ThrowIfFailed(result, nameof(PlayAsync));
-    }
+    // ADR-0069: the controller already answers in Result, so these are
+    // pass-throughs. The wrapper used to translate each one into an
+    // InvalidOperationException with the category flattened into the message.
+    public Task<Result> PlayAsync(CancellationToken cancellationToken = default) =>
+        _controller.PlayAsync(cancellationToken);
 
-    public async Task PauseAsync(CancellationToken cancellationToken = default)
-    {
-        var result = await _controller.PauseAsync(cancellationToken).ConfigureAwait(false);
-        ThrowIfFailed(result, nameof(PauseAsync));
-    }
+    public Task<Result> PauseAsync(CancellationToken cancellationToken = default) =>
+        _controller.PauseAsync(cancellationToken);
 
-    public async Task SeekAsync(TimeSpan position, CancellationToken cancellationToken = default)
-    {
-        var result = await _controller.SeekAsync(position, cancellationToken).ConfigureAwait(false);
-        ThrowIfFailed(result, nameof(SeekAsync));
-    }
+    public Task<Result> SeekAsync(
+        TimeSpan position,
+        CancellationToken cancellationToken = default
+    ) => _controller.SeekAsync(position, cancellationToken);
 
-    public async Task SetRepeatModeAsync(
+    public Task<Result> SetRepeatModeAsync(
         RepeatMode mode,
         CancellationToken cancellationToken = default
-    )
-    {
-        var result = await _controller
-            .SetRepeatModeAsync(mode, cancellationToken)
-            .ConfigureAwait(false);
-        ThrowIfFailed(result, nameof(SetRepeatModeAsync));
-    }
-
-    private static void ThrowIfFailed(Result result, string op)
-    {
-        if (result.IsSuccess)
-            return;
-        var err = result.Error;
-        throw new InvalidOperationException(
-            $"{op} failed: {err?.Category} — {err?.Message}",
-            err?.Inner
-        );
-    }
+    ) => _controller.SetRepeatModeAsync(mode, cancellationToken);
 
     public async ValueTask DisposeAsync()
     {

@@ -180,7 +180,17 @@ public sealed class FrameFlowSeekBar : Slider
         // Rebind the coalescing dispatcher to the new player (or drop it). Any
         // pump still draining against the previous player finishes harmlessly
         // — its seeks target the old, now-disposing player and are swallowed.
-        _scrub = player is null ? null : new ScrubSeekDispatcher(t => player.SeekAsync(t));
+        //
+        // This is the one transport call site that does not report its Result,
+        // and the discard is deliberate rather than an oversight. A scrub emits
+        // seeks continuously, so a source that refuses them — a live stream, or
+        // the disposing player in the case above — would turn one user gesture
+        // into a burst of identical warnings. The seek bar disables itself for
+        // a source with no duration, which is the visible signal that matters.
+        _scrub =
+            player is null
+                ? null
+                : new ScrubSeekDispatcher(async t => _ = await player.SeekAsync(t));
 
         if (player is null)
         {

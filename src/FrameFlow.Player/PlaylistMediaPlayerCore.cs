@@ -69,6 +69,7 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
     public IObservable<PlaybackState> StateChanged => _stateChanged;
     public IObservable<TimeSpan> PositionChanged => _controller.PositionTick;
     public IObservable<LoopStalled> LoopStalled => _controller.LoopStalled;
+    public IObservable<PlaybackError> ErrorOccurred => _controller.ErrorOccurred;
     public IObservable<PlaybackDiagnosticsSnapshot> Diagnostics => EmptyDiagnostics.Instance;
 
     public PlaybackDiagnosticsSnapshot PollDiagnostics() => _controller.GetDiagnostics();
@@ -121,25 +122,19 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
 
     // ── IMediaPlayer: transport ─────────────────────────────────────────────
 
-    public async Task PlayAsync(CancellationToken cancellationToken = default) =>
-        ThrowIfFailed(
-            await _controller.PlayAsync(cancellationToken).ConfigureAwait(false),
-            nameof(PlayAsync)
-        );
+    // ADR-0069: pass-throughs. The controller already answers in Result.
+    public Task<Result> PlayAsync(CancellationToken cancellationToken = default) =>
+        _controller.PlayAsync(cancellationToken);
 
-    public async Task PauseAsync(CancellationToken cancellationToken = default) =>
-        ThrowIfFailed(
-            await _controller.PauseAsync(cancellationToken).ConfigureAwait(false),
-            nameof(PauseAsync)
-        );
+    public Task<Result> PauseAsync(CancellationToken cancellationToken = default) =>
+        _controller.PauseAsync(cancellationToken);
 
-    public async Task SeekAsync(TimeSpan position, CancellationToken cancellationToken = default) =>
-        ThrowIfFailed(
-            await _controller.SeekAsync(position, cancellationToken).ConfigureAwait(false),
-            nameof(SeekAsync)
-        );
+    public Task<Result> SeekAsync(
+        TimeSpan position,
+        CancellationToken cancellationToken = default
+    ) => _controller.SeekAsync(position, cancellationToken);
 
-    public async Task SetRepeatModeAsync(
+    public Task<Result> SetRepeatModeAsync(
         RepeatMode mode,
         CancellationToken cancellationToken = default
     )
@@ -147,10 +142,7 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
         // The coordinator owns the loop behavior; the controller mirrors it so
         // RepeatMode reporting stays consistent.
         _coordinator.RepeatMode = mode;
-        ThrowIfFailed(
-            await _controller.SetRepeatModeAsync(mode, cancellationToken).ConfigureAwait(false),
-            nameof(SetRepeatModeAsync)
-        );
+        return _controller.SetRepeatModeAsync(mode, cancellationToken);
     }
 
     // ── IMediaPlaylistPlayer ────────────────────────────────────────────────
@@ -192,17 +184,6 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
         }
 
         _coordinator.Dispose();
-    }
-
-    private static void ThrowIfFailed(Result result, string op)
-    {
-        if (result.IsSuccess)
-            return;
-        var err = result.Error;
-        throw new InvalidOperationException(
-            $"{op} failed: {err?.Category} — {err?.Message}",
-            err?.Inner
-        );
     }
 
     private sealed class EmptyDiagnostics : IObservable<PlaybackDiagnosticsSnapshot>

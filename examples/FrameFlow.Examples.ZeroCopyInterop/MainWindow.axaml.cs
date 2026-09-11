@@ -110,7 +110,19 @@ public partial class MainWindow : Window
                 loggerFactory: _loggerFactory
             );
 
-            await _player.PlayAsync();
+            var played = await _player.PlayAsync();
+            if (!played.IsSuccess)
+            {
+                _logger.LogError(
+                    played.Error.Inner,
+                    "Zero-copy playback refused: {Category}: {Message}",
+                    played.Error.Category,
+                    played.Error.Message
+                );
+                StatusText.Text = $"Refused — {played.Error.Message}";
+                return;
+            }
+
             _logger.LogInformation("Playback started on the zero-copy composition-interop sink.");
         }
         catch (Exception ex)

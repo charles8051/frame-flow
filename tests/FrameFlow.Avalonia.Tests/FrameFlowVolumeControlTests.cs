@@ -154,20 +154,23 @@ public sealed class FrameFlowVolumeControlTests
         public IObservable<PlaybackState> StateChanged { get; } = new Never<PlaybackState>();
         public IObservable<TimeSpan> PositionChanged { get; } = new Never<TimeSpan>();
         public IObservable<LoopStalled> LoopStalled { get; } = new Never<LoopStalled>();
+        public IObservable<PlaybackError> ErrorOccurred { get; } = new Never<PlaybackError>();
         public IObservable<PlaybackDiagnosticsSnapshot> Diagnostics { get; } =
             new Never<PlaybackDiagnosticsSnapshot>();
 
         public PlaybackDiagnosticsSnapshot PollDiagnostics() => PlaybackDiagnosticsSnapshot.Empty;
 
-        public Task PlayAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task<Result> PlayAsync(CancellationToken ct = default) =>
+            Task.FromResult(Result.Ok());
 
-        public Task PauseAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task<Result> PauseAsync(CancellationToken ct = default) =>
+            Task.FromResult(Result.Ok());
 
-        public Task SeekAsync(TimeSpan position, CancellationToken ct = default) =>
-            Task.CompletedTask;
+        public Task<Result> SeekAsync(TimeSpan position, CancellationToken ct = default) =>
+            Task.FromResult(Result.Ok());
 
-        public Task SetRepeatModeAsync(RepeatMode mode, CancellationToken ct = default) =>
-            Task.CompletedTask;
+        public Task<Result> SetRepeatModeAsync(RepeatMode mode, CancellationToken ct = default) =>
+            Task.FromResult(Result.Ok());
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

@@ -215,7 +215,21 @@ public partial class MainWindow : Window
             );
             pane.Player = player;
 
-            await player.PlayAsync();
+            var played = await player.PlayAsync();
+            if (!played.IsSuccess)
+            {
+                _logger.LogError(
+                    played.Error.Inner,
+                    "[{Label}] playback refused: {Category}: {Message}",
+                    cfg.Label,
+                    played.Error.Category,
+                    played.Error.Message
+                );
+                var reason = played.Error.Message;
+                Dispatcher.UIThread.Post(() => pane.Status.Text = $"error: {reason}");
+                return;
+            }
+
             _logger.LogInformation("[{Label}] playing.", cfg.Label);
         }
         catch (Exception ex)
