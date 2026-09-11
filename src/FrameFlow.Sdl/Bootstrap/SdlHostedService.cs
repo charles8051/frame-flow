@@ -4,7 +4,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace FrameFlow.SDL.Bootstrap;
+namespace FrameFlow.Sdl.Bootstrap;
 
 /// <summary>
 /// Hosted service that initializes <see cref="ISdlBootstrapper"/> at application startup,

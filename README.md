@@ -45,7 +45,6 @@ The usual entry point. Give it a source and the sinks you want, then drive
 playback through the returned `IMediaPlayer`:
 
 ```csharp
-using FrameFlow;                 // HardwareDecodeMode lives here
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Media;
 using FrameFlow.Player;
@@ -62,10 +61,6 @@ await using var player = await MediaPlayer.CreateAsync(
 
 await player.PlayAsync();
 ```
-
-Do not drop `using FrameFlow;`. `HardwareDecodeMode` is in the root `FrameFlow`
-namespace while the other types here are not. The examples in this repository
-compile without it only because they declare namespaces under `FrameFlow.*`.
 
 ### `FrameFlowPlayer.Open` — the fluent builder
 

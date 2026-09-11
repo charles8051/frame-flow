@@ -7,9 +7,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using Silk.NET.SDL;
 
-namespace FrameFlow.SDL.Bootstrap;
+namespace FrameFlow.Sdl.Bootstrap;
 
 /// <summary>
 /// Extension methods for registering SDL2 bootstrap services with
@@ -19,7 +18,7 @@ public static class SdlServiceCollectionExtensions
 {
     /// <summary>
     /// Registers <see cref="ISdlBootstrapper"/> as a singleton and
-    /// <see cref="Sdl"/> as a singleton whose factory calls
+    /// <see cref="SdlApi"/> as a singleton whose factory calls
     /// <see cref="ISdlBootstrapper.CreateSdlApi"/>.
     /// </summary>
     /// <param name="builder">
@@ -29,7 +28,7 @@ public static class SdlServiceCollectionExtensions
     /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
     /// <remarks>
     /// <see cref="ISdlBootstrapper.Initialize"/> is not called automatically.
-    /// Either call it manually before resolving <see cref="Sdl"/>, or chain
+    /// Either call it manually before resolving <see cref="SdlApi"/>, or chain
     /// <see cref="AddHostedSdlBootstrap"/> to initialize at hosted startup.
     /// </remarks>
     public static IFrameFlowBuilder AddFrameFlowSdl(this IFrameFlowBuilder builder)
@@ -43,7 +42,7 @@ public static class SdlServiceCollectionExtensions
             return new SdlBootstrapper(opts, loggerFactory);
         });
 
-        builder.Services.TryAddSingleton<Sdl>(sp =>
+        builder.Services.TryAddSingleton<SdlApi>(sp =>
         {
             var bootstrapper = sp.GetRequiredService<ISdlBootstrapper>();
             return bootstrapper.CreateSdlApi();
@@ -95,7 +94,7 @@ public static class SdlServiceCollectionExtensions
     /// </para>
     /// <para>
     /// For the simple-case where you just want a window with default
-    /// dimensions, use the <see cref="AddFrameFlowSdlVideoSink(IFrameFlowBuilder, Sdl, string, int, int, out SdlVideoSink, ILogger{SdlVideoSink}?)"/>
+    /// dimensions, use the <see cref="AddFrameFlowSdlVideoSink(IFrameFlowBuilder, SdlApi, string, int, int, out SdlVideoSink, ILogger{SdlVideoSink}?)"/>
     /// overload instead — it constructs the sink internally and outputs
     /// it for the caller.
     /// </para>
@@ -147,7 +146,7 @@ public static class SdlServiceCollectionExtensions
     /// </example>
     public static IFrameFlowBuilder AddFrameFlowSdlVideoSink(
         this IFrameFlowBuilder builder,
-        Sdl sdl,
+        SdlApi sdl,
         string windowTitle,
         int width,
         int height,

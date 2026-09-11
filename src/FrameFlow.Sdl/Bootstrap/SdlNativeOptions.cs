@@ -1,7 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-namespace FrameFlow.SDL.Bootstrap;
+namespace FrameFlow.Sdl.Bootstrap;
 
 /// <summary>
 /// Options that control how <see cref="SdlBootstrapper"/> resolves the SDL2 native library.

@@ -4,7 +4,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
-namespace FrameFlow;
+namespace FrameFlow.Media;
 
 /// <summary>
 /// Provides <see cref="IServiceCollection"/> extension methods for registering FrameFlow

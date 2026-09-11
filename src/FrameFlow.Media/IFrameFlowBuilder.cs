@@ -3,7 +3,7 @@
 
 using Microsoft.Extensions.DependencyInjection;
 
-namespace FrameFlow;
+namespace FrameFlow.Media;
 
 /// <summary>
 /// A builder returned from <see cref="FrameFlowServiceCollectionExtensions.AddFrameFlow"/>

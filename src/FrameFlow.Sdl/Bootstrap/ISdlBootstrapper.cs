@@ -1,11 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-// Silk.NET.SDL.Sdl is the underlying SDL2 wrapper. The FrameFlow.SDL namespace
-// uses the ALL-CAPS form per .NET acronym conventions so it does not collide.
-using SdlApi = Silk.NET.SDL.Sdl;
-
-namespace FrameFlow.SDL.Bootstrap;
+namespace FrameFlow.Sdl.Bootstrap;
 
 /// <summary>
 /// Resolves and loads the SDL2 native library and produces <see cref="Silk.NET.SDL.Sdl"/> API instances

@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Silk.NET.SDL;
 
-namespace FrameFlow.SDL;
+namespace FrameFlow.Sdl;
 
 /// <summary>
 /// An <see cref="IVideoSink"/> that renders video frames to an SDL2 window.
@@ -32,12 +32,12 @@ namespace FrameFlow.SDL;
 public sealed unsafe partial class SdlVideoSink : IVideoSink
 {
     private static readonly VideoSinkMeters Meters = new(
-        "FrameFlow.SDL.Sink",
+        "FrameFlow.Sdl.Sink",
         "frameflow.sdl.sink",
         nameof(SdlVideoSink)
     );
 
-    private readonly Silk.NET.SDL.Sdl? _sdl;
+    private readonly SdlApi? _sdl;
     private readonly ILogger<SdlVideoSink> _logger;
     private Window* _window;
     private Renderer* _renderer;
@@ -74,7 +74,7 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     /// Thrown if <c>SDL_CreateWindow</c> or <c>SDL_CreateRenderer</c> fails.
     /// </exception>
     public SdlVideoSink(
-        Silk.NET.SDL.Sdl sdl,
+        SdlApi sdl,
         IFramePool framePool,
         string title,
         int width,
@@ -93,8 +93,8 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
 
         _window = sdl.CreateWindow(
             title,
-            Silk.NET.SDL.Sdl.WindowposUndefined,
-            Silk.NET.SDL.Sdl.WindowposUndefined,
+            SdlApi.WindowposUndefined,
+            SdlApi.WindowposUndefined,
             width,
             height,
             (uint)(WindowFlags.Shown | WindowFlags.Resizable)
