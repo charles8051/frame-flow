@@ -25,7 +25,7 @@ namespace FrameFlow.Player;
 /// <see cref="PlayerSession"/> does not depend on
 /// <see cref="FrameFlow.Playback.IPlaybackController"/> or on
 /// anything else registered through
-/// <see cref="FrameFlow.IFrameFlowBuilder"/>. Skipping the DI layer
+/// <see cref="FrameFlow.Media.IFrameFlowBuilder"/>. Skipping the DI layer
 /// removes a per-build allocation tree.
 /// </para>
 /// </remarks>

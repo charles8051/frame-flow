@@ -26,6 +26,15 @@
 
   <ItemGroup>
     <Using Include="FrameFlow.Graph" />
+    <!--
+      Silk.NET.SDL.Sdl is the SDL2 wrapper this package wraps, and its
+      unqualified name is unreachable from inside the package: FrameFlow.Sdl is
+      an enclosing namespace, so a lookup of `Sdl` binds the namespace before
+      any using directive is consulted. This is the cost of the assembly, the
+      package and the namespace finally agreeing on one spelling; one alias
+      here pays it once instead of in every file.
+    -->
+    <Using Include="Silk.NET.SDL.Sdl" Alias="SdlApi" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />

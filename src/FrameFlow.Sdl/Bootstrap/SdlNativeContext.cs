@@ -4,7 +4,7 @@
 using System.Runtime.InteropServices;
 using Silk.NET.Core.Contexts;
 
-namespace FrameFlow.SDL.Bootstrap;
+namespace FrameFlow.Sdl.Bootstrap;
 
 /// <summary>
 /// Silk.NET <see cref="INativeContext"/> implementation that resolves SDL2 function pointers

@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Silk.NET.SDL;
 
-namespace FrameFlow.SDL;
+namespace FrameFlow.Sdl;
 
 /// <summary>
 /// An <see cref="IVideoSink"/> that renders video frames to an SDL2 window.
@@ -31,13 +31,18 @@ namespace FrameFlow.SDL;
 /// </remarks>
 public sealed unsafe partial class SdlVideoSink : IVideoSink
 {
+    // The meter name keeps the ALL-CAPS spelling the namespace just lost, and
+    // deliberately. A meter name is a runtime identity that exporters, views
+    // and dashboards filter on, and renaming it stops them collecting with no
+    // error to notice — a silent break where the namespace rename is a compile
+    // error. The two are not the same contract and do not have to agree.
     private static readonly VideoSinkMeters Meters = new(
         "FrameFlow.SDL.Sink",
         "frameflow.sdl.sink",
         nameof(SdlVideoSink)
     );
 
-    private readonly Silk.NET.SDL.Sdl? _sdl;
+    private readonly SdlApi? _sdl;
     private readonly ILogger<SdlVideoSink> _logger;
     private Window* _window;
     private Renderer* _renderer;
@@ -74,7 +79,7 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     /// Thrown if <c>SDL_CreateWindow</c> or <c>SDL_CreateRenderer</c> fails.
     /// </exception>
     public SdlVideoSink(
-        Silk.NET.SDL.Sdl sdl,
+        SdlApi sdl,
         IFramePool framePool,
         string title,
         int width,
@@ -93,8 +98,8 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
 
         _window = sdl.CreateWindow(
             title,
-            Silk.NET.SDL.Sdl.WindowposUndefined,
-            Silk.NET.SDL.Sdl.WindowposUndefined,
+            SdlApi.WindowposUndefined,
+            SdlApi.WindowposUndefined,
             width,
             height,
             (uint)(WindowFlags.Shown | WindowFlags.Resizable)

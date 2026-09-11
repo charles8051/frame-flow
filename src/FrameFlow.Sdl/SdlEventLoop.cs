@@ -3,7 +3,7 @@
 
 using Silk.NET.SDL;
 
-namespace FrameFlow.SDL;
+namespace FrameFlow.Sdl;
 
 /// <summary>
 /// Runs the standard SDL2 event-loop pump for an <see cref="SdlVideoSink"/>:
@@ -82,7 +82,7 @@ public static class SdlEventLoop
     /// <param name="ct">Cancellation token; loop exits cleanly when set.</param>
     /// <returns>0 on clean exit.</returns>
     public static int Run(
-        Sdl sdl,
+        SdlApi sdl,
         SdlVideoSink videoSink,
         EventHandler? onEvent = null,
         TickHandler? onTick = null,

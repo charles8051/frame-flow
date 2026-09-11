@@ -5,11 +5,8 @@ using System.Runtime.InteropServices;
 using FrameFlow.Media;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-// Silk.NET.SDL.Sdl is the underlying SDL2 wrapper. The FrameFlow.SDL namespace
-// uses the ALL-CAPS form per .NET acronym conventions so it does not collide.
-using SdlApi = Silk.NET.SDL.Sdl;
 
-namespace FrameFlow.SDL.Bootstrap;
+namespace FrameFlow.Sdl.Bootstrap;
 
 /// <summary>
 /// Resolves and loads the SDL2 native library for all publish modes, including
