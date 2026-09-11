@@ -23,6 +23,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <PackageTags>$(PackageTags);avalonia;avaloniaui;ui;video-player</PackageTags>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />

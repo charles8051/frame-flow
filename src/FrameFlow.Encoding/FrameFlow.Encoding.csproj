@@ -4,6 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PackageTags>$(PackageTags);encoder;muxer;h264;mp4</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

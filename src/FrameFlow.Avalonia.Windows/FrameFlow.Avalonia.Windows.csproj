@@ -15,6 +15,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PackageTags>$(PackageTags);avalonia;avaloniaui;ui;windows;direct3d;interop</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

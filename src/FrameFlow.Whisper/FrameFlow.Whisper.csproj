@@ -12,6 +12,7 @@
       NU1903: pre-existing security advisory on a transitive dependency.
     -->
     <NoWarn>$(NoWarn);NU1903;NU5118;NU5100</NoWarn>
+    <PackageTags>whisper;speech-to-text;transcription;onnx;inference;audio;dotnet</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

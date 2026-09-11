@@ -3,6 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <PackageTags>onnx;onnxruntime;inference;machine-learning;abstractions;dotnet</PackageTags>
   </PropertyGroup>
 
   <!--

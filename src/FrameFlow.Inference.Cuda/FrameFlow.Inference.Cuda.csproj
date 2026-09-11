@@ -4,6 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PackageTags>onnx;onnxruntime;inference;cuda;gpu;nvidia;machine-learning;dotnet</PackageTags>
   </PropertyGroup>
 
   <!--

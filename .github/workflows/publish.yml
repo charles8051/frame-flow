@@ -248,15 +248,21 @@ jobs:
         # by an EARLIER tag would otherwise survive into the push glob below and
         # be published alongside this release. periphery clears for the same
         # reason.
+        #
+        # ContinuousIntegrationBuild normalises source paths to the repository
+        # root, which is what makes the SourceLink metadata in the .snupkg
+        # resolve for a consumer. It is set here rather than in
+        # src/Directory.Build.props because it also breaks stepping into a
+        # local build, and every local build would inherit it.
         run: |
           rm -rf packages
-          dotnet pack FrameFlow.slnx --configuration Release -p:FrameFlowLocalFeedDisable=true -o packages
+          dotnet pack FrameFlow.slnx --configuration Release -p:FrameFlowLocalFeedDisable=true -p:ContinuousIntegrationBuild=true -o packages
 
       - name: Pack native runtime package
         # Native.Runtime lives outside the solution (it's a
         # packaging-only project that ships the fetched FFmpeg binaries),
         # so it needs an explicit pack invocation.
-        run: dotnet pack nuget/FrameFlow.Native.Runtime.csproj --configuration Release -o packages
+        run: dotnet pack nuget/FrameFlow.Native.Runtime.csproj --configuration Release -p:ContinuousIntegrationBuild=true -o packages
 
       - name: List packages and assert the family is complete
         # Fail-loud completeness gate, ported from periphery. A release that
@@ -414,7 +420,15 @@ jobs:
           # [0-9] pins the match to a version boundary, matching the completeness
           # gate above. A bare .* would also catch a future sibling id such as
           # FrameFlow.MotionClip.Extensions and hold it back silently.
+          #
+          # The .snupkg moves with its .nupkg. `dotnet nuget push` pushes a
+          # symbol package only as the sibling of a matched .nupkg, so leaving
+          # MotionClip.snupkg behind in packages/ would not publish it — but it
+          # would file it under "published" in the uploaded artifact, which is
+          # the wrong answer to the only question that artifact exists to
+          # settle.
           mv packages/FrameFlow.MotionClip.[0-9]*.nupkg not-published/ 2>/dev/null || true
+          mv packages/FrameFlow.MotionClip.[0-9]*.snupkg not-published/ 2>/dev/null || true
 
           fail=0
           for f in packages/*.nupkg; do
@@ -475,7 +489,9 @@ jobs:
           # reason about, not easier.
           path: |
             packages/*.nupkg
+            packages/*.snupkg
             not-published/*.nupkg
+            not-published/*.snupkg
           if-no-files-found: warn
 
       # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in

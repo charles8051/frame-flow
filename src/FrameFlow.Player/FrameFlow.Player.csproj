@@ -3,6 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <PackageTags>$(PackageTags);player;video-player</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
