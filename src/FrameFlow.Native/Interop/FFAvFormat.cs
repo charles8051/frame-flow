@@ -70,6 +70,7 @@ internal static partial class FFAvFormat
     /// specified stream. Use <paramref name="flags"/> to control direction and precision
     /// (e.g. <c>AVSEEK_FLAG_BACKWARD</c>).
     /// </summary>
+    /// <param name="ctx">Open <c>AVFormatContext*</c> to seek in.</param>
     /// <param name="streamIndex">
     /// Stream index to seek in, or -1 to use a default stream.
     /// </param>

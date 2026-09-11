@@ -68,12 +68,23 @@ public static class PlaybackController
     /// <param name="audioSink">
     /// Audio sink the controller will drive when audio is present.
     /// Doubles as the master clock when it implements
-    /// <see cref="IClockSource"/> (per the existing master-clock
-    /// selection in <see cref="FrameFlow.Playback.PlaybackSession"/>).
+    /// <see cref="IClockSource"/>, which is how the session picks its
+    /// master clock.
     /// </param>
     /// <param name="hardwareDecodeMode">
     /// Hardware-decode policy for the video decoder (ADR-0033). The
     /// session falls back to software when no hwaccel backend binds.
+    /// </param>
+    /// <param name="hardwareDecodeCapabilities">
+    /// Backends the host was probed to support. Pass the value from
+    /// <see cref="FrameFlow.Media.FrameFlowBootstrapResult.Capabilities"/>.
+    /// <see langword="null"/> re-probes, which costs a second or so on a
+    /// multi-GPU host.
+    /// </param>
+    /// <param name="yieldHardwareFrames">
+    /// When <see langword="true"/>, hardware-decoded frames reach the video
+    /// sink as GPU frames instead of being downloaded to system memory first.
+    /// Only useful with a sink that can consume them.
     /// </param>
     /// <param name="initialRepeatMode">
     /// Starting repeat mode. Can be changed at runtime via
@@ -97,6 +108,10 @@ public static class PlaybackController
     /// Optional audio-chain configurator. Same shape as the video
     /// hook; runs between the decoder source and the gate+sink
     /// terminal.
+    /// </param>
+    /// <param name="latenessRecovery">
+    /// Tuning for the lateness-recovery walk. <see langword="null"/> leaves
+    /// the walk off, which is the default.
     /// </param>
     public static IPlaybackController Create(
         IVideoSink? videoSink = null,
@@ -157,6 +172,43 @@ public static class PlaybackController
     /// The shared playlist queue + loop policy + transition stream. Its
     /// <see cref="PlaylistCoordinator.RepeatMode"/> should match
     /// <paramref name="initialRepeatMode"/>.
+    /// </param>
+    /// <param name="videoSink">
+    /// Warm video sink, reused across every item. <see langword="null"/> for
+    /// an audio-only playlist.
+    /// </param>
+    /// <param name="audioSink">
+    /// Warm audio sink, reused across every item. Doubles as the master clock
+    /// when it implements <see cref="IClockSource"/>.
+    /// </param>
+    /// <param name="hardwareDecodeMode">
+    /// Hardware-decode policy applied to each item's video decoder.
+    /// </param>
+    /// <param name="hardwareDecodeCapabilities">
+    /// Backends the host was probed to support, probed once and reused for
+    /// every item. <see langword="null"/> re-probes per item.
+    /// </param>
+    /// <param name="yieldHardwareFrames">
+    /// When <see langword="true"/>, hardware-decoded frames reach the video
+    /// sink as GPU frames rather than being downloaded first.
+    /// </param>
+    /// <param name="initialRepeatMode">
+    /// Starting repeat mode. Defaults to <see cref="RepeatMode.All"/>, which
+    /// is the usual playlist case.
+    /// </param>
+    /// <param name="clock">
+    /// Optional clock to inject. Defaults to a fresh
+    /// <see cref="PlaybackClock"/> with system time.
+    /// </param>
+    /// <param name="loggerFactory">
+    /// Optional logger factory. Defaults to
+    /// <see cref="NullLoggerFactory.Instance"/>.
+    /// </param>
+    /// <param name="configureVideo">
+    /// Optional video-chain configurator, applied to every item's chain.
+    /// </param>
+    /// <param name="configureAudio">
+    /// Optional audio-chain configurator, applied to every item's chain.
     /// </param>
     internal static IPlaybackController CreatePlaylist(
         PlaylistCoordinator coordinator,

@@ -16,15 +16,15 @@ namespace FrameFlow.MotionClip;
 /// <remarks>
 /// <para>
 /// This is the <em>fallback</em> source: the example opens a live camera by
-/// default (see <see cref="CameraVideoSource"/>) and only uses this synthetic
+/// default (the live camera source) and only uses this synthetic
 /// scene when <c>--synthetic</c> is passed or no camera is available, so the
 /// recorder still runs and produces real clips on any machine. The rest of the
 /// pipeline (resize/convert → recorder sink) is identical for either source.
 /// </para>
 /// <para>
-/// Frames are produced at <paramref name="fps"/> with a real-time delay so the
+/// Frames are produced at <c>fps</c> with a real-time delay so the
 /// recorder's pre-roll (frames) and post-roll (frames) windows map to the
-/// wall-clock seconds in <see cref="ClipRecorderOptions"/>.
+/// wall-clock seconds in <see cref="ClipRecorderArgs"/>.
 /// </para>
 /// </remarks>
 internal static class SyntheticSceneSource

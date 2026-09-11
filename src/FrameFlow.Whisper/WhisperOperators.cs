@@ -9,7 +9,7 @@ using Whisper.net;
 namespace FrameFlow.Whisper;
 
 /// <summary>
-/// Substrate operator form of <see cref="FrameFlow.Whisper.WhisperPipelineExtensions.TranscribeWithWhisper"/>.
+/// Substrate operator form of the old <c>WhisperPipelineExtensions.TranscribeWithWhisper</c>.
 /// Wraps Whisper.net inference as a 1→N <see cref="MultiOperatorNode{TIn, TOut}"/>:
 /// each upstream <see cref="PcmAudioBufferRef"/> contributes samples to a
 /// rolling window; each completed window runs one Whisper inference call
@@ -18,7 +18,7 @@ namespace FrameFlow.Whisper;
 /// <remarks>
 /// <para>
 /// <b>Diff from old.</b> The original
-/// <see cref="FrameFlow.Whisper.WhisperPipelineExtensions.TranscribeWithWhisper"/>
+/// <c>WhisperPipelineExtensions.TranscribeWithWhisper</c>
 /// wraps the many-to-many shape in a private bridge: an
 /// <c>Observe</c>-driven background task accumulates samples and writes
 /// captions to an unbounded <see cref="System.Threading.Channels.Channel{T}"/>;
@@ -39,7 +39,7 @@ namespace FrameFlow.Whisper;
 /// boundary still got a caption. The substrate's
 /// <see cref="MultiOperatorNode{TIn, TOut}"/> has no EOS-cleanup hook
 /// today, so the trailing samples are dropped. Same caveat applies to
-/// <see cref="AudioOperators.Resample"/>'s post-EOS resampler buffer.
+/// <c>AudioOperators.Resample</c>'s post-EOS resampler buffer.
 /// For streaming captioning (the LiveCaptioning use case) the trailing
 /// loss is inconsequential; for offline transcription of finite files
 /// the last &lt; <see cref="WhisperOptions.EffectiveWindowSize"/> of
@@ -54,7 +54,7 @@ namespace FrameFlow.Whisper;
 /// unreachable. Whisper.net's types implement <see cref="IDisposable"/>;
 /// the underlying native handles are released via finalizers. Same
 /// "outlives graph run, lean on GC" pattern as
-/// <see cref="AudioOperators.Resample"/>. Consumers with tight cycle
+/// <c>AudioOperators.Resample</c>. Consumers with tight cycle
 /// requirements should hold the operator separately and dispose
 /// explicitly via a follow-on API (not yet exposed).
 /// </para>
@@ -165,7 +165,7 @@ public static class WhisperOperators
     }
 
     /// <summary>
-    /// Wraps one <see cref="WhisperProcessor.ProcessAsync"/> call. Each
+    /// Wraps one <c>WhisperProcessor.ProcessAsync</c> call. Each
     /// non-empty segment becomes one <see cref="CaptionRef"/> with PTS
     /// anchored to <paramref name="windowStartPts"/>.
     /// </summary>

@@ -8,7 +8,7 @@ namespace FrameFlow.Media;
 
 /// <summary>
 /// A decoded PCM audio block whose sample data is backed by pooled memory.
-/// Implements Crossbar's <see cref="Crossbar.IAudioBuffer"/> substrate
+/// Implements the graph substrate's <see cref="FrameFlow.Graph.IAudioBuffer"/>
 /// interface with reference counting so a single buffer can be safely
 /// observed (audio sink playback) and consumed (resampler, ASR) without
 /// duplicating the underlying memory.
@@ -65,7 +65,7 @@ public sealed class PcmAudioBuffer : IAudioBuffer
 
     /// <summary>
     /// Total scalar PCM samples in <see cref="SampleData"/>
-    /// (interleaved layout — <see cref="FrameCount"/> &times;
+    /// (interleaved layout — <see cref="FrameCount"/> ×
     /// <see cref="ChannelCount"/>). May be less than
     /// <c>SampleData.Memory.Length</c> when the pool returns an
     /// oversized buffer.
@@ -124,7 +124,7 @@ public sealed class PcmAudioBuffer : IAudioBuffer
     /// <param name="sampleCount">
     /// Total scalar samples (interleaved). For mono S16 this equals
     /// <see cref="FrameCount"/>; for stereo S16 it equals
-    /// <see cref="FrameCount"/> &times; 2.
+    /// <see cref="FrameCount"/> × 2.
     /// </param>
     /// <param name="sampleRate">Sample rate in Hz.</param>
     /// <param name="channels">Number of channels.</param>

@@ -136,6 +136,7 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
     /// Output configuration. When null the defaults from <see cref="AudioDecoderOptions"/>
     /// are used.
     /// </param>
+    /// <param name="logger">Optional logger; silent when null.</param>
     /// <exception cref="InvalidOperationException">
     /// Thrown when the codec is not found, the context cannot be opened, or the resampler
     /// cannot be initialised.
@@ -274,7 +275,7 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
     /// <summary>
     /// Reads the next input from the packet queue. Returns <see langword="false"/> on a
     /// flush sentinel or once the queue completes, putting the codec into flush mode so
-    /// <see cref="SendCurrentInput"/> sends a null packet.
+    /// <c>SendCurrentInput</c> sends a null packet.
     /// </summary>
     async ValueTask<bool> IDecodeCodec<PcmAudioBuffer>.TryBeginNextInputAsync(
         CancellationToken cancellationToken

@@ -94,7 +94,7 @@ internal static partial class FFAvCodec
     /// Allocates a fresh reference-counted payload buffer of
     /// <paramref name="size"/> bytes on the packet and resets its fields.
     /// Used by the muxer to build a writable <c>AVPacket</c> from an
-    /// <see cref="FrameFlow.Encoding.EncodedPacket"/>'s managed bytes.
+    /// <c>FrameFlow.Encoding.EncodedPacket</c>'s managed bytes.
     /// <c>av_packet_unref</c> the packet first when reusing it.
     /// </summary>
     /// <returns>0 on success or a negative AVERROR code.</returns>

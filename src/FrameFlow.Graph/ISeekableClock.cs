@@ -24,7 +24,7 @@ namespace FrameFlow.Graph;
 /// </para>
 /// <para>
 /// <b>Contract.</b> After <see cref="SeekBaseline"/>, <see cref="IClockSource.Latest"/>
-/// reports a value at or near <paramref name="position"/> until the clock advances
+/// reports a value at or near <c>position</c> until the clock advances
 /// from there. Implementations must apply the reseat atomically with respect to
 /// their read surface and must tolerate being called while inactive/paused (the
 /// new origin takes effect on the next activation/resume). Idempotent for repeated

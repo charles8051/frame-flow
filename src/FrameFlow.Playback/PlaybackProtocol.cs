@@ -102,7 +102,8 @@ internal enum PlaybackActionKind
 /// <summary>
 /// One element of a <see cref="PlaybackDecision"/>'s ordered action list: the
 /// <see cref="PlaybackActionKind"/> plus the single optional payload an action may
-/// carry (today only <see cref="FireTrigger"/> carries one — the follow-up trigger).
+/// carry (today only <see cref="PlaybackActionKind.FireTrigger"/> carries one — the
+/// follow-up trigger).
 /// </summary>
 /// <remarks>
 /// Kept a single value type rather than a class hierarchy so the whole decision is a

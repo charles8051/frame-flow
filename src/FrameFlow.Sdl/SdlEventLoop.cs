@@ -23,10 +23,10 @@ namespace FrameFlow.SDL;
 /// <b>Pacing.</b> The loop sleeps <see cref="DefaultPollInterval"/>
 /// (~8 ms = ~120 Hz) between polls. The render call is non-blocking — it
 /// only paints if the sink has a pending frame. Adjust
-/// <paramref name="pollInterval"/> if you need a different cadence.
+/// <c>pollInterval</c> if you need a different cadence.
 /// </para>
 /// <para>
-/// <b>Cancellation.</b> The loop checks <paramref name="ct"/> between each
+/// <b>Cancellation.</b> The loop checks <c>ct</c> between each
 /// poll cycle and exits cleanly when cancelled. SDL's own
 /// <see cref="EventType.Quit"/> (Cmd-Q, window close, etc.) also exits
 /// the loop.

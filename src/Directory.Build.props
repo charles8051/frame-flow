@@ -41,6 +41,22 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
 
+    <!--
+      Ship the XML doc file in every package. Without this the doc comments
+      across src/ are compiler-ignored: they never reach a consumer's
+      IntelliSense, and the compiler never checks them, so crefs rot silently
+      (MediaPlayer.CreateAsync spent several releases documenting
+      IPlayerBuilder.ConfigureVideoPipeline, renamed to ConfigureVideo).
+
+      CS1591 (missing summary on a public member) is suppressed for now.
+      Turning it on alongside this would add 181 warnings that are a
+      separate piece of work; the cref, <param> and malformed-XML defects
+      this does surface are fixed. Drop the NoWarn per project as each one's
+      public members get summaries.
+    -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
     <!-- MinVer: derive version from git tags like v0.1.0 -->
     <MinVerTagPrefix>v</MinVerTagPrefix>
   </PropertyGroup>

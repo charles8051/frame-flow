@@ -9,7 +9,7 @@ namespace FrameFlow.Playback;
 /// this interface instead of the mutable <see cref="IPlaybackClock"/>.
 /// </summary>
 /// <remarks>
-/// Per ADR-0028 §1, the <see cref="PlaybackSession"/> is the single owner of
+/// Per ADR-0028 §1, the playback session is the single owner of
 /// clock state transitions. Any layer that needs to <em>read</em> the clock —
 /// notably <c>PipelineController</c> for A/V sync — should take
 /// <see cref="IReadOnlyPlaybackClock"/> so that the type system prevents

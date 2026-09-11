@@ -280,6 +280,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// <see cref="VideoDecoderOptions.PacketQueueCapacity"/>). When null the defaults
     /// from <see cref="VideoDecoderOptions"/> are used.
     /// </param>
+    /// <param name="logger">Optional logger; silent when null.</param>
     /// <exception cref="InvalidOperationException">
     /// Thrown if the codec cannot be found, the context cannot be allocated, or
     /// <c>avcodec_open2</c> fails.
@@ -359,7 +360,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// Reads the next input from the packet queue. A packet retained from a cancelled
     /// session (in <see cref="_pendingRetryPacketPtr"/>) is re-fed first. Returns
     /// <see langword="false"/> on a flush sentinel or once the queue completes, putting the
-    /// decoder into flush mode so <see cref="SendCurrentInput"/> sends a null packet.
+    /// decoder into flush mode so <c>SendCurrentInput</c> sends a null packet.
     /// </summary>
     async ValueTask<bool> IDecodeCodec<IVideoFrame>.TryBeginNextInputAsync(
         CancellationToken cancellationToken
@@ -435,7 +436,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// Receives one frame and, on success, builds the managed frame and recycles the native
     /// frame — all under <see cref="_codecSync"/> so a concurrent <see cref="Flush"/> cannot
     /// unref the shared <c>AVFrame</c> mid-build. The ADR-0033/0038 GPU and CPU build paths
-    /// are preserved; the built frame is stashed for <see cref="BuildFrame"/>.
+    /// are preserved; the built frame is stashed for <c>BuildFrame</c>.
     /// </summary>
     CodecReturn IDecodeCodec<IVideoFrame>.ReceiveFrame()
     {
@@ -537,7 +538,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     }
 
     /// <summary>
-    /// Returns the frame stashed by the preceding <see cref="ReceiveFrame"/> (may be
+    /// Returns the frame stashed by the preceding <c>ReceiveFrame</c> (may be
     /// <see langword="null"/> when conversion produced nothing), updating the frames-decoded
     /// counter and first-frame signal. No lock needed: the stash is only touched by the
     /// single decode worker between a receive and this call.
@@ -568,7 +569,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// MUST not block on video send because the pump is single-
     /// threaded across both streams — a blocked video send starves the
     /// audio decoder, drains the audio sink, freezes the master clock,
-    /// freezes <see cref="FrameFlow.Playback.PaceUntil"/>, and
+    /// freezes <c>FrameFlow.Playback.PaceUntil</c>, and
     /// permanently stalls the video chain (self-reinforcing deadlock
     /// that only a manual seek can recover from). This is the
     /// "AvaloniaPlayer freezes video on seek; audio continues several

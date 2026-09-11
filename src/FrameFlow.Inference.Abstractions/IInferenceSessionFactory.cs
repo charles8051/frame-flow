@@ -12,12 +12,12 @@ namespace FrameFlow.Inference;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Lazy probe.</b> The first <see cref="Open"/> call attempts the
+/// <b>Lazy probe.</b> The first <see cref="Open(string, System.IProgress{InferenceSessionProgress})"/> call attempts the
 /// preferred EP and, on failure, walks the fallback chain until one
 /// succeeds. The selected EP is cached as <see cref="ActiveProvider"/>;
-/// subsequent <see cref="Open"/> calls construct with the cached
+/// subsequent <c>Open</c> calls construct with the cached
 /// provider directly without re-probing. If every EP in the chain
-/// fails, <see cref="Open"/> throws and <see cref="ActiveProvider"/>
+/// fails, <c>Open</c> throws and <see cref="ActiveProvider"/>
 /// remains <c>null</c>.
 /// </para>
 /// <para>
@@ -42,8 +42,8 @@ namespace FrameFlow.Inference;
 public interface IInferenceSessionFactory
 {
     /// <summary>
-    /// EP used by previous and future <see cref="Open"/> calls.
-    /// <c>null</c> until <see cref="Open"/> has succeeded at least once.
+    /// EP used by previous and future <c>Open</c> calls.
+    /// <c>null</c> until <see cref="Open(string, System.IProgress{InferenceSessionProgress})"/> has succeeded at least once.
     /// </summary>
     ExecutionProvider? ActiveProvider { get; }
 

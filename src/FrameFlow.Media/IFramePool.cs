@@ -12,7 +12,7 @@ namespace FrameFlow.Media;
 /// <para>
 /// The pool provides backpressure: when all frames are in-flight,
 /// <see cref="RentAsync"/> blocks until a frame is returned via
-/// <see cref="Return"/> (or <see cref="IVideoFrame.Dispose"/>).
+/// <see cref="Return"/> (or <see cref="IDisposable.Dispose"/> on the frame).
 /// </para>
 /// <para>
 /// V1 provides a CPU-backed pool. The <see cref="MemoryDomain"/> property

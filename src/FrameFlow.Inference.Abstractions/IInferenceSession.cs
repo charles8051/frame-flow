@@ -24,12 +24,13 @@ namespace FrameFlow.Inference;
 /// </para>
 /// <para>
 /// <b>Threading.</b> A single session is safe for sequential
-/// <see cref="Run"/> calls. Concurrent calls against one session are
+/// <see cref="Run(IReadOnlyDictionary{string, FrameFlow.Graph.ICpuTensor}, IReadOnlyDictionary{string, FrameFlow.Graph.ICpuTensor})"/>
+/// calls. Concurrent calls against one session are
 /// not supported in V1.
 /// </para>
 /// <para>
 /// <b>Output allocation.</b> Callers pre-allocate output tensors with
-/// the shape the model produces and pass them into <see cref="Run"/>.
+/// the shape the model produces and pass them into <c>Run</c>.
 /// The EP writes results into the caller-owned tensors. This puts
 /// allocation cost on the caller's pool (visible via pool counters)
 /// rather than hiding it inside the EP.

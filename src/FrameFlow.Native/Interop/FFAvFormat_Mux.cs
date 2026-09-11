@@ -59,7 +59,7 @@ internal static partial class FFAvFormat
     /// <param name="codec">
     /// Optional <c>AVCodec*</c> hint; pass <see cref="nint.Zero"/> when the
     /// stream's parameters are filled separately via
-    /// <see cref="avcodec_parameters_from_context"/>.
+    /// <see cref="FFAvCodec.avcodec_parameters_from_context"/>.
     /// </param>
     [LibraryImport("avformat")]
     [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]

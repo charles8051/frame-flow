@@ -25,12 +25,12 @@ namespace FrameFlow.Yolo;
 /// <see cref="FrameFlow.Inference.IInferenceSession"/> (e.g.
 /// <c>new FrameFlow.Inference.Cuda.CudaInferenceSession(modelPath)</c>
 /// or <c>new FrameFlow.Inference.Dml.DmlInferenceSession(modelPath)</c>)
-/// and pass it to <see cref="CreateAsync"/>. The detector takes
+/// and pass it to <c>CreateAsync</c>. The detector takes
 /// ownership; <see cref="Dispose"/> tears down the session.
 /// </para>
 /// <para>
 /// <b>Hot path.</b> Per frame: preprocess (writes pixels into the input
-/// tensor's bytes), <see cref="FrameFlow.Inference.IInferenceSession.Run"/>
+/// tensor's bytes), <c>IInferenceSession.Run</c>
 /// (EP stages internally), postprocess (reads detections from the
 /// output tensor's bytes). No explicit host↔device transfers — the EP
 /// handles staging per ADR-0049 §3.
@@ -258,7 +258,7 @@ public sealed partial class Yolov8Detector : IDisposable
     /// a model path. Typical: <c>path => new CudaInferenceSession(path)</c>
     /// or <c>path => new DmlInferenceSession(path)</c>. New consumers
     /// should prefer the
-    /// <see cref="CreateAsync(FrameFlow.Inference.IInferenceSessionFactory, string?, CancellationToken, ILoggerFactory?)"/>
+    /// <see cref="CreateAsync(FrameFlow.Inference.IInferenceSessionFactory, string, CancellationToken, ILoggerFactory, YoloModelDescriptor, IReadOnlyCollection{int}, IProgress{FrameFlow.Inference.InferenceSessionProgress})"/>
     /// overload, which centralises EP selection and fallback.
     /// </param>
     /// <param name="overrideModelPath">Optional path override; if null, downloads.</param>
@@ -271,7 +271,7 @@ public sealed partial class Yolov8Detector : IDisposable
     /// <see cref="FrameFlow.Inference.InferenceSessionPhase.Warmup"/>).
     /// EP probe / session-open phases are the supplied
     /// <paramref name="sessionFactory"/>'s concern in this overload — pass
-    /// the <see cref="IInferenceSessionFactory"/> overload to get those
+    /// the <see cref="FrameFlow.Inference.IInferenceSessionFactory"/> overload to get those
     /// reported too. <c>null</c> ⇒ identical to the previous behaviour.
     /// </param>
     public static async Task<Yolov8Detector> CreateAsync(
@@ -324,7 +324,7 @@ public sealed partial class Yolov8Detector : IDisposable
     /// </summary>
     /// <remarks>
     /// The three stages are timed separately. Only
-    /// <see cref="FrameFlow.Inference.IInferenceSession.Run"/> executes on
+    /// <c>IInferenceSession.Run</c> executes on
     /// the EP device; <c>Preprocess</c> (pixel resize + NCHW layout into
     /// the input tensor) and <c>Decode</c> (NMS over the candidate boxes)
     /// are CPU work. The split is what distinguishes a GPU-bound host from
@@ -378,7 +378,7 @@ public sealed partial class Yolov8Detector : IDisposable
 
     /// <summary>
     /// Wall-clock duration (ms) of the inference stage
-    /// (<see cref="FrameFlow.Inference.IInferenceSession.Run"/>) of the most
+    /// (<c>IInferenceSession.Run</c>) of the most
     /// recent <see cref="Detect"/> call. The only stage that runs on the EP
     /// device. <see cref="double.NaN"/> before the first detection.
     /// </summary>

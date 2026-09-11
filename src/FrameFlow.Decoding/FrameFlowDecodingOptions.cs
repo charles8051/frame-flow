@@ -5,7 +5,7 @@ namespace FrameFlow.Decoding;
 
 /// <summary>
 /// Configures the decoder and demuxer factories registered by
-/// <see cref="FrameFlowDecodingServiceCollectionExtensions.AddFrameFlowDecoding"/>.
+/// <see cref="FrameFlowDecodingServiceCollectionExtensions.AddFrameFlowDecoding(FrameFlow.IFrameFlowBuilder, System.Action{FrameFlowDecodingOptions})"/>.
 /// All properties are optional — unset values fall back to the shipped defaults
 /// (<see cref="DemuxSessionFactory"/> and <see cref="DecoderFactories.Video"/>
 /// / <see cref="DecoderFactories.Audio"/>).

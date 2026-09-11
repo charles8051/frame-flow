@@ -480,6 +480,12 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// exactly, so without this the whole GOP arrives already due and presents at decode
     /// rate (#157).
     /// </param>
+    /// <param name="holdForSettle">
+    /// When <see langword="true"/>, the run starts with a hold armed: the
+    /// destination frame is withheld until the clock has been reseated onto
+    /// the seek target, so a scrub does not flash a frame paced against the
+    /// pre-seek clock.
+    /// </param>
     /// <remarks>
     /// The floor is armed here rather than at the flush because this is the point the
     /// discontinuity is committed — a run is about to start producing frames against the
@@ -635,6 +641,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// newer one has armed a hold of its own, and clearing that one would deliver its
     /// destination frame before its reseat.
     /// </param>
+    /// <param name="ct">Cancels the wait when the run is torn down.</param>
     private async Task WaitForSettleAsync(long runId, CancellationToken ct)
     {
         try

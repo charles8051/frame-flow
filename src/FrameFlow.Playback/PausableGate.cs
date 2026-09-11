@@ -12,7 +12,7 @@ namespace FrameFlow.Playback;
 /// when closed, the operator awaits the gate before forwarding,
 /// causing the downstream sink pump to idle and the upstream source
 /// to backpressure naturally (the bounded edge buffer fills, then the
-/// upstream's <see cref="Crossbar.SourceNode{T}"/>
+/// upstream's <see cref="FrameFlow.Graph.SourceNode{TOut}"/>
 /// body call blocks on the channel write).
 /// </summary>
 /// <remarks>

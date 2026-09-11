@@ -18,15 +18,13 @@ namespace FrameFlow.Player;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Why no DI container.</b> The old
-/// <see cref="FrameFlow.Player.PlayerBuilder"/> assembles a
-/// <c>ServiceProvider</c> on the fly to compose
-/// <see cref="IPlaybackControllerFactory"/> + decoder factories +
-/// sink registrations + options + logger. The Next builder doesn't
-/// need any of that — it constructs the demux + decoder pieces
-/// directly because the substrate doesn't depend on
-/// <see cref="FrameFlow.Playback.IPlaybackController"/>. Skipping
-/// the DI layer makes the implementation about half the LOC and
+/// <b>Why no DI container.</b> This builder constructs the demux
+/// session and decoders directly rather than standing up a
+/// <c>ServiceProvider</c> to resolve them. It can, because a
+/// <see cref="PlayerSession"/> does not depend on
+/// <see cref="FrameFlow.Playback.IPlaybackController"/> or on
+/// anything else registered through
+/// <see cref="FrameFlow.IFrameFlowBuilder"/>. Skipping the DI layer
 /// removes a per-build allocation tree.
 /// </para>
 /// </remarks>

@@ -11,7 +11,7 @@ namespace FrameFlow.Native.Interop;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Ownership rule (ADR-0005): the <see cref="VideoDecoder"/> allocates the sws context
+/// Ownership rule (ADR-0005): the video decoder allocates the sws context
 /// for the lifetime of the decoder session and is the sole owner. The handle is disposed
 /// when the decoder is disposed.
 /// </para>

@@ -71,7 +71,7 @@ public static class FrameFlowNativeServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers an <see cref="IHostedService"/> that eagerly initializes the FrameFlow
+    /// Registers an <see cref="Microsoft.Extensions.Hosting.IHostedService"/> that eagerly initializes the FrameFlow
     /// native bootstrap (FFmpeg binary loading and codec probing) at application startup,
     /// rather than lazily on the first session creation.
     /// </summary>

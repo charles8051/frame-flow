@@ -9,6 +9,10 @@ namespace FrameFlow.Media;
 /// </summary>
 /// <param name="RawPosition">The most recent position the device actually reported.</param>
 /// <param name="ObservedAtTicks">Monotonic timestamp of that observation.</param>
+/// <param name="LastPublished">
+/// The value most recently handed out. Interpolated reads are clamped to at
+/// least this, so the clock never moves backwards between device updates.
+/// </param>
 /// <param name="Valid">False before any observation, and after a discontinuity.</param>
 public readonly record struct AudioClockAnchor(
     TimeSpan RawPosition,

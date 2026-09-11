@@ -62,14 +62,23 @@ public static class MediaPlayer
     /// Optional video-chain configurator that runs between the
     /// decoder source and the pace+gate+sink terminal. Consumers
     /// insert resize / convert / inference-tap operators here. The
-    /// analog of the old
-    /// <see cref="FrameFlow.Player.IPlayerBuilder.ConfigureVideoPipeline"/>
-    /// hook, retyped for <see cref="GraphChain{VideoFrameRef}"/>.
+    /// fluent builder's equivalent is
+    /// <see cref="IPlayerBuilder.ConfigureVideo"/>.
     /// </param>
     /// <param name="configureAudio">
     /// Optional audio-chain configurator. Same shape as
-    /// <paramref name="configureVideo"/>; the analog of
-    /// <see cref="FrameFlow.Player.IPlayerBuilder.ConfigureAudioPipeline"/>.
+    /// <paramref name="configureVideo"/>; the fluent builder's
+    /// equivalent is <see cref="IPlayerBuilder.ConfigureAudio"/>.
+    /// </param>
+    /// <param name="yieldHardwareFrames">
+    /// When <see langword="true"/>, hardware-decoded frames reach the
+    /// video sink as GPU frames instead of being downloaded to system
+    /// memory first. Only useful with a sink that can consume them; a
+    /// CPU-only sink should leave this <see langword="false"/>.
+    /// </param>
+    /// <param name="cancellationToken">
+    /// Cancels the load. The returned player is not created if this
+    /// fires before <c>LoadAsync</c> completes.
     /// </param>
     public static async Task<IMediaPlayer> CreateAsync(
         IMediaSource source,

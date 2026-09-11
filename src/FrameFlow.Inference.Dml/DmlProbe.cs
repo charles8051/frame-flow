@@ -8,7 +8,7 @@ namespace FrameFlow.Inference.Dml;
 /// <summary>
 /// Process-cached probe reporting whether the DirectML execution
 /// provider is loadable on the current host. Companion to
-/// <see cref="FrameFlow.Inference.Cuda.OnnxProbe"/>; substantially
+/// <c>FrameFlow.Inference.Cuda.OnnxProbe</c>; substantially
 /// simpler because DirectML has no bootstrap requirements
 /// (DirectML.dll ships in-box on Windows 10 1903+).
 /// </summary>

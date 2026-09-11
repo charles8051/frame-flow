@@ -5,7 +5,7 @@ namespace FrameFlow.Media;
 
 /// <summary>
 /// Primary playback region states exposed to consumers of
-/// <see cref="FrameFlow.Playback.IPlaybackController"/>.
+/// <c>IPlaybackController</c> and <c>IMediaPlayer</c>.
 /// Seeking and repeat are tracked as orthogonal regions via
 /// <see cref="SeekState"/> and <see cref="RepeatMode"/>.
 /// </summary>

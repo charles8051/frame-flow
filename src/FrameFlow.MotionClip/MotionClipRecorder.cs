@@ -163,7 +163,7 @@ public sealed class MotionClipRecorder : IAsyncDisposable
     /// <summary>
     /// Builds a one-shot graph wiring <paramref name="source"/> through
     /// <see cref="RecorderPipeline"/> to this recorder's gate and encoder.
-    /// The caller drives the graph (<see cref="Graph.RunAsync"/>) — directly
+    /// The caller drives the graph (<see cref="FrameFlow.Graph.Graph.RunAsync"/>) — directly
     /// for headless, wrapped in <see cref="Task.Run(Func{Task})"/> for the
     /// windowed shell so the UI thread isn't blocked.
     /// </summary>

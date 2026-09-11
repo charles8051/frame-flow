@@ -50,8 +50,7 @@ internal readonly record struct RecoveryDecision(int StepIndex, RecoveryMove Mov
 /// themselves, and the shape of the path is still moving — two of its rules
 /// changed while the prototype was being measured. Publishing it would fix that
 /// shape before it has earned the right to be fixed.
-/// </summary>
-/// <remarks>
+/// </para>
 /// <para>
 /// <b>Ordered by damage.</b> Skipping a readback discards a copy and nothing else
 /// — every frame is still decoded, so no reference chain breaks. Skipping a decode

@@ -35,7 +35,7 @@ internal static partial class FFAvCodec
     /// pointer, which corrupts the FFmpeg heap and causes a native process crash.
     /// Instead we return the raw pointer as <see cref="nint"/> and convert via
     /// <see cref="avcodec_get_name"/> which calls
-    /// <see cref="System.Runtime.InteropServices.Marshal.PtrToStringUTF8"/>.
+    /// <see cref="System.Runtime.InteropServices.Marshal.PtrToStringUTF8(System.IntPtr)"/>.
     /// </para>
     /// </remarks>
     internal static string avcodec_get_name(int codecId)

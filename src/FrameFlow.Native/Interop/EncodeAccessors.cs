@@ -13,7 +13,7 @@ namespace FrameFlow.Native.Interop;
 /// </summary>
 /// <remarks>
 /// Overlays the <c>FFmpeg.AutoGen.Abstractions.AVCodecContext</c> struct onto a
-/// raw pointer via <see cref="Unsafe.AsRef{T}"/> (ADR-0017), mirroring the
+/// raw pointer via <see cref="System.Runtime.CompilerServices.Unsafe.AsRef{T}(void*)"/> (ADR-0017), mirroring the
 /// read-only accessors in <c>AvFrameAccessor</c> / <c>AvFormatContextAccessor</c>.
 /// Does not own the pointer; the caller keeps the backing
 /// <see cref="CodecContextHandle"/> alive for the duration of any access.

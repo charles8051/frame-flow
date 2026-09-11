@@ -67,6 +67,7 @@ public sealed class DemuxSession : IDemuxSession
     /// Ownership transfers to this session.
     /// </param>
     /// <param name="mediaInfo">Pre-populated metadata for this session.</param>
+    /// <param name="logger">Optional logger; silent when null.</param>
     internal DemuxSession(
         FormatContextHandle formatCtx,
         nint packet,

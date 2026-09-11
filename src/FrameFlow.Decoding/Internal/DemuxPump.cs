@@ -234,7 +234,7 @@ internal static class DemuxPump
     /// last asked the shell to perform. Always called from
     /// <see cref="DemuxPumpPhase.NeedRead"/> (the pump only reads when nothing is pending);
     /// the <see cref="DemuxPumpPhase.HavePending"/> phase is driven by
-    /// <see cref="DeliverPending"/> / <see cref="Retain"/> / <see cref="Seek"/>, not by a
+    /// <see cref="PendingDelivered"/> / <see cref="Retain"/> / <see cref="Seek"/>, not by a
     /// read result.
     /// </summary>
     /// <param name="state">The current threaded state.</param>
@@ -242,7 +242,7 @@ internal static class DemuxPump
     /// <returns>The next state and the action the shell must perform.</returns>
     /// <exception cref="InvalidOperationException">
     /// Thrown if called in <see cref="DemuxPumpPhase.HavePending"/> (use
-    /// <see cref="DeliverPending"/>) or <see cref="DemuxPumpPhase.Done"/> (terminal).
+    /// <see cref="PendingDelivered"/>) or <see cref="DemuxPumpPhase.Done"/> (terminal).
     /// </exception>
     public static DemuxPumpTransition Advance(DemuxPumpState state, ReadOutcome outcome) =>
         state.Phase switch

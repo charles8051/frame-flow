@@ -12,7 +12,7 @@ namespace FrameFlow.Native.Interop;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Uses <see cref="Unsafe.AsRef{T}"/> to overlay the <c>FFmpeg.AutoGen.Abstractions.AVFormatContext</c>
+/// Uses <see cref="System.Runtime.CompilerServices.Unsafe.AsRef{T}(void*)"/> to overlay the <c>FFmpeg.AutoGen.Abstractions.AVFormatContext</c>
 /// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 7.1
 /// by the AutoGen binding generator, which derives them from the FFmpeg 7.1 C headers.
 /// </para>
@@ -68,7 +68,7 @@ internal readonly unsafe ref struct AvFormatContextAccessor
 /// </summary>
 /// <remarks>
 /// <para>
-/// Uses <see cref="Unsafe.AsRef{T}"/> to overlay the <c>FFmpeg.AutoGen.Abstractions.AVStream</c>
+/// Uses <see cref="System.Runtime.CompilerServices.Unsafe.AsRef{T}(void*)"/> to overlay the <c>FFmpeg.AutoGen.Abstractions.AVStream</c>
 /// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 7.1.
 /// </para>
 /// <para>
@@ -153,7 +153,7 @@ internal readonly unsafe ref struct AvStreamAccessor
 /// </summary>
 /// <remarks>
 /// <para>
-/// Uses <see cref="Unsafe.AsRef{T}"/> to overlay the <c>FFmpeg.AutoGen.Abstractions.AVCodecParameters</c>
+/// Uses <see cref="System.Runtime.CompilerServices.Unsafe.AsRef{T}(void*)"/> to overlay the <c>FFmpeg.AutoGen.Abstractions.AVCodecParameters</c>
 /// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 7.1.
 /// </para>
 /// </remarks>
@@ -234,7 +234,7 @@ internal readonly unsafe ref struct AvCodecParAccessor
 /// </summary>
 /// <remarks>
 /// <para>
-/// Uses <see cref="Unsafe.AsRef{T}"/> to overlay the <c>FFmpeg.AutoGen.Abstractions.AVPacket</c>
+/// Uses <see cref="System.Runtime.CompilerServices.Unsafe.AsRef{T}(void*)"/> to overlay the <c>FFmpeg.AutoGen.Abstractions.AVPacket</c>
 /// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 7.1.
 /// </para>
 /// </remarks>

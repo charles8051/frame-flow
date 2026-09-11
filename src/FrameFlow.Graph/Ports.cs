@@ -8,7 +8,7 @@ namespace FrameFlow.Graph;
 /// <summary>
 /// Named connection point on a node where edges attach. Ports decouple
 /// node identity from edge wiring: a node exposes one or more ports;
-/// graphs wire ports together via <see cref="Graph.Connect"/>.
+/// graphs wire ports together via <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeOptions)"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -31,7 +31,7 @@ public interface IPort
 
 /// <summary>
 /// An input port: the node reads items of type <typeparamref name="T"/>
-/// from this port. Wired by <see cref="Graph.Connect"/> to one
+/// from this port. Wired by <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeOptions)"/> to one
 /// <see cref="OutputPort{T}"/> on an upstream node.
 /// </summary>
 public sealed class InputPort<T> : IPort
@@ -50,7 +50,7 @@ public sealed class InputPort<T> : IPort
 
     /// <summary>
     /// Eagerly tracks whether this port has been connected, so
-    /// <see cref="Graph.Connect"/> can reject double-connects at
+    /// <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeOptions)"/> can reject double-connects at
     /// build time rather than at run time.
     /// </summary>
     internal bool IsConnected { get; set; }
@@ -86,7 +86,7 @@ public sealed class OutputPort<T> : IPort
 
     /// <summary>
     /// One outgoing edge per downstream connection. Appended by
-    /// <see cref="Graph.Connect"/> as edges are wired up.
+    /// <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeOptions)"/> as edges are wired up.
     /// </summary>
     internal List<OutputEdge<T>> Writers { get; } = new();
 }

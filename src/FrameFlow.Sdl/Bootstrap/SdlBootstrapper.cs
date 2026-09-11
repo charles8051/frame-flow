@@ -17,7 +17,7 @@ namespace FrameFlow.SDL.Bootstrap;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Consuming code should obtain <see cref="Sdl"/> API instances via
+/// Consuming code should obtain <see cref="Silk.NET.SDL.Sdl"/> API instances via
 /// <see cref="CreateSdlApi"/> rather than calling <c>Sdl.GetApi()</c> directly.
 /// Instances produced by <see cref="CreateSdlApi"/> are backed by a pre-loaded handle
 /// that works in all publish modes without PATH manipulation or OS module cache side-effects.

@@ -344,7 +344,7 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
     /// through this signature: there is no handle for it to return.
     /// </para>
     /// <para>
-    /// The buffer must also be at least <see cref="ICpuTensor.ByteCount"/>
+    /// The buffer must also be at least <see cref="FrameFlow.Graph.ITensor.ByteCount"/>
     /// long, because that is the length ORT is told it may read.
     /// <c>CpuTensor</c> establishes this at construction, but
     /// <see cref="ICpuTensor"/> is an interface and an implementation that

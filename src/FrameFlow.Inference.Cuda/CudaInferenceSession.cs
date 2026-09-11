@@ -68,7 +68,7 @@ public sealed class CudaInferenceSession : OrtInferenceSessionBase
 
     /// <summary>
     /// Loads a model from <paramref name="modelPath"/> and configures
-    /// the CUDA execution provider on <paramref name="deviceOrdinal"/>.
+    /// the CUDA execution provider on <c>deviceOrdinal</c>.
     /// </summary>
     public CudaInferenceSession(string modelPath)
         : this(modelPath, 0, logger: null) { }
@@ -95,7 +95,7 @@ public sealed class CudaInferenceSession : OrtInferenceSessionBase
 
     /// <summary>
     /// Loads a model from <paramref name="modelBytes"/> and configures
-    /// the CUDA execution provider on <paramref name="deviceOrdinal"/>.
+    /// the CUDA execution provider on <c>deviceOrdinal</c>.
     /// </summary>
     public CudaInferenceSession(byte[] modelBytes)
         : this(modelBytes, 0, logger: null) { }
