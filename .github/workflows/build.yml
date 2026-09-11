@@ -1,10 +1,41 @@
 name: Build and Test
 
-# Manual dispatch only — pick which OSes to run. Cross-platform runs are
-# expensive in runner-minutes, so we don't auto-trigger on push or PR.
-# The dispatched run still validates the full build + unit-test pipeline
-# on whichever subset of OSes you tick.
+# Two entry points with different matrices, because they answer different
+# questions.
+#
+# A pull request gets ubuntu-latest + windows-latest, always. Until 2026-09-11
+# this workflow was dispatch-only and nothing built a PR at all — the only
+# check on one was the Peanut Gallery reviewer, whose pass means "the panel
+# ran", not "it compiles". #110 merged on that alone. The two legs here are the
+# platforms FrameFlow.Native.Runtime actually ships a RID for.
+#
+# A dispatch still picks any subset of the three, and macOS is reachable only
+# that way. It is the 10x-billed runner, and its FFmpeg comes from a Homebrew
+# keg rather than the pinned LGPL build the other platforms download, so a
+# green macOS leg answers a weaker question than the other two for ten times
+# the price. Cross-platform runs being expensive is why there was no PR trigger
+# at all; capping the automatic matrix at two is what makes one affordable.
+#
+# Restore runs unauthenticated, so a fork pull request builds like any other and
+# nothing here reads a secret. This workflow used to add the private GitHub
+# Packages feed with PACKAGES_READ_PAT because FrameFlow.Native.Runtime lived
+# only there; #51 mapped that id to nuget.org on 2026-08-31 and it has published
+# 0.7.0-alpha.4 and 0.8.0-alpha.1 since. All 35 PackageReference ids in the
+# solution now resolve from nuget.org. The credential outlived its reason by two
+# months unnoticed, because the last dispatch before this trigger existed was
+# 2026-06-24 — the step was never run again to be found redundant.
+#
+# If a private package is ever reintroduced, this stops being true: the auth step
+# comes back, and with it the fork problem, because GitHub hands no secrets to a
+# fork's pull_request.
+#
+# No paths-ignore. A docs-only PR will burn a build, which is the cheaper
+# mistake: paths-ignore leaves the check permanently pending rather than
+# skipped, so it cannot be made a required check later without stranding every
+# docs PR.
 on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
   workflow_dispatch:
     inputs:
       windows:
@@ -20,15 +51,37 @@ on:
         type: boolean
         default: true
 
+# Supersede a PR's in-flight run when the branch is pushed again; never cancel a
+# dispatch, which someone asked for deliberately.
+#
+# This diverges from peanut-gallery.yml, which sets cancel-in-progress: false
+# because a CANCELLED conclusion turned its check rollup UNSTABLE. That reason
+# does not transfer. The reviewer's runs are single-writer comment updates worth
+# serializing; a build superseded four seconds later is pure runner-minutes, and
+# runner-minutes are the whole reason this trigger did not exist before.
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Least privilege, matching peanut-gallery.yml and publish.yml — build.yml was the
+# only workflow here without a permissions block, so GITHUB_TOKEN was taking the
+# repository default. That matters more now than under dispatch-only: a pull
+# request's own MSBuild targets and tests execute in this workspace, and
+# actions/checkout writes the token into .git/config as an extraheader unless told
+# not to. This job holds no other credential and pushes nothing, so contents: read
+# is the ceiling.
+permissions:
+  contents: read
+
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   DOTNET_NOLOGO: true
-  NUGET_SOURCE: https://nuget.pkg.github.com/charles8051/index.json
 
 jobs:
-  # Build the OS matrix from the dispatch inputs. Fails fast if no OS
-  # was selected — the job log shows the error so the user knows why.
+  # Build the OS matrix. On a pull request it is fixed; on a dispatch it comes
+  # from the inputs, and fails fast if no OS was selected — the job log shows
+  # the error so the user knows why.
   setup:
     runs-on: ubuntu-latest
     outputs:
@@ -37,6 +90,12 @@ jobs:
       - id: os
         shell: bash
         run: |
+          # Not a dispatch: the inputs do not exist, and reading them would make
+          # every OS false and trip the "no OS selected" error below.
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo 'matrix={"os":["ubuntu-latest","windows-latest"]}' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           OSES=()
           [ "${{ inputs.windows }}" = "true" ] && OSES+=('"windows-latest"')
           [ "${{ inputs.linux }}" = "true" ] && OSES+=('"ubuntu-latest"')
@@ -57,6 +116,11 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0  # MinVer needs full history to derive version from tags.
+          # Do not leave the token in .git/config as an extraheader. MinVer reads
+          # history and tags, which is local work needing no credential, and
+          # nothing in this job pushes. Without this, the PR's own build and test
+          # code shares a workspace with a usable token.
+          persist-credentials: false
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -82,25 +146,6 @@ jobs:
           df -h /
           sudo rm -rf /usr/local/lib/android /opt/ghc /usr/local/.ghcup             /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift || true
           df -h /
-
-      # This workflow has never had this step, which is why its last dispatch
-      # (2026-06-24) failed: Restore hit the private GitHub Packages feed
-      # unauthenticated, got 401 for periphery, periphery.camera and
-      # frameflow.native.runtime, and died NU1301. Only publish.yml authenticated,
-      # so only publish.yml was ever green.
-      #
-      # Periphery* is no longer the reason — 4.1.0-alpha.2 is on nuget.org, and
-      # nuget.config now maps nuget.org for it. FrameFlow.Native.Runtime is: it
-      # has only ever been published to GitHub Packages, and six projects
-      # reference it. Until it reaches nuget.org, a full-solution restore needs
-      # this credential.
-      #
-      # Safe on this workflow specifically: it is workflow_dispatch only, so no
-      # fork event can reach it. See publish.yml for the PAT's rationale.
-      - name: Authenticate GitHub Packages
-        # Single line + the job's default shell so this runs on every matrix leg:
-        # bash on Linux and macOS, Windows PowerShell on windows-latest.
-        run: dotnet nuget add source "${{ env.NUGET_SOURCE }}" --name github-charles8051 --username "${{ github.repository_owner }}" --password "${{ secrets.PACKAGES_READ_PAT }}" --store-password-in-clear-text --configfile nuget.config
 
       - name: Restore
         run: dotnet restore FrameFlow.slnx
@@ -160,17 +205,3 @@ jobs:
           name: test-results-${{ matrix.os }}
           path: "**/test-*.trx"
           retention-days: 14
-
-      # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
-      # clear text — NuGet has no other way to hand a credential to a v3 source in
-      # a non-interactive job. This job runs on GitHub-hosted runners, which are
-      # discarded per job, so the cleanup is belt-and-braces here rather than
-      # load-bearing as it is in publish.yml. It also keeps the two workflows'
-      # auth blocks symmetrical, so a later move to a self-hosted runner does not
-      # silently drop the scrub. `remove source` drops the
-      # packageSourceCredentials entry along with the source; verified.
-      #
-      # if: always() so a failed build still scrubs the credential.
-      - name: Remove GitHub Packages credential
-        if: always()
-        run: dotnet nuget remove source github-charles8051 --configfile nuget.config
