@@ -9,6 +9,13 @@ namespace FrameFlow.Avalonia;
 /// Reactive helpers for marshalling FrameFlow observables onto the Avalonia
 /// UI thread.
 /// </summary>
+/// <remarks>
+/// Delegate-based subscription lives in <c>FrameFlow.Playback</c>, as
+/// <c>PlaybackObservableExtensions.Subscribe</c>. Declaring a second
+/// <c>Subscribe(IObservable&lt;T&gt;, Action&lt;T&gt;)</c> here made the call
+/// ambiguous (CS0121) in any file importing both namespaces, which every
+/// Avalonia consumer does.
+/// </remarks>
 public static class AvaloniaObservableExtensions
 {
     /// <summary>
@@ -29,30 +36,6 @@ public static class AvaloniaObservableExtensions
     {
         ArgumentNullException.ThrowIfNull(source);
         return new UiThreadObservable<T>(source);
-    }
-
-    /// <summary>
-    /// Subscribes <paramref name="onNext"/> as a fire-and-forget handler.
-    /// Errors and completion are silently ignored — appropriate for
-    /// UI-binding observers where the lifecycle of the source is
-    /// tied to a control and faults would surface via other channels.
-    /// Returns the subscription token so the caller can dispose on
-    /// re-binding or detach.
-    /// </summary>
-    public static IDisposable Subscribe<T>(this IObservable<T> source, Action<T> onNext)
-    {
-        ArgumentNullException.ThrowIfNull(source);
-        ArgumentNullException.ThrowIfNull(onNext);
-        return source.Subscribe(new ActionObserver<T>(onNext));
-    }
-
-    private sealed class ActionObserver<T>(Action<T> onNext) : IObserver<T>
-    {
-        public void OnCompleted() { }
-
-        public void OnError(Exception error) { }
-
-        public void OnNext(T value) => onNext(value);
     }
 
     private sealed class UiThreadObservable<T>(IObservable<T> source) : IObservable<T>

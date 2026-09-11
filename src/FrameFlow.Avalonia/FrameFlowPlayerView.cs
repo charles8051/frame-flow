@@ -12,6 +12,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using FrameFlow.Media;
+using FrameFlow.Playback;
 using FrameFlow.Player;
 using Microsoft.Extensions.Logging;
 
