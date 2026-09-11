@@ -1,10 +1,28 @@
 name: Build and Test
 
-# Manual dispatch only — pick which OSes to run. Cross-platform runs are
-# expensive in runner-minutes, so we don't auto-trigger on push or PR.
-# The dispatched run still validates the full build + unit-test pipeline
-# on whichever subset of OSes you tick.
+# Two entry points with different matrices, because they answer different
+# questions.
+#
+# A pull request gets ubuntu-latest + windows-latest, always. Until 2026-09-11
+# this workflow was dispatch-only and nothing built a PR at all — the only
+# check on one was the Peanut Gallery reviewer, whose pass means "the panel
+# ran", not "it compiles". #110 merged on that alone. The two legs here are the
+# platforms FrameFlow.Native.Runtime actually ships a RID for.
+#
+# A dispatch still picks any subset of the three, and macOS is reachable only
+# that way. It is the 10x-billed runner, and its FFmpeg comes from a Homebrew
+# keg rather than the pinned LGPL build the other platforms download, so a
+# green macOS leg answers a weaker question than the other two for ten times
+# the price. Cross-platform runs being expensive is why there was no PR trigger
+# at all; capping the automatic matrix at two is what makes one affordable.
+#
+# No paths-ignore. A docs-only PR will burn a build, which is the cheaper
+# mistake: paths-ignore leaves the check permanently pending rather than
+# skipped, so it cannot be made a required check later without stranding every
+# docs PR.
 on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
   workflow_dispatch:
     inputs:
       windows:
@@ -20,6 +38,18 @@ on:
         type: boolean
         default: true
 
+# Supersede a PR's in-flight run when the branch is pushed again; never cancel a
+# dispatch, which someone asked for deliberately.
+#
+# This diverges from peanut-gallery.yml, which sets cancel-in-progress: false
+# because a CANCELLED conclusion turned its check rollup UNSTABLE. That reason
+# does not transfer. The reviewer's runs are single-writer comment updates worth
+# serializing; a build superseded four seconds later is pure runner-minutes, and
+# runner-minutes are the whole reason this trigger did not exist before.
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
@@ -27,9 +57,26 @@ env:
   NUGET_SOURCE: https://nuget.pkg.github.com/charles8051/index.json
 
 jobs:
-  # Build the OS matrix from the dispatch inputs. Fails fast if no OS
-  # was selected — the job log shows the error so the user knows why.
+  # Build the OS matrix. On a pull request it is fixed; on a dispatch it comes
+  # from the inputs, and fails fast if no OS was selected — the job log shows
+  # the error so the user knows why.
   setup:
+    # Fork gate. "Authenticate GitHub Packages" below needs PACKAGES_READ_PAT,
+    # and a pull_request from a fork is handed no secrets, so the fork's run
+    # would reach Restore with an empty credential and die NU1301 against
+    # FrameFlow.Native.Runtime. That is a guaranteed red check on every fork PR
+    # reporting a permissions fact rather than anything about the contribution,
+    # so skip the run instead of failing it.
+    #
+    # This is availability, not a security boundary. The boundary is that GitHub
+    # withholds secrets from fork pull_request events in the first place, and
+    # that these are hosted runners discarded per job — unlike peanut-gallery.yml,
+    # which must keep forks off self-hosted hardware. A fork PR still has to be
+    # built before it is merged; do it by pushing the branch to this repo or by
+    # dispatching against it.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.os.outputs.matrix }}
@@ -37,6 +84,12 @@ jobs:
       - id: os
         shell: bash
         run: |
+          # Not a dispatch: the inputs do not exist, and reading them would make
+          # every OS false and trip the "no OS selected" error below.
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo 'matrix={"os":["ubuntu-latest","windows-latest"]}' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           OSES=()
           [ "${{ inputs.windows }}" = "true" ] && OSES+=('"windows-latest"')
           [ "${{ inputs.linux }}" = "true" ] && OSES+=('"ubuntu-latest"')
@@ -95,8 +148,10 @@ jobs:
       # reference it. Until it reaches nuget.org, a full-solution restore needs
       # this credential.
       #
-      # Safe on this workflow specifically: it is workflow_dispatch only, so no
-      # fork event can reach it. See publish.yml for the PAT's rationale.
+      # The PAT is reachable from a pull_request event as of 2026-09-11, but only
+      # from a branch on this repo: GitHub hands no secrets to a fork's
+      # pull_request, and the setup job's fork gate skips those runs rather than
+      # letting them fail here. See publish.yml for the PAT's rationale.
       - name: Authenticate GitHub Packages
         # Single line + the job's default shell so this runs on every matrix leg:
         # bash on Linux and macOS, Windows PowerShell on windows-latest.
