@@ -1,4 +1,6 @@
 using FrameFlow.Graph;
+using FrameFlow.Media;
+using FrameFlow.Playback;
 using FrameFlow.Video;
 
 namespace FrameFlow.Player.Tests;
@@ -172,6 +174,59 @@ public sealed class PlayerSessionIntegrationTests
     }
 
     // ─── Sinks ──────────────────────────────────────────────────────
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task BuildPlayerAsync_ReturnsAWorkingStateMachine()
+    {
+        // The second terminal on the same chain. See issue #99.
+        var path = TestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
+        Assert.NotNull(path);
+
+        var presented = 0;
+        var sink = new CountingVideoSink(() => Interlocked.Increment(ref presented));
+
+        await using var player = await FrameFlowPlayer
+            .Open(path!)
+            .WithVideoSink(sink)
+            .WithHardwareDecode(HardwareDecodeMode.Disabled)
+            .BuildPlayerAsync();
+
+        Assert.Single(player.MediaInfo.VideoStreams);
+        Assert.True(player.Duration > TimeSpan.Zero);
+
+        // Pause and seek are the whole reason this terminal exists —
+        // PlayerSession has neither.
+        await player.PlayAsync();
+        await player.PauseAsync();
+        Assert.Equal(PlaybackState.Paused, player.State);
+
+        await player.SeekAsync(TimeSpan.FromSeconds(1));
+        Assert.True(player.Position >= TimeSpan.Zero);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task BuildPlayerAsync_NarrowedChain_CarriesPlayerOnlyOptions()
+    {
+        var path = TestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
+        Assert.NotNull(path);
+
+        var sink = new CountingVideoSink(() => { });
+        var clock = new PlaybackClock();
+
+        // WithRepeatMode narrows to IMediaPlayerBuilder; the shared
+        // options still chain afterwards, and BuildPlayerAsync is the
+        // only terminal the narrowed interface offers.
+        await using var player = await FrameFlowPlayer
+            .Open(path!)
+            .WithRepeatMode(RepeatMode.All)
+            .WithClock(clock)
+            .WithAudioActivation(false)
+            .WithVideoSink(sink)
+            .WithHardwareDecode(HardwareDecodeMode.Disabled)
+            .BuildPlayerAsync();
+
+        Assert.Single(player.MediaInfo.VideoStreams);
+    }
 
     private sealed class CountingVideoSink : IVideoSink
     {

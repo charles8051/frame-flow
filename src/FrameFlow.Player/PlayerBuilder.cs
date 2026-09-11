@@ -4,6 +4,7 @@
 using FrameFlow.Media;
 using FrameFlow.Decoding;
 using FrameFlow.Native;
+using FrameFlow.Playback;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using FrameFlow.Graph;
@@ -28,7 +29,7 @@ namespace FrameFlow.Player;
 /// removes a per-build allocation tree.
 /// </para>
 /// </remarks>
-internal sealed class PlayerBuilder : IPlayerBuilder
+internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
 {
     private readonly IMediaSource _source;
     private IVideoSink? _videoSink;
@@ -37,6 +38,14 @@ internal sealed class PlayerBuilder : IPlayerBuilder
     private Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? _audioConfigurator;
     private HardwareDecodeMode _hwMode = HardwareDecodeMode.Auto;
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
+
+    // Player-only state. Ignored by BuildAsync, which cannot be
+    // reached once any of these has been set — the setters return
+    // IMediaPlayerBuilder, whose only terminal is BuildPlayerAsync.
+    private RepeatMode _repeatMode = RepeatMode.Off;
+    private IPlaybackClock? _clock;
+    private bool _yieldHardwareFrames;
+    private bool _activateAudioSink = true;
 
     internal PlayerBuilder(IMediaSource source) => _source = source;
 
@@ -78,9 +87,100 @@ internal sealed class PlayerBuilder : IPlayerBuilder
         return this;
     }
 
-    public IPlayerBuilder WithLogger(ILoggerFactory loggerFactory)
+    public IPlayerBuilder WithLogger(ILoggerFactory? loggerFactory)
     {
-        _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
+        // Null is a no-op rather than a throw so a conditional logging
+        // step stays inside the chain instead of forcing the caller to
+        // reassign the builder to a local.
+        if (loggerFactory is not null)
+        {
+            _loggerFactory = loggerFactory;
+        }
+        return this;
+    }
+
+    public IMediaPlayerBuilder WithRepeatMode(RepeatMode mode)
+    {
+        _repeatMode = mode;
+        return this;
+    }
+
+    public IMediaPlayerBuilder WithClock(IPlaybackClock clock)
+    {
+        ArgumentNullException.ThrowIfNull(clock);
+        _clock = clock;
+        return this;
+    }
+
+    public IMediaPlayerBuilder WithHardwareFrames(bool yieldHardwareFrames = true)
+    {
+        _yieldHardwareFrames = yieldHardwareFrames;
+        return this;
+    }
+
+    public IMediaPlayerBuilder WithAudioActivation(bool activateAudioSink = true)
+    {
+        _activateAudioSink = activateAudioSink;
+        return this;
+    }
+
+    public Task<IMediaPlayer> BuildPlayerAsync(CancellationToken cancellationToken = default) =>
+        MediaPlayer.CreateCoreAsync(
+            source: _source,
+            videoSink: _videoSink,
+            audioSink: _audioSink,
+            hardwareDecodeMode: _hwMode,
+            yieldHardwareFrames: _yieldHardwareFrames,
+            initialRepeatMode: _repeatMode,
+            loggerFactory: _loggerFactory,
+            activateAudioSink: _activateAudioSink,
+            configureVideo: _videoConfigurator,
+            configureAudio: _audioConfigurator,
+            clock: _clock,
+            cancellationToken: cancellationToken
+        );
+
+    // IMediaPlayerBuilder repeats the shared options with a narrower
+    // return type so a chain keeps flowing after the narrowing step.
+    // Same mutable state underneath; explicit implementation because
+    // the signatures differ from IPlayerBuilder's only by return type.
+    IMediaPlayerBuilder IMediaPlayerBuilder.WithVideoSink(IVideoSink sink)
+    {
+        WithVideoSink(sink);
+        return this;
+    }
+
+    IMediaPlayerBuilder IMediaPlayerBuilder.WithAudioSink(IAudioSink sink)
+    {
+        WithAudioSink(sink);
+        return this;
+    }
+
+    IMediaPlayerBuilder IMediaPlayerBuilder.ConfigureVideo(
+        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>> configure
+    )
+    {
+        ConfigureVideo(configure);
+        return this;
+    }
+
+    IMediaPlayerBuilder IMediaPlayerBuilder.ConfigureAudio(
+        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>> configure
+    )
+    {
+        ConfigureAudio(configure);
+        return this;
+    }
+
+    IMediaPlayerBuilder IMediaPlayerBuilder.WithHardwareDecode(HardwareDecodeMode mode)
+    {
+        WithHardwareDecode(mode);
+        return this;
+    }
+
+    IMediaPlayerBuilder IMediaPlayerBuilder.WithLogger(ILoggerFactory? loggerFactory)
+    {
+        WithLogger(loggerFactory);
         return this;
     }
 

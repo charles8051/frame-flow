@@ -39,4 +39,24 @@ public static class FrameFlowAvaloniaBuilderExtensions
         ArgumentNullException.ThrowIfNull(view);
         return builder.WithVideoSink(view.EnsureSink());
     }
+
+    /// <summary>
+    /// Wires the supplied <see cref="FrameFlowVideoView"/> to a narrowed
+    /// <see cref="IMediaPlayerBuilder"/> chain — the overload for chains
+    /// headed for <see cref="IMediaPlayerBuilder.BuildPlayerAsync"/>. The
+    /// view's owned sink is materialized eagerly via
+    /// <see cref="FrameFlowVideoView.EnsureSink"/>.
+    /// </summary>
+    /// <param name="builder">The player builder being configured.</param>
+    /// <param name="view">The Avalonia control that will render frames.</param>
+    /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
+    public static IMediaPlayerBuilder WithAvaloniaVideoView(
+        this IMediaPlayerBuilder builder,
+        FrameFlowVideoView view
+    )
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(view);
+        return builder.WithVideoSink(view.EnsureSink());
+    }
 }

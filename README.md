@@ -30,19 +30,16 @@ full list is under [Packages](#packages).
 
 ## Quick start
 
-Three construction surfaces, layered from "full player" down to "raw state
-machine". Pick by what you need from playback:
+Start from `FrameFlowPlayer.Open`. One builder, two terminals — pick by what
+you need from playback:
 
-| Your scenario | Start from | Returns |
+| Your scenario | Terminal | Returns |
 |---|---|---|
-| App or host playback — seek, pause, repeat, observables | `MediaPlayer.CreateAsync(...)` | `IMediaPlayer` |
-| Open a file and play it to the end | `FrameFlowPlayer.Open(...).BuildAsync()` | `PlayerSession` |
+| App or host playback — seek, pause, repeat, observables | `.BuildPlayerAsync()` | `IMediaPlayer` |
+| Open a file and play it to the end | `.BuildAsync()` | `PlayerSession` |
 | Driving the state machine yourself | `PlaybackController.Create(...)` | `IPlaybackController` |
 
-### `MediaPlayer.CreateAsync`
-
-The usual entry point. Give it a source and the sinks you want, then drive
-playback through the returned `IMediaPlayer`:
+### `BuildPlayerAsync` — the full player
 
 ```csharp
 using FrameFlow;                 // HardwareDecodeMode lives here
@@ -50,15 +47,12 @@ using FrameFlow.Audio.OpenAL;
 using FrameFlow.Media;
 using FrameFlow.Player;
 
-// OpenAlAudioSink also implements IClockSource, so it becomes the master clock.
-var audioSink = new OpenAlAudioSink();
-
-await using var player = await MediaPlayer.CreateAsync(
-    source: MediaSource.FromFile(path),
-    videoSink: videoSink,   // an Avalonia video surface's sink, or null for audio-only
-    audioSink: audioSink,
-    hardwareDecodeMode: HardwareDecodeMode.Auto,
-    initialRepeatMode: RepeatMode.Off);
+await using var player = await FrameFlowPlayer.Open(path)
+    .WithOpenAlAudio()          // also implements IClockSource, so it becomes the master clock
+    .WithAvaloniaVideoView(view)
+    .WithHardwareDecode(HardwareDecodeMode.Auto)
+    .WithRepeatMode(RepeatMode.All)
+    .BuildPlayerAsync();
 
 await player.PlayAsync();
 ```
@@ -67,7 +61,13 @@ Do not drop `using FrameFlow;`. `HardwareDecodeMode` is in the root `FrameFlow`
 namespace while the other types here are not. The examples in this repository
 compile without it only because they declare namespaces under `FrameFlow.*`.
 
-### `FrameFlowPlayer.Open` — the fluent builder
+`MediaPlayer.CreateAsync(...)` is the positional form of the same thing — both
+it and the builder run the same wiring. Reach for it directly when you already
+hold all eleven arguments; most of the examples in this repository still do.
+`WithClock` is the one option it cannot express, so a chain that injects a
+clock has to end at `BuildPlayerAsync`.
+
+### `BuildAsync` — play to end of stream
 
 When you only need "open a file and play it to the end", with no seek, pause,
 or repeat:
@@ -79,6 +79,11 @@ await using var player = await FrameFlowPlayer.Open(path)
 
 await player.PlayToCompletionAsync(ct);
 ```
+
+`WithRepeatMode`, `WithClock`, `WithHardwareFrames` and `WithAudioActivation`
+mean nothing to a `PlayerSession`. Calling any of them narrows the chain to
+`IMediaPlayerBuilder`, where `BuildPlayerAsync` is the only terminal on offer,
+so the mismatch is a compile error rather than an ignored setting.
 
 ### Generic Host and DI
 

@@ -18,17 +18,26 @@ namespace FrameFlow.Player;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Scope, and when to use the other entry point.</b> This builder
-/// produces a <see cref="PlayerSession"/>, which covers "open a source and
-/// play it to end of stream". It deliberately does not expose the
-/// <see cref="IMediaPlayer"/> state machine — no pause, resume, seek,
-/// repeat, or observables.
+/// <b>Two terminals.</b> <see cref="IPlayerBuilder.BuildAsync"/> produces a
+/// <see cref="PlayerSession"/>, which covers "open a source and play it to
+/// end of stream" and nothing more.
+/// <see cref="IPlayerBuilder.BuildPlayerAsync"/> produces an
+/// <see cref="IMediaPlayer"/> — pause, resume, seek, repeat, position and
+/// diagnostics. Everything before the terminal is the same chain:
+/// <code>
+/// await using var player = await FrameFlowPlayer
+///     .Open(path)
+///     .WithVideoSink(view)
+///     .WithAudioSink(audio)
+///     .WithRepeatMode(RepeatMode.All)
+///     .BuildPlayerAsync();
+/// await player.PlayAsync();
+/// </code>
 /// </para>
 /// <para>
-/// Reach for <see cref="MediaPlayer.CreateAsync"/> when you need any of
-/// those. It returns an <see cref="IMediaPlayer"/> and is the entry point
-/// most of the examples use. This one is the leaner option for a host that
-/// only needs playback to run to completion.
+/// <see cref="MediaPlayer.CreateAsync"/> is the positional form of the
+/// second terminal; both run the same wiring. Most of the examples in
+/// this repository still call it directly.
 /// </para>
 /// </remarks>
 public static class FrameFlowPlayer

@@ -28,13 +28,11 @@ namespace FrameFlow.Player;
 /// is the shape most consumers want.
 /// </para>
 /// <para>
-/// <b>This is not a fluent builder.</b> For a chain with
-/// <c>WithVideoSink</c> / <c>WithAudioSink</c> / <c>ConfigureVideo</c>,
-/// use <see cref="FrameFlowPlayer.Open(string)"/> — but note it returns a
-/// <see cref="PlayerSession"/>, which plays to end of stream and has no
-/// seek, pause, or repeat. The two entry points trade fluency against
-/// control surface; pick by which you need, not by preference. Consumers
-/// wanting both build their sinks directly and call this factory.
+/// <b>Prefer the fluent builder.</b>
+/// <c>FrameFlowPlayer.Open(path)…BuildPlayerAsync()</c> runs the same
+/// wiring and returns the same <see cref="IMediaPlayer"/>. This factory
+/// stays as the positional escape hatch for callers that already hold
+/// every argument.
 /// </para>
 /// </remarks>
 public static class MediaPlayer
@@ -80,7 +78,7 @@ public static class MediaPlayer
     /// Cancels the load. The returned player is not created if this
     /// fires before <c>LoadAsync</c> completes.
     /// </param>
-    public static async Task<IMediaPlayer> CreateAsync(
+    public static Task<IMediaPlayer> CreateAsync(
         IMediaSource source,
         IVideoSink? videoSink = null,
         IAudioSink? audioSink = null,
@@ -92,6 +90,47 @@ public static class MediaPlayer
         Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? configureVideo = null,
         Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? configureAudio = null,
         CancellationToken cancellationToken = default
+    ) =>
+        CreateCoreAsync(
+            source: source,
+            videoSink: videoSink,
+            audioSink: audioSink,
+            hardwareDecodeMode: hardwareDecodeMode,
+            yieldHardwareFrames: yieldHardwareFrames,
+            initialRepeatMode: initialRepeatMode,
+            loggerFactory: loggerFactory,
+            activateAudioSink: activateAudioSink,
+            configureVideo: configureVideo,
+            configureAudio: configureAudio,
+            clock: null,
+            cancellationToken: cancellationToken
+        );
+
+    /// <summary>
+    /// The body of <see cref="CreateAsync"/>, plus the
+    /// <paramref name="clock"/> that <c>PlaybackController.Create</c>
+    /// accepts and the public factory does not expose.
+    /// </summary>
+    /// <remarks>
+    /// Internal so the clock stays off the positional surface.
+    /// <c>CreateAsync</c> is a published signature; a twelfth optional
+    /// parameter on it would break existing positional calls at source
+    /// and existing compiled callers at load. The fluent builder's
+    /// <see cref="IMediaPlayerBuilder.WithClock"/> reaches this instead.
+    /// </remarks>
+    internal static async Task<IMediaPlayer> CreateCoreAsync(
+        IMediaSource source,
+        IVideoSink? videoSink,
+        IAudioSink? audioSink,
+        HardwareDecodeMode hardwareDecodeMode,
+        bool yieldHardwareFrames,
+        RepeatMode initialRepeatMode,
+        ILoggerFactory? loggerFactory,
+        bool activateAudioSink,
+        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? configureVideo,
+        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? configureAudio,
+        IPlaybackClock? clock,
+        CancellationToken cancellationToken
     )
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -125,7 +164,7 @@ public static class MediaPlayer
             hardwareDecodeCapabilities: bootstrap.Capabilities,
             yieldHardwareFrames: yieldHardwareFrames,
             initialRepeatMode: initialRepeatMode,
-            clock: null,
+            clock: clock,
             loggerFactory: loggerFactory,
             configureVideo: configureVideo,
             configureAudio: configureAudio
