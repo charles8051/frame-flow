@@ -1,0 +1,36 @@
+<Project>
+  <!--
+    A Directory.Build.targets here stops MSBuild's upward search, so the root
+    one — which carries the development-time FFmpeg native copy (ADR-0014) —
+    has to be imported explicitly. Same shape as src/Directory.Build.props.
+  -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))" />
+
+  <!--
+    Public API baseline wiring. This is in .targets rather than .props for one
+    reason: .targets is imported at the BOTTOM of a csproj, so
+    $(FrameFlowTrackPublicApi) here is whatever the project decided. In .props
+    the condition would evaluate before the project body ran, and an opt-out
+    would silently do nothing — the property would read false while the
+    PackageReference and the WarningsAsErrors entry were already in place.
+    FrameFlow.MotionClip is the project that opts out; see its csproj.
+
+    Everything else about the baseline — what it is for, why Shipped stays
+    empty pre-1.0, why RS0026/RS0027 are off — is documented in
+    src/Directory.Build.props beside the property.
+  -->
+  <PropertyGroup Condition="'$(FrameFlowTrackPublicApi)' == 'true'">
+    <WarningsAsErrors>$(WarningsAsErrors);RS0016;RS0017</WarningsAsErrors>
+    <NoWarn>$(NoWarn);RS0026;RS0027</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(FrameFlowTrackPublicApi)' == 'true'">
+    <PackageReference
+      Include="Microsoft.CodeAnalysis.PublicApiAnalyzers"
+      Version="3.*"
+      PrivateAssets="All"
+    />
+    <AdditionalFiles Include="PublicAPI.Shipped.txt" />
+    <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
+  </ItemGroup>
+</Project>

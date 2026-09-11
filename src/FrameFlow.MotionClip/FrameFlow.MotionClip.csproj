@@ -39,6 +39,9 @@
       record 156 entries that protect nobody — and two of them come from the
       Avalonia name generator, so the file would churn whenever generated
       output moved.
+
+      This is read by src/Directory.Build.targets, not src/Directory.Build.props.
+      A .props condition would evaluate before this line exists.
     -->
     <FrameFlowTrackPublicApi>false</FrameFlowTrackPublicApi>
     <RepositoryUrl>https://github.com/charles8051/frame-flow</RepositoryUrl>

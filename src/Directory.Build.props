@@ -171,45 +171,20 @@
 
     See CONTRIBUTING.md for what to do when RS0016 stops your build.
   -->
+  <!--
+    The opt-in property lives here so a project can override it; the analyzer
+    wiring it gates lives in src/Directory.Build.targets, which is imported
+    after the project body. Putting the wiring here instead does not work, and
+    silently: this file is imported at the TOP of every csproj, so its
+    conditions evaluate while FrameFlowTrackPublicApi is still unset, and a
+    project setting it to false further down cannot retract a PackageReference
+    or a WarningsAsErrors entry that has already been evaluated.
+  -->
   <PropertyGroup>
     <FrameFlowTrackPublicApi
       Condition="'$(FrameFlowTrackPublicApi)' == ''"
     >true</FrameFlowTrackPublicApi>
-
-    <!--
-      RS0016 (added, not recorded) and RS0017 (recorded, not found) are the two
-      that do the work, and they are errors rather than warnings. A warning in a
-      build that already emits some is a thing you scroll past; the whole value
-      here is that the surface cannot move without someone typing the change
-      out. CONTRIBUTING.md says what to run.
-
-      RS0026 and RS0027 are off. They are good advice about optional parameters
-      in overloads, and they are advice about not breaking an API you have
-      already shipped: adding an optional parameter is source-compatible and
-      binary-breaking, so the rules exist to stop you doing it to a promise
-      already made. Shipped.txt is empty, so there is no such promise yet, and
-      the 30 they report are the existing overload shape rather than anything
-      this change introduced. Turn them on when Shipped absorbs Unshipped at
-      1.0, which is when they start protecting something, and deal with the 30
-      then as the API-design question they are.
-    -->
-    <WarningsAsErrors
-      Condition="'$(FrameFlowTrackPublicApi)' == 'true'"
-    >$(WarningsAsErrors);RS0016;RS0017</WarningsAsErrors>
-    <NoWarn
-      Condition="'$(FrameFlowTrackPublicApi)' == 'true'"
-    >$(NoWarn);RS0026;RS0027</NoWarn>
   </PropertyGroup>
-
-  <ItemGroup Condition="'$(FrameFlowTrackPublicApi)' == 'true'">
-    <PackageReference
-      Include="Microsoft.CodeAnalysis.PublicApiAnalyzers"
-      Version="3.*"
-      PrivateAssets="All"
-    />
-    <AdditionalFiles Include="PublicAPI.Shipped.txt" />
-    <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
-  </ItemGroup>
 
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)../README.md" Pack="true" PackagePath="/" />
