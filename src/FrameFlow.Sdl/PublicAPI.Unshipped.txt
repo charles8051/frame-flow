@@ -1,0 +1,58 @@
+#nullable enable
+FrameFlow.Sdl.Bootstrap.ISdlBootstrapper
+FrameFlow.Sdl.Bootstrap.ISdlBootstrapper.CreateSdlApi() -> Silk.NET.SDL.Sdl!
+FrameFlow.Sdl.Bootstrap.ISdlBootstrapper.Initialize() -> FrameFlow.Sdl.Bootstrap.SdlBootstrapResult!
+FrameFlow.Sdl.Bootstrap.ISdlBootstrapper.IsInitialized.get -> bool
+FrameFlow.Sdl.Bootstrap.SdlBootstrapper
+FrameFlow.Sdl.Bootstrap.SdlBootstrapper.CreateSdlApi() -> Silk.NET.SDL.Sdl!
+FrameFlow.Sdl.Bootstrap.SdlBootstrapper.Initialize() -> FrameFlow.Sdl.Bootstrap.SdlBootstrapResult!
+FrameFlow.Sdl.Bootstrap.SdlBootstrapper.IsInitialized.get -> bool
+FrameFlow.Sdl.Bootstrap.SdlBootstrapper.SdlBootstrapper() -> void
+FrameFlow.Sdl.Bootstrap.SdlBootstrapper.SdlBootstrapper(FrameFlow.Sdl.Bootstrap.SdlNativeOptions! options, Microsoft.Extensions.Logging.ILoggerFactory! loggerFactory) -> void
+FrameFlow.Sdl.Bootstrap.SdlBootstrapResult
+FrameFlow.Sdl.Bootstrap.SdlBootstrapResult.IsSuccess.get -> bool
+FrameFlow.Sdl.Bootstrap.SdlBootstrapResult.IsSuccess.init -> void
+FrameFlow.Sdl.Bootstrap.SdlBootstrapResult.Message.get -> string!
+FrameFlow.Sdl.Bootstrap.SdlBootstrapResult.Message.init -> void
+FrameFlow.Sdl.Bootstrap.SdlBootstrapResult.ResolvedLibraryPath.get -> string?
+FrameFlow.Sdl.Bootstrap.SdlBootstrapResult.ResolvedLibraryPath.init -> void
+FrameFlow.Sdl.Bootstrap.SdlBootstrapResult.SdlBootstrapResult(bool IsSuccess, string? ResolvedLibraryPath, string! Message) -> void
+FrameFlow.Sdl.Bootstrap.SdlHostedService
+FrameFlow.Sdl.Bootstrap.SdlHostedService.SdlHostedService(FrameFlow.Sdl.Bootstrap.ISdlBootstrapper! bootstrapper, Microsoft.Extensions.Logging.ILogger<FrameFlow.Sdl.Bootstrap.SdlHostedService!>! logger) -> void
+FrameFlow.Sdl.Bootstrap.SdlHostedService.StartAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+FrameFlow.Sdl.Bootstrap.SdlHostedService.StopAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+FrameFlow.Sdl.Bootstrap.SdlNativeOptions
+FrameFlow.Sdl.Bootstrap.SdlNativeOptions.CustomSdlLibraryPath.get -> string?
+FrameFlow.Sdl.Bootstrap.SdlNativeOptions.CustomSdlLibraryPath.set -> void
+FrameFlow.Sdl.Bootstrap.SdlNativeOptions.ProbeSystemLibrary.get -> bool
+FrameFlow.Sdl.Bootstrap.SdlNativeOptions.ProbeSystemLibrary.set -> void
+FrameFlow.Sdl.Bootstrap.SdlNativeOptions.SdlNativeOptions() -> void
+FrameFlow.Sdl.Bootstrap.SdlNativeOptions.UseBundledLibrary.get -> bool
+FrameFlow.Sdl.Bootstrap.SdlNativeOptions.UseBundledLibrary.set -> void
+FrameFlow.Sdl.Bootstrap.SdlServiceCollectionExtensions
+FrameFlow.Sdl.SdlEventLoop
+FrameFlow.Sdl.SdlEventLoop.EventHandler
+FrameFlow.Sdl.SdlEventLoop.TickHandler
+FrameFlow.Sdl.SdlException
+FrameFlow.Sdl.SdlException.Operation.get -> string!
+FrameFlow.Sdl.SdlException.SdlError.get -> string!
+FrameFlow.Sdl.SdlException.SdlException(string! operation, string! sdlError) -> void
+FrameFlow.Sdl.SdlVideoSink
+FrameFlow.Sdl.SdlVideoSink.DestroyResources() -> void
+FrameFlow.Sdl.SdlVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Sdl.SdlVideoSink.DroppedFrameCount.get -> int
+FrameFlow.Sdl.SdlVideoSink.FramePool.get -> FrameFlow.Media.IFramePool!
+FrameFlow.Sdl.SdlVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
+FrameFlow.Sdl.SdlVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Sdl.SdlVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Sdl.SdlVideoSink.RenderedFrameCount.get -> int
+FrameFlow.Sdl.SdlVideoSink.RenderPendingFrame() -> void
+FrameFlow.Sdl.SdlVideoSink.SdlVideoSink(Silk.NET.SDL.Sdl! sdl, FrameFlow.Media.IFramePool! framePool, string! title, int width, int height, Microsoft.Extensions.Logging.ILogger<FrameFlow.Sdl.SdlVideoSink!>? logger = null) -> void
+FrameFlow.Sdl.SdlVideoSink.SetWindowTitle(string! title) -> void
+static FrameFlow.Sdl.Bootstrap.SdlServiceCollectionExtensions.AddFrameFlowSdl(this FrameFlow.Media.IFrameFlowBuilder! builder) -> FrameFlow.Media.IFrameFlowBuilder!
+static FrameFlow.Sdl.Bootstrap.SdlServiceCollectionExtensions.AddFrameFlowSdlVideoSink(this FrameFlow.Media.IFrameFlowBuilder! builder, FrameFlow.Sdl.SdlVideoSink! sink) -> FrameFlow.Media.IFrameFlowBuilder!
+static FrameFlow.Sdl.Bootstrap.SdlServiceCollectionExtensions.AddFrameFlowSdlVideoSink(this FrameFlow.Media.IFrameFlowBuilder! builder, Silk.NET.SDL.Sdl! sdl, string! windowTitle, int width, int height, out FrameFlow.Sdl.SdlVideoSink! sink, Microsoft.Extensions.Logging.ILogger<FrameFlow.Sdl.SdlVideoSink!>? logger = null) -> FrameFlow.Media.IFrameFlowBuilder!
+static FrameFlow.Sdl.Bootstrap.SdlServiceCollectionExtensions.AddHostedSdlBootstrap(this FrameFlow.Media.IFrameFlowBuilder! builder) -> FrameFlow.Media.IFrameFlowBuilder!
+static FrameFlow.Sdl.SdlEventLoop.Run(Silk.NET.SDL.Sdl! sdl, FrameFlow.Sdl.SdlVideoSink! videoSink, FrameFlow.Sdl.SdlEventLoop.EventHandler? onEvent = null, FrameFlow.Sdl.SdlEventLoop.TickHandler? onTick = null, System.TimeSpan? pollInterval = null, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> int
+static FrameFlow.Sdl.SdlVideoSink.CreateHeadless(FrameFlow.Media.IFramePool! framePool, Microsoft.Extensions.Logging.ILogger<FrameFlow.Sdl.SdlVideoSink!>? logger = null) -> FrameFlow.Sdl.SdlVideoSink!
+static readonly FrameFlow.Sdl.SdlEventLoop.DefaultPollInterval -> System.TimeSpan

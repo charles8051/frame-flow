@@ -1,0 +1,211 @@
+#nullable enable
+const FrameFlow.Decoding.ReadAheadCapacity.MaxCapacity = 4096 -> int
+const FrameFlow.Decoding.ReadAheadCapacity.MinCapacity = 512 -> int
+const FrameFlow.Decoding.ShedRateAccounting.MinReportableRate = 1 -> double
+FrameFlow.Decoding.AudioDecoder
+FrameFlow.Decoding.AudioDecoder.AudioDecoder(nint formatCtxPtr, int streamIndex, FrameFlow.Decoding.AudioDecoderOptions? options = null, Microsoft.Extensions.Logging.ILogger? logger = null) -> void
+FrameFlow.Decoding.AudioDecoder.CompletePacketQueue() -> void
+FrameFlow.Decoding.AudioDecoder.DecodeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<FrameFlow.Media.PcmAudioBuffer!>!
+FrameFlow.Decoding.AudioDecoder.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Decoding.AudioDecoder.Flush() -> void
+FrameFlow.Decoding.AudioDecoder.FlushAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Decoding.AudioDecoder.GetDiagnostics() -> FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot!
+FrameFlow.Decoding.AudioDecoder.ResetPacketQueue() -> void
+FrameFlow.Decoding.AudioDecoder.SendPacketAsync(nint packetPtr, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Decoding.AudioDecoderOptions
+FrameFlow.Decoding.AudioDecoderOptions.AudioDecoderOptions() -> void
+FrameFlow.Decoding.AudioDecoderOptions.PacketQueueCapacity.get -> int
+FrameFlow.Decoding.AudioDecoderOptions.PacketQueueCapacity.init -> void
+FrameFlow.Decoding.AudioDecoderOptions.TargetSampleRate.get -> int
+FrameFlow.Decoding.AudioDecoderOptions.TargetSampleRate.init -> void
+FrameFlow.Decoding.DecodeDiscardLevel
+FrameFlow.Decoding.DecodeDiscardLevel.Bidirectional = 2 -> FrameFlow.Decoding.DecodeDiscardLevel
+FrameFlow.Decoding.DecodeDiscardLevel.KeyframesOnly = 3 -> FrameFlow.Decoding.DecodeDiscardLevel
+FrameFlow.Decoding.DecodeDiscardLevel.None = 0 -> FrameFlow.Decoding.DecodeDiscardLevel
+FrameFlow.Decoding.DecodeDiscardLevel.NonReference = 1 -> FrameFlow.Decoding.DecodeDiscardLevel
+FrameFlow.Decoding.DecoderFactories
+FrameFlow.Decoding.DecoderSourceAdapters
+FrameFlow.Decoding.DecodingPipeline
+FrameFlow.Decoding.DecodingPipeline.DecodingPipeline(FrameFlow.Decoding.DemuxSession! demuxSession, FrameFlow.Decoding.VideoDecoder? videoDecoder, FrameFlow.Decoding.AudioDecoder? audioDecoder, Microsoft.Extensions.Logging.ILogger? logger = null) -> void
+FrameFlow.Decoding.DecodingPipeline.DemuxSession.get -> FrameFlow.Decoding.IDemuxSession!
+FrameFlow.Decoding.DecodingPipeline.DiscardPendingPacket() -> void
+FrameFlow.Decoding.DecodingPipeline.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Decoding.DecodingPipeline.FinalizeDecodersAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+FrameFlow.Decoding.DecodingPipeline.ResetForSeek() -> void
+FrameFlow.Decoding.DecodingPipeline.RunDemuxPumpAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+FrameFlow.Decoding.DemuxSession
+FrameFlow.Decoding.DemuxSession.DiscardStream(int streamIndex) -> void
+FrameFlow.Decoding.DemuxSession.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Decoding.DemuxSession.FormatContextPtr.get -> nint
+FrameFlow.Decoding.DemuxSession.GetDiagnostics() -> FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot!
+FrameFlow.Decoding.DemuxSession.MediaInfo.get -> FrameFlow.Media.MediaInfo!
+FrameFlow.Decoding.DemuxSession.ReadPacketAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<FrameFlow.Media.DemuxPacket?>
+FrameFlow.Decoding.DemuxSession.SeekAsync(System.TimeSpan position, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Decoding.DemuxSessionFactory
+FrameFlow.Decoding.DemuxSessionFactory.DemuxSessionFactory(Microsoft.Extensions.Logging.ILogger<FrameFlow.Decoding.DemuxSessionFactory!>? logger = null) -> void
+FrameFlow.Decoding.DemuxSessionFactory.DemuxSessionFactory(Microsoft.Extensions.Logging.ILoggerFactory! loggerFactory) -> void
+FrameFlow.Decoding.DemuxSessionFactory.OpenAsync(FrameFlow.Media.IMediaSource! source, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<FrameFlow.Decoding.IDemuxSession!>
+FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot
+FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot.AudioDecoderDiagnosticsSnapshot(long BuffersDecoded, long DecodeErrors, bool UsedSyntheticPts) -> void
+FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot.BuffersDecoded.get -> long
+FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot.BuffersDecoded.init -> void
+FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot.DecodeErrors.get -> long
+FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot.DecodeErrors.init -> void
+FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot.UsedSyntheticPts.get -> bool
+FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot.UsedSyntheticPts.init -> void
+FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot
+FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.AudioChannelDepth.get -> int
+FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.AudioChannelDepth.init -> void
+FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.AudioDecoder.get -> FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot!
+FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.AudioDecoder.init -> void
+FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.DecodedMediaStreamDiagnosticsSnapshot(FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot! Demux, FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot! VideoDecoder, FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot! AudioDecoder, int VideoChannelDepth, int AudioChannelDepth) -> void
+FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.Demux.get -> FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot!
+FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.Demux.init -> void
+FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.VideoChannelDepth.get -> int
+FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.VideoChannelDepth.init -> void
+FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.VideoDecoder.get -> FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot!
+FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.VideoDecoder.init -> void
+FrameFlow.Decoding.Diagnostics.DecodePoolMetrics
+FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot
+FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot.BytesRead.get -> long
+FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot.BytesRead.init -> void
+FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot.DemuxSessionDiagnosticsSnapshot(long PacketsRead, long BytesRead, long SeeksPerformed, bool EndOfStreamReached) -> void
+FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot.EndOfStreamReached.get -> bool
+FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot.EndOfStreamReached.init -> void
+FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot.PacketsRead.get -> long
+FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot.PacketsRead.init -> void
+FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot.SeeksPerformed.get -> long
+FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot.SeeksPerformed.init -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.DecodeErrors.get -> long
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.DecodeErrors.init -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.FramesDecoded.get -> long
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.FramesDecoded.init -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareBackend.get -> FrameFlow.Media.HardwareDecodeBackendKind?
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareBackend.init -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedForBackpressure.get -> long
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedForBackpressure.init -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.VideoDecoderDiagnosticsSnapshot(long FramesDecoded, long DecodeErrors, FrameFlow.Media.HardwareDecodeBackendKind? HardwareBackend, long PacketsDroppedForBackpressure = 0) -> void
+FrameFlow.Decoding.FrameFlowDecodingOptions
+FrameFlow.Decoding.FrameFlowDecodingOptions.AudioDecoderFactory.get -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IAudioDecoder?>?
+FrameFlow.Decoding.FrameFlowDecodingOptions.AudioDecoderFactory.set -> void
+FrameFlow.Decoding.FrameFlowDecodingOptions.FrameFlowDecodingOptions() -> void
+FrameFlow.Decoding.FrameFlowDecodingOptions.VideoDecoderFactory.get -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IVideoDecoder?>?
+FrameFlow.Decoding.FrameFlowDecodingOptions.VideoDecoderFactory.set -> void
+FrameFlow.Decoding.FrameFlowDecodingServiceCollectionExtensions
+FrameFlow.Decoding.GpuVideoFrame
+FrameFlow.Decoding.GpuVideoFrame.AddRef() -> FrameFlow.Media.IVideoFrame!
+FrameFlow.Decoding.GpuVideoFrame.AsCpu() -> FrameFlow.Media.CpuFrameData?
+FrameFlow.Decoding.GpuVideoFrame.Backend.get -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Decoding.GpuVideoFrame.Dispose() -> void
+FrameFlow.Decoding.GpuVideoFrame.Duration.get -> System.TimeSpan
+FrameFlow.Decoding.GpuVideoFrame.Format.get -> FrameFlow.Media.PixelFormat
+FrameFlow.Decoding.GpuVideoFrame.Height.get -> int
+FrameFlow.Decoding.GpuVideoFrame.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Decoding.GpuVideoFrame.Pts.get -> System.TimeSpan
+FrameFlow.Decoding.GpuVideoFrame.ReadbackToCpuBgra32() -> FrameFlow.Media.CpuVideoFrame!
+FrameFlow.Decoding.GpuVideoFrame.ToCpu() -> FrameFlow.Media.CpuFrameData
+FrameFlow.Decoding.GpuVideoFrame.TryGetD3D11Texture(out nint texture, out int subresourceIndex, out nint device) -> bool
+FrameFlow.Decoding.GpuVideoFrame.Width.get -> int
+FrameFlow.Decoding.HardwareDecodeAttempt
+FrameFlow.Decoding.HardwareDecodeAttempt.Backend.get -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Decoding.HardwareDecodeAttempt.Backend.init -> void
+FrameFlow.Decoding.HardwareDecodeAttempt.HardwareDecodeAttempt(FrameFlow.Media.HardwareDecodeBackendKind Backend, string! Reason) -> void
+FrameFlow.Decoding.HardwareDecodeAttempt.Reason.get -> string!
+FrameFlow.Decoding.HardwareDecodeAttempt.Reason.init -> void
+FrameFlow.Decoding.HardwareDecodeUnavailableException
+FrameFlow.Decoding.HardwareDecodeUnavailableException.Attempts.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Decoding.HardwareDecodeAttempt!>!
+FrameFlow.Decoding.HardwareDecodeUnavailableException.CodecId.get -> int
+FrameFlow.Decoding.HardwareDecodeUnavailableException.CodecName.get -> string!
+FrameFlow.Decoding.HardwareDecodeUnavailableException.HardwareDecodeUnavailableException(int codecId, string! codecName, System.Collections.Generic.IReadOnlyList<FrameFlow.Decoding.HardwareDecodeAttempt!>! attempts) -> void
+FrameFlow.Decoding.IAudioDecoder
+FrameFlow.Decoding.IAudioDecoder.CompletePacketQueue() -> void
+FrameFlow.Decoding.IAudioDecoder.DecodeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<FrameFlow.Media.PcmAudioBuffer!>!
+FrameFlow.Decoding.IAudioDecoder.Flush() -> void
+FrameFlow.Decoding.IAudioDecoder.FlushAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Decoding.IAudioDecoder.GetDiagnostics() -> FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot!
+FrameFlow.Decoding.IAudioDecoder.ResetPacketQueue() -> void
+FrameFlow.Decoding.IDemuxSession
+FrameFlow.Decoding.IDemuxSession.GetDiagnostics() -> FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot!
+FrameFlow.Decoding.IDemuxSession.MediaInfo.get -> FrameFlow.Media.MediaInfo!
+FrameFlow.Decoding.IDemuxSession.ReadPacketAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<FrameFlow.Media.DemuxPacket?>
+FrameFlow.Decoding.IDemuxSession.SeekAsync(System.TimeSpan position, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Decoding.IDemuxSessionFactory
+FrameFlow.Decoding.IDemuxSessionFactory.OpenAsync(FrameFlow.Media.IMediaSource! source, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<FrameFlow.Decoding.IDemuxSession!>
+FrameFlow.Decoding.ISeekResettable
+FrameFlow.Decoding.ISeekResettable.ResetForSeek() -> void
+FrameFlow.Decoding.IVideoDecoder
+FrameFlow.Decoding.IVideoDecoder.CompletePacketQueue() -> void
+FrameFlow.Decoding.IVideoDecoder.DecodeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<FrameFlow.Media.IVideoFrame!>!
+FrameFlow.Decoding.IVideoDecoder.FirstFrameDecoded.get -> System.Threading.Tasks.Task!
+FrameFlow.Decoding.IVideoDecoder.Flush() -> void
+FrameFlow.Decoding.IVideoDecoder.FlushAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Decoding.IVideoDecoder.GetDiagnostics() -> FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot!
+FrameFlow.Decoding.IVideoDecoder.ResetPacketQueue() -> void
+FrameFlow.Decoding.ReadAheadCapacity
+FrameFlow.Decoding.ShedRateAccounting
+FrameFlow.Decoding.ShedReport
+FrameFlow.Decoding.ShedReport.Dropped.get -> long
+FrameFlow.Decoding.ShedReport.Dropped.init -> void
+FrameFlow.Decoding.ShedReport.PerSecond.get -> double
+FrameFlow.Decoding.ShedReport.PerSecond.init -> void
+FrameFlow.Decoding.ShedReport.Seconds.get -> double
+FrameFlow.Decoding.ShedReport.Seconds.init -> void
+FrameFlow.Decoding.ShedReport.ShedReport() -> void
+FrameFlow.Decoding.ShedReport.ShedReport(long Dropped, double Seconds, double PerSecond, long TotalDropped) -> void
+FrameFlow.Decoding.ShedReport.TotalDropped.get -> long
+FrameFlow.Decoding.ShedReport.TotalDropped.init -> void
+FrameFlow.Decoding.ShedWindow
+FrameFlow.Decoding.ShedWindow.DroppedInWindow.get -> long
+FrameFlow.Decoding.ShedWindow.DroppedInWindow.init -> void
+FrameFlow.Decoding.ShedWindow.LastDropTicks.get -> long
+FrameFlow.Decoding.ShedWindow.LastDropTicks.init -> void
+FrameFlow.Decoding.ShedWindow.Open.get -> bool
+FrameFlow.Decoding.ShedWindow.Open.init -> void
+FrameFlow.Decoding.ShedWindow.ShedWindow() -> void
+FrameFlow.Decoding.ShedWindow.ShedWindow(long WindowStartTicks, long LastDropTicks, long DroppedInWindow, bool Open) -> void
+FrameFlow.Decoding.ShedWindow.WindowStartTicks.get -> long
+FrameFlow.Decoding.ShedWindow.WindowStartTicks.init -> void
+FrameFlow.Decoding.VideoDecoder
+FrameFlow.Decoding.VideoDecoder.CompletePacketQueue() -> void
+FrameFlow.Decoding.VideoDecoder.DecodeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<FrameFlow.Media.IVideoFrame!>!
+FrameFlow.Decoding.VideoDecoder.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Decoding.VideoDecoder.DropNewestWhenQueueFull.get -> bool
+FrameFlow.Decoding.VideoDecoder.DropNewestWhenQueueFull.set -> void
+FrameFlow.Decoding.VideoDecoder.FirstFrameDecoded.get -> System.Threading.Tasks.Task!
+FrameFlow.Decoding.VideoDecoder.Flush() -> void
+FrameFlow.Decoding.VideoDecoder.FlushAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Decoding.VideoDecoder.GetDiagnostics() -> FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot!
+FrameFlow.Decoding.VideoDecoder.HardwareBackend.get -> FrameFlow.Media.HardwareDecodeBackendKind?
+FrameFlow.Decoding.VideoDecoder.ReadbackEveryN.get -> int
+FrameFlow.Decoding.VideoDecoder.ReadbackEveryN.set -> void
+FrameFlow.Decoding.VideoDecoder.ResetPacketQueue() -> void
+FrameFlow.Decoding.VideoDecoder.SendPacketAsync(nint packetPtr, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Decoding.VideoDecoder.SetDiscardLevel(FrameFlow.Decoding.DecodeDiscardLevel level) -> void
+FrameFlow.Decoding.VideoDecoder.YieldHardwareFrames.get -> bool
+FrameFlow.Decoding.VideoDecoder.YieldHardwareFrames.set -> void
+FrameFlow.Decoding.VideoDecoderOptions
+FrameFlow.Decoding.VideoDecoderOptions.PacketQueueCapacity.get -> int?
+FrameFlow.Decoding.VideoDecoderOptions.PacketQueueCapacity.init -> void
+FrameFlow.Decoding.VideoDecoderOptions.VideoDecoderOptions() -> void
+static FrameFlow.Decoding.DecoderFactories.Audio.get -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IAudioDecoder?>!
+static FrameFlow.Decoding.DecoderFactories.CreateAudio(Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory) -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IAudioDecoder?>!
+static FrameFlow.Decoding.DecoderFactories.CreateVideo(FrameFlow.Media.HardwareDecodeOptions! options, FrameFlow.Media.HardwareDecodeCapabilities! capabilities, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory, FrameFlow.Decoding.VideoDecoderOptions? videoOptions = null) -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IVideoDecoder?>!
+static FrameFlow.Decoding.DecoderFactories.Video.get -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IVideoDecoder?>!
+static FrameFlow.Decoding.DecoderSourceAdapters.AsSourceNode(this FrameFlow.Decoding.IAudioDecoder! decoder, string! id = "audio-decoder") -> FrameFlow.Graph.SourceNode<FrameFlow.Media.PcmAudioBufferRef!>!
+static FrameFlow.Decoding.DecoderSourceAdapters.AsSourceNode(this FrameFlow.Decoding.IVideoDecoder! decoder, string! id = "video-decoder") -> FrameFlow.Graph.SourceNode<FrameFlow.Media.VideoFrameRef!>!
+static FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot.Empty.get -> FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot!
+static FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.Empty.get -> FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot!
+static FrameFlow.Decoding.Diagnostics.DecodePoolMetrics.OnLeaseAcquired() -> void
+static FrameFlow.Decoding.Diagnostics.DecodePoolMetrics.OnLeaseReleased() -> void
+static FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot.Empty.get -> FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot!
+static FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.Empty.get -> FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot!
+static FrameFlow.Decoding.FrameFlowDecodingServiceCollectionExtensions.AddFrameFlowDecoding(this FrameFlow.Media.IFrameFlowBuilder! builder) -> FrameFlow.Media.IFrameFlowBuilder!
+static FrameFlow.Decoding.FrameFlowDecodingServiceCollectionExtensions.AddFrameFlowDecoding(this FrameFlow.Media.IFrameFlowBuilder! builder, System.Action<FrameFlow.Decoding.FrameFlowDecodingOptions!>? configure) -> FrameFlow.Media.IFrameFlowBuilder!
+static FrameFlow.Decoding.ReadAheadCapacity.ForVideo(int frameRateNum, int frameRateDen, System.TimeSpan readAhead) -> int
+static FrameFlow.Decoding.ShedRateAccounting.Observe(FrameFlow.Decoding.ShedWindow state, long nowTicks, long ticksPerSecond, System.TimeSpan reportEvery, long totalDropped) -> (FrameFlow.Decoding.ShedWindow Next, FrameFlow.Decoding.ShedReport? Report)
+static FrameFlow.Decoding.ShedWindow.None.get -> FrameFlow.Decoding.ShedWindow
+static FrameFlow.Decoding.VideoDecoder.Open(nint formatContextPtr, int streamIndex, FrameFlow.Decoding.VideoDecoderOptions? videoOptions = null, Microsoft.Extensions.Logging.ILogger? logger = null) -> FrameFlow.Decoding.VideoDecoder!
+static FrameFlow.Decoding.VideoDecoder.Open(nint formatContextPtr, int streamIndex, FrameFlow.Media.HardwareDecodeOptions? options, FrameFlow.Media.HardwareDecodeCapabilities? capabilities, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory, FrameFlow.Decoding.VideoDecoderOptions? videoOptions = null) -> FrameFlow.Decoding.VideoDecoder!
+static readonly FrameFlow.Decoding.ReadAheadCapacity.DefaultVideoReadAhead -> System.TimeSpan
+static readonly FrameFlow.Decoding.ShedRateAccounting.DefaultReportEvery -> System.TimeSpan

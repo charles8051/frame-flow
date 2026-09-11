@@ -1,0 +1,31 @@
+#nullable enable
+FrameFlow.Inference.ExecutionProvider
+FrameFlow.Inference.ExecutionProvider.Cpu = 0 -> FrameFlow.Inference.ExecutionProvider
+FrameFlow.Inference.ExecutionProvider.Cuda = 2 -> FrameFlow.Inference.ExecutionProvider
+FrameFlow.Inference.ExecutionProvider.DirectML = 1 -> FrameFlow.Inference.ExecutionProvider
+FrameFlow.Inference.IInferenceSession
+FrameFlow.Inference.IInferenceSession.InputNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
+FrameFlow.Inference.IInferenceSession.InputShapes.get -> System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<long>!>!
+FrameFlow.Inference.IInferenceSession.OutputNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
+FrameFlow.Inference.IInferenceSession.OutputShapes.get -> System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<long>!>!
+FrameFlow.Inference.IInferenceSession.Run(FrameFlow.Graph.ICpuTensor! input, FrameFlow.Graph.ICpuTensor! output) -> void
+FrameFlow.Inference.IInferenceSession.Run(System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>! inputs, System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>! outputs) -> void
+FrameFlow.Inference.IInferenceSessionFactory
+FrameFlow.Inference.IInferenceSessionFactory.ActiveProvider.get -> FrameFlow.Inference.ExecutionProvider?
+FrameFlow.Inference.IInferenceSessionFactory.Open(string! modelPath) -> FrameFlow.Inference.IInferenceSession!
+FrameFlow.Inference.IInferenceSessionFactory.Open(string! modelPath, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress) -> FrameFlow.Inference.IInferenceSession!
+FrameFlow.Inference.InferenceSessionFactoryBuilder
+FrameFlow.Inference.InferenceSessionPhase
+FrameFlow.Inference.InferenceSessionPhase.OpeningSession = 1 -> FrameFlow.Inference.InferenceSessionPhase
+FrameFlow.Inference.InferenceSessionPhase.ProbingProvider = 0 -> FrameFlow.Inference.InferenceSessionPhase
+FrameFlow.Inference.InferenceSessionPhase.Warmup = 2 -> FrameFlow.Inference.InferenceSessionPhase
+FrameFlow.Inference.InferenceSessionProgress
+FrameFlow.Inference.InferenceSessionProgress.InferenceSessionProgress() -> void
+FrameFlow.Inference.InferenceSessionProgress.InferenceSessionProgress(FrameFlow.Inference.InferenceSessionPhase Phase, FrameFlow.Inference.ExecutionProvider? Provider = null, string? Message = null) -> void
+FrameFlow.Inference.InferenceSessionProgress.Message.get -> string?
+FrameFlow.Inference.InferenceSessionProgress.Message.init -> void
+FrameFlow.Inference.InferenceSessionProgress.Phase.get -> FrameFlow.Inference.InferenceSessionPhase
+FrameFlow.Inference.InferenceSessionProgress.Phase.init -> void
+FrameFlow.Inference.InferenceSessionProgress.Provider.get -> FrameFlow.Inference.ExecutionProvider?
+FrameFlow.Inference.InferenceSessionProgress.Provider.init -> void
+static FrameFlow.Inference.InferenceSessionFactoryBuilder.Create(FrameFlow.Inference.ExecutionProvider preferred, System.Collections.Generic.IReadOnlyDictionary<FrameFlow.Inference.ExecutionProvider, System.Func<string!, FrameFlow.Inference.IInferenceSession!>!>! providers, System.Collections.Generic.IReadOnlyList<FrameFlow.Inference.ExecutionProvider>? fallbackOrder = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Inference.IInferenceSessionFactory!

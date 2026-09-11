@@ -130,15 +130,56 @@ dotnet run scripts/generate-test-corpus.cs -- --include-benchmarks
 
 Read the skip list at the end of a run before treating it as a full pass.
 
+## Public API
+
+Every public type and member under `src/` is written down in
+`PublicAPI.Unshipped.txt` beside its project. Adding one without recording it
+**fails the build**:
+
+```
+error RS0016: Symbol 'DriftProbe' is not part of the declared public API
+```
+
+Removing one that is still recorded fails it the other way, as `RS0017`.
+
+The fix is not to type the entry out. Run the analyzer's own code fix:
+
+```bash
+dotnet format analyzers ./src/FrameFlow.Media/FrameFlow.Media.csproj --diagnostics RS0016
+```
+
+Then read the diff. That is the point of the whole arrangement — a new public
+member becomes a two-line change, and a reviewer seeing only the code half
+knows to ask why.
+
+Pre-1.0, everything lives in `Unshipped` and `Shipped.txt` stays empty. An
+entry in `Shipped` is a compatibility promise, and there is nothing to promise
+until 1.0; that is also when `RS0026` and `RS0027` (optional parameters in
+overloads) become worth turning on. `README.md` still governs: the surface
+moves freely, and [docs/BREAKING-CHANGES.md](docs/BREAKING-CHANGES.md) is where
+each move gets written up for consumers.
+
+`FrameFlow.MotionClip` opts out via `FrameFlowTrackPublicApi`. It is
+`PackAsTool`, so its contract is the command line rather than its types.
+
 ## Continuous integration
 
-`Build and Test` is **`workflow_dispatch` only** — a cross-platform matrix is
-expensive in runner minutes, so it does not fire on push or pull request. It is
-dispatched by hand against a chosen branch.
+`Build and Test` runs on every pull request — `ubuntu-latest` and
+`windows-latest`, the two platforms `FrameFlow.Native.Runtime` ships a RID for.
+macOS is reachable only by `workflow_dispatch`, which still picks any subset of
+the three; it is the 10x-billed runner and its FFmpeg comes from a Homebrew keg
+rather than the pinned build, so a green macOS leg answers a weaker question for
+ten times the price.
 
-Worth knowing when reading the repository: a quiet checks list on a commit does
-not mean CI passed on it. It usually means CI never ran. The local suite is the
-real gate.
+One failure mode worth knowing, because it looks exactly like a broken runner:
+**a pull request with merge conflicts gets no checks at all.** GitHub builds
+`pull_request` runs against a merge commit it cannot create for a conflicted
+branch, so the checks list reads "no checks reported" rather than failing.
+Rebase onto `main` and they appear. This bites most often after a parent PR in
+a stack is squash-merged, which leaves the child carrying commits `main` now
+has under a different hash.
+
+The local suite is still the faster gate; CI is the one that has to agree.
 
 ## Style
 

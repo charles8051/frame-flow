@@ -1,0 +1,63 @@
+#nullable enable
+FrameFlow.Player.FrameFlowPlayer
+FrameFlow.Player.IMediaPlayer
+FrameFlow.Player.IMediaPlayer.Diagnostics.get -> System.IObservable<FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot!>!
+FrameFlow.Player.IMediaPlayer.Duration.get -> System.TimeSpan
+FrameFlow.Player.IMediaPlayer.ErrorOccurred.get -> System.IObservable<FrameFlow.Media.PlaybackError!>!
+FrameFlow.Player.IMediaPlayer.GetDiagnostics() -> FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot!
+FrameFlow.Player.IMediaPlayer.LoopStalled.get -> System.IObservable<FrameFlow.Media.LoopStalled!>!
+FrameFlow.Player.IMediaPlayer.MediaInfo.get -> FrameFlow.Media.MediaInfo!
+FrameFlow.Player.IMediaPlayer.Muted.get -> bool
+FrameFlow.Player.IMediaPlayer.Muted.set -> void
+FrameFlow.Player.IMediaPlayer.PauseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
+FrameFlow.Player.IMediaPlayer.PlayAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
+FrameFlow.Player.IMediaPlayer.Position.get -> System.TimeSpan
+FrameFlow.Player.IMediaPlayer.PositionTick.get -> System.IObservable<System.TimeSpan>!
+FrameFlow.Player.IMediaPlayer.SeekAsync(System.TimeSpan position, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
+FrameFlow.Player.IMediaPlayer.SetRepeatModeAsync(FrameFlow.Media.RepeatMode mode, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
+FrameFlow.Player.IMediaPlayer.State.get -> FrameFlow.Media.PlaybackState
+FrameFlow.Player.IMediaPlayer.StateChanged.get -> System.IObservable<FrameFlow.Media.PlaybackState>!
+FrameFlow.Player.IMediaPlayer.SupportsVolumeControl.get -> bool
+FrameFlow.Player.IMediaPlayer.Volume.get -> float
+FrameFlow.Player.IMediaPlayer.Volume.set -> void
+FrameFlow.Player.IMediaPlayerBuilder
+FrameFlow.Player.IMediaPlayerBuilder.BuildPlayerAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Player.IMediaPlayer!>!
+FrameFlow.Player.IMediaPlayerBuilder.ConfigureAudio(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>>! configure) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IMediaPlayerBuilder.ConfigureVideo(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>>! configure) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IMediaPlayerBuilder.WithAudioActivation(bool activateAudioSink = true) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IMediaPlayerBuilder.WithAudioSink(FrameFlow.Media.IAudioSink! sink) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IMediaPlayerBuilder.WithClock(FrameFlow.Playback.IPlaybackClock! clock) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IMediaPlayerBuilder.WithHardwareDecode(FrameFlow.Media.HardwareDecodeMode mode) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IMediaPlayerBuilder.WithHardwareFrames(bool yieldHardwareFrames = true) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IMediaPlayerBuilder.WithLogger(Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IMediaPlayerBuilder.WithRepeatMode(FrameFlow.Media.RepeatMode mode) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IMediaPlayerBuilder.WithVideoSink(FrameFlow.Media.IVideoSink! sink) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IMediaPlaylistPlayer
+FrameFlow.Player.IMediaPlaylistPlayer.CurrentSource.get -> FrameFlow.Media.IMediaSource?
+FrameFlow.Player.IMediaPlaylistPlayer.EnqueueAsync(FrameFlow.Media.IMediaSource! source, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+FrameFlow.Player.IMediaPlaylistPlayer.SetNextAsync(FrameFlow.Media.IMediaSource? source, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+FrameFlow.Player.IMediaPlaylistPlayer.SkipToNextAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+FrameFlow.Player.IMediaPlaylistPlayer.SourceTransitioned.get -> System.IObservable<FrameFlow.Playback.PlaylistTransition!>!
+FrameFlow.Player.IPlayerBuilder
+FrameFlow.Player.IPlayerBuilder.BuildAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Player.PlayerSession!>!
+FrameFlow.Player.IPlayerBuilder.BuildPlayerAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Player.IMediaPlayer!>!
+FrameFlow.Player.IPlayerBuilder.ConfigureAudio(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>>! configure) -> FrameFlow.Player.IPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.ConfigureVideo(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>>! configure) -> FrameFlow.Player.IPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.WithAudioActivation(bool activateAudioSink = true) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.WithAudioSink(FrameFlow.Media.IAudioSink! sink) -> FrameFlow.Player.IPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.WithClock(FrameFlow.Playback.IPlaybackClock! clock) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.WithHardwareDecode(FrameFlow.Media.HardwareDecodeMode mode) -> FrameFlow.Player.IPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.WithHardwareFrames(bool yieldHardwareFrames = true) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.WithLogger(Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory) -> FrameFlow.Player.IPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.WithRepeatMode(FrameFlow.Media.RepeatMode mode) -> FrameFlow.Player.IMediaPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.WithVideoSink(FrameFlow.Media.IVideoSink! sink) -> FrameFlow.Player.IPlayerBuilder!
+FrameFlow.Player.MediaPlayer
+FrameFlow.Player.MediaPlaylistPlayer
+FrameFlow.Player.PlayerSession
+FrameFlow.Player.PlayerSession.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Player.PlayerSession.Info.get -> FrameFlow.Media.MediaInfo!
+FrameFlow.Player.PlayerSession.PlayToCompletionAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+static FrameFlow.Player.FrameFlowPlayer.Open(FrameFlow.Media.IMediaSource! source) -> FrameFlow.Player.IPlayerBuilder!
+static FrameFlow.Player.FrameFlowPlayer.Open(string! path) -> FrameFlow.Player.IPlayerBuilder!
+static FrameFlow.Player.MediaPlayer.CreateAsync(FrameFlow.Media.IMediaSource! source, FrameFlow.Media.IVideoSink? videoSink = null, FrameFlow.Media.IAudioSink? audioSink = null, FrameFlow.Media.HardwareDecodeMode hardwareDecodeMode = FrameFlow.Media.HardwareDecodeMode.Auto, bool yieldHardwareFrames = false, FrameFlow.Media.RepeatMode initialRepeatMode = FrameFlow.Media.RepeatMode.Off, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, bool activateAudioSink = true, System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>>? configureVideo = null, System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>>? configureAudio = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Player.IMediaPlayer!>!
+static FrameFlow.Player.MediaPlaylistPlayer.CreateAsync(System.Collections.Generic.IEnumerable<FrameFlow.Media.IMediaSource!>! sources, FrameFlow.Media.IVideoSink? videoSink = null, FrameFlow.Media.IAudioSink? audioSink = null, FrameFlow.Media.HardwareDecodeMode hardwareDecodeMode = FrameFlow.Media.HardwareDecodeMode.Auto, bool yieldHardwareFrames = false, FrameFlow.Media.RepeatMode initialRepeatMode = FrameFlow.Media.RepeatMode.All, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, bool activateAudioSink = true, System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>>? configureVideo = null, System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>>? configureAudio = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Player.IMediaPlaylistPlayer!>!

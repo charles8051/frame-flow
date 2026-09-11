@@ -1,0 +1,9 @@
+#nullable enable
+FrameFlow.Inference.Dml.DmlInferenceSession
+FrameFlow.Inference.Dml.DmlInferenceSession.DmlInferenceSession(byte[]! modelBytes) -> void
+FrameFlow.Inference.Dml.DmlInferenceSession.DmlInferenceSession(byte[]! modelBytes, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.Dml.DmlInferenceSession!>? logger) -> void
+FrameFlow.Inference.Dml.DmlInferenceSession.DmlInferenceSession(string! modelPath) -> void
+FrameFlow.Inference.Dml.DmlInferenceSession.DmlInferenceSession(string! modelPath, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.Dml.DmlInferenceSession!>? logger) -> void
+FrameFlow.Inference.Dml.DmlProbe
+static FrameFlow.Inference.Dml.DmlProbe.Failure.get -> System.Exception?
+static FrameFlow.Inference.Dml.DmlProbe.IsAvailable.get -> bool

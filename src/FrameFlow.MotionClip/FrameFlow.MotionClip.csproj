@@ -31,6 +31,19 @@
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <Description>Motion-triggered pre-roll clip recorder. Continuously buffers the most recent few seconds of camera video and, on motion, writes an H.264/MP4 clip that starts before the motion began. `motionclip scan` lists cameras; `motionclip run --IdStartsWith "&lt;id-prefix&gt;"` records, tracking the camera resiliently (starts whether or not it is plugged in). Install with `dotnet tool install -g FrameFlow.MotionClip`.</Description>
     <PackageTags>camera;motion-detection;recording;security-camera;cli;dotnet-tool;frameflow</PackageTags>
+
+    <!--
+      No public API baseline for this one. It is PackAsTool: consumers install
+      it with `dotnet tool install` and its contract is the command line, not
+      its types. Nothing references it as a library, so an API file here would
+      record 156 entries that protect nobody — and two of them come from the
+      Avalonia name generator, so the file would churn whenever generated
+      output moved.
+
+      This is read by src/Directory.Build.targets, not src/Directory.Build.props.
+      A .props condition would evaluate before this line exists.
+    -->
+    <FrameFlowTrackPublicApi>false</FrameFlowTrackPublicApi>
     <RepositoryUrl>https://github.com/charles8051/frame-flow</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/charles8051/frame-flow</PackageProjectUrl>

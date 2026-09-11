@@ -126,6 +126,66 @@
     <PackageReference Include="MinVer" Version="7.0.0" PrivateAssets="All" />
   </ItemGroup>
 
+  <!--
+    ============================================================================
+    Public API baseline.
+    ============================================================================
+
+    Every public type and member in src/ is written down in PublicAPI.*.txt
+    beside its project, and RS0016 fails the build on any addition that is not.
+    The point is not to freeze the surface — README.md says it moves freely
+    pre-1.0 and it does — but to make it move VISIBLY. Without this, adding,
+    renaming or removing a public member is invisible in review unless a reader
+    happens to open the file.
+
+    The api-surface review that produced issues #101-#108 is the argument. Every
+    one of those was surface drift that a diff to a checked-in API file would
+    have raised at the time:
+
+      IPlayerBuilder.ConfigureVideoPipeline renamed to ConfigureVideo, leaving
+        two dead crefs behind (#98, found only when #109 turned the doc file on)
+      Subscribe<T> declared in a second namespace, making it ambiguous for every
+        Avalonia consumer (#100)
+      FrameFlow.Media growing types in the bare FrameFlow namespace (#104)
+      FrameFlow.Sdl declaring FrameFlow.SDL (#104)
+      SDL's four DI extensions landing on IServiceCollection while the other
+        five adapters used IFrameFlowBuilder (#105)
+
+    None was a bug. All were drift, which is the class this catches.
+
+    HOW IT WORKS PRE-1.0. Two files per project. Everything goes in Unshipped;
+    Shipped stays empty until there is a compatibility promise worth making,
+    which is 1.0. Adding a public member is then a two-line diff — the code and
+    the Unshipped entry — and a reviewer who sees only the first knows to ask.
+    Removing one is a deletion from Unshipped, which is just as loud.
+
+    At 1.0, Shipped absorbs Unshipped and RS0017 starts reporting removals from
+    the shipped set as errors. That is the switch, and it is deliberate that
+    nothing here does it early: an entry in Shipped is a promise, and there is
+    nothing to promise yet.
+
+    EnablePackageValidation with a PackageValidationBaselineVersion is the
+    binary-level counterpart and is NOT turned on here. It compares against the
+    last published nupkg, which is the right check once the surface stops
+    moving; today it would fail every release on purpose-built breaks.
+
+    See CONTRIBUTING.md for what to do when RS0016 stops your build.
+  -->
+  <!--
+    The opt-in property lives here so a project can override it; the analyzer
+    wiring it gates lives in src/Directory.Build.targets, which is imported
+    after the project body. Putting the wiring here instead does not work, and
+    silently: this file is imported at the TOP of every csproj, so its
+    conditions evaluate while FrameFlowTrackPublicApi is still unset, and a
+    project setting it to false further down cannot retract a PackageReference
+    or a WarningsAsErrors entry that has already been evaluated.
+  -->
+  <PropertyGroup>
+    <FrameFlowTrackPublicApi
+      Condition="'$(FrameFlowTrackPublicApi)' == ''"
+    >true</FrameFlowTrackPublicApi>
+  </PropertyGroup>
+
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)../README.md" Pack="true" PackagePath="/" />
     <None Include="$(MSBuildThisFileDirectory)../assets/icon.png" Pack="true" PackagePath="/" />

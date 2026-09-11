@@ -1,0 +1,25 @@
+#nullable enable
+FrameFlow.Native.FrameFlowBootstrapper
+FrameFlow.Native.FrameFlowBootstrapper.FrameFlowBootstrapper(FrameFlow.Native.FrameFlowNativeOptions! options) -> void
+FrameFlow.Native.FrameFlowBootstrapper.FrameFlowBootstrapper(FrameFlow.Native.FrameFlowNativeOptions! options, Microsoft.Extensions.Logging.ILoggerFactory! loggerFactory) -> void
+FrameFlow.Native.FrameFlowBootstrapper.Initialize() -> FrameFlow.Media.FrameFlowBootstrapResult!
+FrameFlow.Native.FrameFlowBootstrapper.IsInitialized.get -> bool
+FrameFlow.Native.FrameFlowHostedService
+FrameFlow.Native.FrameFlowHostedService.FrameFlowHostedService(FrameFlow.Media.IFrameFlowBootstrapper! bootstrapper, Microsoft.Extensions.Logging.ILogger<FrameFlow.Native.FrameFlowHostedService!>! logger) -> void
+FrameFlow.Native.FrameFlowHostedService.StartAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+FrameFlow.Native.FrameFlowHostedService.StopAsync(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+FrameFlow.Native.FrameFlowNativeOptions
+FrameFlow.Native.FrameFlowNativeOptions.CustomFfmpegPath.get -> string?
+FrameFlow.Native.FrameFlowNativeOptions.CustomFfmpegPath.set -> void
+FrameFlow.Native.FrameFlowNativeOptions.FrameFlowNativeOptions() -> void
+FrameFlow.Native.FrameFlowNativeOptions.ProbeSystemLibraries.get -> bool
+FrameFlow.Native.FrameFlowNativeOptions.ProbeSystemLibraries.set -> void
+FrameFlow.Native.FrameFlowNativeOptions.ProbeUncataloguedBackends.get -> bool
+FrameFlow.Native.FrameFlowNativeOptions.ProbeUncataloguedBackends.set -> void
+FrameFlow.Native.FrameFlowNativeOptions.SkipHardwareProbe.get -> bool
+FrameFlow.Native.FrameFlowNativeOptions.SkipHardwareProbe.set -> void
+FrameFlow.Native.FrameFlowNativeOptions.UseBundledBinaries.get -> bool
+FrameFlow.Native.FrameFlowNativeOptions.UseBundledBinaries.set -> void
+FrameFlow.Native.FrameFlowNativeServiceCollectionExtensions
+static FrameFlow.Native.FrameFlowNativeServiceCollectionExtensions.AddFrameFlowNative(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<FrameFlow.Native.FrameFlowNativeOptions!>? configure = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static FrameFlow.Native.FrameFlowNativeServiceCollectionExtensions.AddHostedBootstrap(this FrameFlow.Media.IFrameFlowBuilder! builder) -> FrameFlow.Media.IFrameFlowBuilder!

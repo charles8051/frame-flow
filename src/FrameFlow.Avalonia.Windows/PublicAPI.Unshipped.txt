@@ -1,0 +1,67 @@
+#nullable enable
+const FrameFlow.Avalonia.Windows.PresentPlan.DropSlot = -1 -> int
+FrameFlow.Avalonia.Windows.CompositionInteropVideoSink
+FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.CompositionInteropVideoSink(FrameFlow.Media.IFramePool! framePool, Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.Windows.CompositionInteropVideoSink!>? logger = null) -> void
+FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramePool.get -> FrameFlow.Media.IFramePool!
+FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramesAccepted.get -> long
+FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramesSuperseded.get -> long
+FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
+FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.CompositionInteropVideoView() -> void
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.EnsureSink() -> FrameFlow.Avalonia.Windows.CompositionInteropVideoSink!
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.FramesCommitted.get -> int
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.FramesDropped.get -> int
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.FramesPresented.get -> int
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.Initialize(Microsoft.Extensions.Logging.ILoggerFactory! loggerFactory) -> void
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.PresenterRecovered -> System.EventHandler<FrameFlow.Media.Diagnostics.PresenterRecoveryInfo>?
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.PresenterStalled -> System.EventHandler<FrameFlow.Media.Diagnostics.PresenterStallInfo>?
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.Sink.get -> FrameFlow.Avalonia.Windows.CompositionInteropVideoSink?
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.Sink.set -> void
+FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics
+FrameFlow.Avalonia.Windows.FrameDescriptor
+FrameFlow.Avalonia.Windows.FrameDescriptor.FrameDescriptor() -> void
+FrameFlow.Avalonia.Windows.FrameDescriptor.FrameDescriptor(bool IsGpu, int Width, int Height) -> void
+FrameFlow.Avalonia.Windows.FrameDescriptor.Height.get -> int
+FrameFlow.Avalonia.Windows.FrameDescriptor.Height.init -> void
+FrameFlow.Avalonia.Windows.FrameDescriptor.IsGpu.get -> bool
+FrameFlow.Avalonia.Windows.FrameDescriptor.IsGpu.init -> void
+FrameFlow.Avalonia.Windows.FrameDescriptor.Width.get -> int
+FrameFlow.Avalonia.Windows.FrameDescriptor.Width.init -> void
+FrameFlow.Avalonia.Windows.PresentPlan
+FrameFlow.Avalonia.Windows.PresentPlan.Drop.get -> bool
+FrameFlow.Avalonia.Windows.PresentPlan.NextState.get -> FrameFlow.Avalonia.Windows.PresentState
+FrameFlow.Avalonia.Windows.PresentPlan.NextState.init -> void
+FrameFlow.Avalonia.Windows.PresentPlan.PresentPlan() -> void
+FrameFlow.Avalonia.Windows.PresentPlan.PresentPlan(FrameFlow.Avalonia.Windows.PresentState NextState, int SlotIndex, bool ReimportRing, bool UpdateLayout) -> void
+FrameFlow.Avalonia.Windows.PresentPlan.ReimportRing.get -> bool
+FrameFlow.Avalonia.Windows.PresentPlan.ReimportRing.init -> void
+FrameFlow.Avalonia.Windows.PresentPlan.SlotIndex.get -> int
+FrameFlow.Avalonia.Windows.PresentPlan.SlotIndex.init -> void
+FrameFlow.Avalonia.Windows.PresentPlan.UpdateLayout.get -> bool
+FrameFlow.Avalonia.Windows.PresentPlan.UpdateLayout.init -> void
+FrameFlow.Avalonia.Windows.PresentPlanner
+FrameFlow.Avalonia.Windows.PresentState
+FrameFlow.Avalonia.Windows.PresentState.ActiveIsGpu.get -> bool?
+FrameFlow.Avalonia.Windows.PresentState.NextBuffer.get -> int
+FrameFlow.Avalonia.Windows.PresentState.PresentState() -> void
+FrameFlow.Avalonia.Windows.PresentState.RingSize.get -> int
+FrameFlow.Avalonia.Windows.PresentState.VideoHeight.get -> int
+FrameFlow.Avalonia.Windows.PresentState.VideoWidth.get -> int
+FrameFlow.Avalonia.Windows.PresentState.WithActiveSource(bool? activeIsGpu) -> FrameFlow.Avalonia.Windows.PresentState
+FrameFlow.Avalonia.Windows.PresentState.WithNextBuffer(int nextBuffer) -> FrameFlow.Avalonia.Windows.PresentState
+FrameFlow.Avalonia.Windows.PresentState.WithVideoSize(int width, int height) -> FrameFlow.Avalonia.Windows.PresentState
+static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.BeginTeardown() -> long
+static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordCompleted(long startTimestamp) -> double
+static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordDeferred() -> void
+static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordDeviceChangeRebind() -> void
+static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordDeviceChangeRebuild() -> void
+static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordDeviceLostRebuild() -> void
+static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordReaperCompleted() -> void
+static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordResolutionChangeRebuild() -> void
+static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordStall() -> void
+static FrameFlow.Avalonia.Windows.PresentPlanner.Advance(in FrameFlow.Avalonia.Windows.PresentState state, in FrameFlow.Avalonia.Windows.FrameDescriptor frame, System.Func<int, bool>! slotFree) -> FrameFlow.Avalonia.Windows.PresentPlan
+static FrameFlow.Avalonia.Windows.PresentState.Initial(int ringSize) -> FrameFlow.Avalonia.Windows.PresentState

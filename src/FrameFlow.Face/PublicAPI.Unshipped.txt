@@ -1,0 +1,139 @@
+#nullable enable
+const FrameFlow.Face.FaceDetection.KeypointCount = 6 -> int
+FrameFlow.Face.BlazeFaceDetector
+FrameFlow.Face.BlazeFaceDetector.Detect(FrameFlow.Media.IVideoFrame! frame) -> System.Collections.Generic.List<FrameFlow.Face.FaceDetection>!
+FrameFlow.Face.BlazeFaceDetector.Detect(FrameFlow.Media.IVideoFrame! frame, FrameFlow.Face.FaceRoi roi) -> System.Collections.Generic.List<FrameFlow.Face.FaceDetection>!
+FrameFlow.Face.BlazeFaceDetector.Dispose() -> void
+FrameFlow.Face.BlazeFaceDetector.LastInferenceMs.get -> double
+FrameFlow.Face.BlazeFaceDetector.LastPostprocessMs.get -> double
+FrameFlow.Face.BlazeFaceDetector.LastPreprocessMs.get -> double
+FrameFlow.Face.BlazeFaceDetector.Warmup() -> void
+FrameFlow.Face.BlazeFaceInputLayout
+FrameFlow.Face.BlazeFaceInputLayout.Nchw = 0 -> FrameFlow.Face.BlazeFaceInputLayout
+FrameFlow.Face.BlazeFaceInputLayout.Nhwc = 1 -> FrameFlow.Face.BlazeFaceInputLayout
+FrameFlow.Face.BlazeFaceModelDescriptor
+FrameFlow.Face.BlazeFaceModelDescriptor.Anchors.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Face.SsdAnchor>!
+FrameFlow.Face.BlazeFaceModelDescriptor.BlazeFaceModelDescriptor(FrameFlow.Face.SsdAnchorOptions! options, int numKeypoints = 6, FrameFlow.Face.BlazeFaceInputLayout inputLayout = FrameFlow.Face.BlazeFaceInputLayout.Nchw) -> void
+FrameFlow.Face.BlazeFaceModelDescriptor.BoxElementCount.get -> int
+FrameFlow.Face.BlazeFaceModelDescriptor.CoordinateScale.get -> float
+FrameFlow.Face.BlazeFaceModelDescriptor.IdentifyOutputs(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<long>!>! outputShapes) -> (int BoxIndex, int ScoreIndex)
+FrameFlow.Face.BlazeFaceModelDescriptor.InputElementCount.get -> int
+FrameFlow.Face.BlazeFaceModelDescriptor.InputLayout.get -> FrameFlow.Face.BlazeFaceInputLayout
+FrameFlow.Face.BlazeFaceModelDescriptor.InputSize.get -> int
+FrameFlow.Face.BlazeFaceModelDescriptor.NumBoxes.get -> int
+FrameFlow.Face.BlazeFaceModelDescriptor.NumCoords.get -> int
+FrameFlow.Face.BlazeFaceModelDescriptor.NumKeypoints.get -> int
+FrameFlow.Face.BlazeFaceModelDescriptor.ScoreElementCount.get -> int
+FrameFlow.Face.BlazeFaceModelDescriptor.ValidateSession(FrameFlow.Inference.IInferenceSession! session) -> void
+FrameFlow.Face.BlazeFacePostprocessor
+FrameFlow.Face.BlazeFacePostprocessor.BlazeFacePostprocessor(FrameFlow.Face.BlazeFaceModelDescriptor? descriptor = null) -> void
+FrameFlow.Face.BlazeFacePostprocessor.Decode(System.ReadOnlySpan<float> boxes, System.ReadOnlySpan<float> scores, FrameFlow.Face.FaceRoi roi) -> System.Collections.Generic.List<FrameFlow.Face.FaceDetection>!
+FrameFlow.Face.BlazeFacePostprocessor.IoUThreshold.get -> float
+FrameFlow.Face.BlazeFacePostprocessor.IoUThreshold.init -> void
+FrameFlow.Face.BlazeFacePostprocessor.MaxFaces.get -> int
+FrameFlow.Face.BlazeFacePostprocessor.MaxFaces.init -> void
+FrameFlow.Face.BlazeFacePostprocessor.MinScore.get -> float
+FrameFlow.Face.BlazeFacePostprocessor.MinScore.init -> void
+FrameFlow.Face.BlazeFacePostprocessor.ScoreClipThreshold.get -> float
+FrameFlow.Face.BlazeFacePostprocessor.ScoreClipThreshold.init -> void
+FrameFlow.Face.BlazeFacePreprocessor
+FrameFlow.Face.BlazeFacePreprocessor.BlazeFacePreprocessor(int inputSize = 128, FrameFlow.Face.BlazeFaceInputLayout layout = FrameFlow.Face.BlazeFaceInputLayout.Nchw) -> void
+FrameFlow.Face.BlazeFacePreprocessor.InputElementCount.get -> int
+FrameFlow.Face.BlazeFacePreprocessor.InputSize.get -> int
+FrameFlow.Face.BlazeFacePreprocessor.Layout.get -> FrameFlow.Face.BlazeFaceInputLayout
+FrameFlow.Face.BlazeFacePreprocessor.Preprocess(FrameFlow.Media.IVideoFrame! frame, FrameFlow.Face.FaceRoi roi, System.Span<float> destination) -> void
+FrameFlow.Face.DetectedFaceFrameRef
+FrameFlow.Face.DetectedFaceFrameRef.AddRef() -> FrameFlow.Graph.IRefCounted!
+FrameFlow.Face.DetectedFaceFrameRef.DetectedFaceFrameRef(FrameFlow.Media.VideoFrameRef! video, System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceDetection>! faces) -> void
+FrameFlow.Face.DetectedFaceFrameRef.Dispose() -> void
+FrameFlow.Face.DetectedFaceFrameRef.Faces.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceDetection>!
+FrameFlow.Face.DetectedFaceFrameRef.Video.get -> FrameFlow.Media.VideoFrameRef!
+FrameFlow.Face.FaceDetection
+FrameFlow.Face.FaceDetection.Confidence.get -> float
+FrameFlow.Face.FaceDetection.Confidence.init -> void
+FrameFlow.Face.FaceDetection.FaceDetection() -> void
+FrameFlow.Face.FaceDetection.FaceDetection(float Confidence, float X, float Y, float Width, float Height, System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceKeypoint2D>! Keypoints) -> void
+FrameFlow.Face.FaceDetection.Height.get -> float
+FrameFlow.Face.FaceDetection.Height.init -> void
+FrameFlow.Face.FaceDetection.Keypoint(FrameFlow.Face.FaceKeypoint which) -> FrameFlow.Face.FaceKeypoint2D
+FrameFlow.Face.FaceDetection.Keypoints.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceKeypoint2D>!
+FrameFlow.Face.FaceDetection.Keypoints.init -> void
+FrameFlow.Face.FaceDetection.Width.get -> float
+FrameFlow.Face.FaceDetection.Width.init -> void
+FrameFlow.Face.FaceDetection.X.get -> float
+FrameFlow.Face.FaceDetection.X.init -> void
+FrameFlow.Face.FaceDetection.Y.get -> float
+FrameFlow.Face.FaceDetection.Y.init -> void
+FrameFlow.Face.FaceKeypoint
+FrameFlow.Face.FaceKeypoint.LeftEarTragion = 5 -> FrameFlow.Face.FaceKeypoint
+FrameFlow.Face.FaceKeypoint.LeftEye = 1 -> FrameFlow.Face.FaceKeypoint
+FrameFlow.Face.FaceKeypoint.Mouth = 3 -> FrameFlow.Face.FaceKeypoint
+FrameFlow.Face.FaceKeypoint.Nose = 2 -> FrameFlow.Face.FaceKeypoint
+FrameFlow.Face.FaceKeypoint.RightEarTragion = 4 -> FrameFlow.Face.FaceKeypoint
+FrameFlow.Face.FaceKeypoint.RightEye = 0 -> FrameFlow.Face.FaceKeypoint
+FrameFlow.Face.FaceKeypoint2D
+FrameFlow.Face.FaceKeypoint2D.FaceKeypoint2D() -> void
+FrameFlow.Face.FaceKeypoint2D.FaceKeypoint2D(float X, float Y) -> void
+FrameFlow.Face.FaceKeypoint2D.X.get -> float
+FrameFlow.Face.FaceKeypoint2D.X.init -> void
+FrameFlow.Face.FaceKeypoint2D.Y.get -> float
+FrameFlow.Face.FaceKeypoint2D.Y.init -> void
+FrameFlow.Face.FaceOperators
+FrameFlow.Face.FaceRoi
+FrameFlow.Face.FaceRoi.FaceRoi() -> void
+FrameFlow.Face.FaceRoi.FaceRoi(float X, float Y, float Width, float Height) -> void
+FrameFlow.Face.FaceRoi.Height.get -> float
+FrameFlow.Face.FaceRoi.Height.init -> void
+FrameFlow.Face.FaceRoi.ToSource(float normalizedX, float normalizedY) -> (float X, float Y)
+FrameFlow.Face.FaceRoi.Width.get -> float
+FrameFlow.Face.FaceRoi.Width.init -> void
+FrameFlow.Face.FaceRoi.X.get -> float
+FrameFlow.Face.FaceRoi.X.init -> void
+FrameFlow.Face.FaceRoi.Y.get -> float
+FrameFlow.Face.FaceRoi.Y.init -> void
+FrameFlow.Face.SsdAnchor
+FrameFlow.Face.SsdAnchor.Height.get -> float
+FrameFlow.Face.SsdAnchor.Height.init -> void
+FrameFlow.Face.SsdAnchor.SsdAnchor() -> void
+FrameFlow.Face.SsdAnchor.SsdAnchor(float XCenter, float YCenter, float Width, float Height) -> void
+FrameFlow.Face.SsdAnchor.Width.get -> float
+FrameFlow.Face.SsdAnchor.Width.init -> void
+FrameFlow.Face.SsdAnchor.XCenter.get -> float
+FrameFlow.Face.SsdAnchor.XCenter.init -> void
+FrameFlow.Face.SsdAnchor.YCenter.get -> float
+FrameFlow.Face.SsdAnchor.YCenter.init -> void
+FrameFlow.Face.SsdAnchorGenerator
+FrameFlow.Face.SsdAnchorOptions
+FrameFlow.Face.SsdAnchorOptions.AnchorOffsetX.get -> float
+FrameFlow.Face.SsdAnchorOptions.AnchorOffsetX.init -> void
+FrameFlow.Face.SsdAnchorOptions.AnchorOffsetY.get -> float
+FrameFlow.Face.SsdAnchorOptions.AnchorOffsetY.init -> void
+FrameFlow.Face.SsdAnchorOptions.AspectRatios.get -> System.Collections.Generic.IReadOnlyList<float>!
+FrameFlow.Face.SsdAnchorOptions.AspectRatios.init -> void
+FrameFlow.Face.SsdAnchorOptions.FixedAnchorSize.get -> bool
+FrameFlow.Face.SsdAnchorOptions.FixedAnchorSize.init -> void
+FrameFlow.Face.SsdAnchorOptions.InputSizeHeight.get -> int
+FrameFlow.Face.SsdAnchorOptions.InputSizeHeight.init -> void
+FrameFlow.Face.SsdAnchorOptions.InputSizeWidth.get -> int
+FrameFlow.Face.SsdAnchorOptions.InputSizeWidth.init -> void
+FrameFlow.Face.SsdAnchorOptions.InterpolatedScaleAspectRatio.get -> float
+FrameFlow.Face.SsdAnchorOptions.InterpolatedScaleAspectRatio.init -> void
+FrameFlow.Face.SsdAnchorOptions.MaxScale.get -> float
+FrameFlow.Face.SsdAnchorOptions.MaxScale.init -> void
+FrameFlow.Face.SsdAnchorOptions.MinScale.get -> float
+FrameFlow.Face.SsdAnchorOptions.MinScale.init -> void
+FrameFlow.Face.SsdAnchorOptions.NumLayers.get -> int
+FrameFlow.Face.SsdAnchorOptions.NumLayers.init -> void
+FrameFlow.Face.SsdAnchorOptions.ReduceBoxesInLowestLayer.get -> bool
+FrameFlow.Face.SsdAnchorOptions.ReduceBoxesInLowestLayer.init -> void
+FrameFlow.Face.SsdAnchorOptions.Strides.get -> System.Collections.Generic.IReadOnlyList<int>!
+FrameFlow.Face.SsdAnchorOptions.Strides.init -> void
+static FrameFlow.Face.BlazeFaceDetector.Create(FrameFlow.Inference.IInferenceSession! session, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Face.BlazeFaceModelDescriptor? descriptor = null, FrameFlow.Face.BlazeFacePostprocessor? postprocessor = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null) -> FrameFlow.Face.BlazeFaceDetector!
+static FrameFlow.Face.BlazeFaceDetector.CreateAsync(FrameFlow.Inference.IInferenceSessionFactory! factory, string! modelPath, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Face.BlazeFaceModelDescriptor? descriptor = null, FrameFlow.Face.BlazeFacePostprocessor? postprocessor = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null) -> System.Threading.Tasks.Task<FrameFlow.Face.BlazeFaceDetector!>!
+static FrameFlow.Face.BlazeFaceModelDescriptor.FromSession(FrameFlow.Inference.IInferenceSession! session) -> FrameFlow.Face.BlazeFaceModelDescriptor!
+static FrameFlow.Face.BlazeFaceModelDescriptor.Front128.get -> FrameFlow.Face.BlazeFaceModelDescriptor!
+static FrameFlow.Face.BlazeFaceModelDescriptor.Front128Nhwc.get -> FrameFlow.Face.BlazeFaceModelDescriptor!
+static FrameFlow.Face.BlazeFaceModelDescriptor.Front128Options.get -> FrameFlow.Face.SsdAnchorOptions!
+static FrameFlow.Face.FaceOperators.DetectWith(string! id, System.Func<FrameFlow.Media.IVideoFrame!, System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceDetection>!>! detect) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.VideoFrameRef!, FrameFlow.Face.DetectedFaceFrameRef!>!
+static FrameFlow.Face.FaceRoi.Full(FrameFlow.Media.IVideoFrame! frame) -> FrameFlow.Face.FaceRoi
+static FrameFlow.Face.SsdAnchorGenerator.Generate(FrameFlow.Face.SsdAnchorOptions! options) -> System.Collections.Generic.IReadOnlyList<FrameFlow.Face.SsdAnchor>!
