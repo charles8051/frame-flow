@@ -4,8 +4,8 @@ using FrameFlow.Examples.SdlPlayer;
 using FrameFlow.Media;
 using FrameFlow.Native;
 using FrameFlow.Playback; // IPlaybackController — this example drives the state machine directly
-using FrameFlow.SDL;
-using FrameFlow.SDL.Bootstrap;
+using FrameFlow.Sdl;
+using FrameFlow.Sdl.Bootstrap;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Silk.NET.SDL;
@@ -115,7 +115,7 @@ static int SdlMain(string[] args)
             PlaybackController.Create(
                 videoSink: videoSink,
                 audioSink: audioSink,
-                hardwareDecodeMode: global::FrameFlow.HardwareDecodeMode.Auto,
+                hardwareDecodeMode: HardwareDecodeMode.Auto,
                 loggerFactory: loggerFactory
             );
 

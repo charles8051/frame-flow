@@ -1,7 +1,7 @@
 using FrameFlow.Integration.Tests.Harness;
 using FrameFlow.Media;
 using FrameFlow.Playback;
-using FrameFlow.SDL;
+using FrameFlow.Sdl;
 using Microsoft.Extensions.Logging.Abstractions;
 using SilkSdl = Silk.NET.SDL.Sdl;
 

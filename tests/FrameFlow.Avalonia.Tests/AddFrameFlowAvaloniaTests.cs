@@ -1,4 +1,3 @@
-using FrameFlow;
 using FrameFlow.Avalonia;
 using FrameFlow.Media;
 using FrameFlow.Playback;

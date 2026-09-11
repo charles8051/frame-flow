@@ -3,7 +3,7 @@
 
 using FrameFlow.Media;
 
-namespace FrameFlow;
+namespace FrameFlow.Media;
 
 public sealed class FrameFlowOptions
 {

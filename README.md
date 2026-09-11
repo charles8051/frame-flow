@@ -42,7 +42,6 @@ you need from playback:
 ### `BuildPlayerAsync` — the full player
 
 ```csharp
-using FrameFlow;                 // HardwareDecodeMode lives here
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Media;
 using FrameFlow.Player;
@@ -56,10 +55,6 @@ await using var player = await FrameFlowPlayer.Open(path)
 
 await player.PlayAsync();
 ```
-
-Do not drop `using FrameFlow;`. `HardwareDecodeMode` is in the root `FrameFlow`
-namespace while the other types here are not. The examples in this repository
-compile without it only because they declare namespaces under `FrameFlow.*`.
 
 `MediaPlayer.CreateAsync(...)` is the positional form of the same thing — both
 it and the builder run the same wiring. Reach for it directly when you already
