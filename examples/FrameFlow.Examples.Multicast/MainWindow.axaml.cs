@@ -556,8 +556,11 @@ public partial class MainWindow : Window
             );
             // Click already flipped the toggle and repeat mode has no
             // observable to resynchronise from, so put it back rather than
-            // leave it advertising a mode the player refused.
-            LoopButton.IsChecked = !requested;
+            // leave it advertising a mode the player refused. Only if it still
+            // reads what this call asked for: the button stays live while the
+            // command runs, and a later click owns the state after that.
+            if (LoopButton.IsChecked == requested)
+                LoopButton.IsChecked = !requested;
         }
     }
 

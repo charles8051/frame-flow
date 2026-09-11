@@ -207,7 +207,17 @@ public sealed class FrameFlowTransportBar : StackPanel
             // this surface — so nothing would correct the glyph and it would
             // keep advertising a mode the player refused until the next click.
             // Setting IsChecked here does not re-raise Click.
-            _ => _loopButton.IsChecked = !requested
+            //
+            // Guarded, because the button stays live while the command runs.
+            // Two quick clicks put two of these in flight, and an older one
+            // completing last would roll back a state the newer click already
+            // replaced. If the toggle no longer reads what this call asked
+            // for, a later click owns it.
+            _ =>
+            {
+                if (_loopButton.IsChecked == requested)
+                    _loopButton.IsChecked = !requested;
+            }
         );
     }
 }
