@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <!-- Required for LibraryImport source generation and pointer manipulation in FFmpeg interop wrappers. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PackageTags>$(PackageTags);decoder;hardware-acceleration;nvdec;d3d11va</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <NoWarn>$(NoWarn);NU1903</NoWarn>
+    <PackageTags>yolo;object-detection;onnx;onnxruntime;inference;computer-vision;video;dotnet</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

@@ -57,6 +57,41 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
 
+    <!--
+      The default tag set, appended to rather than replaced by the projects
+      that need more (see the adapter and inference csproj files). Nothing in
+      src/ carried tags before this, so a nuget.org search for "ffmpeg" or
+      "playback" did not find FrameFlow at all.
+
+      Keep this set true of EVERY package that inherits it. Adapter-specific
+      terms (avalonia, sdl, openal) belong on the adapter, not here — a tag on
+      FrameFlow.Yolo claiming "avalonia" is worse than no tag.
+    -->
+    <PackageTags>ffmpeg;video;audio;media;playback;dotnet;cross-platform</PackageTags>
+
+    <!--
+      SourceLink. The .NET SDK has carried the GitHub provider in-box since
+      .NET 8, so this needs no PackageReference — only the two properties that
+      put the repository URL in the nuspec and embed sources git does not track
+      (generated files) in the PDB.
+
+      ContinuousIntegrationBuild is deliberately NOT set here. It normalises
+      source paths to the repository root, which is what SourceLink needs, but
+      it also breaks local debugging into the build you just made. publish.yml
+      passes it on the pack that produces release artifacts.
+    -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+
+    <!--
+      Symbol packages. Without these a consumer's stack trace through FrameFlow
+      has no file or line number. snupkg is the format nuget.org accepts;
+      `dotnet nuget push <id>.nupkg` pushes the sibling <id>.snupkg
+      automatically, so publish.yml needs no extra push step.
+    -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+
     <!-- MinVer: derive version from git tags like v0.1.0 -->
     <MinVerTagPrefix>v</MinVerTagPrefix>
   </PropertyGroup>

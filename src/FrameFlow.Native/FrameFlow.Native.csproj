@@ -4,6 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PackageTags>$(PackageTags);native;interop;bindings;ffmpeg-binaries</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
