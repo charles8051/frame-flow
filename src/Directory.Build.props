@@ -126,6 +126,91 @@
     <PackageReference Include="MinVer" Version="7.0.0" PrivateAssets="All" />
   </ItemGroup>
 
+  <!--
+    ============================================================================
+    Public API baseline.
+    ============================================================================
+
+    Every public type and member in src/ is written down in PublicAPI.*.txt
+    beside its project, and RS0016 fails the build on any addition that is not.
+    The point is not to freeze the surface — README.md says it moves freely
+    pre-1.0 and it does — but to make it move VISIBLY. Without this, adding,
+    renaming or removing a public member is invisible in review unless a reader
+    happens to open the file.
+
+    The api-surface review that produced issues #101-#108 is the argument. Every
+    one of those was surface drift that a diff to a checked-in API file would
+    have raised at the time:
+
+      IPlayerBuilder.ConfigureVideoPipeline renamed to ConfigureVideo, leaving
+        two dead crefs behind (#98, found only when #109 turned the doc file on)
+      Subscribe<T> declared in a second namespace, making it ambiguous for every
+        Avalonia consumer (#100)
+      FrameFlow.Media growing types in the bare FrameFlow namespace (#104)
+      FrameFlow.Sdl declaring FrameFlow.SDL (#104)
+      SDL's four DI extensions landing on IServiceCollection while the other
+        five adapters used IFrameFlowBuilder (#105)
+
+    None was a bug. All were drift, which is the class this catches.
+
+    HOW IT WORKS PRE-1.0. Two files per project. Everything goes in Unshipped;
+    Shipped stays empty until there is a compatibility promise worth making,
+    which is 1.0. Adding a public member is then a two-line diff — the code and
+    the Unshipped entry — and a reviewer who sees only the first knows to ask.
+    Removing one is a deletion from Unshipped, which is just as loud.
+
+    At 1.0, Shipped absorbs Unshipped and RS0017 starts reporting removals from
+    the shipped set as errors. That is the switch, and it is deliberate that
+    nothing here does it early: an entry in Shipped is a promise, and there is
+    nothing to promise yet.
+
+    EnablePackageValidation with a PackageValidationBaselineVersion is the
+    binary-level counterpart and is NOT turned on here. It compares against the
+    last published nupkg, which is the right check once the surface stops
+    moving; today it would fail every release on purpose-built breaks.
+
+    See CONTRIBUTING.md for what to do when RS0016 stops your build.
+  -->
+  <PropertyGroup>
+    <FrameFlowTrackPublicApi
+      Condition="'$(FrameFlowTrackPublicApi)' == ''"
+    >true</FrameFlowTrackPublicApi>
+
+    <!--
+      RS0016 (added, not recorded) and RS0017 (recorded, not found) are the two
+      that do the work, and they are errors rather than warnings. A warning in a
+      build that already emits some is a thing you scroll past; the whole value
+      here is that the surface cannot move without someone typing the change
+      out. CONTRIBUTING.md says what to run.
+
+      RS0026 and RS0027 are off. They are good advice about optional parameters
+      in overloads, and they are advice about not breaking an API you have
+      already shipped: adding an optional parameter is source-compatible and
+      binary-breaking, so the rules exist to stop you doing it to a promise
+      already made. Shipped.txt is empty, so there is no such promise yet, and
+      the 30 they report are the existing overload shape rather than anything
+      this change introduced. Turn them on when Shipped absorbs Unshipped at
+      1.0, which is when they start protecting something, and deal with the 30
+      then as the API-design question they are.
+    -->
+    <WarningsAsErrors
+      Condition="'$(FrameFlowTrackPublicApi)' == 'true'"
+    >$(WarningsAsErrors);RS0016;RS0017</WarningsAsErrors>
+    <NoWarn
+      Condition="'$(FrameFlowTrackPublicApi)' == 'true'"
+    >$(NoWarn);RS0026;RS0027</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(FrameFlowTrackPublicApi)' == 'true'">
+    <PackageReference
+      Include="Microsoft.CodeAnalysis.PublicApiAnalyzers"
+      Version="3.*"
+      PrivateAssets="All"
+    />
+    <AdditionalFiles Include="PublicAPI.Shipped.txt" />
+    <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
+  </ItemGroup>
+
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)../README.md" Pack="true" PackagePath="/" />
     <None Include="$(MSBuildThisFileDirectory)../assets/icon.png" Pack="true" PackagePath="/" />

@@ -1,0 +1,63 @@
+#nullable enable
+FrameFlow.Audio.OpenAL.AlSourceState
+FrameFlow.Audio.OpenAL.AlSourceState.Paused = 1 -> FrameFlow.Audio.OpenAL.AlSourceState
+FrameFlow.Audio.OpenAL.AlSourceState.PlayingOrInitial = 0 -> FrameFlow.Audio.OpenAL.AlSourceState
+FrameFlow.Audio.OpenAL.AlSourceState.Stopped = 2 -> FrameFlow.Audio.OpenAL.AlSourceState
+FrameFlow.Audio.OpenAL.BufferQueueState
+FrameFlow.Audio.OpenAL.BufferQueueState.AppendStaging(int sampleCount) -> FrameFlow.Audio.OpenAL.BufferQueueState
+FrameFlow.Audio.OpenAL.BufferQueueState.BufferQueueState() -> void
+FrameFlow.Audio.OpenAL.BufferQueueState.ClearStaging() -> FrameFlow.Audio.OpenAL.BufferQueueState
+FrameFlow.Audio.OpenAL.BufferQueueState.MarkSourceStopped() -> FrameFlow.Audio.OpenAL.BufferQueueState
+FrameFlow.Audio.OpenAL.BufferQueueState.ObserveQueueDepth(int queuedDepth) -> FrameFlow.Audio.OpenAL.StartOutcome
+FrameFlow.Audio.OpenAL.BufferQueueState.ObserveUnderrun(bool firstPass, FrameFlow.Audio.OpenAL.AlSourceState sourceState) -> FrameFlow.Audio.OpenAL.UnderrunOutcome
+FrameFlow.Audio.OpenAL.BufferQueueState.PlanUpload(bool sinkActive, int freeBufferCount, FrameFlow.Audio.OpenAL.AlSourceState sourceState) -> FrameFlow.Audio.OpenAL.UploadDecision
+FrameFlow.Audio.OpenAL.BufferQueueState.ResetForActivation() -> FrameFlow.Audio.OpenAL.BufferQueueState
+FrameFlow.Audio.OpenAL.BufferQueueState.ShouldFlush.get -> bool
+FrameFlow.Audio.OpenAL.BufferQueueState.SourceStarted.get -> bool
+FrameFlow.Audio.OpenAL.BufferQueueState.SourceStarted.init -> void
+FrameFlow.Audio.OpenAL.BufferQueueState.StagingCount.get -> int
+FrameFlow.Audio.OpenAL.BufferQueueState.StagingCount.init -> void
+FrameFlow.Audio.OpenAL.FrameFlowOpenAlBuilderExtensions
+FrameFlow.Audio.OpenAL.FrameFlowOpenAlServiceCollectionExtensions
+FrameFlow.Audio.OpenAL.OpenAlAudioSink
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.ActivateAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.BackpressureCount.get -> long
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.BlocksWritten.get -> long
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.DeactivateAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot!
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.GetPlaybackTime() -> System.TimeSpan
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.Muted.get -> bool
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.Muted.set -> void
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.OpenAlAudioSink(Microsoft.Extensions.Logging.ILogger<FrameFlow.Audio.OpenAL.OpenAlAudioSink!>? logger = null) -> void
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.OpenAlAudioSink(Microsoft.Extensions.Logging.ILogger<FrameFlow.Audio.OpenAL.OpenAlAudioSink!>? logger, System.TimeProvider? timeProvider) -> void
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.PauseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.PresentAsync(FrameFlow.Graph.IAudioBuffer! frame, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.ResumeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.SeekBaseline(System.TimeSpan position) -> void
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.UnderrunCount.get -> long
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.Volume.get -> float
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.Volume.set -> void
+FrameFlow.Audio.OpenAL.StartOutcome
+FrameFlow.Audio.OpenAL.StartOutcome.Next.get -> FrameFlow.Audio.OpenAL.BufferQueueState
+FrameFlow.Audio.OpenAL.StartOutcome.Next.init -> void
+FrameFlow.Audio.OpenAL.StartOutcome.ShouldStartPlayback.get -> bool
+FrameFlow.Audio.OpenAL.StartOutcome.ShouldStartPlayback.init -> void
+FrameFlow.Audio.OpenAL.StartOutcome.StartOutcome() -> void
+FrameFlow.Audio.OpenAL.StartOutcome.StartOutcome(FrameFlow.Audio.OpenAL.BufferQueueState Next, bool ShouldStartPlayback) -> void
+FrameFlow.Audio.OpenAL.UnderrunOutcome
+FrameFlow.Audio.OpenAL.UnderrunOutcome.Next.get -> FrameFlow.Audio.OpenAL.BufferQueueState
+FrameFlow.Audio.OpenAL.UnderrunOutcome.Next.init -> void
+FrameFlow.Audio.OpenAL.UnderrunOutcome.Underran.get -> bool
+FrameFlow.Audio.OpenAL.UnderrunOutcome.Underran.init -> void
+FrameFlow.Audio.OpenAL.UnderrunOutcome.UnderrunOutcome() -> void
+FrameFlow.Audio.OpenAL.UnderrunOutcome.UnderrunOutcome(FrameFlow.Audio.OpenAL.BufferQueueState Next, bool Underran) -> void
+FrameFlow.Audio.OpenAL.UploadDecision
+FrameFlow.Audio.OpenAL.UploadDecision.Abort = 3 -> FrameFlow.Audio.OpenAL.UploadDecision
+FrameFlow.Audio.OpenAL.UploadDecision.NeedBuffer = 2 -> FrameFlow.Audio.OpenAL.UploadDecision
+FrameFlow.Audio.OpenAL.UploadDecision.Nothing = 0 -> FrameFlow.Audio.OpenAL.UploadDecision
+FrameFlow.Audio.OpenAL.UploadDecision.Upload = 1 -> FrameFlow.Audio.OpenAL.UploadDecision
+static FrameFlow.Audio.OpenAL.BufferQueueState.Create(int coalesceTargetSamples, int preBufferCount) -> FrameFlow.Audio.OpenAL.BufferQueueState
+static FrameFlow.Audio.OpenAL.FrameFlowOpenAlBuilderExtensions.WithOpenAlAudio(this FrameFlow.Player.IMediaPlayerBuilder! builder, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Player.IMediaPlayerBuilder!
+static FrameFlow.Audio.OpenAL.FrameFlowOpenAlBuilderExtensions.WithOpenAlAudio(this FrameFlow.Player.IPlayerBuilder! builder, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Player.IPlayerBuilder!
+static FrameFlow.Audio.OpenAL.FrameFlowOpenAlServiceCollectionExtensions.AddFrameFlowOpenAlAudio(this FrameFlow.Media.IFrameFlowBuilder! builder) -> FrameFlow.Media.IFrameFlowBuilder!

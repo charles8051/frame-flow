@@ -1,0 +1,78 @@
+#nullable enable
+FrameFlow.Encoding.EncodedPacket
+FrameFlow.Encoding.EncodedPacket.AddRef() -> FrameFlow.Graph.IRefCounted!
+FrameFlow.Encoding.EncodedPacket.Data.get -> System.ReadOnlyMemory<byte>
+FrameFlow.Encoding.EncodedPacket.Dispose() -> void
+FrameFlow.Encoding.EncodedPacket.Dts.get -> long
+FrameFlow.Encoding.EncodedPacket.Duration.get -> long
+FrameFlow.Encoding.EncodedPacket.EncodedPacket(byte[]! data, long pts, long dts, long duration, int timeBaseNumerator, int timeBaseDenominator, bool isKeyFrame, int streamIndex = 0) -> void
+FrameFlow.Encoding.EncodedPacket.IsKeyFrame.get -> bool
+FrameFlow.Encoding.EncodedPacket.Pts.get -> long
+FrameFlow.Encoding.EncodedPacket.StreamIndex.get -> int
+FrameFlow.Encoding.EncodedPacket.TimeBaseDenominator.get -> int
+FrameFlow.Encoding.EncodedPacket.TimeBaseNumerator.get -> int
+FrameFlow.Encoding.EncodedStreamConfig
+FrameFlow.Encoding.EncodedStreamConfig.CodecName.get -> string!
+FrameFlow.Encoding.EncodedStreamConfig.CodecName.init -> void
+FrameFlow.Encoding.EncodedStreamConfig.EncodedStreamConfig() -> void
+FrameFlow.Encoding.EncodedStreamConfig.EncodedStreamConfig(string! CodecName, int Width, int Height, int FrameRateNumerator, int FrameRateDenominator) -> void
+FrameFlow.Encoding.EncodedStreamConfig.FrameRateDenominator.get -> int
+FrameFlow.Encoding.EncodedStreamConfig.FrameRateDenominator.init -> void
+FrameFlow.Encoding.EncodedStreamConfig.FrameRateNumerator.get -> int
+FrameFlow.Encoding.EncodedStreamConfig.FrameRateNumerator.init -> void
+FrameFlow.Encoding.EncodedStreamConfig.Height.get -> int
+FrameFlow.Encoding.EncodedStreamConfig.Height.init -> void
+FrameFlow.Encoding.EncodedStreamConfig.Width.get -> int
+FrameFlow.Encoding.EncodedStreamConfig.Width.init -> void
+FrameFlow.Encoding.Encoder
+FrameFlow.Encoding.EncoderInfo
+FrameFlow.Encoding.EncoderInfo.CodecName.get -> string!
+FrameFlow.Encoding.EncoderInfo.CodecName.init -> void
+FrameFlow.Encoding.EncoderInfo.EncoderInfo() -> void
+FrameFlow.Encoding.EncoderInfo.EncoderInfo(string! CodecName, int Width, int Height, int FrameRateNumerator, int FrameRateDenominator) -> void
+FrameFlow.Encoding.EncoderInfo.FrameRateDenominator.get -> int
+FrameFlow.Encoding.EncoderInfo.FrameRateDenominator.init -> void
+FrameFlow.Encoding.EncoderInfo.FrameRateNumerator.get -> int
+FrameFlow.Encoding.EncoderInfo.FrameRateNumerator.init -> void
+FrameFlow.Encoding.EncoderInfo.Height.get -> int
+FrameFlow.Encoding.EncoderInfo.Height.init -> void
+FrameFlow.Encoding.EncoderInfo.Width.get -> int
+FrameFlow.Encoding.EncoderInfo.Width.init -> void
+FrameFlow.Encoding.H264EncoderOptions
+FrameFlow.Encoding.H264EncoderOptions.BitRate.get -> long
+FrameFlow.Encoding.H264EncoderOptions.BitRate.init -> void
+FrameFlow.Encoding.H264EncoderOptions.EncoderName.get -> string?
+FrameFlow.Encoding.H264EncoderOptions.EncoderName.init -> void
+FrameFlow.Encoding.H264EncoderOptions.FrameRateDenominator.get -> int
+FrameFlow.Encoding.H264EncoderOptions.FrameRateDenominator.init -> void
+FrameFlow.Encoding.H264EncoderOptions.FrameRateNumerator.get -> int
+FrameFlow.Encoding.H264EncoderOptions.FrameRateNumerator.init -> void
+FrameFlow.Encoding.H264EncoderOptions.GopSize.get -> int
+FrameFlow.Encoding.H264EncoderOptions.GopSize.init -> void
+FrameFlow.Encoding.H264EncoderOptions.Height.get -> int
+FrameFlow.Encoding.H264EncoderOptions.Height.init -> void
+FrameFlow.Encoding.H264EncoderOptions.Width.get -> int
+FrameFlow.Encoding.H264EncoderOptions.Width.init -> void
+FrameFlow.Encoding.IEncoder<TFrame, TPacket>
+FrameFlow.Encoding.IEncoder<TFrame, TPacket>.Encode(TFrame frame) -> System.Collections.Generic.IReadOnlyList<TPacket!>!
+FrameFlow.Encoding.IEncoder<TFrame, TPacket>.Flush() -> System.Collections.Generic.IReadOnlyList<TPacket!>!
+FrameFlow.Encoding.IEncoder<TFrame, TPacket>.Info.get -> FrameFlow.Encoding.EncoderInfo
+FrameFlow.Encoding.IMuxer
+FrameFlow.Encoding.IMuxer.AddVideoStream(FrameFlow.Encoding.IVideoEncoder! encoder) -> int
+FrameFlow.Encoding.IMuxer.CompleteAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Encoding.IMuxer.StartAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Encoding.IMuxer.WriteAsync(FrameFlow.Encoding.EncodedPacket! packet, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Encoding.IVideoEncoder
+FrameFlow.Encoding.IVideoEncoder.IsOpen.get -> bool
+FrameFlow.Encoding.Mp4VideoWriter
+FrameFlow.Encoding.Mp4VideoWriter.AsSinkNode(string! id = "mp4-writer") -> FrameFlow.Graph.SinkNode<FrameFlow.Media.VideoFrameRef!>!
+FrameFlow.Encoding.Mp4VideoWriter.CompleteAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Encoding.Mp4VideoWriter.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Encoding.Mp4VideoWriter.EncoderInfo.get -> FrameFlow.Encoding.EncoderInfo
+FrameFlow.Encoding.Mp4VideoWriter.WriteAsync(FrameFlow.Media.VideoFrameRef! frame, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Encoding.Muxer
+static FrameFlow.Encoding.Encoder.H264(FrameFlow.Encoding.H264EncoderOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Encoding.IVideoEncoder!
+static FrameFlow.Encoding.H264EncoderOptions.DefaultEncoderPreference.get -> System.Collections.Generic.IReadOnlyList<string!>!
+static FrameFlow.Encoding.Mp4VideoWriter.Create(string! path, FrameFlow.Encoding.H264EncoderOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Encoding.Mp4VideoWriter!
+static FrameFlow.Encoding.Mp4VideoWriter.RecordAsync(string! path, System.Collections.Generic.IAsyncEnumerable<FrameFlow.Media.VideoFrameRef!>! frames, FrameFlow.Encoding.H264EncoderOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string!>!
+static FrameFlow.Encoding.Muxer.Mp4(string! path, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Encoding.IMuxer!

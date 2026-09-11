@@ -1,0 +1,38 @@
+#nullable enable
+FrameFlow.Whisper.ActiveCaptions
+FrameFlow.Whisper.ActiveCaptions.ActiveCaptions(System.Collections.Generic.IReadOnlyList<FrameFlow.Whisper.Caption!>! Captions) -> void
+FrameFlow.Whisper.ActiveCaptions.Captions.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Whisper.Caption!>!
+FrameFlow.Whisper.ActiveCaptions.Captions.init -> void
+FrameFlow.Whisper.Caption
+FrameFlow.Whisper.Caption.Caption(System.TimeSpan From, System.TimeSpan To, string! Text) -> void
+FrameFlow.Whisper.Caption.From.get -> System.TimeSpan
+FrameFlow.Whisper.Caption.From.init -> void
+FrameFlow.Whisper.Caption.Text.get -> string!
+FrameFlow.Whisper.Caption.Text.init -> void
+FrameFlow.Whisper.Caption.To.get -> System.TimeSpan
+FrameFlow.Whisper.Caption.To.init -> void
+FrameFlow.Whisper.CaptionOperators
+FrameFlow.Whisper.CaptionRef
+FrameFlow.Whisper.CaptionRef.AddRef() -> FrameFlow.Graph.IRefCounted!
+FrameFlow.Whisper.CaptionRef.CaptionRef(FrameFlow.Whisper.Caption! value) -> void
+FrameFlow.Whisper.CaptionRef.Dispose() -> void
+FrameFlow.Whisper.CaptionRef.Value.get -> FrameFlow.Whisper.Caption!
+FrameFlow.Whisper.CaptionTimeline
+FrameFlow.Whisper.CaptionTimeline.Add(FrameFlow.Whisper.Caption! caption, System.TimeSpan enqueuedAtPts) -> void
+FrameFlow.Whisper.CaptionTimeline.CaptionTimeline(System.TimeSpan displayDuration, int maxStackedLines = 1) -> void
+FrameFlow.Whisper.CaptionTimeline.GetActive(System.TimeSpan framePts) -> System.Collections.Generic.IReadOnlyList<FrameFlow.Whisper.Caption!>!
+FrameFlow.Whisper.WhisperOperators
+FrameFlow.Whisper.WhisperOptions
+FrameFlow.Whisper.WhisperOptions.EffectiveWindowSize.get -> System.TimeSpan
+FrameFlow.Whisper.WhisperOptions.InputChannels.get -> int
+FrameFlow.Whisper.WhisperOptions.InputChannels.init -> void
+FrameFlow.Whisper.WhisperOptions.InputSampleRate.get -> int
+FrameFlow.Whisper.WhisperOptions.InputSampleRate.init -> void
+FrameFlow.Whisper.WhisperOptions.Language.get -> string!
+FrameFlow.Whisper.WhisperOptions.Language.init -> void
+FrameFlow.Whisper.WhisperOptions.WhisperOptions(string! Language = "en", System.TimeSpan WindowSize = default(System.TimeSpan), int InputSampleRate = 16000, int InputChannels = 1) -> void
+FrameFlow.Whisper.WhisperOptions.WindowSize.get -> System.TimeSpan
+FrameFlow.Whisper.WhisperOptions.WindowSize.init -> void
+static FrameFlow.Whisper.CaptionOperators.AnimatedReveal(string! id, double wordsPerSecond = 5) -> FrameFlow.Graph.MultiOperatorNode<FrameFlow.Whisper.CaptionRef!, FrameFlow.Whisper.CaptionRef!>!
+static FrameFlow.Whisper.CaptionOperators.SplitOnPunctuation(string! id) -> FrameFlow.Graph.MultiOperatorNode<FrameFlow.Whisper.CaptionRef!, FrameFlow.Whisper.CaptionRef!>!
+static FrameFlow.Whisper.WhisperOperators.TranscribeWithWhisper(string! id, string! modelPath, FrameFlow.Whisper.WhisperOptions? options = null) -> FrameFlow.Graph.MultiOperatorNode<FrameFlow.Media.PcmAudioBufferRef!, FrameFlow.Whisper.CaptionRef!>!

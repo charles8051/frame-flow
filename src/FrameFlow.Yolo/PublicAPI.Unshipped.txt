@@ -1,0 +1,73 @@
+#nullable enable
+const FrameFlow.Yolo.CocoClasses.Count = 80 -> int
+const FrameFlow.Yolo.Yolov8ModelDownloader.DefaultModelFileName = "yolov8n.onnx" -> string!
+FrameFlow.Yolo.CocoClasses
+FrameFlow.Yolo.DetectedVideoFrameRef
+FrameFlow.Yolo.DetectedVideoFrameRef.AddRef() -> FrameFlow.Graph.IRefCounted!
+FrameFlow.Yolo.DetectedVideoFrameRef.DetectedVideoFrameRef(FrameFlow.Media.VideoFrameRef! video, System.Collections.Generic.IReadOnlyList<FrameFlow.Yolo.Detection>! detections) -> void
+FrameFlow.Yolo.DetectedVideoFrameRef.Detections.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Yolo.Detection>!
+FrameFlow.Yolo.DetectedVideoFrameRef.Dispose() -> void
+FrameFlow.Yolo.DetectedVideoFrameRef.Video.get -> FrameFlow.Media.VideoFrameRef!
+FrameFlow.Yolo.Detection
+FrameFlow.Yolo.Detection.ClassId.get -> int
+FrameFlow.Yolo.Detection.ClassId.init -> void
+FrameFlow.Yolo.Detection.ClassName.get -> string!
+FrameFlow.Yolo.Detection.ClassName.init -> void
+FrameFlow.Yolo.Detection.Confidence.get -> float
+FrameFlow.Yolo.Detection.Confidence.init -> void
+FrameFlow.Yolo.Detection.Detection() -> void
+FrameFlow.Yolo.Detection.Detection(int ClassId, string! ClassName, float Confidence, float X, float Y, float Width, float Height) -> void
+FrameFlow.Yolo.Detection.Height.get -> float
+FrameFlow.Yolo.Detection.Height.init -> void
+FrameFlow.Yolo.Detection.Width.get -> float
+FrameFlow.Yolo.Detection.Width.init -> void
+FrameFlow.Yolo.Detection.X.get -> float
+FrameFlow.Yolo.Detection.X.init -> void
+FrameFlow.Yolo.Detection.Y.get -> float
+FrameFlow.Yolo.Detection.Y.init -> void
+FrameFlow.Yolo.YoloModelDescriptor
+FrameFlow.Yolo.YoloModelDescriptor.AnchorCount.get -> int
+FrameFlow.Yolo.YoloModelDescriptor.ClassCount.get -> int
+FrameFlow.Yolo.YoloModelDescriptor.ClassNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
+FrameFlow.Yolo.YoloModelDescriptor.InputElementCount.get -> int
+FrameFlow.Yolo.YoloModelDescriptor.InputSize.get -> int
+FrameFlow.Yolo.YoloModelDescriptor.OutputChannelCount.get -> int
+FrameFlow.Yolo.YoloModelDescriptor.OutputElementCount.get -> int
+FrameFlow.Yolo.YoloModelDescriptor.YoloModelDescriptor(int inputSize, int classCount, System.Collections.Generic.IReadOnlyList<string!>? classNames = null) -> void
+FrameFlow.Yolo.YoloOperators
+FrameFlow.Yolo.Yolov8Detector
+FrameFlow.Yolo.Yolov8Detector.Detect(FrameFlow.Media.IVideoFrame! frame) -> System.Collections.Generic.List<FrameFlow.Yolo.Detection>!
+FrameFlow.Yolo.Yolov8Detector.Dispose() -> void
+FrameFlow.Yolo.Yolov8Detector.LastInferenceMs.get -> double
+FrameFlow.Yolo.Yolov8Detector.LastPostprocessMs.get -> double
+FrameFlow.Yolo.Yolov8Detector.LastPreprocessMs.get -> double
+FrameFlow.Yolo.Yolov8Detector.Warmup() -> void
+FrameFlow.Yolo.Yolov8ModelDownloader
+FrameFlow.Yolo.Yolov8Postprocessor
+FrameFlow.Yolo.Yolov8Postprocessor.AnchorCount.get -> int
+FrameFlow.Yolo.Yolov8Postprocessor.ChannelCount.get -> int
+FrameFlow.Yolo.Yolov8Postprocessor.ConfidenceThreshold.get -> float
+FrameFlow.Yolo.Yolov8Postprocessor.ConfidenceThreshold.init -> void
+FrameFlow.Yolo.Yolov8Postprocessor.Decode(System.ReadOnlySpan<float> modelOutput, float scaleX, float scaleY) -> System.Collections.Generic.List<FrameFlow.Yolo.Detection>!
+FrameFlow.Yolo.Yolov8Postprocessor.DecodedClasses.get -> System.Collections.Generic.IReadOnlyList<int>!
+FrameFlow.Yolo.Yolov8Postprocessor.IoUThreshold.get -> float
+FrameFlow.Yolo.Yolov8Postprocessor.IoUThreshold.init -> void
+FrameFlow.Yolo.Yolov8Postprocessor.MaxDetections.get -> int
+FrameFlow.Yolo.Yolov8Postprocessor.MaxDetections.init -> void
+FrameFlow.Yolo.Yolov8Postprocessor.OutputElementCount.get -> int
+FrameFlow.Yolo.Yolov8Postprocessor.Yolov8Postprocessor(FrameFlow.Yolo.YoloModelDescriptor? descriptor = null, System.Collections.Generic.IReadOnlyCollection<int>? classFilter = null) -> void
+FrameFlow.Yolo.Yolov8Preprocessor
+FrameFlow.Yolo.Yolov8Preprocessor.InputElementCount.get -> int
+FrameFlow.Yolo.Yolov8Preprocessor.InputSize.get -> int
+FrameFlow.Yolo.Yolov8Preprocessor.Preprocess(FrameFlow.Media.IVideoFrame! frame, System.Span<float> destination) -> (float ScaleX, float ScaleY)
+FrameFlow.Yolo.Yolov8Preprocessor.Yolov8Preprocessor(int inputSize = 640) -> void
+static FrameFlow.Yolo.CocoClasses.Names.get -> System.Collections.Generic.IReadOnlyList<string!>!
+static FrameFlow.Yolo.YoloModelDescriptor.AnchorsFor(int inputSize) -> int
+static FrameFlow.Yolo.YoloModelDescriptor.CocoDefault.get -> FrameFlow.Yolo.YoloModelDescriptor!
+static FrameFlow.Yolo.YoloModelDescriptor.FromSession(FrameFlow.Inference.IInferenceSession! session) -> FrameFlow.Yolo.YoloModelDescriptor!
+static FrameFlow.Yolo.YoloModelDescriptor.TryDescribe(FrameFlow.Inference.IInferenceSession! session, out FrameFlow.Yolo.YoloModelDescriptor? descriptor, out string? error) -> bool
+static FrameFlow.Yolo.YoloOperators.DetectWith(string! id, System.Func<FrameFlow.Media.IVideoFrame!, System.Collections.Generic.IReadOnlyList<FrameFlow.Yolo.Detection>!>! detect) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.VideoFrameRef!, FrameFlow.Yolo.DetectedVideoFrameRef!>!
+static FrameFlow.Yolo.Yolov8Detector.Create(FrameFlow.Inference.IInferenceSession! session, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Yolo.YoloModelDescriptor? descriptor = null, System.Collections.Generic.IReadOnlyCollection<int>? classFilter = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null) -> FrameFlow.Yolo.Yolov8Detector!
+static FrameFlow.Yolo.Yolov8Detector.CreateAsync(FrameFlow.Inference.IInferenceSessionFactory! factory, string? overrideModelPath = null, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken), Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Yolo.YoloModelDescriptor? descriptor = null, System.Collections.Generic.IReadOnlyCollection<int>? classFilter = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null) -> System.Threading.Tasks.Task<FrameFlow.Yolo.Yolov8Detector!>!
+static FrameFlow.Yolo.Yolov8Detector.CreateAsync(System.Func<string!, FrameFlow.Inference.IInferenceSession!>! sessionFactory, string? overrideModelPath = null, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken), Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Yolo.YoloModelDescriptor? descriptor = null, System.Collections.Generic.IReadOnlyCollection<int>? classFilter = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null) -> System.Threading.Tasks.Task<FrameFlow.Yolo.Yolov8Detector!>!
+static FrameFlow.Yolo.Yolov8ModelDownloader.EnsureModelAvailableAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken), string! modelUrl = "https://huggingface.co/cabelo/yolov8/resolve/main/yolov8n.onnx", string? overrideCacheDir = null, Microsoft.Extensions.Logging.ILogger? logger = null) -> System.Threading.Tasks.Task<string!>!

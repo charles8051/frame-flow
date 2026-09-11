@@ -1,0 +1,38 @@
+#nullable enable
+FrameFlow.Camera.CameraFrameAdapter
+FrameFlow.Camera.CameraFrameAdapter.AddRef() -> FrameFlow.Graph.IRefCounted!
+FrameFlow.Camera.CameraFrameAdapter.CameraFrameAdapter(Periphery.Camera.ICameraFrame! inner) -> void
+FrameFlow.Camera.CameraFrameAdapter.Dispose() -> void
+FrameFlow.Camera.CameraFrameAdapter.Height.get -> int
+FrameFlow.Camera.CameraFrameAdapter.Inner.get -> Periphery.Camera.ICameraFrame!
+FrameFlow.Camera.CameraFrameAdapter.Timestamp.get -> System.TimeSpan
+FrameFlow.Camera.CameraFrameAdapter.Width.get -> int
+FrameFlow.Camera.CameraFramePushBridge
+FrameFlow.Camera.CameraFramePushBridge.AsSourceNode(string! id = "camera-push-source") -> FrameFlow.Graph.SourceNode<FrameFlow.Camera.CameraFrameAdapter!>!
+FrameFlow.Camera.CameraFramePushBridge.AsVideoFrameSourceNode(string! id = "camera-push-source") -> FrameFlow.Graph.SourceNode<FrameFlow.Media.VideoFrameRef!>!
+FrameFlow.Camera.CameraFramePushBridge.CameraFramePushBridge(int capacity = 1, System.Threading.Channels.BoundedChannelFullMode overflowMode = System.Threading.Channels.BoundedChannelFullMode.DropOldest) -> void
+FrameFlow.Camera.CameraFramePushBridge.Dispose() -> void
+FrameFlow.Camera.CameraFramePushBridge.Fault(System.Exception! error) -> void
+FrameFlow.Camera.CameraFramePushBridge.Push(Periphery.Camera.ICameraFrame! borrowed) -> bool
+FrameFlow.Camera.CameraFrameSinkAdapters
+FrameFlow.Camera.CameraPushSource
+FrameFlow.Camera.CameraPushSource.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Camera.CameraPushSource.Source.get -> FrameFlow.Graph.SourceNode<FrameFlow.Media.VideoFrameRef!>!
+FrameFlow.Camera.CameraSessionSourceExtensions
+FrameFlow.Camera.CameraSourceAdapters
+FrameFlow.Camera.CameraVideoFrame
+FrameFlow.Camera.CameraVideoFrame.AddRef() -> FrameFlow.Media.IVideoFrame!
+FrameFlow.Camera.CameraVideoFrame.AsCpu() -> FrameFlow.Media.CpuFrameData?
+FrameFlow.Camera.CameraVideoFrame.CameraVideoFrame(Periphery.Camera.ICameraFrame! inner) -> void
+FrameFlow.Camera.CameraVideoFrame.Dispose() -> void
+FrameFlow.Camera.CameraVideoFrame.Duration.get -> System.TimeSpan
+FrameFlow.Camera.CameraVideoFrame.Format.get -> FrameFlow.Media.PixelFormat
+FrameFlow.Camera.CameraVideoFrame.Height.get -> int
+FrameFlow.Camera.CameraVideoFrame.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Camera.CameraVideoFrame.Pts.get -> System.TimeSpan
+FrameFlow.Camera.CameraVideoFrame.ToCpu() -> FrameFlow.Media.CpuFrameData
+FrameFlow.Camera.CameraVideoFrame.Width.get -> int
+static FrameFlow.Camera.CameraFrameSinkAdapters.AsSinkNode(this Periphery.Camera.ICameraFrameSink! sink, string! id = "camera-sink") -> FrameFlow.Graph.SinkNode<FrameFlow.Camera.CameraFrameAdapter!>!
+static FrameFlow.Camera.CameraSessionSourceExtensions.AsPushVideoFrameSource(this Periphery.Camera.CameraSession! session, System.Threading.CancellationToken ct, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, int capacity = 1, string! id = "camera-source") -> FrameFlow.Camera.CameraPushSource!
+static FrameFlow.Camera.CameraSourceAdapters.AsSourceNode<T>(this System.Collections.Generic.IAsyncEnumerable<T!>! source, string! id = "camera-source") -> FrameFlow.Graph.SourceNode<FrameFlow.Camera.CameraFrameAdapter!>!
+static FrameFlow.Camera.CameraSourceAdapters.AsVideoFrameSourceNode<T>(this System.Collections.Generic.IAsyncEnumerable<T!>! source, string! id = "camera-video-source") -> FrameFlow.Graph.SourceNode<FrameFlow.Media.VideoFrameRef!>!

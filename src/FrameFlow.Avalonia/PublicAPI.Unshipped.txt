@@ -1,0 +1,101 @@
+#nullable enable
+FrameFlow.Avalonia.AvaloniaObservableExtensions
+FrameFlow.Avalonia.AvaloniaVideoSink
+FrameFlow.Avalonia.AvaloniaVideoSink.AvaloniaVideoSink(FrameFlow.Media.IFramePool! framePool, Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.AvaloniaVideoSink!>? logger = null) -> void
+FrameFlow.Avalonia.AvaloniaVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Avalonia.AvaloniaVideoSink.DroppedFrameCount.get -> int
+FrameFlow.Avalonia.AvaloniaVideoSink.FramePool.get -> FrameFlow.Media.IFramePool!
+FrameFlow.Avalonia.AvaloniaVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
+FrameFlow.Avalonia.AvaloniaVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Avalonia.AvaloniaVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Avalonia.AvaloniaVideoSink.RenderedFrameCount.get -> int
+FrameFlow.Avalonia.AvaloniaVideoSink.RenderPendingFrame() -> FrameFlow.Media.IVideoFrame?
+FrameFlow.Avalonia.FileOpenRequestedEventArgs
+FrameFlow.Avalonia.FileOpenRequestedEventArgs.FileOpenRequestedEventArgs(string! filePath) -> void
+FrameFlow.Avalonia.FileOpenRequestedEventArgs.FilePath.get -> string!
+FrameFlow.Avalonia.FrameFlowAvaloniaBuilderExtensions
+FrameFlow.Avalonia.FrameFlowAvaloniaServiceCollectionExtensions
+FrameFlow.Avalonia.FrameFlowPlayerChrome
+FrameFlow.Avalonia.FrameFlowPlayerChrome.EnableKeyboardShortcuts.get -> bool
+FrameFlow.Avalonia.FrameFlowPlayerChrome.EnableKeyboardShortcuts.set -> void
+FrameFlow.Avalonia.FrameFlowPlayerChrome.FileOpenRequested -> System.EventHandler<FrameFlow.Avalonia.FileOpenRequestedEventArgs!>?
+FrameFlow.Avalonia.FrameFlowPlayerChrome.FrameFlowPlayerChrome() -> void
+FrameFlow.Avalonia.FrameFlowPlayerChrome.HasOpenButton.get -> bool
+FrameFlow.Avalonia.FrameFlowPlayerChrome.HasOpenButton.set -> void
+FrameFlow.Avalonia.FrameFlowPlayerChrome.LoopByDefault.get -> bool
+FrameFlow.Avalonia.FrameFlowPlayerChrome.LoopByDefault.set -> void
+FrameFlow.Avalonia.FrameFlowPlayerChrome.MediaPlayer.get -> FrameFlow.Player.IMediaPlayer?
+FrameFlow.Avalonia.FrameFlowPlayerChrome.MediaPlayer.set -> void
+FrameFlow.Avalonia.FrameFlowPlayerChrome.SeekBar.get -> FrameFlow.Avalonia.FrameFlowSeekBar!
+FrameFlow.Avalonia.FrameFlowPlayerView
+FrameFlow.Avalonia.FrameFlowPlayerView.AttachSink(Microsoft.Extensions.Logging.ILoggerFactory! loggerFactory) -> FrameFlow.Media.IVideoSink!
+FrameFlow.Avalonia.FrameFlowPlayerView.Chrome.get -> FrameFlow.Avalonia.FrameFlowPlayerChrome!
+FrameFlow.Avalonia.FrameFlowPlayerView.FileOpenRequested -> System.EventHandler<FrameFlow.Avalonia.FileOpenRequestedEventArgs!>?
+FrameFlow.Avalonia.FrameFlowPlayerView.FrameFlowPlayerView() -> void
+FrameFlow.Avalonia.FrameFlowPlayerView.LoopByDefault.get -> bool
+FrameFlow.Avalonia.FrameFlowPlayerView.LoopByDefault.set -> void
+FrameFlow.Avalonia.FrameFlowPlayerView.MediaPlayer.get -> FrameFlow.Player.IMediaPlayer?
+FrameFlow.Avalonia.FrameFlowPlayerView.MediaPlayer.set -> void
+FrameFlow.Avalonia.FrameFlowPlayerView.VideoSurface.get -> FrameFlow.Avalonia.IVideoSurface!
+FrameFlow.Avalonia.FrameFlowPlayerView.VideoSurface.set -> void
+FrameFlow.Avalonia.FrameFlowPositionLabel
+FrameFlow.Avalonia.FrameFlowPositionLabel.FrameFlowPositionLabel() -> void
+FrameFlow.Avalonia.FrameFlowPositionLabel.MediaPlayer.get -> FrameFlow.Player.IMediaPlayer?
+FrameFlow.Avalonia.FrameFlowPositionLabel.MediaPlayer.set -> void
+FrameFlow.Avalonia.FrameFlowSeekBar
+FrameFlow.Avalonia.FrameFlowSeekBar.FrameFlowSeekBar() -> void
+FrameFlow.Avalonia.FrameFlowSeekBar.MediaPlayer.get -> FrameFlow.Player.IMediaPlayer?
+FrameFlow.Avalonia.FrameFlowSeekBar.MediaPlayer.set -> void
+FrameFlow.Avalonia.FrameFlowStateBadge
+FrameFlow.Avalonia.FrameFlowStateBadge.FrameFlowStateBadge() -> void
+FrameFlow.Avalonia.FrameFlowStateBadge.MediaPlayer.get -> FrameFlow.Player.IMediaPlayer?
+FrameFlow.Avalonia.FrameFlowStateBadge.MediaPlayer.set -> void
+FrameFlow.Avalonia.FrameFlowStreamSummary
+FrameFlow.Avalonia.FrameFlowStreamSummary.FrameFlowStreamSummary() -> void
+FrameFlow.Avalonia.FrameFlowStreamSummary.MediaPlayer.get -> FrameFlow.Player.IMediaPlayer?
+FrameFlow.Avalonia.FrameFlowStreamSummary.MediaPlayer.set -> void
+FrameFlow.Avalonia.FrameFlowTransportBar
+FrameFlow.Avalonia.FrameFlowTransportBar.FrameFlowTransportBar() -> void
+FrameFlow.Avalonia.FrameFlowTransportBar.LoopByDefault.get -> bool
+FrameFlow.Avalonia.FrameFlowTransportBar.LoopByDefault.set -> void
+FrameFlow.Avalonia.FrameFlowTransportBar.MediaPlayer.get -> FrameFlow.Player.IMediaPlayer?
+FrameFlow.Avalonia.FrameFlowTransportBar.MediaPlayer.set -> void
+FrameFlow.Avalonia.FrameFlowVideoView
+FrameFlow.Avalonia.FrameFlowVideoView.Clear() -> void
+FrameFlow.Avalonia.FrameFlowVideoView.EnsureSink() -> FrameFlow.Avalonia.AvaloniaVideoSink!
+FrameFlow.Avalonia.FrameFlowVideoView.FrameFlowVideoView() -> void
+FrameFlow.Avalonia.FrameFlowVideoView.FrameFlowVideoView(Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.FrameFlowVideoView!>? logger) -> void
+FrameFlow.Avalonia.FrameFlowVideoView.LoggerFactory.get -> Microsoft.Extensions.Logging.ILoggerFactory!
+FrameFlow.Avalonia.FrameFlowVideoView.LoggerFactory.set -> void
+FrameFlow.Avalonia.FrameFlowVideoView.RenderedFrameCount.get -> int
+FrameFlow.Avalonia.FrameFlowVideoView.Sink.get -> FrameFlow.Avalonia.AvaloniaVideoSink?
+FrameFlow.Avalonia.FrameFlowVideoView.Sink.set -> void
+FrameFlow.Avalonia.FrameFlowVolumeControl
+FrameFlow.Avalonia.FrameFlowVolumeControl.FrameFlowVolumeControl() -> void
+FrameFlow.Avalonia.FrameFlowVolumeControl.MediaPlayer.get -> FrameFlow.Player.IMediaPlayer?
+FrameFlow.Avalonia.FrameFlowVolumeControl.MediaPlayer.set -> void
+FrameFlow.Avalonia.FrameFlowVolumeControl.RefreshFromPlayer() -> void
+FrameFlow.Avalonia.IVideoSurface
+FrameFlow.Avalonia.IVideoSurface.AttachSink(Microsoft.Extensions.Logging.ILoggerFactory! loggerFactory) -> FrameFlow.Media.IVideoSink!
+FrameFlow.Avalonia.IVideoSurface.Control.get -> Avalonia.Controls.Control!
+FrameFlow.Avalonia.IVideoSurface.PrefersHardwareFrames.get -> bool
+override FrameFlow.Avalonia.FrameFlowVideoView.Render(Avalonia.Media.DrawingContext! context) -> void
+static FrameFlow.Avalonia.AvaloniaObservableExtensions.ObserveOnUiThread<T>(this System.IObservable<T>! source) -> System.IObservable<T>!
+static FrameFlow.Avalonia.AvaloniaVideoSink.CreateHeadless(FrameFlow.Media.IFramePool! framePool, Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.AvaloniaVideoSink!>? logger = null) -> FrameFlow.Avalonia.AvaloniaVideoSink!
+static FrameFlow.Avalonia.FrameFlowAvaloniaBuilderExtensions.WithAvaloniaVideoView(this FrameFlow.Player.IMediaPlayerBuilder! builder, FrameFlow.Avalonia.FrameFlowVideoView! view) -> FrameFlow.Player.IMediaPlayerBuilder!
+static FrameFlow.Avalonia.FrameFlowAvaloniaBuilderExtensions.WithAvaloniaVideoView(this FrameFlow.Player.IPlayerBuilder! builder, FrameFlow.Avalonia.FrameFlowVideoView! view) -> FrameFlow.Player.IPlayerBuilder!
+static FrameFlow.Avalonia.FrameFlowAvaloniaServiceCollectionExtensions.AddFrameFlowAvaloniaVideoSink(this FrameFlow.Media.IFrameFlowBuilder! builder) -> FrameFlow.Media.IFrameFlowBuilder!
+static FrameFlow.Avalonia.FrameFlowAvaloniaServiceCollectionExtensions.AddFrameFlowAvaloniaVideoSink(this FrameFlow.Media.IFrameFlowBuilder! builder, FrameFlow.Avalonia.FrameFlowVideoView! view, Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.AvaloniaVideoSink!>? logger = null) -> FrameFlow.Media.IFrameFlowBuilder!
+static readonly FrameFlow.Avalonia.FrameFlowPlayerChrome.EnableKeyboardShortcutsProperty -> Avalonia.StyledProperty<bool>!
+static readonly FrameFlow.Avalonia.FrameFlowPlayerChrome.HasOpenButtonProperty -> Avalonia.StyledProperty<bool>!
+static readonly FrameFlow.Avalonia.FrameFlowPlayerChrome.LoopByDefaultProperty -> Avalonia.StyledProperty<bool>!
+static readonly FrameFlow.Avalonia.FrameFlowPlayerChrome.MediaPlayerProperty -> Avalonia.StyledProperty<FrameFlow.Player.IMediaPlayer?>!
+static readonly FrameFlow.Avalonia.FrameFlowPlayerView.LoopByDefaultProperty -> Avalonia.StyledProperty<bool>!
+static readonly FrameFlow.Avalonia.FrameFlowPlayerView.MediaPlayerProperty -> Avalonia.StyledProperty<FrameFlow.Player.IMediaPlayer?>!
+static readonly FrameFlow.Avalonia.FrameFlowPositionLabel.MediaPlayerProperty -> Avalonia.StyledProperty<FrameFlow.Player.IMediaPlayer?>!
+static readonly FrameFlow.Avalonia.FrameFlowSeekBar.MediaPlayerProperty -> Avalonia.StyledProperty<FrameFlow.Player.IMediaPlayer?>!
+static readonly FrameFlow.Avalonia.FrameFlowStateBadge.MediaPlayerProperty -> Avalonia.StyledProperty<FrameFlow.Player.IMediaPlayer?>!
+static readonly FrameFlow.Avalonia.FrameFlowStreamSummary.MediaPlayerProperty -> Avalonia.StyledProperty<FrameFlow.Player.IMediaPlayer?>!
+static readonly FrameFlow.Avalonia.FrameFlowTransportBar.LoopByDefaultProperty -> Avalonia.StyledProperty<bool>!
+static readonly FrameFlow.Avalonia.FrameFlowTransportBar.MediaPlayerProperty -> Avalonia.StyledProperty<FrameFlow.Player.IMediaPlayer?>!
+static readonly FrameFlow.Avalonia.FrameFlowVolumeControl.MediaPlayerProperty -> Avalonia.StyledProperty<FrameFlow.Player.IMediaPlayer?>!

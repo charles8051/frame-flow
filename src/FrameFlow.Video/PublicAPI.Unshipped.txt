@@ -1,0 +1,12 @@
+#nullable enable
+FrameFlow.Video.IVideoConverter
+FrameFlow.Video.IVideoConverter.Process(FrameFlow.Media.IVideoFrame! source) -> FrameFlow.Media.CpuVideoFrame!
+FrameFlow.Video.IVideoConverter.TargetFormat.get -> FrameFlow.Media.PixelFormat?
+FrameFlow.Video.IVideoConverter.TargetHeight.get -> int?
+FrameFlow.Video.IVideoConverter.TargetWidth.get -> int?
+FrameFlow.Video.VideoConverter
+FrameFlow.Video.VideoOperators
+static FrameFlow.Video.VideoConverter.Create(int? targetWidth = null, int? targetHeight = null, FrameFlow.Media.PixelFormat? targetFormat = null) -> FrameFlow.Video.IVideoConverter!
+static FrameFlow.Video.VideoOperators.ConvertPixelFormat(string! id, FrameFlow.Media.PixelFormat target) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.VideoFrameRef!, FrameFlow.Media.VideoFrameRef!>!
+static FrameFlow.Video.VideoOperators.Resize(string! id, int width, int height) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.VideoFrameRef!, FrameFlow.Media.VideoFrameRef!>!
+static FrameFlow.Video.VideoOperators.ResizeAndConvert(string! id, int width, int height, FrameFlow.Media.PixelFormat targetFormat) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.VideoFrameRef!, FrameFlow.Media.VideoFrameRef!>!

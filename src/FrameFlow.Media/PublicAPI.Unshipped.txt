@@ -1,0 +1,536 @@
+#nullable enable
+const FrameFlow.Media.Diagnostics.PresenterStallEvaluator.DefaultRecoverySamples = 4 -> int
+FrameFlow.Media.AudioClockAnchor
+FrameFlow.Media.AudioClockAnchor.AudioClockAnchor() -> void
+FrameFlow.Media.AudioClockAnchor.AudioClockAnchor(System.TimeSpan RawPosition, long ObservedAtTicks, System.TimeSpan LastPublished, bool Valid) -> void
+FrameFlow.Media.AudioClockAnchor.LastPublished.get -> System.TimeSpan
+FrameFlow.Media.AudioClockAnchor.LastPublished.init -> void
+FrameFlow.Media.AudioClockAnchor.ObservedAtTicks.get -> long
+FrameFlow.Media.AudioClockAnchor.ObservedAtTicks.init -> void
+FrameFlow.Media.AudioClockAnchor.RawPosition.get -> System.TimeSpan
+FrameFlow.Media.AudioClockAnchor.RawPosition.init -> void
+FrameFlow.Media.AudioClockAnchor.Valid.get -> bool
+FrameFlow.Media.AudioClockAnchor.Valid.init -> void
+FrameFlow.Media.AudioClockInterpolation
+FrameFlow.Media.AudioClockState
+FrameFlow.Media.AudioClockState.AudioClockState() -> void
+FrameFlow.Media.AudioClockState.BaseSourceTime.get -> System.TimeSpan
+FrameFlow.Media.AudioClockState.BaseSourceTime.init -> void
+FrameFlow.Media.AudioClockState.CaptureFirstBufferPts(System.TimeSpan presentationTime) -> FrameFlow.Media.AudioClockState
+FrameFlow.Media.AudioClockState.OnDeactivate() -> FrameFlow.Media.AudioClockState
+FrameFlow.Media.AudioClockState.OriginSeated.get -> bool
+FrameFlow.Media.AudioClockState.OriginSeated.init -> void
+FrameFlow.Media.AudioClockState.PendingSeekBaseline.get -> System.TimeSpan?
+FrameFlow.Media.AudioClockState.PendingSeekBaseline.init -> void
+FrameFlow.Media.AudioClockState.Position(long deviceSampleOffset, int sampleRate) -> System.TimeSpan
+FrameFlow.Media.AudioClockState.ProcessedSamplesPerChannel.get -> long
+FrameFlow.Media.AudioClockState.ProcessedSamplesPerChannel.init -> void
+FrameFlow.Media.AudioClockState.SeatOnActivate() -> FrameFlow.Media.AudioClockState
+FrameFlow.Media.AudioClockState.SeekBaseline(System.TimeSpan position) -> FrameFlow.Media.AudioClockState
+FrameFlow.Media.AudioClockState.WithProcessed(long additionalSamplesPerChannel) -> FrameFlow.Media.AudioClockState
+FrameFlow.Media.AudioStreamInfo
+FrameFlow.Media.AudioStreamInfo.AudioStreamInfo(int StreamIndex, string! CodecName, int SampleRate, int Channels) -> void
+FrameFlow.Media.AudioStreamInfo.Channels.get -> int
+FrameFlow.Media.AudioStreamInfo.Channels.init -> void
+FrameFlow.Media.AudioStreamInfo.CodecName.get -> string!
+FrameFlow.Media.AudioStreamInfo.CodecName.init -> void
+FrameFlow.Media.AudioStreamInfo.SampleRate.get -> int
+FrameFlow.Media.AudioStreamInfo.SampleRate.init -> void
+FrameFlow.Media.AudioStreamInfo.StreamIndex.get -> int
+FrameFlow.Media.AudioStreamInfo.StreamIndex.init -> void
+FrameFlow.Media.CpuFrameData
+FrameFlow.Media.CpuFrameData.CpuFrameData() -> void
+FrameFlow.Media.CpuFrameData.CpuFrameData(System.ReadOnlyMemory<byte> PlaneY, System.ReadOnlyMemory<byte> PlaneU, System.ReadOnlyMemory<byte> PlaneV, int StrideY, int StrideU, int StrideV, int Width, int Height) -> void
+FrameFlow.Media.CpuFrameData.Height.get -> int
+FrameFlow.Media.CpuFrameData.Height.init -> void
+FrameFlow.Media.CpuFrameData.PlaneU.get -> System.ReadOnlyMemory<byte>
+FrameFlow.Media.CpuFrameData.PlaneU.init -> void
+FrameFlow.Media.CpuFrameData.PlaneV.get -> System.ReadOnlyMemory<byte>
+FrameFlow.Media.CpuFrameData.PlaneV.init -> void
+FrameFlow.Media.CpuFrameData.PlaneY.get -> System.ReadOnlyMemory<byte>
+FrameFlow.Media.CpuFrameData.PlaneY.init -> void
+FrameFlow.Media.CpuFrameData.StrideU.get -> int
+FrameFlow.Media.CpuFrameData.StrideU.init -> void
+FrameFlow.Media.CpuFrameData.StrideV.get -> int
+FrameFlow.Media.CpuFrameData.StrideV.init -> void
+FrameFlow.Media.CpuFrameData.StrideY.get -> int
+FrameFlow.Media.CpuFrameData.StrideY.init -> void
+FrameFlow.Media.CpuFrameData.Width.get -> int
+FrameFlow.Media.CpuFrameData.Width.init -> void
+FrameFlow.Media.CpuFramePool
+FrameFlow.Media.CpuFramePool.CpuFramePool(Microsoft.Extensions.Logging.ILogger<FrameFlow.Media.CpuFramePool!>! logger, int capacity = 3) -> void
+FrameFlow.Media.CpuFramePool.Dispose() -> void
+FrameFlow.Media.CpuFramePool.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Media.CpuFramePool.RentAsync(int width, int height, FrameFlow.Media.PixelFormat format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask<FrameFlow.Media.IVideoFrame!>
+FrameFlow.Media.CpuFramePool.Return(FrameFlow.Media.IVideoFrame! frame) -> void
+FrameFlow.Media.CpuVideoFrame
+FrameFlow.Media.CpuVideoFrame.AddRef() -> FrameFlow.Media.IVideoFrame!
+FrameFlow.Media.CpuVideoFrame.AsCpu() -> FrameFlow.Media.CpuFrameData?
+FrameFlow.Media.CpuVideoFrame.CpuVideoFrame(System.Buffers.IMemoryOwner<byte>! pixelData, int width, int height, int stride, FrameFlow.Media.PixelFormat format, System.TimeSpan presentationTime, System.TimeSpan duration = default(System.TimeSpan)) -> void
+FrameFlow.Media.CpuVideoFrame.Dispose() -> void
+FrameFlow.Media.CpuVideoFrame.Duration.get -> System.TimeSpan
+FrameFlow.Media.CpuVideoFrame.Format.get -> FrameFlow.Media.PixelFormat
+FrameFlow.Media.CpuVideoFrame.Height.get -> int
+FrameFlow.Media.CpuVideoFrame.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Media.CpuVideoFrame.PixelData.get -> System.Buffers.IMemoryOwner<byte>!
+FrameFlow.Media.CpuVideoFrame.PresentationTime.get -> System.TimeSpan
+FrameFlow.Media.CpuVideoFrame.Pts.get -> System.TimeSpan
+FrameFlow.Media.CpuVideoFrame.Stride.get -> int
+FrameFlow.Media.CpuVideoFrame.ToCpu() -> FrameFlow.Media.CpuFrameData
+FrameFlow.Media.CpuVideoFrame.Width.get -> int
+FrameFlow.Media.DemuxPacket
+FrameFlow.Media.DemuxPacket.Data.get -> byte[]!
+FrameFlow.Media.DemuxPacket.DemuxPacket(int streamIndex, System.TimeSpan pts, bool hasPts, System.TimeSpan dts, bool hasDts, System.TimeSpan duration, byte[]! data, bool isKeyFrame) -> void
+FrameFlow.Media.DemuxPacket.Dts.get -> System.TimeSpan
+FrameFlow.Media.DemuxPacket.Duration.get -> System.TimeSpan
+FrameFlow.Media.DemuxPacket.HasDts.get -> bool
+FrameFlow.Media.DemuxPacket.HasPts.get -> bool
+FrameFlow.Media.DemuxPacket.IsKeyFrame.get -> bool
+FrameFlow.Media.DemuxPacket.Pts.get -> System.TimeSpan
+FrameFlow.Media.DemuxPacket.StreamIndex.get -> int
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.AudioSinkDiagnosticsSnapshot(System.TimeSpan PresentationTime, long ProcessedSamplesPerChannel, int SampleRate, int Channels, long BlocksWritten, long UnderrunCount, long BackpressureEvents, bool IsActive) -> void
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.BackpressureEvents.get -> long
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.BackpressureEvents.init -> void
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.BlocksWritten.get -> long
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.BlocksWritten.init -> void
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.Channels.get -> int
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.Channels.init -> void
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.IsActive.get -> bool
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.IsActive.init -> void
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.PresentationTime.get -> System.TimeSpan
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.PresentationTime.init -> void
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.ProcessedSamplesPerChannel.get -> long
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.ProcessedSamplesPerChannel.init -> void
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.SampleRate.get -> int
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.SampleRate.init -> void
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.UnderrunCount.get -> long
+FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.UnderrunCount.init -> void
+FrameFlow.Media.Diagnostics.PresentCadenceMetrics
+FrameFlow.Media.Diagnostics.PresenterRecoveryInfo
+FrameFlow.Media.Diagnostics.PresenterRecoveryInfo.ConfirmedOverSamples.get -> int
+FrameFlow.Media.Diagnostics.PresenterRecoveryInfo.ConfirmedOverSamples.init -> void
+FrameFlow.Media.Diagnostics.PresenterRecoveryInfo.FramesPresented.get -> int
+FrameFlow.Media.Diagnostics.PresenterRecoveryInfo.FramesPresented.init -> void
+FrameFlow.Media.Diagnostics.PresenterRecoveryInfo.PresenterRecoveryInfo() -> void
+FrameFlow.Media.Diagnostics.PresenterRecoveryInfo.PresenterRecoveryInfo(int FramesPresented, FrameFlow.Media.Diagnostics.PresenterStalledReason Reason, int ConfirmedOverSamples) -> void
+FrameFlow.Media.Diagnostics.PresenterRecoveryInfo.Reason.get -> FrameFlow.Media.Diagnostics.PresenterStalledReason
+FrameFlow.Media.Diagnostics.PresenterRecoveryInfo.Reason.init -> void
+FrameFlow.Media.Diagnostics.PresenterSample
+FrameFlow.Media.Diagnostics.PresenterSample.FramesAccepted.get -> long
+FrameFlow.Media.Diagnostics.PresenterSample.FramesAccepted.init -> void
+FrameFlow.Media.Diagnostics.PresenterSample.FramesCommitted.get -> int
+FrameFlow.Media.Diagnostics.PresenterSample.FramesCommitted.init -> void
+FrameFlow.Media.Diagnostics.PresenterSample.FramesPresented.get -> int
+FrameFlow.Media.Diagnostics.PresenterSample.FramesPresented.init -> void
+FrameFlow.Media.Diagnostics.PresenterSample.LastBltStartedTicks.get -> long
+FrameFlow.Media.Diagnostics.PresenterSample.LastBltStartedTicks.init -> void
+FrameFlow.Media.Diagnostics.PresenterSample.NowTicks.get -> long
+FrameFlow.Media.Diagnostics.PresenterSample.NowTicks.init -> void
+FrameFlow.Media.Diagnostics.PresenterSample.PresenterSample() -> void
+FrameFlow.Media.Diagnostics.PresenterSample.PresenterSample(long NowTicks, int FramesPresented, int FramesCommitted, long FramesAccepted, long LastBltStartedTicks) -> void
+FrameFlow.Media.Diagnostics.PresenterStalledReason
+FrameFlow.Media.Diagnostics.PresenterStalledReason.None = 0 -> FrameFlow.Media.Diagnostics.PresenterStalledReason
+FrameFlow.Media.Diagnostics.PresenterStalledReason.OutputNotComposited = 2 -> FrameFlow.Media.Diagnostics.PresenterStalledReason
+FrameFlow.Media.Diagnostics.PresenterStalledReason.PresentLoopWedged = 1 -> FrameFlow.Media.Diagnostics.PresenterStalledReason
+FrameFlow.Media.Diagnostics.PresenterStallEvaluator
+FrameFlow.Media.Diagnostics.PresenterStallEvaluator.Observe(in FrameFlow.Media.Diagnostics.PresenterSample sample) -> FrameFlow.Media.Diagnostics.PresenterStallOutcome
+FrameFlow.Media.Diagnostics.PresenterStallEvaluator.PresenterStallEvaluator() -> void
+FrameFlow.Media.Diagnostics.PresenterStallInfo
+FrameFlow.Media.Diagnostics.PresenterStallInfo.FramesPresented.get -> int
+FrameFlow.Media.Diagnostics.PresenterStallInfo.FramesPresented.init -> void
+FrameFlow.Media.Diagnostics.PresenterStallInfo.PresenterStallInfo() -> void
+FrameFlow.Media.Diagnostics.PresenterStallInfo.PresenterStallInfo(double StalledForMs, int FramesPresented, FrameFlow.Media.Diagnostics.PresenterStalledReason Reason) -> void
+FrameFlow.Media.Diagnostics.PresenterStallInfo.Reason.get -> FrameFlow.Media.Diagnostics.PresenterStalledReason
+FrameFlow.Media.Diagnostics.PresenterStallInfo.Reason.init -> void
+FrameFlow.Media.Diagnostics.PresenterStallInfo.StalledForMs.get -> double
+FrameFlow.Media.Diagnostics.PresenterStallInfo.StalledForMs.init -> void
+FrameFlow.Media.Diagnostics.PresenterStallOutcome
+FrameFlow.Media.Diagnostics.PresenterStallOutcome.Next.get -> FrameFlow.Media.Diagnostics.PresenterStallEvaluator
+FrameFlow.Media.Diagnostics.PresenterStallOutcome.Next.init -> void
+FrameFlow.Media.Diagnostics.PresenterStallOutcome.PresenterStallOutcome() -> void
+FrameFlow.Media.Diagnostics.PresenterStallOutcome.PresenterStallOutcome(FrameFlow.Media.Diagnostics.PresenterStallEvaluator Next, bool Stalled, long SinceProgressTicks, FrameFlow.Media.Diagnostics.PresenterStalledReason Reason = FrameFlow.Media.Diagnostics.PresenterStalledReason.None, bool Recovered = false) -> void
+FrameFlow.Media.Diagnostics.PresenterStallOutcome.Reason.get -> FrameFlow.Media.Diagnostics.PresenterStalledReason
+FrameFlow.Media.Diagnostics.PresenterStallOutcome.Reason.init -> void
+FrameFlow.Media.Diagnostics.PresenterStallOutcome.Recovered.get -> bool
+FrameFlow.Media.Diagnostics.PresenterStallOutcome.Recovered.init -> void
+FrameFlow.Media.Diagnostics.PresenterStallOutcome.SinceProgressTicks.get -> long
+FrameFlow.Media.Diagnostics.PresenterStallOutcome.SinceProgressTicks.init -> void
+FrameFlow.Media.Diagnostics.PresenterStallOutcome.Stalled.get -> bool
+FrameFlow.Media.Diagnostics.PresenterStallOutcome.Stalled.init -> void
+FrameFlow.Media.Diagnostics.PresenterStallWatchdog
+FrameFlow.Media.Diagnostics.PresenterStallWatchdog.Dispose() -> void
+FrameFlow.Media.Diagnostics.PresenterStallWatchdog.PresenterStallWatchdog(System.Func<FrameFlow.Media.Diagnostics.PresenterSample>! sample, Microsoft.Extensions.Logging.ILogger! logger, System.TimeSpan? timeout = null, System.TimeSpan? interval = null, int recoverySamples = 4) -> void
+FrameFlow.Media.Diagnostics.PresenterStallWatchdog.Recovered -> System.Action<FrameFlow.Media.Diagnostics.PresenterRecoveryInfo>?
+FrameFlow.Media.Diagnostics.PresenterStallWatchdog.Stalled -> System.Action<FrameFlow.Media.Diagnostics.PresenterStallInfo>?
+FrameFlow.Media.Diagnostics.PresenterTickMeter
+FrameFlow.Media.Diagnostics.PresenterTickMeter.PresenterTickMeter(long timestampFrequency, int reportEvery = 120) -> void
+FrameFlow.Media.Diagnostics.PresenterTickMeter.Record(long enteredTicks, long exitedTicks, bool hadFrame) -> FrameFlow.Media.Diagnostics.PresenterTickReport?
+FrameFlow.Media.Diagnostics.PresenterTickMeter.Reset() -> void
+FrameFlow.Media.Diagnostics.PresenterTickReport
+FrameFlow.Media.Diagnostics.PresenterTickReport.GapMaxMs.get -> double
+FrameFlow.Media.Diagnostics.PresenterTickReport.GapMaxMs.init -> void
+FrameFlow.Media.Diagnostics.PresenterTickReport.GapMeanMs.get -> double
+FrameFlow.Media.Diagnostics.PresenterTickReport.GapMeanMs.init -> void
+FrameFlow.Media.Diagnostics.PresenterTickReport.PresenterTickReport() -> void
+FrameFlow.Media.Diagnostics.PresenterTickReport.PresenterTickReport(int Ticks, int TicksWithFrame, double WindowMs, double TicksPerSecond, double GapMeanMs, double GapMaxMs, double WorkMeanMs, double WorkMaxMs) -> void
+FrameFlow.Media.Diagnostics.PresenterTickReport.Ticks.get -> int
+FrameFlow.Media.Diagnostics.PresenterTickReport.Ticks.init -> void
+FrameFlow.Media.Diagnostics.PresenterTickReport.TicksPerSecond.get -> double
+FrameFlow.Media.Diagnostics.PresenterTickReport.TicksPerSecond.init -> void
+FrameFlow.Media.Diagnostics.PresenterTickReport.TicksWithFrame.get -> int
+FrameFlow.Media.Diagnostics.PresenterTickReport.TicksWithFrame.init -> void
+FrameFlow.Media.Diagnostics.PresenterTickReport.WindowMs.get -> double
+FrameFlow.Media.Diagnostics.PresenterTickReport.WindowMs.init -> void
+FrameFlow.Media.Diagnostics.PresenterTickReport.WorkMaxMs.get -> double
+FrameFlow.Media.Diagnostics.PresenterTickReport.WorkMaxMs.init -> void
+FrameFlow.Media.Diagnostics.PresenterTickReport.WorkMeanMs.get -> double
+FrameFlow.Media.Diagnostics.PresenterTickReport.WorkMeanMs.init -> void
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.FramesCommitted.get -> long
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.FramesCommitted.init -> void
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.FramesDropped.get -> long
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.FramesDropped.init -> void
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.FramesPresented.get -> long
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.FramesPresented.init -> void
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.LastCommittedAtUtc.get -> System.DateTime?
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.LastCommittedAtUtc.init -> void
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.LastPresentedAtUtc.get -> System.DateTime?
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.LastPresentedAtUtc.init -> void
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.LastPresentedPresentationTime.get -> System.TimeSpan?
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.LastPresentedPresentationTime.init -> void
+FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.VideoSinkDiagnosticsSnapshot(long FramesPresented, long FramesDropped, System.TimeSpan? LastPresentedPresentationTime, System.DateTime? LastPresentedAtUtc, long FramesCommitted = 0, System.DateTime? LastCommittedAtUtc = null) -> void
+FrameFlow.Media.Diagnostics.VideoSinkMeters
+FrameFlow.Media.Diagnostics.VideoSinkMeters.VideoSinkMeters(string! meterName, string! metricPrefix, string! sinkName) -> void
+FrameFlow.Media.Diagnostics.VideoSinkTelemetry
+FrameFlow.Media.Diagnostics.VideoSinkTelemetry.DroppedCount.get -> long
+FrameFlow.Media.Diagnostics.VideoSinkTelemetry.PresentedCount.get -> long
+FrameFlow.Media.Diagnostics.VideoSinkTelemetry.RecordExtraDrop() -> void
+FrameFlow.Media.Diagnostics.VideoSinkTelemetry.RecordPresented(System.TimeSpan pts) -> void
+FrameFlow.Media.Diagnostics.VideoSinkTelemetry.RecordSupersededDrop() -> void
+FrameFlow.Media.Diagnostics.VideoSinkTelemetry.Snapshot() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
+FrameFlow.Media.Diagnostics.VideoSinkTelemetry.VideoSinkTelemetry(FrameFlow.Media.Diagnostics.VideoSinkMeters! meters) -> void
+FrameFlow.Media.Diagnostics.VideoSinkTelemetry.VideoSinkTelemetry(FrameFlow.Media.Diagnostics.VideoSinkMeters! meters, FrameFlow.Media.LatestWinsFrameSlot! slot) -> void
+FrameFlow.Media.ErrorCategory
+FrameFlow.Media.ErrorCategory.Decode = 3 -> FrameFlow.Media.ErrorCategory
+FrameFlow.Media.ErrorCategory.InvalidOperation = 0 -> FrameFlow.Media.ErrorCategory
+FrameFlow.Media.ErrorCategory.Io = 4 -> FrameFlow.Media.ErrorCategory
+FrameFlow.Media.ErrorCategory.Network = 2 -> FrameFlow.Media.ErrorCategory
+FrameFlow.Media.ErrorCategory.Source = 1 -> FrameFlow.Media.ErrorCategory
+FrameFlow.Media.ErrorCategory.System = 5 -> FrameFlow.Media.ErrorCategory
+FrameFlow.Media.FfmpegBinarySource
+FrameFlow.Media.FfmpegBinarySource.Bundled = 1 -> FrameFlow.Media.FfmpegBinarySource
+FrameFlow.Media.FfmpegBinarySource.CustomPath = 2 -> FrameFlow.Media.FfmpegBinarySource
+FrameFlow.Media.FfmpegBinarySource.System = 3 -> FrameFlow.Media.FfmpegBinarySource
+FrameFlow.Media.FfmpegBinarySource.Unknown = 0 -> FrameFlow.Media.FfmpegBinarySource
+FrameFlow.Media.FrameFlowAudioOptions
+FrameFlow.Media.FrameFlowAudioOptions.EnableAudio.get -> bool
+FrameFlow.Media.FrameFlowAudioOptions.EnableAudio.set -> void
+FrameFlow.Media.FrameFlowAudioOptions.FrameFlowAudioOptions() -> void
+FrameFlow.Media.FrameFlowAudioOptions.PreferredChannels.get -> int
+FrameFlow.Media.FrameFlowAudioOptions.PreferredChannels.set -> void
+FrameFlow.Media.FrameFlowBootstrapResult
+FrameFlow.Media.FrameFlowBootstrapResult.BinarySource.get -> FrameFlow.Media.FfmpegBinarySource
+FrameFlow.Media.FrameFlowBootstrapResult.BinarySource.init -> void
+FrameFlow.Media.FrameFlowBootstrapResult.Capabilities.get -> FrameFlow.Media.HardwareDecodeCapabilities!
+FrameFlow.Media.FrameFlowBootstrapResult.Capabilities.init -> void
+FrameFlow.Media.FrameFlowBootstrapResult.FrameFlowBootstrapResult(bool IsSuccess, string? ResolvedPath, FrameFlow.Media.FfmpegBinarySource BinarySource, string! Message) -> void
+FrameFlow.Media.FrameFlowBootstrapResult.FrameFlowBootstrapResult(bool IsSuccess, string? ResolvedPath, FrameFlow.Media.FfmpegBinarySource BinarySource, string! Message, FrameFlow.Media.HardwareDecodeCapabilities! Capabilities) -> void
+FrameFlow.Media.FrameFlowBootstrapResult.IsSuccess.get -> bool
+FrameFlow.Media.FrameFlowBootstrapResult.IsSuccess.init -> void
+FrameFlow.Media.FrameFlowBootstrapResult.Message.get -> string!
+FrameFlow.Media.FrameFlowBootstrapResult.Message.init -> void
+FrameFlow.Media.FrameFlowBootstrapResult.ResolvedPath.get -> string?
+FrameFlow.Media.FrameFlowBootstrapResult.ResolvedPath.init -> void
+FrameFlow.Media.FrameFlowBufferingOptions
+FrameFlow.Media.FrameFlowBufferingOptions.FrameFlowBufferingOptions() -> void
+FrameFlow.Media.FrameFlowBufferingOptions.MaxPendingFrames.get -> int
+FrameFlow.Media.FrameFlowBufferingOptions.MaxPendingFrames.set -> void
+FrameFlow.Media.FrameFlowBufferingOptions.MaxQueuedAudioPackets.get -> int
+FrameFlow.Media.FrameFlowBufferingOptions.MaxQueuedAudioPackets.set -> void
+FrameFlow.Media.FrameFlowBufferingOptions.MaxQueuedVideoPackets.get -> int
+FrameFlow.Media.FrameFlowBufferingOptions.MaxQueuedVideoPackets.set -> void
+FrameFlow.Media.FrameFlowOptions
+FrameFlow.Media.FrameFlowOptions.Audio.get -> FrameFlow.Media.FrameFlowAudioOptions!
+FrameFlow.Media.FrameFlowOptions.Audio.set -> void
+FrameFlow.Media.FrameFlowOptions.Buffering.get -> FrameFlow.Media.FrameFlowBufferingOptions!
+FrameFlow.Media.FrameFlowOptions.Buffering.set -> void
+FrameFlow.Media.FrameFlowOptions.FrameFlowOptions() -> void
+FrameFlow.Media.FrameFlowOptions.Playback.get -> FrameFlow.Media.FrameFlowPlaybackOptions!
+FrameFlow.Media.FrameFlowOptions.Playback.set -> void
+FrameFlow.Media.FrameFlowOptions.Video.get -> FrameFlow.Media.FrameFlowVideoOptions!
+FrameFlow.Media.FrameFlowOptions.Video.set -> void
+FrameFlow.Media.FrameFlowPlaybackOptions
+FrameFlow.Media.FrameFlowPlaybackOptions.FrameFlowPlaybackOptions() -> void
+FrameFlow.Media.FrameFlowPlaybackOptions.InitialRepeatMode.get -> FrameFlow.Media.RepeatMode
+FrameFlow.Media.FrameFlowPlaybackOptions.InitialRepeatMode.set -> void
+FrameFlow.Media.FrameFlowServiceCollectionExtensions
+FrameFlow.Media.FrameFlowVideoOptions
+FrameFlow.Media.FrameFlowVideoOptions.FrameFlowVideoOptions() -> void
+FrameFlow.Media.FrameFlowVideoOptions.HardwareDecode.get -> FrameFlow.Media.HardwareDecodeOptions!
+FrameFlow.Media.FrameFlowVideoOptions.HardwareDecode.set -> void
+FrameFlow.Media.HardwareDecodeBackend
+FrameFlow.Media.HardwareDecodeBackend.AvDeviceTypeName.get -> string!
+FrameFlow.Media.HardwareDecodeBackend.AvDeviceTypeName.init -> void
+FrameFlow.Media.HardwareDecodeBackend.DiagnosticMessage.get -> string?
+FrameFlow.Media.HardwareDecodeBackend.DiagnosticMessage.init -> void
+FrameFlow.Media.HardwareDecodeBackend.DisplayName.get -> string!
+FrameFlow.Media.HardwareDecodeBackend.DisplayName.init -> void
+FrameFlow.Media.HardwareDecodeBackend.HardwareDecodeBackend(FrameFlow.Media.HardwareDecodeBackendKind Kind, string! DisplayName, string! AvDeviceTypeName, bool Initialized, string? DiagnosticMessage) -> void
+FrameFlow.Media.HardwareDecodeBackend.Initialized.get -> bool
+FrameFlow.Media.HardwareDecodeBackend.Initialized.init -> void
+FrameFlow.Media.HardwareDecodeBackend.Kind.get -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackend.Kind.init -> void
+FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackendKind.Cuda = 0 -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackendKind.D3D11Va = 2 -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackendKind.D3D12Va = 10 -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackendKind.Drm = 8 -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackendKind.Dxva2 = 3 -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackendKind.MediaCodec = 6 -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackendKind.OpenCl = 11 -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackendKind.Other = 12 -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackendKind.Qsv = 5 -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackendKind.VaApi = 1 -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackendKind.Vdpau = 9 -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackendKind.VideoToolbox = 4 -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeBackendKind.Vulkan = 7 -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Media.HardwareDecodeCapabilities
+FrameFlow.Media.HardwareDecodeCapabilities.Available.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Media.HardwareDecodeBackend!>!
+FrameFlow.Media.HardwareDecodeCapabilities.Available.init -> void
+FrameFlow.Media.HardwareDecodeCapabilities.HardwareDecodeCapabilities(System.Collections.Generic.IReadOnlyList<FrameFlow.Media.HardwareDecodeBackend!>! Available) -> void
+FrameFlow.Media.HardwareDecodeMode
+FrameFlow.Media.HardwareDecodeMode.Auto = 1 -> FrameFlow.Media.HardwareDecodeMode
+FrameFlow.Media.HardwareDecodeMode.Disabled = 0 -> FrameFlow.Media.HardwareDecodeMode
+FrameFlow.Media.HardwareDecodeMode.Required = 2 -> FrameFlow.Media.HardwareDecodeMode
+FrameFlow.Media.HardwareDecodeOptions
+FrameFlow.Media.HardwareDecodeOptions.HardwareDecodeOptions() -> void
+FrameFlow.Media.HardwareDecodeOptions.Mode.get -> FrameFlow.Media.HardwareDecodeMode
+FrameFlow.Media.HardwareDecodeOptions.Mode.set -> void
+FrameFlow.Media.HardwareDecodeOptions.PreferredBackends.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Media.HardwareDecodeBackendKind>!
+FrameFlow.Media.HardwareDecodeOptions.PreferredBackends.set -> void
+FrameFlow.Media.HeadlessVideoSink
+FrameFlow.Media.HeadlessVideoSink.AbandonedCount.get -> long
+FrameFlow.Media.HeadlessVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.HeadlessVideoSink.FramePool.get -> FrameFlow.Media.IFramePool!
+FrameFlow.Media.HeadlessVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
+FrameFlow.Media.HeadlessVideoSink.HeadlessVideoSink(FrameFlow.Media.IFramePool! framePool, System.TimeSpan presentCost = default(System.TimeSpan), System.TimeProvider? timeProvider = null) -> void
+FrameFlow.Media.HeadlessVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.HeadlessVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.HeadlessVideoSink.PresentCost.get -> System.TimeSpan
+FrameFlow.Media.HeadlessVideoSink.PresentedCount.get -> long
+FrameFlow.Media.HighResolutionTimeProvider
+FrameFlow.Media.IAudioSink
+FrameFlow.Media.IAudioSink.ActivateAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.IAudioSink.DeactivateAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.IAudioSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot!
+FrameFlow.Media.IAudioSink.PauseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.IAudioSink.PresentAsync(FrameFlow.Graph.IAudioBuffer! buffer, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.IAudioSink.ResumeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.IFrameFlowBootstrapper
+FrameFlow.Media.IFrameFlowBootstrapper.Initialize() -> FrameFlow.Media.FrameFlowBootstrapResult!
+FrameFlow.Media.IFrameFlowBootstrapper.IsInitialized.get -> bool
+FrameFlow.Media.IFrameFlowBuilder
+FrameFlow.Media.IFrameFlowBuilder.Services.get -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+FrameFlow.Media.IFramePool
+FrameFlow.Media.IFramePool.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Media.IFramePool.RentAsync(int width, int height, FrameFlow.Media.PixelFormat format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask<FrameFlow.Media.IVideoFrame!>
+FrameFlow.Media.IFramePool.Return(FrameFlow.Media.IVideoFrame! frame) -> void
+FrameFlow.Media.IMediaSource
+FrameFlow.Media.IMediaSource.DisplayName.get -> string!
+FrameFlow.Media.IMediaSource.FilePath.get -> string?
+FrameFlow.Media.IMediaSource.IsSeekable.get -> bool
+FrameFlow.Media.IMediaSource.Uri.get -> System.Uri?
+FrameFlow.Media.IVideoFrame
+FrameFlow.Media.IVideoFrame.AddRef() -> FrameFlow.Media.IVideoFrame!
+FrameFlow.Media.IVideoFrame.AsCpu() -> FrameFlow.Media.CpuFrameData?
+FrameFlow.Media.IVideoFrame.Duration.get -> System.TimeSpan
+FrameFlow.Media.IVideoFrame.Format.get -> FrameFlow.Media.PixelFormat
+FrameFlow.Media.IVideoFrame.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Media.IVideoFrame.Pts.get -> System.TimeSpan
+FrameFlow.Media.IVideoFrame.ToCpu() -> FrameFlow.Media.CpuFrameData
+FrameFlow.Media.IVideoSink
+FrameFlow.Media.IVideoSink.FramePool.get -> FrameFlow.Media.IFramePool!
+FrameFlow.Media.IVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
+FrameFlow.Media.IVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.IVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.IVolumeControl
+FrameFlow.Media.IVolumeControl.Muted.get -> bool
+FrameFlow.Media.IVolumeControl.Muted.set -> void
+FrameFlow.Media.IVolumeControl.Volume.get -> float
+FrameFlow.Media.IVolumeControl.Volume.set -> void
+FrameFlow.Media.LatestWinsFrameSlot
+FrameFlow.Media.LatestWinsFrameSlot.Dropped.get -> long
+FrameFlow.Media.LatestWinsFrameSlot.HasPending.get -> bool
+FrameFlow.Media.LatestWinsFrameSlot.LatestWinsFrameSlot() -> void
+FrameFlow.Media.LatestWinsFrameSlot.Take(System.Action<FrameFlow.Media.IVideoFrame!>? onTaken = null) -> FrameFlow.Media.IVideoFrame?
+FrameFlow.Media.LatestWinsFrameSlot.TrySet(FrameFlow.Media.IVideoFrame! frame) -> bool
+FrameFlow.Media.LoopRestarted
+FrameFlow.Media.LoopRestarted.ItemDuration.get -> System.TimeSpan
+FrameFlow.Media.LoopRestarted.ItemDuration.init -> void
+FrameFlow.Media.LoopRestarted.LoopCount.get -> int
+FrameFlow.Media.LoopRestarted.LoopCount.init -> void
+FrameFlow.Media.LoopRestarted.LoopRestarted(int LoopCount, System.TimeSpan ItemDuration) -> void
+FrameFlow.Media.LoopStalled
+FrameFlow.Media.LoopStalled.Duration.get -> System.TimeSpan
+FrameFlow.Media.LoopStalled.Duration.init -> void
+FrameFlow.Media.LoopStalled.LoopCount.get -> int
+FrameFlow.Media.LoopStalled.LoopCount.init -> void
+FrameFlow.Media.LoopStalled.LoopStalled(int LoopCount, System.TimeSpan Position, System.TimeSpan Duration, System.TimeSpan Overrun) -> void
+FrameFlow.Media.LoopStalled.Overrun.get -> System.TimeSpan
+FrameFlow.Media.LoopStalled.Overrun.init -> void
+FrameFlow.Media.LoopStalled.Position.get -> System.TimeSpan
+FrameFlow.Media.LoopStalled.Position.init -> void
+FrameFlow.Media.MediaInfo
+FrameFlow.Media.MediaInfo.AudioStreams.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Media.AudioStreamInfo!>!
+FrameFlow.Media.MediaInfo.AudioStreams.init -> void
+FrameFlow.Media.MediaInfo.ContainerName.get -> string!
+FrameFlow.Media.MediaInfo.ContainerName.init -> void
+FrameFlow.Media.MediaInfo.Duration.get -> System.TimeSpan
+FrameFlow.Media.MediaInfo.Duration.init -> void
+FrameFlow.Media.MediaInfo.MediaInfo(string! ContainerName, System.TimeSpan Duration, System.Collections.Generic.IReadOnlyList<FrameFlow.Media.VideoStreamInfo!>! VideoStreams, System.Collections.Generic.IReadOnlyList<FrameFlow.Media.AudioStreamInfo!>! AudioStreams) -> void
+FrameFlow.Media.MediaInfo.VideoStreams.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Media.VideoStreamInfo!>!
+FrameFlow.Media.MediaInfo.VideoStreams.init -> void
+FrameFlow.Media.MediaSource
+FrameFlow.Media.MediaSource.DisplayName.get -> string!
+FrameFlow.Media.MediaSource.DisplayName.init -> void
+FrameFlow.Media.MediaSource.FilePath.get -> string?
+FrameFlow.Media.MediaSource.FilePath.init -> void
+FrameFlow.Media.MediaSource.IsSeekable.get -> bool
+FrameFlow.Media.MediaSource.IsSeekable.init -> void
+FrameFlow.Media.MediaSource.MediaSource(string! DisplayName, System.Uri? Uri = null, string? FilePath = null, bool IsSeekable = true) -> void
+FrameFlow.Media.MediaSource.Uri.get -> System.Uri?
+FrameFlow.Media.MediaSource.Uri.init -> void
+FrameFlow.Media.NullVideoSink
+FrameFlow.Media.NullVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.NullVideoSink.FramePool.get -> FrameFlow.Media.IFramePool!
+FrameFlow.Media.NullVideoSink.NullVideoSink() -> void
+FrameFlow.Media.NullVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.NullVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.PcmAudioBuffer
+FrameFlow.Media.PcmAudioBuffer.AddRef() -> FrameFlow.Graph.IAudioBuffer!
+FrameFlow.Media.PcmAudioBuffer.ChannelCount.get -> int
+FrameFlow.Media.PcmAudioBuffer.Channels.get -> int
+FrameFlow.Media.PcmAudioBuffer.Dispose() -> void
+FrameFlow.Media.PcmAudioBuffer.Duration.get -> System.TimeSpan
+FrameFlow.Media.PcmAudioBuffer.FrameCount.get -> int
+FrameFlow.Media.PcmAudioBuffer.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Media.PcmAudioBuffer.PcmAudioBuffer(System.Buffers.IMemoryOwner<short>! sampleData, int sampleCount, int sampleRate, int channels, System.TimeSpan presentationTime) -> void
+FrameFlow.Media.PcmAudioBuffer.PresentationTime.get -> System.TimeSpan
+FrameFlow.Media.PcmAudioBuffer.SampleCount.get -> int
+FrameFlow.Media.PcmAudioBuffer.SampleData.get -> System.Buffers.IMemoryOwner<short>!
+FrameFlow.Media.PcmAudioBuffer.SampleFormat.get -> FrameFlow.Graph.AudioSampleFormat
+FrameFlow.Media.PcmAudioBuffer.SampleRate.get -> int
+FrameFlow.Media.PcmAudioBuffer.Samples.get -> System.ReadOnlyMemory<short>
+FrameFlow.Media.PcmAudioBuffer.Timestamp.get -> System.TimeSpan
+FrameFlow.Media.PcmAudioBufferRef
+FrameFlow.Media.PcmAudioBufferRef.AddRef() -> FrameFlow.Graph.IRefCounted!
+FrameFlow.Media.PcmAudioBufferRef.Buffer.get -> FrameFlow.Media.PcmAudioBuffer!
+FrameFlow.Media.PcmAudioBufferRef.Detach() -> FrameFlow.Media.PcmAudioBuffer?
+FrameFlow.Media.PcmAudioBufferRef.Dispose() -> void
+FrameFlow.Media.PcmAudioBufferRef.PcmAudioBufferRef(FrameFlow.Media.PcmAudioBuffer! buffer) -> void
+FrameFlow.Media.PixelFormat
+FrameFlow.Media.PixelFormat.Bgra32 = 0 -> FrameFlow.Media.PixelFormat
+FrameFlow.Media.PixelFormat.Nv12 = 3 -> FrameFlow.Media.PixelFormat
+FrameFlow.Media.PixelFormat.Rgba32 = 1 -> FrameFlow.Media.PixelFormat
+FrameFlow.Media.PixelFormat.Uyvy422 = 5 -> FrameFlow.Media.PixelFormat
+FrameFlow.Media.PixelFormat.Yuv420P = 2 -> FrameFlow.Media.PixelFormat
+FrameFlow.Media.PixelFormat.Yuyv422 = 4 -> FrameFlow.Media.PixelFormat
+FrameFlow.Media.PlaybackError
+FrameFlow.Media.PlaybackError.Category.get -> FrameFlow.Media.ErrorCategory
+FrameFlow.Media.PlaybackError.Category.init -> void
+FrameFlow.Media.PlaybackError.Inner.get -> System.Exception?
+FrameFlow.Media.PlaybackError.Inner.init -> void
+FrameFlow.Media.PlaybackError.Message.get -> string!
+FrameFlow.Media.PlaybackError.Message.init -> void
+FrameFlow.Media.PlaybackError.PlaybackError(FrameFlow.Media.ErrorCategory Category, string! Message, System.Exception? Inner = null) -> void
+FrameFlow.Media.PlaybackState
+FrameFlow.Media.PlaybackState.Ended = 5 -> FrameFlow.Media.PlaybackState
+FrameFlow.Media.PlaybackState.Error = 7 -> FrameFlow.Media.PlaybackState
+FrameFlow.Media.PlaybackState.Idle = 0 -> FrameFlow.Media.PlaybackState
+FrameFlow.Media.PlaybackState.Loading = 1 -> FrameFlow.Media.PlaybackState
+FrameFlow.Media.PlaybackState.Paused = 2 -> FrameFlow.Media.PlaybackState
+FrameFlow.Media.PlaybackState.Playing = 3 -> FrameFlow.Media.PlaybackState
+FrameFlow.Media.PlaybackState.Rebuffering = 4 -> FrameFlow.Media.PlaybackState
+FrameFlow.Media.PlaybackState.Unloaded = 6 -> FrameFlow.Media.PlaybackState
+FrameFlow.Media.RepeatMode
+FrameFlow.Media.RepeatMode.All = 2 -> FrameFlow.Media.RepeatMode
+FrameFlow.Media.RepeatMode.Off = 0 -> FrameFlow.Media.RepeatMode
+FrameFlow.Media.RepeatMode.One = 1 -> FrameFlow.Media.RepeatMode
+FrameFlow.Media.Result
+FrameFlow.Media.Result.Error.get -> FrameFlow.Media.PlaybackError?
+FrameFlow.Media.Result.IsSuccess.get -> bool
+FrameFlow.Media.Result.Result() -> void
+FrameFlow.Media.Result<T>
+FrameFlow.Media.Result<T>.Error.get -> FrameFlow.Media.PlaybackError?
+FrameFlow.Media.Result<T>.IsSuccess.get -> bool
+FrameFlow.Media.Result<T>.Result() -> void
+FrameFlow.Media.Result<T>.Value.get -> T
+FrameFlow.Media.ScrubSeekDispatcher
+FrameFlow.Media.ScrubSeekDispatcher.IsSeeking.get -> bool
+FrameFlow.Media.ScrubSeekDispatcher.LastRequested.get -> System.TimeSpan
+FrameFlow.Media.ScrubSeekDispatcher.Request(System.TimeSpan target) -> void
+FrameFlow.Media.ScrubSeekDispatcher.ScrubSeekDispatcher(System.Func<System.TimeSpan, System.Threading.Tasks.Task!>! seek) -> void
+FrameFlow.Media.SeekState
+FrameFlow.Media.SeekState.NotSeeking = 0 -> FrameFlow.Media.SeekState
+FrameFlow.Media.SeekState.SeekInProgress = 2 -> FrameFlow.Media.SeekState
+FrameFlow.Media.SeekState.SeekPending = 1 -> FrameFlow.Media.SeekState
+FrameFlow.Media.SinkAdapters
+FrameFlow.Media.StateTransition<T>
+FrameFlow.Media.StateTransition<T>.Current.get -> T
+FrameFlow.Media.StateTransition<T>.Current.init -> void
+FrameFlow.Media.StateTransition<T>.Previous.get -> T
+FrameFlow.Media.StateTransition<T>.Previous.init -> void
+FrameFlow.Media.StateTransition<T>.StateTransition() -> void
+FrameFlow.Media.StateTransition<T>.StateTransition(T Previous, T Current) -> void
+FrameFlow.Media.VideoFormatInfo
+FrameFlow.Media.VideoFormatInfo.Format.get -> FrameFlow.Media.PixelFormat
+FrameFlow.Media.VideoFormatInfo.Format.init -> void
+FrameFlow.Media.VideoFormatInfo.Height.get -> int
+FrameFlow.Media.VideoFormatInfo.Height.init -> void
+FrameFlow.Media.VideoFormatInfo.VideoFormatInfo(int Width, int Height, FrameFlow.Media.PixelFormat Format) -> void
+FrameFlow.Media.VideoFormatInfo.Width.get -> int
+FrameFlow.Media.VideoFormatInfo.Width.init -> void
+FrameFlow.Media.VideoFrameExtensions
+FrameFlow.Media.VideoFrameRef
+FrameFlow.Media.VideoFrameRef.AddRef() -> FrameFlow.Graph.IRefCounted!
+FrameFlow.Media.VideoFrameRef.Detach() -> FrameFlow.Media.IVideoFrame?
+FrameFlow.Media.VideoFrameRef.Dispose() -> void
+FrameFlow.Media.VideoFrameRef.Frame.get -> FrameFlow.Media.IVideoFrame!
+FrameFlow.Media.VideoFrameRef.VideoFrameRef(FrameFlow.Media.IVideoFrame! frame) -> void
+FrameFlow.Media.VideoStreamInfo
+FrameFlow.Media.VideoStreamInfo.CodecName.get -> string!
+FrameFlow.Media.VideoStreamInfo.CodecName.init -> void
+FrameFlow.Media.VideoStreamInfo.FrameRate.get -> double
+FrameFlow.Media.VideoStreamInfo.FrameRate.init -> void
+FrameFlow.Media.VideoStreamInfo.Height.get -> int
+FrameFlow.Media.VideoStreamInfo.Height.init -> void
+FrameFlow.Media.VideoStreamInfo.StreamIndex.get -> int
+FrameFlow.Media.VideoStreamInfo.StreamIndex.init -> void
+FrameFlow.Media.VideoStreamInfo.VideoStreamInfo(int StreamIndex, string! CodecName, int Width, int Height, double FrameRate) -> void
+FrameFlow.Media.VideoStreamInfo.Width.get -> int
+FrameFlow.Media.VideoStreamInfo.Width.init -> void
+override FrameFlow.Media.HighResolutionTimeProvider.CreateTimer(System.Threading.TimerCallback! callback, object? state, System.TimeSpan dueTime, System.TimeSpan period) -> System.Threading.ITimer!
+static FrameFlow.Media.AudioClockAnchor.None.get -> FrameFlow.Media.AudioClockAnchor
+static FrameFlow.Media.AudioClockInterpolation.Read(FrameFlow.Media.AudioClockAnchor anchor, System.TimeSpan rawPosition, long nowTicks, long ticksPerSecond, System.TimeSpan maxExtrapolation, bool interpolate) -> (FrameFlow.Media.AudioClockAnchor Anchor, System.TimeSpan Position)
+static FrameFlow.Media.AudioClockState.Initial.get -> FrameFlow.Media.AudioClockState
+static FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.Empty.get -> FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot!
+static FrameFlow.Media.Diagnostics.PresentCadenceMetrics.RecordPresent() -> void
+static FrameFlow.Media.Diagnostics.PresenterStallEvaluator.Create(System.TimeSpan stallTimeout, int recoverySamples = 4) -> FrameFlow.Media.Diagnostics.PresenterStallEvaluator
+static FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.Empty.get -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
+static FrameFlow.Media.FrameFlowServiceCollectionExtensions.AddFrameFlow(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<FrameFlow.Media.FrameFlowOptions!>? configure = null) -> FrameFlow.Media.IFrameFlowBuilder!
+static FrameFlow.Media.HardwareDecodeCapabilities.Empty.get -> FrameFlow.Media.HardwareDecodeCapabilities!
+static FrameFlow.Media.HighResolutionTimeProvider.IsSupported.get -> bool
+static FrameFlow.Media.HighResolutionTimeProvider.Preferred.get -> System.TimeProvider!
+static FrameFlow.Media.MediaSource.FromFile(string! path) -> FrameFlow.Media.MediaSource!
+static FrameFlow.Media.MediaSource.FromUri(System.Uri! uri) -> FrameFlow.Media.MediaSource!
+static FrameFlow.Media.Result.Fail(FrameFlow.Media.ErrorCategory category, string! message, System.Exception? inner = null) -> FrameFlow.Media.Result
+static FrameFlow.Media.Result.Fail(FrameFlow.Media.PlaybackError! error) -> FrameFlow.Media.Result
+static FrameFlow.Media.Result.Ok() -> FrameFlow.Media.Result
+static FrameFlow.Media.Result<T>.Fail(FrameFlow.Media.ErrorCategory category, string! message, System.Exception? inner = null) -> FrameFlow.Media.Result<T>
+static FrameFlow.Media.Result<T>.Fail(FrameFlow.Media.PlaybackError! error) -> FrameFlow.Media.Result<T>
+static FrameFlow.Media.Result<T>.Ok(T value) -> FrameFlow.Media.Result<T>
+static FrameFlow.Media.SinkAdapters.AsSinkNode(this FrameFlow.Media.IAudioSink! sink, string! id = "audio-sink") -> FrameFlow.Graph.SinkNode<FrameFlow.Media.PcmAudioBufferRef!>!
+static FrameFlow.Media.SinkAdapters.AsSinkNode(this FrameFlow.Media.IVideoSink! sink, string! id = "video-sink") -> FrameFlow.Graph.SinkNode<FrameFlow.Media.VideoFrameRef!>!
+static FrameFlow.Media.VideoFrameExtensions.CloneCpu(this FrameFlow.Media.IVideoFrame! frame) -> FrameFlow.Media.CpuVideoFrame!
+static readonly FrameFlow.Media.AudioClockInterpolation.DefaultMaxExtrapolation -> System.TimeSpan

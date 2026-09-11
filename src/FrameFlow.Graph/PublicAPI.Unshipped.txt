@@ -1,0 +1,222 @@
+#nullable enable
+FrameFlow.Graph.AudioSampleFormat
+FrameFlow.Graph.AudioSampleFormat.Float32 = 2 -> FrameFlow.Graph.AudioSampleFormat
+FrameFlow.Graph.AudioSampleFormat.Float32Planar = 6 -> FrameFlow.Graph.AudioSampleFormat
+FrameFlow.Graph.AudioSampleFormat.Float64 = 3 -> FrameFlow.Graph.AudioSampleFormat
+FrameFlow.Graph.AudioSampleFormat.Float64Planar = 7 -> FrameFlow.Graph.AudioSampleFormat
+FrameFlow.Graph.AudioSampleFormat.Int16 = 0 -> FrameFlow.Graph.AudioSampleFormat
+FrameFlow.Graph.AudioSampleFormat.Int16Planar = 4 -> FrameFlow.Graph.AudioSampleFormat
+FrameFlow.Graph.AudioSampleFormat.Int32 = 1 -> FrameFlow.Graph.AudioSampleFormat
+FrameFlow.Graph.AudioSampleFormat.Int32Planar = 5 -> FrameFlow.Graph.AudioSampleFormat
+FrameFlow.Graph.AudioSampleFormatExtensions
+FrameFlow.Graph.ClockSubject
+FrameFlow.Graph.ClockSubject.ClockSubject() -> void
+FrameFlow.Graph.ClockSubject.ClockSubject(System.TimeSpan initial) -> void
+FrameFlow.Graph.ClockSubject.Dispose() -> void
+FrameFlow.Graph.ClockSubject.Latest.get -> System.TimeSpan
+FrameFlow.Graph.ClockSubject.Publish(System.TimeSpan value) -> void
+FrameFlow.Graph.ClockSubject.WaitUntilAsync(System.TimeSpan target, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Graph.Consumer<TIn>
+FrameFlow.Graph.CpuTensor<T>
+FrameFlow.Graph.CpuTensor<T>.AddRef() -> FrameFlow.Graph.ITensor!
+FrameFlow.Graph.CpuTensor<T>.ByteCount.get -> long
+FrameFlow.Graph.CpuTensor<T>.Bytes.get -> System.ReadOnlyMemory<byte>
+FrameFlow.Graph.CpuTensor<T>.Dispose() -> void
+FrameFlow.Graph.CpuTensor<T>.Dtype.get -> FrameFlow.Graph.DType
+FrameFlow.Graph.CpuTensor<T>.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Graph.CpuTensor<T>.ReadOnlySpan.get -> System.ReadOnlySpan<T>
+FrameFlow.Graph.CpuTensor<T>.Shape.get -> FrameFlow.Graph.TensorShape
+FrameFlow.Graph.CpuTensor<T>.Span.get -> System.Span<T>
+FrameFlow.Graph.CpuTensorPool
+FrameFlow.Graph.CpuTensorPool.CpuTensorPool(System.Buffers.ArrayPool<byte>? arrayPool = null) -> void
+FrameFlow.Graph.CpuTensorPool.Dispose() -> void
+FrameFlow.Graph.CpuTensorPool.Outstanding.get -> long
+FrameFlow.Graph.CpuTensorPool.Rent<T>(FrameFlow.Graph.TensorShape shape) -> FrameFlow.Graph.CpuTensor<T>!
+FrameFlow.Graph.CpuTensorPool.TotalRented.get -> long
+FrameFlow.Graph.CpuTensorPool.TotalReturned.get -> long
+FrameFlow.Graph.DType
+FrameFlow.Graph.DType.BFloat16 = 2 -> FrameFlow.Graph.DType
+FrameFlow.Graph.DType.Bool = 12 -> FrameFlow.Graph.DType
+FrameFlow.Graph.DType.Float16 = 1 -> FrameFlow.Graph.DType
+FrameFlow.Graph.DType.Float32 = 0 -> FrameFlow.Graph.DType
+FrameFlow.Graph.DType.Float64 = 3 -> FrameFlow.Graph.DType
+FrameFlow.Graph.DType.Int16 = 6 -> FrameFlow.Graph.DType
+FrameFlow.Graph.DType.Int32 = 8 -> FrameFlow.Graph.DType
+FrameFlow.Graph.DType.Int64 = 10 -> FrameFlow.Graph.DType
+FrameFlow.Graph.DType.Int8 = 4 -> FrameFlow.Graph.DType
+FrameFlow.Graph.DType.UInt16 = 7 -> FrameFlow.Graph.DType
+FrameFlow.Graph.DType.UInt32 = 9 -> FrameFlow.Graph.DType
+FrameFlow.Graph.DType.UInt64 = 11 -> FrameFlow.Graph.DType
+FrameFlow.Graph.DType.UInt8 = 5 -> FrameFlow.Graph.DType
+FrameFlow.Graph.DTypeExtensions
+FrameFlow.Graph.EdgeConfig<T>
+FrameFlow.Graph.EdgeConfig<T>.Cloner.get -> System.Func<T!, T!>?
+FrameFlow.Graph.EdgeConfig<T>.Cloner.init -> void
+FrameFlow.Graph.EdgeConfig<T>.EdgeConfig() -> void
+FrameFlow.Graph.EdgeConfig<T>.EdgeConfig(FrameFlow.Graph.EdgeOptions! Options, System.Func<T!, T!>? Cloner) -> void
+FrameFlow.Graph.EdgeConfig<T>.Options.get -> FrameFlow.Graph.EdgeOptions!
+FrameFlow.Graph.EdgeConfig<T>.Options.init -> void
+FrameFlow.Graph.EdgeOptions
+FrameFlow.Graph.EdgeOptions.Capacity.get -> int
+FrameFlow.Graph.EdgeOptions.Capacity.init -> void
+FrameFlow.Graph.EdgeOptions.EdgeOptions(int Capacity = 1, FrameFlow.Graph.Overflow Overflow = FrameFlow.Graph.Overflow.Block) -> void
+FrameFlow.Graph.EdgeOptions.Overflow.get -> FrameFlow.Graph.Overflow
+FrameFlow.Graph.EdgeOptions.Overflow.init -> void
+FrameFlow.Graph.EdgeOptionsExtensions
+FrameFlow.Graph.FailureResponse
+FrameFlow.Graph.FailureResponse.Discard = 1 -> FrameFlow.Graph.FailureResponse
+FrameFlow.Graph.FailureResponse.Propagate = 0 -> FrameFlow.Graph.FailureResponse
+FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Graph.FrameMemoryDomain.Cpu = 0 -> FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Graph.FrameMemoryDomain.Gpu = 1 -> FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Graph.Graph
+FrameFlow.Graph.Graph.Add<T>(T node) -> T
+FrameFlow.Graph.Graph.Connect<T>(FrameFlow.Graph.OutputPort<T!>! from, FrameFlow.Graph.InputPort<T!>! to, FrameFlow.Graph.EdgeConfig<T!> config) -> FrameFlow.Graph.Graph!
+FrameFlow.Graph.Graph.Connect<T>(FrameFlow.Graph.OutputPort<T!>! from, FrameFlow.Graph.InputPort<T!>! to, FrameFlow.Graph.EdgeOptions? options = null) -> FrameFlow.Graph.Graph!
+FrameFlow.Graph.Graph.Graph() -> void
+FrameFlow.Graph.Graph.RunAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+FrameFlow.Graph.GraphChain<T>
+FrameFlow.Graph.GraphChain<T>.Graph.get -> FrameFlow.Graph.Graph!
+FrameFlow.Graph.GraphChain<T>.GraphChain() -> void
+FrameFlow.Graph.GraphChain<T>.Output.get -> FrameFlow.Graph.OutputPort<T!>!
+FrameFlow.Graph.GraphChain<T>.Then<TOut>(FrameFlow.Graph.MultiOperatorNode<T!, TOut!>! next, FrameFlow.Graph.EdgeOptions? options = null) -> FrameFlow.Graph.GraphChain<TOut!>
+FrameFlow.Graph.GraphChain<T>.Then<TOut>(FrameFlow.Graph.OperatorNode<T!, TOut!>! next, FrameFlow.Graph.EdgeOptions? options = null) -> FrameFlow.Graph.GraphChain<TOut!>
+FrameFlow.Graph.GraphChain<T>.To(FrameFlow.Graph.SinkNode<T!>! sink, FrameFlow.Graph.EdgeOptions? options = null) -> void
+FrameFlow.Graph.GraphChain<T>.ToPrimary<TSecondary, TOut>(FrameFlow.Graph.SyncJoinNode<T!, TSecondary!, TOut!>! join, FrameFlow.Graph.EdgeOptions? options = null) -> void
+FrameFlow.Graph.GraphChain<T>.ToSecondary<TPrimary, TOut>(FrameFlow.Graph.SyncJoinNode<TPrimary!, T!, TOut!>! join, FrameFlow.Graph.EdgeOptions? options = null) -> void
+FrameFlow.Graph.GraphChainExtensions
+FrameFlow.Graph.IAudioBuffer
+FrameFlow.Graph.IAudioBuffer.AddRef() -> FrameFlow.Graph.IAudioBuffer!
+FrameFlow.Graph.IAudioBuffer.ChannelCount.get -> int
+FrameFlow.Graph.IAudioBuffer.Duration.get -> System.TimeSpan
+FrameFlow.Graph.IAudioBuffer.FrameCount.get -> int
+FrameFlow.Graph.IAudioBuffer.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Graph.IAudioBuffer.SampleFormat.get -> FrameFlow.Graph.AudioSampleFormat
+FrameFlow.Graph.IAudioBuffer.SampleRate.get -> int
+FrameFlow.Graph.IAudioBuffer.Timestamp.get -> System.TimeSpan
+FrameFlow.Graph.IClockSource
+FrameFlow.Graph.IClockSource.Latest.get -> System.TimeSpan
+FrameFlow.Graph.IClockSource.WaitUntilAsync(System.TimeSpan target, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Graph.ICpuTensor
+FrameFlow.Graph.ICpuTensor.Bytes.get -> System.ReadOnlyMemory<byte>
+FrameFlow.Graph.IFrame
+FrameFlow.Graph.IFrame.Height.get -> int
+FrameFlow.Graph.IFrame.Timestamp.get -> System.TimeSpan
+FrameFlow.Graph.IFrame.Width.get -> int
+FrameFlow.Graph.INode
+FrameFlow.Graph.INode.Id.get -> string!
+FrameFlow.Graph.INode.OnError.get -> FrameFlow.Graph.FailureResponse
+FrameFlow.Graph.InputPort<T>
+FrameFlow.Graph.InputPort<T>.InputPort(FrameFlow.Graph.INode! owner, string! name) -> void
+FrameFlow.Graph.InputPort<T>.Name.get -> string!
+FrameFlow.Graph.InputPort<T>.Owner.get -> FrameFlow.Graph.INode!
+FrameFlow.Graph.IPort
+FrameFlow.Graph.IPort.Name.get -> string!
+FrameFlow.Graph.IPort.Owner.get -> FrameFlow.Graph.INode!
+FrameFlow.Graph.IRefCounted
+FrameFlow.Graph.IRefCounted.AddRef() -> FrameFlow.Graph.IRefCounted!
+FrameFlow.Graph.ISeekableClock
+FrameFlow.Graph.ISeekableClock.SeekBaseline(System.TimeSpan position) -> void
+FrameFlow.Graph.ITensor
+FrameFlow.Graph.ITensor.AddRef() -> FrameFlow.Graph.ITensor!
+FrameFlow.Graph.ITensor.ByteCount.get -> long
+FrameFlow.Graph.ITensor.Dtype.get -> FrameFlow.Graph.DType
+FrameFlow.Graph.ITensor.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Graph.ITensor.Shape.get -> FrameFlow.Graph.TensorShape
+FrameFlow.Graph.MultiOperator<TIn, TOut>
+FrameFlow.Graph.MultiOperatorNode<TIn, TOut>
+FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Body.get -> FrameFlow.Graph.MultiOperator<TIn!, TOut!>!
+FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Id.get -> string!
+FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Input.get -> FrameFlow.Graph.InputPort<TIn!>!
+FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.MultiOperatorNode(string! id, FrameFlow.Graph.MultiOperator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate) -> void
+FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
+FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
+FrameFlow.Graph.Operator<TIn, TOut>
+FrameFlow.Graph.OperatorNode<TIn, TOut>
+FrameFlow.Graph.OperatorNode<TIn, TOut>.Body.get -> FrameFlow.Graph.Operator<TIn!, TOut!>!
+FrameFlow.Graph.OperatorNode<TIn, TOut>.Id.get -> string!
+FrameFlow.Graph.OperatorNode<TIn, TOut>.Input.get -> FrameFlow.Graph.InputPort<TIn!>!
+FrameFlow.Graph.OperatorNode<TIn, TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
+FrameFlow.Graph.OperatorNode<TIn, TOut>.OperatorNode(string! id, FrameFlow.Graph.Operator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate) -> void
+FrameFlow.Graph.OperatorNode<TIn, TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
+FrameFlow.Graph.OutputPort<T>
+FrameFlow.Graph.OutputPort<T>.Name.get -> string!
+FrameFlow.Graph.OutputPort<T>.OutputPort(FrameFlow.Graph.INode! owner, string! name) -> void
+FrameFlow.Graph.OutputPort<T>.Owner.get -> FrameFlow.Graph.INode!
+FrameFlow.Graph.Overflow
+FrameFlow.Graph.Overflow.Block = 0 -> FrameFlow.Graph.Overflow
+FrameFlow.Graph.Overflow.DropIncoming = 1 -> FrameFlow.Graph.Overflow
+FrameFlow.Graph.Overflow.DropOldest = 2 -> FrameFlow.Graph.Overflow
+FrameFlow.Graph.Producer<TOut>
+FrameFlow.Graph.RefBox
+FrameFlow.Graph.RefBox<T>
+FrameFlow.Graph.RefBox<T>.AddRef() -> FrameFlow.Graph.IRefCounted!
+FrameFlow.Graph.RefBox<T>.Dispose() -> void
+FrameFlow.Graph.RefBox<T>.RefBox(T value, System.Action<T>? onLastRelease = null) -> void
+FrameFlow.Graph.RefBox<T>.RefCount.get -> int
+FrameFlow.Graph.RefBox<T>.Value.get -> T
+FrameFlow.Graph.SinkNode<TIn>
+FrameFlow.Graph.SinkNode<TIn>.Body.get -> FrameFlow.Graph.Consumer<TIn!>!
+FrameFlow.Graph.SinkNode<TIn>.Id.get -> string!
+FrameFlow.Graph.SinkNode<TIn>.Input.get -> FrameFlow.Graph.InputPort<TIn!>!
+FrameFlow.Graph.SinkNode<TIn>.OnError.get -> FrameFlow.Graph.FailureResponse
+FrameFlow.Graph.SinkNode<TIn>.SinkNode(string! id, FrameFlow.Graph.Consumer<TIn!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate) -> void
+FrameFlow.Graph.SourceNode<TOut>
+FrameFlow.Graph.SourceNode<TOut>.Body.get -> FrameFlow.Graph.Producer<TOut!>!
+FrameFlow.Graph.SourceNode<TOut>.Cleanup.get -> System.Func<System.Threading.Tasks.ValueTask>?
+FrameFlow.Graph.SourceNode<TOut>.Id.get -> string!
+FrameFlow.Graph.SourceNode<TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
+FrameFlow.Graph.SourceNode<TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
+FrameFlow.Graph.SourceNode<TOut>.SourceNode(string! id, FrameFlow.Graph.Producer<TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, System.Func<System.Threading.Tasks.ValueTask>? cleanup = null) -> void
+FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>
+FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.PrimaryTime.get -> System.Func<TPrimary!, System.TimeSpan>!
+FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.PrimaryTime.init -> void
+FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.SecondaryInterval.get -> System.Func<TSecondary!, (System.TimeSpan From, System.TimeSpan To)>!
+FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.SecondaryInterval.init -> void
+FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.SyncJoinKeys(System.Func<TPrimary!, System.TimeSpan>! PrimaryTime, System.Func<TSecondary!, (System.TimeSpan From, System.TimeSpan To)>! SecondaryInterval) -> void
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Body.get -> FrameFlow.Graph.SyncJoinOperator<TPrimary!, TSecondary!, TOut!>!
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Id.get -> string!
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Keys.get -> FrameFlow.Graph.SyncJoinKeys<TPrimary!, TSecondary!>!
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.MatchPolicy.get -> FrameFlow.Graph.SyncMatch
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.MaxStaleness.get -> System.TimeSpan
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Primary.get -> FrameFlow.Graph.InputPort<TPrimary!>!
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.ResetWindow() -> void
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.RetainedCount.get -> int
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Secondary.get -> FrameFlow.Graph.InputPort<TSecondary!>!
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.SyncJoinNode(string! id, FrameFlow.Graph.SyncJoinOperator<TPrimary!, TSecondary!, TOut!>! body, FrameFlow.Graph.SyncJoinKeys<TPrimary!, TSecondary!>! keys, FrameFlow.Graph.SyncMatch matchPolicy, System.TimeSpan window, System.TimeSpan? maxStaleness = null, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate) -> void
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Window.get -> System.TimeSpan
+FrameFlow.Graph.SyncJoinOperator<TPrimary, TSecondary, TOut>
+FrameFlow.Graph.SyncMatch
+FrameFlow.Graph.SyncMatch.MostRecentAtOrBefore = 1 -> FrameFlow.Graph.SyncMatch
+FrameFlow.Graph.SyncMatch.Within = 0 -> FrameFlow.Graph.SyncMatch
+FrameFlow.Graph.TensorShape
+FrameFlow.Graph.TensorShape.AsSpan() -> System.ReadOnlySpan<int>
+FrameFlow.Graph.TensorShape.ByteCount(FrameFlow.Graph.DType dtype) -> long
+FrameFlow.Graph.TensorShape.ElementCount.get -> long
+FrameFlow.Graph.TensorShape.Equals(FrameFlow.Graph.TensorShape other) -> bool
+FrameFlow.Graph.TensorShape.Rank.get -> int
+FrameFlow.Graph.TensorShape.TensorShape() -> void
+FrameFlow.Graph.TensorShape.TensorShape(params int[]! dims) -> void
+FrameFlow.Graph.TensorShape.TensorShape(System.Collections.Immutable.ImmutableArray<int> dims) -> void
+FrameFlow.Graph.TensorShape.this[int index].get -> int
+override FrameFlow.Graph.CpuTensor<T>.ToString() -> string!
+override FrameFlow.Graph.TensorShape.Equals(object? obj) -> bool
+override FrameFlow.Graph.TensorShape.GetHashCode() -> int
+override FrameFlow.Graph.TensorShape.ToString() -> string!
+static FrameFlow.Graph.AudioSampleFormatExtensions.BytesPerSample(this FrameFlow.Graph.AudioSampleFormat format) -> int
+static FrameFlow.Graph.AudioSampleFormatExtensions.ClrType(this FrameFlow.Graph.AudioSampleFormat format) -> System.Type!
+static FrameFlow.Graph.AudioSampleFormatExtensions.IsPlanar(this FrameFlow.Graph.AudioSampleFormat format) -> bool
+static FrameFlow.Graph.DTypeExtensions.ByteSize(this FrameFlow.Graph.DType dtype) -> int
+static FrameFlow.Graph.DTypeExtensions.ClrType(this FrameFlow.Graph.DType dtype) -> System.Type!
+static FrameFlow.Graph.EdgeOptions.Buffered(int capacity) -> FrameFlow.Graph.EdgeOptions!
+static FrameFlow.Graph.EdgeOptions.Default.get -> FrameFlow.Graph.EdgeOptions!
+static FrameFlow.Graph.EdgeOptions.LatestWins(int capacity = 1) -> FrameFlow.Graph.EdgeOptions!
+static FrameFlow.Graph.EdgeOptionsExtensions.WithCloner<T>(this FrameFlow.Graph.EdgeOptions! options, System.Func<T!, T!>! cloner) -> FrameFlow.Graph.EdgeConfig<T!>
+static FrameFlow.Graph.GraphChainExtensions.Pipeline<T>(this FrameFlow.Graph.Graph! graph, FrameFlow.Graph.OutputPort<T!>! from) -> FrameFlow.Graph.GraphChain<T!>
+static FrameFlow.Graph.GraphChainExtensions.Pipeline<T>(this FrameFlow.Graph.Graph! graph, FrameFlow.Graph.SourceNode<T!>! source) -> FrameFlow.Graph.GraphChain<T!>
+static FrameFlow.Graph.RefBox.Of<T>(T value, System.Action<T>? onLastRelease = null) -> FrameFlow.Graph.RefBox<T>!
+static FrameFlow.Graph.TensorShape.operator !=(FrameFlow.Graph.TensorShape left, FrameFlow.Graph.TensorShape right) -> bool
+static FrameFlow.Graph.TensorShape.operator ==(FrameFlow.Graph.TensorShape left, FrameFlow.Graph.TensorShape right) -> bool

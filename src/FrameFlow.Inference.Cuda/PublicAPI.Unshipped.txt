@@ -1,0 +1,72 @@
+#nullable enable
+FrameFlow.Inference.Cuda.CudaBootstrapInstruction
+FrameFlow.Inference.Cuda.CudaBootstrapInstruction.ActionableStep.get -> string!
+FrameFlow.Inference.Cuda.CudaBootstrapInstruction.ActionableStep.init -> void
+FrameFlow.Inference.Cuda.CudaBootstrapInstruction.Component.get -> FrameFlow.Inference.Cuda.MissingNativeComponent
+FrameFlow.Inference.Cuda.CudaBootstrapInstruction.Component.init -> void
+FrameFlow.Inference.Cuda.CudaBootstrapInstruction.CudaBootstrapInstruction(FrameFlow.Inference.Cuda.MissingNativeComponent Component, string! Description, string! ActionableStep, System.Uri? DocumentationUri) -> void
+FrameFlow.Inference.Cuda.CudaBootstrapInstruction.Description.get -> string!
+FrameFlow.Inference.Cuda.CudaBootstrapInstruction.Description.init -> void
+FrameFlow.Inference.Cuda.CudaBootstrapInstruction.DocumentationUri.get -> System.Uri?
+FrameFlow.Inference.Cuda.CudaBootstrapInstruction.DocumentationUri.init -> void
+FrameFlow.Inference.Cuda.CudaBootstrapper
+FrameFlow.Inference.Cuda.CudaBootstrapper.CudaBootstrapper(Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.Cuda.CudaBootstrapper!>? logger = null, FrameFlow.Inference.Cuda.ICudaInstallInstructionProvider? installInstructionProvider = null) -> void
+FrameFlow.Inference.Cuda.CudaBootstrapper.Probe() -> FrameFlow.Inference.Cuda.CudaBootstrapResult!
+FrameFlow.Inference.Cuda.CudaBootstrapResult
+FrameFlow.Inference.Cuda.CudaBootstrapResult.CudaBootstrapResult(FrameFlow.Inference.Cuda.CudaBootstrapStatus Status, FrameFlow.Inference.Cuda.MissingNativeComponent Missing, System.Collections.Generic.IReadOnlyList<FrameFlow.Inference.Cuda.CudaBootstrapInstruction!>! Instructions, string? DetectedCudaToolkitBin, string? DetectedCudnnBin, string? OrtVersion, int DetectedDeviceCount, System.Exception? DriverFailure, System.Exception? OrtFailure) -> void
+FrameFlow.Inference.Cuda.CudaBootstrapResult.DetectedCudaToolkitBin.get -> string?
+FrameFlow.Inference.Cuda.CudaBootstrapResult.DetectedCudaToolkitBin.init -> void
+FrameFlow.Inference.Cuda.CudaBootstrapResult.DetectedCudnnBin.get -> string?
+FrameFlow.Inference.Cuda.CudaBootstrapResult.DetectedCudnnBin.init -> void
+FrameFlow.Inference.Cuda.CudaBootstrapResult.DetectedDeviceCount.get -> int
+FrameFlow.Inference.Cuda.CudaBootstrapResult.DetectedDeviceCount.init -> void
+FrameFlow.Inference.Cuda.CudaBootstrapResult.DriverFailure.get -> System.Exception?
+FrameFlow.Inference.Cuda.CudaBootstrapResult.DriverFailure.init -> void
+FrameFlow.Inference.Cuda.CudaBootstrapResult.Instructions.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Inference.Cuda.CudaBootstrapInstruction!>!
+FrameFlow.Inference.Cuda.CudaBootstrapResult.Instructions.init -> void
+FrameFlow.Inference.Cuda.CudaBootstrapResult.IsReady.get -> bool
+FrameFlow.Inference.Cuda.CudaBootstrapResult.Missing.get -> FrameFlow.Inference.Cuda.MissingNativeComponent
+FrameFlow.Inference.Cuda.CudaBootstrapResult.Missing.init -> void
+FrameFlow.Inference.Cuda.CudaBootstrapResult.OrtFailure.get -> System.Exception?
+FrameFlow.Inference.Cuda.CudaBootstrapResult.OrtFailure.init -> void
+FrameFlow.Inference.Cuda.CudaBootstrapResult.OrtVersion.get -> string?
+FrameFlow.Inference.Cuda.CudaBootstrapResult.OrtVersion.init -> void
+FrameFlow.Inference.Cuda.CudaBootstrapResult.Status.get -> FrameFlow.Inference.Cuda.CudaBootstrapStatus
+FrameFlow.Inference.Cuda.CudaBootstrapResult.Status.init -> void
+FrameFlow.Inference.Cuda.CudaBootstrapStatus
+FrameFlow.Inference.Cuda.CudaBootstrapStatus.MissingComponents = 1 -> FrameFlow.Inference.Cuda.CudaBootstrapStatus
+FrameFlow.Inference.Cuda.CudaBootstrapStatus.Ready = 0 -> FrameFlow.Inference.Cuda.CudaBootstrapStatus
+FrameFlow.Inference.Cuda.CudaBootstrapStatus.UnsupportedPlatform = 2 -> FrameFlow.Inference.Cuda.CudaBootstrapStatus
+FrameFlow.Inference.Cuda.CudaDllResolver
+FrameFlow.Inference.Cuda.CudaInferenceSession
+FrameFlow.Inference.Cuda.CudaInferenceSession.CreateCudaMemoryInfo() -> Microsoft.ML.OnnxRuntime.OrtMemoryInfo!
+FrameFlow.Inference.Cuda.CudaInferenceSession.CudaInferenceSession(byte[]! modelBytes) -> void
+FrameFlow.Inference.Cuda.CudaInferenceSession.CudaInferenceSession(byte[]! modelBytes, int deviceOrdinal) -> void
+FrameFlow.Inference.Cuda.CudaInferenceSession.CudaInferenceSession(byte[]! modelBytes, int deviceOrdinal, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.Cuda.CudaInferenceSession!>? logger) -> void
+FrameFlow.Inference.Cuda.CudaInferenceSession.CudaInferenceSession(string! modelPath) -> void
+FrameFlow.Inference.Cuda.CudaInferenceSession.CudaInferenceSession(string! modelPath, int deviceOrdinal) -> void
+FrameFlow.Inference.Cuda.CudaInferenceSession.CudaInferenceSession(string! modelPath, int deviceOrdinal, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.Cuda.CudaInferenceSession!>? logger) -> void
+FrameFlow.Inference.Cuda.CudaInferenceSession.DeviceOrdinal.get -> int
+FrameFlow.Inference.Cuda.CudaInferenceSession.Run(System.Collections.Generic.IReadOnlyDictionary<string!, Microsoft.ML.OnnxRuntime.OrtValue!>! inputs, System.Collections.Generic.IReadOnlyDictionary<string!, Microsoft.ML.OnnxRuntime.OrtValue!>! outputs) -> void
+FrameFlow.Inference.Cuda.CudaInstallInstructionProviders
+FrameFlow.Inference.Cuda.ICudaInstallInstructionProvider
+FrameFlow.Inference.Cuda.ICudaInstallInstructionProvider.GetInstruction(FrameFlow.Inference.Cuda.MissingNativeComponent component) -> FrameFlow.Inference.Cuda.CudaBootstrapInstruction!
+FrameFlow.Inference.Cuda.ICudaInstallInstructionProvider.IsSupportedOnCurrentPlatform.get -> bool
+FrameFlow.Inference.Cuda.MissingNativeComponent
+FrameFlow.Inference.Cuda.MissingNativeComponent.CudaToolkit = 2 -> FrameFlow.Inference.Cuda.MissingNativeComponent
+FrameFlow.Inference.Cuda.MissingNativeComponent.CuDnn = 4 -> FrameFlow.Inference.Cuda.MissingNativeComponent
+FrameFlow.Inference.Cuda.MissingNativeComponent.GpuDriver = 1 -> FrameFlow.Inference.Cuda.MissingNativeComponent
+FrameFlow.Inference.Cuda.MissingNativeComponent.None = 0 -> FrameFlow.Inference.Cuda.MissingNativeComponent
+FrameFlow.Inference.Cuda.MissingNativeComponent.OrtCudaProvider = 8 -> FrameFlow.Inference.Cuda.MissingNativeComponent
+FrameFlow.Inference.Cuda.OnnxProbe
+FrameFlow.Inference.Cuda.WindowsCudaInstallInstructionProvider
+FrameFlow.Inference.Cuda.WindowsCudaInstallInstructionProvider.GetInstruction(FrameFlow.Inference.Cuda.MissingNativeComponent component) -> FrameFlow.Inference.Cuda.CudaBootstrapInstruction!
+FrameFlow.Inference.Cuda.WindowsCudaInstallInstructionProvider.IsSupportedOnCurrentPlatform.get -> bool
+FrameFlow.Inference.Cuda.WindowsCudaInstallInstructionProvider.WindowsCudaInstallInstructionProvider() -> void
+static FrameFlow.Inference.Cuda.CudaDllResolver.EnsureLoadable(Microsoft.Extensions.Logging.ILogger? logger = null) -> void
+static FrameFlow.Inference.Cuda.CudaDllResolver.TryFindCudaToolkitBin(Microsoft.Extensions.Logging.ILogger? logger = null) -> string?
+static FrameFlow.Inference.Cuda.CudaDllResolver.TryFindCudnnBin(string? cudaToolkitBin, Microsoft.Extensions.Logging.ILogger? logger = null) -> string?
+static FrameFlow.Inference.Cuda.CudaInstallInstructionProviders.ForCurrentPlatform() -> FrameFlow.Inference.Cuda.ICudaInstallInstructionProvider?
+static FrameFlow.Inference.Cuda.OnnxProbe.CudaExecutionProviderAvailable.get -> bool
+static FrameFlow.Inference.Cuda.OnnxProbe.Failure.get -> System.Exception?
+static FrameFlow.Inference.Cuda.OnnxProbe.OrtVersion.get -> string!
