@@ -214,7 +214,20 @@ public partial class MainWindow : Window
 
             Title = $"FrameFlow Player — {Path.GetFileName(path)}";
 
-            await _player.PlayAsync();
+            // ADR-0069: a refused command comes back as a Result. The catch
+            // below still covers what genuinely throws.
+            var played = await _player.PlayAsync();
+            if (!played.IsSuccess)
+            {
+                _logger.LogError(
+                    played.Error.Inner,
+                    "Playback refused for {File}: {Category}: {Message}",
+                    Path.GetFileName(path),
+                    played.Error.Category,
+                    played.Error.Message
+                );
+                Title = "FrameFlow Player — error";
+            }
         }
         catch (Exception ex)
         {
@@ -320,7 +333,18 @@ public partial class MainWindow : Window
                 _playlistEntries.Count
             );
 
-            await playlist.PlayAsync();
+            var played = await playlist.PlayAsync();
+            if (!played.IsSuccess)
+            {
+                _logger.LogError(
+                    played.Error.Inner,
+                    "Folder playback refused for {Folder}: {Category}: {Message}",
+                    folderPath,
+                    played.Error.Category,
+                    played.Error.Message
+                );
+                Title = "FrameFlow Player — error";
+            }
         }
         catch (Exception ex)
         {

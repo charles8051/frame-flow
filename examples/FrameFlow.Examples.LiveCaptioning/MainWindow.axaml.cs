@@ -527,7 +527,9 @@ public partial class MainWindow : Window
         else
             HideStatus();
 
-        await _player.PlayAsync(_windowCts.Token);
+        var played = await _player.PlayAsync(_windowCts.Token);
+        if (!played.IsSuccess)
+            SetStatus($"⚠ playback refused — {played.Error.Message}", "#d08a8a");
     }
 
     /// <summary>

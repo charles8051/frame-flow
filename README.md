@@ -53,7 +53,9 @@ await using var player = await FrameFlowPlayer.Open(path)
     .WithRepeatMode(RepeatMode.All)
     .BuildPlayerAsync();
 
-await player.PlayAsync();
+var played = await player.PlayAsync();
+if (!played.IsSuccess)
+    Console.Error.WriteLine($"{played.Error.Category}: {played.Error.Message}");
 ```
 
 `MediaPlayer.CreateAsync(...)` is the positional form of the same thing — both
@@ -99,6 +101,29 @@ await using var player = await FrameFlowPlayer.Open(path)
     .WithAudioSink(resolvedAudioSink)
     .BuildAsync(ct);
 ```
+
+### Errors
+
+Transport commands on `IPlaybackController` and `IMediaPlayer` return `Result`
+rather than throwing. A command the state machine refuses — a seek on a
+non-seekable source, a play on a disposed player — is an expected outcome, and
+`Result.Error` carries an `ErrorCategory` alongside the message:
+
+```csharp
+var seeked = await player.SeekAsync(TimeSpan.FromSeconds(30));
+if (!seeked.IsSuccess && seeked.Error.Category == ErrorCategory.InvalidOperation)
+    DisableTheSeekBar();
+```
+
+`IsSuccess` carries `[MemberNotNullWhen(false, nameof(Error))]`, so a failure
+branch reads `Error` without a null check.
+
+Exceptions still mean what exceptions mean. `MediaPlayer.CreateAsync` throws if
+it cannot build a player, argument validation throws, and anything a sink or the
+decode stack raises comes through. Failures that arise mid-playback rather than
+in answer to a command surface on `IMediaPlayer.ErrorOccurred`.
+
+See [ADR-0069](docs/adr/ADR-0069-one-error-model-across-the-playback-stack.md).
 
 ## What works
 

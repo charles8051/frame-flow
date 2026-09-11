@@ -25,11 +25,14 @@ namespace FrameFlow.Avalonia;
 /// Open button + drag-drop alongside this transport bar.
 /// </para>
 /// <para>
-/// Errors from <c>PlayAsync</c> / <c>PauseAsync</c> / <c>SeekAsync</c>
-/// / <c>SetRepeatModeAsync</c> are caught and silently swallowed —
-/// consumers wanting full error visibility should observe
-/// <see cref="IMediaPlayer.StateChanged"/> directly (the controller
-/// transitions to Error on fatal failures regardless).
+/// A refused <c>PlayAsync</c> / <c>PauseAsync</c> / <c>SeekAsync</c> /
+/// <c>SetRepeatModeAsync</c> comes back as a <see cref="Result"/> and is
+/// logged through Avalonia's logger by <c>PlayerCommand</c> (ADR-0069).
+/// The bar has no error affordance of its own: the buttons follow
+/// <see cref="IMediaPlayer.StateChanged"/>, so a refusal leaves them
+/// where the state says they belong. A consumer wanting failures that
+/// arise mid-playback rather than in answer to a command should observe
+/// <see cref="IMediaPlayer.ErrorOccurred"/>.
 /// </para>
 /// </remarks>
 public sealed class FrameFlowTransportBar : StackPanel
@@ -132,7 +135,15 @@ public sealed class FrameFlowTransportBar : StackPanel
         _loopButton.IsChecked = LoopByDefault;
         // Apply the initial loop preference to the freshly-bound player.
         if (LoopByDefault)
-            FireAndForget(() => player.SetRepeatModeAsync(RepeatMode.One));
+            PlayerCommand.FireAndForget(
+                this,
+                nameof(IMediaPlayer.SetRepeatModeAsync),
+                () => player.SetRepeatModeAsync(RepeatMode.One),
+                // Repeat mode has no observable to resynchronise from, so a
+                // refused command would otherwise leave the toggle showing a
+                // mode the player never adopted.
+                _ => _loopButton.IsChecked = false
+            );
 
         UpdateButtonsForState(player.State);
         _stateSubscription = player
@@ -147,55 +158,56 @@ public sealed class FrameFlowTransportBar : StackPanel
         _stopButton.IsEnabled = state is PlaybackState.Playing or PlaybackState.Paused;
     }
 
-    private async void OnPlayClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnPlayClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (MediaPlayer is { } p)
-            try
-            {
-                await p.PlayAsync();
-            }
-            catch { }
+            PlayerCommand.FireAndForget(this, nameof(IMediaPlayer.PlayAsync), () => p.PlayAsync());
     }
 
-    private async void OnPauseClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnPauseClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (MediaPlayer is { } p)
-            try
-            {
-                await p.PauseAsync();
-            }
-            catch { }
+            PlayerCommand.FireAndForget(this, nameof(IMediaPlayer.PauseAsync), () => p.PauseAsync());
     }
 
-    private async void OnStopClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (MediaPlayer is { } p)
-            try
-            {
-                await p.PauseAsync();
-                await p.SeekAsync(TimeSpan.Zero);
-            }
-            catch { }
-    }
-
-    private async void OnLoopClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnStopClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (MediaPlayer is not { } p)
             return;
-        var mode = _loopButton.IsChecked == true ? RepeatMode.One : RepeatMode.Off;
-        try
-        {
-            await p.SetRepeatModeAsync(mode);
-        }
-        catch { }
+
+        // Stop is a pause followed by a rewind. If the pause is refused there
+        // is nothing to rewind to, so its Result is what the caller hears
+        // about. Under the old exception model the throw skipped the seek
+        // implicitly; this says so.
+        PlayerCommand.FireAndForget(
+            this,
+            "Stop",
+            async () =>
+            {
+                var paused = await p.PauseAsync().ConfigureAwait(true);
+                return paused.IsSuccess
+                    ? await p.SeekAsync(TimeSpan.Zero).ConfigureAwait(true)
+                    : paused;
+            }
+        );
     }
 
-    private static async void FireAndForget(Func<Task> work)
+    private void OnLoopClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
-        try
-        {
-            await work();
-        }
-        catch { }
+        if (MediaPlayer is not { } p)
+            return;
+        var requested = _loopButton.IsChecked == true;
+        var mode = requested ? RepeatMode.One : RepeatMode.Off;
+        PlayerCommand.FireAndForget(
+            this,
+            nameof(IMediaPlayer.SetRepeatModeAsync),
+            () => p.SetRepeatModeAsync(mode),
+            // Click already flipped the toggle. Unlike play/pause/stop, whose
+            // buttons follow StateChanged, repeat mode has no observable on
+            // this surface — so nothing would correct the glyph and it would
+            // keep advertising a mode the player refused until the next click.
+            // Setting IsChecked here does not re-raise Click.
+            _ => _loopButton.IsChecked = !requested
+        );
     }
 }

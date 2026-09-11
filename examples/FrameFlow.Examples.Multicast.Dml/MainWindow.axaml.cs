@@ -340,8 +340,19 @@ public partial class MainWindow : Window
             PlayerChrome.MediaPlayer = _player;
 
             StartupClock.Mark("PlayFileAsync: PlayAsync starting");
-            await _player.PlayAsync(_windowCts.Token);
+            var played = await _player.PlayAsync(_windowCts.Token);
             StartupClock.Mark("PlayFileAsync: PlayAsync returned");
+            if (!played.IsSuccess)
+            {
+                _logger?.LogError(
+                    played.Error.Inner,
+                    "PlayAsync refused for {File}: {Category}: {Message}",
+                    Path.GetFileName(filePath),
+                    played.Error.Category,
+                    played.Error.Message
+                );
+                GlobalStatsText.Text = $"Play refused: {played.Error.Message}";
+            }
         }
         catch (Exception ex)
         {
@@ -384,8 +395,21 @@ public partial class MainWindow : Window
     {
         if (_player is null)
             return;
-        var mode = LoopButton.IsChecked == true ? RepeatMode.One : RepeatMode.Off;
-        await _player.SetRepeatModeAsync(mode);
+        var requested = LoopButton.IsChecked == true;
+        var mode = requested ? RepeatMode.One : RepeatMode.Off;
+        var set = await _player.SetRepeatModeAsync(mode);
+        if (!set.IsSuccess)
+        {
+            _logger?.LogWarning(
+                "SetRepeatModeAsync refused: {Category}: {Message}",
+                set.Error.Category,
+                set.Error.Message
+            );
+            // Click already flipped the toggle and repeat mode has no
+            // observable to resynchronise from, so put it back rather than
+            // leave it advertising a mode the player refused.
+            LoopButton.IsChecked = !requested;
+        }
     }
 
     private void OnStatsTick(object? sender, EventArgs e)
