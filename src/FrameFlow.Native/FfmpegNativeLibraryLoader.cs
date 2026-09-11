@@ -38,6 +38,17 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
     // SetDllImportResolver can only be called once per assembly per process lifetime.
     private static bool _resolverRegistered;
 
+    // Set when something else got to that one slot first, so FrameFlow's resolver is not
+    // installed and the names in FFmpegLibraryResolver are not mapped.
+    private static bool _foreignResolverInstalled;
+
+    private const string ForeignResolverMessage =
+        "A DllImportResolver is already registered for the FrameFlow.Native assembly, so "
+        + "FrameFlow's own resolver could not be installed and the FFmpeg library names are "
+        + "not mapped to the packaged files. NativeLibrary.SetDllImportResolver permits one "
+        + "resolver per assembly and they cannot be chained. Remove the other resolver, or "
+        + "resolve the FFmpeg libraries through it.";
+
     // Search directory the registered resolver consults when it has to resolve a library on
     // demand. The resolver cannot capture it at registration time: registration now happens in
     // a module initializer, before any options exist. TryLoad updates it on every attempt, so a
@@ -82,12 +93,29 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
             + "allows: it must be in place before the first P/Invoke in this assembly, and no "
             + "consumer call site can guarantee that. It registers a callback and loads nothing."
     )]
-    internal static void InstallResolver() => EnsureResolverRegistered();
+    internal static void InstallResolver()
+    {
+        // A module initializer that throws makes every later use of this assembly fail with a
+        // TypeInitializationException raised from wherever it was first touched. Swallow the
+        // conflict here and let TryLoad raise it, which is where it surfaced before
+        // registration moved into this method.
+        try
+        {
+            EnsureResolverRegistered();
+        }
+        catch (InvalidOperationException)
+        {
+            // Recorded in _foreignResolverInstalled. TryLoad reports it.
+        }
+    }
 
     private static void EnsureResolverRegistered()
     {
         lock (LoadLock)
         {
+            if (_foreignResolverInstalled)
+                throw new InvalidOperationException(ForeignResolverMessage);
+
             if (_resolverRegistered)
                 return;
 
@@ -100,9 +128,12 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
             }
             catch (InvalidOperationException)
             {
-                // A resolver is already set for this assembly by something other than this type.
-                // SetDllImportResolver permits exactly one per assembly, so retrying is pointless.
-                // Mark it registered and let the existing resolver do the work.
+                // Something else owns this assembly's single resolver slot. FrameFlow's name
+                // mapping is not active and cannot be made active — resolvers cannot be
+                // chained, and retrying throws again. Claiming registration succeeded would
+                // disable packaged avformat/avcodec resolution silently, so say so instead.
+                _foreignResolverInstalled = true;
+                throw new InvalidOperationException(ForeignResolverMessage);
             }
 
             _resolverRegistered = true;
@@ -117,23 +148,35 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
             // If we've already probed successfully, return the cached result.
             if (_cachedProbeResult.HasValue)
             {
-                _logger.LogDebug("FFmpeg libraries already loaded; returning cached probe result.");
-
+                // Unless this caller asked for binaries other than the ones already loaded.
+                // FFmpeg loads once per process, so that request cannot be honoured — and
+                // reporting success would tell the caller it got binaries it did not get.
+                // A warning is not enough on its own: a consumer with no logger configured
+                // would run on an unintended build with nothing to show for it.
                 if (
                     !string.IsNullOrEmpty(searchPath)
                     && !string.Equals(_resolverSearchPath, searchPath, StringComparison.Ordinal)
                 )
                 {
+                    var loadedPath = _resolverSearchPath ?? "(OS loader default)";
+
                     _logger.LogWarning(
                         "FFmpeg libraries were already loaded from '{LoadedPath}'; the requested "
-                            + "search path '{RequestedPath}' will not be used. Libraries load once "
-                            + "per process, so call Initialize() before the first decode call to "
-                            + "control which binaries are loaded.",
-                        _resolverSearchPath ?? "(OS loader default)",
+                            + "search path '{RequestedPath}' cannot be used.",
+                        loadedPath,
                         searchPath
+                    );
+
+                    return FfmpegLoadResult.Failure(
+                        $"FFmpeg libraries are already loaded from '{loadedPath}', so the "
+                            + $"requested path '{searchPath}' cannot be used. Libraries load "
+                            + "once per process: bootstrap before the first decode call to "
+                            + "control which binaries load. The already-loaded libraries stay "
+                            + "usable."
                     );
                 }
 
+                _logger.LogDebug("FFmpeg libraries already loaded; returning cached probe result.");
                 return _cachedProbeResult.Value;
             }
 

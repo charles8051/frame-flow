@@ -115,6 +115,23 @@ This is the part that answers ADR-0002's rejection. The environment failure is n
 by loading implicitly — it is reported in more detail than before, in the same exception
 type any existing `catch` already handles.
 
+### A resolver slot taken by something else is reported, not absorbed
+
+`SetDllImportResolver` permits one resolver per assembly and throws on the second. Resolvers
+cannot be chained, so if something else registers one for `FrameFlow.Native` first — a host
+that loads the assembly and installs its own before any method in it runs — FrameFlow's name
+mapping cannot be installed at all.
+
+The module initializer swallows that conflict, because a module initializer that throws makes
+every later use of the assembly fail with a `TypeInitializationException` raised from wherever
+it was first touched. It records the conflict, and `TryLoad` throws
+`InvalidOperationException` naming it — which is where it surfaced before registration moved,
+since `TryLoad` was the caller of `SetDllImportResolver` then.
+
+The alternative — marking registration successful and letting the other resolver do the work —
+would disable packaged `avformat` resolution silently and turn up later as a host-dependent
+`DllNotFoundException`.
+
 ### What did not change
 
 `Initialize()` is unchanged and still wins when it runs first: it populates the handle
@@ -137,10 +154,11 @@ It remains the only way to select binaries, and the only way to obtain
 
 - **An implicit bootstrap uses default options.** A consumer who sets `CustomFfmpegPath`
   but touches a decoding API before calling `Initialize()` gets bundled or system binaries
-  instead, silently as far as the call goes. `TryLoad` logs a warning naming both paths
-  when it sees a second, different request, but a consumer with no logger configured will
-  not see it. The ordering requirement is unchanged from before this decision; what
-  changed is that getting it wrong no longer throws.
+  instead. FFmpeg loads once per process, so that cannot be undone. The later `Initialize()`
+  returns a failure result naming both paths rather than reporting a success it did not
+  deliver, and the libraries that did load stay usable. A warning alone was the first shape
+  of this and was wrong: a consumer with a null logger would have run on an unintended build
+  with nothing to show for it.
 - **Hardware-decode capability discovery still needs an explicit `Initialize()`.** A
   process that only ever bootstraps implicitly gets `HardwareDecodeCapabilities.Empty`,
   and `HardwareDecodeMode.Auto` falls through to software decode. This matches what such a

@@ -66,6 +66,41 @@ public sealed class ColdStartTests
     }
 
     /// <summary>
+    /// An implicit bootstrap uses default options, so a consumer who wanted particular binaries
+    /// and reached a decode call first does not get them. FFmpeg loads once per process, so that
+    /// cannot be undone — but reporting success would say the requested path was used.
+    /// </summary>
+    /// <remarks>
+    /// Opens a file first rather than relying on another test having done so, since test order
+    /// within the class is not the guarantee this assertion needs.
+    /// </remarks>
+    [RequiresFfmpegAndCorpusFact]
+    public async Task Initialize_AfterImplicitBootstrap_ReportsThatAnotherPathCannotBeUsed()
+    {
+        var path = ColdStartEnvironment.GetCorpusFile(CorpusFile);
+        Assert.NotNull(path);
+
+        var factory = new DemuxSessionFactory();
+        await using (await factory.OpenAsync(MediaSource.FromFile(path))) { }
+
+        var late = new FrameFlowBootstrapper(
+            new FrameFlowNativeOptions
+            {
+                CustomFfmpegPath = Path.Combine(Path.GetTempPath(), "not-the-loaded-ffmpeg"),
+                SkipHardwareProbe = true,
+            }
+        ).Initialize();
+
+        Assert.False(late.IsSuccess);
+        Assert.Contains("already loaded", late.Message, StringComparison.Ordinal);
+
+        // The libraries that did load stay usable — this reports a request that cannot be
+        // honoured, it does not break the process.
+        await using var demux = await factory.OpenAsync(MediaSource.FromFile(path));
+        Assert.NotEmpty(demux.MediaInfo.VideoStreams);
+    }
+
+    /// <summary>
     /// Issue #55: the same defect one layer up. <c>PlaybackController.Create</c> never
     /// bootstraps, unlike <c>MediaPlayer.CreateAsync</c>.
     /// </summary>
