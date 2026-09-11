@@ -4,15 +4,19 @@
 
 Proposed (2026-09-11). Draft pending number assignment.
 
+Revised (2026-09-11) after an independent review of the first draft. That
+review found a defect that would have corrupted this document's own gating
+experiment, plus two false claims about the codebase and a mechanism gap that
+made one rejected alternative unjustifiable. What changed, and why, is recorded
+in *Revision history* at the end — the superseded reasoning is kept because it
+is what three of the open questions were about.
+
 Resolves the substantial half of
 [#108](https://github.com/charles8051/frame-flow/issues/108). The three small
-items in that issue are settled here too, in *Decision §5*, because they are the
-same type's surface and one of them is being declined.
+items in that issue are settled in *Decision §6*.
 
-**Nothing in this document is implemented.** Two of its decisions rest on
-behaviour that has not been measured on this codebase, and both are called out
-as acceptance conditions in *Not settled here*. Read it as a design under
-review.
+**Nothing here is implemented.** Two decisions rest on behaviour not measured on
+this codebase; both are acceptance conditions in *Not settled here*.
 
 ## Context
 
@@ -20,15 +24,15 @@ review.
 
 `IMediaSource` exposes `Uri`, `FilePath` and `IsSeekable`. Nothing else. A
 consumer holding an in-memory clip, an embedded resource, a decrypted blob, or
-a byte range inside a larger archive has exactly one route: write it to a
-temporary file and pass the path.
+a byte range inside a larger archive has one route: write it to a temporary
+file and pass the path.
 
-That route is not merely inelegant. It requires a writable filesystem, it
-doubles the storage for content that is already resident, it leaves the
-plaintext of a decrypted blob on disk, and it makes the caller responsible for
-deleting a file whose lifetime is now coupled to a player they do not own.
+That needs a writable filesystem, doubles storage for content already resident,
+leaves the plaintext of a decrypted blob on disk, and makes the caller
+responsible for deleting a file whose lifetime now belongs to a player they do
+not own.
 
-`IMediaSource`'s own doc comment already acknowledges the gap:
+`IMediaSource`'s own doc comment already names the missing case:
 
 ```csharp
 /// The URI identifying the media resource, or <see langword="null"/> for sources
@@ -36,15 +40,13 @@ deleting a file whose lifetime is now coupled to a player they do not own.
 Uri? Uri { get; }
 ```
 
-The interface was written with streams in mind and the plumbing was never
-built.
+The interface was written with streams in mind. The plumbing was never built.
 
-### The open path is one call site
+### The production open path is one call site
 
-This is the part that makes the change tractable.
-`DemuxSessionFactory.OpenAsync` is the only place in the repository that calls
-`avformat_open_input`, and it reaches the source through a single private
-helper:
+`DemuxSessionFactory.OpenAsync` is the only place in `src/` that calls
+`avformat_open_input`, and it reaches the source through one private helper
+(`DemuxSessionFactory.cs:207-220`):
 
 ```csharp
 private static string ResolveUrl(IMediaSource source)
@@ -60,230 +62,394 @@ private static string ResolveUrl(IMediaSource source)
 }
 ```
 
-A stream source is precisely the case that falls through to the `throw`. The
-seam already exists; it currently has a wall behind it.
+A stream source is exactly the case that falls through to the `throw`. The seam
+exists; it has a wall behind it.
+
+Not the only call site in the *repository*:
+`tests/FrameFlow.Decoding.Tests/BootstrapDiagnosticTests.cs` calls
+`avformat_open_input` directly eleven times. Those tests exercise an open path
+the new branch will not cover, which is worth knowing when this is implemented
+but does not change the shape of the change.
 
 ### `IsSeekable` informs nothing
 
-Worth stating plainly, because a stream design would otherwise assume
-otherwise. A repository-wide search for `IsSeekable` outside its own
-declaration finds:
+A repository-wide search for `IsSeekable` outside its own declaration finds:
 
 | Where | What it does |
 |---|---|
-| `MediaSource.FromFile` | sets it `true` |
-| `MediaSource.FromUri` | sets it `uri.IsFile` |
+| `MediaSource.FromFile` / `FromUri` | sets it |
 | `MediaSourceTests` | asserts the value the factory just set |
 | two test stubs | return `true` |
 
-**No production code reads it.** It is a property that describes the source to
-nobody. `IPlaybackController.SeekAsync` does not consult it, the seek bar does
-not disable itself on it, and `#118` added a latch to the seek bar's scrub
-dispatcher precisely because a refusing source was otherwise indistinguishable
-from a working one.
-
-That is tolerable while every source is a local file. A stream source is the
-first case where non-seekable is both common and knowable up front, so this
-design cannot treat `IsSeekable` as an existing mechanism it plugs into. It has
-to give the property its first consumer.
+**No production code reads it.** `SeekAsync` does not consult it and the seek
+bar does not gate on it. That is tolerable while every source is a local file.
+A stream source is the first case where non-seekable is both common and
+knowable up front, so this design cannot treat the property as a mechanism it
+plugs into.
 
 ### There is no input-side AVIO interop
 
-`FrameFlow.Native` has the output half — `avio_open`, `avio_closep`, and a `pb`
-accessor on the format context — added for the MP4 muxer. It has none of the
-input half: no `avio_alloc_context`, no `av_malloc`/`av_free`, no delegate
-marshalling for read/seek callbacks.
+`FrameFlow.Native` has the output half — `avio_open`, `avio_closep`, and a `Pb`
+accessor on `AvOutputFormatContextAccessor` — added for the MP4 muxer. The
+input-side `AvFormatContextAccessor` is read-only and has no `pb` at all, so a
+writable input accessor is part of this work. There is no
+`avformat_alloc_context`, no `avio_alloc_context`, no `avio_context_free`, no
+`av_malloc`/`av_free`, and no `AVERROR(EINVAL)`/`ENOSYS` constants.
 
-So this is new interop, in the assembly whose stated job is to keep FFmpeg
-pointers and allocation rules isolated behind a small surface
-(ARCHITECTURE.md §4).
+There is also no `[UnmanagedCallersOnly]` or `GetFunctionPointerForDelegate`
+anywhere in `src/`. Managed callbacks invoked from native code are new ground
+for this repository.
 
 ## Decision
 
-### 1. `MediaSource.FromStream`, backed by a custom `AVIOContext`
+### 1. `MediaSource.FromStream`, returning `IMediaSource`
 
 ```csharp
-public static MediaSource FromStream(
+public static IMediaSource FromStream(
     Stream stream,
     string displayName,
     bool leaveOpen = false);
 ```
 
-`IsSeekable` is **not** a parameter. It is read from `stream.CanSeek`, which is
-the authoritative answer and one the caller cannot get wrong.
+It returns `IMediaSource`, not `MediaSource`, and the instance is an
+`internal sealed class StreamMediaSource : IMediaSource` in `FrameFlow.Media`.
+Two reasons, both of which the first draft got wrong by leaving the mechanism
+open (see Alternative C):
 
-`DemuxSessionFactory` gains a branch: a source carrying a stream allocates an
-`AVIOContext` over managed read/seek callbacks and assigns it to the format
-context's `pb` before `avformat_open_input`, which is then passed `null` for
-the URL.
+- `MediaSource` is a `public sealed record`. It cannot be subclassed, and a
+  positional record has value equality — two `FromStream` sources with the same
+  display name and null `Uri`/`FilePath` would compare **equal** while wrapping
+  different streams. A class with reference identity is the correct shape for a
+  handle to a one-shot resource, and it also removes the question of what
+  `with`-cloning such a record would mean.
+- Keeping the stream off the public record is the point of Alternative C's
+  rejection. An internal type is how that is achieved rather than asserted.
 
-### 2. The stream is owned by one thread, and the contract says so
+`FrameFlow.Media` grants `InternalsVisibleTo` to Sdl, Native, Playback,
+Audio.OpenAL and Media.Tests — **not** Decoding. It gains Decoding, so
+`DemuxSessionFactory` can type-test for `StreamMediaSource`.
 
-FFmpeg calls the read callback from whichever thread is driving the demuxer.
-`Stream` is not thread-safe, and neither is `AVFormatContext` —
-`FormatContextHandle` already documents the latter:
+`IsSeekable` is read from `stream.CanSeek`. It is not a parameter: that is the
+authoritative answer and one the caller cannot get wrong.
 
-> The underlying `AVFormatContext` operations are not thread-safe; callers must
-> ensure that only one thread operates on this handle at a time.
+### 2. The open sequence
 
-The stream inherits that rule rather than getting a new one. `FromStream`'s
-documentation states that the stream is consumed by the demux thread and must
-not be touched by the caller after the source is handed to a player. No
-locking is added inside the callback: a lock there would sit on the packet-read
-path, and the invariant it would protect is one the caller can simply keep.
+The first draft said "assign `pb` before `avformat_open_input`", which is not
+executable — there is no context yet to assign it on.
 
-### 3. Non-seekable is a first-class outcome, not a failure
+```
+ctx = avformat_alloc_context()
+ctx->pb = avio_alloc_context(av_malloc(size), size, 0, opaque, read, seek_or_null, NULL)
+avformat_open_input(&ctx, url: NULL, NULL, NULL)
+```
 
-A forward-only stream is the expected case for the motivating scenarios, so it
-gets a designed path rather than an error:
+`avformat_open_input` sets `AVFMT_FLAG_CUSTOM_IO` itself when `pb` is non-NULL
+on entry, and `avformat_close_input` reads that flag to skip closing `pb`. That
+is what makes §4's teardown safe rather than a double free, and it is stated
+here because every line of §4 depends on it.
 
-- The seek callback returns `AVERROR(EINVAL)` when `stream.CanSeek` is false.
-  FFmpeg treats that as "this input cannot seek" and copes.
-- `MediaInfo` gains a `CanSeek` flag, read from the opened format context
-  rather than from the source's claim, because a seekable stream in a container
-  that cannot seek is still not seekable.
-- `IPlaybackController.SeekAsync` consults it and returns
-  `Result.Fail(ErrorCategory.InvalidOperation, ...)` rather than attempting the
-  seek. This is `IsSeekable`'s first real consumer, and it arrives as a
-  `Result` because ADR-0069 made that the answer to a refused command.
-- `FrameFlowSeekBar` disables itself when the bound player reports it, which
-  replaces the latch `#118` added with the signal that latch was approximating.
+`FFAvFormat.avformat_open_input` currently declares a non-nullable
+`string url`; it needs `string?`, as the mux-side declarations already use.
 
-### 4. Buffer and lifetime rules, written down once
+### 3. Seekability: two properties, two jobs
 
-The three ways this leaks or crashes, and the rule for each:
+The first draft claimed `MediaInfo.CanSeek` was "`IsSeekable`'s first
+consumer", which is a contradiction — a new property cannot be a consumer of
+the old one. Both exist, and they answer different questions:
 
-**The callback delegates must outlive the context.** FFmpeg stores raw function
-pointers. A `GCHandle` pinned in the session's state, released in the same
-`Dispose` that closes the format context, and never a lambda captured into a
-local.
+| Property | Question | Read by |
+|---|---|---|
+| `IMediaSource.IsSeekable` | can the *source* produce bytes out of order? | the AVIO setup in §2 |
+| `MediaInfo.CanSeek` | can the *opened container* seek? | `SeekAsync`, the seek bar |
 
-**The AVIO buffer is FFmpeg's, not ours.** It is allocated with `av_malloc`,
-FFmpeg may reallocate it, and the pointer to free at teardown is
-`avioContext->buffer` as it stands then — not the pointer originally passed in.
-Freeing the original is a heap corruption that will not reproduce on a small
-file.
+`IsSeekable` decides **whether a seek callback is installed at all**. This is
+the correction that matters most:
 
-**Teardown order is fixed**: `avformat_close_input` first, then `av_free` the
-AVIO buffer, then `av_free` the AVIO context, then release the `GCHandle`, then
-dispose the stream if `leaveOpen` is false. A `SafeHandle` per resource, in the
-shape `FormatContextHandle` already establishes, rather than a `finally` block
-that has to get five steps right.
+> FFmpeg derives seekability from whether the seek function pointer is non-NULL,
+> not from what it returns. `avio_alloc_context` sets
+> `s->seekable = seek ? AVIO_SEEKABLE_NORMAL : 0`, and the header says the seek
+> callback "may be NULL".
 
-### 5. The rest of #108
+So the first draft's "return `AVERROR(EINVAL)` when `CanSeek` is false" does
+not make the input non-seekable. With a callback installed FFmpeg believes it
+*is* seekable, takes the seekable demuxer paths, and never engages
+`ffio_ensure_seekback` — the probe buffering that makes forward-only inputs
+work at all, and which is gated on `!seekable`. Pass NULL.
 
-**`FromUri(Uri uri, bool? isSeekable = null)`** — adopted. The current
-`IsSeekable: uri.IsFile` reports a range-serving HTTP origin as non-seekable,
-and once §3 gives the property teeth that becomes a seek bar disabled on a
-source that seeks fine. `null` keeps the current inference.
+`MediaInfo.CanSeek` is then read back from the opened context (`pb->seekable`
+plus the demuxer's own capability), because a seekable stream in a container
+that cannot seek is still not seekable.
+
+### 4. Refusing a seek, everywhere seeks are issued
+
+`MediaInfo.CanSeek` gates the seek path, and the gate cannot live only on
+`IPlaybackController.SeekAsync`. Two internal paths bypass that method:
+
+- **Loop rewind.** `PlaybackControllerCore.RunLoopRewindAsync` calls
+  `StartSeekRunner(_session, TimeSpan.Zero, loopRewind: true)` directly
+  (`PlaybackControllerCore.cs:944`). A non-seekable stream under
+  `RepeatMode.One` would attempt the rewind and fail below the guard — the
+  outcome the guard exists to prevent.
+- **Playlist replay.** `PlaylistCoordinator.DecideNext` returns `Replay` for a
+  single-clip `RepeatMode.All` wrap, serviced by `RewindToStartAsync`. Under
+  `RepeatMode.All` the coordinator copies played items into `_loopBuffer` and
+  replays the **same `IMediaSource` instances**, which for a stream means
+  reopening one already consumed to EOF. The coordinator's own doc comment
+  calls the single-clip loop "the canonical signage attract/panel loop", so
+  this is the common case.
+
+The guard goes on the session seek entry point that both routes reach, and
+`SeekAsync` surfaces it as `Result.Fail(ErrorCategory.InvalidOperation, ...)`
+per ADR-0069.
+
+Whether a non-seekable source should additionally be *refused at load* under a
+rewinding repeat mode, rather than failing at the first loop boundary, is in
+*Not settled here*.
+
+### 5. Callback and lifetime rules
+
+The ways this corrupts, leaks or hangs, and the rule for each. These are
+decisions, not implementation detail — the first draft deferred the exception
+rule to a test, which was wrong because with `[UnmanagedCallersOnly]` an
+escaping exception is a process fail-fast that no test can observe.
+
+**Every callback body is a catch-all.** It returns an AVERROR and stashes the
+exception in the session state for rethrow after `avformat_open_input` or
+`av_read_frame` returns. Nothing propagates through FFmpeg's stack frames.
+
+**Read: `n == 0` maps to `AVERROR_EOF`, never 0.** The FFmpeg 7.1 header is
+explicit: *"For stream protocols, must never return 0 but rather a proper
+AVERROR code."* Returning 0 is read as "no data yet" and spins. The constant
+already exists as `FFAvUtil.AvErrorEof`. `Stream.Read` may also return fewer
+bytes than requested, which is legal and must not be treated as EOF.
+
+**Seek: handle `AVSEEK_SIZE`.** `whence` may be `AVSEEK_SIZE` (0x10000),
+optionally OR'd with `AVSEEK_FORCE` (0x20000). Both mov/mp4 and Matroska call
+`avio_size()`, which routes through it. Mask `AVSEEK_FORCE`, answer
+`AVSEEK_SIZE` with `Length` or a negative AVERROR when unknown, and only then
+map SET/CUR/END. Casting `whence` straight to `SeekOrigin` yields
+`(SeekOrigin)0x10000` and an `ArgumentException` inside a native frame.
+
+**The delegates are reachable, not pinned.** A delegate cannot be pinned —
+`GCHandle.Alloc(del, GCHandleType.Pinned)` throws on a non-blittable type. A
+normal strong `GCHandle` plus `Marshal.GetFunctionPointerForDelegate`, or
+`[UnmanagedCallersOnly]` statics. Released in the same `Dispose` that closes
+the context.
+
+**The `opaque` pointer is how a static callback finds its stream.** With
+`[UnmanagedCallersOnly]` there is no other route. It carries a `GCHandle` to
+the session state.
+
+**The AVIO buffer is FFmpeg's.** Header, verbatim: *"It may be freed and
+replaced with a new buffer by libavformat. AVIOContext.buffer holds the buffer
+currently in use, which must be later freed with av_free()."* Free
+`avioContext->buffer` as it stands at teardown, not the pointer originally
+passed. The realloc is not hypothetical here: `ffio_ensure_seekback` is what
+does it, on exactly the forward-only probe path §3 designs for.
+
+**The context is freed with `avio_context_free`**, not `av_free`.
+`avio_alloc_context` allocates an internal `FFIOContext` with the
+`AVIOContext` as its first member; `av_free` happens to work today only because
+`avio_context_free` is currently `av_freep`. That is the class of assumption
+this section exists to remove.
+
+**Two teardown orders, because failure is not success reversed.**
+
+| | Success | `avformat_open_input` failed |
+|---|---|---|
+| 1 | `avformat_close_input` | *nothing* — it freed the context already |
+| 2 | `av_free(avio->buffer)` | `av_free(avio->buffer)` |
+| 3 | `avio_context_free(&avio)` | `avio_context_free(&avio)` |
+| 4 | release `GCHandle` | release `GCHandle` |
+| 5 | dispose stream unless `leaveOpen` | dispose stream unless `leaveOpen` |
+
+The header states that *"a user-supplied AVFormatContext will be freed on
+failure"*, so calling `avformat_close_input` on that path is a double free,
+while the AVIO context, its buffer, the handle and the stream are all still
+ours. A malformed stream is the most likely failure, so this is the path that
+leaks in production. `find_stream_info` failure is the success column with
+`formatCtx.Dispose()` in row 1 — today that call
+(`DemuxSessionFactory.cs:139-152`) leaves the AVIO context and buffer behind.
+
+A `SafeHandle` per resource, in the shape `FormatContextHandle` already
+establishes, rather than a `finally` that has to get five steps right.
+
+### 6. Ownership, cancellation, and the stream's position
+
+**One thread.** FFmpeg calls back from whichever thread drives the demuxer.
+`Stream` is not thread-safe and neither is `AVFormatContext` —
+`FormatContextHandle` already documents the latter
+(`FormatContextHandle.cs:24-26`). The stream inherits that rule. No lock in the
+callback: it would sit on the packet-read path to protect an invariant the
+caller can simply keep.
+
+**The caller gets the stream back at disposal.** §5 row 5 is the point at which
+it is the caller's again. `leaveOpen: false` is the default because the common
+case is a `MemoryStream` the caller built for this purpose; a caller who owns
+the stream beyond the player passes `true`.
+
+**Cancellation needs `AVIOInterruptCB`.** ADR-0013 is Accepted and says a
+consumer token on `OpenAsync` means "abort this operation", illustrated with a
+timeout on an open. `DemuxSessionFactory.OpenAsync` checks the token once and
+then blocks inside `avformat_open_input` — which, with custom IO, blocks inside
+a managed read callback with no token in scope. FFmpeg's answer is
+`AVFormatContext.interrupt_callback`, polled during blocking IO; it is the
+bridge for the token and it is part of this work, not a follow-up.
+
+**The stream is read from its current position, and offsets are absolute from
+it.** FFmpeg seeks absolutely from byte 0 of what it is given. A stream handed
+over mid-way must therefore have its origin rebased in the callbacks, or the
+"byte range inside a larger archive" scenario silently reads the wrong bytes.
+`FromStream` records the position at construction and treats it as byte 0.
+
+### 7. The rest of #108
+
+**`FromUri(Uri uri, bool? isSeekable = null)`** — adopted. `IsSeekable:
+uri.IsFile` reports a range-serving HTTP origin as non-seekable; once §3 gives
+the property a consumer that becomes a real consequence. `null` keeps the
+current inference.
 
 **XML docs on `MediaSource`, `IMediaSource`, `MediaInfo`, `VideoStreamInfo`,
-`AudioStreamInfo`** — adopted. These are the first types a consumer touches and
-none has a doc comment.
+`AudioStreamInfo`** — adopted. None has a doc comment, and they are the first
+types a consumer touches.
 
-**`implicit operator MediaSource(string)`** — **declined.** A `string` that
-looks like a path and a `string` that is a URL are indistinguishable at the
-call site, and the conversion would silently route both through `FromFile`,
-turning `player.Open("https://example.com/a.mp4")` into a path relative to the
-working directory. The saving is the eight characters of `FromFile`, and the
-cost is a wrong answer that looks like a missing file. `FrameFlowPlayer.Open`
-takes the shortcut internally today; it should call `MediaSource.FromFile`
-explicitly rather than have the language do it invisibly.
+**`implicit operator MediaSource(string)`** — **declined.** A `string` that is
+a path and a `string` that is a URL are indistinguishable at the call site, and
+the conversion would route both through `FromFile`, turning
+`Open("https://example.com/a.mp4")` into a path relative to the working
+directory. The saving is eight characters; the cost is a wrong answer that
+looks like a missing file.
 
 ## Alternatives considered
 
 ### A. Spill to a temporary file inside `FromStream`
 
-Keep the public shape, copy the stream to a temp file, open the path, delete on
-dispose. No interop at all.
+Copy the stream to a temp file, open the path, delete on dispose. No interop.
 
-Rejected. It is the workaround the issue exists to remove, moved behind a nicer
-name — it still needs a writable filesystem, still doubles storage, and still
-writes a decrypted blob to disk. It is also worse than the caller doing it,
-because the caller at least knows a file appeared.
-
-Worth keeping in mind as a fallback if the probing condition in *Not settled
-here* fails for forward-only streams, since a spill makes any stream seekable.
+Rejected. It is the workaround the issue exists to remove, behind a nicer name.
+Retained as the fallback if acceptance condition 1 fails, since a spill makes
+any stream seekable.
 
 ### B. A named pipe or loopback socket
 
-Write the stream into a pipe and hand FFmpeg a `pipe:` URL. No custom AVIO, and
-FFmpeg's own protocol handler does the work.
+Rejected. Never seekable, so it forecloses §3's seekable case entirely; costs a
+thread and a full copy of every byte; and a Windows named pipe versus a Unix
+FIFO is a second portability surface.
 
-Rejected. It is never seekable, so it forecloses §3's seekable-stream case
-entirely; it costs a thread and a full copy of every byte; and the platform
-differences between a Windows named pipe and a Unix FIFO are a second
-portability surface for a library that already carries one.
-
-### C. Extend `IMediaSource` with the stream
+### C. Put the stream on `IMediaSource`
 
 Add `Stream? Content { get; }` beside `Uri` and `FilePath`.
 
-Rejected as the *public* shape, though something like it is needed internally.
-`IMediaSource` is a description of where media lives; a `Stream` is a live,
-stateful, disposable resource with thread affinity, and putting one on a
-record that consumers construct invites them to reuse a source across two
-players and get a half-consumed stream. The stream should be reachable only
-through the factory that understands its lifetime. The internal mechanism is an
-implementation question this ADR does not settle.
+Rejected as the **public** shape. `IMediaSource` describes where media lives; a
+`Stream` is a live, stateful, disposable resource with thread affinity, and
+putting one on a record consumers construct invites reusing a source across two
+players and getting a half-consumed stream.
+
+The first draft stopped there and called the internal mechanism "an
+implementation question this ADR does not settle". That was not a tenable
+position: rejecting C is only valid if some other route exists, and none of the
+obvious three did — `OpenAsync` takes `IMediaSource`, `MediaSource` is a sealed
+record, and `FrameFlow.Media` did not grant `InternalsVisibleTo` to Decoding.
+§1 settles it.
 
 ## Consequences
 
 ### Good
 
-- The motivating scenarios work without a filesystem: in-memory clips, embedded
-  resources, decrypted blobs, byte ranges inside an archive.
-- `IsSeekable` acquires a consumer, and the seek bar stops guessing.
-- `SeekAsync` on a non-seekable source becomes a refusal with a category rather
-  than an attempt that fails somewhere below.
-- `FrameFlow.Native` gains input-side AVIO interop, which is also the
-  prerequisite for any future custom protocol.
+- The motivating scenarios work without a filesystem.
+- `IsSeekable` acquires its first real consumer (§3), and `SeekAsync` gains a
+  structured refusal instead of an attempt that fails below.
+- `FrameFlow.Native` gains input-side AVIO interop, the prerequisite for any
+  future custom protocol.
+- `interrupt_callback` makes `OpenAsync` honour its token for the first time,
+  which ADR-0013 already promised.
 
 ### Bad
 
-- New unmanaged-callback interop on the packet-read path. It is the highest-risk
-  kind of code in this repository: a lifetime mistake produces heap corruption
-  at a distance, not an exception.
-- A blocking read inside the callback blocks the demux thread. For a
-  `MemoryStream` that is free; for a network-backed `Stream` it is a stall the
-  pacing chain cannot see or account for. The design does not address this, and
-  it is the strongest argument for restricting the first cut to streams that are
-  already resident.
-- `MediaInfo` gains a member, which is a breaking change for anyone
-  constructing one. Pre-1.0, and it goes in
-  [docs/BREAKING-CHANGES.md](../BREAKING-CHANGES.md) like the rest.
+- New unmanaged-callback interop on the packet-read path — the highest-risk code
+  in this repository. A lifetime mistake is heap corruption at a distance.
+- A blocking read blocks the demux thread. Free for a `MemoryStream`; for a
+  network-backed stream a stall that begins at open, before any pacing exists to
+  notice it. `interrupt_callback` makes it cancellable, not fast.
+- `FromStream` accepts any `Stream`, including ones whose only real
+  implementation is `ReadAsync`. A synchronous callback means sync-over-async on
+  the demux thread.
+- `MediaInfo` gains a member: breaking for anyone constructing one. It also
+  moves the public API surface recorded in `PublicAPI.Unshipped.txt`, so
+  `FromStream`, the `FromUri` overload and `MediaInfo.CanSeek` each need an
+  entry, and the break goes in
+  [docs/BREAKING-CHANGES.md](../BREAKING-CHANGES.md).
 
 ### Neutral
 
-- `#118`'s seek-bar latch becomes redundant once §3 lands. It should be removed
-  then rather than left as a second mechanism for the same signal.
+- **The seek-bar latch stays.** The first draft said §3 makes it redundant. It
+  does not: `FrameFlowSeekBar`'s latch de-duplicates refusal *reports* across
+  every `ErrorCategory`, not only non-seekability, and carries a
+  `_playerGeneration` guard for rebinding. Removing it would restore the warning
+  burst for wrong-state refusals, cancelled seeks and source errors during a
+  scrub. Disabling the bar on `CanSeek` removes one cause of refusals, not the
+  latch's job.
 
 ## Not settled here
 
-Two acceptance conditions. Neither has been measured on this codebase, and the
-decision should not be accepted until both are.
+Two acceptance conditions, neither measured. Do not accept this without both.
 
-1. **Probing a forward-only stream.** `avformat_find_stream_info` reads ahead to
-   identify streams, and on a seekable input it rewinds afterwards. FFmpeg
-   buffers probe data for non-seekable inputs, but how much, and whether it is
-   enough for the containers FrameFlow cares about, is not something this
-   document knows. The condition: open a fragmented MP4 and a Matroska file over
-   a `CanSeek == false` wrapper and confirm `MediaInfo` comes back complete. If
-   it does not, alternative A returns as the fallback for that case.
+1. **Probing a forward-only stream.** Open a fragmented MP4 and a Matroska file
+   over a `CanSeek == false` wrapper — **with no seek callback installed**, per
+   §3 — and confirm `MediaInfo` comes back complete. Running this the way the
+   first draft described would have measured a configuration in which FFmpeg's
+   probe buffering can never engage, produced a failure, and concluded that
+   forward-only streams are unsupportable. If it fails when run correctly,
+   Alternative A returns as the fallback for that case.
+2. **Teardown under a mid-read failure.** A test that faults the read callback
+   and asserts no leak of buffer, context or `GCHandle`, against both columns of
+   §5's table. §5 now fixes the exception rule, so this measures the rules
+   rather than discovering them.
 
-2. **Teardown under a mid-read failure.** The rules in §4 are correct as written
-   and the ordering is the part that goes wrong in practice. The condition: a
-   test that throws from inside the read callback and asserts the session tears
-   down without leaking the buffer, the context or the `GCHandle` — which means
-   deciding first how an exception crossing the unmanaged boundary is caught,
-   since letting one propagate through FFmpeg's stack frames is undefined.
+Open, and deliberately not decided:
 
-Also open, and deliberately not decided:
-
-- **Whether the first cut restricts itself to `CanSeek` streams.** That would
-  sidestep condition 1 entirely and cover the in-memory cases, which are the
-  motivating ones. It would also mean `FromStream` initially rejects exactly the
-  forward-only sources §3 designs for, so the two sections need reconciling one
-  way or the other before this is accepted.
+- **Whether a non-seekable source is refused at `LoadAsync` under a rewinding
+  repeat mode**, or allowed to fail at the first loop boundary. Refusing is
+  honest and breaks the signage loop for stream sources; allowing it defers the
+  failure to a point where the cause is less obvious. §4 guards the seek either
+  way.
 - **Whether `MediaInfo.CanSeek` is the right home**, versus a capability on the
   controller alongside `IsActivelyPresenting`.
+- **Whether the first cut restricts itself to `CanSeek` streams.** This would
+  sidestep condition 1 and cover the in-memory cases, which are the motivating
+  ones, at the cost of rejecting the forward-only sources §3 designs for. The
+  first draft floated this while §3 designed the opposite; the tension is real
+  and is a scoping call, not a design one.
+- **`ADR-0048` step 4.** `DemuxSession.SeekAsync` pairs `av_seek_frame` with
+  `avformat_flush`, whose documentation notes it does not flush the AVIOContext.
+  The demuxer's internal `avio_seek` is believed to reset the AVIO buffer, so
+  this is likely benign — but ADR-0048's audit table has a row for
+  `DemuxSession` libavformat read-ahead whose meaning a custom AVIO changes, and
+  its stated rule is that a new session-lifetime stateful component updates that
+  table in the same commit.
+- **Duration on a forward-only stream.** `DemuxSession.BuildMediaInfo` maps a
+  non-positive `fmtCtx.duration` to `TimeSpan.Zero`. What the seek bar's
+  `Maximum`, the position label and the loop-stall watchdog do with a zero
+  duration is unexamined.
+
+## Revision history
+
+**2026-09-11, after independent review.** The review is the reason this document
+is worth more than the first draft, and three findings changed the decision
+rather than the prose:
+
+- §3's seek callback returning `AVERROR(EINVAL)` was the wrong mechanism.
+  FFmpeg reads seekability off the pointer, not the return, so the draft both
+  described an input that was still seekable and would have invalidated its own
+  acceptance condition 1 — producing a failure and, per the draft's own
+  fallback rule, reinstating the temp-file spill the issue exists to remove.
+- Alternative C's rejection had no surviving mechanism behind it. §1 now
+  settles the internal shape, which also resolves the record-equality problem
+  the draft never noticed.
+- §4's guard sat only on `IPlaybackController.SeekAsync`, which loop rewind and
+  playlist replay both bypass.
+
+Corrected factual claims: `avformat_open_input` is called in tests as well as
+production; `FrameFlowPlayer.Open` already calls `MediaSource.FromFile`, so §7's
+decline no longer prescribes something already true; the seek-bar latch is not
+made redundant by §3.

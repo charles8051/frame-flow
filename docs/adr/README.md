@@ -184,7 +184,12 @@ land.
   in `src/` reads that property today — and declines the implicit `string` conversion #108
   also asks for, because a path and a URL are indistinguishable at the call site. Two
   acceptance conditions stand, neither measured: whether a forward-only stream probes
-  completely, and how teardown behaves when the read callback throws.
+  completely, and how teardown behaves when the read callback throws. Revised once after
+  an independent review, which caught that the draft's way of marking a stream
+  non-seekable did not work — FFmpeg reads seekability off whether the seek pointer is
+  non-NULL, so the draft would have run its own gating experiment against a configuration
+  where the mechanism under test could not engage. Its Revision history keeps the
+  superseded reasoning, which is what three of the open questions are about.
 - [A video-only pipeline that falls behind skips decode work](lateness-driven-decode-skip.md) —
   it stays realtime by shrinking decode cost under a lateness-driven discard level,
   rather than losing time. Implements the drop responsibility ADR-0003 already assigns
