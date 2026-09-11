@@ -487,6 +487,23 @@ Open, and deliberately not decided:
   way.
 - **Whether `MediaInfo.CanSeek` is the right home**, versus a capability on the
   controller alongside `IsActivelyPresenting`.
+- **Whether this should ship at all before an async read path exists.** The
+  strongest objection to this design, raised three times in review and not
+  answered by anything above. §1's bound is documentation; a caller who
+  ignores it hangs playback *and* teardown, and no mechanism on either side
+  can interrupt a synchronous `Stream.Read`. The watchdog makes that
+  diagnosable, not survivable, and an allow-list of `Stream` subclasses does
+  not work — a `FileStream` over a dead SMB share blocks like a socket.
+
+  The case for shipping: the motivating scenarios are `MemoryStream`-shaped,
+  where reads cannot block, and deferring leaves them on the temp-file
+  workaround indefinitely. The case against: an unenforceable contract on a
+  public API eventually meets a caller who did not read it, and "the process
+  will not exit" is an expensive way to learn.
+
+  This is a judgement about acceptable risk on a public surface, which is the
+  maintainer's to make rather than this document's. It is stated here so the
+  decision is taken deliberately and not by default.
 - **A tighter derivation for `MediaInfo.CanSeek`.** §3 settles for
   `pb->seekable != 0`: reliable as a negative, advisory as a positive. A better
   answer probably means probing — attempting a seek to the current position
