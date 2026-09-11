@@ -34,7 +34,7 @@ public sealed class VideoSinkMeters
     internal Counter<long> FramesDropped { get; }
 
     /// <param name="meterName">
-    /// Meter name to scrape with, e.g. <c>FrameFlow.Sdl.Sink</c>.
+    /// Meter name to scrape with, e.g. <c>FrameFlow.SDL.Sink</c>.
     /// </param>
     /// <param name="metricPrefix">
     /// Instrument-name prefix, e.g. <c>frameflow.sdl.sink</c>. The two counters append

@@ -31,8 +31,13 @@ namespace FrameFlow.Sdl;
 /// </remarks>
 public sealed unsafe partial class SdlVideoSink : IVideoSink
 {
+    // The meter name keeps the ALL-CAPS spelling the namespace just lost, and
+    // deliberately. A meter name is a runtime identity that exporters, views
+    // and dashboards filter on, and renaming it stops them collecting with no
+    // error to notice — a silent break where the namespace rename is a compile
+    // error. The two are not the same contract and do not have to agree.
     private static readonly VideoSinkMeters Meters = new(
-        "FrameFlow.Sdl.Sink",
+        "FrameFlow.SDL.Sink",
         "frameflow.sdl.sink",
         nameof(SdlVideoSink)
     );
