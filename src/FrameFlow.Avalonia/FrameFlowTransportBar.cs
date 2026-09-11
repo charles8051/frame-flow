@@ -24,11 +24,14 @@ namespace FrameFlow.Avalonia;
 /// Open button + drag-drop alongside this transport bar.
 /// </para>
 /// <para>
-/// Errors from <c>PlayAsync</c> / <c>PauseAsync</c> / <c>SeekAsync</c>
-/// / <c>SetRepeatModeAsync</c> are caught and silently swallowed —
-/// consumers wanting full error visibility should observe
-/// <see cref="IMediaPlayer.StateChanged"/> directly (the controller
-/// transitions to Error on fatal failures regardless).
+/// A refused <c>PlayAsync</c> / <c>PauseAsync</c> / <c>SeekAsync</c> /
+/// <c>SetRepeatModeAsync</c> comes back as a <see cref="Result"/> and is
+/// logged through Avalonia's logger by <c>PlayerCommand</c> (ADR-0069).
+/// The bar has no error affordance of its own: the buttons follow
+/// <see cref="IMediaPlayer.StateChanged"/>, so a refusal leaves them
+/// where the state says they belong. A consumer wanting failures that
+/// arise mid-playback rather than in answer to a command should observe
+/// <see cref="IMediaPlayer.ErrorOccurred"/>.
 /// </para>
 /// </remarks>
 public sealed class FrameFlowTransportBar : StackPanel
@@ -134,7 +137,11 @@ public sealed class FrameFlowTransportBar : StackPanel
             PlayerCommand.FireAndForget(
                 this,
                 nameof(IMediaPlayer.SetRepeatModeAsync),
-                () => player.SetRepeatModeAsync(RepeatMode.One)
+                () => player.SetRepeatModeAsync(RepeatMode.One),
+                // Repeat mode has no observable to resynchronise from, so a
+                // refused command would otherwise leave the toggle showing a
+                // mode the player never adopted.
+                _ => _loopButton.IsChecked = false
             );
 
         UpdateButtonsForState(player.State);
@@ -188,11 +195,18 @@ public sealed class FrameFlowTransportBar : StackPanel
     {
         if (MediaPlayer is not { } p)
             return;
-        var mode = _loopButton.IsChecked == true ? RepeatMode.One : RepeatMode.Off;
+        var requested = _loopButton.IsChecked == true;
+        var mode = requested ? RepeatMode.One : RepeatMode.Off;
         PlayerCommand.FireAndForget(
             this,
             nameof(IMediaPlayer.SetRepeatModeAsync),
-            () => p.SetRepeatModeAsync(mode)
+            () => p.SetRepeatModeAsync(mode),
+            // Click already flipped the toggle. Unlike play/pause/stop, whose
+            // buttons follow StateChanged, repeat mode has no observable on
+            // this surface — so nothing would correct the glyph and it would
+            // keep advertising a mode the player refused until the next click.
+            // Setting IsChecked here does not re-raise Click.
+            _ => _loopButton.IsChecked = !requested
         );
     }
 }
