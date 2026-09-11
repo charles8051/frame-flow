@@ -137,8 +137,17 @@ in practice `MemoryStream`, `UnmanagedMemoryStream`, `FileStream`, and
 wrappers over them. The reason is §6: a blocking `Read` cannot be interrupted
 by anything, so an unbounded one hangs playback and teardown with no recourse.
 Enforced by documentation rather than a type check, because no property on
-`Stream` answers the question — the doc comment says plainly what happens if
-you ignore it.
+`Stream` answers the question and no list of allowed subclasses is right — a
+`FileStream` over a dead SMB share blocks exactly like a socket.
+
+Documentation alone leaves a silent hang, so it is paired with a **read
+watchdog**: the callback records the start time, and a read outstanding longer
+than a configured threshold raises on `ErrorOccurred` with
+`ErrorCategory.Io` and surfaces in the diagnostics snapshot. This does not
+unblock the thread — nothing can — but it converts "playback stopped and the
+process will not exit" into a logged, observable cause, which is the
+difference between a bug report that can be answered and one that cannot.
+The repository already takes this shape for loop stalls.
 
 This bounds **blocking**, not **seeking**. The two are orthogonal and the
 first revision conflated them: a `DeflateStream` over a `MemoryStream` is
@@ -347,10 +356,26 @@ over mid-way must therefore have its origin rebased in the callbacks, or the
 
 ### 7. The rest of #108
 
-**`FromUri(Uri uri, bool? isSeekable = null)`** — adopted. `IsSeekable:
-uri.IsFile` reports a range-serving HTTP origin as non-seekable; once §3 gives
-the property a consumer that becomes a real consequence. `null` keeps the
-current inference.
+**`FromUri(Uri uri, bool? isSeekable = null)`** — **declined**, reversing both
+earlier revisions of this document.
+
+Its whole justification was that §3 gives `IsSeekable` teeth. §3 gives it teeth
+*for stream sources*, where it decides whether a seek callback is installed on
+an AVIO context we build. A URI source has no AVIO context of ours: FFmpeg's
+own protocol handler opens it and decides its own seekability. So the override
+would feed nothing — a caller marking an HTTP URL seekable would change no
+behaviour, while a caller marking a file URL non-seekable would be ignored by
+the thing that actually seeks.
+
+Worse, it would advertise a capability contradicting the opened context, which
+is the defect this ADR spends §3 removing. Adding a parameter that changes
+nothing observable is precisely the class of drift #108 exists to clean up.
+
+The underlying complaint in #108 is real — `IsSeekable: uri.IsFile` does
+mislabel a range-serving origin. The fix is `MediaInfo.CanSeek`, read from the
+opened context, which reports what the protocol actually supports without
+asking the caller to guess. `IMediaSource.IsSeekable` stays what it is for a
+URI source: a hint that nothing operative reads.
 
 **XML docs on `MediaSource`, `IMediaSource`, `MediaInfo`, `VideoStreamInfo`,
 `AudioStreamInfo`** — adopted. None has a doc comment, and they are the first
@@ -419,11 +444,12 @@ record, and `FrameFlow.Media` did not grant `InternalsVisibleTo` to Decoding.
   a hang, and the honest position is that the API cannot stop them.
 - Consequently the network-backed case, which is a reasonable thing to want, is
   **not** served by this design and needs an async read path that does not
-  exist. Named as future work rather than quietly implied.
+  exist. Named as future work rather than quietly implied. The watchdog in §1
+  makes an ignored restriction diagnosable; it does not make it survivable.
 - `MediaInfo` gains a member: breaking for anyone constructing one. It also
   moves the public API surface recorded in `PublicAPI.Unshipped.txt`, so
-  `FromStream`, the `FromUri` overload and `MediaInfo.CanSeek` each need an
-  entry, and the break goes in
+  `FromStream` and `MediaInfo.CanSeek` each need an entry, and the break goes
+  in
   [docs/BREAKING-CHANGES.md](../BREAKING-CHANGES.md).
 
 ### Neutral
@@ -520,3 +546,18 @@ claiming a problem was solved when it was not:
 - The exception stash was checked after two native calls;
   `avformat_find_stream_info` drives the callbacks too, and a managed exception
   during probing was being lost behind a generic failure.
+
+**2026-09-11, third review pass.** Two, one of which reverses a decision both
+earlier revisions had made:
+
+- The bounded-read restriction in §1 is documentation and cannot be enforced —
+  no property on `Stream` answers the question and no allow-list of subclasses
+  is right. That stands, but it left a silent hang, so §1 now pairs it with a
+  read watchdog that raises on `ErrorOccurred` and shows in diagnostics. It
+  cannot unblock the thread; it makes the cause observable.
+- `FromUri(Uri, bool?)` is **declined**, having been adopted twice. Its
+  justification was that §3 gives `IsSeekable` teeth, and §3 does so only for
+  stream sources — a URI source is opened by FFmpeg's own protocol handler,
+  which decides its own seekability, so the override would change nothing while
+  advertising a capability that could contradict the opened context. #108's
+  underlying complaint is answered by `MediaInfo.CanSeek` instead.
