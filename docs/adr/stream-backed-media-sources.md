@@ -13,7 +13,7 @@ is what three of the open questions were about.
 
 Resolves the substantial half of
 [#108](https://github.com/charles8051/frame-flow/issues/108). The three small
-items in that issue are settled in *Decision §6*.
+items in that issue are settled in *Decision §7*.
 
 **Nothing here is implemented.** Two decisions rest on behaviour not measured on
 this codebase; both are acceptance conditions in *Not settled here*.
@@ -132,6 +132,19 @@ Audio.OpenAL and Media.Tests — **not** Decoding. It gains Decoding, so
 `IsSeekable` is read from `stream.CanSeek`. It is not a parameter: that is the
 authoritative answer and one the caller cannot get wrong.
 
+**The first cut accepts only streams whose synchronous reads are bounded** —
+in practice `MemoryStream`, `UnmanagedMemoryStream`, `FileStream`, and
+wrappers over them. The reason is §6: a blocking `Read` cannot be interrupted
+by anything, so an unbounded one hangs playback and teardown with no recourse.
+Enforced by documentation rather than a type check, because no property on
+`Stream` answers the question — the doc comment says plainly what happens if
+you ignore it.
+
+This bounds **blocking**, not **seeking**. The two are orthogonal and the
+first revision conflated them: a `DeflateStream` over a `MemoryStream` is
+bounded and forward-only, so §3's non-seekable path ships with the first cut
+rather than being deferred alongside it.
+
 ### 2. The open sequence
 
 The first draft said "assign `pb` before `avformat_open_input`", which is not
@@ -145,8 +158,8 @@ avformat_open_input(&ctx, url: NULL, NULL, NULL)
 
 `avformat_open_input` sets `AVFMT_FLAG_CUSTOM_IO` itself when `pb` is non-NULL
 on entry, and `avformat_close_input` reads that flag to skip closing `pb`. That
-is what makes §4's teardown safe rather than a double free, and it is stated
-here because every line of §4 depends on it.
+is what makes §5's teardown safe rather than a double free, and it is stated
+here because every line of that table depends on it.
 
 `FFAvFormat.avformat_open_input` currently declares a non-nullable
 `string url`; it needs `string?`, as the mux-side declarations already use.
@@ -176,9 +189,22 @@ not make the input non-seekable. With a callback installed FFmpeg believes it
 `ffio_ensure_seekback` — the probe buffering that makes forward-only inputs
 work at all, and which is gated on `!seekable`. Pass NULL.
 
-`MediaInfo.CanSeek` is then read back from the opened context (`pb->seekable`
-plus the demuxer's own capability), because a seekable stream in a container
-that cannot seek is still not seekable.
+`MediaInfo.CanSeek` is then read back from the opened context — but only as
+far as the readback is trustworthy, which is less far than the first revision
+implied.
+
+`pb->seekable == 0` is a reliable **negative**: that input definitely cannot
+seek. A non-zero value is not a reliable positive. It describes the AVIO layer
+only, and a demuxer exposing a `read_seek` pointer does not guarantee a seek
+will succeed on this particular input — nor does its absence rule out generic
+index-based seeking. FFmpeg has no single flag that answers the question.
+
+So `CanSeek` is `pb->seekable != 0`, and it is **advisory in the affirmative**.
+A false positive degrades to a refused seek rather than a crash, because
+ADR-0069 already makes a refusal an expected outcome carrying a category. The
+UI gating in §4 is a courtesy that removes the common case, not a guarantee
+that every surviving seek succeeds; the `Result` is the backstop and stays the
+authority. A tighter derivation is an open question below.
 
 ### 4. Refusing a seek, everywhere seeks are issued
 
@@ -214,8 +240,16 @@ rule to a test, which was wrong because with `[UnmanagedCallersOnly]` an
 escaping exception is a process fail-fast that no test can observe.
 
 **Every callback body is a catch-all.** It returns an AVERROR and stashes the
-exception in the session state for rethrow after `avformat_open_input` or
-`av_read_frame` returns. Nothing propagates through FFmpeg's stack frames.
+exception in the session state. Nothing propagates through FFmpeg's stack
+frames.
+
+The stash is checked after **every** native call that can drive the callbacks,
+not only the two obvious ones. `avformat_find_stream_info` reads ahead and so
+runs them too; without a check there, a managed exception during probing
+surfaces as a generic stream-info failure and the original cause is lost. The
+list today is `avformat_open_input`, `avformat_find_stream_info`,
+`av_read_frame` and `av_seek_frame`, and the rule is what governs rather than
+the list — a new native call that can reach the stream gets a check.
 
 **Read: `n == 0` maps to `AVERROR_EOF`, never 0.** The FFmpeg 7.1 header is
 explicit: *"For stream protocols, must never return 0 but rather a proper
@@ -288,13 +322,22 @@ it is the caller's again. `leaveOpen: false` is the default because the common
 case is a `MemoryStream` the caller built for this purpose; a caller who owns
 the stream beyond the player passes `true`.
 
-**Cancellation needs `AVIOInterruptCB`.** ADR-0013 is Accepted and says a
-consumer token on `OpenAsync` means "abort this operation", illustrated with a
-timeout on an open. `DemuxSessionFactory.OpenAsync` checks the token once and
-then blocks inside `avformat_open_input` — which, with custom IO, blocks inside
-a managed read callback with no token in scope. FFmpeg's answer is
-`AVFormatContext.interrupt_callback`, polled during blocking IO; it is the
-bridge for the token and it is part of this work, not a follow-up.
+**Cancellation: `AVIOInterruptCB`, and an honest limit on it.** ADR-0013 is
+Accepted and says a consumer token on `OpenAsync` means "abort this
+operation". `DemuxSessionFactory.OpenAsync` checks the token once and then
+blocks inside `avformat_open_input`, which with custom IO blocks inside a
+managed read callback with no token in scope.
+`AVFormatContext.interrupt_callback` bridges the token and is part of this
+work.
+
+It does not close the hole. FFmpeg polls the interrupt callback *between* IO
+operations; while control is synchronously inside our read callback it polls
+nothing. A `Stream.Read` that blocks is therefore uninterruptible from the
+FFmpeg side, and `Stream.Read` takes no token to honour on ours. Cancellation
+and teardown both wait for it to return.
+
+That is why §1 bounds what `FromStream` accepts rather than taking any
+`Stream`.
 
 **The stream is read from its current position, and offsets are absolute from
 it.** FFmpeg seeks absolutely from byte 0 of what it is given. A stream handed
@@ -361,19 +404,22 @@ record, and `FrameFlow.Media` did not grant `InternalsVisibleTo` to Decoding.
   structured refusal instead of an attempt that fails below.
 - `FrameFlow.Native` gains input-side AVIO interop, the prerequisite for any
   future custom protocol.
-- `interrupt_callback` makes `OpenAsync` honour its token for the first time,
-  which ADR-0013 already promised.
+- `interrupt_callback` makes `OpenAsync` honour its token for FFmpeg's own
+  waits, which ADR-0013 promised and nothing has delivered.
 
 ### Bad
 
 - New unmanaged-callback interop on the packet-read path — the highest-risk code
   in this repository. A lifetime mistake is heap corruption at a distance.
-- A blocking read blocks the demux thread. Free for a `MemoryStream`; for a
-  network-backed stream a stall that begins at open, before any pacing exists to
-  notice it. `interrupt_callback` makes it cancellable, not fast.
-- `FromStream` accepts any `Stream`, including ones whose only real
-  implementation is `ReadAsync`. A synchronous callback means sync-over-async on
-  the demux thread.
+- **A blocking read is uninterruptible, by anything.** FFmpeg polls its
+  interrupt callback between IO operations, not during ours, and `Stream.Read`
+  takes no token. Cancellation and teardown both wait. §1 bounds the accepted
+  shapes for that reason, and the bound is documentation rather than a
+  compiler-enforced contract — a caller who passes a network stream anyway gets
+  a hang, and the honest position is that the API cannot stop them.
+- Consequently the network-backed case, which is a reasonable thing to want, is
+  **not** served by this design and needs an async read path that does not
+  exist. Named as future work rather than quietly implied.
 - `MediaInfo` gains a member: breaking for anyone constructing one. It also
   moves the public API surface recorded in `PublicAPI.Unshipped.txt`, so
   `FromStream`, the `FromUri` overload and `MediaInfo.CanSeek` each need an
@@ -415,11 +461,16 @@ Open, and deliberately not decided:
   way.
 - **Whether `MediaInfo.CanSeek` is the right home**, versus a capability on the
   controller alongside `IsActivelyPresenting`.
-- **Whether the first cut restricts itself to `CanSeek` streams.** This would
-  sidestep condition 1 and cover the in-memory cases, which are the motivating
-  ones, at the cost of rejecting the forward-only sources §3 designs for. The
-  first draft floated this while §3 designed the opposite; the tension is real
-  and is a scoping call, not a design one.
+- **A tighter derivation for `MediaInfo.CanSeek`.** §3 settles for
+  `pb->seekable != 0`: reliable as a negative, advisory as a positive. A better
+  answer probably means probing — attempting a seek to the current position
+  during open and reading the result — which costs an IO round trip on every
+  load and may fail for reasons unrelated to capability. Worth measuring before
+  adopting; the `Result` backstop makes the current answer safe, only imprecise.
+- **An async read path**, for the network-backed streams §1 excludes. A
+  different design: FFmpeg's callback is synchronous, so it means either a pump
+  thread feeding a ring buffer the callback reads without blocking, or a
+  pre-buffered window. Neither belongs in this ADR.
 - **`ADR-0048` step 4.** `DemuxSession.SeekAsync` pairs `av_seek_frame` with
   `avformat_flush`, whose documentation notes it does not flush the AVIOContext.
   The demuxer's internal `avio_seek` is believed to reset the AVIO buffer, so
@@ -446,10 +497,26 @@ rather than the prose:
 - Alternative C's rejection had no surviving mechanism behind it. §1 now
   settles the internal shape, which also resolves the record-equality problem
   the draft never noticed.
-- §4's guard sat only on `IPlaybackController.SeekAsync`, which loop rewind and
-  playlist replay both bypass.
+- The seek guard sat only on `IPlaybackController.SeekAsync`, which loop rewind
+  and playlist replay both bypass. §4 now puts it where both routes reach it.
 
 Corrected factual claims: `avformat_open_input` is called in tests as well as
 production; `FrameFlowPlayer.Open` already calls `MediaSource.FromFile`, so §7's
 decline no longer prescribes something already true; the seek-bar latch is not
 made redundant by §3.
+
+**2026-09-11, second review pass.** Three more, two of them the document
+claiming a problem was solved when it was not:
+
+- `MediaInfo.CanSeek` "read back from the opened context (`pb->seekable` plus
+  the demuxer's own capability)" named no such combined capability, because
+  FFmpeg has none. §3 now claims only what is true — a reliable negative, an
+  advisory positive — and leans on ADR-0069's refusal path for the rest.
+- `AVIOInterruptCB` was called "the bridge for the token". It bridges FFmpeg's
+  own waits and cannot interrupt a synchronous managed `Read`, so an unbounded
+  stream hangs playback and teardown regardless. §1 now bounds the accepted
+  shapes, which also settles the standing first-cut question: the limit is on
+  blocking, not on seeking, so §3's forward-only path ships with the first cut.
+- The exception stash was checked after two native calls;
+  `avformat_find_stream_info` drives the callbacks too, and a managed exception
+  during probing was being lost behind a generic failure.
