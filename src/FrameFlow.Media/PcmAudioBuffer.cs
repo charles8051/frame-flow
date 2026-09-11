@@ -22,7 +22,7 @@ namespace FrameFlow.Media;
 /// pooled buffer to <see cref="System.Buffers.MemoryPool{T}.Shared"/>.
 /// This is the audio counterpart to <see cref="IVideoFrame.AddRef"/>
 /// and formally amends ADR-0012's single-owner stance for audio buffers
-/// per Crossbar's <see cref="IAudioBuffer"/> contract.
+/// per the graph substrate's <see cref="IAudioBuffer"/> contract.
 /// </para>
 /// <para>
 /// <b>Why refcount.</b> Audio fan-out is a routine pattern — the same

@@ -21,10 +21,10 @@ namespace FrameFlow.Media;
 /// GPU domain accessors will be added when hardware decode backends land.
 /// </para>
 /// <para>
-/// <b>Crossbar binding.</b> <see cref="IVideoFrame"/> extends
-/// <see cref="Graph.IFrame"/> so video frames flow through Crossbar's
+/// <b>Graph binding.</b> <see cref="IVideoFrame"/> extends
+/// <see cref="Graph.IFrame"/> so video frames flow through the graph
 /// runtime (<c>FramePipeline&lt;IVideoFrame&gt;</c>) without a wrapper
-/// layer. Crossbar requires Width, Height, Timestamp, and IDisposable;
+/// layer. The runtime requires Width, Height, Timestamp, and IDisposable;
 /// FrameFlow's domain-natural name for the timestamp is
 /// <see cref="Pts"/>, so <see cref="IFrame.Timestamp"/> is
 /// provided here as a default-interface alias for Pts. Existing
@@ -50,7 +50,7 @@ public interface IVideoFrame : IFrame
     FrameMemoryDomain MemoryDomain { get; }
 
     /// <summary>
-    /// Crossbar's substrate-level timestamp, aliased to <see cref="Pts"/>
+    /// The substrate-level timestamp, aliased to <see cref="Pts"/>
     /// via a default interface implementation. Implementations that have
     /// a more precise distinction between presentation timestamp and
     /// substrate timestamp can override this.

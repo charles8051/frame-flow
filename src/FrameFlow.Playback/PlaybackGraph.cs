@@ -81,7 +81,7 @@ public sealed class PlaybackGraph : IAsyncDisposable
     /// <see cref="PlayToCompletionAsync"/> a second time on a
     /// decoder that's already reached EOS produces an empty graph.
     /// Demos that want loop / restart semantics need to recreate
-    /// the decoders too (deferred per Crossbar ADR-0014 Phase 3 long pole).
+    /// the decoders too (deferred during the substrate migration).
     /// </remarks>
     public async Task PlayToCompletionAsync(CancellationToken ct = default)
     {

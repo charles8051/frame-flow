@@ -28,7 +28,7 @@ namespace FrameFlow.Playback;
 /// gate; nothing gets cancelled mid-decode.
 /// </para>
 /// <para>
-/// <b>Why not put this in <c>Crossbar</c>.</b> The
+/// <b>Why not put this in <c>FrameFlow.Graph</c>.</b> The
 /// gate is fully generic over <c>T : class, IRefCounted</c> and would
 /// fit in the substrate. It lives here for now because (a) it's
 /// only used by the playback controller and (b) keeping playback-

@@ -44,7 +44,7 @@ namespace FrameFlow.Whisper;
 /// loss is inconsequential; for offline transcription of finite files
 /// the last &lt; <see cref="WhisperOptions.EffectiveWindowSize"/> of
 /// audio gets silently dropped. Tracked in docs/DEFERRED_WORK.md as "MultiOperatorNode
-/// needs Cleanup hook" — fix lives in Crossbar, not here.
+/// needs Cleanup hook" — fix lives in the graph substrate, not here.
 /// </para>
 /// <para>
 /// <b>Native resource lifetime.</b> <see cref="WhisperFactory"/> and

@@ -19,8 +19,8 @@ namespace FrameFlow.Media;
 /// </para>
 /// <para>
 /// <b>Location.</b> Lives in <c>FrameFlow.Media</c> rather than
-/// <c>FrameFlow.Playback</c>, where it started (moved during Crossbar
-/// ADR-0014 Phase 4 prep). Sinks (Avalonia / SDL) and examples
+/// <c>FrameFlow.Playback</c>, where it started (moved during the
+/// substrate migration). Sinks (Avalonia / SDL) and examples
 /// (FrameDumper / SdlPlayer) need a pool, and should not have to pull in the
 /// playback assembly to get one.
 /// </para>

@@ -53,8 +53,8 @@ namespace FrameFlow.Inference.Cuda;
 /// </para>
 /// <para>
 /// <b>Migration note (ADR-0049 §3).</b> This class is the successor
-/// to the deleted <c>Crossbar.Onnx.OnnxInferenceSession</c>. The
-/// pre-fork class bound <c>ICudaTensor</c>; this one binds
+/// to the pre-fork ONNX session class. That class bound
+/// <c>ICudaTensor</c>; this one binds
 /// <see cref="ICpuTensor"/> by default, with the OrtValue escape
 /// hatch preserving device-direct binding for callers who need it.
 /// </para>

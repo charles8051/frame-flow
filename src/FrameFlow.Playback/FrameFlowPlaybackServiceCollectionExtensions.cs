@@ -13,7 +13,7 @@ namespace FrameFlow.Playback;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Post-Phase-4 (Crossbar ADR-0014).</b> The substrate's <see cref="PlaybackControllerCore"/>
+/// <b>After the substrate migration.</b> The substrate's <see cref="PlaybackControllerCore"/>
 /// is constructed via the static <see cref="PlaybackController.Create"/> factory —
 /// not through DI. This extension is reduced to
 /// registering the playback clock for consumers who want the default

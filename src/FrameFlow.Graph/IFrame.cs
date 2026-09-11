@@ -4,21 +4,21 @@
 namespace FrameFlow.Graph;
 
 /// <summary>
-/// The minimal frame primitive Crossbar's runtime requires. Library-specific
+/// The minimal frame primitive the graph runtime requires. Library-specific
 /// frame types (e.g. <c>ICameraFrame</c> in <c>Periphery.Camera</c>,
 /// <c>IVideoFrame</c> in <c>FrameFlow.Media</c>) extend this with
 /// pixel-format vocabularies, plane accessors, ref-counting semantics, etc.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Crossbar uses <see cref="IFrame"/> as a structural constraint rather than
+/// The runtime uses <see cref="IFrame"/> as a structural constraint rather than
 /// an inheritance root — it is sufficient to satisfy the runtime's needs
 /// (dimensions, timestamp, deterministic disposal). Consumers should
 /// continue to design their richer frame types as the public surface;
 /// <see cref="IFrame"/> exists so the runtime stays format-neutral.
 /// </para>
 /// <para>
-/// Disposal semantics are intentionally library-specific. Crossbar treats
+/// Disposal semantics are intentionally library-specific. The runtime treats
 /// every frame it surfaces as owned by the recipient — sinks dispose
 /// frames they accept; transforms dispose inputs once they emit
 /// replacements. The frame-lifetime model (single-owner lease,

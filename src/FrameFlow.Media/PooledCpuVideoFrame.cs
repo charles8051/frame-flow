@@ -21,7 +21,7 @@ namespace FrameFlow.Media;
 /// </para>
 /// <para>
 /// <b>Name + location.</b> Renamed from <c>FrameFlow.Playback.CpuVideoFrame</c>
-/// during Phase 4 prep (Crossbar ADR-0014) — moving alongside <see cref="CpuFramePool"/>
+/// during the substrate migration — moving alongside <see cref="CpuFramePool"/>
 /// would have collided with the existing public
 /// <see cref="CpuVideoFrame"/> in this namespace, so the pooled variant
 /// got the qualifier instead. Stays <c>internal sealed</c>: nothing

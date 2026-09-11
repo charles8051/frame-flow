@@ -22,15 +22,15 @@ namespace FrameFlow.Playback;
 /// <c>PlaybackController</c> is substrate-agnostic in its core: the
 /// three Stateless state machines, the channel-serialized command
 /// dispatch loop, the observable subjects, the position-ticker worker —
-/// none of it touches Crossbar directly. The substrate-tied piece is
+/// none of it touches the graph substrate directly. The substrate-tied piece is
 /// the <c>IPlaybackSession</c> the controller delegates dataflow to.
 /// So the port is just "swap the session factory."
 /// </para>
 /// <para>
 /// The <c>IPlaybackController</c> and supporting types are
 /// <c>internal</c> in <c>FrameFlow.Playback</c>; this facade reaches
-/// them via the <c>InternalsVisibleTo</c> added in Crossbar ADR-0014
-/// Phase 3. Phase 4 has since completed: the old assembly is gone and
+/// them via the <c>InternalsVisibleTo</c> added during the substrate
+/// migration, which has since completed: the old assembly is gone and
 /// the supporting types live here.
 /// </para>
 /// <para>

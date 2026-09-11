@@ -8,7 +8,7 @@ namespace FrameFlow.Face;
 
 /// <summary>
 /// Operator factories that turn a BlazeFace detection function into a
-/// Crossbar pipeline node. The detection function is the entire contract
+/// graph pipeline node. The detection function is the entire contract
 /// — this type knows nothing about which backend produced the faces.
 /// Mirrors <c>FrameFlow.Yolo.YoloOperators</c>.
 /// </summary>
