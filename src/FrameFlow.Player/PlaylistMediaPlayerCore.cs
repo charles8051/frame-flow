@@ -134,15 +134,23 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
         CancellationToken cancellationToken = default
     ) => _controller.SeekAsync(position, cancellationToken);
 
-    public Task<Result> SetRepeatModeAsync(
+    public async Task<Result> SetRepeatModeAsync(
         RepeatMode mode,
         CancellationToken cancellationToken = default
     )
     {
         // The coordinator owns the loop behavior; the controller mirrors it so
-        // RepeatMode reporting stays consistent.
-        _coordinator.RepeatMode = mode;
-        return _controller.SetRepeatModeAsync(mode, cancellationToken);
+        // RepeatMode reporting stays consistent. The controller goes first: it
+        // is the one that can refuse, and a coordinator that adopted the mode
+        // anyway would run the playlist on a setting the caller was told
+        // failed. Under the old exception model this was the same bug, hidden
+        // by the throw unwinding past the assignment.
+        var result = await _controller
+            .SetRepeatModeAsync(mode, cancellationToken)
+            .ConfigureAwait(false);
+        if (result.IsSuccess)
+            _coordinator.RepeatMode = mode;
+        return result;
     }
 
     // ── IMediaPlaylistPlayer ────────────────────────────────────────────────

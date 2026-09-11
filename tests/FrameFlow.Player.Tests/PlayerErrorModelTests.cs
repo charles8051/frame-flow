@@ -99,8 +99,47 @@ public sealed class PlayerErrorModelTests
         Assert.Same(Refusal, seen);
     }
 
+    // ── Playlist player: the coordinator must not run ahead of the controller ──
+
+    [Fact]
+    public async Task Playlist_SetRepeatMode_AppliesToTheCoordinator_OnSuccess()
+    {
+        var coordinator = new PlaylistCoordinator([MediaSource.FromFile("a.mp4")], RepeatMode.Off);
+        await using var player = NewPlaylistPlayer(new StubController(), coordinator);
+
+        var result = await player.SetRepeatModeAsync(RepeatMode.All);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(RepeatMode.All, coordinator.RepeatMode);
+    }
+
+    [Fact]
+    public async Task Playlist_SetRepeatMode_LeavesTheCoordinatorAlone_WhenRefused()
+    {
+        // The coordinator used to be assigned before the controller was asked,
+        // so a refused command left the playlist running on a mode the caller
+        // was told had failed. The old exception model hid it: the throw
+        // unwound past an assignment that had already happened.
+        var coordinator = new PlaylistCoordinator([MediaSource.FromFile("a.mp4")], RepeatMode.Off);
+        await using var player = NewPlaylistPlayer(
+            new StubController { Failure = Refusal },
+            coordinator
+        );
+
+        var result = await player.SetRepeatModeAsync(RepeatMode.All);
+
+        Assert.False(result.IsSuccess);
+        Assert.Same(Refusal, result.Error);
+        Assert.Equal(RepeatMode.Off, coordinator.RepeatMode);
+    }
+
     private static MediaPlayerCore NewPlayer(IPlaybackController controller) =>
         new(controller, audioSink: null, ownedProvider: null, NullLogger.Instance);
+
+    private static PlaylistMediaPlayerCore NewPlaylistPlayer(
+        IPlaybackController controller,
+        PlaylistCoordinator coordinator
+    ) => new(controller, coordinator, audioSink: null, NullLogger.Instance);
 
     // ── Doubles ──────────────────────────────────────────────────────────────
 

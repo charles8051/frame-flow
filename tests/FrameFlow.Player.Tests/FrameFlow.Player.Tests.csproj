@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FrameFlow.Player\FrameFlow.Player.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Playback\FrameFlow.Playback.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Decoding\FrameFlow.Decoding.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Media\FrameFlow.Media.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Native\FrameFlow.Native.csproj" />

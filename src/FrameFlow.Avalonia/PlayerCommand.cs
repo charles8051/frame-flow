@@ -41,15 +41,26 @@ internal static class PlayerCommand
     /// <param name="source">The control issuing the command, for the log entry.</param>
     /// <param name="operation">The command's name, for the log entry.</param>
     /// <param name="command">The command to run.</param>
+    /// <param name="onRefused">
+    /// Runs on the UI context when the command comes back refused, after the
+    /// log entry. For a control whose visual state moved ahead of the command —
+    /// a toggle that flipped on click — this is where it moves back. Controls
+    /// that only follow <c>StateChanged</c> need nothing here, since a refused
+    /// command produces no transition and leaves them correct.
+    /// </param>
     internal static async void FireAndForget(
         object source,
         string operation,
-        Func<Task<Result>> command
+        Func<Task<Result>> command,
+        Action<PlaybackError>? onRefused = null
     )
     {
         try
         {
-            Report(source, operation, await command().ConfigureAwait(true));
+            var result = await command().ConfigureAwait(true);
+            Report(source, operation, result);
+            if (!result.IsSuccess)
+                onRefused?.Invoke(result.Error);
         }
         catch (Exception ex)
         {
