@@ -142,7 +142,16 @@ public sealed class FrameFlowTransportBar : StackPanel
                 // Repeat mode has no observable to resynchronise from, so a
                 // refused command would otherwise leave the toggle showing a
                 // mode the player never adopted.
-                _ => _loopButton.IsChecked = false
+                //
+                // Only while this player is still the bound one. A rebind
+                // during the command leaves this callback holding a player the
+                // control no longer shows, and unchecking then would overwrite
+                // the new binding's LoopByDefault.
+                _ =>
+                {
+                    if (ReferenceEquals(MediaPlayer, player))
+                        _loopButton.IsChecked = false;
+                }
             );
 
         UpdateButtonsForState(player.State);
@@ -213,9 +222,11 @@ public sealed class FrameFlowTransportBar : StackPanel
             // completing last would roll back a state the newer click already
             // replaced. If the toggle no longer reads what this call asked
             // for, a later click owns it.
+            // The player check is the rebind case, the IsChecked check the
+            // newer-click one.
             _ =>
             {
-                if (_loopButton.IsChecked == requested)
+                if (ReferenceEquals(MediaPlayer, p) && _loopButton.IsChecked == requested)
                     _loopButton.IsChecked = !requested;
             }
         );
