@@ -152,6 +152,12 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     // Guarded by _gate.
     private long _runId;
 
+    // Whether delivery is stopped on purpose — the session's pause gate is closed. The wait
+    // cap is a backstop for a misaligned or stalled master clock, and a clock held still by a
+    // pause is neither. Arming it against one walked the ring out a frame at a time and logged
+    // a warning every maxWait for a non-fault (#127). Guarded by _gate.
+    private bool _paused;
+
     /// <summary>
     /// How long delivery may stay held waiting for a reseat that never comes. A backstop:
     /// every path that arms the hold has a matching release, and the reseat itself runs in
@@ -213,6 +219,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// PTS before it is presented anyway (defense-in-depth, mirrors the old
     /// PaceUntil cap). A misaligned/stalled master clock degrades to
     /// choppy-but-alive instead of buffering forever. Defaults to 5&#160;s.
+    /// Suspended between <see cref="Pause"/> and <see cref="Resume"/>.
     /// </param>
     public ClockSelectVideoSink(
         IVideoSink inner,
@@ -465,6 +472,44 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         _recheck = new CancellationTokenSource();
         old.Cancel();
         old.Dispose();
+    }
+
+    /// <summary>
+    /// Suspends the wait cap: a buffered frame waits for the resume rather than being
+    /// force-presented while the master clock is deliberately stopped. Idempotent.
+    /// </summary>
+    /// <remarks>
+    /// Call wherever the session closes its video gate — the two are one decision. The gate
+    /// knows a pause from a stall and the cap did not, so a pause force-presented the whole
+    /// ring, one frame every maxWait, and logged each as a suspected stalled master (#127).
+    /// The recheck is what stops a cap already counting down from firing partway into the
+    /// pause; the loop re-enters and re-arms itself uncapped.
+    /// </remarks>
+    public void Pause()
+    {
+        lock (_gate)
+        {
+            if (_paused)
+                return;
+            _paused = true;
+            TriggerRecheckLocked();
+        }
+    }
+
+    /// <summary>
+    /// Re-arms the wait cap after <see cref="Pause"/>. The budget starts again here, so a
+    /// master that is genuinely stalled after a resume still degrades to choppy-but-alive
+    /// within one maxWait rather than inheriting a spent budget. Idempotent.
+    /// </summary>
+    public void Resume()
+    {
+        lock (_gate)
+        {
+            if (!_paused)
+                return;
+            _paused = false;
+            TriggerRecheckLocked();
+        }
     }
 
     /// <summary>
@@ -723,13 +768,20 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                         // below, so a stalled/stopped master (e.g. audio EOS before the
                         // video tail) caps out instead of hanging, and a concurrent
                         // Flush/seek breaks the hold rather than stranding the next frame.
+                        // Uncapped while paused: pausing over the last frame's display must
+                        // not end the clip (#127).
                         CancellationToken holdRecheckToken;
+                        bool holdPaused;
                         lock (_gate)
+                        {
                             holdRecheckToken = _recheck.Token;
+                            holdPaused = _paused;
+                        }
                         bool holdRechecked = false;
                         using (var holdCts = CancellationTokenSource.CreateLinkedTokenSource(ct, holdRecheckToken))
                         {
-                            holdCts.CancelAfter(_maxWait);
+                            if (!holdPaused)
+                                holdCts.CancelAfter(_maxWait);
                             try
                             {
                                 await _clock.WaitUntilAsync(holdTarget, holdCts.Token).ConfigureAwait(false);
@@ -775,12 +827,21 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                 bool capFired = false;
                 bool rechecked = false;
                 CancellationToken recheckToken;
+                bool paused;
                 lock (_gate)
+                {
                     recheckToken = _recheck.Token;
+                    paused = _paused;
+                }
                 waitSw.Restart();
                 using (var capCts = CancellationTokenSource.CreateLinkedTokenSource(ct, recheckToken))
                 {
-                    capCts.CancelAfter(_maxWait);
+                    // No cap while paused (#127): the clock is stopped because the user
+                    // stopped it, so the frame waits for the resume. Pause and Resume each
+                    // fire a recheck, so a wait armed on the other side of either transition
+                    // is re-entered here and re-armed against the current state.
+                    if (!paused)
+                        capCts.CancelAfter(_maxWait);
                     try
                     {
                         await _clock.WaitUntilAsync(earliest.Value, capCts.Token).ConfigureAwait(false);

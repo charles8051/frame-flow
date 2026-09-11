@@ -527,6 +527,12 @@ internal sealed class SubstrateSession : IPlaybackSession
                     _loggerFactory.CreateLogger("FrameFlow.Playback.ClockSelect.Video"),
                     maxWait: PaceWaitCap
                 );
+                // Seat the cap on the gate state this pacer is born into — a session
+                // prepared while paused (a playlist advance mid-pause) must not arm the cap
+                // against a stopped clock. OpenGates/CloseGates keep the pair in step from
+                // here on (#127).
+                if (!_videoGate.IsOpen)
+                    _videoPacer.Pause();
             }
 
             // ADR-0056: register every pre-seek-stateful participant once, here, next to
@@ -728,8 +734,7 @@ internal sealed class SubstrateSession : IPlaybackSession
                 StartSessionTasks();
             }
 
-            _videoGate.Open();
-            _audioGate.Open();
+            OpenGates();
 
             _renderersActivated = true;
             return;
@@ -773,8 +778,7 @@ internal sealed class SubstrateSession : IPlaybackSession
         _clock.Resume();
         _ownedClockSource?.Resume();
 
-        _videoGate.Open();
-        _audioGate.Open();
+        OpenGates();
 
         if (_hasAudio)
             await _audioSink!.ResumeAsync(cancellationToken).ConfigureAwait(false);
@@ -862,6 +866,32 @@ internal sealed class SubstrateSession : IPlaybackSession
         }
     }
 
+    /// <summary>
+    /// Opens both stream gates and re-arms the pacer's wait cap.
+    /// </summary>
+    /// <remarks>
+    /// The gates and the pacer's cap are one decision, so they move together here rather
+    /// than at each of the six call sites. The pacer knows only the clock, and a clock that
+    /// is stopped because the gates are shut looks exactly like a stalled one — which is
+    /// how a pause came to force-present the ring a frame at a time (#127).
+    /// </remarks>
+    private void OpenGates()
+    {
+        _videoPacer?.Resume();
+        _videoGate.Open();
+        _audioGate.Open();
+    }
+
+    /// <summary>
+    /// Closes both stream gates and suspends the pacer's wait cap. See <see cref="OpenGates"/>.
+    /// </summary>
+    private void CloseGates()
+    {
+        _videoGate.Close();
+        _audioGate.Close();
+        _videoPacer?.Pause();
+    }
+
     public async ValueTask PauseAsync(CancellationToken cancellationToken = default)
     {
         // Pause the audio sink first so the user hears silence
@@ -871,8 +901,7 @@ internal sealed class SubstrateSession : IPlaybackSession
         if (_hasAudio)
             await _audioSink!.PauseAsync(cancellationToken).ConfigureAwait(false);
 
-        _videoGate.Close();
-        _audioGate.Close();
+        CloseGates();
 
         _clock.Pause();
         _ownedClockSource?.Pause();
@@ -1041,8 +1070,7 @@ internal sealed class SubstrateSession : IPlaybackSession
         // pause audio so we don't hear the in-flight pre-discontinuity audio buffer.
         // (At a clean EOS loop boundary the gates are open and the sinks have drained;
         // closing here is defensive symmetry that also covers the AwaitClean safety path.)
-        _videoGate.Close();
-        _audioGate.Close();
+        CloseGates();
 
         if (_hasAudio)
             await _audioSink!.PauseAsync(cancellationToken).ConfigureAwait(false);
@@ -1182,8 +1210,7 @@ internal sealed class SubstrateSession : IPlaybackSession
             else
                 LaunchSessionTasks();
 
-            _videoGate.Open();
-            _audioGate.Open();
+            OpenGates();
 
             if (_hasAudio)
                 await _audioSink!.ResumeAsync(cancellationToken).ConfigureAwait(false);
@@ -1205,8 +1232,7 @@ internal sealed class SubstrateSession : IPlaybackSession
 
         // Open the gates so any blocked operator bodies unblock and the
         // subsequent cancellation propagates through cleanly.
-        _videoGate.Open();
-        _audioGate.Open();
+        OpenGates();
 
         try
         {

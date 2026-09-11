@@ -589,6 +589,121 @@ public sealed class ClockSelectVideoSinkTests
         Assert.False(drain.IsCompleted, "Flush during the end-of-content hold must not fire EOS");
     }
 
+    // ── The wait cap vs. a pause (#127) ────────────────────────
+
+    [Fact]
+    public async Task WaitCap_ForcePresentsWhenTheMasterNeverReachesTheFramesPts()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        await using var pacer = new ClockSelectVideoSink(
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120));
+
+        pacer.BeginRun();
+        // Due at 5s against a clock parked at 0: a genuinely stalled/misaligned master.
+        await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromSeconds(5)), default);
+
+        // The cap fires and the frame presents anyway — choppy-but-alive, the behaviour
+        // the cap exists for. This is the baseline the paused case must NOT match.
+        await sink.WaitForCountAsync(1);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(5) }, sink.PresentedPts);
+    }
+
+    [Fact]
+    public async Task WaitCap_IsSuspendedWhilePaused_SoAPauseDoesNotWalkTheRingOut()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        await using var pacer = new ClockSelectVideoSink(
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120));
+
+        pacer.BeginRun();
+        pacer.Pause();
+
+        // A full ring of undue frames against a clock stopped at 0 — exactly the state a
+        // pause leaves behind. Uncapped, the cap force-presented one frame every maxWait
+        // until the ring was empty, creeping the picture forward while the user was paused
+        // and logging each as a suspected stalled master (#127).
+        for (int i = 0; i < 4; i++)
+            await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromMilliseconds(100 + (33 * i))), default);
+
+        await Task.Delay(400); // several maxWait periods.
+
+        Assert.Empty(sink.PresentedPts);
+    }
+
+    [Fact]
+    public async Task WaitCap_ReArmsOnResume_SoAStalledMasterStillDegradesToChoppy()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        await using var pacer = new ClockSelectVideoSink(
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120));
+
+        pacer.BeginRun();
+        pacer.Pause();
+        await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromSeconds(5)), default);
+        await Task.Delay(250);
+        Assert.Empty(sink.PresentedPts);
+
+        // Resuming onto a master that is still not advancing is the case the cap is for.
+        pacer.Resume();
+
+        await sink.WaitForCountAsync(1);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(5) }, sink.PresentedPts);
+    }
+
+    [Fact]
+    public async Task WaitCap_PauseMidWait_BreaksACapAlreadyCountingDown()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        await using var pacer = new ClockSelectVideoSink(
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(300));
+
+        pacer.BeginRun();
+        await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromSeconds(5)), default);
+        await Task.Delay(150); // the loop is waiting, cap half spent.
+
+        pacer.Pause();
+
+        // Without the recheck the already-armed cap would fire ~150 ms into the pause and
+        // present one frame anyway. The pause must break that wait, not merely affect the
+        // next one.
+        await Task.Delay(400);
+        Assert.Empty(sink.PresentedPts);
+    }
+
+    [Fact]
+    public async Task WaitForDrain_PausedOverTheLastFramesDisplay_DoesNotEndTheClip()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        await using var pacer = new ClockSelectVideoSink(
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120));
+
+        pacer.BeginRun();
+        var f0 = new TrackingFrame(TimeSpan.FromMilliseconds(0)); // ends at 33ms.
+        await pacer.PresentAsync(f0, default);
+        await sink.WaitForCountAsync(1);
+
+        // Paused before input completes, so the hold is never armed with a cap in the
+        // first place — the loop cannot race us to a cap-out.
+        pacer.Pause();
+        pacer.SignalInputComplete();
+        var drain = pacer.WaitForDrainAsync(default);
+
+        await Task.Delay(400);
+
+        // The end-of-content hold caps out on a master that stopped short, which is right
+        // for a stalled one and wrong for a paused one: pausing on the last frame would
+        // otherwise fire Ended and advance a playlist while the user sat on pause (#127).
+        Assert.False(drain.IsCompleted, "a pause must not end the clip");
+
+        pacer.Resume();
+        await drain.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
     [Fact]
     public async Task Dispose_DisposesBufferedFrames_ButNotInnerSink()
     {
