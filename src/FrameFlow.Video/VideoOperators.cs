@@ -7,12 +7,12 @@ using FrameFlow.Media;
 namespace FrameFlow.Video;
 
 /// <summary>
-/// Port of <see cref="VideoPipelineExtensions"/> to the new
+/// Port of the old <c>VideoPipelineExtensions</c> to the new
 /// primitive-set substrate. Each operator is now a factory that
 /// builds an <see cref="OperatorNode{TIn, TOut}"/> wrapping the
 /// underlying <see cref="IVideoConverter"/> primitive; consumers
 /// connect the node's input/output ports via
-/// <see cref="Graph.Connect"/>.
+/// <see cref="FrameFlow.Graph.Graph.Connect{T}(FrameFlow.Graph.OutputPort{T}, FrameFlow.Graph.InputPort{T}, FrameFlow.Graph.EdgeOptions)"/>.
 /// </summary>
 /// <remarks>
 /// <para>

@@ -427,6 +427,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// operation. Completion, cancellation, and faults are serialized back through the
     /// command channel via <see cref="SeekOutcomeCommand"/>.
     /// </summary>
+    /// <param name="session">The loaded session the seek runs against.</param>
+    /// <param name="position">
+    /// Target position in media time. <see cref="TimeSpan.Zero"/> for a loop
+    /// rewind, where it is used for the diagnostics and log line only.
+    /// </param>
     /// <param name="loopRewind">
     /// When <see langword="true"/>, the session operation is the cheap
     /// <see cref="IPlaybackSession.RewindToStartAsync"/> (the <c>RepeatMode.One</c> loop

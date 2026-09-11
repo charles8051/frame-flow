@@ -5,7 +5,7 @@ namespace FrameFlow.Graph;
 
 /// <summary>
 /// The substrate-level decoded audio buffer — a chunk of consecutive
-/// audio frames (samples per channel) flowing through a Crossbar
+/// audio frames (samples per channel) flowing through a graph
 /// pipeline. Sibling of <see cref="IFrame"/>: both compose through the
 /// same pipeline runtime, but audio buffers carry no Width/Height and
 /// would distort the <see cref="IFrame"/> contract.

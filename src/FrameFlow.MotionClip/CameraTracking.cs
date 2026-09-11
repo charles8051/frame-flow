@@ -150,7 +150,7 @@ internal static class CameraTracking
     /// Starts the resilient camera host. Returns immediately; the host drives
     /// sessions in the background, running the recorder graph for the lifetime of
     /// each connection. The caller owns the host (dispose it to stop). The
-    /// <paramref name="recorder"/> and <paramref name="motion"/> live outside the
+    /// <c>recorder</c> and <c>motion</c> live outside the
     /// host, so clip count accumulates across reconnects; the motion detector's
     /// reference frame is reset at the start of each session so a replug doesn't
     /// fire a spurious "motion" event.

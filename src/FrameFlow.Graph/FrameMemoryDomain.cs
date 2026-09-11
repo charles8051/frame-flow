@@ -32,7 +32,7 @@ public enum FrameMemoryDomain
 
     /// <summary>
     /// Frame or tensor data is in GPU device memory. Used by
-    /// <c>Crossbar.Cuda</c> tensors and by future D3D/Vulkan/Metal
+    /// CUDA tensors and by future D3D/Vulkan/Metal
     /// implementations. The enum doesn't carry device identity — when
     /// a sink needs to know <em>which</em> GPU, the capability-handle
     /// layer (future) is what answers that.

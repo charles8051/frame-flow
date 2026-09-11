@@ -9,7 +9,7 @@ namespace FrameFlow.Inference.Cuda;
 /// One-shot probe verifying ONNX Runtime is loadable and the CUDA
 /// execution provider can be appended to a fresh
 /// <see cref="SessionOptions"/>. Mirrors the role of
-/// <c>Crossbar.Cuda.CudaProbe</c>: a process-cached check that the
+/// the driver-level CUDA probe: a process-cached check that the
 /// test harness uses to skip GPU-dependent tests on machines without
 /// the right native dependencies.
 /// </summary>
@@ -18,7 +18,7 @@ namespace FrameFlow.Inference.Cuda;
 /// ORT-Gpu bundles its own CUDA runtime libraries — this probe doesn't
 /// require the toolkit to be installed system-wide. It does require the
 /// NVIDIA driver to be present (which is what
-/// <c>Crossbar.Cuda.CudaProbe</c> verifies separately). For
+/// the driver-level CUDA probe verifies separately). For
 /// inference-running tests, both probes must succeed.
 /// </para>
 /// <para>

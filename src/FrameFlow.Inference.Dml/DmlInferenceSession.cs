@@ -10,7 +10,7 @@ namespace FrameFlow.Inference.Dml;
 /// ONNX Runtime inference session configured for the DirectML execution
 /// provider, accepting <see cref="ICpuTensor"/> inputs and outputs. The
 /// DML EP handles host→device staging through D3D12 upload buffers.
-/// Sibling to <see cref="FrameFlow.Inference.Cuda.CudaInferenceSession"/>
+/// Sibling to <c>FrameFlow.Inference.Cuda.CudaInferenceSession</c>
 /// per ADR-0049 §3.
 /// </summary>
 /// <remarks>

@@ -8,7 +8,7 @@ namespace FrameFlow.Yolo;
 
 /// <summary>
 /// Operator factories that turn a YOLOv8 detection function into a
-/// Crossbar pipeline node. The detection function is the entire
+/// graph pipeline node. The detection function is the entire
 /// contract — this type knows nothing about which backend (CUDA / DML /
 /// CPU) produced the detections.
 /// </summary>

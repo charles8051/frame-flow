@@ -4,7 +4,7 @@
 namespace FrameFlow.Decoding.Diagnostics;
 
 /// <summary>
-/// Aggregate diagnostics snapshot for an <see cref="IDecodedMediaStream"/>
+/// Aggregate diagnostics snapshot for one decoded media stream
 /// (ADR-0036). Composes the demux, video-decoder, and audio-decoder
 /// snapshots that already exist (ADR-0034), and adds the pull-channel
 /// depths that are owned by the stream itself.

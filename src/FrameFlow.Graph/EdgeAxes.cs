@@ -35,7 +35,7 @@ public enum Overflow
 /// <para>
 /// The historic <c>Shape</c> (push/pull), <c>Cadence</c>
 /// (producer/consumer-paced), and <c>Underflow</c> axes carried over
-/// verbatim from the Crossbar fork were never read by the runner; per
+/// verbatim at the fork were never read by the runner; per
 /// ADR-0049 §2 they were dropped once the consumer's actual needs were
 /// observable.
 /// </para>

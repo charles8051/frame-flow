@@ -8,7 +8,7 @@ using SdlApi = Silk.NET.SDL.Sdl;
 namespace FrameFlow.SDL.Bootstrap;
 
 /// <summary>
-/// Resolves and loads the SDL2 native library and produces <see cref="Sdl"/> API instances
+/// Resolves and loads the SDL2 native library and produces <see cref="Silk.NET.SDL.Sdl"/> API instances
 /// backed by the resolved handle.
 /// </summary>
 /// <remarks>

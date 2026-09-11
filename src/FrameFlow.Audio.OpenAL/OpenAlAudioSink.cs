@@ -387,7 +387,7 @@ public sealed partial class OpenAlAudioSink
     /// Consumes the samples synchronously into the staging buffer (and
     /// flushes to OpenAL when it crosses
     /// <see cref="CoalesceTargetSamples"/>), then disposes the buffer per
-    /// the <see cref="IFrameSink{TFrame}"/> contract. The dispose just
+    /// the <see cref="FrameFlow.Media.IAudioSink"/> contract. The dispose just
     /// decrements the refcount — when the original packet downstream
     /// drops its reference, the pooled <c>IMemoryOwner&lt;short&gt;</c>
     /// returns to <see cref="System.Buffers.MemoryPool{T}.Shared"/>.
@@ -852,7 +852,7 @@ public sealed partial class OpenAlAudioSink
     /// <summary>
     /// Returns the current playback position based on processed buffers
     /// plus the current source sample offset. Synonym for
-    /// <see cref="Latest"/> kept on the type's public surface for direct
+    /// <see cref="IClockSource.Latest"/> kept on the type's public surface for direct
     /// callers (diagnostics tooling, examples) that don't already hold an
     /// <see cref="IClockSource"/> reference.
     /// </summary>

@@ -44,7 +44,7 @@ public enum MissingNativeComponent
     /// <summary>
     /// The NVIDIA GPU driver is not loaded — <c>nvcuda.dll</c> is
     /// missing, no CUDA-capable device is visible, or
-    /// <see cref="Crossbar.Cuda.CudaProbe.IsAvailable"/> is otherwise
+    /// the CUDA probe is otherwise
     /// false. Cannot be resolved by package installs; the user must
     /// install or update the GPU driver.
     /// </summary>

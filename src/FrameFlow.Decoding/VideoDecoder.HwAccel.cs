@@ -40,7 +40,7 @@ public sealed partial class VideoDecoder
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Set when <see cref="Open(nint, int, HardwareDecodeOptions, HardwareDecodeCapabilities, ILoggerFactory?)"/>
+    /// Set when <see cref="Open(nint, int, HardwareDecodeOptions, HardwareDecodeCapabilities, ILoggerFactory, VideoDecoderOptions)"/>
     /// binds a backend, then tracked against every decoded frame. Binding is not
     /// engagement: FFmpeg accepts the device at open and can still refuse the hwaccel
     /// per stream in <c>get_format</c>, falling back to software. See
@@ -76,6 +76,16 @@ public sealed partial class VideoDecoder
     /// <see cref="VideoDecoderOptions.PacketQueueCapacity"/>). When null the defaults
     /// from <see cref="VideoDecoderOptions"/> are used.
     /// </param>
+    /// <param name="formatContextPtr">Open <c>AVFormatContext</c> the stream belongs to.</param>
+    /// <param name="streamIndex">Index of the video stream to decode.</param>
+    /// <param name="options">
+    /// Hardware-decode policy. <see langword="null"/> makes this behave as the
+    /// software-only overload.
+    /// </param>
+    /// <param name="capabilities">
+    /// Backends the host was probed to support. <see langword="null"/> re-probes.
+    /// </param>
+    /// <param name="loggerFactory">Optional logger factory; silent when null.</param>
     /// <exception cref="HardwareDecodeUnavailableException">
     /// Thrown when <see cref="HardwareDecodeMode.Required"/> is configured and
     /// no candidate backend can be bound to the codec.
@@ -542,7 +552,7 @@ public sealed partial class VideoDecoder
 
     /// <summary>
     /// Opens a software codec context for the given codec/parameters.
-    /// Mirrors the original <see cref="Open(nint, int, ILogger?)"/> path,
+    /// Mirrors the software-only <see cref="Open(nint, int, VideoDecoderOptions, ILogger)"/> path,
     /// factored so both the software-only entry and the HW fallback can
     /// share it.
     /// </summary>

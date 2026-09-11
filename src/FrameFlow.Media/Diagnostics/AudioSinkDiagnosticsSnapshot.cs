@@ -9,7 +9,8 @@ namespace FrameFlow.Media.Diagnostics;
 /// </summary>
 /// <param name="PresentationTime">
 /// The sink's current master-clock playback time, equivalent to a synchronized
-/// read of <see cref="IAudioSink.GetPlaybackTime"/>. Sampled inside the sink's
+/// read of the sink's clock (<see cref="FrameFlow.Graph.IClockSource.Latest"/>
+/// where the sink is one). Sampled inside the sink's
 /// internal lock alongside <paramref name="ProcessedSamplesPerChannel"/> so the
 /// two fields are coherent — this is the API shape that prevents the
 /// PTS/samples-played torn-read race that motivated this ADR.
@@ -22,7 +23,7 @@ namespace FrameFlow.Media.Diagnostics;
 /// <param name="SampleRate">Output sample rate in Hz. Zero before activation.</param>
 /// <param name="Channels">Output channel count. Zero before activation.</param>
 /// <param name="BlocksWritten">
-/// Total decoded audio blocks accepted by <see cref="IAudioSink.WriteAsync"/>
+/// Total decoded audio blocks accepted by <see cref="IAudioSink.PresentAsync"/>
 /// since the most recent <see cref="IAudioSink.ActivateAsync"/>.
 /// </param>
 /// <param name="UnderrunCount">
@@ -31,7 +32,7 @@ namespace FrameFlow.Media.Diagnostics;
 /// keeping up; transient underruns at start-up are normal.
 /// </param>
 /// <param name="BackpressureEvents">
-/// Number of times <see cref="IAudioSink.WriteAsync"/> had to wait for a free
+/// Number of times <see cref="IAudioSink.PresentAsync"/> had to wait for a free
 /// device-side buffer before it could accept the next block. Indicates the
 /// sink is being fed faster than it can drain.
 /// </param>

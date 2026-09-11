@@ -184,7 +184,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     /// bound to</b> (the device its per-frame cross-device copy targets). Updated whenever
     /// <see cref="TryRebindDecodeDevice"/> rebinds the bridge to a new decode device. Exposed
     /// so the presenter can compare it against an incoming frame's device identity
-    /// (<see cref="GpuVideoFrame.TryGetD3D11Texture"/>'s <c>device</c> out): when they differ,
+    /// (<see cref="FrameFlow.Decoding.GpuVideoFrame.TryGetD3D11Texture"/>'s <c>device</c> out): when they differ,
     /// a warm-sink player swap brought a new decode device and the converter must rebind its
     /// decode bridge (ADR-0064). While bound, the converter holds COM references to this
     /// device (via <see cref="_decodeSideNv12"/> / <see cref="_decodeContext"/>), so its

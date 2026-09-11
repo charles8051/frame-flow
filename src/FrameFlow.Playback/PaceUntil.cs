@@ -11,7 +11,7 @@ namespace FrameFlow.Playback;
 /// <summary>
 /// Builds a 1→1 substrate operator that throttles item flow to a
 /// master <see cref="IClockSource"/>. For each item, the operator
-/// extracts the item's PTS via the supplied <paramref name="ptsSelector"/>
+/// extracts the item's PTS via the supplied <c>ptsSelector</c>
 /// and awaits <see cref="IClockSource.WaitUntilAsync"/> before
 /// forwarding — so a 1-second media frame doesn't reach the sink
 /// before the clock has advanced 1 second.

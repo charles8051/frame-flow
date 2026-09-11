@@ -15,7 +15,7 @@ namespace FrameFlow.Media;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Why this exists.</b> The substrate (Crossbar)
+/// <b>Why this exists.</b> The graph substrate
 /// uniformly requires <c>T : class, IRefCounted</c> on flowing items
 /// because the substrate handles AddRef/Dispose automatically at
 /// every operator boundary. FrameFlow's <see cref="IVideoFrame"/>

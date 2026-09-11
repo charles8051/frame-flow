@@ -19,7 +19,7 @@ namespace FrameFlow.Graph;
 /// </para>
 /// <para>
 /// For multi-output topologies (fan-out to multiple consumers), drop
-/// back to the explicit <see cref="Graph.Connect"/> API — the chain is
+/// back to the explicit <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeOptions)"/> API — the chain is
 /// sugar for linear segments only.
 /// </para>
 /// </remarks>

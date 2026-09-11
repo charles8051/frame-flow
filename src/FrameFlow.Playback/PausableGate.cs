@@ -12,7 +12,7 @@ namespace FrameFlow.Playback;
 /// when closed, the operator awaits the gate before forwarding,
 /// causing the downstream sink pump to idle and the upstream source
 /// to backpressure naturally (the bounded edge buffer fills, then the
-/// upstream's <see cref="Crossbar.SourceNode{T}"/>
+/// upstream's <see cref="FrameFlow.Graph.SourceNode{TOut}"/>
 /// body call blocks on the channel write).
 /// </summary>
 /// <remarks>
@@ -28,7 +28,7 @@ namespace FrameFlow.Playback;
 /// gate; nothing gets cancelled mid-decode.
 /// </para>
 /// <para>
-/// <b>Why not put this in <c>Crossbar</c>.</b> The
+/// <b>Why not put this in <c>FrameFlow.Graph</c>.</b> The
 /// gate is fully generic over <c>T : class, IRefCounted</c> and would
 /// fit in the substrate. It lives here for now because (a) it's
 /// only used by the playback controller and (b) keeping playback-

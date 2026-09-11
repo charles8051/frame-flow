@@ -4,7 +4,7 @@
 namespace FrameFlow.Graph;
 
 /// <summary>
-/// The minimal tensor primitive Crossbar's runtime requires. A
+/// The minimal tensor primitive the graph runtime requires. A
 /// peer of <see cref="IFrame"/> for non-pixel sensor data:
 /// point clouds, IMU samples, audio buffers, embedding vectors,
 /// inference inputs and outputs.
@@ -14,7 +14,7 @@ namespace FrameFlow.Graph;
 /// <b>Refcounted ownership.</b> Unlike <see cref="IFrame"/>, which
 /// leaves the refcount model to the binding library (per
 /// ADR-0001 §2), <see cref="ITensor"/> exposes <see cref="AddRef"/>
-/// directly. Tensors are Crossbar's own primitive — there is no
+/// directly. Tensors are the graph substrate's own primitive — there is no
 /// equivalent of the Periphery / FrameFlow split — so the substrate
 /// can rely on the refcount being part of the contract. This makes
 /// fan-out over <see cref="ITensor"/> ergonomic: an edge can share a

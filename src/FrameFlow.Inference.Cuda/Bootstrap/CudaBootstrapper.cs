@@ -34,7 +34,7 @@ namespace FrameFlow.Inference.Cuda;
 /// <para>
 /// The bootstrapper is safe to call repeatedly. It does no caching of
 /// its own — each <see cref="Probe"/> re-queries the underlying probes
-/// (<see cref="CudaProbe"/>, <see cref="OnnxProbe"/>) and the
+/// (<c>CudaProbe</c>, <see cref="OnnxProbe"/>) and the
 /// <see cref="CudaDllResolver"/>. Those have their own internal
 /// caching, so repeated calls are cheap.
 /// </para>

@@ -13,7 +13,7 @@ namespace FrameFlow.Media;
 /// </summary>
 /// <remarks>
 /// Moved from <c>FrameFlow.Playback</c> to <c>FrameFlow.Media</c> during
-/// Phase 4 prep (Crossbar ADR-0014). Sinks (Avalonia / SDL) and examples
+/// the substrate migration. Sinks (Avalonia / SDL) and examples
 /// consume it — anchoring it in the substrate-neutral Media assembly keeps
 /// them from transitively pulling <c>FrameFlow.Playback</c>.
 /// </remarks>

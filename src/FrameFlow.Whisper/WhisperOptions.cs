@@ -5,7 +5,7 @@ namespace FrameFlow.Whisper;
 
 /// <summary>
 /// Configuration for the
-/// <see cref="WhisperPipelineExtensions.TranscribeWithWhisper"/>
+/// <c>WhisperOperators.TranscribeWithWhisper</c>
 /// pipeline operator.
 /// </summary>
 /// <param name="Language">

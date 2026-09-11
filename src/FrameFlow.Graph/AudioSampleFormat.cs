@@ -6,7 +6,7 @@ namespace FrameFlow.Graph;
 /// <summary>
 /// Per-sample numeric type and channel-interleaving layout for decoded
 /// audio buffers. The set mirrors what FFmpeg's <c>AVSampleFormat</c>
-/// produces after audio decode, restricted to the variants Crossbar
+/// produces after audio decode, restricted to the variants graph
 /// consumers actually exchange.
 /// </summary>
 /// <remarks>

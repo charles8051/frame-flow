@@ -268,7 +268,7 @@ public sealed class GpuVideoFrame : IVideoFrame
         );
 
     /// <summary>
-    /// Performs an explicit GPU&rarr;CPU readback of this frame's
+    /// Performs an explicit GPU→CPU readback of this frame's
     /// pixel data via <c>av_hwframe_transfer_data</c>, then
     /// <c>sws_scale</c>s the result to a tightly-packed
     /// <see cref="PixelFormat.Bgra32"/> <see cref="CpuVideoFrame"/>.

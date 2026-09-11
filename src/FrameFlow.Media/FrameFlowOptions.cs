@@ -20,7 +20,7 @@ public sealed class FrameFlowPlaybackOptions
 {
     /// <summary>
     /// Initial repeat mode applied when a controller is created. Can be changed
-    /// at runtime via <see cref="Playback.IPlaybackController.SetRepeatModeAsync"/>.
+    /// at runtime via <c>IPlaybackController.SetRepeatModeAsync</c>.
     /// </summary>
     public RepeatMode InitialRepeatMode { get; set; } = RepeatMode.Off;
 }

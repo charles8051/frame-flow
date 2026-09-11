@@ -25,9 +25,16 @@ internal static partial class FFSwScale
     /// Returns the context pointer on success, or <see cref="nint.Zero"/> on failure.
     /// Caller must free with <see cref="sws_freeContext"/>.
     /// </summary>
+    /// <param name="srcW">Source width in pixels.</param>
+    /// <param name="srcH">Source height in pixels.</param>
     /// <param name="srcFormat">Source pixel format (FFmpeg <c>AVPixelFormat</c> integer).</param>
+    /// <param name="dstW">Destination width in pixels.</param>
+    /// <param name="dstH">Destination height in pixels.</param>
     /// <param name="dstFormat">Destination pixel format (FFmpeg <c>AVPixelFormat</c> integer).</param>
     /// <param name="flags">Algorithm flags; use <c>SWS_BILINEAR</c> (2) for a good default.</param>
+    /// <param name="srcFilter">Optional source filter; <see cref="nint.Zero"/> for none.</param>
+    /// <param name="dstFilter">Optional destination filter; <see cref="nint.Zero"/> for none.</param>
+    /// <param name="param">Optional algorithm tuning array; <see cref="nint.Zero"/> for defaults.</param>
     [LibraryImport("swscale")]
     [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
     internal static partial nint sws_getContext(

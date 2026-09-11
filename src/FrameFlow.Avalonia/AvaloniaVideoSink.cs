@@ -82,7 +82,7 @@ public sealed partial class AvaloniaVideoSink : IVideoSink
     /// it cannot know whether a frame will be copied until it has one in hand and can read
     /// its dimensions — a frame arriving mid-resize is discarded, and counting it presented
     /// would inflate the very number this sink exists to report honestly.
-    /// Pair with <see cref="RecordCopied"/> or <see cref="RecordPreSwapDrop"/>.
+    /// Pair with <see cref="RecordPresented"/> or <see cref="RecordPreSwapDrop"/>.
     /// </summary>
     internal IVideoFrame? TakePendingFrame() => _slot.Take();
 
