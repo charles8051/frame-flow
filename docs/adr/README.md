@@ -188,6 +188,14 @@ land.
   measured against a running policy before the default changes. Its rejected alternative F
   records the packet-pacing design this replaced, and the measurement that ruled it
   out.
+- [One builder, two terminals](one-builder-two-terminals.md) — the fluent surface
+  returned the weaker object: `BuildAsync` yields a single-shot `PlayerSession`, while
+  the eleven-parameter `MediaPlayer.CreateAsync` holds the whole state machine. Adds
+  `BuildPlayerAsync` as a second terminal on the same chain, and narrows the chain to
+  `IMediaPlayerBuilder` the moment an option only a player can honour is set, so
+  setting repeat mode and then asking for a session is a compile error rather than a
+  dropped setting. Records the cost of the narrowing — a second overload for every
+  builder extension method — and the interface break it accepts to get there.
 - [Sync-window join for media-time correlation](sync-window-join.md) — the substrate
   fans out and cannot rejoin, so four consumers hand-roll the same correlation outside
   the graph. Adds a two-input node that pairs a slow secondary onto a fast primary by

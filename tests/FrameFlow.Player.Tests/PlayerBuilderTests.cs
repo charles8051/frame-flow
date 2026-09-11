@@ -2,6 +2,8 @@ using FrameFlow.Audio;
 using FrameFlow.Media;
 using FrameFlow.Video;
 using FrameFlow.Graph;
+using FrameFlow.Native;
+using FrameFlow.Playback;
 
 namespace FrameFlow.Player.Tests;
 
@@ -71,10 +73,42 @@ public sealed class PlayerBuilderTests
     }
 
     [Fact]
-    public void WithLogger_Null_Throws()
+    public void WithLogger_Null_IsNoOpAndKeepsTheChain()
+    {
+        // Null is deliberately not a throw: a conditional logging step
+        // has to stay inside the chain rather than forcing the caller
+        // out to a local. See issue #99.
+        var builder = FrameFlowPlayer.Open("any.mp4");
+        var same = builder.WithLogger(null).WithHardwareDecode(HardwareDecodeMode.Disabled);
+        Assert.Same(builder, same);
+    }
+
+    [Fact]
+    public void WithClock_Null_Throws()
     {
         var builder = FrameFlowPlayer.Open("any.mp4");
-        Assert.Throws<ArgumentNullException>(() => builder.WithLogger(null!));
+        Assert.Throws<ArgumentNullException>(() => builder.WithClock(null!));
+    }
+
+    [Fact]
+    public void PlayerOnlyOption_NarrowsToMediaPlayerBuilder()
+    {
+        var builder = FrameFlowPlayer.Open("any.mp4");
+        var sink = new NullVideoSink();
+
+        // Each player-only setter narrows the chain, and the narrowed
+        // interface carries the shared options forward on the same
+        // instance so either ordering chains.
+        IMediaPlayerBuilder narrowed = builder
+            .WithRepeatMode(RepeatMode.All)
+            .WithHardwareFrames()
+            .WithAudioActivation(false)
+            .WithClock(new PlaybackClock())
+            .WithVideoSink(sink)
+            .WithHardwareDecode(HardwareDecodeMode.Disabled)
+            .WithLogger(null);
+
+        Assert.Same(builder, narrowed);
     }
 
     [Fact]

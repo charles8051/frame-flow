@@ -44,4 +44,30 @@ public static class FrameFlowOpenAlBuilderExtensions
 #pragma warning restore CA2000
         return builder.WithAudioSink(sink);
     }
+
+    /// <summary>
+    /// Constructs an <see cref="OpenAlAudioSink"/> and attaches it to a
+    /// narrowed <see cref="IMediaPlayerBuilder"/> chain — the overload
+    /// for chains headed for
+    /// <see cref="IMediaPlayerBuilder.BuildPlayerAsync"/>.
+    /// </summary>
+    /// <param name="builder">The player builder being configured.</param>
+    /// <param name="loggerFactory">
+    /// Optional logger factory used to create a logger for the sink. When
+    /// <see langword="null"/>, the sink runs without logging.
+    /// </param>
+    /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
+    public static IMediaPlayerBuilder WithOpenAlAudio(
+        this IMediaPlayerBuilder builder,
+        ILoggerFactory? loggerFactory = null
+    )
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        // Ownership transfers to the player builder, which holds the sink for
+        // the player's lifetime. CA2000 can't see the ownership handoff.
+#pragma warning disable CA2000
+        var sink = new OpenAlAudioSink(loggerFactory?.CreateLogger<OpenAlAudioSink>());
+#pragma warning restore CA2000
+        return builder.WithAudioSink(sink);
+    }
 }

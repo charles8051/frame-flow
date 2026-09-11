@@ -70,10 +70,11 @@ internal static class Program
 
         try
         {
-            var builder = FrameFlowPlayer.Open(inputPath).WithAudioSink(sink);
-            if (loggerFactory is not null)
-                builder = builder.WithLogger(loggerFactory);
-            await using var player = await builder.BuildAsync();
+            await using var player = await FrameFlowPlayer
+                .Open(inputPath)
+                .WithAudioSink(sink)
+                .WithLogger(loggerFactory)
+                .BuildAsync();
 
             if (player.Info.AudioStreams.Count == 0)
             {
