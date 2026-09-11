@@ -67,6 +67,24 @@
     <RepositoryType>git</RepositoryType>
     <Description>FFmpeg 7.1 shared native libraries for FrameFlow. Provides pre-built binaries for win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, and osx-arm64.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>ffmpeg;native;runtime;binaries;video;audio;media;cross-platform</PackageTags>
+
+    <!--
+      This project sits outside src/, so it inherits none of the package
+      defaults in src/Directory.Build.props. PackageTags above is therefore
+      spelled out; the rest of that file does not apply here and the reason is
+      worth recording, because "Native.Runtime has no symbol package" reads
+      like an oversight.
+
+      IncludeSymbols / SymbolPackageFormat: nothing to symbolise. NoBuild and
+      IncludeBuildOutput=false mean this package contains FFmpeg's shared
+      libraries and no managed assembly, so there is no PDB and a .snupkg would
+      ship empty.
+
+      PublishRepositoryUrl / EmbedUntrackedSources: SourceLink maps a PDB back
+      to source, and there is no PDB. The repository metadata SourceLink would
+      have filled in is already set explicitly above.
+    -->
 
     <!-- MinVer: derive version from git tags like v0.1.0 -->
     <MinVerTagPrefix>v</MinVerTagPrefix>
