@@ -60,6 +60,14 @@ Bootstrap will be separate from playback session creation and separate from demu
 
 Rejected because it hides environment failures in the wrong layer.
 
+**Amended by [ADR-0070](ADR-0070-resolver-installs-itself-on-first-native-use.md).** The
+loading half of this alternative was adopted: a P/Invoke that finds nothing loaded runs a
+default bootstrap once. While the bootstrap was reachable only from `FrameFlow.Player`,
+every entry point below it threw `Unable to load DLL 'avformat'` — an environment failure
+wearing a packaging error's clothes, which is the outcome this rejection was written to
+avoid. ADR-0070 keeps the rejection's substance by making the remaining failure carry this
+layer's own diagnostic instead.
+
 ### Only support bundled binaries
 
 Rejected because it reduces flexibility for development and deployment.

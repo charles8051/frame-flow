@@ -220,7 +220,15 @@ land.
   detection overlay migrated onto it, which deletes the `_inferenceBusy` gating in
   favour of a `LatestWins(1)` edge; the caption overlay waits on ADR-0047's lookahead.
 
-(Most recently, the playback stack's two error models were collapsed into one as
+(Most recently, the FFmpeg resolver stopped waiting to be installed as
+[ADR-0070](ADR-0070-resolver-installs-itself-on-first-native-use.md) —
+`SetDllImportResolver` moved to a module initializer in `FrameFlow.Native`, and a P/Invoke
+that finds nothing loaded runs a default bootstrap once rather than throwing
+`Unable to load DLL 'avformat'`; it amends [ADR-0002](ADR-0002-ffmpeg-bootstrap-strategy.md),
+whose rejection of implicit loading it answers by making the remaining failure carry the
+bootstrap's own diagnostic, and it closes issues #124 and #55, which were the same
+convention failing one layer apart. Before it, the playback stack's two error models were
+collapsed into one as
 [ADR-0069](ADR-0069-one-error-model-across-the-playback-stack.md) — `IMediaPlayer`'s
 transport commands return `Result` like the controller under them, instead of flattening
 `ErrorCategory` into an `InvalidOperationException` message, and gain the `ErrorOccurred`

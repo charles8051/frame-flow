@@ -155,6 +155,14 @@ and live camera and multicast sources.
 `FrameFlow.Native.Runtime` carries the FFmpeg binaries. The libraries do not
 reference it — add it yourself, or supply the natives another way.
 
+Any package here works on its own. The FFmpeg resolver installs itself on the
+first native call, so `FrameFlow.Decoding` opens a file without a bootstrap call
+and without a dependency on the player layer (ADR-0070). Bootstrap explicitly —
+`AddHostedBootstrap()`, or `new FrameFlowBootstrapper(options).Initialize()` —
+when you need to choose which binaries load, or need the hardware-decode
+capabilities the result reports. Do it before the first decode call: libraries
+load once per process.
+
 `FrameFlow.MotionClip` is a camera-tracked motion-clip capture tool. It is not
 on nuget.org; take the self-contained binary from
 [Releases](https://github.com/charles8051/frame-flow/releases).
