@@ -16,6 +16,19 @@ name: Build and Test
 # the price. Cross-platform runs being expensive is why there was no PR trigger
 # at all; capping the automatic matrix at two is what makes one affordable.
 #
+# Restore runs unauthenticated, so a fork pull request builds like any other and
+# nothing here reads a secret. This workflow used to add the private GitHub
+# Packages feed with PACKAGES_READ_PAT because FrameFlow.Native.Runtime lived
+# only there; #51 mapped that id to nuget.org on 2026-08-31 and it has published
+# 0.7.0-alpha.4 and 0.8.0-alpha.1 since. All 35 PackageReference ids in the
+# solution now resolve from nuget.org. The credential outlived its reason by two
+# months unnoticed, because the last dispatch before this trigger existed was
+# 2026-06-24 — the step was never run again to be found redundant.
+#
+# If a private package is ever reintroduced, this stops being true: the auth step
+# comes back, and with it the fork problem, because GitHub hands no secrets to a
+# fork's pull_request.
+#
 # No paths-ignore. A docs-only PR will burn a build, which is the cheaper
 # mistake: paths-ignore leaves the check permanently pending rather than
 # skipped, so it cannot be made a required check later without stranding every
@@ -55,8 +68,8 @@ concurrency:
 # repository default. That matters more now than under dispatch-only: a pull
 # request's own MSBuild targets and tests execute in this workspace, and
 # actions/checkout writes the token into .git/config as an extraheader unless told
-# not to. Restore needs nothing from GITHUB_TOKEN — the private feed uses
-# PACKAGES_READ_PAT — and nothing here pushes, so contents: read is the ceiling.
+# not to. This job holds no other credential and pushes nothing, so contents: read
+# is the ceiling.
 permissions:
   contents: read
 
@@ -64,7 +77,6 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   DOTNET_NOLOGO: true
-  NUGET_SOURCE: https://nuget.pkg.github.com/charles8051/index.json
 
 jobs:
   # Build the OS matrix. On a pull request it is fixed; on a dispatch it comes
@@ -75,30 +87,6 @@ jobs:
     outputs:
       matrix: ${{ steps.os.outputs.matrix }}
     steps:
-      # Fork gate, and it FAILS rather than skips. "Authenticate GitHub Packages"
-      # below needs PACKAGES_READ_PAT; a pull_request from a fork is handed no
-      # secrets, so that run would reach Restore with an empty credential and die
-      # NU1301 against FrameFlow.Native.Runtime. This repo genuinely cannot build a
-      # fork PR on CI until that package reaches nuget.org.
-      #
-      # The first draft skipped the job instead, which is worse than useless:
-      # GitHub reports an if-skipped job as `skipped`, and branch protection counts
-      # `skipped` as success. A required check would then read GREEN on precisely
-      # the pull requests nothing had compiled. Failing states the same fact in the
-      # one direction that cannot be mistaken for validation.
-      #
-      # Consequence for branch protection: require `setup`, not the `test` legs.
-      # `test` skips through `needs` when this step fails, and a skipped matrix leg
-      # is subject to the same green-when-absent rule. `setup` is the job that
-      # actually goes red.
-      - name: Refuse fork pull requests
-        if: >-
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name != github.repository
-        run: |
-          echo "::error::CI cannot build a pull request from a fork: the restore needs PACKAGES_READ_PAT, and GitHub withholds secrets from fork pull_request events. A maintainer must build this branch by pushing it to this repository, or by dispatching Build and Test against it. This is a limitation of the private FrameFlow.Native.Runtime feed, not a judgement on the contribution."
-          exit 1
-
       - id: os
         shell: bash
         run: |
@@ -159,34 +147,6 @@ jobs:
           sudo rm -rf /usr/local/lib/android /opt/ghc /usr/local/.ghcup             /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift || true
           df -h /
 
-      # This workflow has never had this step, which is why its last dispatch
-      # (2026-06-24) failed: Restore hit the private GitHub Packages feed
-      # unauthenticated, got 401 for periphery, periphery.camera and
-      # frameflow.native.runtime, and died NU1301. Only publish.yml authenticated,
-      # so only publish.yml was ever green.
-      #
-      # Periphery* is no longer the reason — 4.1.0-alpha.2 is on nuget.org, and
-      # nuget.config now maps nuget.org for it. FrameFlow.Native.Runtime is: it
-      # has only ever been published to GitHub Packages, and six projects
-      # reference it. Until it reaches nuget.org, a full-solution restore needs
-      # this credential.
-      #
-      # The PAT is reachable from a pull_request event as of 2026-09-11, but only
-      # from a branch on this repo: GitHub hands no secrets to a fork's
-      # pull_request, and the setup job refuses those runs outright rather than
-      # letting them reach this step and fail confusingly at Restore.
-      #
-      # A same-repo pull request does execute its own MSBuild targets and tests
-      # against the nuget.config this step writes. That is accepted: opening one
-      # requires write access to this repository, and a pull_request runs the PR's
-      # copy of this workflow file, so anyone able to open it can already reach the
-      # secret by other means. The trust boundary is repository write access, not
-      # this step. See publish.yml for the PAT's rationale.
-      - name: Authenticate GitHub Packages
-        # Single line + the job's default shell so this runs on every matrix leg:
-        # bash on Linux and macOS, Windows PowerShell on windows-latest.
-        run: dotnet nuget add source "${{ env.NUGET_SOURCE }}" --name github-charles8051 --username "${{ github.repository_owner }}" --password "${{ secrets.PACKAGES_READ_PAT }}" --store-password-in-clear-text --configfile nuget.config
-
       - name: Restore
         run: dotnet restore FrameFlow.slnx
 
@@ -245,17 +205,3 @@ jobs:
           name: test-results-${{ matrix.os }}
           path: "**/test-*.trx"
           retention-days: 14
-
-      # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
-      # clear text — NuGet has no other way to hand a credential to a v3 source in
-      # a non-interactive job. This job runs on GitHub-hosted runners, which are
-      # discarded per job, so the cleanup is belt-and-braces here rather than
-      # load-bearing as it is in publish.yml. It also keeps the two workflows'
-      # auth blocks symmetrical, so a later move to a self-hosted runner does not
-      # silently drop the scrub. `remove source` drops the
-      # packageSourceCredentials entry along with the source; verified.
-      #
-      # if: always() so a failed build still scrubs the credential.
-      - name: Remove GitHub Packages credential
-        if: always()
-        run: dotnet nuget remove source github-charles8051 --configfile nuget.config
