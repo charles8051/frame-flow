@@ -305,12 +305,9 @@ public partial class MainWindow : Window
             _player = playlist;
 
             // Follow the now-playing file in the list as the presenter advances.
-            // Fully qualified because FrameFlow.Avalonia and FrameFlow.Playback
-            // both expose a Subscribe(IObservable, Action) extension.
-            _transitionSub = AvaloniaObservableExtensions.Subscribe(
-                playlist.SourceTransitioned.ObserveOnUiThread(),
-                OnSourceTransitioned
-            );
+            _transitionSub = playlist
+                .SourceTransitioned.ObserveOnUiThread()
+                .Subscribe(OnSourceTransitioned);
 
             PlayerView.MediaPlayer = playlist;
             UpdateSelection(playlist.CurrentSource);

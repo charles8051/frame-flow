@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using FrameFlow.Media;
+using FrameFlow.Playback;
 using FrameFlow.Player;
 
 namespace FrameFlow.Avalonia;
