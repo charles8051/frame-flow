@@ -75,6 +75,14 @@ public interface IPlaybackController : IAsyncDisposable
     // ── Observable events ────────────────────────────────────────────────
 
     /// <summary>Fires on every primary playback state transition.</summary>
+    /// <remarks>
+    /// Carries both ends of the transition, matching
+    /// <see cref="SeekStateChanged"/> and <see cref="RepeatModeChanged"/>.
+    /// <c>FrameFlow.Player</c>'s <c>IMediaPlayer.StateChanged</c> projects this
+    /// to the current state alone, which is why it keeps the shorter name: the
+    /// two payloads differ, so one name for both would say they were
+    /// interchangeable.
+    /// </remarks>
     IObservable<StateTransition<PlaybackState>> PlaybackStateChanged { get; }
 
     /// <summary>Fires on every seeking state transition.</summary>
@@ -98,6 +106,13 @@ public interface IPlaybackController : IAsyncDisposable
     IObservable<PlaybackError> ErrorOccurred { get; }
 
     /// <summary>Periodic position updates during playback.</summary>
+    /// <remarks>
+    /// A cadence, not a change notification, and named for it. The clock is
+    /// sampled on a 250 ms <see cref="PeriodicTimer"/> bound to
+    /// <see cref="PlaybackState.Playing"/>, and whatever it reads is pushed, so
+    /// a value can repeat and the stream is silent while paused. A consumer
+    /// that needs edge semantics has to compare for itself.
+    /// </remarks>
     IObservable<TimeSpan> PositionTick { get; }
 
     // ── Diagnostics (ADR-0034) ────────────────────────────────────────────

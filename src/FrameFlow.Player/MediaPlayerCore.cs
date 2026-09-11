@@ -55,12 +55,12 @@ internal sealed class MediaPlayerCore : IMediaPlayer
         );
 
     public IObservable<PlaybackState> StateChanged => _stateChanged;
-    public IObservable<TimeSpan> PositionChanged => _controller.PositionTick;
+    public IObservable<TimeSpan> PositionTick => _controller.PositionTick;
     public IObservable<LoopStalled> LoopStalled => _controller.LoopStalled;
     public IObservable<PlaybackError> ErrorOccurred => _controller.ErrorOccurred;
     public IObservable<PlaybackDiagnosticsSnapshot> Diagnostics => DiagnosticsObservable.Instance;
 
-    public PlaybackDiagnosticsSnapshot PollDiagnostics() => _controller.GetDiagnostics();
+    public PlaybackDiagnosticsSnapshot GetDiagnostics() => _controller.GetDiagnostics();
 
     // Volume / mute forward to the sink only when it implements
     // IVolumeControl. When it does not, the writes are kept here so the
@@ -172,7 +172,7 @@ internal sealed class MediaPlayerCore : IMediaPlayer
     /// Empty diagnostics observable — Phase-1 implementation. The
     /// underlying <see cref="IPlaybackController"/> doesn't push
     /// diagnostics as an event stream today; consumers use
-    /// <see cref="IMediaPlayer.PollDiagnostics"/> with a timer
+    /// <see cref="IMediaPlayer.GetDiagnostics"/> with a timer
     /// instead. A future revision can add a cadenced diagnostics
     /// pump driven by the controller's position ticker.
     /// </summary>

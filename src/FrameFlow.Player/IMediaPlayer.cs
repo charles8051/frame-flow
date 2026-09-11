@@ -79,10 +79,25 @@ public interface IMediaPlayer : IAsyncDisposable
     MediaInfo MediaInfo { get; }
 
     /// <summary>Stream of primary playback state transitions.</summary>
+    /// <remarks>
+    /// Carries the state the player moved <i>to</i>, which is what a badge or a
+    /// button row needs. The layer below reports the same transitions as
+    /// <see cref="IPlaybackController.PlaybackStateChanged"/>, typed
+    /// <c>StateTransition&lt;PlaybackState&gt;</c> so it also carries the state
+    /// moved <i>from</i>. The two names differ because the two payloads do;
+    /// take the controller's stream if you need the previous state.
+    /// </remarks>
     IObservable<PlaybackState> StateChanged { get; }
 
     /// <summary>Stream of position updates.</summary>
-    IObservable<TimeSpan> PositionChanged { get; }
+    /// <remarks>
+    /// A cadence, not a change notification. The controller samples the
+    /// playback clock on a 250 ms <see cref="PeriodicTimer"/> while the player
+    /// is in <see cref="PlaybackState.Playing"/> and pushes whatever it reads,
+    /// so a value can repeat and the stream is silent while paused. This is
+    /// <see cref="IPlaybackController.PositionTick"/> unprojected.
+    /// </remarks>
+    IObservable<TimeSpan> PositionTick { get; }
 
     /// <summary>
     /// Fires when a single-item loop appears to have stalled — the position
@@ -107,7 +122,13 @@ public interface IMediaPlayer : IAsyncDisposable
     IObservable<PlaybackDiagnosticsSnapshot> Diagnostics { get; }
 
     /// <summary>Returns a snapshot of diagnostics on demand.</summary>
-    PlaybackDiagnosticsSnapshot PollDiagnostics();
+    /// <remarks>
+    /// Named for the ADR-0034 convention that every diagnostics-bearing surface
+    /// in FrameFlow follows — sinks, decoders, the demux session and the
+    /// controller all spell it <c>GetDiagnostics()</c>. Cheap enough for a UI
+    /// timer at ~2 Hz; not a hot-path call.
+    /// </remarks>
+    PlaybackDiagnosticsSnapshot GetDiagnostics();
 
     /// <summary>
     /// Whether the underlying audio sink can actually change output gain.

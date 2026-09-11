@@ -67,12 +67,12 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
         );
 
     public IObservable<PlaybackState> StateChanged => _stateChanged;
-    public IObservable<TimeSpan> PositionChanged => _controller.PositionTick;
+    public IObservable<TimeSpan> PositionTick => _controller.PositionTick;
     public IObservable<LoopStalled> LoopStalled => _controller.LoopStalled;
     public IObservable<PlaybackError> ErrorOccurred => _controller.ErrorOccurred;
     public IObservable<PlaybackDiagnosticsSnapshot> Diagnostics => EmptyDiagnostics.Instance;
 
-    public PlaybackDiagnosticsSnapshot PollDiagnostics() => _controller.GetDiagnostics();
+    public PlaybackDiagnosticsSnapshot GetDiagnostics() => _controller.GetDiagnostics();
 
     // Same shape as MediaPlayerCore: forward to the sink when it implements
     // IVolumeControl, otherwise keep the write locally so the getters
