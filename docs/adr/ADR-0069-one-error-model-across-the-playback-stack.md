@@ -124,10 +124,19 @@ handlers where an escaping exception takes the process down rather than
 reaching a caller. What changes is that it now distinguishes the two cases and
 records both, instead of discarding them together.
 
-One call site deliberately does not report: the seek bar's scrub dispatcher. A
-scrub emits seeks continuously, so a source that refuses them would turn one
-gesture into a burst of identical warnings. The discard is explicit and
-commented at the site.
+One call site reports through a latch rather than on every command: the seek
+bar's scrub dispatcher. A scrub emits seeks continuously, so reporting each
+refusal turns one gesture into a burst of identical warnings, while reporting
+none leaves a source that has a duration but refuses seeking
+indistinguishable from one that works. The latch gives the first refusal and
+clears on the next success, which re-arms it.
+
+A control whose visual state runs ahead of the command needs one thing more.
+The loop toggle flips on click, and repeat mode has no observable on this
+surface to resynchronise from, so a refusal would leave it advertising a mode
+the player never adopted. `PlayerCommand.FireAndForget` takes an optional
+`onRefused` for exactly that. Play, pause and stop need nothing: their buttons
+follow `StateChanged`, and a refused command produces no transition.
 
 ## Alternatives considered
 

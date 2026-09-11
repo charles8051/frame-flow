@@ -100,6 +100,12 @@ public sealed class FrameFlowSeekBar : Slider
     // latest-target-wins policy that keeps a drag from flooding the engine.
     private ScrubSeekDispatcher? _scrub;
 
+    // Latches on the first refused seek and clears on the next successful one,
+    // so a source that refuses seeking says so once per run of failures rather
+    // than once per scrub tick. UI thread only: the dispatcher's pump resumes
+    // on the Avalonia context.
+    private bool _seekRefusalReported;
+
     public FrameFlowSeekBar()
     {
         Minimum = 0;
@@ -181,16 +187,31 @@ public sealed class FrameFlowSeekBar : Slider
         // pump still draining against the previous player finishes harmlessly
         // — its seeks target the old, now-disposing player and are swallowed.
         //
-        // This is the one transport call site that does not report its Result,
-        // and the discard is deliberate rather than an oversight. A scrub emits
-        // seeks continuously, so a source that refuses them — a live stream, or
-        // the disposing player in the case above — would turn one user gesture
-        // into a burst of identical warnings. The seek bar disables itself for
-        // a source with no duration, which is the visible signal that matters.
+        // This call site reports its Result through a latch rather than on
+        // every seek. A scrub emits seeks continuously, so reporting each
+        // refusal would turn one gesture into a burst of identical warnings;
+        // reporting none leaves a source that has a duration but refuses
+        // seeking indistinguishable from one that works. The latch gives the
+        // first refusal and then stays quiet until a seek succeeds, which
+        // re-arms it for the next thing that goes wrong.
+        _seekRefusalReported = false;
         _scrub =
             player is null
                 ? null
-                : new ScrubSeekDispatcher(async t => _ = await player.SeekAsync(t));
+                : new ScrubSeekDispatcher(async t =>
+                {
+                    var result = await player.SeekAsync(t).ConfigureAwait(true);
+                    if (result.IsSuccess)
+                    {
+                        _seekRefusalReported = false;
+                        return;
+                    }
+
+                    if (_seekRefusalReported)
+                        return;
+                    _seekRefusalReported = true;
+                    PlayerCommand.Report(this, nameof(IMediaPlayer.SeekAsync), result);
+                });
 
         if (player is null)
         {

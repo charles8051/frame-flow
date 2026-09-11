@@ -544,14 +544,21 @@ public partial class MainWindow : Window
     {
         if (_player is null)
             return;
-        var mode = LoopButton.IsChecked == true ? RepeatMode.One : RepeatMode.Off;
+        var requested = LoopButton.IsChecked == true;
+        var mode = requested ? RepeatMode.One : RepeatMode.Off;
         var set = await _player.SetRepeatModeAsync(mode);
         if (!set.IsSuccess)
+        {
             _logger?.LogWarning(
                 "SetRepeatModeAsync refused: {Category}: {Message}",
                 set.Error.Category,
                 set.Error.Message
             );
+            // Click already flipped the toggle and repeat mode has no
+            // observable to resynchronise from, so put it back rather than
+            // leave it advertising a mode the player refused.
+            LoopButton.IsChecked = !requested;
+        }
     }
 
     private void OnStatsTick(object? sender, EventArgs e)
