@@ -305,8 +305,9 @@ public partial class MainWindow : Window
                             "broadcast-fanout",
                             async (item, ct) =>
                             {
-                                // pane1 is an IVideoSink (post-ADR-0014
-                                // Phase 4: invoke PresentAsync directly);
+                                // pane1 is an IVideoSink (post-Crossbar
+                                // ADR-0014 Phase 4: invoke PresentAsync
+                                // directly);
                                 // pane2/pane3 are custom Avalonia
                                 // controls with public PresentAsync
                                 // methods of the same shape.

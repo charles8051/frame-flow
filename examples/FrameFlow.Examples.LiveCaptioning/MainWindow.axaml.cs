@@ -58,7 +58,7 @@ namespace FrameFlow.Examples.LiveCaptioning;
 ///     with the latest video PTS. Replaces the old
 ///     <c>OverlayOnto</c>'s metadata-bag pattern with a shared
 ///     concurrent state — the substrate doesn't have a metadata
-///     bag (per ADR-0014 §"What goes away").</item>
+///     bag (per Crossbar ADR-0014 §"What goes away").</item>
 ///   <item><b>Detection branch.</b> The decoded video output fans out
 ///     to a YOLO operator on a <c>LatestWins(1)</c> cloner edge. That
 ///     edge's drop-oldest is the skip-while-busy behaviour: frames

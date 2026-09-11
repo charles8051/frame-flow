@@ -456,8 +456,8 @@ public partial class MainWindow : Window
                     // pane doesn't tear down the graph. Mirrors the
                     // periphery BroadcastFanOut.SafePresentAsync claim;
                     // here it's aggregate rather than per-branch (file
-                    // Multicast doesn't split either — see ADR-0014
-                    // Phase 4).
+                    // Multicast doesn't split either — see Crossbar
+                    // ADR-0014 Phase 4).
                     Interlocked.Increment(ref _broadcastBranchErrors);
                     _logger.LogWarning(ex, "Broadcast fan-out branch threw.");
                 }

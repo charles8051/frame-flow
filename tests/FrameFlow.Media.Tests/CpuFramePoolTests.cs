@@ -3,10 +3,11 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Media.Tests;
 
-// Moved from FrameFlow.Playback.Tests during Phase 4 prep (ADR-0014) —
-// CpuFramePool now lives in FrameFlow.Media so sinks / examples don't need
-// to transitively reference the soon-to-be-deleted FrameFlow.Playback
-// assembly. Test surface is unchanged; only the host project differs.
+// Moved from FrameFlow.Playback.Tests during Phase 4 prep (Crossbar
+// ADR-0014) — CpuFramePool now lives in FrameFlow.Media so sinks /
+// examples don't need to transitively reference the soon-to-be-deleted
+// FrameFlow.Playback assembly. Test surface is unchanged; only the host
+// project differs.
 public sealed class CpuFramePoolTests
 {
     private static CpuFramePool CreatePool(int capacity = 3) =>
