@@ -515,6 +515,87 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.True(sink.Muted);
     }
 
+    // ── The clock across a pause (#127) ─────────────────────────────
+    //
+    // A paused device's counters are not evidence. The reported failure was a source
+    // whose whole 16-buffer queue was marked processed five minutes into a pause: the
+    // clock credited it, resumed 1.09 s past where it paused, and every decoded frame
+    // came due at once. The sink now latches the position at the pause and re-anchors
+    // onto it at the resume, so whatever the queue did in between stays out.
+
+    [RequiresAudioDeviceFact]
+    public async Task Pause_FreezesTheClock()
+    {
+        await using var sink = new OpenAlAudioSink();
+        await sink.ActivateAsync();
+        for (int i = 0; i < 8; i++)
+            await sink.PresentAsync(MakePcmBlock(4800, 48000, 2, TimeSpan.Zero));
+
+        await Task.Delay(120);
+        await sink.PauseAsync();
+
+        var atPause = sink.GetPlaybackTime();
+        await Task.Delay(300);
+
+        // Not "barely moved" — identical. The clock is the latch while paused, and the
+        // device is not consulted at all, so there is nothing to be approximately right
+        // about.
+        Assert.Equal(atPause, sink.GetPlaybackTime());
+        Assert.Equal(atPause, sink.GetPlaybackTime());
+    }
+
+    [RequiresAudioDeviceFact]
+    public async Task Resume_ReportsThePositionThePauseReported()
+    {
+        await using var sink = new OpenAlAudioSink();
+        await sink.ActivateAsync();
+        for (int i = 0; i < 8; i++)
+            await sink.PresentAsync(MakePcmBlock(4800, 48000, 2, TimeSpan.Zero));
+
+        await Task.Delay(120);
+        await sink.PauseAsync();
+        var atPause = sink.GetPlaybackTime();
+
+        await Task.Delay(300);
+        await sink.ResumeAsync();
+
+        // The assertion the report asks for: `Audio resumed at 5.43s` after
+        // `Audio paused at 4.34s` must not be possible. Read immediately, before the
+        // device has had a mixing period to advance it legitimately.
+        var atResume = sink.GetPlaybackTime();
+        Assert.InRange(
+            (atResume - atPause).TotalMilliseconds,
+            -1.0,
+            AudioClockInterpolation.DefaultMaxExtrapolation.TotalMilliseconds + 1.0
+        );
+    }
+
+    [RequiresAudioDeviceFact]
+    public async Task PauseResume_LeavesTheClockRunningForwards()
+    {
+        await using var sink = new OpenAlAudioSink();
+        await sink.ActivateAsync();
+        for (int i = 0; i < 8; i++)
+            await sink.PresentAsync(MakePcmBlock(4800, 48000, 2, TimeSpan.Zero));
+
+        await Task.Delay(120);
+        await sink.PauseAsync();
+        var atPause = sink.GetPlaybackTime();
+        await Task.Delay(200);
+        await sink.ResumeAsync();
+
+        // The re-anchor must leave a working clock behind, not a frozen one: feed it and
+        // let it play, and the position has to move on from where the pause left it.
+        for (int i = 0; i < 8; i++)
+            await sink.PresentAsync(MakePcmBlock(4800, 48000, 2, TimeSpan.Zero));
+        await Task.Delay(250);
+
+        Assert.True(
+            sink.GetPlaybackTime() > atPause,
+            $"clock did not advance after resume (paused at {atPause}, now {sink.GetPlaybackTime()})"
+        );
+    }
+
     /// <summary>
     /// Construct a PcmAudioBuffer carrying <paramref name="samples"/>
     /// interleaved int16 samples (total — divide by channels for

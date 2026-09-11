@@ -109,6 +109,17 @@ public sealed partial class OpenAlAudioSink
     // _stateLock, like _clock — every read goes through GetPlaybackTimeUnderLock.
     private AudioClockAnchor _clockAnchor = AudioClockAnchor.None;
 
+    // Holds the clock to the rate a playing device can consume at, so a counter that
+    // advanced because the device dropped audio cannot carry the master clock with it
+    // (#127). Dropped at every discontinuity that reseats the clock, alongside
+    // _clockAnchor — see InvalidateClockAnchorsUnderLock. Guarded by _stateLock.
+    private AudioClockRateAnchor _rateAnchor = AudioClockRateAnchor.None;
+
+    // The position the clock stopped at, while it is stopped; null whenever playing.
+    // A paused device's counters are not evidence of anything: the clock reads this and
+    // ResumeAsync re-anchors onto it, so whatever the queue did meanwhile stays out of
+    // the master clock (#127). Guarded by _stateLock.
+    private TimeSpan? _pausedPosition;
 
     // Serialises every touch of the OpenAL source state, the buffer-pool queue,
     // the sample-counter, and the staging buffer. Three threads can race here in
@@ -428,6 +439,7 @@ public sealed partial class OpenAlAudioSink
                 if (!_clock.OriginSeated)
                 {
                     _clock = _clock.CaptureFirstBufferPts(pcm.PresentationTime);
+                    InvalidateClockAnchorsUnderLock();
                     LogBaseSourceTimeCaptured(_logger, _clock.BaseSourceTime.TotalSeconds);
                 }
 
@@ -697,7 +709,13 @@ public sealed partial class OpenAlAudioSink
             {
                 _al.SourcePause(_source);
                 _sessionClock.Stop();
-                LogPaused(_logger, GetPlaybackTimeUnderLock().TotalSeconds);
+                // Read the device once more, while it still means something, and latch it.
+                // Every later read returns the latch: a paused source that drains its queue
+                // reports the whole queue processed, and crediting that put the clock a
+                // buffer-pool ahead of the picture for the rest of the session (#127).
+                var pausedAt = GetPlaybackTimeUnderLock();
+                _pausedPosition = pausedAt;
+                LogPaused(_logger, pausedAt.TotalSeconds);
             }
             return ValueTask.CompletedTask;
         }
@@ -711,13 +729,13 @@ public sealed partial class OpenAlAudioSink
             if (_al is null || _disposed)
                 return ValueTask.CompletedTask;
 
-            // Drop the anchor before interpolation comes back on. The last read of the
-            // paused session anchored at the pause instant, and nothing reads the clock
-            // while paused — so without this the first read after resume measures its gap
-            // from that old timestamp and immediately leads the device by the full cap,
-            // instead of starting where the device actually is. Both branches below resume,
-            // so this sits above them.
-            _clockAnchor = AudioClockAnchor.None;
+            // Drop the anchors before interpolation and the rate limit come back on. The
+            // last read of the paused session anchored at the pause instant, and the clock
+            // has been frozen since — so without this the first read after resume measures
+            // its gap from that old timestamp and immediately leads the device by the full
+            // cap, instead of starting where the device actually is. Both branches below
+            // resume, so this sits above them.
+            InvalidateClockAnchorsUnderLock();
 
             _al.GetSourceProperty(_source, GetSourceInteger.SourceState, out int state);
             if ((SourceState)state == SourceState.Paused)
@@ -725,7 +743,7 @@ public sealed partial class OpenAlAudioSink
                 // Source still has buffers queued — resume playback normally.
                 _al.SourcePlay(_source);
                 _sessionClock.Start();
-                LogResumed(_logger, GetPlaybackTimeUnderLock().TotalSeconds);
+                LogResumed(_logger, RebaseOnResumeUnderLock().TotalSeconds);
             }
             else
             {
@@ -735,11 +753,35 @@ public sealed partial class OpenAlAudioSink
                 // queued.
                 _queue = _queue.MarkSourceStopped();
                 _sessionClock.Start();
-                LogResumed(_logger, GetPlaybackTimeUnderLock().TotalSeconds);
+                LogResumed(_logger, RebaseOnResumeUnderLock().TotalSeconds);
             }
 
             return ValueTask.CompletedTask;
         }
+    }
+
+    /// <summary>
+    /// Seats the clock's origin so it continues from the latched pause position, then
+    /// clears the latch and returns that position. A no-op read when there was no latch.
+    /// </summary>
+    /// <remarks>
+    /// Recycles first so the origin accounts for every buffer the device let go of during
+    /// the pause, legitimately or not — those buffers are returned to the pool either way,
+    /// and the rebase is what keeps their samples out of the published position. The
+    /// assertion this exists to make true is the one in #127: a resume must report the
+    /// position the pause reported, not that position plus the queue.
+    /// </remarks>
+    private TimeSpan RebaseOnResumeUnderLock()
+    {
+        if (_pausedPosition is not { } resumeAt)
+            return GetPlaybackTimeUnderLock();
+
+        RecycleProcessedBuffers();
+        _al!.GetSourceProperty(_source, GetSourceInteger.SampleOffset, out int sampleOffset);
+        _clock = _clock.RebaseOnResume(resumeAt, sampleOffset, _sampleRate);
+        _pausedPosition = null;
+        InvalidateClockAnchorsUnderLock();
+        return resumeAt;
     }
 
     /// <inheritdoc/>
@@ -800,10 +842,25 @@ public sealed partial class OpenAlAudioSink
             // OnDeactivate() folds all four of the old resets (_processedSamplesPerChannel
             // / _baseSourceTime / _baseSourceTimeCaptured / _pendingSeekBaseline) into one.
             _clock = _clock.OnDeactivate();
-            _clockAnchor = AudioClockAnchor.None;
+            _pausedPosition = null;
+            InvalidateClockAnchorsUnderLock();
 
             return ValueTask.CompletedTask;
         }
+    }
+
+    /// <summary>
+    /// Drops both clock anchors. Every discontinuity that reseats the origin has to,
+    /// because each anchor measures an advance from a reading taken against the old
+    /// timeline: the interpolator would extrapolate from a stale timestamp, and the rate
+    /// limit would read the reseat itself as a device outrunning real time — which is the
+    /// failure that got the first version of that guard deleted (#127). Must hold
+    /// <see cref="_stateLock"/>.
+    /// </summary>
+    private void InvalidateClockAnchorsUnderLock()
+    {
+        _clockAnchor = AudioClockAnchor.None;
+        _rateAnchor = AudioClockRateAnchor.None;
     }
 
     // Establishes the source-time origin during activation. Must be called under
@@ -816,8 +873,9 @@ public sealed partial class OpenAlAudioSink
     private void SeatBaseSourceTimeOnActivate()
     {
         var pendingSeed = _clock.PendingSeekBaseline;
+        _pausedPosition = null;
         _clock = _clock.SeatOnActivate();
-        _clockAnchor = AudioClockAnchor.None;
+        InvalidateClockAnchorsUnderLock();
         if (pendingSeed is { } seekBaseline)
             LogBaseSeatedToSeekTarget(_logger, seekBaseline.TotalSeconds);
     }
@@ -845,7 +903,7 @@ public sealed partial class OpenAlAudioSink
             _clock = _clock.SeekBaseline(position);
             // A seek moves the clock discontinuously; smoothing across it would drag the old
             // position into the new timeline.
-            _clockAnchor = AudioClockAnchor.None;
+            InvalidateClockAnchorsUnderLock();
         }
     }
 
@@ -987,6 +1045,12 @@ public sealed partial class OpenAlAudioSink
         if (_al is null || _disposed || _sampleRate <= 0)
             return _clock.BaseSourceTime;
 
+        // Paused: the latch is the answer, and the device is not consulted at all. Reading
+        // it would recycle whatever the queue did while stopped straight into the clock,
+        // which is how a pause came to end 1.09 s further on than it started (#127).
+        if (_pausedPosition is { } paused)
+            return paused;
+
         // Recycle first so _clock.ProcessedSamplesPerChannel reflects every buffer
         // OpenAL has finished, then read the live in-flight cursor and let the pure
         // value do the arithmetic. The shell owns the two device numbers (the
@@ -997,6 +1061,17 @@ public sealed partial class OpenAlAudioSink
         _al.GetSourceProperty(_source, GetSourceInteger.SampleOffset, out int sampleOffset);
 
         var raw = _clock.Position(sampleOffset, _sampleRate);
+
+        // A playing device consumes one second per second. A reading that outruns elapsed
+        // playing time is audio it dropped rather than played, so publish what real time
+        // allows instead of following it (#127). Applied to the device's own claim, before
+        // interpolation fills the gap between claims.
+        (_rateAnchor, raw) = AudioClockRateLimit.Apply(
+            _rateAnchor,
+            raw,
+            _sessionClock.Elapsed,
+            AudioClockRateLimit.DefaultSlack
+        );
 
         // The device value only moves once per mixing period — 20.00 ms on the measured
         // device — so consumers pacing against it move in 20 ms steps and a 60 fps source

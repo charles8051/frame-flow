@@ -1,5 +1,4 @@
 #nullable enable
-const FrameFlow.Media.Diagnostics.PresenterStallEvaluator.DefaultRecoverySamples = 4 -> int
 FrameFlow.Media.AudioClockAnchor
 FrameFlow.Media.AudioClockAnchor.AudioClockAnchor() -> void
 FrameFlow.Media.AudioClockAnchor.AudioClockAnchor(System.TimeSpan RawPosition, long ObservedAtTicks, System.TimeSpan LastPublished, bool Valid) -> void
@@ -12,6 +11,16 @@ FrameFlow.Media.AudioClockAnchor.RawPosition.init -> void
 FrameFlow.Media.AudioClockAnchor.Valid.get -> bool
 FrameFlow.Media.AudioClockAnchor.Valid.init -> void
 FrameFlow.Media.AudioClockInterpolation
+FrameFlow.Media.AudioClockRateAnchor
+FrameFlow.Media.AudioClockRateAnchor.AudioClockRateAnchor() -> void
+FrameFlow.Media.AudioClockRateAnchor.AudioClockRateAnchor(System.TimeSpan Position, System.TimeSpan SessionElapsed, bool Valid) -> void
+FrameFlow.Media.AudioClockRateAnchor.Position.get -> System.TimeSpan
+FrameFlow.Media.AudioClockRateAnchor.Position.init -> void
+FrameFlow.Media.AudioClockRateAnchor.SessionElapsed.get -> System.TimeSpan
+FrameFlow.Media.AudioClockRateAnchor.SessionElapsed.init -> void
+FrameFlow.Media.AudioClockRateAnchor.Valid.get -> bool
+FrameFlow.Media.AudioClockRateAnchor.Valid.init -> void
+FrameFlow.Media.AudioClockRateLimit
 FrameFlow.Media.AudioClockState
 FrameFlow.Media.AudioClockState.AudioClockState() -> void
 FrameFlow.Media.AudioClockState.BaseSourceTime.get -> System.TimeSpan
@@ -25,6 +34,7 @@ FrameFlow.Media.AudioClockState.PendingSeekBaseline.init -> void
 FrameFlow.Media.AudioClockState.Position(long deviceSampleOffset, int sampleRate) -> System.TimeSpan
 FrameFlow.Media.AudioClockState.ProcessedSamplesPerChannel.get -> long
 FrameFlow.Media.AudioClockState.ProcessedSamplesPerChannel.init -> void
+FrameFlow.Media.AudioClockState.RebaseOnResume(System.TimeSpan resumeAt, long deviceSampleOffset, int sampleRate) -> FrameFlow.Media.AudioClockState
 FrameFlow.Media.AudioClockState.SeatOnActivate() -> FrameFlow.Media.AudioClockState
 FrameFlow.Media.AudioClockState.SeekBaseline(System.TimeSpan position) -> FrameFlow.Media.AudioClockState
 FrameFlow.Media.AudioClockState.WithProcessed(long additionalSamplesPerChannel) -> FrameFlow.Media.AudioClockState
@@ -129,10 +139,6 @@ FrameFlow.Media.Diagnostics.PresenterSample.NowTicks.get -> long
 FrameFlow.Media.Diagnostics.PresenterSample.NowTicks.init -> void
 FrameFlow.Media.Diagnostics.PresenterSample.PresenterSample() -> void
 FrameFlow.Media.Diagnostics.PresenterSample.PresenterSample(long NowTicks, int FramesPresented, int FramesCommitted, long FramesAccepted, long LastBltStartedTicks) -> void
-FrameFlow.Media.Diagnostics.PresenterStalledReason
-FrameFlow.Media.Diagnostics.PresenterStalledReason.None = 0 -> FrameFlow.Media.Diagnostics.PresenterStalledReason
-FrameFlow.Media.Diagnostics.PresenterStalledReason.OutputNotComposited = 2 -> FrameFlow.Media.Diagnostics.PresenterStalledReason
-FrameFlow.Media.Diagnostics.PresenterStalledReason.PresentLoopWedged = 1 -> FrameFlow.Media.Diagnostics.PresenterStalledReason
 FrameFlow.Media.Diagnostics.PresenterStallEvaluator
 FrameFlow.Media.Diagnostics.PresenterStallEvaluator.Observe(in FrameFlow.Media.Diagnostics.PresenterSample sample) -> FrameFlow.Media.Diagnostics.PresenterStallOutcome
 FrameFlow.Media.Diagnostics.PresenterStallEvaluator.PresenterStallEvaluator() -> void
@@ -163,6 +169,10 @@ FrameFlow.Media.Diagnostics.PresenterStallWatchdog.Dispose() -> void
 FrameFlow.Media.Diagnostics.PresenterStallWatchdog.PresenterStallWatchdog(System.Func<FrameFlow.Media.Diagnostics.PresenterSample>! sample, Microsoft.Extensions.Logging.ILogger! logger, System.TimeSpan? timeout = null, System.TimeSpan? interval = null, int recoverySamples = 4) -> void
 FrameFlow.Media.Diagnostics.PresenterStallWatchdog.Recovered -> System.Action<FrameFlow.Media.Diagnostics.PresenterRecoveryInfo>?
 FrameFlow.Media.Diagnostics.PresenterStallWatchdog.Stalled -> System.Action<FrameFlow.Media.Diagnostics.PresenterStallInfo>?
+FrameFlow.Media.Diagnostics.PresenterStalledReason
+FrameFlow.Media.Diagnostics.PresenterStalledReason.None = 0 -> FrameFlow.Media.Diagnostics.PresenterStalledReason
+FrameFlow.Media.Diagnostics.PresenterStalledReason.OutputNotComposited = 2 -> FrameFlow.Media.Diagnostics.PresenterStalledReason
+FrameFlow.Media.Diagnostics.PresenterStalledReason.PresentLoopWedged = 1 -> FrameFlow.Media.Diagnostics.PresenterStalledReason
 FrameFlow.Media.Diagnostics.PresenterTickMeter
 FrameFlow.Media.Diagnostics.PresenterTickMeter.PresenterTickMeter(long timestampFrequency, int reportEvery = 120) -> void
 FrameFlow.Media.Diagnostics.PresenterTickMeter.Record(long enteredTicks, long exitedTicks, bool hadFrame) -> FrameFlow.Media.Diagnostics.PresenterTickReport?
@@ -510,9 +520,12 @@ FrameFlow.Media.VideoStreamInfo.StreamIndex.init -> void
 FrameFlow.Media.VideoStreamInfo.VideoStreamInfo(int StreamIndex, string! CodecName, int Width, int Height, double FrameRate) -> void
 FrameFlow.Media.VideoStreamInfo.Width.get -> int
 FrameFlow.Media.VideoStreamInfo.Width.init -> void
+const FrameFlow.Media.Diagnostics.PresenterStallEvaluator.DefaultRecoverySamples = 4 -> int
 override FrameFlow.Media.HighResolutionTimeProvider.CreateTimer(System.Threading.TimerCallback! callback, object? state, System.TimeSpan dueTime, System.TimeSpan period) -> System.Threading.ITimer!
 static FrameFlow.Media.AudioClockAnchor.None.get -> FrameFlow.Media.AudioClockAnchor
 static FrameFlow.Media.AudioClockInterpolation.Read(FrameFlow.Media.AudioClockAnchor anchor, System.TimeSpan rawPosition, long nowTicks, long ticksPerSecond, System.TimeSpan maxExtrapolation, bool interpolate) -> (FrameFlow.Media.AudioClockAnchor Anchor, System.TimeSpan Position)
+static FrameFlow.Media.AudioClockRateAnchor.None.get -> FrameFlow.Media.AudioClockRateAnchor
+static FrameFlow.Media.AudioClockRateLimit.Apply(FrameFlow.Media.AudioClockRateAnchor anchor, System.TimeSpan raw, System.TimeSpan sessionElapsed, System.TimeSpan slack) -> (FrameFlow.Media.AudioClockRateAnchor Anchor, System.TimeSpan Position)
 static FrameFlow.Media.AudioClockState.Initial.get -> FrameFlow.Media.AudioClockState
 static FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.Empty.get -> FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot!
 static FrameFlow.Media.Diagnostics.PresentCadenceMetrics.RecordPresent() -> void
@@ -534,3 +547,4 @@ static FrameFlow.Media.SinkAdapters.AsSinkNode(this FrameFlow.Media.IAudioSink! 
 static FrameFlow.Media.SinkAdapters.AsSinkNode(this FrameFlow.Media.IVideoSink! sink, string! id = "video-sink") -> FrameFlow.Graph.SinkNode<FrameFlow.Media.VideoFrameRef!>!
 static FrameFlow.Media.VideoFrameExtensions.CloneCpu(this FrameFlow.Media.IVideoFrame! frame) -> FrameFlow.Media.CpuVideoFrame!
 static readonly FrameFlow.Media.AudioClockInterpolation.DefaultMaxExtrapolation -> System.TimeSpan
+static readonly FrameFlow.Media.AudioClockRateLimit.DefaultSlack -> System.TimeSpan
