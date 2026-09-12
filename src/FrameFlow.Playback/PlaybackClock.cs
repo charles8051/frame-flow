@@ -4,9 +4,9 @@
 namespace FrameFlow.Playback;
 
 /// <summary>
-/// Tracks playback position using a configurable time source.
-/// The default constructor uses real wall-clock time; inject a <see cref="ITimeSource"/>
-/// for deterministic testing.
+/// Tracks playback position using a configurable <see cref="TimeProvider"/>.
+/// The default constructor uses real wall-clock time; inject a
+/// <c>FakeTimeProvider</c> for deterministic testing.
 /// </summary>
 /// <remarks>
 /// State transitions:
@@ -20,7 +20,7 @@ namespace FrameFlow.Playback;
 /// </remarks>
 public sealed class PlaybackClock : IPlaybackClock
 {
-    private readonly ITimeSource _timeSource;
+    private readonly TimeProvider _timeProvider;
 
     private DateTimeOffset? _startedAt;
     private TimeSpan _basePosition;
@@ -31,22 +31,25 @@ public sealed class PlaybackClock : IPlaybackClock
     /// Initializes a new <see cref="PlaybackClock"/> using real wall-clock time.
     /// </summary>
     public PlaybackClock()
-        : this(new SystemTimeSource()) { }
+        : this(TimeProvider.System) { }
 
     /// <summary>
-    /// Initializes a new <see cref="PlaybackClock"/> using the supplied <paramref name="timeSource"/>.
+    /// Initializes a new <see cref="PlaybackClock"/> reading from <paramref name="timeProvider"/>.
     /// </summary>
-    /// <param name="timeSource">The time source to use. Inject a fake for deterministic tests.</param>
-    public PlaybackClock(ITimeSource timeSource)
+    /// <param name="timeProvider">
+    /// Supplies the current time. Inject a fake for deterministic tests.
+    /// </param>
+    public PlaybackClock(TimeProvider timeProvider)
     {
-        _timeSource = timeSource;
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        _timeProvider = timeProvider;
     }
 
     /// <inheritdoc/>
     public TimeSpan Position =>
         _startedAt is null ? _basePosition
         : _isPaused ? _pausedAt
-        : _basePosition + (_timeSource.UtcNow - _startedAt.Value);
+        : _basePosition + (_timeProvider.GetUtcNow() - _startedAt.Value);
 
     /// <inheritdoc/>
     public bool IsRunning => _startedAt is not null && !_isPaused;
@@ -58,7 +61,7 @@ public sealed class PlaybackClock : IPlaybackClock
     public void Start(TimeSpan startPosition)
     {
         _basePosition = startPosition;
-        _startedAt = _timeSource.UtcNow;
+        _startedAt = _timeProvider.GetUtcNow();
         _isPaused = false;
         _pausedAt = startPosition;
     }
