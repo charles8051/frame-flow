@@ -54,6 +54,15 @@ public sealed class WallClockSource : IClockSource, ISeekableClock, IAsyncDispos
     // because the choice decides the frame rate. See the constructor.
     private readonly TimeProvider _timeProvider;
 
+    // The provider the constructor settled on, exposed so a test can assert the choice
+    // instead of timing its consequence. The default is the whole of #128: a regression
+    // from HighResolutionTimeProvider.Preferred back to TimeProvider.System leaves every
+    // wiring test passing and drops playback to ~34 fps. Measuring that on a shared CI
+    // runner is what #148 was — the runner deschedules the sleep, the median blows past
+    // the threshold, and the test fails on a tree with no defect in it. The selection is
+    // the property worth pinning, and it is observable without a clock.
+    internal TimeProvider Provider => _timeProvider;
+
     // Elapsed running time, measured through _timeProvider rather than a private Stopwatch.
     //
     // The delay and the clock have to come from the same source. With Task.Delay on the

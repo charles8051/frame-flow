@@ -19,7 +19,15 @@ namespace FrameFlow.Playback.Tests;
 /// <para>
 /// These tests do not assert timing, which would be flaky. They assert the wiring: the
 /// injected provider is what gets asked for the delay, so substituting one is sufficient to
-/// change the pacing behaviour.
+/// change the pacing behaviour — and the default constructor selects the high-resolution
+/// provider, which is the choice that decides the frame rate.
+/// </para>
+/// <para>
+/// The one measurement that remains is
+/// <see cref="DefaultConstruction_PacesInsideOneSystemTick"/>, and it is gated behind
+/// <see cref="TimingFactAttribute"/> rather than run on every build. It answers a question
+/// about the machine rather than about the code; see that attribute for why that is not a
+/// gate worth having in CI.
 /// </para>
 /// </remarks>
 public sealed class WallClockSourceTimeProviderTests
@@ -56,26 +64,52 @@ public sealed class WallClockSourceTimeProviderTests
     }
 
     [Fact]
-    public async Task DefaultConstruction_PacesThroughTheHighResolutionProvider()
+    public async Task DefaultConstruction_SelectsTheHighResolutionProvider()
     {
         // The parameterless constructor is what every existing caller uses, including
         // SubstrateSession, so it is the one that decides whether the fix reaches playback.
+        await using var clock = new WallClockSource();
+
+        // Assert the selection, not its consequence. This used to time fifteen real 16.67 ms
+        // waits and assert the median came in under 25 ms, which is the same property
+        // measured through a shared CI runner's scheduler: #148 is that test failing on
+        // windows-latest with min 16.67 (provider wired correctly) and a median of 32.32
+        // because more than half the waits were descheduled. The choice the constructor makes
+        // is the thing worth pinning, it is the same choice on every platform, and it is
+        // observable without a clock.
+        Assert.Same(HighResolutionTimeProvider.Preferred, clock.Provider);
+    }
+
+    [Fact]
+    public async Task ExplicitProvider_OptsOutOfTheDefault()
+    {
+        // The other half of the contract: passing a provider has to win over the default,
+        // which is what lets a caller opt back in to TimeProvider.System and what lets every
+        // test in this assembly substitute a fake.
+        await using var clock = new WallClockSource(TimeProvider.System);
+
+        Assert.Same(TimeProvider.System, clock.Provider);
+    }
+
+    [TimingFact]
+    public async Task DefaultConstruction_PacesInsideOneSystemTick()
+    {
+        // Evidence, not a gate. This is the measurement #148 removed from the always-on
+        // suite: it answers "is the high-resolution timer actually faster here", which is a
+        // question about the machine, and it needs a quiet one to answer honestly. Run it
+        // deliberately with FRAMEFLOW_TIMING_TESTS=1; never in CI.
         await using var clock = new WallClockSource();
         clock.Start();
 
         await clock.WaitUntilAsync(TimeSpan.Zero, CancellationToken.None);
 
         // Off Windows, and on Windows before 10 1803, Preferred is the system provider and
-        // there is nothing to assert beyond the clock still working.
+        // there is nothing to measure beyond the clock still working.
         if (!HighResolutionTimeProvider.IsSupported)
             return;
 
-        // Sleeps the system provider would round up to two ticks. Timing is asserted here
-        // rather than only wiring because the default is the whole change: a regression to
-        // TimeProvider.System would leave every test passing and playback back at ~34 fps.
-        //
         // Over a median of 15, not one sample. A single frame period is short enough that one
-        // descheduled wake-up decides the result, and this suite runs right after a build.
+        // descheduled wake-up decides the result.
         var samples = new List<double>();
         for (int i = 0; i < 15; i++)
         {
