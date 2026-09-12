@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics;
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Media;
 using FrameFlow.Graph;
@@ -427,6 +428,86 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
             "Clock did not advance — the device never consumed the queued buffers, so "
                 + "the backpressure path was not actually exercised."
         );
+    }
+
+    // ── Underrun recovery (#133) ────────────────────────────────────────────
+
+    // An intermittently-fed sink went permanently silent after its first underrun: the
+    // first burst played, every burst after it was accepted, counted and inaudible.
+    //
+    // OpenAL Soft reports the whole queue of a stopped source as processed, including
+    // buffers queued after it stopped. RecycleProcessedBuffers ran at the top of every
+    // flush, so each re-primed buffer was unqueued before the next one arrived, the depth
+    // oscillated between 0 and 1, and the pre-buffer gate never reached PreBufferCount to
+    // fire SourcePlay again.
+    //
+    // Nothing in the sink's own reporting said so, which is what makes the assertion below
+    // the one worth making. BlocksWritten rose by the full count, GetPlaybackTime advanced
+    // by exactly the duration pushed (the fake processed count was credited to the clock),
+    // and UnderrunCount stayed at 1 (the latch it would need to re-observe a starve was
+    // cleared and never re-latched). The one counter that told the truth was backpressure:
+    // a dead sink never fills its pool, so pushing into one returns immediately.
+    //
+    // Device-gated: the mechanism is a real OpenAL Soft behaviour, so a real device is the
+    // only place it reproduces. The device-free half of this fix is
+    // BufferQueueStateTests.Priming_*.
+
+    [RequiresAudioDeviceFact]
+    public async Task Underrun_RefeedAfterSilenceResumesPlayback()
+    {
+        await using var sink = new OpenAlAudioSink();
+        // These play on the machine running the test. Audible enough to check by ear,
+        // quiet enough not to matter.
+        sink.Volume = 0.05f;
+        await sink.ActivateAsync();
+
+        // ── Burst 1: two seconds, then let the source starve ────────────────
+        await FeedBurstAsync(sink, blocks: 20);
+
+        // No real device: the sink is inert, nothing drains, and there is nothing to
+        // exercise. Same trivial-pass gate as the backpressure test above.
+        if (sink.GetPlaybackTime() == TimeSpan.Zero && sink.BackpressureCount == 0)
+            return;
+
+        long backpressureAfterFirst = sink.BackpressureCount;
+        Assert.True(
+            backpressureAfterFirst > 0,
+            "Burst 1 never filled the buffer pool, so the device was not draining and the "
+                + "underrun this test depends on cannot be provoked."
+        );
+
+        // Two seconds of audio, three seconds of silence: the queue is empty and the
+        // source is AL_STOPPED well before the next burst arrives.
+        await Task.Delay(TimeSpan.FromSeconds(3));
+
+        // ── Burst 2: the same feed into the same sink ───────────────────────
+        var sw = Stopwatch.StartNew();
+        await FeedBurstAsync(sink, blocks: 20);
+        sw.Stop();
+
+        Assert.True(
+            sink.UnderrunCount >= 1,
+            "The source was expected to starve during the three-second gap, but no "
+                + "underrun was observed — the test never reached the state it guards."
+        );
+
+        // The assertion. A sink that came back fills its pool and backpressures the
+        // producer exactly as it did on the first burst. A sink wedged on a stopped
+        // source accepts all 20 blocks at memcpy speed and never fills anything.
+        Assert.True(
+            sink.BackpressureCount > backpressureAfterFirst,
+            $"Burst 2 backpressured {sink.BackpressureCount - backpressureAfterFirst} times "
+                + $"(burst 1: {backpressureAfterFirst}) and took {sw.Elapsed.TotalSeconds:0.00}s "
+                + "to push two seconds of audio. The queue is not draining, so the source "
+                + "never restarted after the underrun and the sink is silently accepting "
+                + "buffers it will never play (#133)."
+        );
+    }
+
+    private static async Task FeedBurstAsync(OpenAlAudioSink sink, int blocks)
+    {
+        for (int i = 0; i < blocks; i++)
+            await sink.PresentAsync(MakePcmBlock(samples: 4800, sampleRate: 48000, channels: 2));
     }
 
     // ── Volume / Mute ───────────────────────────────────────────────────────

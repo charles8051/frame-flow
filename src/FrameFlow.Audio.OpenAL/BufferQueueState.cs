@@ -159,6 +159,32 @@ public readonly record struct BufferQueueState
     public bool SourceStarted { get; init; }
 
     /// <summary>
+    /// Whether the queue is priming: filling towards <see cref="ObserveQueueDepth"/>'s
+    /// pre-buffer threshold on a source that is not playing. While this holds, the
+    /// device's processed-buffer count is not evidence that anything was played, and the
+    /// shell must not recycle against it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Priming is exactly the absence of <see cref="SourceStarted"/>. The latch is only
+    /// ever clear when the source is AL_INITIAL (fresh activation) or AL_STOPPED (an
+    /// underrun, a drain while paused, or a deactivation), and OpenAL Soft reports the
+    /// whole queue of a stopped source as processed — including buffers queued <i>after</i>
+    /// it stopped, which it never played.
+    /// </para>
+    /// <para>
+    /// Recycling against that count is what kept a sink silent for the rest of its life
+    /// after one underrun (#133). Each re-primed buffer was unqueued on the next flush
+    /// before the next one arrived, so the depth oscillated between 0 and 1, never reached
+    /// <c>PreBufferCount</c>, and the pre-buffer gate never fired <c>SourcePlay</c> again.
+    /// The pool stayed full, so nothing backpressured; the count was credited to the clock,
+    /// so the position advanced; the latch stayed clear, so no second underrun was ever
+    /// observed. Every counter agreed the sink was fine.
+    /// </para>
+    /// </remarks>
+    public bool Priming => !SourceStarted;
+
+    /// <summary>
     /// Appends <paramref name="sampleCount"/> interleaved samples to the staging fill
     /// level (the sink's <c>_stagingCount += samples.Length</c>). The bytes themselves are
     /// copied into the shell's <c>short[]</c>; this only advances the count.

@@ -238,6 +238,61 @@ public sealed class BufferQueueStateTests
         Assert.True(restarted.Next.SourceStarted);
     }
 
+    // ── Priming (#133) ───────────────────────────────────────────────────────────
+    //
+    // Priming says the source is not playing, so the device's processed-buffer count is
+    // not a record of what it played. OpenAL Soft reports the whole queue of a stopped
+    // source as processed, including buffers queued after it stopped; recycling against
+    // that count while re-priming unqueues each new buffer before the next arrives, the
+    // depth never reaches the pre-buffer threshold, and the gate below never fires again.
+
+    [Fact]
+    public void Priming_HoldsBeforeTheGateFires()
+    {
+        var s = New();
+        Assert.True(s.Priming);
+
+        // Still priming at every depth below the threshold.
+        Assert.True(s.ObserveQueueDepth(PreBuffer - 1).Next.Priming);
+    }
+
+    [Fact]
+    public void Priming_ClearsWhenPlaybackStarts()
+    {
+        var started = New().AppendStaging(CoalesceTarget).ObserveQueueDepth(PreBuffer).Next;
+        Assert.False(started.Priming);
+    }
+
+    [Fact]
+    public void Priming_ReturnsAfterUnderrun()
+    {
+        // The regression the guard exists for: one underrun puts the queue back into
+        // priming, and it must stay there until the gate re-fires — for the whole
+        // re-prime, not just the flush that observed the starve.
+        var started = New().AppendStaging(CoalesceTarget).ObserveQueueDepth(PreBuffer).Next;
+        Assert.False(started.Priming);
+
+        var afterUnderrun = started.ObserveUnderrun(firstPass: true, AlSourceState.Stopped).Next;
+        Assert.True(afterUnderrun.Priming);
+
+        for (int depth = 0; depth < PreBuffer; depth++)
+            Assert.True(afterUnderrun.ObserveQueueDepth(depth).Next.Priming);
+
+        Assert.False(afterUnderrun.ObserveQueueDepth(PreBuffer).Next.Priming);
+    }
+
+    [Fact]
+    public void Priming_HoldsAfterMarkSourceStoppedAndActivationReset()
+    {
+        // The other two routes to a stopped source: a drain while paused (ResumeAsync's
+        // else-branch) and a fresh activation. Both prime from an unplaying source, so
+        // both must suppress the recycle for the same reason.
+        var started = New().AppendStaging(CoalesceTarget).ObserveQueueDepth(PreBuffer).Next;
+
+        Assert.True(started.MarkSourceStopped().Priming);
+        Assert.True(started.ResetForActivation().Priming);
+    }
+
     // ── Latch clears (MarkSourceStopped) ─────────────────────────────────────────
 
     [Fact]
