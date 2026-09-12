@@ -304,6 +304,44 @@ Gen(
 );
 
 Gen(
+    // Portrait HEVC at a real bitrate: the decode-pressure shape (frame-flow#141).
+    //
+    // Every other video fixture is 320x240 or 1920x1080 landscape H.264, and the
+    // basic set is flat testsrc2 that decodes almost for free. frame-flow#134
+    // reproduced on a 720x1280 portrait HEVC clip and did NOT reproduce on
+    // 640x360 H.264; the variable separating them was decode cost per unit of
+    // wall time, which is what drives the demux queue full and makes the pump
+    // shed. Nothing in the corpus could reach that.
+    //
+    // Three things each carry part of it:
+    //
+    //   HEVC, via libkvazaar. Not x265 — the pinned runtime disables it as GPL —
+    //   but kvazaar is LGPL and produces a real HEVC bitstream, so the decode
+    //   path under test is the same one.
+    //
+    //   The noise filter, for the reason the benchmark category records: flat
+    //   testsrc2 encodes to almost nothing and understates any throughput
+    //   problem. Without it this fixture would be 720x1280 and still cheap.
+    //
+    //   12 Mbps, which is where the cost lands without the file becoming
+    //   disproportionate. Measured on this box: 6.1 MB for 3 s, against 3.2 MB
+    //   at 6 Mbps and 17.4 MB unconstrained. The corpus is 11 MB today, so the
+    //   unconstrained version would more than double it to buy decode cost the
+    //   constrained one already has.
+    //
+    // Default tier rather than benchmarks: it encodes in about three seconds
+    // here, and a fixture in the opt-in tier is one that most runs do not
+    // generate and no test therefore exercises.
+    "test-portrait-hevc-pressure.mp4",
+    "-f lavfi -i testsrc2=size=720x1280:rate=30:duration=3,noise=alls=14:allf=t:all_seed=12345",
+    "-c:v libkvazaar -kvazaar-params bitrate=12000000 -pix_fmt yuv420p -an",
+    new(Width: 720, Height: 1280, Fps: 30, DurationSec: 3.0),
+    // kvazaar at this size is slower than the 320x240 entries; ~3 s here, but the
+    // 60 s default would be tight on a slower box.
+    timeoutMs: 180_000
+);
+
+Gen(
     "test-multi-audio.mkv",
     "-f lavfi -i sine=frequency=440:sample_rate=44100:duration=3 -f lavfi -i sine=frequency=880:sample_rate=44100:duration=3 -f lavfi -i testsrc2=size=320x240:rate=24:duration=3",
     "-c:v libopenh264 -preset fast -pix_fmt yuv420p -c:a aac -b:a 128k -ac 2 -map 2:v -map 0:a -map 1:a -shortest",

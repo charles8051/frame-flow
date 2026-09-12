@@ -229,6 +229,17 @@
     "hasAudio": true
   },
   {
+    "filename": "test-portrait-hevc-pressure.mp4",
+    "durationSeconds": 3,
+    "durationToleranceMs": 350,
+    "width": 720,
+    "height": 1280,
+    "fps": 30,
+    "expectedVideoFrames": 90,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
     "filename": "test-multi-audio.mkv",
     "durationSeconds": 3,
     "durationToleranceMs": 350,

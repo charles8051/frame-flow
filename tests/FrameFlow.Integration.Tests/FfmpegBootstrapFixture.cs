@@ -177,6 +177,32 @@ internal sealed class RequiresFfmpegAndCorpusFactAttribute : FactAttribute
 }
 
 /// <summary>
+/// Skips when one specific corpus file is absent, rather than only when the corpus as a whole
+/// is. For fixtures that the generator can legitimately decline to produce.
+/// </summary>
+/// <remarks>
+/// <see cref="RequiresFfmpegAndCorpusFactAttribute"/> skips on an empty corpus and nothing
+/// finer, so a test for a fixture that one runtime cannot encode fails there instead of
+/// skipping. The generator reports such a fixture as <c>UNAVL</c> and still records its
+/// expectation, so the expectation being present says nothing about the file. Same shape as the
+/// attribute of this name in <c>FrameFlow.Decoding.Tests</c>.
+/// </remarks>
+internal sealed class RequiresCorpusFileFactAttribute : FactAttribute
+{
+    public RequiresCorpusFileFactAttribute(string fileName, string howToGenerate)
+    {
+        if (!IntegrationTestEnvironment.HasFfmpegSharedLibraries)
+        {
+            Skip = "FFmpeg shared libraries not available.";
+            return;
+        }
+
+        if (IntegrationTestEnvironment.GetCorpusFile(fileName) is null)
+            Skip = $"Corpus file '{fileName}' not present. {howToGenerate}";
+    }
+}
+
+/// <summary>
 /// Theory-shaped sibling of <see cref="RequiresFfmpegAndCorpusFactAttribute"/>
 /// for parameterised integration tests (e.g. XR001 driven by
 /// <c>[InlineData]</c> across multiple corpus files). xUnit v2's

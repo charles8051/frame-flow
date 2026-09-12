@@ -123,6 +123,92 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
         );
     }
 
+    /// <summary>
+    /// Recovery from an underrun has to repeat. Burst, starve, burst, starve, for as many
+    /// cycles as the theory asks — every burst must reach the device, not just the second one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The two tests above stop after one recovery, and a sink that recovered once and then
+    /// wedged would pass both. #133's actual reproducer was four 2-second tones six seconds
+    /// apart, so the shape that was reported is the four-burst case rather than the two-burst
+    /// one. #141 asks for the gap pattern as a test parameter for this reason: the feed pattern
+    /// is a property of how the consumer calls the sink, not of any media file, so no corpus
+    /// entry can produce it.
+    /// </para>
+    /// <para>
+    /// Each burst carries its own amplitude, so "did burst N reach the device" is a question
+    /// about content rather than about counters — the same distinction
+    /// <c>ContinuousFeed_DeviceReceivesTheSamplesInOrder</c> draws. Every burst is checked and
+    /// the failure names all the ones that went missing, so a sink that dies on the fourth
+    /// cycle reports that rather than just "something was missing".
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(2)]
+    [InlineData(4)] // the shape #133 was reported in
+    [InlineData(6)]
+    public async Task IntermittentFeed_RecoversOnEveryBurst(int bursts)
+    {
+        const int blocksPerBurst = 8;
+        var device = new FakeOpenAlDevice();
+        await using var sink = NewSink(device);
+        await sink.ActivateAsync(CancellationToken.None);
+
+        var failures = new List<string>();
+        for (int burst = 0; burst < bursts; burst++)
+        {
+            int playedBefore = device.PlayedSamples.Count;
+
+            // One distinct value per block, not per burst. A constant-amplitude burst cannot
+            // tell a duplicated block from the one it replaced, or two blocks swapped, because
+            // every sample in it looks the same. Stepping the value per block makes the device's
+            // record a sequence that only the right blocks in the right order can match.
+            var expected = new List<short>(blocksPerBurst * ScalarsPerBlock);
+            for (int block = 0; block < blocksPerBurst; block++)
+            {
+                var value = (short)(1000 * (burst + 1) + block);
+                await PushBlocksAsync(
+                    sink,
+                    blocks: 1,
+                    amplitude: value,
+                    firstBlockIndex: (burst * blocksPerBurst) + block
+                );
+                expected.AddRange(Enumerable.Repeat(value, ScalarsPerBlock));
+            }
+            DrainFully(device);
+
+            // Exactly what this cycle appended — not a count over the cumulative record, which
+            // stale or duplicated samples from another cycle could satisfy. No slack: blocks are
+            // pushed at exactly the coalesce size, so nothing is held back as a partial, and
+            // measured delivery is every block, in order, 4800 samples each.
+            var appended = device.PlayedSamples.Skip(playedBefore).ToList();
+            if (!appended.SequenceEqual(expected))
+                failures.Add($"burst {burst + 1}: {DescribeRuns(appended)}");
+        }
+
+        Assert.True(
+            failures.Count == 0,
+            $"Of {bursts} bursts, {failures.Count} did not reach the device intact and in order. "
+                + $"Underruns={sink.UnderrunCount}, blocks written={sink.BlocksWritten}."
+                + Environment.NewLine
+                + string.Join(Environment.NewLine, failures)
+                + Environment.NewLine
+                + device.DescribeCalls()
+        );
+
+        // Proves the gaps are real. Every burst but the first is preceded by a drain that
+        // starves the source, so N bursts must cost N-1 underruns. Without this a change that
+        // stopped the drain from starving anything would leave the test passing while it had
+        // quietly stopped testing recovery at all — and the six-burst case would be five
+        // recovery cycles on paper and one in fact.
+        Assert.True(
+            sink.UnderrunCount == bursts - 1,
+            $"{bursts} bursts separated by full drains should starve the source {bursts - 1} "
+                + $"times; the sink counted {sink.UnderrunCount}."
+        );
+    }
+
     // ── Ordering against the device ─────────────────────────────────────────
 
     /// <summary>
@@ -302,13 +388,18 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
     private static OpenAlAudioSink NewSink(FakeOpenAlDevice device) =>
         FakeOpenAlSink.Create(device, timeProvider: TimeProvider.System);
 
-    private static async Task PushBlocksAsync(OpenAlAudioSink sink, int blocks, short amplitude)
+    private static async Task PushBlocksAsync(
+        OpenAlAudioSink sink,
+        int blocks,
+        short amplitude,
+        int firstBlockIndex = 0
+    )
     {
         for (int i = 0; i < blocks; i++)
         {
             var owner = MemoryPool<short>.Shared.Rent(ScalarsPerBlock);
             owner.Memory.Span[..ScalarsPerBlock].Fill(amplitude);
-            var pts = TimeSpan.FromTicks(BlockDuration.Ticks * i);
+            var pts = TimeSpan.FromTicks(BlockDuration.Ticks * (firstBlockIndex + i));
             await sink.PresentAsync(
                 new PcmAudioBuffer(owner, ScalarsPerBlock, Rate, Channels, pts),
                 CancellationToken.None
@@ -325,6 +416,28 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
     {
         for (int i = 0; i < BufferPoolSize + PreBufferCount; i++)
             device.AdvancePlayback(BlockDuration);
+    }
+
+    // "1000x4800 1001x4800 ..." — a burst's shape at a glance, so a failure says which block
+    // went missing or arrived twice instead of printing tens of thousands of samples.
+    private static string DescribeRuns(IReadOnlyList<short> samples)
+    {
+        if (samples.Count == 0)
+            return "nothing played";
+        var runs = new List<string>();
+        int i = 0;
+        while (i < samples.Count)
+        {
+            short value = samples[i];
+            int length = 0;
+            while (i < samples.Count && samples[i] == value)
+            {
+                length++;
+                i++;
+            }
+            runs.Add($"{value}x{length}");
+        }
+        return string.Join(" ", runs);
     }
 
     private static int IndexOfFirst(IReadOnlyList<AlCall> calls, string name)
