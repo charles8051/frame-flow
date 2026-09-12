@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using FrameFlow.Media;
 
 namespace FrameFlow.Playback.Tests;
@@ -23,11 +22,9 @@ namespace FrameFlow.Playback.Tests;
 /// provider, which is the choice that decides the frame rate.
 /// </para>
 /// <para>
-/// The one measurement that remains is
-/// <see cref="DefaultConstruction_PacesInsideOneSystemTick"/>, and it is gated behind
-/// <see cref="TimingFactAttribute"/> rather than run on every build. It answers a question
-/// about the machine rather than about the code; see that attribute for why that is not a
-/// gate worth having in CI.
+/// Whether the selected provider is actually fast is a different question, and it belongs to
+/// the provider rather than to this type.
+/// <c>HighResolutionTimeProviderTests.AFramePeriodCostsAFramePeriod</c> is where it is asked.
 /// </para>
 /// </remarks>
 public sealed class WallClockSourceTimeProviderTests
@@ -90,46 +87,6 @@ public sealed class WallClockSourceTimeProviderTests
 
         Assert.Same(TimeProvider.System, clock.Provider);
     }
-
-    [TimingFact]
-    public async Task DefaultConstruction_PacesInsideOneSystemTick()
-    {
-        // Evidence, not a gate. This is the measurement #148 removed from the always-on
-        // suite: it answers "is the high-resolution timer actually faster here", which is a
-        // question about the machine, and it needs a quiet one to answer honestly. Run it
-        // deliberately with FRAMEFLOW_TIMING_TESTS=1; never in CI.
-        await using var clock = new WallClockSource();
-        clock.Start();
-
-        await clock.WaitUntilAsync(TimeSpan.Zero, CancellationToken.None);
-
-        // Off Windows, and on Windows before 10 1803, Preferred is the system provider and
-        // there is nothing to measure beyond the clock still working.
-        if (!HighResolutionTimeProvider.IsSupported)
-            return;
-
-        // Over a median of 15, not one sample. A single frame period is short enough that one
-        // descheduled wake-up decides the result.
-        var samples = new List<double>();
-        for (int i = 0; i < 15; i++)
-        {
-            var started = Stopwatch.GetTimestamp();
-            await clock.WaitUntilAsync(clock.Latest + FramePeriod, CancellationToken.None);
-            samples.Add(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
-        }
-        samples.Sort();
-        var median = samples[samples.Count / 2];
-
-        Assert.True(
-            median < 25.0,
-            $"one 60 fps frame period took {median:F2} ms at the median of {samples.Count} "
-                + $"(min {samples[0]:F2}, max {samples[^1]:F2}), which is the quantized cost "
-                + "the default provider exists to avoid"
-        );
-    }
-
-    /// <summary>A 60 fps frame period: just over one system tick, which is the defect.</summary>
-    private static readonly TimeSpan FramePeriod = TimeSpan.FromMilliseconds(16.67);
 
     /// <summary>Delegates to the system provider but records that a timer was asked for.</summary>
     private sealed class RecordingTimeProvider : TimeProvider
