@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FrameFlow.Media;
 
 namespace FrameFlow.Playback.Tests;
@@ -86,6 +87,87 @@ public sealed class WallClockSourceTimeProviderTests
         await using var clock = new WallClockSource(TimeProvider.System);
 
         Assert.Same(TimeProvider.System, clock.Provider);
+    }
+
+    [Fact]
+    public async Task WaitUntilAsync_SleepsTheRemainingTime_NotTheCap()
+    {
+        // Selecting the fast provider is not sufficient on its own: the loop also has to ask
+        // it for the right interval. Slicing every wait at MaxSleep instead of the remaining
+        // sub-frame time would leave both selection assertions passing and put a 50 ms floor
+        // under every frame, which is the same ~20 fps symptom by a different route.
+        //
+        // Frozen provider, so remaining is exactly the target and nothing here reads a wall
+        // clock. The timer never fires; what is asserted is the interval that was asked for.
+        var provider = new FrozenRecordingTimeProvider();
+        await using var clock = new WallClockSource(provider);
+        clock.Start();
+
+        using var cts = new CancellationTokenSource();
+        var wait = clock.WaitUntilAsync(TimeSpan.FromMilliseconds(30), cts.Token);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(30), await provider.FirstDueTime.Task);
+
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await wait);
+    }
+
+    [Fact]
+    public async Task WaitUntilAsync_CapsALongSleepAtTheSliceLimit()
+    {
+        // The other side of the same arithmetic. A far-future target must not be slept in one
+        // go — the cap is what lets a paused or seeked clock be re-read promptly (ADR-0057).
+        var provider = new FrozenRecordingTimeProvider();
+        await using var clock = new WallClockSource(provider);
+        clock.Start();
+
+        using var cts = new CancellationTokenSource();
+        var wait = clock.WaitUntilAsync(TimeSpan.FromSeconds(10), cts.Token);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(50), await provider.FirstDueTime.Task);
+
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await wait);
+    }
+
+    /// <summary>
+    /// A <see cref="TimeProvider"/> whose clock never moves and whose timers never fire,
+    /// recording the interval the first one was asked for.
+    /// </summary>
+    /// <remarks>
+    /// Frozen rather than advancing, so <c>remaining</c> inside the pacing loop is exactly the
+    /// target and the assertion is on an exact value. It never fires a callback, so none of
+    /// the ordering hazards that make a hand-rolled advancing provider a bad idea apply here —
+    /// this records a request, it does not simulate time.
+    /// </remarks>
+    private sealed class FrozenRecordingTimeProvider : TimeProvider
+    {
+        public TaskCompletionSource<TimeSpan> FirstDueTime { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override long GetTimestamp() => 0;
+
+        public override long TimestampFrequency => Stopwatch.Frequency;
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period
+        )
+        {
+            FirstDueTime.TrySetResult(dueTime);
+            return new NeverFiringTimer();
+        }
+
+        private sealed class NeverFiringTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose() { }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 
     /// <summary>Delegates to the system provider but records that a timer was asked for.</summary>
