@@ -88,17 +88,31 @@ internal sealed class SharedOpenAlContext
         }
     }
 
+    // ALC token values Silk.NET's enums do not carry. Both come from extensions that
+    // every OpenAL Soft build ships, but an implementation without them leaves the
+    // caller's buffer untouched rather than failing, so each read seeds a safe default.
+    private const int AlcAllDevicesSpecifier = 0x1013; // ALC_ENUMERATE_ALL_EXT
+    private const int AlcConnected = 0x313; // ALC_EXT_disconnect
+
     private readonly AL _al;
     private readonly ALContext _alc;
     private readonly unsafe Device* _device;
     private readonly unsafe Context* _context;
+    private readonly string _deviceName;
 
-    private unsafe SharedOpenAlContext(AL al, ALContext alc, Device* device, Context* context)
+    private unsafe SharedOpenAlContext(
+        AL al,
+        ALContext alc,
+        Device* device,
+        Context* context,
+        string deviceName
+    )
     {
         _al = al;
         _alc = alc;
         _device = device;
         _context = context;
+        _deviceName = deviceName;
     }
 
     /// <summary>
@@ -107,6 +121,48 @@ internal sealed class SharedOpenAlContext
     /// concurrently from distinct threads on distinct sources.
     /// </summary>
     public AL Al => _al;
+
+    /// <summary>
+    /// The endpoint this context was opened on, as the driver names it — for example
+    /// <c>OpenAL Soft on Headphones (4- Arctis 7 Game)</c>.
+    /// </summary>
+    /// <remarks>
+    /// Captured once at open, because that is the only moment it is unambiguous:
+    /// <c>alcOpenDevice("")</c> binds whichever endpoint is default then and holds that
+    /// one, so re-reading the default later can name a different device than the one in
+    /// use. Worth logging because a failure that turns out to be about the endpoint
+    /// cannot be diagnosed from a log that never says which endpoint it was (#127).
+    /// </remarks>
+    public string DeviceName => _deviceName;
+
+    /// <summary>
+    /// Whether the device still considers itself connected, read live from
+    /// <c>ALC_CONNECTED</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// False once the endpoint has gone away underneath the open context — a Remote
+    /// Desktop session disconnecting takes its Remote Audio endpoint with it, and an
+    /// output device being disabled or unplugged does the same. OpenAL Soft keeps its
+    /// mixer thread running over the dead device and marks queued buffers processed
+    /// without playing them, which is indistinguishable from playback at every layer
+    /// above unless something asks this question (#127).
+    /// </para>
+    /// <para>
+    /// Reads as connected on an implementation without <c>ALC_EXT_disconnect</c>: the
+    /// call leaves the buffer untouched, and the seeded default is the answer that keeps
+    /// such a device working rather than reporting it permanently dead.
+    /// </para>
+    /// </remarks>
+    public unsafe bool IsConnected
+    {
+        get
+        {
+            int connected = 1;
+            _alc.GetContextProperty(_device, (GetContextInteger)AlcConnected, 1, &connected);
+            return connected != 0;
+        }
+    }
 
     /// <summary>
     /// Acquires a lease on the shared device/context, creating it on first use.
@@ -173,7 +229,34 @@ internal sealed class SharedOpenAlContext
         // The one and only MakeContextCurrent in the process. It is never changed
         // again until TearDown, so no sink's al* calls can be retargeted.
         alc.MakeContextCurrent(context);
-        return new SharedOpenAlContext(al, alc, device, context);
+        return new SharedOpenAlContext(al, alc, device, context, ReadDeviceName(alc, device));
+    }
+
+    /// <summary>
+    /// Names the endpoint a device handle is open on. Prefers the all-devices specifier,
+    /// which distinguishes endpoints of the same kind; falls back to the basic specifier,
+    /// and then to a placeholder, so a driver that answers neither costs a log line rather
+    /// than an activation.
+    /// </summary>
+    private static unsafe string ReadDeviceName(ALContext alc, Device* device)
+    {
+        try
+        {
+            var name = alc.GetContextProperty(device, (GetContextString)AlcAllDevicesSpecifier);
+            if (!string.IsNullOrWhiteSpace(name))
+                return name;
+
+            name = alc.GetContextProperty(device, GetContextString.DeviceSpecifier);
+            if (!string.IsNullOrWhiteSpace(name))
+                return name;
+        }
+        catch (Exception)
+        {
+            // A driver that faults on an enumeration query is not a reason to fail the
+            // open; the name is diagnostic only.
+        }
+
+        return "(unnamed device)";
     }
 
     private unsafe void TearDown()
@@ -203,6 +286,14 @@ internal sealed class SharedOpenAlContextLease : IDisposable
     /// <summary>The shared AL API. Throws if the lease has already been disposed.</summary>
     public AL Al =>
         (_context ?? throw new ObjectDisposedException(nameof(SharedOpenAlContextLease))).Al;
+
+    /// <inheritdoc cref="SharedOpenAlContext.DeviceName"/>
+    public string DeviceName =>
+        (_context ?? throw new ObjectDisposedException(nameof(SharedOpenAlContextLease))).DeviceName;
+
+    /// <inheritdoc cref="SharedOpenAlContext.IsConnected"/>
+    public bool IsConnected =>
+        (_context ?? throw new ObjectDisposedException(nameof(SharedOpenAlContextLease))).IsConnected;
 
     /// <inheritdoc/>
     public void Dispose()

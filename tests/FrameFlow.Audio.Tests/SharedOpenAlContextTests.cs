@@ -111,4 +111,44 @@ public sealed class SharedOpenAlContextTests : IClassFixture<FfmpegBootstrapFixt
 
         Assert.Equal(leasesBefore, SharedOpenAlContext.CurrentLeaseCount);
     }
+
+    // ── Endpoint identity and liveness (#127) ─────────────────────────
+    //
+    // A dead endpoint is indistinguishable from a working one at every layer above
+    // OpenAL: the mixer keeps running and buffers keep coming back processed. These pin
+    // that the two questions can now be asked at all. Neither can assert the negative
+    // case — that needs an endpoint to actually be removed mid-run, which no test can do
+    // to the machine it is running on.
+
+    [RequiresAudioDeviceFact]
+    public void Lease_NamesTheEndpointItOpened()
+    {
+        using var lease = SharedOpenAlContext.Acquire();
+        Assert.NotNull(lease);
+
+        // A real name, not the placeholder: a log that says "(unnamed device)" cannot
+        // answer which endpoint a failure happened on, which is the whole point.
+        Assert.False(string.IsNullOrWhiteSpace(lease!.DeviceName));
+        Assert.NotEqual("(unnamed device)", lease.DeviceName);
+    }
+
+    [RequiresAudioDeviceFact]
+    public void Lease_ReportsALiveEndpointAsConnected()
+    {
+        using var lease = SharedOpenAlContext.Acquire();
+        Assert.NotNull(lease);
+
+        // Also covers the no-ALC_EXT_disconnect fallback: an implementation that ignores
+        // the query must read as connected, never as permanently dead.
+        Assert.True(lease!.IsConnected);
+    }
+
+    [RequiresAudioDeviceFact]
+    public async Task Sink_OnALiveEndpoint_DoesNotReportADisconnect()
+    {
+        await using var sink = new OpenAlAudioSink();
+        await sink.ActivateAsync();
+
+        Assert.False(sink.DeviceDisconnected);
+    }
 }
