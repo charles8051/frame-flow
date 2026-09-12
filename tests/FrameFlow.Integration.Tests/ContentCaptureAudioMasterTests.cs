@@ -33,6 +33,7 @@ namespace FrameFlow.Integration.Tests;
 /// </remarks>
 [Trait("Category", "Integration")]
 [Trait("Tier", "1")]
+[Collection(ContentCaptureCollection.Name)]
 public sealed class ContentCaptureAudioMasterTests : IClassFixture<FfmpegBootstrapFixture>
 {
     private const string Corpus = "test-av-h264-aac.mp4";
