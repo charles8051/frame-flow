@@ -166,10 +166,12 @@ public sealed class ClockSelectVideoSinkTests
         await sink.WaitForCountAsync(1);
         Assert.Equal(new[] { TimeSpan.Zero }, sink.PresentedPts);
 
+        var parked = pacer.ParkGeneration;
         await pacer.PresentAsync(f1, default);
         await pacer.PresentAsync(f2, default);
-        // Not yet due — clock still at 0.
-        await Task.Delay(30);
+        // Not yet due — clock still at 0. Parking means the loop has seen both frames and
+        // decided against them; the sleep this replaces only meant "probably long enough".
+        await pacer.WaitForParkAfterAsync(parked);
         Assert.Single(sink.PresentedPts);
 
         clock.Advance(TimeSpan.FromMilliseconds(40)); // f1 (33) due, f2 (66) not.
@@ -226,9 +228,12 @@ public sealed class ClockSelectVideoSinkTests
         await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromMilliseconds(10)), default);
         await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromMilliseconds(20)), default);
 
-        // Third enqueue must block — the ring is full and nothing is due yet.
+        // The loop has seen both frames and parked with neither due, so the ring is full and
+        // no slot has been released. A third enqueue blocks on that, and cannot be completed
+        // by anything until the clock moves — so this needs no wait, only the park above.
+        await pacer.WaitForParkAfterAsync(0);
         var third = pacer.PresentAsync(new TrackingFrame(TimeSpan.FromMilliseconds(30)), default);
-        await Task.Delay(40);
+        Assert.Empty(sink.PresentedPts);
         Assert.False(third.IsCompleted, "PresentAsync should backpressure when the ring is full");
 
         // Advance the clock so the first frame is delivered, freeing a slot.
@@ -245,10 +250,12 @@ public sealed class ClockSelectVideoSinkTests
 
         var f1 = new TrackingFrame(TimeSpan.FromMilliseconds(50));
         var f2 = new TrackingFrame(TimeSpan.FromMilliseconds(80));
+        var parked = pacer.ParkGeneration;
         await pacer.PresentAsync(f1, default);
         await pacer.PresentAsync(f2, default);
-        // Give the loop a moment to pick up f1 as "earliest" and park on the clock.
-        await Task.Delay(30);
+        // The loop has picked up f1 as "earliest" and parked on the clock. Flushing before
+        // that would be flushing a buffer the loop had not looked at.
+        await pacer.WaitForParkAfterAsync(parked);
 
         pacer.Flush();
 
@@ -366,9 +373,9 @@ public sealed class ClockSelectVideoSinkTests
             await pacer.WaitForSeekTargetAsync(pacer.CurrentRunId, TimeSpan.FromSeconds(5), default)
         );
 
-        // Long enough that an unheld loop would have delivered it several times over. The
-        // backstop is on the fake provider and nobody advanced it, so it is not in this race.
-        await Task.Delay(120);
+        // The loop has parked inside the hold. An unheld loop would have found this frame due
+        // against a clock 0.73 s past it and presented it before ever parking.
+        await pacer.WaitForParkAfterAsync(0);
         Assert.Empty(sink.PresentedPts);
 
         // The session reseats, then releases.
@@ -419,10 +426,17 @@ public sealed class ClockSelectVideoSinkTests
         clock.Advance(TimeSpan.FromSeconds(20.5));
         await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromSeconds(20)), default);
 
+        // Park the loop inside the newer run's hold first, so "still held" below is a
+        // statement about the release rather than about the loop not having got there yet.
+        await pacer.WaitForParkAfterAsync(0);
+        Assert.True(pacer.IsSettleHeld);
+
         pacer.ReleaseSeekSettle(staleRun);
 
-        // The backstop cannot fire at all here, so this measures the scoping and only it.
-        await Task.Delay(120);
+        // The scoping check, and it is synchronous: ReleaseSeekSettle either cleared the flag
+        // or it did not. Waiting to see whether a frame came out was asking the same question
+        // through a scheduler.
+        Assert.True(pacer.IsSettleHeld, "a stale release must not clear the newer run's hold");
         Assert.Empty(sink.PresentedPts);
 
         clock.Advance(TimeSpan.FromSeconds(20));
@@ -512,19 +526,25 @@ public sealed class ClockSelectVideoSinkTests
         await pacer.PresentAsync(f1, default);
         await sink.WaitForCountAsync(1); // f0 delivered (due at 0); f1 buffered.
 
+        // Park the loop on f1's pacing wait before signalling, so the assertion below is
+        // about SignalInputComplete and not about the loop still catching up.
+        await pacer.WaitForParkAfterAsync(0);
+
         pacer.SignalInputComplete();
         var drain = pacer.WaitForDrainAsync(default);
 
-        // f1 isn't due yet, so drain must NOT complete.
-        await Task.Delay(40);
+        // f1 isn't due yet, so drain must NOT complete. SignalInputComplete drains inline when
+        // it drains at all, and the parked loop cannot until the clock moves — so there is
+        // nothing to wait for here.
         Assert.False(drain.IsCompleted, "drain must wait for the last buffered frame to play");
 
         // f1 is now due and delivered, but its 33ms display interval has NOT elapsed
         // (clock 60 < end 83). Draining here would cut the final frame short and fire
         // Ended ~one frame early — the drain must keep waiting.
+        var displayParked = pacer.ParkGeneration;
         clock.Advance(TimeSpan.FromMilliseconds(60));
         await sink.WaitForCountAsync(2);
-        await Task.Delay(40);
+        await pacer.WaitForParkAfterAsync(displayParked);
         Assert.False(drain.IsCompleted, "drain must hold until the last frame finishes displaying (Pts+Duration)");
 
         // The clock reaches the last frame's end ⇒ the run is truly over ⇒ drain completes.
@@ -588,13 +608,16 @@ public sealed class ClockSelectVideoSinkTests
 
         pacer.SignalInputComplete();
         var drain = pacer.WaitForDrainAsync(default);
-        await Task.Delay(40); // let the loop enter the end-of-content hold (clock 0 < 33).
+        // Wait for the loop to actually enter the end-of-content hold (clock 0 < 33). Flushing
+        // before it gets there would test nothing, and a sleep could not tell the difference.
+        await pacer.WaitForParkAfterAsync(0);
 
+        var flushParked = pacer.ParkGeneration;
         pacer.Flush(); // a seek/loop discontinuity mid-hold.
 
         // A Flush is NOT end-of-stream: the hold must break and re-evaluate, never fire
         // EOS on the discontinuity (which would advance/loop a signage playlist spuriously).
-        await Task.Delay(80);
+        await pacer.WaitForParkAfterAsync(flushParked);
         Assert.False(drain.IsCompleted, "Flush during the end-of-content hold must not fire EOS");
     }
 
@@ -623,8 +646,9 @@ public sealed class ClockSelectVideoSinkTests
     {
         var clock = new FakeClock();
         var sink = new RecordingSink();
+        var time = new FakeTimeProvider();
         await using var pacer = new ClockSelectVideoSink(
-            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120));
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120), timeProvider: time);
 
         pacer.BeginRun();
         pacer.Pause();
@@ -633,10 +657,14 @@ public sealed class ClockSelectVideoSinkTests
         // pause leaves behind. Uncapped, the cap force-presented one frame every maxWait
         // until the ring was empty, creeping the picture forward while the user was paused
         // and logging each as a suspected stalled master (#127).
+        var parked = pacer.ParkGeneration;
         for (int i = 0; i < 4; i++)
             await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromMilliseconds(100 + (33 * i))), default);
+        await pacer.WaitForParkAfterAsync(parked);
 
-        await Task.Delay(400); // several maxWait periods.
+        // Several maxWait periods, on the clock the cap is armed from. A suspended cap has no
+        // armed timer to fire, so this cannot wake the loop and needs no second park.
+        time.Advance(TimeSpan.FromMilliseconds(400));
 
         Assert.Empty(sink.PresentedPts);
     }
@@ -646,18 +674,25 @@ public sealed class ClockSelectVideoSinkTests
     {
         var clock = new FakeClock();
         var sink = new RecordingSink();
+        var time = new FakeTimeProvider();
         await using var pacer = new ClockSelectVideoSink(
-            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120));
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120), timeProvider: time);
 
         pacer.BeginRun();
         pacer.Pause();
+        var parked = pacer.ParkGeneration;
         await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromSeconds(5)), default);
-        await Task.Delay(250);
+        await pacer.WaitForParkAfterAsync(parked);
+
+        time.Advance(TimeSpan.FromMilliseconds(250)); // twice the cap, suspended, so nothing.
         Assert.Empty(sink.PresentedPts);
 
         // Resuming onto a master that is still not advancing is the case the cap is for.
+        var resumed = pacer.ParkGeneration;
         pacer.Resume();
+        await pacer.WaitForParkAfterAsync(resumed); // the cap is armed once it re-parks.
 
+        time.Advance(TimeSpan.FromMilliseconds(150)); // past the re-armed cap.
         await sink.WaitForCountAsync(1);
         Assert.Equal(new[] { TimeSpan.FromSeconds(5) }, sink.PresentedPts);
     }
@@ -667,19 +702,27 @@ public sealed class ClockSelectVideoSinkTests
     {
         var clock = new FakeClock();
         var sink = new RecordingSink();
+        var time = new FakeTimeProvider();
         await using var pacer = new ClockSelectVideoSink(
-            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(300));
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(300), timeProvider: time);
 
         pacer.BeginRun();
+        var parked = pacer.ParkGeneration;
         await pacer.PresentAsync(new TrackingFrame(TimeSpan.FromSeconds(5)), default);
-        await Task.Delay(150); // the loop is waiting, cap half spent.
+        await pacer.WaitForParkAfterAsync(parked); // the loop is in the wait, cap armed.
 
+        time.Advance(TimeSpan.FromMilliseconds(150)); // cap half spent, not fired.
+        Assert.Empty(sink.PresentedPts);
+
+        var pausedGen = pacer.ParkGeneration;
         pacer.Pause();
+        await pacer.WaitForParkAfterAsync(pausedGen); // the recheck re-entered the wait.
 
-        // Without the recheck the already-armed cap would fire ~150 ms into the pause and
+        // Without the recheck the already-armed cap would fire 150 ms into the pause and
         // present one frame anyway. The pause must break that wait, not merely affect the
-        // next one.
-        await Task.Delay(400);
+        // next one — so the remaining 150 ms of the original cap, and more, must pass with
+        // nothing presented.
+        time.Advance(TimeSpan.FromMilliseconds(400));
         Assert.Empty(sink.PresentedPts);
     }
 
@@ -688,8 +731,9 @@ public sealed class ClockSelectVideoSinkTests
     {
         var clock = new FakeClock();
         var sink = new RecordingSink();
+        var time = new FakeTimeProvider();
         await using var pacer = new ClockSelectVideoSink(
-            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120));
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120), timeProvider: time);
 
         pacer.BeginRun();
         var f0 = new TrackingFrame(TimeSpan.FromMilliseconds(0)); // ends at 33ms.
@@ -698,19 +742,34 @@ public sealed class ClockSelectVideoSinkTests
 
         // Paused before input completes, so the hold is never armed with a cap in the
         // first place — the loop cannot race us to a cap-out.
+        //
+        // Pause on its own cannot be awaited: a loop parked for want of frames is waiting on
+        // arrival, which the recheck token does not reach. SignalInputComplete sets arrival,
+        // so it is the wake this parks on.
         pacer.Pause();
+        var parked = pacer.ParkGeneration;
         pacer.SignalInputComplete();
         var drain = pacer.WaitForDrainAsync(default);
+        await pacer.WaitForParkAfterAsync(parked);
 
-        await Task.Delay(400);
+        // Far past the 120 ms cap, on the clock the cap is armed from. Suspended by the
+        // pause, so there is no armed timer to fire and nothing can wake the loop.
+        time.Advance(TimeSpan.FromSeconds(30));
 
         // The end-of-content hold caps out on a master that stopped short, which is right
         // for a stalled one and wrong for a paused one: pausing on the last frame would
         // otherwise fire Ended and advance a playlist while the user sat on pause (#127).
         Assert.False(drain.IsCompleted, "a pause must not end the clip");
 
+        // Resuming re-arms the cap. The master is still stopped at 0 and the last frame ends
+        // at 33 ms, so it is the cap firing that ends the run — which is the behaviour the
+        // pause was suppressing, now allowed to happen.
+        var resumed = pacer.ParkGeneration;
         pacer.Resume();
-        await drain.WaitAsync(TimeSpan.FromSeconds(2));
+        await pacer.WaitForParkAfterAsync(resumed);
+
+        time.Advance(TimeSpan.FromMilliseconds(150)); // past the re-armed 120 ms cap.
+        await drain;
     }
 
     [Fact]
@@ -721,8 +780,9 @@ public sealed class ClockSelectVideoSinkTests
         var pacer = new ClockSelectVideoSink(sink, clock, capacity: 4);
 
         var f1 = new TrackingFrame(TimeSpan.FromMilliseconds(500)); // far future, never due.
+        var parked = pacer.ParkGeneration;
         await pacer.PresentAsync(f1, default);
-        await Task.Delay(20);
+        await pacer.WaitForParkAfterAsync(parked); // the frame is buffered and the loop is idle.
 
         await pacer.DisposeAsync();
 
@@ -896,6 +956,7 @@ public sealed class ClockSelectVideoSinkTests
     {
         private readonly object _lock = new();
         private readonly List<TimeSpan> _pts = new();
+        private readonly List<(int Count, TaskCompletionSource Signal)> _waiters = [];
         public bool IsDisposed { get; private set; }
 
         public IReadOnlyList<TimeSpan> PresentedPts
@@ -905,32 +966,48 @@ public sealed class ClockSelectVideoSinkTests
 
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {
+            List<TaskCompletionSource>? ready = null;
             lock (_lock)
+            {
                 _pts.Add(frame.Pts);
+                for (int i = _waiters.Count - 1; i >= 0; i--)
+                {
+                    if (_pts.Count >= _waiters[i].Count)
+                    {
+                        (ready ??= []).Add(_waiters[i].Signal);
+                        _waiters.RemoveAt(i);
+                    }
+                }
+            }
             frame.Dispose();
+            if (ready is not null)
+                foreach (var signal in ready)
+                    signal.TrySetResult();
             return ValueTask.CompletedTask;
         }
 
-        public async Task WaitForCountAsync(int count, int timeoutMs = 2000)
+        /// <summary>
+        /// Completes when <paramref name="count"/> frames have been presented.
+        /// </summary>
+        /// <remarks>
+        /// Signalled from <see cref="PresentAsync"/> rather than polled. The previous version
+        /// woke every 5 ms against a 2000 ms cap and threw <see cref="TimeoutException"/> when
+        /// it ran out, which on a slow machine is a second way for this file to fail without
+        /// anything being wrong (#152). There is no cap here: the run settings already impose
+        /// a 60 s per-test timeout, and a test that genuinely wedges should report as the
+        /// hang it is rather than as a bespoke timeout from a test double.
+        /// </remarks>
+        public Task WaitForCountAsync(int count)
         {
-            using var cts = new CancellationTokenSource(timeoutMs);
-            while (true)
+            TaskCompletionSource signal;
+            lock (_lock)
             {
-                lock (_lock)
-                {
-                    if (_pts.Count >= count)
-                        return;
-                }
-                try
-                { await Task.Delay(5, cts.Token); }
-                catch (OperationCanceledException)
-                {
-                    int have;
-                    lock (_lock)
-                        have = _pts.Count;
-                    throw new TimeoutException($"Expected {count} presented frames; have {have}.");
-                }
+                if (_pts.Count >= count)
+                    return Task.CompletedTask;
+                signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _waiters.Add((count, signal));
             }
+            return signal.Task;
         }
 
         public IFramePool FramePool => null!;
