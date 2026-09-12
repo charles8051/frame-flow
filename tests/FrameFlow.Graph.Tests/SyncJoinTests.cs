@@ -93,14 +93,32 @@ public sealed class SyncJoinTests
                 )
             );
 
+    /// <summary>
+    /// Waits for a state the join exposes, such as <see cref="SyncJoinNode{TPrimary,TSecondary,TOut}.RetainedCount"/>.
+    /// </summary>
+    /// <remarks>
+    /// A condition wait, not a sleep: nothing here depends on how long anything takes, only on
+    /// the condition becoming true. It yields between checks rather than delaying, so no
+    /// duration is involved at all (ADR-0072). The join has no event for "an item was
+    /// retained", so polling the count it does expose is the observation available.
+    /// </remarks>
     private static async Task SpinUntil(Func<bool> condition, CancellationToken ct)
     {
         while (!condition())
         {
             ct.ThrowIfCancellationRequested();
-            await Task.Delay(1, ct).ConfigureAwait(false);
+            await Task.Yield();
         }
     }
+
+    /// <summary>
+    /// Completes only by throwing when <paramref name="ct"/> fires. For a source that must
+    /// never end on its own.
+    /// </summary>
+    private static Task UntilCancelled(CancellationToken ct) =>
+        new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(
+            ct
+        );
 
     private static int Collected(List<string> sink)
     {
@@ -394,14 +412,18 @@ public sealed class SyncJoinTests
         // that waited on the secondary's writer completing would hang here.
         var join = Join(SyncMatch.MostRecentAtOrBefore, window: Ms(10_000));
 
+        // What makes it unbounded, for this test, is that its writer never completes. It
+        // emits one span, which the primary's gate needs retained, and then holds every later
+        // pull open until the graph token fires. That is the whole of a live source's
+        // relevance here, without a delay pretending to be a frame rate.
         var emitted = 0;
         var unbounded = new SourceNode<RefBox<Span>>(
             "unbounded-secondary",
             async ct =>
             {
-                await Task.Delay(1, ct).ConfigureAwait(false);
-                var n = Interlocked.Increment(ref emitted);
-                return RefBox.Of(new Span(Ms(0), Ms(0), $"s{n}"));
+                if (Interlocked.Increment(ref emitted) > 1)
+                    await UntilCancelled(ct).ConfigureAwait(false);
+                return RefBox.Of(new Span(Ms(0), Ms(0), "s1"));
             }
         );
 
@@ -469,38 +491,113 @@ public sealed class SyncJoinTests
         // capacity. If the pump stopped reading at primary EOS, that upstream
         // would block in WriteAsync and RunAsync would never return — which is
         // what SubstrateSession waits on before raising OnEndOfStream.
+        //
+        // "Lagging" used to mean a 5 ms delay per item, which made it likely the
+        // secondary still had items pending when the primary ended. This sequences
+        // it instead, so it is certain:
+        //
+        //   1. One span, so the primary's gate opens and the primary runs to EOS.
+        //   2. Probes, one at a time, each waiting until the pump has consumed the
+        //      last. A probe that comes back retained was read before the pump saw
+        //      primary EOS; one that comes back disposed without being retained was
+        //      read after, in discard mode. The first disposed probe proves the loop
+        //      has crossed EOS and is still reading.
+        //   3. More spans than the edge holds, sent without waiting. Only a pump that
+        //      keeps draining after EOS lets the source get through them.
+        //
+        // Step 3 is what the regression needs. A secondary loop that stops after its
+        // first post-EOS item still consumes the probe in step 2.
+        const int edgeCapacity = 4;
         var join = Join(SyncMatch.MostRecentAtOrBefore, window: Ms(10_000));
 
-        var spans = Enumerable
-            .Range(0, 12)
-            .Select(i => RefBox.Of(new Span(Ms(i * 10), Ms(i * 10), $"s{i}")))
-            .ToArray();
+        var primaryEos = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ticks = new[] { RefBox.Of(new Tick(Ms(0))), RefBox.Of(new Tick(Ms(10))) };
+        int t = 0;
+        var primary = new SourceNode<RefBox<Tick>>(
+            "primary",
+            async ct =>
+            {
+                if (t == 0)
+                    await SpinUntil(() => join.RetainedCount >= 1, ct).ConfigureAwait(false);
+                if (t < ticks.Length)
+                    return ticks[t++];
+                primaryEos.TrySetResult();
+                return null;
+            }
+        );
 
-        int s = 0;
+        var emitted = new List<RefBox<Span>>();
+        RefBox<Span> Next()
+        {
+            var span = RefBox.Of(new Span(Ms(0), Ms(0), $"s{emitted.Count}"));
+            emitted.Add(span);
+            return span;
+        }
+
+        var phase = 0; // 0 = first span, 1 = probing, 2 = burst
+        RefBox<Span>? probe = null;
+        var retainedAtProbe = 0;
+        var burstLeft = edgeCapacity + 2;
         var lagging = new SourceNode<RefBox<Span>>(
             "lagging-secondary",
             async ct =>
             {
-                await Task.Delay(5, ct).ConfigureAwait(false);
-                return s < spans.Length ? spans[s++] : null;
+                if (phase == 0)
+                {
+                    phase = 1;
+                    return Next();
+                }
+
+                if (phase == 1)
+                {
+                    if (probe is null)
+                    {
+                        await primaryEos.Task.WaitAsync(ct).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        var sent = probe;
+                        var before = retainedAtProbe;
+                        await SpinUntil(() => sent.RefCount == 0 || join.RetainedCount > before, ct)
+                            .ConfigureAwait(false);
+                        if (sent.RefCount == 0)
+                            phase = 2;
+                    }
+
+                    if (phase == 1)
+                    {
+                        retainedAtProbe = join.RetainedCount;
+                        return probe = Next();
+                    }
+                }
+
+                return burstLeft-- > 0 ? Next() : null;
             }
         );
 
-        var ticks = new[] { RefBox.Of(new Tick(Ms(0))), RefBox.Of(new Tick(Ms(10))) };
-
         var got = new List<string>();
         var graph = new GraphRunner();
-        graph.Pipeline(lagging).ToSecondary(join, EdgeOptions.Buffered(4));
-        graph.Pipeline(EmitAfterRetained(join, 1, ticks)).ToPrimary(join);
+        graph.Pipeline(lagging).ToSecondary(join, EdgeOptions.Buffered(edgeCapacity));
+        graph.Pipeline(primary).ToPrimary(join);
         graph.Pipeline(join.Output).To(CollectInto(got));
 
-        await graph.RunAsync().WaitAsync(TimeSpan.FromSeconds(15));
+        using var cts = new CancellationTokenSource();
+        try
+        {
+            await graph.RunAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        finally
+        {
+            // On a hang, stop the probe spin rather than leave it running for the rest
+            // of the suite. A no-op after a clean completion.
+            cts.Cancel();
+        }
 
         Assert.Equal(2, got.Count);
         Assert.Equal(0, join.RetainedCount);
         // Every secondary is accounted for, admitted or discarded post-EOS.
-        Assert.All(spans, x => Assert.Equal(0, x.RefCount));
-        Assert.All(ticks, t => Assert.Equal(0, t.RefCount));
+        Assert.All(emitted, x => Assert.Equal(0, x.RefCount));
+        Assert.All(ticks, x => Assert.Equal(0, x.RefCount));
     }
 
     // ── Failure policy ──────────────────────────────────────────────────
@@ -568,11 +665,16 @@ public sealed class SyncJoinTests
             Ms(10_000)
         );
 
+        // Never EOSes on its own: one tick, then every later pull waits for the graph token.
+        // Cancellation at the fault site is the only thing that can end it, which is the
+        // property under test.
+        var endlessPulls = 0;
         var endless = new SourceNode<RefBox<Tick>>(
             "endless-primary",
             async ct =>
             {
-                await Task.Delay(5, ct).ConfigureAwait(false);
+                if (Interlocked.Increment(ref endlessPulls) > 1)
+                    await UntilCancelled(ct).ConfigureAwait(false);
                 return RefBox.Of(new Tick(Ms(0)));
             }
         );
