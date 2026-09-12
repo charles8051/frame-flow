@@ -461,8 +461,17 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
         sink.Volume = 0.05f;
         await sink.ActivateAsync();
 
+        // Twenty blocks into a sixteen-buffer pool. The overflow is what makes the
+        // assertions below arithmetic rather than timing: the producer cannot finish
+        // pushing until the device has finished at least BurstBlocks - BufferPoolSize of
+        // them, and the device finishes buffers in real time, not at memcpy speed.
+        const int burstBlocks = 20;
+        const int bufferPoolSize = 16;
+        const int blockSamplesPerChannel = 2400; // 4800 interleaved / 2 channels
+        const long mustDrainPerChannel = (burstBlocks - bufferPoolSize) * blockSamplesPerChannel;
+
         // ── Burst 1: two seconds, then let the source starve ────────────────
-        await FeedBurstAsync(sink, blocks: 20);
+        await FeedBurstAsync(sink, blocks: burstBlocks);
 
         // No real device: the sink is inert, nothing drains, and there is nothing to
         // exercise. Same trivial-pass gate as the backpressure test above.
@@ -480,9 +489,13 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
         // source is AL_STOPPED well before the next burst arrives.
         await Task.Delay(TimeSpan.FromSeconds(3));
 
+        // Everything burst 1 played, credited. Burst 1 is fully drained by now, so the
+        // delta across burst 2 is burst 2's own audio and nothing else.
+        long processedBeforeSecond = sink.GetDiagnostics().ProcessedSamplesPerChannel;
+
         // ── Burst 2: the same feed into the same sink ───────────────────────
         var sw = Stopwatch.StartNew();
-        await FeedBurstAsync(sink, blocks: 20);
+        await FeedBurstAsync(sink, blocks: burstBlocks);
         sw.Stop();
 
         Assert.True(
@@ -503,18 +516,27 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
                 + "(#133)."
         );
 
-        // And it is draining. A sink that came back fills its pool and backpressures the
-        // producer as it did on the first burst; one that is merely latched but not
-        // consuming accepts all 20 blocks at memcpy speed and never fills anything. The
-        // pair is as close to "audible" as this can get without capturing the output —
-        // a dead endpoint still marks buffers processed (#127), which DeviceDisconnected
-        // rather than these counters is the check for.
+        // And burst 2's own buffers went through the device. The pool cannot hold the
+        // whole burst, so the push above could not have returned until the device
+        // finished at least the overflow — a lower bound from the pool arithmetic, not
+        // from how fast anything ran. A latched-but-idle source never reaches it.
+        long drainedDuringSecond =
+            sink.GetDiagnostics().ProcessedSamplesPerChannel - processedBeforeSecond;
         Assert.True(
-            sink.BackpressureCount > backpressureAfterFirst,
-            $"Burst 2 backpressured {sink.BackpressureCount - backpressureAfterFirst} times "
-                + $"(burst 1: {backpressureAfterFirst}) and took {sw.Elapsed.TotalSeconds:0.00}s "
-                + "to push two seconds of audio. The queue is not draining, so the sink is "
-                + "silently accepting buffers it will never play (#133)."
+            drainedDuringSecond >= mustDrainPerChannel,
+            $"The device finished {drainedDuringSecond} samples/channel of burst 2, below the "
+                + $"{mustDrainPerChannel} the pool overflow requires. Burst 2's push returned in "
+                + $"{sw.Elapsed.TotalSeconds:0.00}s, so the sink accepted {burstBlocks} blocks "
+                + $"into a {bufferPoolSize}-buffer pool without the device draining any of "
+                + "them (#133)."
+        );
+
+        // Neither assertion proves audibility, and nothing short of capturing the output
+        // would: a dead endpoint marks buffers processed without playing them, which is
+        // what DeviceDisconnected rather than any of these counters exists for (#127).
+        Assert.False(
+            sink.DeviceDisconnected,
+            "The output endpoint went away mid-test, so nothing above says what was played."
         );
     }
 
