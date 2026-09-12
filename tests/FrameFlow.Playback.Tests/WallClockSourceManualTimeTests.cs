@@ -57,13 +57,14 @@ public sealed class WallClockSourceManualTimeTests
         var wait = clock.WaitUntilAsync(TimeSpan.FromSeconds(2)).AsTask();
         Assert.False(wait.IsCompleted);
 
-        // WaitUntilAsync armed its first slice before returning.
-        var armed = time.TimersCreated;
+        // WaitUntilAsync armed its first slice before returning. Take the signal for the next
+        // timer now, before the advance, so the loop's re-arm cannot happen unobserved.
+        var rearmed = time.NextTimerCreated;
         time.Advance(TimeSpan.FromSeconds(1));
 
         // The slice fired; wait for the loop to see a second still to go and arm the next one.
         // Advancing before this is the race described in the class remarks.
-        await time.WaitForTimersCreatedAsync(armed + 1).WaitAsync(TimeSpan.FromSeconds(5));
+        await rearmed.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.False(wait.IsCompleted);
 
         time.Advance(TimeSpan.FromSeconds(1));
@@ -153,40 +154,21 @@ public sealed class WallClockSourceManualTimeTests
     }
 
     /// <summary>
-    /// A <see cref="FakeTimeProvider"/> that reports each timer it creates, so a test can wait
-    /// for code under test to arm its next timer instead of guessing when it has.
+    /// A <see cref="FakeTimeProvider"/> that signals when it creates a timer, so a test can wait
+    /// for code under test to arm its next one instead of guessing when it has.
     /// </summary>
     /// <remarks>
-    /// Signals after the base provider has registered the timer, so an advance made once the
-    /// wait completes is guaranteed to see it. Everything about time itself is still
-    /// <see cref="FakeTimeProvider"/>'s; this only makes arming observable.
+    /// The signal fires after the base provider has registered the timer, so an advance made
+    /// once it completes is guaranteed to fire that timer. Nothing else in these tests creates
+    /// timers on the provider, so the next timer after an advance is the pacing loop's re-arm.
+    /// Everything about time itself is still <see cref="FakeTimeProvider"/>'s.
     /// </remarks>
     private sealed class ArmSignallingTimeProvider : FakeTimeProvider
     {
-        private readonly object _gate = new();
-        private readonly List<(int Count, TaskCompletionSource Signal)> _waiters = [];
-        private int _created;
+        private TaskCompletionSource _next = NewSignal();
 
-        public int TimersCreated
-        {
-            get
-            {
-                lock (_gate)
-                    return _created;
-            }
-        }
-
-        public Task WaitForTimersCreatedAsync(int count)
-        {
-            lock (_gate)
-            {
-                if (_created >= count)
-                    return Task.CompletedTask;
-                var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                _waiters.Add((count, signal));
-                return signal.Task;
-            }
-        }
+        /// <summary>Completes when the first timer created after this was read is armed.</summary>
+        public Task NextTimerCreated => Volatile.Read(ref _next).Task;
 
         public override ITimer CreateTimer(
             TimerCallback callback,
@@ -196,23 +178,11 @@ public sealed class WallClockSourceManualTimeTests
         )
         {
             var timer = base.CreateTimer(callback, state, dueTime, period);
-            List<TaskCompletionSource>? ready = null;
-            lock (_gate)
-            {
-                _created++;
-                for (int i = _waiters.Count - 1; i >= 0; i--)
-                {
-                    if (_created >= _waiters[i].Count)
-                    {
-                        (ready ??= []).Add(_waiters[i].Signal);
-                        _waiters.RemoveAt(i);
-                    }
-                }
-            }
-            if (ready is not null)
-                foreach (var signal in ready)
-                    signal.TrySetResult();
+            Interlocked.Exchange(ref _next, NewSignal()).TrySetResult();
             return timer;
         }
+
+        private static TaskCompletionSource NewSignal() =>
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }
