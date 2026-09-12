@@ -131,9 +131,9 @@ public sealed class ContentCaptureTests : IClassFixture<FfmpegBootstrapFixture>
         };
 
     /// <summary>
-    /// Asserts the frames the playback runtime presented are the frames a
-    /// bare decode of the same file produces — same count, same PTS, same
-    /// pixels.
+    /// Asserts every frame the playback runtime presented is byte-identical
+    /// to the frame a bare decode of the same file produces at that PTS, and
+    /// that no frame went missing.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -148,13 +148,15 @@ public sealed class ContentCaptureTests : IClassFixture<FfmpegBootstrapFixture>
     /// Both sides decode in software (<see cref="HardwareDecodeMode.Disabled"/>
     /// is the harness default and <see cref="ReferenceDecoder"/> drives the
     /// decoders directly), so byte-exact equality is the right expectation.
-    /// A hardware path that introduces chroma rounding needs the SSIM
-    /// variant the <c>ssimFloor</c> parameter is reserved for.
     /// </para>
     /// <para>
-    /// The count assertion fires before any pixel is compared. A run that
-    /// dropped or duplicated a single frame fails there, naming the
-    /// difference, which is the shape #134 presented as.
+    /// The frame-loss budget stays at its default of zero. These clips are
+    /// 3 seconds at 320x240, with two at 1080p, and none of them sheds a
+    /// packet on any machine that can run the suite: measured on the pre-#137
+    /// build, every one reports <c>shed=0</c>. So every reference frame must
+    /// arrive. A clip chosen to overload decode needs a stated budget and
+    /// belongs in its own test, not in this set with the budget loosened to
+    /// accommodate it.
     /// </para>
     /// </remarks>
     [RequiresFfmpegAndCorpusTheory]

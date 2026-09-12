@@ -452,82 +452,164 @@ internal static class PlaybackInvariants
     // ──────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Asserts captured video frames match reference frames at each
-    /// PTS within a structural-similarity threshold. SSIM 0.99 is the
-    /// floor; lower than that indicates genuine pixel divergence
-    /// (color-space regression, chroma-subsample shift, decoder
-    /// fallback path).
+    /// Asserts every frame the runtime delivered is byte-identical to the
+    /// reference decode's frame at the same PTS, and that no more than
+    /// <paramref name="maxFrameLossRatio"/> of the reference's frames went
+    /// missing.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the two halves are separate.</b> A pipeline under load loses
+    /// frames on purpose. Post-#137 a broken reference chain costs the rest
+    /// of its GOP, so a clip that sheds delivers far fewer frames than a bare
+    /// decode produces and every one it does deliver is correct. On the clip
+    /// from #134 that is 525 delivered against 997 referenced, all 525
+    /// byte-identical. The earlier version of this invariant compared counts
+    /// first and failed there, which meant it could only ever compare pixels
+    /// on runs where nothing went wrong — it could not reach the corruption
+    /// it was written for.
+    /// </para>
+    /// <para>
+    /// So delivery and correctness are asserted apart. Every delivered frame
+    /// must match exactly, whatever the loss. The loss itself is a budget the
+    /// caller states: <c>0.0</c> for the corpus clips, which shed nothing and
+    /// must deliver everything, and a stated fraction for a clip chosen to
+    /// apply decode pressure.
+    /// </para>
+    /// <para>
+    /// <b>Byte-exact, not SSIM.</b> Both sides run the same decoder in
+    /// software, so the target is equality rather than similarity. A hardware
+    /// path that introduces chroma rounding needs a similarity variant; add it
+    /// when such a path actually diverges, rather than carrying an unused
+    /// threshold that reads as coverage.
+    /// </para>
+    /// </remarks>
+    /// <param name="capture">Frames the playback runtime presented, in arrival order.</param>
+    /// <param name="reference">Ground-truth decode of the same source.</param>
+    /// <param name="maxFrameLossRatio">
+    /// Fraction of the reference's frames the runtime may fail to deliver,
+    /// in [0, 1]. Defaults to 0: every frame must arrive. Raise it only for a
+    /// clip deliberately chosen to overload decode, and say in the test why
+    /// that clip's budget is what it is.
+    /// </param>
     public static void VideoFramePixelsMatchReference(
         IReadOnlyList<VideoCapture> capture,
         IReadOnlyList<VideoCapture> reference,
-        double ssimFloor = 0.99
+        double maxFrameLossRatio = 0.0
     )
     {
         ArgumentNullException.ThrowIfNull(capture);
         ArgumentNullException.ThrowIfNull(reference);
-
-        // Same-decoder reference means byte-exact match is the target,
-        // not approximate SSIM. The `ssimFloor` parameter is preserved
-        // for forward-compatibility with hardware-decode paths that
-        // might introduce chroma rounding; the default 0.99 wouldn't
-        // gate this byte-equal implementation either way. When the
-        // chroma-aware variant lands, route through SSIM if ssimFloor
-        // < 1.0 and through byte-equal if == 1.0.
-        _ = ssimFloor;
+        // NaN fails every comparison, so it would slip past a bare range check
+        // and then make the budget assertion below vacuously true.
+        if (double.IsNaN(maxFrameLossRatio) || maxFrameLossRatio < 0.0 || maxFrameLossRatio > 1.0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxFrameLossRatio),
+                maxFrameLossRatio,
+                "Frame-loss budget must be a fraction in [0, 1]."
+            );
+        }
 
         if (capture.Count == 0 && reference.Count == 0)
             return;
 
-        Assert.NotEmpty(capture);
         Assert.NotEmpty(reference);
 
-        // The decoder is deterministic so frame counts should match
-        // exactly. A diff usually means a frame was dropped by the
-        // playback worker (e.g. backpressure stalling decode).
-        Assert.True(
-            capture.Count == reference.Count,
-            $"Video frame count mismatch: capture={capture.Count}, reference={reference.Count}. "
-                + $"Diff usually means the playback runtime dropped or duplicated frames."
-        );
+        var referenceByPts = new Dictionary<TimeSpan, VideoCapture>(reference.Count);
+        foreach (var r in reference)
+            referenceByPts[r.Pts] = r;
+
+        // Delivery order and uniqueness first. Checking these up front is what
+        // lets the loss count below be a subtraction rather than a set
+        // difference: every captured PTS is known to be distinct and known to
+        // exist in the reference.
+        var seen = new HashSet<TimeSpan>(capture.Count);
+        var previous = TimeSpan.MinValue;
 
         for (int i = 0; i < capture.Count; i++)
         {
             var c = capture[i];
-            var r = reference[i];
 
-            Assert.True(
-                c.Pts == r.Pts,
-                $"Video frame {i} PTS mismatch: capture={c.Pts.TotalSeconds:F4}s, "
-                    + $"reference={r.Pts.TotalSeconds:F4}s. Frame ordering or PTS regression."
-            );
-
-            Assert.True(
-                c.Width == r.Width && c.Height == r.Height && c.Format == r.Format,
-                $"Video frame {i} (Pts={c.Pts.TotalSeconds:F3}s) format mismatch: "
-                    + $"capture={c.Width}x{c.Height} {c.Format}, "
-                    + $"reference={r.Width}x{r.Height} {r.Format}."
-            );
-
-            if (c.Pixels.Length != r.Pixels.Length)
+            if (!seen.Add(c.Pts))
             {
                 Assert.Fail(
-                    $"Video frame {i} (Pts={c.Pts.TotalSeconds:F3}s) pixel-byte length "
-                        + $"mismatch: capture={c.Pixels.Length}, reference={r.Pixels.Length}."
+                    $"Video frame {i} repeats PTS {c.Pts.TotalSeconds:F4}s, already delivered "
+                        + $"earlier in the run. The runtime presented one decoded frame twice."
                 );
             }
 
-            if (!c.Pixels.AsSpan().SequenceEqual(r.Pixels))
+            if (c.Pts <= previous)
             {
-                int firstDiff = FirstDifferingByte(c.Pixels, r.Pixels);
                 Assert.Fail(
-                    $"Video frame {i} (Pts={c.Pts.TotalSeconds:F3}s) pixel bytes diverge "
-                        + $"at byte {firstDiff} of {c.Pixels.Length}. "
-                        + $"capture={c.Pixels[firstDiff]} reference={r.Pixels[firstDiff]}. "
-                        + $"Same-decoder paths should be byte-identical."
+                    $"Video frame {i} arrived out of order: PTS {c.Pts.TotalSeconds:F4}s "
+                        + $"≤ previous {previous.TotalSeconds:F4}s. Frames must reach the sink "
+                        + $"in presentation order."
                 );
             }
+            previous = c.Pts;
+
+            if (!referenceByPts.TryGetValue(c.Pts, out var r))
+            {
+                Assert.Fail(
+                    $"Video frame {i} has PTS {c.Pts.TotalSeconds:F4}s, which the reference "
+                        + $"decode never produced. The runtime invented a frame or stamped one "
+                        + $"with the wrong timestamp."
+                );
+            }
+
+            AssertFrameMatches(i, c, r);
         }
+
+        int missing = reference.Count - capture.Count;
+        double lossRatio = (double)missing / reference.Count;
+
+        Assert.True(
+            lossRatio <= maxFrameLossRatio,
+            $"Video frame loss {lossRatio:P2} exceeds the budget {maxFrameLossRatio:P2}: "
+                + $"delivered {capture.Count} of {reference.Count} reference frames "
+                + $"({missing} missing). Every delivered frame matched, so this is the runtime "
+                + $"dropping pictures rather than corrupting them — check the shed counters."
+        );
+    }
+
+    /// <summary>
+    /// Asserts one delivered frame is byte-identical to its reference, with a
+    /// message that separates a rounding-scale difference from corruption.
+    /// </summary>
+    private static void AssertFrameMatches(int index, VideoCapture c, VideoCapture r)
+    {
+        Assert.True(
+            c.Width == r.Width && c.Height == r.Height && c.Format == r.Format,
+            $"Video frame {index} (Pts={c.Pts.TotalSeconds:F3}s) format mismatch: "
+                + $"capture={c.Width}x{c.Height} {c.Format}, "
+                + $"reference={r.Width}x{r.Height} {r.Format}."
+        );
+
+        if (c.Pixels.Length != r.Pixels.Length)
+        {
+            Assert.Fail(
+                $"Video frame {index} (Pts={c.Pts.TotalSeconds:F3}s) pixel-byte length "
+                    + $"mismatch: capture={c.Pixels.Length}, reference={r.Pixels.Length}."
+            );
+        }
+
+        if (c.Pixels.AsSpan().SequenceEqual(r.Pixels))
+            return;
+
+        int firstDiff = FirstDifferingByte(c.Pixels, r.Pixels);
+        int differing = CountDifferingBytes(c.Pixels, r.Pixels);
+        double pct = 100.0 * differing / c.Pixels.Length;
+
+        Assert.Fail(
+            $"Video frame {index} (Pts={c.Pts.TotalSeconds:F3}s) pixel bytes diverge from the "
+                + $"reference decode: {differing} of {c.Pixels.Length} bytes differ ({pct:F2}%), "
+                + $"first at byte {firstDiff} (capture={c.Pixels[firstDiff]}, "
+                + $"reference={r.Pixels[firstDiff]}). Same-decoder paths are byte-identical, so "
+                + $"any divergence is the runtime producing a different picture. A large "
+                + $"percentage is the #134 signature: a frame decoded against references that "
+                + $"were dropped."
+        );
     }
 
     private static int FirstDifferingByte(byte[] a, byte[] b)
@@ -539,6 +621,18 @@ internal static class PlaybackInvariants
                 return i;
         }
         return n;
+    }
+
+    private static int CountDifferingBytes(byte[] a, byte[] b)
+    {
+        int n = Math.Min(a.Length, b.Length);
+        int differing = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (a[i] != b[i])
+                differing++;
+        }
+        return differing;
     }
 
     /// <summary>
