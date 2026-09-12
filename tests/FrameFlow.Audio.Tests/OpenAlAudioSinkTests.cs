@@ -491,16 +491,30 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
                 + "underrun was observed — the test never reached the state it guards."
         );
 
-        // The assertion. A sink that came back fills its pool and backpressures the
-        // producer exactly as it did on the first burst. A sink wedged on a stopped
-        // source accepts all 20 blocks at memcpy speed and never fills anything.
+        // The source restarted. IsActive is the source-started latch, and the only thing
+        // that sets it is the pre-buffer gate firing and the shell calling SourcePlay. A
+        // sink wedged on a stopped source clears the latch at the underrun and never
+        // re-latches, because the queue depth never reaches PreBufferCount again.
+        Assert.True(
+            sink.GetDiagnostics().IsActive,
+            "The source-started latch is still clear after the second burst, so the "
+                + "pre-buffer gate never re-fired and SourcePlay was never re-issued. "
+                + "Everything pushed since the underrun is queued on a stopped source "
+                + "(#133)."
+        );
+
+        // And it is draining. A sink that came back fills its pool and backpressures the
+        // producer as it did on the first burst; one that is merely latched but not
+        // consuming accepts all 20 blocks at memcpy speed and never fills anything. The
+        // pair is as close to "audible" as this can get without capturing the output —
+        // a dead endpoint still marks buffers processed (#127), which DeviceDisconnected
+        // rather than these counters is the check for.
         Assert.True(
             sink.BackpressureCount > backpressureAfterFirst,
             $"Burst 2 backpressured {sink.BackpressureCount - backpressureAfterFirst} times "
                 + $"(burst 1: {backpressureAfterFirst}) and took {sw.Elapsed.TotalSeconds:0.00}s "
-                + "to push two seconds of audio. The queue is not draining, so the source "
-                + "never restarted after the underrun and the sink is silently accepting "
-                + "buffers it will never play (#133)."
+                + "to push two seconds of audio. The queue is not draining, so the sink is "
+                + "silently accepting buffers it will never play (#133)."
         );
     }
 

@@ -596,8 +596,9 @@ public sealed partial class OpenAlAudioSink
     /// that the caller should await a buffer return.
     /// </summary>
     /// <param name="firstPass">
-    /// Whether this is the first attempt of the current flush — the underrun check
-    /// runs once, mirroring the pre-async single check before the wait loop.
+    /// Whether this is the first attempt of the current flush — the endpoint-liveness
+    /// check runs once per flush rather than once per attempt. The underrun check is not
+    /// gated on it; see <see cref="BufferQueueState.ObserveUnderrun"/> for why.
     /// </param>
     /// <param name="writeSw">
     /// Stopwatch started when the flush began, recorded into
@@ -615,22 +616,20 @@ public sealed partial class OpenAlAudioSink
             if (_al is null || _disposed || _queue.StagingCount == 0)
                 return FlushStep.Done;
 
-            RecycleProcessedBuffers();
-
-            // Endpoint liveness, at the same once-per-flush cadence as the underrun check
-            // below and for the same reason: it is the other way the device stops being a
-            // place audio goes. It is not folded into that check because the two do not
-            // co-occur — a dead endpoint keeps reporting buffers processed, so the source
-            // never starves and no underrun is ever observed (#127).
-            if (firstPass)
-                ObserveEndpointLivenessUnderLock();
-
-            // Underrun check (once per flush, as before). The device SourceState read
-            // stays gated behind firstPass && SourceStarted so the hot path never reads
-            // it; the pure value then renders the Stopped → underrun verdict + latch.
-            if (firstPass && _queue.SourceStarted)
+            // Underrun check, before anything reads BuffersProcessed and on every pass,
+            // not just the first. The device SourceState read stays gated behind
+            // SourceStarted, so a priming sink never pays for it; the pure value renders
+            // the Stopped → underrun verdict + latch.
+            //
+            // Every pass, because a source can drain while this flush is parked in the
+            // backpressure wait. A retry that did not look would queue a buffer onto a
+            // source nobody had noticed was stopped — audio that never plays, credited to
+            // the clock by the next flush's recycle and then dropped by the re-prime.
+            // Before the recycle, because a processed count taken from a source whose stop
+            // has not been established yet cannot be read as a record of what played.
+            if (_queue.SourceStarted)
             {
-                var underrun = _queue.ObserveUnderrun(firstPass, ReadSourceStateUnderLock());
+                var underrun = _queue.ObserveUnderrun(ReadSourceStateUnderLock());
                 _queue = underrun.Next;
                 if (underrun.Underran)
                 {
@@ -643,14 +642,31 @@ public sealed partial class OpenAlAudioSink
                     );
                     LogUnderrun(_logger, _underrunCount, _freeBuffers.Count, queuedAtUnderrun);
 
-                    // Put the starved source back in the state ActivateAsync hands the
-                    // pre-buffer gate: queue empty, cursor rewound. Without this the
+                    // Credit what the device genuinely played, while that is still what
+                    // the processed count means. The check above runs on every pass, so
+                    // nothing has been queued since the source stopped: every processed
+                    // buffer here really was played. Forced because the latch just cleared
+                    // and the priming guard would otherwise skip it.
+                    RecycleProcessedBuffers(force: true);
+
+                    // Then put the starved source back in the state ActivateAsync hands
+                    // the pre-buffer gate: queue empty, cursor rewound. Without this the
                     // re-prime queues onto a stopped source whose play cursor sits at the
                     // end of the old queue, which is the degenerate state #133 and the
                     // loop-restart comment in ActivateAsync both describe.
                     ResetSourceQueueUnderLock();
                 }
             }
+
+            RecycleProcessedBuffers();
+
+            // Endpoint liveness, once per flush. It is the other way the device stops
+            // being a place audio goes, and it is deliberately not folded into the
+            // underrun check above: the two do not co-occur, because a dead endpoint keeps
+            // reporting buffers processed, so the source never starves and no underrun is
+            // ever observed (#127).
+            if (firstPass)
+                ObserveEndpointLivenessUnderLock();
 
             // Upload / backpressure plan. The source-state read only happens when the
             // pool is empty (the lazy ReadSourceStateUnderLock keeps the upload hot path
