@@ -220,7 +220,17 @@ land.
   detection overlay migrated onto it, which deletes the `_inferenceBusy` gating in
   favour of a `LatestWins(1)` edge; the caption overlay waits on ADR-0047's lookahead.
 
-(Most recently, the audio clock was told what it is allowed to believe as
+(Most recently, tests stopped depending on elapsed time as
+[ADR-0072](ADR-0072-tests-do-not-depend-on-elapsed-time.md) — wall time is `TimeProvider`
+faked with `FakeTimeProvider`, a test about a background worker waits on a signal from the
+worker rather than a duration, health gates assert counts and conservation instead of
+wall-clock-derived values, and only `FrameFlow.Integration.Tests` and a type whose defining
+property is timing may read the clock; it extends
+[ADR-0007](ADR-0007-testing-and-validation-strategy.md), which asked for deterministic seams
+and said nothing about what a test may do once they exist, and it is enforced by a
+banned-API ratchet in `tests/` shaped like the public-API baseline in `src/`, because the
+clean state of sixteen test projects out of twenty-one had been reached by nobody deciding
+anything. Before it, the audio clock was told what it is allowed to believe as
 [ADR-0071](ADR-0071-what-the-audio-clock-is-allowed-to-believe.md) — a paused device's
 sample counter is no longer read at all, a reading that advances further than elapsed
 playing time is treated as audio the device dropped rather than played, and a removed

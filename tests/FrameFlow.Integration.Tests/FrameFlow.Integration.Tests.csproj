@@ -5,6 +5,15 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!--
+      Opted out of the wall-clock ratchet in tests/Directory.Build.targets (ADR-0072).
+      Permanent. This suite drives real FFmpeg decode through the playback stack and asserts
+      real durations: that a 3 s clip takes about 3 s to play, that a loop restarts on time,
+      that pause and resume land where they should. Elapsed time is what it measures, not an
+      accident of how it was written. ADR-0072 records it as the one suite allowed to read the
+      clock, so the exception is argued once rather than rediscovered per test.
+    -->
+    <FrameFlowBanWallClockInTests>false</FrameFlowBanWallClockInTests>
   </PropertyGroup>
 
   <ItemGroup>

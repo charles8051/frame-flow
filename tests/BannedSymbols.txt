@@ -1,0 +1,15 @@
+M:System.Threading.Thread.Sleep(System.Int32);Sleeping is a bet on scheduler latency. Wait on the thing you expect instead, or advance a FakeTimeProvider. See ADR-0072.
+M:System.Threading.Thread.Sleep(System.TimeSpan);Sleeping is a bet on scheduler latency. Wait on the thing you expect instead, or advance a FakeTimeProvider. See ADR-0072.
+M:System.Threading.Tasks.Task.Delay(System.Int32);A delay in a test guesses how long something takes. Await a signal from the code under test, or use Task.Delay(TimeSpan, TimeProvider) with a FakeTimeProvider. See ADR-0072.
+M:System.Threading.Tasks.Task.Delay(System.TimeSpan);A delay in a test guesses how long something takes. Await a signal from the code under test, or use Task.Delay(TimeSpan, TimeProvider) with a FakeTimeProvider. See ADR-0072.
+M:System.Threading.Tasks.Task.Delay(System.Int32,System.Threading.CancellationToken);A delay in a test guesses how long something takes. Await a signal from the code under test, or use Task.Delay(TimeSpan, TimeProvider, CancellationToken) with a FakeTimeProvider. See ADR-0072.
+M:System.Threading.Tasks.Task.Delay(System.TimeSpan,System.Threading.CancellationToken);A delay in a test guesses how long something takes. Await a signal from the code under test, or use Task.Delay(TimeSpan, TimeProvider, CancellationToken) with a FakeTimeProvider. See ADR-0072.
+P:System.DateTime.Now;Reading the wall clock makes a test depend on when it runs. Inject a TimeProvider and use FakeTimeProvider. See ADR-0072.
+P:System.DateTime.UtcNow;Reading the wall clock makes a test depend on when it runs. Inject a TimeProvider and use FakeTimeProvider. See ADR-0072.
+P:System.DateTimeOffset.Now;Reading the wall clock makes a test depend on when it runs. Inject a TimeProvider and use FakeTimeProvider. See ADR-0072.
+P:System.DateTimeOffset.UtcNow;Reading the wall clock makes a test depend on when it runs. Inject a TimeProvider and use FakeTimeProvider. See ADR-0072.
+M:System.Diagnostics.Stopwatch.#ctor;Measuring elapsed time in a test asserts how fast the machine is. Assert the behaviour instead; real measurements belong behind an opt-in. See ADR-0072.
+M:System.Diagnostics.Stopwatch.StartNew;Measuring elapsed time in a test asserts how fast the machine is. Assert the behaviour instead; real measurements belong behind an opt-in. See ADR-0072.
+M:System.Diagnostics.Stopwatch.GetTimestamp;Measuring elapsed time in a test asserts how fast the machine is. Assert the behaviour instead; real measurements belong behind an opt-in. See ADR-0072.
+M:System.Diagnostics.Stopwatch.GetElapsedTime(System.Int64);Measuring elapsed time in a test asserts how fast the machine is. Assert the behaviour instead; real measurements belong behind an opt-in. See ADR-0072.
+M:System.Diagnostics.Stopwatch.GetElapsedTime(System.Int64,System.Int64);Measuring elapsed time in a test asserts how fast the machine is. Assert the behaviour instead; real measurements belong behind an opt-in. See ADR-0072.
