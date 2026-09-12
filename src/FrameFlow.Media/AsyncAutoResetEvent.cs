@@ -41,6 +41,19 @@ internal sealed class AsyncAutoResetEvent
 {
     private readonly Lock _gate = new();
 
+    // Arms the wait's timeout. Injectable so the timeout can be driven deterministically
+    // (ADR-0072): whether a wait timed out, and not before it should have, is the contract
+    // this type exists to keep, and asserting it against the platform timer made those tests
+    // measure the machine. Defaults to TimeProvider.System, so production is unchanged.
+    private readonly TimeProvider _timeProvider;
+
+    /// <summary>Creates an event whose wait timeouts run on <paramref name="timeProvider"/>.</summary>
+    /// <param name="timeProvider">
+    /// Supplies the timeout in <see cref="WaitAsync"/>. Null uses <see cref="TimeProvider.System"/>.
+    /// </param>
+    public AsyncAutoResetEvent(TimeProvider? timeProvider = null) =>
+        _timeProvider = timeProvider ?? TimeProvider.System;
+
     // The TCS the current waiter (if any) is parked on. Null when no one is
     // waiting. RunContinuationsAsynchronously so completing under _gate never
     // runs the awaiter's continuation inline while the lock is held.
@@ -107,7 +120,7 @@ internal sealed class AsyncAutoResetEvent
             waitTask = _waiter.Task;
         }
 
-        using var timeoutCts = new CancellationTokenSource(timeout);
+        using var timeoutCts = new CancellationTokenSource(timeout, _timeProvider);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             timeoutCts.Token

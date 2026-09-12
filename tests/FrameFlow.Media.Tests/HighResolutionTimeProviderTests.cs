@@ -1,3 +1,10 @@
+// Exempt from the wall-clock ratchet (ADR-0072, rule 6). HighResolutionTimeProvider exists to make
+// a real delay cost what it asked for instead of a rounded-up system tick, so the property under
+// test is elapsed time and no fake clock can stand in for it. Its timers are OS waitable timers,
+// so whether one fires once, fires periodically, or stops on dispose is also only observable in
+// real time. Scoped to this file: nothing else in FrameFlow.Media.Tests may read the clock.
+#pragma warning disable RS0030
+
 using System.Diagnostics;
 using FrameFlow.Media;
 

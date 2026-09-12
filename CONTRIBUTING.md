@@ -114,6 +114,7 @@ dotnet test ./FrameFlow.slnx --nologo
 per project, and expects a prior `dotnet build`.
 
 `tests/frameflow.runsettings` carries the timeouts and the `FRAMEFLOW_VISUAL_TESTS` gate.
+The SDL tests open a real window and stay skipped unless you set it to `1`.
 
 **A test that sleeps, delays, or reads the wall clock fails the build.** Every project under
 `tests/` runs a banned-API analyzer over `Thread.Sleep`, the `Task.Delay` overloads that take no
@@ -129,13 +130,14 @@ Inject a `TimeProvider` and pass `FakeTimeProvider`, which every test project al
 When the code under test works on another task, wait on a signal from it rather than a duration.
 [ADR-0072](docs/adr/ADR-0072-tests-do-not-depend-on-elapsed-time.md) has the reasoning and the two
 places allowed to read the clock. A project that cannot comply yet sets
-`FrameFlowBanWallClockInTests` to `false` in its `.csproj` with a comment saying why. The list is
-meant to get shorter, so it is not written down here; this is the current one:
+`FrameFlowBanWallClockInTests` to `false` in its `.csproj` with a comment saying why. A test file
+whose subject *is* elapsed time carries `#pragma warning disable RS0030` at the top with its reason
+instead, so the rest of its project stays under the ban. The list is meant to get shorter, so it is
+not written down here; this is the current one:
 
 ```bash
-grep -l "FrameFlowBanWallClockInTests>false" tests/*/*.csproj
+grep -rlE "FrameFlowBanWallClockInTests>false|disable RS0030" tests --include=*.csproj --include=*.cs
 ```
-The SDL tests open a real window and stay skipped unless you set it to `1`.
 
 Two corpus fixtures cannot be produced by the pinned FFmpeg build, because x264 and
 x265 are disabled as GPL. `generate-test-corpus.cs` reports which and explains the

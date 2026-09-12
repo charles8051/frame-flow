@@ -196,6 +196,13 @@ checked.
 
 A project opts out by setting `FrameFlowBanWallClockInTests` to `false` in its own `.csproj`, with a
 comment saying why. The opt-out list is the six projects that had violations when this landed.
+
+A file that falls under rule 6 — its subject is elapsed time — does not keep its whole project off
+the ban. It carries `#pragma warning disable RS0030` at the top of the file, under a comment giving the
+rule-6 reason, and the rest of the project stays covered. The suppression is for that case only: a
+file that merely has not been fixed yet belongs on the project list, where it is expected to come
+off, not behind a pragma, where nothing asks it to. `HighResolutionTimeProviderTests` is the first
+(added 2026-09-12, when `FrameFlow.Media.Tests` came off the list).
 It only shrinks. A project comes off when its last violation is gone, and a new test project starts
 on the right side of the ban without anyone having to decide to put it there — which is the whole
 point, because the previous state of the tree was reached by nobody deciding anything.
@@ -206,8 +213,8 @@ point, because the previous state of the tree was reached by nobody deciding any
 
 - A new wall-clock dependency in a test fails the build with a message naming what to use instead,
   rather than surfacing months later as a flake on one CI leg.
-- Every exception is a line in a `.csproj` with its reason next to it, and the set of exceptions is
-  a grep.
+- Every exception is a line in a `.csproj` or the head of a test file, with its reason next to it,
+  and the set of exceptions is one grep across both.
 - `ClockSelectVideoSinkTests` runs in 0.7 s where it took 3 s, with no sleeps, and was run 25
   consecutive times clean.
 - Hand-rolled time doubles cannot quietly reappear, since the replacement is already referenced by

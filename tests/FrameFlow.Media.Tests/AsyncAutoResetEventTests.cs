@@ -1,5 +1,5 @@
-using System.Diagnostics;
 using FrameFlow.Media;
+using Microsoft.Extensions.Time.Testing;
 
 namespace FrameFlow.Media.Tests;
 
@@ -13,6 +13,24 @@ namespace FrameFlow.Media.Tests;
 /// device, which is what the end-to-end backpressure test gates behind
 /// <c>RequiresAudioDeviceFact</c>. They moved here with the primitive; the sequence they pin
 /// is the one any buffer-return backpressure loop needs, not an OpenAL-specific one.
+/// <para>
+/// Where a test is about the timeout — that a wait gives up, and not before it should — the
+/// event runs on a <see cref="FakeTimeProvider"/> and the test advances it. They used to time a
+/// real 50 ms wait with a <c>Stopwatch</c> and allow 20 ms of slack, which is an assertion
+/// about the scheduler (ADR-0072). <see cref="AsyncAutoResetEvent.WaitAsync"/> registers its
+/// waiter and parks before it returns, so a pending task observed straight after the call is
+/// a parked waiter, and only a <see cref="AsyncAutoResetEvent.Set"/>, the timeout or
+/// cancellation can complete it.
+/// </para>
+/// <para>
+/// "Not before its timeout" is asserted by result, never by <c>IsCompleted</c> after an
+/// advance. The timer fires inside <see cref="FakeTimeProvider.Advance"/>, but the wait's own
+/// completion runs on a continuation afterwards, so a wait that timed out early can still read
+/// as pending for a moment. What is settled synchronously is which of the two won: a
+/// <see cref="AsyncAutoResetEvent.Set"/> one tick short of the timeout releases a wait that is
+/// still inside it, and the same call against one that already gave up returns false.
+/// Measured: with the timeout halved, only the test built that way failed.
+/// </para>
 /// </remarks>
 public sealed class AsyncAutoResetEventTests
 {
@@ -49,16 +67,21 @@ public sealed class AsyncAutoResetEventTests
     {
         // Before the recycle, the awaiter must not complete on its own — otherwise
         // the sink would busy-loop re-polling an empty queue (the exact CPU waste
-        // the async conversion removes). Verify it is still pending after a real
-        // delay, then released by Set().
-        var signal = new AsyncAutoResetEvent();
+        // the async conversion removes). With all but the last tick of its timeout
+        // gone, a Set() must still release it: a wait that had already given up
+        // would return false here instead. This is also the test that pins "not
+        // before its timeout" — see the class remarks for why it is done this way.
+        var time = new FakeTimeProvider();
+        var signal = new AsyncAutoResetEvent(time);
         var waitTask = signal.WaitAsync(GenerousTimeout, CancellationToken.None);
 
-        await Task.Delay(100);
-        Assert.False(waitTask.IsCompleted, "Awaiter must remain blocked until a buffer recycles.");
-
+        time.Advance(GenerousTimeout - TimeSpan.FromTicks(1));
         signal.Set();
-        Assert.True(await waitTask.WaitAsync(GenerousTimeout));
+
+        Assert.True(
+            await waitTask.WaitAsync(GenerousTimeout),
+            "Awaiter must remain blocked until a buffer recycles, however much of its timeout has passed."
+        );
     }
 
     // ── Missed-wakeup safety: Set before Wait must not be lost ──────────────────
@@ -86,21 +109,22 @@ public sealed class AsyncAutoResetEventTests
         // One recycle == one permit. After a latched Set() is consumed by a wait,
         // the following wait must block again (until the next recycle) rather than
         // spuriously returning. Auto-reset semantics: the permit does not persist.
-        var signal = new AsyncAutoResetEvent();
+        var time = new FakeTimeProvider();
+        var signal = new AsyncAutoResetEvent(time);
         signal.Set();
 
         // First wait consumes the permit immediately.
         Assert.True(await signal.WaitAsync(GenerousTimeout, CancellationToken.None));
 
-        // Second wait must time out (no further Set()) — returns false, no throw.
-        var sw = Stopwatch.StartNew();
-        var releasedBySignal = await signal.WaitAsync(ShortTimeout, CancellationToken.None);
-        sw.Stop();
+        // Second wait must park — a latched permit returns synchronously, so pending here
+        // means there was none — and then time out: returns false, no throw.
+        var second = signal.WaitAsync(ShortTimeout, CancellationToken.None);
+        Assert.False(second.IsCompleted, "A consumed permit must not satisfy a subsequent wait.");
 
-        Assert.False(releasedBySignal, "A consumed permit must not satisfy a subsequent wait.");
-        Assert.True(
-            sw.Elapsed >= ShortTimeout - TimeSpan.FromMilliseconds(20),
-            $"Second wait returned after {sw.ElapsedMilliseconds}ms; expected to block ~{ShortTimeout.TotalMilliseconds}ms."
+        time.Advance(ShortTimeout);
+        Assert.False(
+            await second.WaitAsync(GenerousTimeout),
+            "A consumed permit must not satisfy a subsequent wait."
         );
     }
 
@@ -112,16 +136,15 @@ public sealed class AsyncAutoResetEventTests
         // The device-never-drains case: if no buffer ever recycles, WaitAsync must
         // still return (false) after the slice so FlushStagingBufferAsync re-polls
         // source state (catching a Pause/Stop) instead of hanging forever.
-        var signal = new AsyncAutoResetEvent();
+        var time = new FakeTimeProvider();
+        var signal = new AsyncAutoResetEvent(time);
 
-        var sw = Stopwatch.StartNew();
-        var releasedBySignal = await signal.WaitAsync(ShortTimeout, CancellationToken.None);
-        sw.Stop();
+        var wait = signal.WaitAsync(ShortTimeout, CancellationToken.None);
 
-        Assert.False(releasedBySignal, "With no Set(), the wait must report a timeout, not a signal.");
-        Assert.True(
-            sw.Elapsed >= ShortTimeout - TimeSpan.FromMilliseconds(20),
-            $"Wait returned after {sw.ElapsedMilliseconds}ms; expected to block ~{ShortTimeout.TotalMilliseconds}ms before timing out."
+        time.Advance(ShortTimeout);
+        Assert.False(
+            await wait.WaitAsync(GenerousTimeout),
+            "With no Set(), the wait must report a timeout, not a signal."
         );
     }
 
@@ -185,11 +208,20 @@ public sealed class AsyncAutoResetEventTests
         // FlushStagingBufferAsync; Set() is fired from a *different* path
         // (RecycleProcessedBuffers, invoked under _stateLock by another call). Prove
         // the cross-thread set→release works and the result is observed.
-        var signal = new AsyncAutoResetEvent();
-        var waitTask = Task.Run(() => signal.WaitAsync(GenerousTimeout, CancellationToken.None));
+        //
+        // The wait is started on a pool thread and handed back once WaitAsync has returned, which
+        // is once it has parked. So the Set() below goes through the release path rather than the
+        // latch — the thing this test is for — where it used to sleep 50 ms and hope. The fake
+        // provider is never advanced, so nothing but that Set() can complete the wait.
+        var time = new FakeTimeProvider();
+        var signal = new AsyncAutoResetEvent(time);
+        var started = new TaskCompletionSource<Task<bool>>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        _ = Task.Run(() => started.SetResult(signal.WaitAsync(GenerousTimeout, CancellationToken.None)));
+        var waitTask = await started.Task.WaitAsync(GenerousTimeout);
 
-        // Give the waiter time to park, then signal from this thread.
-        await Task.Delay(50);
+        Assert.False(waitTask.IsCompleted, "The waiter should be parked, not holding a latched permit.");
         signal.Set();
 
         Assert.True(await waitTask.WaitAsync(GenerousTimeout));

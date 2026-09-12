@@ -47,12 +47,11 @@ public sealed class CpuFramePoolTests
         var thirdRentTask = pool.RentAsync(64, 64, PixelFormat.Bgra32, CancellationToken.None)
             .AsTask();
 
-        // Verify it does NOT complete within 200ms.
-        var completed = await Task.WhenAny(
-            thirdRentTask,
-            Task.Delay(TimeSpan.FromMilliseconds(200))
-        );
-        Assert.NotSame(thirdRentTask, completed);
+        // RentAsync waits on the pool's semaphore with no timeout, so with no permit left it
+        // returns a pending task that only a returned frame or cancellation can complete. Pending
+        // here is therefore blocked, and stays blocked; the 200 ms this used to wait added
+        // nothing but a dependence on the runner (ADR-0072).
+        Assert.False(thirdRentTask.IsCompleted, "RentAsync should block while every frame is rented.");
 
         // Return one frame — third rent should unblock.
         frame1.Dispose();

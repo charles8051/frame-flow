@@ -5,15 +5,6 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <!--
-      Opted out of the wall-clock ratchet in tests/Directory.Build.targets (ADR-0072).
-      Temporary, and mixed. HighResolutionTimeProviderTests measures real timer latency on
-      purpose: it is the defining property of the type, and ADR-0072 allows it. The delays in
-      AsyncAutoResetEventTests, CpuFramePoolTests and LatestWinsFrameSlotTests are not like
-      that and should go. When they have, the provider tests can carry a local suppression
-      and this line can come out.
-    -->
-    <FrameFlowBanWallClockInTests>false</FrameFlowBanWallClockInTests>
   </PropertyGroup>
 
   <ItemGroup>
