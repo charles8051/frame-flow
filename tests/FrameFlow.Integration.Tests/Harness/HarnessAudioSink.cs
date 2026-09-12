@@ -19,6 +19,7 @@ internal sealed class HarnessAudioSink : IAudioSink
     private long _baselineSamplesPerChannel;
     private long _sessionSamplesPerChannel;
     private int _sampleRate;
+    private int _channels;
     private bool _paused;
 
     // ── Counters ────────────────────────────────────────────────────
@@ -36,6 +37,9 @@ internal sealed class HarnessAudioSink : IAudioSink
         Volatile.Read(ref _baselineSamplesPerChannel)
         + Volatile.Read(ref _sessionSamplesPerChannel);
     public int SampleRate => Volatile.Read(ref _sampleRate);
+
+    /// <summary>Channel count of the most recently accepted block; 0 before the first.</summary>
+    public int Channels => Volatile.Read(ref _channels);
     public int ActivateCount => Volatile.Read(ref _activateCount);
     public int PauseCount => Volatile.Read(ref _pauseCount);
     public int ResumeCount => Volatile.Read(ref _resumeCount);
@@ -73,7 +77,10 @@ internal sealed class HarnessAudioSink : IAudioSink
             Interlocked.Increment(ref _blockCount);
             Volatile.Write(ref _sampleRate, block.SampleRate);
             if (block.Channels > 0)
+            {
+                Volatile.Write(ref _channels, block.Channels);
                 Interlocked.Add(ref _sessionSamplesPerChannel, block.SampleCount / block.Channels);
+            }
             _lastBlockPts = block.PresentationTime;
             return ValueTask.CompletedTask;
         }
@@ -129,7 +136,7 @@ internal sealed class HarnessAudioSink : IAudioSink
             PresentationTime: GetPlaybackTime(),
             ProcessedSamplesPerChannel: TotalSamplesPerChannel,
             SampleRate: SampleRate,
-            Channels: 0,
+            Channels: Channels,
             BlocksWritten: BlockCount,
             UnderrunCount: 0,
             BackpressureEvents: 0,

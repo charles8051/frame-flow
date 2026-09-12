@@ -33,6 +33,12 @@ namespace FrameFlow.Integration.Tests;
 ///     whether the pipeline paid to keep up; the lag says how the runner was feeling.
 ///   </description></item>
 ///   <item><description>
+///     <c>VideoFramesDroppedForSync == 0</c>. It is derived from the same timing relationship as
+///     the lag: a runner descheduled for longer than a frame interval makes the clock pass a
+///     queued frame, and the pipeline legitimately counts a drop. The conservation check below
+///     covers what this gate actually needs from it.
+///   </description></item>
+///   <item><description>
 ///     <c>UnderrunCount</c> and <c>BackpressureEvents</c>. <see cref="HarnessAudioSink"/>
 ///     accepts every block immediately and has no device behind it, so it cannot starve and
 ///     cannot push back; both are structurally zero and asserting on them would be a test that
@@ -80,45 +86,14 @@ public sealed class NominalRunHealthTests : IClassFixture<FfmpegBootstrapFixture
         var (controller, audioSink, videoSink) = IntegrationTestHelper.CreateController();
         await using (controller)
         {
-            var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var errors = new List<PlaybackError>();
-
-            using var stateSub = controller.PlaybackStateChanged.Subscribe(
-                new ActionObserver<StateTransition<PlaybackState>>(t =>
-                {
-                    if (
-                        t.Current
-                        is PlaybackState.Ended
-                            or PlaybackState.Error
-                            or PlaybackState.Unloaded
-                    )
-                    {
-                        ended.TrySetResult();
-                    }
-                })
-            );
-            using var errSub = controller.ErrorOccurred.Subscribe(
-                new ActionObserver<PlaybackError>(errors.Add)
+            var (load, play) = await IntegrationTestHelper.PlayToCompletionAsync(
+                controller,
+                MediaSource.FromFile(filePath!)
             );
 
-            var load = await controller.LoadAsync(MediaSource.FromFile(filePath!));
             Assert.True(load.IsSuccess, $"{filename}: LoadAsync failed ({load.Error?.Message}).");
-
-            var play = await controller.PlayAsync();
             Assert.True(play.IsSuccess, $"{filename}: PlayAsync failed ({play.Error?.Message}).");
-
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            try
-            {
-                await ended.Task.WaitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                Assert.Fail($"{filename}: timed out waiting for a terminal state.");
-            }
-
             Assert.Equal(PlaybackState.Ended, controller.State);
-            Assert.Empty(errors);
 
             var info = controller.MediaInfo;
             Assert.NotNull(info);
@@ -128,7 +103,7 @@ public sealed class NominalRunHealthTests : IClassFixture<FfmpegBootstrapFixture
             var pipeline = controller.GetDiagnostics().Pipeline;
             var decoder = pipeline.Stream.VideoDecoder;
 
-            // ── The decode side ──────────────────────────────────────────
+            // ── Decode correctness. Independent of how fast the machine is. ──
             Assert.True(
                 decoder.DecodeErrors == 0,
                 $"{filename}: {decoder.DecodeErrors} decode errors on a nominal run."
@@ -143,7 +118,8 @@ public sealed class NominalRunHealthTests : IClassFixture<FfmpegBootstrapFixture
             if (expectation!.ExpectedVideoFrames is { } expectedFrames)
             {
                 // The decoder sees every frame in the file. Unlike a presented-frame count this
-                // is not subject to pacing, so it is an equality rather than a range.
+                // is not subject to pacing, so it is an equality rather than a range. It is also
+                // what catches a shed indirectly: shed packets never reach the decoder.
                 Assert.True(
                     decoder.FramesDecoded == expectedFrames,
                     $"{filename}: decoded {decoder.FramesDecoded} frames, expected {expectedFrames} "
@@ -151,27 +127,29 @@ public sealed class NominalRunHealthTests : IClassFixture<FfmpegBootstrapFixture
                 );
             }
 
-            // ── The presentation side ────────────────────────────────────
+            // ── Conservation. Every decoded frame is accounted for. ──
+            //
+            // Not "nothing was dropped for sync". That counter moves when the playback clock
+            // passes a queued frame, which a descheduled runner can cause on a tree with no
+            // defect in it — the same wall-clock sensitivity that keeps VideoPresentationLag out
+            // of this gate. What is asserted instead is that frames do not go missing silently:
+            // a decoded frame either reached the sink or was counted on its way out. That holds
+            // at any speed, and it is the class of bug this gate exists for — #134 was correct
+            // counters and nothing checking them against each other.
             if (info.VideoStreams.Count > 0)
             {
+                var accountedFor =
+                    pipeline.VideoSink.FramesPresented + pipeline.VideoFramesDroppedForSync;
                 Assert.True(
-                    pipeline.VideoSink.FramesPresented == decoder.FramesDecoded,
-                    $"{filename}: the pipeline decoded {decoder.FramesDecoded} frames and handed "
-                        + $"{pipeline.VideoSink.FramesPresented} to the sink. Every decoded frame "
-                        + "should reach the sink on a run that sheds nothing and drops nothing."
-                );
-                // VideoSink.FramesDropped is deliberately not asserted. For HarnessVideoSink
-                // it counts the double's own pump losing a race with the next arrival against
-                // its single slot, which moves with machine load and says nothing about the
-                // pipeline. It flickered between 0 and 1 across runs of this very test.
-                Assert.True(
-                    pipeline.VideoFramesDroppedForSync == 0,
-                    $"{filename}: dropped {pipeline.VideoFramesDroppedForSync} frames for sync. "
-                        + "The clock ran past frames the pipeline had already decoded."
+                    accountedFor == decoder.FramesDecoded,
+                    $"{filename}: decoded {decoder.FramesDecoded} frames but accounted for "
+                        + $"{accountedFor} — {pipeline.VideoSink.FramesPresented} presented plus "
+                        + $"{pipeline.VideoFramesDroppedForSync} dropped for sync. The difference "
+                        + "went missing with no counter recording it."
                 );
             }
 
-            // ── The audio side ───────────────────────────────────────────
+            // ── Audio actually flowed. ──
             if (info.AudioStreams.Count > 0)
             {
                 Assert.True(
