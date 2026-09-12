@@ -19,7 +19,13 @@ namespace FrameFlow.Playback.Tests;
 /// <para>
 /// These tests do not assert timing, which would be flaky. They assert the wiring: the
 /// injected provider is what gets asked for the delay, so substituting one is sufficient to
-/// change the pacing behaviour.
+/// change the pacing behaviour — and the default constructor selects the high-resolution
+/// provider, which is the choice that decides the frame rate.
+/// </para>
+/// <para>
+/// Whether the selected provider is actually fast is a different question, and it belongs to
+/// the provider rather than to this type.
+/// <c>HighResolutionTimeProviderTests.AFramePeriodCostsAFramePeriod</c> is where it is asked.
 /// </para>
 /// </remarks>
 public sealed class WallClockSourceTimeProviderTests
@@ -56,46 +62,113 @@ public sealed class WallClockSourceTimeProviderTests
     }
 
     [Fact]
-    public async Task DefaultConstruction_PacesThroughTheHighResolutionProvider()
+    public async Task DefaultConstruction_SelectsTheHighResolutionProvider()
     {
         // The parameterless constructor is what every existing caller uses, including
         // SubstrateSession, so it is the one that decides whether the fix reaches playback.
         await using var clock = new WallClockSource();
-        clock.Start();
 
-        await clock.WaitUntilAsync(TimeSpan.Zero, CancellationToken.None);
-
-        // Off Windows, and on Windows before 10 1803, Preferred is the system provider and
-        // there is nothing to assert beyond the clock still working.
-        if (!HighResolutionTimeProvider.IsSupported)
-            return;
-
-        // Sleeps the system provider would round up to two ticks. Timing is asserted here
-        // rather than only wiring because the default is the whole change: a regression to
-        // TimeProvider.System would leave every test passing and playback back at ~34 fps.
-        //
-        // Over a median of 15, not one sample. A single frame period is short enough that one
-        // descheduled wake-up decides the result, and this suite runs right after a build.
-        var samples = new List<double>();
-        for (int i = 0; i < 15; i++)
-        {
-            var started = Stopwatch.GetTimestamp();
-            await clock.WaitUntilAsync(clock.Latest + FramePeriod, CancellationToken.None);
-            samples.Add(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
-        }
-        samples.Sort();
-        var median = samples[samples.Count / 2];
-
-        Assert.True(
-            median < 25.0,
-            $"one 60 fps frame period took {median:F2} ms at the median of {samples.Count} "
-                + $"(min {samples[0]:F2}, max {samples[^1]:F2}), which is the quantized cost "
-                + "the default provider exists to avoid"
-        );
+        // Assert the selection, not its consequence. This used to time fifteen real 16.67 ms
+        // waits and assert the median came in under 25 ms, which is the same property
+        // measured through a shared CI runner's scheduler: #148 is that test failing on
+        // windows-latest with min 16.67 (provider wired correctly) and a median of 32.32
+        // because more than half the waits were descheduled. The choice the constructor makes
+        // is the thing worth pinning, it is the same choice on every platform, and it is
+        // observable without a clock.
+        Assert.Same(HighResolutionTimeProvider.Preferred, clock.Provider);
     }
 
-    /// <summary>A 60 fps frame period: just over one system tick, which is the defect.</summary>
-    private static readonly TimeSpan FramePeriod = TimeSpan.FromMilliseconds(16.67);
+    [Fact]
+    public async Task ExplicitProvider_OptsOutOfTheDefault()
+    {
+        // The other half of the contract: passing a provider has to win over the default,
+        // which is what lets a caller opt back in to TimeProvider.System and what lets every
+        // test in this assembly substitute a fake.
+        await using var clock = new WallClockSource(TimeProvider.System);
+
+        Assert.Same(TimeProvider.System, clock.Provider);
+    }
+
+    [Fact]
+    public async Task WaitUntilAsync_SleepsTheRemainingTime_NotTheCap()
+    {
+        // Selecting the fast provider is not sufficient on its own: the loop also has to ask
+        // it for the right interval. Slicing every wait at MaxSleep instead of the remaining
+        // sub-frame time would leave both selection assertions passing and put a 50 ms floor
+        // under every frame, which is the same ~20 fps symptom by a different route.
+        //
+        // Frozen provider, so remaining is exactly the target and nothing here reads a wall
+        // clock. The timer never fires; what is asserted is the interval that was asked for.
+        var provider = new FrozenRecordingTimeProvider();
+        await using var clock = new WallClockSource(provider);
+        clock.Start();
+
+        using var cts = new CancellationTokenSource();
+        var wait = clock.WaitUntilAsync(TimeSpan.FromMilliseconds(30), cts.Token);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(30), await provider.FirstDueTime.Task);
+
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await wait);
+    }
+
+    [Fact]
+    public async Task WaitUntilAsync_CapsALongSleepAtTheSliceLimit()
+    {
+        // The other side of the same arithmetic. A far-future target must not be slept in one
+        // go — the cap is what lets a paused or seeked clock be re-read promptly (ADR-0057).
+        var provider = new FrozenRecordingTimeProvider();
+        await using var clock = new WallClockSource(provider);
+        clock.Start();
+
+        using var cts = new CancellationTokenSource();
+        var wait = clock.WaitUntilAsync(TimeSpan.FromSeconds(10), cts.Token);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(50), await provider.FirstDueTime.Task);
+
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await wait);
+    }
+
+    /// <summary>
+    /// A <see cref="TimeProvider"/> whose clock never moves and whose timers never fire,
+    /// recording the interval the first one was asked for.
+    /// </summary>
+    /// <remarks>
+    /// Frozen rather than advancing, so <c>remaining</c> inside the pacing loop is exactly the
+    /// target and the assertion is on an exact value. It never fires a callback, so none of
+    /// the ordering hazards that make a hand-rolled advancing provider a bad idea apply here —
+    /// this records a request, it does not simulate time.
+    /// </remarks>
+    private sealed class FrozenRecordingTimeProvider : TimeProvider
+    {
+        public TaskCompletionSource<TimeSpan> FirstDueTime { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override long GetTimestamp() => 0;
+
+        public override long TimestampFrequency => Stopwatch.Frequency;
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period
+        )
+        {
+            FirstDueTime.TrySetResult(dueTime);
+            return new NeverFiringTimer();
+        }
+
+        private sealed class NeverFiringTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose() { }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
 
     /// <summary>Delegates to the system provider but records that a timer was asked for.</summary>
     private sealed class RecordingTimeProvider : TimeProvider
