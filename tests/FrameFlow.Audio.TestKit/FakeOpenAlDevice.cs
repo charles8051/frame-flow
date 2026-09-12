@@ -143,6 +143,24 @@ public sealed class FakeOpenAlDevice : IOpenAlApi
         }
     }
 
+    /// <summary>
+    /// Whether every live source has an empty buffer queue, so there is no audio
+    /// left for the device to play.
+    /// </summary>
+    /// <remarks>
+    /// An unambiguous drain condition, unlike a sample count that has stopped
+    /// moving: that is equally consistent with a finished device and with a
+    /// descheduled pump thread.
+    /// </remarks>
+    public bool AllQueuesEmpty
+    {
+        get
+        {
+            lock (_gate)
+                return _sources.Values.All(s => s.Deleted || s.Queue.Count == 0);
+        }
+    }
+
     /// <summary>Leases handed out that have not been disposed.</summary>
     public int LeasesOutstanding
     {

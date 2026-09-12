@@ -166,6 +166,46 @@ public sealed class OpenAlSinkContentTests : IClassFixture<FfmpegBootstrapFixtur
     }
 
     /// <summary>
+    /// Raising the shortfall budget does not license extra audio.
+    /// </summary>
+    /// <remarks>
+    /// The budget is one-directional, and this is why. A capture carrying the
+    /// whole reference plus a duplicated tail is audible duplication — the
+    /// ADR-0031 bug class — and with a symmetric budget it passed: the excess sat
+    /// inside the allowance, and the sample comparison only ever reads the common
+    /// prefix, so the duplicate was never looked at.
+    /// </remarks>
+    [Theory]
+    [InlineData(2400, "half a buffer of duplicated tail")]
+    [InlineData(4800, "a whole buffer of duplicated tail")]
+    public void AudioPcmMatchesReference_RejectsExtraAudio(int extra, string what)
+    {
+        const int rate = 48000;
+        const int channels = 2;
+        const int total = 288000;
+
+        var reference = new short[total];
+        for (int i = 0; i < total; i++)
+            reference[i] = (short)((i % 2000) - 1000);
+
+        // The full reference with its own last `extra` samples played again.
+        var duplicated = new short[total + extra];
+        reference.CopyTo(duplicated, 0);
+        Array.Copy(reference, total - extra, duplicated, total, extra);
+
+        var ex = Record.Exception(() =>
+            PlaybackInvariants.AudioPcmMatchesReference(
+                [new AudioCapture(TimeSpan.Zero, duplicated, rate, channels)],
+                [new AudioCapture(TimeSpan.Zero, reference, rate, channels)],
+                maxRmsErrorPerSample: 4.0,
+                maxTailShortfall: TimeSpan.FromMilliseconds(50)
+            )
+        );
+
+        Assert.True(ex is not null, $"The invariant did not catch {what}.");
+    }
+
+    /// <summary>
     /// The other side of the tolerance: a shortfall inside the budget, at the
     /// tail, is accepted. Without this the widening is untested in the direction
     /// it was made for.

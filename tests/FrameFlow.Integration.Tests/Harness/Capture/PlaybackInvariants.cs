@@ -285,13 +285,18 @@ internal static class PlaybackInvariants
     /// rounding precision.
     /// </param>
     /// <param name="maxTailShortfall">
-    /// How much of the tail the capture is allowed to be missing, as a duration.
-    /// Null keeps the 10 ms default, which suits a capturing sink because it
-    /// drops nothing. The real <c>OpenAlAudioSink</c> needs more: it coalesces
-    /// into ~50 ms buffers and deliberately discards a trailing staging block
-    /// that never reaches the threshold, so up to one buffer of the tail is
+    /// How much of the tail the capture is allowed to be <i>missing</i>, as a
+    /// duration. Null keeps the 10 ms default, which suits a capturing sink
+    /// because it drops nothing. The real <c>OpenAlAudioSink</c> needs more: it
+    /// coalesces into ~50 ms buffers and deliberately discards a trailing staging
+    /// block that never reaches the threshold, so up to one buffer of the tail is
     /// never handed to the device. A caller comparing against what a device
     /// actually played states that budget here (#146).
+    /// <para>
+    /// This budget is one-directional. Audio <i>beyond</i> the reference is held
+    /// to a fixed 10 ms whatever this is set to, because extra audio is not a
+    /// missing tail — it is the duplication ADR-0031 exists to catch.
+    /// </para>
     /// </param>
     public static void AudioPcmMatchesReference(
         IReadOnlyList<AudioCapture> capture,
@@ -312,28 +317,49 @@ internal static class PlaybackInvariants
         var captureFlat = FlattenInterleaved(capture);
         var referenceFlat = FlattenInterleaved(reference);
 
-        // The decoder produces deterministic output, so the playback-side
-        // capture should match the reference 1:1 in sample count. Allow a
-        // small tolerance for end-of-stream flush samples that one side
-        // emitted but the other dropped (e.g. when a Deactivate happens
-        // before the final flush drains). 480 samples = 10ms at 48 kHz
-        // per channel, well below what would affect any content assertion.
+        // The decoder produces deterministic output, so the playback-side capture
+        // should match the reference 1:1 in sample count.
+        //
+        // The two directions are not the same failure and do not share a budget.
+        // Short is a tail the runtime never emitted — a Deactivate landing before
+        // the final flush drains, or the real sink discarding a staging block that
+        // never reached its coalesce threshold. Long is audio the runtime invented,
+        // and a replayed final buffer is precisely the duplication ADR-0031 was
+        // built to catch. A symmetric budget let a capture carrying the whole
+        // reference plus a duplicated tail pass, because the excess sat inside the
+        // allowance and the RMS comparison only ever reads the common prefix.
         int channels = capture[0].Channels;
         int sampleRate = capture[0].SampleRate;
-        var tolerance = maxTailShortfall ?? TimeSpan.FromMilliseconds(10);
-        int tailToleranceSamples = Math.Max(
+
+        var shortfallBudget = maxTailShortfall ?? TimeSpan.FromMilliseconds(10);
+        int shortfallSamples = Math.Max(
             channels,
-            (int)(tolerance.TotalSeconds * sampleRate) * channels
+            (int)(shortfallBudget.TotalSeconds * sampleRate) * channels
         );
 
-        int lengthDiff = Math.Abs(captureFlat.Length - referenceFlat.Length);
+        // Overshoot keeps the original 10 ms and is never widened: a caller raising
+        // the shortfall budget is describing a sink that drops a tail, not one
+        // allowed to add to it.
+        int overshootSamples = Math.Max(channels, (sampleRate / 100) * channels);
+
+        int shortfall = referenceFlat.Length - captureFlat.Length;
+
         Assert.True(
-            lengthDiff <= tailToleranceSamples,
-            $"Audio length mismatch: capture={captureFlat.Length} samples, "
+            shortfall >= -overshootSamples,
+            $"Audio is longer than the reference: capture={captureFlat.Length} samples, "
                 + $"reference={referenceFlat.Length} samples, "
-                + $"diff={lengthDiff} (tolerance {tailToleranceSamples} = "
-                + $"~{tolerance.TotalMilliseconds:F0} ms × {channels}ch). "
-                + $"A diff of this size usually means a block was dropped or duplicated."
+                + $"excess={-shortfall} (allowance {overshootSamples} = ~10 ms × {channels}ch). "
+                + "Extra audio is not a missing tail; a replayed final buffer looks exactly "
+                + "like this, and the sample comparison below only reads the common prefix."
+        );
+
+        Assert.True(
+            shortfall <= shortfallSamples,
+            $"Audio is shorter than the reference: capture={captureFlat.Length} samples, "
+                + $"reference={referenceFlat.Length} samples, "
+                + $"short by {shortfall} (budget {shortfallSamples} = "
+                + $"~{shortfallBudget.TotalMilliseconds:F0} ms × {channels}ch). "
+                + "A shortfall of this size usually means a block was dropped."
         );
 
         int common = Math.Min(captureFlat.Length, referenceFlat.Length);

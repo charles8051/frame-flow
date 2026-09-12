@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FrameFlow.Audio.TestKit;
 using FrameFlow.Media;
 using FrameFlow.Playback;
@@ -170,6 +171,7 @@ internal static class OpenAlPlaybackHarness
         );
 
         var pump = new FakeDevicePump(device);
+        var pumpStopped = false;
 
         try
         {
@@ -186,6 +188,14 @@ internal static class OpenAlPlaybackHarness
             // earlier than the moment the device has played it.
             await DrainAsync(device).ConfigureAwait(false);
 
+            // Stop the pump before reading the device, so the snapshot is of a
+            // device nothing is still advancing. Reading it live raced the pump:
+            // a lull long enough to satisfy the drain would be followed by the
+            // pump playing more during teardown, and the captured audio would be
+            // short by whatever landed after the read.
+            await pump.DisposeAsync().ConfigureAwait(false);
+            pumpStopped = true;
+
             return new OpenAlPlaybackResult(
                 Device: device,
                 Sink: audioSink,
@@ -198,26 +208,36 @@ internal static class OpenAlPlaybackHarness
         }
         finally
         {
-            await pump.DisposeAsync().ConfigureAwait(false);
+            if (!pumpStopped)
+                await pump.DisposeAsync().ConfigureAwait(false);
             await IntegrationTestHelper.StabilizeForDisposeAsync(controller).ConfigureAwait(false);
             await controller.DisposeAsync().ConfigureAwait(false);
         }
     }
 
     /// <summary>
-    /// Waits until the device stops making progress, so the comparison runs
-    /// against everything it played rather than everything it played by the time
-    /// the controller said Ended.
+    /// Waits until the device has played everything queued on it, so the
+    /// comparison runs against everything it played rather than everything it had
+    /// played by the moment the controller said Ended.
     /// </summary>
+    /// <remarks>
+    /// The exit condition is the queue, not a quiet period. A sample count that
+    /// stopped moving is ambiguous — the device may be genuinely finished, or the
+    /// pump thread may simply have been descheduled — and treating a lull as
+    /// completion returns a short capture. An empty source queue is not ambiguous.
+    /// The elapsed cap is a backstop for a sink that has wedged, which is a
+    /// failure the caller's own assertions should report rather than a hang here.
+    /// </remarks>
     private static async Task DrainAsync(FakeOpenAlDevice device)
     {
-        int previous = -1;
-        for (int quietTicks = 0; quietTicks < 5; )
+        var deadline = Stopwatch.StartNew();
+        var cap = TimeSpan.FromSeconds(10);
+
+        while (deadline.Elapsed < cap)
         {
-            await Task.Delay(50).ConfigureAwait(false);
-            int played = device.PlayedSamples.Count;
-            quietTicks = played == previous ? quietTicks + 1 : 0;
-            previous = played;
+            if (device.AllQueuesEmpty)
+                return;
+            await Task.Delay(20).ConfigureAwait(false);
         }
     }
 
