@@ -94,6 +94,14 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     private readonly int _capacity;
     private readonly TimeSpan _maxWait;
 
+    // Supplies the three real-time timers in this type: the settle backstop and the two
+    // maxWait caps. Injectable because those are the production timers the tests race —
+    // #78 is a 120 ms Task.Delay in a test losing to the 250 ms backstop below on a loaded
+    // macOS runner, with only 130 ms between them and no upper bound on the sleep. Driving
+    // them from a fake provider is what lets a test say "the backstop has not fired" as a
+    // fact rather than as a bet. Defaults to TimeProvider.System, so production is unchanged.
+    private readonly TimeProvider _timeProvider;
+
     private readonly object _gate = new();
     private readonly ClockSelectBuffer _buffer;
 
@@ -221,12 +229,18 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// choppy-but-alive instead of buffering forever. Defaults to 5&#160;s.
     /// Suspended between <see cref="Pause"/> and <see cref="Resume"/>.
     /// </param>
+    /// <param name="timeProvider">
+    /// Supplies the settle backstop and the <paramref name="maxWait"/> caps. Null uses
+    /// <see cref="TimeProvider.System"/>, which is the production path. Inject a fake to
+    /// drive those timers deterministically instead of waiting for them.
+    /// </param>
     public ClockSelectVideoSink(
         IVideoSink inner,
         IClockSource clock,
         ILogger? logger = null,
         int capacity = DefaultCapacity,
-        TimeSpan? maxWait = null
+        TimeSpan? maxWait = null,
+        TimeProvider? timeProvider = null
     )
     {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
@@ -238,6 +252,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
             throw new ArgumentOutOfRangeException(nameof(maxWait), mw, "maxWait must be positive when supplied.");
         _capacity = capacity;
         _maxWait = maxWait ?? TimeSpan.FromSeconds(5);
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _buffer = new ClockSelectBuffer(capacity);
         _space = new SemaphoreSlim(capacity, capacity);
 
@@ -691,7 +706,10 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     {
         try
         {
-            await _settled.WaitAsync(ct).WaitAsync(SettleHoldBackstop, ct).ConfigureAwait(false);
+            await _settled
+                .WaitAsync(ct)
+                .WaitAsync(SettleHoldBackstop, _timeProvider, ct)
+                .ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
@@ -778,10 +796,21 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                             holdPaused = _paused;
                         }
                         bool holdRechecked = false;
-                        using (var holdCts = CancellationTokenSource.CreateLinkedTokenSource(ct, holdRecheckToken))
+                        // The cap is its own source so it can be armed through _timeProvider;
+                        // CancelAfter on a linked source always uses the platform timer queue.
+                        using var holdCap = holdPaused
+                            ? null
+                            : new CancellationTokenSource(_maxWait, _timeProvider);
+                        using (
+                            var holdCts = holdCap is null
+                                ? CancellationTokenSource.CreateLinkedTokenSource(ct, holdRecheckToken)
+                                : CancellationTokenSource.CreateLinkedTokenSource(
+                                    ct,
+                                    holdRecheckToken,
+                                    holdCap.Token
+                                )
+                        )
                         {
-                            if (!holdPaused)
-                                holdCts.CancelAfter(_maxWait);
                             try
                             {
                                 await _clock.WaitUntilAsync(holdTarget, holdCts.Token).ConfigureAwait(false);
@@ -834,14 +863,20 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                     paused = _paused;
                 }
                 waitSw.Restart();
-                using (var capCts = CancellationTokenSource.CreateLinkedTokenSource(ct, recheckToken))
+                // No cap while paused (#127): the clock is stopped because the user stopped
+                // it, so the frame waits for the resume. Pause and Resume each fire a
+                // recheck, so a wait armed on the other side of either transition is
+                // re-entered here and re-armed against the current state.
+                //
+                // Its own source rather than CancelAfter on the linked one, so the cap is
+                // armed through _timeProvider; CancelAfter always uses the platform queue.
+                using var cap = paused ? null : new CancellationTokenSource(_maxWait, _timeProvider);
+                using (
+                    var capCts = cap is null
+                        ? CancellationTokenSource.CreateLinkedTokenSource(ct, recheckToken)
+                        : CancellationTokenSource.CreateLinkedTokenSource(ct, recheckToken, cap.Token)
+                )
                 {
-                    // No cap while paused (#127): the clock is stopped because the user
-                    // stopped it, so the frame waits for the resume. Pause and Resume each
-                    // fire a recheck, so a wait armed on the other side of either transition
-                    // is re-entered here and re-armed against the current state.
-                    if (!paused)
-                        capCts.CancelAfter(_maxWait);
                     try
                     {
                         await _clock.WaitUntilAsync(earliest.Value, capCts.Token).ConfigureAwait(false);

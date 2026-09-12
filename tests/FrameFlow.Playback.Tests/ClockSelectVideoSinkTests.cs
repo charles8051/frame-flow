@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using FrameFlow.Media.Diagnostics;
 
 namespace FrameFlow.Playback.Tests;
@@ -348,7 +349,12 @@ public sealed class ClockSelectVideoSinkTests
         // it — along with whatever follows, at decode rate. That is the run-up (#161).
         var clock = new FakeClock();
         var sink = new RecordingSink();
-        await using var pacer = new ClockSelectVideoSink(sink, clock, capacity: 4);
+        // The settle hold has a 250 ms real-time backstop behind it. Held on a fake provider
+        // that nobody advances, it cannot fire, so the assertion below is about the hold
+        // rather than about which of two wall clocks won (#78).
+        var time = new FakeTimeProvider();
+        await using var pacer = new ClockSelectVideoSink(
+            sink, clock, capacity: 4, timeProvider: time);
 
         pacer.BeginRun(TimeSpan.FromSeconds(7), holdForSettle: true);
         clock.Advance(TimeSpan.FromSeconds(7.73)); // the clock ran through the decode-forward
@@ -360,7 +366,8 @@ public sealed class ClockSelectVideoSinkTests
             await pacer.WaitForSeekTargetAsync(pacer.CurrentRunId, TimeSpan.FromSeconds(5), default)
         );
 
-        // Long enough that an unheld loop would have delivered it several times over.
+        // Long enough that an unheld loop would have delivered it several times over. The
+        // backstop is on the fake provider and nobody advanced it, so it is not in this race.
         await Task.Delay(120);
         Assert.Empty(sink.PresentedPts);
 
@@ -397,7 +404,9 @@ public sealed class ClockSelectVideoSinkTests
         // its own settle has not corrected yet.
         var clock = new FakeClock();
         var sink = new RecordingSink();
-        await using var pacer = new ClockSelectVideoSink(sink, clock, capacity: 4);
+        var time = new FakeTimeProvider(); // backstop parked; see the reseat test above.
+        await using var pacer = new ClockSelectVideoSink(
+            sink, clock, capacity: 4, timeProvider: time);
 
         pacer.BeginRun(TimeSpan.FromSeconds(7), holdForSettle: true);
         var staleRun = pacer.CurrentRunId;
@@ -412,7 +421,7 @@ public sealed class ClockSelectVideoSinkTests
 
         pacer.ReleaseSeekSettle(staleRun);
 
-        // Shorter than the backstop, so this is measuring the scoping and not it.
+        // The backstop cannot fire at all here, so this measures the scoping and only it.
         await Task.Delay(120);
         Assert.Empty(sink.PresentedPts);
 
