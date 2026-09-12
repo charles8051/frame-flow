@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!--
+      net10.0-windows10.0.18362.0 is the floor for Microsoft.Windows.AI.MachineLearning
+      (Microsoft.WindowsAppSDK.ML goes down to 17763 but adds RegFree WinRT plumbing
+      this probe doesn't need). C# needs .NET 8+ for the Microsoft.ML.OnnxRuntime
+      surface to be usable alongside the WinML APIs.
+    -->
+    <TargetFramework>net10.0-windows10.0.18362.0</TargetFramework>
+    <RootNamespace>WinMlProbe</RootNamespace>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- Throwaway spike: not part of FrameFlow.slnx, not packed, not shipped. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Self-contained Windows ML: this package alone brings the WinML API
+      (Microsoft.Windows.AI.MachineLearning.dll), the ONNX Runtime engine
+      (onnxruntime.dll) and the in-box DirectML EP (DirectML.dll), ~41 MB total.
+      Deliberately NOT referencing Microsoft.WindowsAppSDK.Runtime or the main
+      Microsoft.WindowsAppSDK package — either would flip this to
+      framework-dependent mode and require the WinAppSDK runtime on the box.
+
+      PINNED, following DmlTdrProbe: this spike exists to re-check a recorded
+      measurement, and the recorded ORT version (1.27.1) is a property of this
+      exact package. A float would let a later restore quietly swap the runtime
+      under numbers the investigation still quotes, and would silently change
+      which onnxruntime.dll wins the unification tested in step 2 below.
+      Bump it deliberately, and re-run the comparison when you do.
+    -->
+    <PackageReference Include="Microsoft.Windows.AI.MachineLearning" Version="2.3.42" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Not decoration, and not here to be inherited from: this reference IS the
+      coexistence test reported in step 2.
+
+      FrameFlow.Inference.Ort compiles against Microsoft.ML.OnnxRuntime.Managed,
+      whose managed assembly has the same simple name and the same public key
+      token as the Microsoft.ML.OnnxRuntime.dll the WinML package ships. That is
+      the shape of an assembly conflict, and whether a FrameFlow.Inference.WinML
+      package could reuse OrtInferenceSessionBase turns on it. Referencing the
+      real project is what makes the answer checkable here rather than asserted
+      in prose: if a future WinML package breaks the unification, this spike
+      stops building or step 2 reports a different runtime, instead of the
+      breakage being discovered inside a new EP package.
+    -->
+    <ProjectReference Include="../../src/FrameFlow.Inference.Ort/FrameFlow.Inference.Ort.csproj" />
+  </ItemGroup>
+
+</Project>
