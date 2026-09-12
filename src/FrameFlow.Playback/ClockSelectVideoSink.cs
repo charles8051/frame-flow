@@ -179,10 +179,17 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         return signal.Task;
     }
 
-    // Awaits one of the delivery loop's waits, counting it as a park only if it actually
-    // suspends. A wait that completes synchronously — a target already due, an arrival already
-    // signalled — is the loop carrying straight on, not the loop going idle, and publishing a
-    // park for it would complete a waiter while the iteration was still running.
+    // Awaits one of the delivery loop's waits, counting it as a park only if the wait is still
+    // pending when the park is published. A wait that completes synchronously — a target
+    // already due, an arrival already signalled — is the loop carrying straight on rather than
+    // going idle, and publishing a park for it would release a waiter mid-iteration.
+    //
+    // The re-check happens inside _parkGate, so the completion test and the publish are one
+    // critical section rather than a snapshot taken before it. It is not atomic with respect to
+    // the wait itself and cannot be: any check is followed by an instruction during which the
+    // wait may complete. What remains is a wait that was pending when the park went out and
+    // completed immediately after — a real park followed by a real wake. The loop did reach a
+    // point where it had nothing left to do, which is what the waiter was told.
     private async ValueTask ParkedAwaitAsync(ValueTask wait)
     {
         if (wait.IsCompleted)
@@ -190,7 +197,21 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
             await wait.ConfigureAwait(false);
             return;
         }
-        EnterPark();
+
+        List<TaskCompletionSource>? ready;
+        bool parked;
+        lock (_parkGate)
+        {
+            parked = !wait.IsCompleted;
+            ready = parked ? PublishPark() : null;
+        }
+        if (!parked)
+        {
+            await wait.ConfigureAwait(false);
+            return;
+        }
+        ReleaseParkWaiters(ready);
+
         try
         {
             await wait.ConfigureAwait(false);
@@ -208,7 +229,21 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
             await wait.ConfigureAwait(false);
             return;
         }
-        EnterPark();
+
+        List<TaskCompletionSource>? ready;
+        bool parked;
+        lock (_parkGate)
+        {
+            parked = !wait.IsCompleted;
+            ready = parked ? PublishPark() : null;
+        }
+        if (!parked)
+        {
+            await wait.ConfigureAwait(false);
+            return;
+        }
+        ReleaseParkWaiters(ready);
+
         try
         {
             await wait.ConfigureAwait(false);
@@ -219,25 +254,29 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         }
     }
 
-    private void EnterPark()
+    // Caller holds _parkGate. Returns the waiters this park satisfies, to complete outside it.
+    private List<TaskCompletionSource>? PublishPark()
     {
         List<TaskCompletionSource>? ready = null;
-        lock (_parkGate)
+        _parkGeneration++;
+        _isParked = true;
+        for (int i = _parkWaiters.Count - 1; i >= 0; i--)
         {
-            _parkGeneration++;
-            _isParked = true;
-            for (int i = _parkWaiters.Count - 1; i >= 0; i--)
+            if (_parkGeneration > _parkWaiters[i].AfterGeneration)
             {
-                if (_parkGeneration > _parkWaiters[i].AfterGeneration)
-                {
-                    (ready ??= []).Add(_parkWaiters[i].Signal);
-                    _parkWaiters.RemoveAt(i);
-                }
+                (ready ??= []).Add(_parkWaiters[i].Signal);
+                _parkWaiters.RemoveAt(i);
             }
         }
-        if (ready is not null)
-            foreach (var signal in ready)
-                signal.TrySetResult();
+        return ready;
+    }
+
+    private static void ReleaseParkWaiters(List<TaskCompletionSource>? ready)
+    {
+        if (ready is null)
+            return;
+        foreach (var signal in ready)
+            signal.TrySetResult();
     }
 
     private void ExitPark()
