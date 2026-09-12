@@ -97,7 +97,10 @@ public sealed class NoConsumerStreamDiscardTests : IClassFixture<FfmpegBootstrap
                 catch (OperationCanceledException) { }
                 return frames;
             },
-            cts.Token
+            // Not cts.Token. If the pump wins the race before this task has started, cancelling
+            // would cancel the Task.Run itself, the delegate would never run, and awaiting the
+            // drain would throw instead of reporting the assertion. The decoder takes the token.
+            CancellationToken.None
         );
 
         var consumerFinished = await Task.WhenAny(pump, drain).WaitAsync(TimeSpan.FromSeconds(30)) == drain;
