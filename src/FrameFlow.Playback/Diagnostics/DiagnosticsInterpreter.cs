@@ -118,6 +118,18 @@ public static class DiagnosticsInterpreter
 
         Add(
             observations,
+            DiagnosticsObservationKind.VideoPacketsShedToGopResync,
+            DiagnosticsObservationSeverity.Warning,
+            Rise(
+                beforeStream.VideoDecoder.PacketsDroppedToGopResync,
+                afterStream.VideoDecoder.PacketsDroppedToGopResync
+            ),
+            n =>
+                $"Video decoder shed {Packets(n)} more to reach the next keyframe — the cost in picture of the drop above, not a second fault."
+        );
+
+        Add(
+            observations,
             DiagnosticsObservationKind.FramesDroppedForSync,
             DiagnosticsObservationSeverity.Warning,
             Rise(

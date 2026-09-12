@@ -28,6 +28,7 @@ FrameFlow.Playback.Diagnostics.DiagnosticsObservationKind.LoopStalled = 9 -> Fra
 FrameFlow.Playback.Diagnostics.DiagnosticsObservationKind.SinkFramesDropped = 6 -> FrameFlow.Playback.Diagnostics.DiagnosticsObservationKind
 FrameFlow.Playback.Diagnostics.DiagnosticsObservationKind.VideoDecodeErrors = 2 -> FrameFlow.Playback.Diagnostics.DiagnosticsObservationKind
 FrameFlow.Playback.Diagnostics.DiagnosticsObservationKind.VideoPacketsShed = 4 -> FrameFlow.Playback.Diagnostics.DiagnosticsObservationKind
+FrameFlow.Playback.Diagnostics.DiagnosticsObservationKind.VideoPacketsShedToGopResync = 10 -> FrameFlow.Playback.Diagnostics.DiagnosticsObservationKind
 FrameFlow.Playback.Diagnostics.DiagnosticsObservationSeverity
 FrameFlow.Playback.Diagnostics.DiagnosticsObservationSeverity.Error = 2 -> FrameFlow.Playback.Diagnostics.DiagnosticsObservationSeverity
 FrameFlow.Playback.Diagnostics.DiagnosticsObservationSeverity.Info = 0 -> FrameFlow.Playback.Diagnostics.DiagnosticsObservationSeverity

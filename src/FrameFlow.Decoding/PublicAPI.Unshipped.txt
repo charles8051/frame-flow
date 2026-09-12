@@ -85,7 +85,9 @@ FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareBackend.g
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareBackend.init -> void
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedForBackpressure.get -> long
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedForBackpressure.init -> void
-FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.VideoDecoderDiagnosticsSnapshot(long FramesDecoded, long DecodeErrors, FrameFlow.Media.HardwareDecodeBackendKind? HardwareBackend, long PacketsDroppedForBackpressure = 0) -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedToGopResync.get -> long
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedToGopResync.init -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.VideoDecoderDiagnosticsSnapshot(long FramesDecoded, long DecodeErrors, FrameFlow.Media.HardwareDecodeBackendKind? HardwareBackend, long PacketsDroppedForBackpressure = 0, long PacketsDroppedToGopResync = 0) -> void
 FrameFlow.Decoding.FrameFlowDecodingOptions
 FrameFlow.Decoding.FrameFlowDecodingOptions.AudioDecoderFactory.get -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IAudioDecoder?>?
 FrameFlow.Decoding.FrameFlowDecodingOptions.AudioDecoderFactory.set -> void
@@ -93,6 +95,12 @@ FrameFlow.Decoding.FrameFlowDecodingOptions.FrameFlowDecodingOptions() -> void
 FrameFlow.Decoding.FrameFlowDecodingOptions.VideoDecoderFactory.get -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IVideoDecoder?>?
 FrameFlow.Decoding.FrameFlowDecodingOptions.VideoDecoderFactory.set -> void
 FrameFlow.Decoding.FrameFlowDecodingServiceCollectionExtensions
+FrameFlow.Decoding.GopShedGate
+FrameFlow.Decoding.GopShedState
+FrameFlow.Decoding.GopShedState.AwaitingKeyframe.get -> bool
+FrameFlow.Decoding.GopShedState.AwaitingKeyframe.init -> void
+FrameFlow.Decoding.GopShedState.GopShedState() -> void
+FrameFlow.Decoding.GopShedState.GopShedState(bool AwaitingKeyframe) -> void
 FrameFlow.Decoding.GpuVideoFrame
 FrameFlow.Decoding.GpuVideoFrame.AddRef() -> FrameFlow.Media.IVideoFrame!
 FrameFlow.Decoding.GpuVideoFrame.AsCpu() -> FrameFlow.Media.CpuFrameData?
@@ -142,6 +150,9 @@ FrameFlow.Decoding.IVideoDecoder.Flush() -> void
 FrameFlow.Decoding.IVideoDecoder.FlushAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 FrameFlow.Decoding.IVideoDecoder.GetDiagnostics() -> FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot!
 FrameFlow.Decoding.IVideoDecoder.ResetPacketQueue() -> void
+FrameFlow.Decoding.PacketAdmission
+FrameFlow.Decoding.PacketAdmission.Admit = 0 -> FrameFlow.Decoding.PacketAdmission
+FrameFlow.Decoding.PacketAdmission.Shed = 1 -> FrameFlow.Decoding.PacketAdmission
 FrameFlow.Decoding.ReadAheadCapacity
 FrameFlow.Decoding.ShedRateAccounting
 FrameFlow.Decoding.ShedReport
@@ -202,6 +213,9 @@ static FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot.Empty.get 
 static FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.Empty.get -> FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot!
 static FrameFlow.Decoding.FrameFlowDecodingServiceCollectionExtensions.AddFrameFlowDecoding(this FrameFlow.Media.IFrameFlowBuilder! builder) -> FrameFlow.Media.IFrameFlowBuilder!
 static FrameFlow.Decoding.FrameFlowDecodingServiceCollectionExtensions.AddFrameFlowDecoding(this FrameFlow.Media.IFrameFlowBuilder! builder, System.Action<FrameFlow.Decoding.FrameFlowDecodingOptions!>? configure) -> FrameFlow.Media.IFrameFlowBuilder!
+static FrameFlow.Decoding.GopShedGate.AfterShed(FrameFlow.Decoding.GopShedState state) -> FrameFlow.Decoding.GopShedState
+static FrameFlow.Decoding.GopShedGate.Offer(FrameFlow.Decoding.GopShedState state, bool isKeyframe) -> (FrameFlow.Decoding.GopShedState Next, FrameFlow.Decoding.PacketAdmission Admission)
+static FrameFlow.Decoding.GopShedState.Intact.get -> FrameFlow.Decoding.GopShedState
 static FrameFlow.Decoding.ReadAheadCapacity.ForVideo(int frameRateNum, int frameRateDen, System.TimeSpan readAhead) -> int
 static FrameFlow.Decoding.ShedRateAccounting.Observe(FrameFlow.Decoding.ShedWindow state, long nowTicks, long ticksPerSecond, System.TimeSpan reportEvery, long totalDropped) -> (FrameFlow.Decoding.ShedWindow Next, FrameFlow.Decoding.ShedReport? Report)
 static FrameFlow.Decoding.ShedWindow.None.get -> FrameFlow.Decoding.ShedWindow

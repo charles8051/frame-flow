@@ -31,6 +31,7 @@ public sealed class DiagnosticsInterpreterTests
         long videoDecodeErrors = 0,
         long audioDecodeErrors = 0,
         long packetsShed = 0,
+        long packetsShedToGopResync = 0,
         long droppedForSync = 0,
         long sinkDropped = 0,
         long underruns = 0,
@@ -57,7 +58,8 @@ public sealed class DiagnosticsInterpreterTests
                         FramesDecoded: 0,
                         DecodeErrors: videoDecodeErrors,
                         HardwareBackend: null,
-                        PacketsDroppedForBackpressure: packetsShed
+                        PacketsDroppedForBackpressure: packetsShed,
+                        PacketsDroppedToGopResync: packetsShedToGopResync
                     ),
                     AudioDecoder: new AudioDecoderDiagnosticsSnapshot(
                         BuffersDecoded: 0,
@@ -181,6 +183,10 @@ public sealed class DiagnosticsInterpreterTests
     [InlineData(DiagnosticsObservationKind.VideoDecodeErrors, DiagnosticsObservationSeverity.Error)]
     [InlineData(DiagnosticsObservationKind.AudioDecodeErrors, DiagnosticsObservationSeverity.Error)]
     [InlineData(DiagnosticsObservationKind.VideoPacketsShed, DiagnosticsObservationSeverity.Warning)]
+    [InlineData(
+        DiagnosticsObservationKind.VideoPacketsShedToGopResync,
+        DiagnosticsObservationSeverity.Warning
+    )]
     [InlineData(DiagnosticsObservationKind.FramesDroppedForSync, DiagnosticsObservationSeverity.Warning)]
     [InlineData(DiagnosticsObservationKind.SinkFramesDropped, DiagnosticsObservationSeverity.Warning)]
     [InlineData(DiagnosticsObservationKind.AudioUnderruns, DiagnosticsObservationSeverity.Warning)]
@@ -196,6 +202,9 @@ public sealed class DiagnosticsInterpreterTests
             DiagnosticsObservationKind.VideoDecodeErrors => Snapshot(videoDecodeErrors: 3),
             DiagnosticsObservationKind.AudioDecodeErrors => Snapshot(audioDecodeErrors: 3),
             DiagnosticsObservationKind.VideoPacketsShed => Snapshot(packetsShed: 3),
+            DiagnosticsObservationKind.VideoPacketsShedToGopResync => Snapshot(
+                packetsShedToGopResync: 3
+            ),
             DiagnosticsObservationKind.FramesDroppedForSync => Snapshot(droppedForSync: 3),
             DiagnosticsObservationKind.SinkFramesDropped => Snapshot(sinkDropped: 3),
             DiagnosticsObservationKind.AudioUnderruns => Snapshot(underruns: 3),

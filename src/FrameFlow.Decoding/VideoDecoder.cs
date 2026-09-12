@@ -147,6 +147,20 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     // headroom (~17 s at 30 fps with cap=512).
     private long _packetsDroppedForBackpressure;
 
+    // Packets shed because an earlier drop already broke the reference chain and
+    // no keyframe has arrived since (#134). These are not the pipeline falling
+    // behind — they are the cost of not handing the decoder frames it cannot
+    // reconstruct. Counted apart from the backpressure drops so the two causes
+    // stay distinguishable in diagnostics: the first number says how far behind
+    // the video chain is, the second how much picture that cost.
+    private long _packetsDroppedToGopResync;
+
+    // GOP resync gate (#134). 0 = chain intact, 1 = awaiting a keyframe. Read on every
+    // packet and written only at the boundaries, so it is a volatile int rather than
+    // something taken under _shedGate; SendPacketAsync has a single caller (the demux
+    // pump) and a torn read is not possible on an int regardless.
+    private int _awaitingKeyframe;
+
     // Rate reporting for the drop path (#143). Guarded by _shedGate: SendPacketAsync is called
     // only from the single demux pump today, but the lock is taken solely on a drop, so it
     // costs nothing on a healthy pipeline and does not rely on that staying true.
@@ -589,6 +603,19 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// shedding without log noise.
     /// </para>
     /// <para>
+    /// <b>Why the truncation has to reach the next keyframe (#134).</b> Dropping
+    /// the newest packet truncates the tail of a GOP only if nothing after it is
+    /// admitted. It is not: the queue drains, the send resumes mid-GOP, and the
+    /// decoder is handed P- and B-frames that predict from packets it never
+    /// received. FFmpeg reconstructs them anyway and reports no error, so
+    /// <c>DecodeErrors</c> stays at zero while the picture fills with
+    /// macroblock-aligned garbage. <see cref="GopShedGate"/> closes that: the
+    /// first shed arms a gate that sheds every following packet until a keyframe,
+    /// which is the only point a decoder can resume from nothing. Load shedding
+    /// that keeps frames belongs to <see cref="DecodeDiscardLevel"/>, which
+    /// discards with knowledge of frame types and cannot break a chain.
+    /// </para>
+    /// <para>
     /// <b>When healthy pipelines hit this path.</b> They don't, in
     /// practice. The 512-slot queue holds ~17 s of footage at 30 fps;
     /// typical seek transients clear in under a second. Sustained
@@ -602,6 +629,23 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         ThrowIfDisposed();
         if (cancellationToken.IsCancellationRequested)
             return ValueTask.FromCanceled(cancellationToken);
+
+        // #134: a shed packet breaks the reference chain. Everything from there to the next
+        // keyframe predicts from data the decoder never received, and FFmpeg will decode it
+        // anyway without erroring. Hold the gate shut and shed the rest of the GOP instead.
+        var (nextShedState, admission) = GopShedGate.Offer(
+            ReadGopShedState(),
+            IsKeyframePacket(packetPtr)
+        );
+        if (admission == PacketAdmission.Shed)
+        {
+            var unusable = packetPtr;
+            FFAvCodec.av_packet_free(ref unusable);
+            ReportShedRate(toGopResync: true);
+            return ValueTask.CompletedTask;
+        }
+
+        WriteGopShedState(nextShedState);
 
         // Fast path: queue has room.
         if (_packetQueue.Writer.TryWrite((packetPtr, isFlush: false)))
@@ -623,13 +667,29 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
         // Drop-newest: an audio stream shares this pump, so the video send must
         // never wedge it (that would starve audio + freeze the clock). Free the
-        // new packet so we don't leak; the decoder resyncs on the next keyframe
-        // once the queue drains.
+        // new packet so we don't leak, and arm the gate so nothing is fed to the
+        // decoder until a keyframe restores a chain it can actually reconstruct
+        // from (#134).
         var ptr = packetPtr;
         FFAvCodec.av_packet_free(ref ptr);
-        ReportShedRate();
+        WriteGopShedState(GopShedGate.AfterShed(nextShedState));
+        ReportShedRate(toGopResync: false);
         return ValueTask.CompletedTask;
     }
+
+    /// <summary>
+    /// Reads <c>AV_PKT_FLAG_KEY</c> off a native packet. The pointer does not escape and
+    /// nothing is retained, so this stays inside the ADR-0005 interop boundary.
+    /// </summary>
+    internal static unsafe bool IsKeyframePacket(nint packetPtr) =>
+        packetPtr != nint.Zero
+        && (Unsafe.AsRef<AVPacket>((void*)packetPtr).flags & FFmpegConstants.PktFlagKey) != 0;
+
+    private GopShedState ReadGopShedState() =>
+        new(AwaitingKeyframe: Volatile.Read(ref _awaitingKeyframe) != 0);
+
+    private void WriteGopShedState(GopShedState state) =>
+        Volatile.Write(ref _awaitingKeyframe, state.AwaitingKeyframe ? 1 : 0);
 
     /// <summary>
     /// Copy one received frame in N to host memory; skip the rest. 1 copies every
@@ -702,7 +762,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             FramesDecoded: Interlocked.Read(ref _framesDecoded),
             DecodeErrors: Interlocked.Read(ref _decodeErrors),
             HardwareBackend: HardwareBackend,
-            PacketsDroppedForBackpressure: Interlocked.Read(ref _packetsDroppedForBackpressure)
+            PacketsDroppedForBackpressure: Interlocked.Read(ref _packetsDroppedForBackpressure),
+            PacketsDroppedToGopResync: Interlocked.Read(ref _packetsDroppedToGopResync)
         );
 
     /// <inheritdoc/>
@@ -1157,14 +1218,23 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// ever said it out loud, so a pipeline dropping a third of its packets read as healthy
     /// in the logs and three separate investigations went looking elsewhere (#143, #145).
     /// </summary>
-    private void ReportShedRate()
+    /// <param name="toGopResync">
+    /// True when the packet was shed to hold the stream shut until the next keyframe (#134),
+    /// false when it was shed because the queue was full. Both are shedding and both belong
+    /// in the rate, but they are counted separately in <see cref="GetDiagnostics"/>.
+    /// </param>
+    private void ReportShedRate(bool toGopResync)
     {
         lock (_shedGate)
         {
             // Increment inside the gate so the total a report carries cannot be older than one
             // an earlier report already showed. Incrementing outside lets two callers acquire
             // in the opposite order and emit a decreasing cumulative count.
-            var total = Interlocked.Increment(ref _packetsDroppedForBackpressure);
+            var total = toGopResync
+                ? Interlocked.Increment(ref _packetsDroppedToGopResync)
+                    + Interlocked.Read(ref _packetsDroppedForBackpressure)
+                : Interlocked.Increment(ref _packetsDroppedForBackpressure)
+                    + Interlocked.Read(ref _packetsDroppedToGopResync);
 
             (_shedWindow, var report) = ShedRateAccounting.Observe(
                 _shedWindow,
@@ -1188,8 +1258,9 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         Level = LogLevel.Warning,
         Message = "Video packets shed to backpressure: {Dropped} in {Seconds:F1}s "
             + "({PerSecond:F1}/s), {TotalDropped} this session. The demux pump is delivering "
-            + "faster than the video chain consumes; sustained shedding leaves gaps in the "
-            + "decoded timeline and shows up downstream as a stalling presenter."
+            + "faster than the video chain consumes. Each drop also sheds the rest of its GOP "
+            + "(#134), so sustained shedding leaves whole-GOP gaps in the decoded timeline and "
+            + "shows up downstream as a stalling presenter."
     )]
     private static partial void LogShedRate(
         ILogger logger,
