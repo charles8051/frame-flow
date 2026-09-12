@@ -1,9 +1,9 @@
 # Windows ML as an inference path alongside DirectML
 
-**Date:** 2026-09-09
+**Date:** 2026-09-09 (measurements revised 2026-09-12 — see Secondary finding 1)
 **Status:** Concluded — **build it, additively.** A `FrameFlow.Inference.WinML`
-package whose value is Windows ML's *EP selection policy*, not its EP list.
-DirectML stays; this is not a migration.
+package, for the vendor execution providers Windows ML can reach. DirectML
+stays; this is not a migration.
 **Scope:** `src/FrameFlow.Inference.Dml`, `src/FrameFlow.Inference.Ort`,
 `src/FrameFlow.Inference.Abstractions`
 **Related:**
@@ -32,58 +32,66 @@ that cannot float is what sustained engineering looks like from inside a csproj.
 
 ## Verdict
 
-**Windows ML is worth an additive EP package, and the reason is the selection
-policy rather than any single execution provider.**
+**Windows ML is worth an additive EP package, because it reaches vendor
+execution providers DirectML cannot. Roughly 1.9× on this model and hardware.**
 
 yolov8n (12 MB, 1×3×640×640, FP32 I/O) on a discrete NVIDIA GPU, on a Windows 11
 build new enough for the EP catalog. 50 timed iterations after warmup, **one
-process per configuration** (see Secondary finding 4 for why that qualifier is
-not optional):
+process per configuration**, with the TensorRT engine cache already populated
+(see Secondary finding 1 — that qualifier is not optional):
 
 | configuration | open ms | warmup ms | median ms | p95 ms |
 |---|---:|---:|---:|---:|
-| `SetEpSelectionPolicy(PREFER_GPU)` | 3896 | 80.7 | **1.72** | 2.77 |
-| `SetEpSelectionPolicy(MAX_PERFORMANCE)` | 4813 | 82.5 | **1.72** | 1.93 |
-| DirectML, ORT defaults | 302 | 8.2 | 3.17 | 3.32 |
-| DirectML, `DmlInferenceSession` recipe | 354 | 8.9 | 3.30 | 3.58 |
-| `NvTensorRTRTX`, appended explicitly by device | 7007 | 172.9 | 8.60 | 9.33 |
-| CPU | 43 | 29.8 | 26.55 | 30.34 |
+| `NvTensorRTRTX`, appended explicitly by device | 3731 | 91.8 | **1.73** | 2.31 |
+| `SetEpSelectionPolicy(MAX_PERFORMANCE)` | 3558 | 97.6 | **1.72** | 2.30 |
+| `SetEpSelectionPolicy(PREFER_GPU)` | 3620 | 90.7 | **1.72** | 2.33 |
+| DirectML, `DmlInferenceSession` recipe | 291 | 9.4 | 3.28 | 3.74 |
+| DirectML, ORT defaults | 307 | 8.7 | 3.38 | 4.03 |
+| CPU | 45 | 44.4 | 28.52 | 30.99 |
 
-The policy is **1.9× DirectML**. The win is attributable rather than assumed:
-re-run the same policy configuration with the vendor EP left unregistered and it
-lands on 3.20 ms / 3.19 ms — DirectML's number, to two significant figures,
-because DirectML is then the only GPU EP present.
+The gain is attributable to the vendor EP rather than to Windows ML generally:
+re-run either policy with the vendor EP left unregistered and it lands on
+DirectML's number, because DirectML is then the only GPU EP present.
 
 | configuration | median ms | p95 ms |
 |---|---:|---:|
-| `PREFER_GPU`, `--no-register` | 3.20 | 3.42 |
-| `MAX_PERFORMANCE`, `--no-register` | 3.19 | 4.54 |
+| `PREFER_GPU`, `--no-register` | 3.35 | 3.78 |
+| `MAX_PERFORMANCE`, `--no-register` | 3.29 | 3.86 |
 
 ## Secondary findings
 
-### 1. Hand-picking the EP device is worse than doing nothing
+### 1. Retracted: "hand-picking the EP device is slower than the policy"
 
-The row that matters most is the one that looks like a mistake:
-`AppendExecutionProvider(env, [nvTensorRtRtxDevice], {})` measures **8.60 ms**,
-2.6× *slower* than DirectML, while the selection policy reaching the same EP on
-the same adapter measures 1.72 ms. Both were measured in isolated processes, so
-this is not ordering.
+The first version of this document led with a finding that is **wrong**, and the
+way it was wrong is worth more than the finding was.
 
-The two paths are not "the same thing with different syntax". Asking for a
-device by hand yields a session that performs worse than the fallback it was
-meant to beat, and nothing in the API shape warns about it.
+It reported `AppendExecutionProvider(env, [nvTensorRtRtxDevice], {})` at
+**8.60 ms**, 2.6× slower than DirectML, against 1.72 ms for the selection
+policy — and concluded that EP choice must be delegated to Windows, which in
+turn implied `IInferenceSessionFactory`'s preferred-EP-plus-fallback-chain model
+was the wrong shape for this platform. That was a large design claim resting on
+one number.
 
-**This is the design consequence, and it points away from how FrameFlow selects
-EPs today.** `IInferenceSessionFactory` is built around a caller-declared
-preferred EP plus an ordered fallback chain — the caller names DirectML or CUDA
-and the factory probes down the list. That model is exactly the hand-picking
-that loses here. A WinML session should hand EP choice to Windows and report
-back what was chosen, which is a different contract, not a new entry in the
-`ExecutionProvider` enum.
+The number did not reproduce. Re-measured, alternating the two configurations
+across separate processes:
 
-Untested, and the first thing to check before designing that contract: whether
-the policy's advantage survives models other than yolov8n, and whether a session
-can report which EP a policy actually selected without turning on ORT profiling.
+| run | explicit device | selection policy |
+|---|---:|---:|
+| 1 | 2.19 | 1.91 |
+| 2 | 1.72 | 1.93 |
+| 3 | 1.73 | 1.72 |
+
+They are the same within run-to-run spread. The original 8.60 ms was taken on a
+machine that had never compiled a TensorRT engine for this model: the cost of
+that first compile is not confined to session open, and it did not recur once
+the on-disk engine cache existed.
+
+**So selection route does not change steady-state throughput, and no design
+conclusion follows from it.** How a `FrameFlow.Inference.WinML` session should
+choose an EP is still open — `SetEpSelectionPolicy` is less code and tracks
+whatever Windows learns about new silicon, while explicit device selection is
+predictable and matches the existing factory — but it is now a design
+preference, not something the measurements decide.
 
 ### 2. `FrameFlow.Inference.WinML` can inherit `OrtInferenceSessionBase` unchanged
 
@@ -91,19 +99,32 @@ can report which EP a policy actually selected without turning on ORT profiling.
 `Microsoft.ML.OnnxRuntime.dll` — same simple name and same public key token
 (`f27f157f0a5b7bb6`) as the `Microsoft.ML.OnnxRuntime.Managed` package that
 `FrameFlow.Inference.Ort` references. That is the shape of an assembly conflict,
-so it was tested rather than assumed: a `net10.0-windows10.0.18362.0` project
-referencing both `FrameFlow.Inference.Ort` and `Microsoft.Windows.AI.MachineLearning`
+and whether a WinML EP wrapper could reuse the existing staging body turns on it.
 
-- builds with **0 warnings** on a clean rebuild, no `MSB3277`,
-- emits exactly one `Microsoft.ML.OnnxRuntime.dll`,
-- resolves `OrtInferenceSessionBase` and `ExecutionProviderCatalog` together,
-- and reports `OrtEnv.GetVersionString()` = 1.27.1 at runtime, i.e. the Windows
-  ML copy won the unification.
+`spikes/WinMlProbe` references `FrameFlow.Inference.Ort` for exactly this reason,
+and step 1 exercises the collision rather than asserting it is benign: it opens
+yolov8n through FrameFlow's own `CpuInferenceSession` — driving the base class's
+session construction and name/shape reflection — against whichever runtime won
+unification. It builds with 0 warnings and no `MSB3277`, emits one
+`Microsoft.ML.OnnxRuntime.dll`, and reports:
 
-So the ~515-line host→ORT staging body in `OrtInferenceSessionBase` carries over
-with no changes, and a WinML EP wrapper is the same shape as
-`DmlInferenceSession`: session-options configuration and nothing else. ADR-0049
-§3's layering holds without amendment.
+```
+--- 1  Windows ML runtime + FrameFlow.Inference.Ort coexistence ---
+  PASS  OrtEnv.Instance()  ORT 1.27.1
+  Microsoft.ML.OnnxRuntime resolved from ...\win-x64\Microsoft.ML.OnnxRuntime.dll
+  PASS  FrameFlow FfCpuSession opened the model: 1 input(s), 1 output(s), input shape [1,3,640,640]
+```
+
+So the ~515-line host→ORT staging body carries over with no changes, and a WinML
+EP wrapper is the same shape as `DmlInferenceSession`: session-options
+configuration and nothing else. ADR-0049 §3's layering holds without amendment.
+Because the probe is pinned to one WinML package version, a future version that
+breaks this stops the spike building — or changes step 1's output — instead of
+the breakage surfacing inside a new EP package.
+
+One naming note for that package: `FrameFlow.Inference.ExecutionProvider` (the
+EP enum) and `Microsoft.Windows.AI.MachineLearning.ExecutionProvider` (a catalog
+entry) collide, so any file touching both needs aliases.
 
 ### 3. The `DmlInferenceSession` session-options overrides buy nothing at 1.27.1
 
@@ -114,10 +135,10 @@ in isolated processes:
 
 | configuration | median ms | p95 ms |
 |---|---:|---:|
-| DirectML, ORT defaults | 3.17 | 3.32 |
-| DirectML, `ORT_ENABLE_BASIC` only | 3.21 | 4.01 |
-| DirectML, `EnableMemoryPattern = false` only | 3.18 | 4.09 |
-| DirectML, both (shipping recipe) | 3.30 | 3.58 |
+| DirectML, ORT defaults | 3.38 | 4.03 |
+| DirectML, `ORT_ENABLE_BASIC` only | 3.45 | 4.01 |
+| DirectML, `EnableMemoryPattern = false` only | 3.41 | 4.11 |
+| DirectML, both (shipping recipe) | 3.28 | 3.74 |
 
 All four are inside each other's spread. Whatever the overrides did when they
 were written, at ORT 1.27.1 on this adapter they cost nothing and gain nothing.
@@ -128,25 +149,29 @@ cannot retire a compatibility workaround. It is recorded so the next person to
 read those comments knows the performance half of the claim has been measured
 and came back flat.
 
-### 4. Measurement hazard: sessions in one process are not independent
+### 4. Measurement hazard: three ways this benchmark lied
 
-The first version of this comparison ran every configuration in a single process
-and produced two false results, in opposite directions:
+Every wrong number in this investigation came from treating one measurement as
+independent when it was not. In order of how much they cost:
 
-- Whichever configuration went first absorbed GPU clock ramp, driver shader
-  cache, and ORT native init. The `DmlInferenceSession` recipe measured
-  **14.62 ms median / 51.75 ms p95** as row one, and **3.41 / 4.81** — the same
-  code, same model — once anything had run before it. Read naively, that was a
-  4:1 win for Windows ML that did not exist.
-- The first TensorRT-RTX session builds engines that later sessions in the same
-  process reuse. So the explicit `NvTensorRTRTX` row (early) looked slow at
-  6.62 ms while the policy rows (late) looked fast at 1.93 ms, inflating a real
-  gap into a bigger one.
+1. **The on-disk TensorRT engine cache**, across *machine* lifetime. This
+   produced the retracted finding in Secondary finding 1 and survived every
+   in-process precaution, because the state lives outside the process. The first
+   run on a machine that has never compiled engines for a given model is not a
+   steady-state measurement of anything. Discard it and re-run.
+2. **Process-wide warm-up.** Whichever configuration went first absorbed GPU
+   clock ramp, driver shader cache and ORT native init. The `DmlInferenceSession`
+   recipe measured **14.62 ms median / 51.75 ms p95** as row one and **3.41 /
+   4.81** — same code, same model — once anything had run before it.
+3. **In-process engine reuse.** The first TensorRT session in a process builds
+   engines that later sessions in that process reuse, so an early explicit row
+   looked slow next to late policy rows.
 
-Both are fixed in the probe: it primes on DirectML before the table, and takes
-`--only` so each configuration can own a process. **Every number in this
-document comes from a `--only` run.** Anyone re-running this should do the same
-before quoting a figure.
+The probe addresses 2 by priming on DirectML before the table, and 3 via `--only`
+so each configuration owns a process. It cannot address 1, which is machine
+state rather than program state — that one is a rule for the operator, not code.
+**Every number in this document comes from a `--only` run on a warm engine
+cache.**
 
 ## Cost/benefit
 
@@ -157,12 +182,11 @@ before quoting a figure.
   whose core is deliberately cross-platform. This is containable the same way
   CUDA and DirectML already are — one EP package, chosen at the executable
   boundary, never referenced by `FrameFlow.Inference.Abstractions`.
-- First-open cost goes from ~0.3 s to ~4 s, which is TensorRT engine build.
-  ORT's compile API (`OrtModelCompilationOptions`) is designed to cache exactly
-  this, and it is **untested here**. An app that opens a session per run, rather
-  than once per process, would feel this before it felt the 1.9×.
-- A second EP-selection model to maintain next to the existing fallback chain,
-  per Secondary finding 1.
+- First-open cost goes from ~0.3 s to ~3.5-5 s, which is TensorRT engine
+  preparation, and it is paid per process even with a warm on-disk cache. ORT's
+  compile API (`OrtModelCompilationOptions`) is designed to cut this and is
+  **untested here**. An app that opens a session per run, rather than once per
+  process, would feel this before it felt the 1.9×.
 
 **What it does not cost.** Not a migration. Windows ML ships the DirectML EP
 in-box, labelled legacy, so `FrameFlow.Inference.Dml` keeps working and stays
@@ -179,11 +203,11 @@ using the DirectML package directly.
 
 1. **Do not migrate `FrameFlow.Inference.Dml`.** It is correct, it is the only
    GPU path below the 24H2 floor, and it is what Windows ML falls back to anyway.
-2. **Design the WinML session contract around policy, not preference**, per
-   Secondary finding 1. It does not fit `ExecutionProvider` + fallback chain, and
-   forcing it into that enum would encode the 8.60 ms path as the intended one.
-3. **Measure engine-compilation caching before committing to the 1.9×.** A 4 s
-   open that cannot be cached changes which deployments benefit.
+2. **Decide the WinML session's EP-selection shape on design grounds**, not on
+   these numbers — Secondary finding 1 retracted the measurement that appeared to
+   settle it. Both routes reach the same steady state.
+3. **Measure engine-compilation caching before committing to the 1.9×.** A
+   multi-second open that cannot be amortised changes which deployments benefit.
 4. **Re-run the comparison on a second GPU vendor** before generalising. Every
    number here is one NVIDIA adapter; the OpenVINO and QNN paths are unmeasured,
    and OpenVINO's floor (12th-gen Core for GPU) excludes older Intel integrated
@@ -194,9 +218,9 @@ using the DirectML package directly.
 ## Reproducing / re-checking this
 
 `spikes/WinMlProbe` is a throwaway console app, deliberately **not** in
-`FrameFlow.slnx` and not shipped. It runs six steps: runtime load, EP devices
-before registration, catalog inventory, registration, EP devices after, and the
-benchmark table.
+`FrameFlow.slnx` and not shipped. It runs six steps: runtime load and coexistence,
+EP devices before registration, catalog inventory, registration, EP devices after,
+and the benchmark table.
 
 The default run is read-only with respect to the machine — it calls
 `RegisterCertifiedAsync()`, which registers what is already installed and
@@ -209,9 +233,6 @@ dotnet run --project spikes/WinMlProbe
 Baseline before any EP was acquired:
 
 ```
---- 1  Windows ML runtime ---
-  PASS  OrtEnv.Instance()  ORT 1.27.1
-
 --- 2  EP devices before registration ---
   CPUExecutionProvider             CPU  Microsoft (device 0)
   DmlExecutionProvider             GPU  Microsoft (device 8712)
@@ -225,13 +246,17 @@ Baseline before any EP was acquired:
 and installs** every compatible EP system-wide from Windows Update. It is opt-in
 for that reason; run the default first, because step 3 tells you what `--acquire`
 would fetch before you let it fetch anything. Acquiring `NvTensorRTRTX` took
-tens of seconds; that figure is network-bound and will differ.
+tens of seconds; that figure is network-bound and will differ. Neither
+registration API is transactional, so a failure can leave providers installed —
+the probe stops and returns non-zero rather than benchmarking the partial state.
 
 ```bash
 dotnet run --project spikes/WinMlProbe -- --acquire
 ```
 
-For any number you intend to quote, one process per configuration:
+For any number you intend to quote, one process per configuration, and **discard
+the first TensorRT run on a machine that has not compiled engines for this model
+before**:
 
 ```powershell
 foreach ($c in 'recipe','defaults','CPU','NvTensorRTRTX','MAX_PERFORMANCE','PREFER_GPU') {

@@ -11,7 +11,9 @@
 // them in order:
 //
 //   1  the self-contained Windows ML runtime loads in a plain unpackaged
-//      console app — no MSIX, no WinAppSDK bootstrap, no installer
+//      console app — no MSIX, no WinAppSDK bootstrap, no installer — AND it
+//      coexists with FrameFlow.Inference.Ort, which compiles against a
+//      different package supplying the same strong-named ORT assembly
 //   2  ORT sees CPU + DmlExecutionProvider before any catalog call, so the
 //      existing DML recipe still works unchanged under the new runtime
 //   3  the EP catalog reports something beyond those two on the host it runs on
@@ -63,22 +65,38 @@
 //                    registration and drops to DirectML speed without it, the
 //                    speed came from the vendor EP the policy selected.
 //
-// USE --only FOR ANY NUMBER YOU INTEND TO QUOTE. Sessions in one process are
-// not independent: DirectML rows warm the GPU for rows after them, and the
-// first TensorRT-RTX session builds engines that later sessions in the same
-// process reuse. On a discrete NVIDIA GPU, an all-in-one-process run put
-// NvTensorRTRTX at 6.62 ms and the policy row that selects it at 1.93 ms —
-// same EP, same model, 3:1 apart, entirely from ordering. One process per
-// configuration is the only reading that compares like with like:
+// USE --only FOR ANY NUMBER YOU INTEND TO QUOTE, AND DISCARD THE FIRST
+// TENSORRT RUN ON A GIVEN MACHINE. Two different things make a naive run lie,
+// and this probe can only fix one of them.
+//
+// In-process: DirectML rows warm the GPU for rows after them, and the first
+// TensorRT-RTX session builds engines that later sessions in the same process
+// reuse. The probe primes on DirectML before the table, and --only lets each
+// configuration own a process:
 //
 //   foreach ($c in 'recipe','defaults','CPU','NvTensorRTRTX','MAX_PERF','PREFER_GPU') {
 //       dotnet run --project spikes/WinMlProbe -- --runs 50 --only $c
 //   }
+//
+// Across machine lifetime: TensorRT also caches compiled engines ON DISK, and
+// no amount of process isolation touches that. The first run on a machine that
+// has never compiled engines for a given model measured 8.60 ms steady state
+// where every later run measured 1.7-2.2 ms. That reading was published as a
+// finding before it was re-checked, and it was wrong — see Secondary finding 1
+// in docs/investigations/2026-09-09-windows-ml-ep-selection.md. Run it twice.
 
 using System.Diagnostics;
 using System.Globalization;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.Windows.AI.MachineLearning;
+
+// Aliases rather than `using FrameFlow.Inference;`: that namespace also has an
+// `ExecutionProvider` (the EP enum), which collides with Windows ML's
+// `ExecutionProvider` (the catalog entry) and makes every bare mention
+// ambiguous. Worth knowing before naming anything in a FrameFlow.Inference.WinML
+// package.
+using FfCpuSession = FrameFlow.Inference.CpuInferenceSession;
+using FfOrtBase = FrameFlow.Inference.OrtInferenceSessionBase;
 
 namespace WinMlProbe;
 
@@ -92,13 +110,24 @@ internal static class Program
         string? only = ArgString(args, "--only", null);
         bool noRegister = args.Contains("--no-register");
 
+        // `new double[0]` sorts fine and then indexes out of range at the
+        // median, which Benchmark's catch would report as a benchmark FAIL on
+        // a still-zero exit code. A bad argument should not look like a
+        // hardware result.
+        if (runs < 1)
+        {
+            Console.Error.WriteLine($"--runs must be at least 1 (got {runs}).");
+            return 2;
+        }
+
         Console.WriteLine($"WinMlProbe  pid={Environment.ProcessId}  {DateTimeOffset.UtcNow:O}");
         Console.WriteLine($"OS {Environment.OSVersion.Version}  {(Environment.Is64BitProcess ? "x64" : "x86")}");
         Console.WriteLine($"mode={(acquire ? "ACQUIRE (downloads + installs EPs)" : "read-only (registers what is already present)")}");
         Console.WriteLine();
 
-        // ---- 1  does the self-contained runtime load at all, unpackaged? ----
-        Console.WriteLine("--- 1  Windows ML runtime ---");
+        // ---- 1  does the runtime load unpackaged, and does FrameFlow's own
+        //         ORT binding survive being loaded next to it? ----
+        Console.WriteLine("--- 1  Windows ML runtime + FrameFlow.Inference.Ort coexistence ---");
         OrtEnv env;
         try
         {
@@ -112,6 +141,7 @@ internal static class Program
             return 1;
         }
 
+        ReportCoexistence(modelPath);
         Console.WriteLine();
 
         // ---- 2  what ORT sees with no catalog involvement ----
@@ -175,6 +205,23 @@ internal static class Program
                 sw.Stop();
                 Console.WriteLine($"  FAIL  after {sw.Elapsed.TotalSeconds:F1}s");
                 Console.WriteLine($"        {ex.GetType().Name}: {Squash(ex.Message)}");
+
+                // Stop here rather than benchmarking the wreckage. Neither API
+                // is transactional: EnsureAndRegisterCertifiedAsync() can have
+                // installed several providers system-wide before a later one
+                // threw, so the machine may have changed even though this
+                // failed. Carrying on would print policy rows measured against
+                // whatever half-registered state resulted — rows that look like
+                // vendor-EP measurements and are not.
+                if (acquire)
+                {
+                    Console.WriteLine(
+                        "        acquisition is not transactional: providers installed before "
+                            + "this failure are still on the machine. Re-run to see the state."
+                    );
+                }
+
+                return 1;
             }
         }
 
@@ -299,6 +346,51 @@ internal static class Program
             // A box with no working DML still benchmarks fine; it just carries
             // the warm-up cost into whatever row comes first.
             Console.WriteLine($"  prime skipped: {ex.GetType().Name}: {Squash(ex.Message)}");
+        }
+    }
+
+    /// <summary>
+    /// Reports whether FrameFlow's existing ORT wrapper works against the
+    /// Windows ML runtime. `Microsoft.Windows.AI.MachineLearning` ships a managed
+    /// `Microsoft.ML.OnnxRuntime.dll` with the same simple name and public key
+    /// token as the `Microsoft.ML.OnnxRuntime.Managed` package that
+    /// FrameFlow.Inference.Ort compiles against, so exactly one of them wins
+    /// unification and the other project's code has to keep working against it.
+    ///
+    /// Whether a FrameFlow.Inference.WinML package could reuse
+    /// <c>OrtInferenceSessionBase</c> turns entirely on this, which is why it is
+    /// exercised rather than asserted: opening a real model through
+    /// <c>CpuInferenceSession</c> drives the base's binding path — session
+    /// construction, name and shape reflection — against whichever runtime won.
+    /// </summary>
+    private static void ReportCoexistence(string modelPath)
+    {
+        var ortAssembly = typeof(OrtEnv).Assembly;
+        Console.WriteLine($"  Microsoft.ML.OnnxRuntime resolved from {ortAssembly.Location}");
+
+        if (!File.Exists(modelPath))
+        {
+            Console.WriteLine($"  SKIP  no model at {modelPath}; type load only");
+            Console.WriteLine($"  PASS  {typeof(FfOrtBase).FullName} loads");
+            return;
+        }
+
+        try
+        {
+            using var session = new FfCpuSession(modelPath);
+            Console.WriteLine(
+                $"  PASS  FrameFlow {nameof(FfCpuSession)} opened the model: "
+                    + $"{session.InputNames.Count} input(s), {session.OutputNames.Count} output(s), "
+                    + $"input shape [{string.Join(",", session.InputShapes[0])}]"
+            );
+        }
+        catch (Exception ex)
+        {
+            // The interesting failure. A MissingMethodException or a native load
+            // error here means the unification broke FrameFlow's wrapper, and a
+            // WinML EP package could not inherit the base as-is.
+            Console.WriteLine($"  FAIL  FrameFlow {nameof(FfCpuSession)} against the Windows ML runtime");
+            Console.WriteLine($"        {ex.GetType().Name}: {Squash(ex.Message)}");
         }
     }
 
