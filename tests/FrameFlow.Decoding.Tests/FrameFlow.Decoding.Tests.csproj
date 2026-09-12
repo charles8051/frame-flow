@@ -6,6 +6,11 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!--
+      Opted out of the wall-clock ratchet in tests/Directory.Build.targets (ADR-0072).
+      Temporary. NoConsumerStreamDiscardTests only.
+    -->
+    <FrameFlowBanWallClockInTests>false</FrameFlowBanWallClockInTests>
   </PropertyGroup>
 
   <ItemGroup>

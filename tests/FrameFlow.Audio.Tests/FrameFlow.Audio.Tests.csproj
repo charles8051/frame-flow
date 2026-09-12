@@ -7,6 +7,14 @@
     <IsTestProject>true</IsTestProject>
     <!-- The fidelity tests drive FakeOpenAlDevice's pointer-taking members directly. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!--
+      Opted out of the wall-clock ratchet in tests/Directory.Build.targets (ADR-0072).
+      Temporary. The delays are in OpenAlAudioSinkTests and OpenAlAudioSinkMultiInstanceTests,
+      which drive a real OpenAL device. OpenAlAudioSinkFakeDeviceTests already covers the same
+      sink headless with no clock at all; moving the rest onto the fake device is how this
+      line comes out.
+    -->
+    <FrameFlowBanWallClockInTests>false</FrameFlowBanWallClockInTests>
   </PropertyGroup>
 
   <ItemGroup>

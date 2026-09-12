@@ -1,0 +1,55 @@
+<Project>
+  <!--
+    A Directory.Build.targets here stops MSBuild's upward search, so the root one,
+    which carries the development-time FFmpeg native copy (ADR-0014), has to be
+    imported explicitly. Same shape as src/Directory.Build.targets.
+  -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))" />
+
+  <!--
+    Wall-clock ratchet for tests (ADR-0072).
+
+    Bans the APIs that make a test depend on how fast the machine is: sleeping,
+    reading the wall clock, and starting a stopwatch. BannedSymbols.txt beside this
+    file lists them, each with the replacement named in the message. RS0030 is an
+    error, so a new wall-clock dependency fails the build rather than turning up
+    months later as a flake on one CI leg.
+
+    The shape is the public-API baseline's in src/Directory.Build.targets, for the
+    same reason: a drift nobody has to notice is a drift nobody will. There, an
+    undeclared public member fails the build. Here, an undeclared dependency on
+    elapsed time does.
+
+    On by default. A project turns it off by setting
+    FrameFlowBanWallClockInTests to false in its own csproj, with a comment saying
+    why. That makes every exception a visible line in a diff and the list of
+    exceptions a grep. The list only gets shorter: a project comes off it when its
+    last violation is gone, and a new test project starts on the right side of it
+    without anyone deciding to put it there.
+
+    In .targets rather than .props so the csproj's setting is what the condition
+    reads. The same reasoning is written out in src/Directory.Build.targets.
+  -->
+  <PropertyGroup Condition="'$(FrameFlowBanWallClockInTests)' != 'false'">
+    <WarningsAsErrors>$(WarningsAsErrors);RS0030</WarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(FrameFlowBanWallClockInTests)' != 'false'">
+    <PackageReference
+      Include="Microsoft.CodeAnalysis.BannedApiAnalyzers"
+      Version="3.*"
+      PrivateAssets="All"
+    />
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" />
+  </ItemGroup>
+
+  <!--
+    The replacement comes with the ban. Every test project gets FakeTimeProvider,
+    so the banned-API message can say "use FakeTimeProvider" and the package is
+    already there when someone does. Unconditional: a project opted out of the ban
+    is exactly the one that most needs a way off it.
+  -->
+  <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="9.*" />
+  </ItemGroup>
+</Project>

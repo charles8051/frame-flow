@@ -114,6 +114,23 @@ dotnet test ./FrameFlow.slnx --nologo
 per project, and expects a prior `dotnet build`.
 
 `tests/frameflow.runsettings` carries the timeouts and the `FRAMEFLOW_VISUAL_TESTS` gate.
+
+**A test that sleeps, delays, or reads the wall clock fails the build.** Every project under
+`tests/` runs a banned-API analyzer over `Thread.Sleep`, the `Task.Delay` overloads that take no
+`TimeProvider`, `DateTime.Now`/`UtcNow`, and `Stopwatch`:
+
+```
+error RS0030: The symbol 'Task.Delay(int, CancellationToken)' is banned in this project:
+A delay in a test guesses how long something takes. Await a signal from the code under test,
+or use Task.Delay(TimeSpan, TimeProvider, CancellationToken) with a FakeTimeProvider.
+```
+
+Inject a `TimeProvider` and pass `FakeTimeProvider`, which every test project already references.
+When the code under test works on another task, wait on a signal from it rather than a duration.
+[ADR-0072](docs/adr/ADR-0072-tests-do-not-depend-on-elapsed-time.md) has the reasoning and the two
+places allowed to read the clock. A project that cannot comply yet sets
+`FrameFlowBanWallClockInTests` to `false` in its `.csproj` with a comment saying why; six do today,
+and that list is meant to get shorter.
 The SDL tests open a real window and stay skipped unless you set it to `1`.
 
 Two corpus fixtures cannot be produced by the pinned FFmpeg build, because x264 and
@@ -212,7 +229,7 @@ the closest thing to a design record for changes too small to earn an ADR.
 
 ## Architecture decisions
 
-`docs/adr/` holds 68 decision records, indexed in
+`docs/adr/` holds 72 decision records, indexed in
 [docs/adr/README.md](docs/adr/README.md). Read the relevant one before changing a
 subsystem's shape — several explain why an obvious-looking simplification was
 already tried and rejected.
