@@ -473,21 +473,23 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
         // ── Burst 1: two seconds, then let the source starve ────────────────
         await FeedBurstAsync(sink, blocks: burstBlocks);
 
-        // A device that did not drain two seconds into a sixteen-buffer pool did not open
-        // or is not playing. FRAMEFLOW_AUDIO_DEVICE_TESTS=1 is the operator asserting there
-        // is one, so that is a broken environment and this says so.
+        // Is there a device at all. The clock only advances on buffers OpenAL reported
+        // finished, so two seconds that left it at zero is a device that did not open or
+        // is not playing. Availability only — whether the pool saturated is the scenario's
+        // business, asserted below where a failure names the right thing.
         //
-        // The neighbouring device-gated tests return green here instead. xUnit v2 has no
-        // dynamic skip, so the choice is between failing and passing a test that exercised
-        // nothing, and a regression that turns a sink silently inaudible is exactly the
-        // kind that hides behind the second. CI does not set the variable, so CI skips this
-        // at the attribute rather than reaching here.
+        // FRAMEFLOW_AUDIO_DEVICE_TESTS=1 is the operator asserting there is a device, so
+        // this fails rather than returning green. The neighbouring device-gated tests
+        // return instead; xUnit v2 has no dynamic skip, so the choice is between failing
+        // and passing a test that exercised nothing, and a regression that turns a sink
+        // silently inaudible is exactly the kind that hides behind the second. CI does not
+        // set the variable and skips at the attribute rather than reaching here.
         Assert.True(
-            sink.BackpressureCount > 0 && sink.GetPlaybackTime() > TimeSpan.Zero,
-            "Burst 1 neither filled the buffer pool nor advanced the clock, so nothing "
-                + "drained it. The underrun this test depends on cannot be provoked, and "
-                + "with FRAMEFLOW_AUDIO_DEVICE_TESTS set that is a device that did not open "
-                + "or did not play — not a reason to pass."
+            sink.GetPlaybackTime() > TimeSpan.Zero,
+            "Burst 1 left the playback clock at zero, so nothing drained it and the "
+                + "underrun this test depends on cannot be provoked. With "
+                + "FRAMEFLOW_AUDIO_DEVICE_TESTS set that is a device that did not open or "
+                + "did not play — not a reason to pass."
         );
 
         // Two seconds of audio, three seconds of silence: the queue is empty and the
