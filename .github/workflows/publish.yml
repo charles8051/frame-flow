@@ -45,6 +45,75 @@ permissions:
   contents: read
 
 jobs:
+  # The release's prose, and the one check on it. Runs before anything is built so a
+  # forgotten doc costs nothing but a re-tag — once nuget.org has the package, the story
+  # that shipped with it is whatever was written at push time.
+  #
+  # Two things, because they are the same thing: a release explaining itself.
+  #
+  #   1. BREAKING-CHANGES.md must not still say "Unreleased". That file groups entries by
+  #      the release they ship in, so an "## Unreleased" heading at tag time means the
+  #      section was never retitled and the doc now tells a reader the breaks they just
+  #      hit are still pending. v0.9.0-alpha.1 shipped exactly that way, which is why the
+  #      check exists rather than a note asking someone to remember.
+  #   2. The annotated tag's message becomes the Release body. It is already written —
+  #      the tag is annotated precisely so the release has a message — and nothing was
+  #      reading it, so every Release so far had an empty body.
+  #
+  # Both steps are skipped on the workflow_dispatch dry-run, which has no tag to read.
+  # The JOB still runs: a skipped job skips everything that needs it, which would take the
+  # dry-run's publish and release-binaries legs down with it and quietly retire the
+  # dress rehearsal this workflow exposes workflow_dispatch for.
+  release-notes:
+    runs-on: ${{ fromJSON(vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]') }}
+    outputs:
+      body: ${{ steps.notes.outputs.body }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Assert BREAKING-CHANGES.md names this release
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          doc=docs/BREAKING-CHANGES.md
+          [ -f "$doc" ] || { echo "::error::$doc is missing."; exit 1; }
+          if grep -qiE '^##[[:space:]]+Unreleased' "$doc"; then
+            echo "::error file=$doc::Still has an '## Unreleased' heading at ${GITHUB_REF_NAME}."
+            echo "Retitle that section to ${GITHUB_REF_NAME}, then move the tag. A release"
+            echo "whose breaking-changes doc calls its own entries unreleased is worse than"
+            echo "no doc: it reads as a promise that nothing shipped."
+            grep -niE '^##[[:space:]]+Unreleased' "$doc"
+            exit 1
+          fi
+          echo "No unreleased section. ${GITHUB_REF_NAME} is described."
+
+      - name: Read the annotated tag message
+        id: notes
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          # checkout replaces annotated tags with lightweight ones, which have no message.
+          # Re-fetch to get the tag objects back before asking for their contents.
+          git fetch --force --tags --quiet
+          tag="${GITHUB_REF_NAME}"
+          if [ "$(git cat-file -t "$tag" 2>/dev/null || true)" != "tag" ]; then
+            echo "::warning::${tag} is a lightweight tag and carries no message; Release body left empty."
+            body=""
+          else
+            # %(contents:body) is everything after the subject line, which is the version
+            # over again. Drop a PGP trailer if the tag is signed.
+            body="$(git tag -l --format='%(contents:body)' "$tag" | sed '/-----BEGIN PGP SIGNATURE-----/,$d')"
+          fi
+          {
+            echo "body<<RELEASE_NOTES_EOF"
+            echo "$body"
+            echo "RELEASE_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release body, ${#body} chars:"
+          echo "$body"
+
   # Validate before publishing — a release should not ship if tests
   # fail. Windows-only matrix: FrameFlow is Windows-first by policy and
   # several test fixtures rely on
@@ -142,7 +211,7 @@ jobs:
         run: dotnet nuget remove source github-charles8051 --configfile nuget.config
 
   publish:
-    needs: test
+    needs: [test, release-notes]
     # The trusted-publishing policy on nuget.org names this environment, so a
     # token minted by any other job or workflow does not validate against it.
     # That scoping is what makes it safe to hold id-token in the same job that
@@ -533,7 +602,7 @@ jobs:
   # what LGPL §6 then requires of the release, under both versions.
 
   release-binaries:
-    needs: test
+    needs: [test, release-notes]
     # Defaults to the maintainer's self-hosted Windows runner; set WINDOWS_RUNNER to a hosted
     # label as JSON (e.g. ["windows-latest"]) to fall back.
     runs-on: ${{ fromJSON(vars.WINDOWS_RUNNER || '["self-hosted","windows","x64"]') }}
@@ -633,6 +702,9 @@ jobs:
           # the file is appended.
           files: artifacts/MotionClip-*.zip
           fail_on_unmatched_files: true
+          # The annotated tag's message. Written once, at the tag, and now read here
+          # instead of every Release shipping with an empty body.
+          body: ${{ needs.release-notes.outputs.body }}
           # The action does not infer this from the tag, and its default is false,
           # so every alpha so far was created as a full release and took the
           # "Latest" badge. SemVer puts the prerelease identifier after a hyphen

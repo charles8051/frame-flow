@@ -11,7 +11,7 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
-## Unreleased — since `v0.8.0-alpha.1`
+## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`
 
@@ -203,3 +203,20 @@ almost all of them.
   there is no PDB to ship.
 - **Packages now carry `PackageTags`.** They are findable on nuget.org by
   subject rather than only by name.
+- **The audio master clock stops at the pause position.** It used to keep
+  reading the device while paused, and credit whatever the device let go of. A
+  device that drops its queue — a Remote Desktop session ending takes its audio
+  endpoint with it — reports the whole queue processed at once, so a long pause
+  could resume more than a second further on than it stopped, with every decoded
+  frame then due at once. `Position` read across a pause now returns where the
+  pause stopped, and resume re-anchors onto it. Nothing to change; the number
+  just stops being wrong.
+- **The audio master clock is capped at real time.** A playing device consumes
+  one second of audio per second, so a reading that advances further than
+  elapsed playing time is audio the device dropped rather than played, and the
+  clock publishes what real time allows instead of following it. Only reachable
+  when the device is already misbehaving. `OpenAlAudioSink.DeviceDisconnected`
+  reports that case, and the start log now names the endpoint it opened.
+- **The OpenAL start log gained a field.** It reads `OpenAL audio sink started
+  on {Device}. BufferPoolSize=...` where it used to begin `OpenAL audio sink
+  started. BufferPoolSize=...`. Only breaking if you parse that line.
