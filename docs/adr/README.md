@@ -220,7 +220,16 @@ land.
   detection overlay migrated onto it, which deletes the `_inferenceBusy` gating in
   favour of a `LatestWins(1)` edge; the caption overlay waits on ADR-0047's lookahead.
 
-(Most recently, the FFmpeg resolver stopped waiting to be installed as
+(Most recently, the audio clock was told what it is allowed to believe as
+[ADR-0071](ADR-0071-what-the-audio-clock-is-allowed-to-believe.md) — a paused device's
+sample counter is no longer read at all, a reading that advances further than elapsed
+playing time is treated as audio the device dropped rather than played, and a removed
+endpoint is named through `ALC_CONNECTED` instead of being indistinguishable from
+playback; it amends [ADR-0003](ADR-0003-audio-master-sync-policy.md), whose "most stable
+continuous time source" holds while the device is playing and says nothing about when it
+is not, and it restores in delta form the `min(audioTime, sessionElapsed)` clamp that was
+deleted for clamping the clock to zero after every seek. Before it, the FFmpeg resolver
+stopped waiting to be installed as
 [ADR-0070](ADR-0070-resolver-installs-itself-on-first-native-use.md) —
 `SetDllImportResolver` moved to a module initializer in `FrameFlow.Native`, and a P/Invoke
 that finds nothing loaded runs a default bootstrap once rather than throwing
