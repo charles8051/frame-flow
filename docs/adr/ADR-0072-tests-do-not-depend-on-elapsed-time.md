@@ -168,6 +168,32 @@ an error. `tests/BannedSymbols.txt` bans:
 
 Each entry's message names the replacement and cites this record, so the error explains itself.
 
+#### What the ratchet deliberately leaves alone: timeouts that bound a failure
+
+`Task.WaitAsync(TimeSpan)`, `new CancellationTokenSource(TimeSpan)` and `CancelAfter` are not
+banned, and that is a decision rather than a gap. Tests use them overwhelmingly as a safety net —
+`new CancellationTokenSource(TimeSpan.FromSeconds(30))` around a playback run, `WaitAsync(5 s)` on
+a task that should complete in milliseconds. Those do not make a passing test depend on how fast
+the machine is. A correct run finishes far inside them, and they only expire when the test has
+already failed, where they turn a hang into a named failure instead of a stuck CI job. Banning
+them would break correct tests in projects that are otherwise clean and make every real failure
+worse.
+
+The line is whether the duration **bounds** a failure or **is** the assertion:
+
+> Would the test still be correct if this timeout were ten times longer?
+
+If yes, it is a safety net and it stays. If no — the test only passes because the time runs out —
+it is a sleep in disguise and falls under rules 3 to 5. The common disguise is proving a negative
+through a timeout: `await Assert.ThrowsAsync<TimeoutException>(() => task.WaitAsync(100 ms))` to
+show something did not complete. That is `Task.Delay(100); Assert.False(task.IsCompleted)` with
+different spelling, and it is not allowed.
+
+The analyzer cannot tell those two apart, because they are the same call. So this boundary is held
+by review and by this record rather than by the build. That is the one part of the policy the
+ratchet does not enforce, and it is named here so nobody concludes from a green build that it was
+checked.
+
 A project opts out by setting `FrameFlowBanWallClockInTests` to `false` in its own `.csproj`, with a
 comment saying why. The opt-out list is the six projects that had violations when this landed.
 It only shrinks. A project comes off when its last violation is gone, and a new test project starts

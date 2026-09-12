@@ -1,3 +1,9 @@
+// Wall-clock APIs banned in tests. ADR-0072 has the reasoning.
+//
+// Not banned, on purpose: Task.WaitAsync(TimeSpan), new CancellationTokenSource(TimeSpan) and
+// CancelAfter. As safety nets that bound a failure they are correct and wanted. A timeout used as
+// the assertion itself is still disallowed, but the analyzer cannot tell the two apart, so that
+// boundary is held by review. See "What the ratchet deliberately leaves alone" in ADR-0072.
 M:System.Threading.Thread.Sleep(System.Int32);Sleeping is a bet on scheduler latency. Wait on the thing you expect instead, or advance a FakeTimeProvider. See ADR-0072.
 M:System.Threading.Thread.Sleep(System.TimeSpan);Sleeping is a bet on scheduler latency. Wait on the thing you expect instead, or advance a FakeTimeProvider. See ADR-0072.
 M:System.Threading.Tasks.Task.Delay(System.Int32);A delay in a test guesses how long something takes. Await a signal from the code under test, or use Task.Delay(TimeSpan, TimeProvider) with a FakeTimeProvider. See ADR-0072.
