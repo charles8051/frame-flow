@@ -774,8 +774,15 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// can accept new packets after a pause/resume cycle. Any unread packets in the
     /// old queue are drained and freed.
     /// </summary>
+    /// <remarks>
+    /// Draining discards content the decoder never saw, so a reset that freed anything
+    /// leaves the packet stream awaiting a keyframe exactly as a shed does (#134). See the
+    /// comment on the arming line for why this is a no-op on an ordinary seek.
+    /// </remarks>
     public void ResetPacketQueue()
     {
+        var discarded = false;
+
         // Drain and free any leftover packets from the old queue.
         while (_packetQueue.Reader.TryRead(out var item))
         {
@@ -783,10 +790,15 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             {
                 var ptr = item.packetPtr;
                 FFAvCodec.av_packet_free(ref ptr);
+                discarded = true;
             }
         }
 
-        FreePendingRetryPacket();
+        discarded |= FreePendingRetryPacket();
+
+        // A reset that threw packets away is a shed by another name (#134); the gate owns
+        // the rule and AfterReset's remarks carry the reasoning.
+        WriteGopShedState(GopShedGate.AfterReset(ReadGopShedState(), discarded));
 
         // Recreate at the SAME configured depth (_packetQueueCapacity). Every seek and
         // every loop iteration calls this method, so the reset-path depth must match the
@@ -859,7 +871,12 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         }
     }
 
-    private void FreePendingRetryPacket()
+    /// <summary>
+    /// Frees the input packet the decode driver was still holding, if any. Returns whether
+    /// there was one — a freed packet is content the decoder never got, which
+    /// <see cref="ResetPacketQueue"/> treats the same way as a shed (#134).
+    /// </summary>
+    private bool FreePendingRetryPacket()
     {
         nint packetPtr;
         lock (_codecSync)
@@ -868,10 +885,11 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             _pendingRetryPacketPtr = nint.Zero;
         }
 
-        if (packetPtr != nint.Zero)
-        {
-            FFAvCodec.av_packet_free(ref packetPtr);
-        }
+        if (packetPtr == nint.Zero)
+            return false;
+
+        FFAvCodec.av_packet_free(ref packetPtr);
+        return true;
     }
 
     /// <summary>

@@ -94,6 +94,49 @@ public sealed class GopShedGateTests
     }
 
     [Fact]
+    public void AResetThatDiscardedPacketsLeavesTheStreamAwaitingAKeyframe()
+    {
+        // The case the gate would otherwise miss: a keyframe is admitted and opens the
+        // gate, then the reset frees it before the decoder ever sees it.
+        var (afterKeyframe, admission) = GopShedGate.Offer(
+            GopShedGate.AfterShed(GopShedState.Intact),
+            isKeyframe: true
+        );
+        Assert.Equal(PacketAdmission.Admit, admission);
+        Assert.False(afterKeyframe.AwaitingKeyframe);
+
+        var afterReset = GopShedGate.AfterReset(afterKeyframe, discardedPackets: true);
+
+        Assert.True(afterReset.AwaitingKeyframe);
+        Assert.Equal(
+            PacketAdmission.Shed,
+            GopShedGate.Offer(afterReset, isKeyframe: false).Admission
+        );
+    }
+
+    [Fact]
+    public void AResetThatDiscardedNothingLeavesAnOpenGateOpen()
+    {
+        // Arming on every reset would cost the first GOP after every seek for no reason.
+        var afterReset = GopShedGate.AfterReset(GopShedState.Intact, discardedPackets: false);
+
+        Assert.False(afterReset.AwaitingKeyframe);
+        Assert.Equal(
+            PacketAdmission.Admit,
+            GopShedGate.Offer(afterReset, isKeyframe: false).Admission
+        );
+    }
+
+    [Fact]
+    public void AResetThatDiscardedNothingDoesNotDisarmAnArmedGate()
+    {
+        var armed = GopShedGate.AfterShed(GopShedState.Intact);
+
+        Assert.True(GopShedGate.AfterReset(armed, discardedPackets: false).AwaitingKeyframe);
+        Assert.True(GopShedGate.AfterReset(armed, discardedPackets: true).AwaitingKeyframe);
+    }
+
+    [Fact]
     public void ConsecutiveShedsDoNotStackOrDecay()
     {
         var state = GopShedGate.AfterShed(GopShedGate.AfterShed(GopShedState.Intact));

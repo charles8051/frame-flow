@@ -106,4 +106,26 @@ internal static class GopShedGate
         {
             AwaitingKeyframe = true,
         };
+
+    /// <summary>
+    /// Records a queue reset. Draining the packet queue frees packets the decoder never
+    /// saw, which is a shed by another name, so a reset that discarded anything leaves the
+    /// stream awaiting a keyframe.
+    /// </summary>
+    /// <param name="state">The gate state carried across the reset.</param>
+    /// <param name="discardedPackets">
+    /// Whether the reset actually freed a packet. A reset that found nothing to drop
+    /// breaks no chain and must leave an open gate open — arming on every reset would cost
+    /// the first GOP after every seek for no reason.
+    /// </param>
+    /// <remarks>
+    /// The case this exists for: the gate admits a resynchronising keyframe and opens, the
+    /// keyframe is still queued when a reset frees it, and the gate is left open on a
+    /// keyframe the decoder never received. In practice the demuxer resumes at its seek
+    /// keyframe and the gate closes again on the very next packet, so this changes nothing
+    /// on an ordinary seek. It stops correctness from depending on that resumption always
+    /// landing on a keyframe.
+    /// </remarks>
+    internal static GopShedState AfterReset(GopShedState state, bool discardedPackets) =>
+        discardedPackets ? AfterShed(state) : state;
 }
