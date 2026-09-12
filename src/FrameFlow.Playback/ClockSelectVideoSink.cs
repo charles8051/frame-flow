@@ -126,8 +126,16 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     private readonly List<(long AfterGeneration, TaskCompletionSource Signal)> _parkWaiters = [];
 
     /// <summary>
-    /// The park generation, which increments each time the delivery loop enters one of its
-    /// blocking waits. Capture before acting, then pass to <see cref="WaitForParkAfterAsync"/>.
+    /// The park generation, which increments each time the <b>delivery loop</b> suspends on one
+    /// of its blocking waits. Capture before acting, then pass to
+    /// <see cref="WaitForParkAfterAsync"/>.
+    ///
+    /// <para>
+    /// Producer-side backpressure — a <see cref="PresentAsync"/> blocked on a full ring — is
+    /// deliberately not part of this. It belongs to whichever thread is presenting rather than
+    /// to the loop, so counting it here would let a blocked producer satisfy a waiter that is
+    /// asking about delivery, and its unblocking would clear a park the loop was still in.
+    /// </para>
     /// </summary>
     internal long ParkGeneration
     {
@@ -169,6 +177,46 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
             _parkWaiters.Add((generation, signal));
         }
         return signal.Task;
+    }
+
+    // Awaits one of the delivery loop's waits, counting it as a park only if it actually
+    // suspends. A wait that completes synchronously — a target already due, an arrival already
+    // signalled — is the loop carrying straight on, not the loop going idle, and publishing a
+    // park for it would complete a waiter while the iteration was still running.
+    private async ValueTask ParkedAwaitAsync(ValueTask wait)
+    {
+        if (wait.IsCompleted)
+        {
+            await wait.ConfigureAwait(false);
+            return;
+        }
+        EnterPark();
+        try
+        {
+            await wait.ConfigureAwait(false);
+        }
+        finally
+        {
+            ExitPark();
+        }
+    }
+
+    private async ValueTask ParkedAwaitAsync(Task wait)
+    {
+        if (wait.IsCompleted)
+        {
+            await wait.ConfigureAwait(false);
+            return;
+        }
+        EnterPark();
+        try
+        {
+            await wait.ConfigureAwait(false);
+        }
+        finally
+        {
+            ExitPark();
+        }
     }
 
     private void EnterPark()
@@ -493,15 +541,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _shutdownCts.Token);
         try
         {
-            EnterPark();
-            try
-            {
-                await _space.WaitAsync(linked.Token).ConfigureAwait(false);
-            }
-            finally
-            {
-                ExitPark();
-            }
+            await _space.WaitAsync(linked.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -855,18 +895,10 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     {
         try
         {
-            EnterPark();
-            try
-            {
-                await _settled
-                    .WaitAsync(ct)
-                    .WaitAsync(SettleHoldBackstop, _timeProvider, ct)
-                    .ConfigureAwait(false);
-            }
-            finally
-            {
-                ExitPark();
-            }
+            await ParkedAwaitAsync(
+                    _settled.WaitAsync(ct).WaitAsync(SettleHoldBackstop, _timeProvider, ct)
+                )
+                .ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
@@ -966,17 +998,10 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                         {
                             try
                             {
-                                EnterPark();
-                                try
-                                {
-                                    await _clock
-                                        .WaitUntilAsync(holdTarget, holdCts.Token)
-                                        .ConfigureAwait(false);
-                                }
-                                finally
-                                {
-                                    ExitPark();
-                                }
+                                await ParkedAwaitAsync(
+                                        _clock.WaitUntilAsync(holdTarget, holdCts.Token)
+                                    )
+                                    .ConfigureAwait(false);
                             }
                             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                             {
@@ -998,15 +1023,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                         }
                         continue;
                     }
-                    EnterPark();
-                    try
-                    {
-                        await _arrival.WaitAsync(ct).ConfigureAwait(false);
-                    }
-                    finally
-                    {
-                        ExitPark();
-                    }
+                    await ParkedAwaitAsync(_arrival.WaitAsync(ct)).ConfigureAwait(false);
                     lock (_gate)
                     {
                         // Reset only if still empty — a frame may have landed
@@ -1052,17 +1069,10 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                 {
                     try
                     {
-                        EnterPark();
-                        try
-                        {
-                            await _clock
-                                .WaitUntilAsync(earliest.Value, capCts.Token)
-                                .ConfigureAwait(false);
-                        }
-                        finally
-                        {
-                            ExitPark();
-                        }
+                        await ParkedAwaitAsync(
+                                _clock.WaitUntilAsync(earliest.Value, capCts.Token)
+                            )
+                            .ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                     {
