@@ -5,6 +5,9 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- FakeOpenAlDevice implements IOpenAlApi, whose queue and BufferData members
+         take raw pointers because the production Silk.NET signatures do. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

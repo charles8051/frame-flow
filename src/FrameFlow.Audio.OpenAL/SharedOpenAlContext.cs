@@ -95,6 +95,7 @@ internal sealed class SharedOpenAlContext
     private const int AlcConnected = 0x313; // ALC_EXT_disconnect
 
     private readonly AL _al;
+    private readonly SilkOpenAlApi _api;
     private readonly ALContext _alc;
     private readonly unsafe Device* _device;
     private readonly unsafe Context* _context;
@@ -109,6 +110,7 @@ internal sealed class SharedOpenAlContext
     )
     {
         _al = al;
+        _api = new SilkOpenAlApi(al);
         _alc = alc;
         _device = device;
         _context = context;
@@ -120,7 +122,7 @@ internal sealed class SharedOpenAlContext
     /// this for its source and buffer operations; it is safe to call
     /// concurrently from distinct threads on distinct sources.
     /// </summary>
-    public AL Al => _al;
+    public IOpenAlApi Al => _api;
 
     /// <summary>
     /// The endpoint this context was opened on, as the driver names it — for example
@@ -277,14 +279,14 @@ internal sealed class SharedOpenAlContext
 /// Disposing it releases the reference; the last lease disposed tears down the
 /// underlying device/context. Disposal is idempotent and thread-safe.
 /// </summary>
-internal sealed class SharedOpenAlContextLease : IDisposable
+internal sealed class SharedOpenAlContextLease : IOpenAlContextLease
 {
     private SharedOpenAlContext? _context;
 
     internal SharedOpenAlContextLease(SharedOpenAlContext context) => _context = context;
 
     /// <summary>The shared AL API. Throws if the lease has already been disposed.</summary>
-    public AL Al =>
+    public IOpenAlApi Al =>
         (_context ?? throw new ObjectDisposedException(nameof(SharedOpenAlContextLease))).Al;
 
     /// <inheritdoc cref="SharedOpenAlContext.DeviceName"/>
