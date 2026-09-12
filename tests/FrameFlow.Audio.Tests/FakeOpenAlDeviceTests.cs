@@ -143,6 +143,37 @@ public sealed class FakeOpenAlDeviceTests
     }
 
     /// <summary>
+    /// §4.3.6: "alSourcePlay applied to a AL_PLAYING source will restart the
+    /// source from the beginning. It will not affect the configuration, and will
+    /// leave the source in AL_PLAYING state, but reset the sampling offset to the
+    /// beginning." §4.3.2 states it from the other side: "An alSourceStop,
+    /// alSourceRewind, or a second alSourcePlay call will reset the offset to the
+    /// beginning of the buffer."
+    /// </summary>
+    /// <remarks>
+    /// A redundant <c>SourcePlay</c> is therefore not a no-op, and a sink path that
+    /// issues one replays audio the device has already played. Pinned here so the
+    /// fake is not softened into treating it as harmless.
+    /// </remarks>
+    [Fact]
+    public void Play_OnAnAlreadyPlayingSource_RestartsFromTheBeginning()
+    {
+        var device = new FakeOpenAlDevice();
+        var source = Prime(device, buffers: 4);
+
+        device.SourcePlay(source);
+        device.AdvancePlayback(TimeSpan.FromMilliseconds(120));
+        Assert.True(SampleOffset(device, source) > 0);
+        Assert.Equal(2, device.BuffersProcessed(source));
+
+        device.SourcePlay(source);
+
+        Assert.Equal(AlState.Playing, device.StateOf(source));
+        Assert.Equal(0, SampleOffset(device, source));
+        Assert.Equal(0, device.BuffersProcessed(source));
+    }
+
+    /// <summary>
     /// §4.3.6: "alSourcePlay applied to a AL_PAUSED source will resume processing
     /// using the source state as preserved at the alSourcePause operation."
     /// </summary>

@@ -275,10 +275,18 @@ internal sealed class FakeOpenAlDevice : IOpenAlApi
         {
             Record("SourcePlay", source: source);
             var s = RequireSource(source);
-            // §4.3.6 state transitions. Play from STOPPED propagates through
-            // INITIAL, so the cursor restarts at the head of the queue; a second
-            // Play on a PLAYING source likewise resets the offset. Only a PAUSED
-            // source resumes where it left off.
+            // §4.3.6 state transitions. Only a PAUSED source resumes where it left
+            // off; every other state starts at the head of the queue.
+            //
+            // A second Play on an already-PLAYING source is not a no-op, which is
+            // the transition most often assumed away: "alSourcePlay applied to a
+            // AL_PLAYING source will restart the source from the beginning. It will
+            // not affect the configuration, and will leave the source in AL_PLAYING
+            // state, but reset the sampling offset to the beginning." §4.3.2 says it
+            // again from the other side: "An alSourceStop, alSourceRewind, or a
+            // second alSourcePlay call will reset the offset to the beginning of the
+            // buffer." A sink that issues a redundant SourcePlay therefore replays
+            // audio the device already played.
             switch (s.State)
             {
                 case AlState.Paused:
