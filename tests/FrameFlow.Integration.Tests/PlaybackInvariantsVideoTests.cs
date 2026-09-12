@@ -148,6 +148,25 @@ public sealed class PlaybackInvariantsVideoTests
         );
     }
 
+    /// <summary>
+    /// Matching by PTS and counting loss by subtraction both assume the
+    /// reference has no repeated timestamp. If one slipped through, a duplicate
+    /// would vanish from the lookup while still counting toward the reference
+    /// total, and the comparison would quietly certify or reject the wrong
+    /// thing.
+    /// </summary>
+    [Fact]
+    public void ADuplicateReferencePtsIsRejectedRatherThanOverwritten()
+    {
+        var reference = Sequence(5);
+        reference[3] = reference[3] with { Pts = reference[2].Pts };
+        var capture = Sequence(5);
+
+        var failure = Fails(capture, reference);
+
+        Assert.Contains("more than once", failure.Message, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(-0.01)]
     [InlineData(1.01)]

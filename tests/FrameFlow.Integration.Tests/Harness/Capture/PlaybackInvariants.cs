@@ -516,9 +516,26 @@ internal static class PlaybackInvariants
 
         Assert.NotEmpty(reference);
 
+        // Frames are matched by PTS and loss is counted by subtracting the two
+        // list lengths. Both depend on the reference's timestamps being unique.
+        // Without this check a duplicate would be silently overwritten in the
+        // lookup while still counting toward the reference total: with a budget
+        // it could certify a capture that omitted one of the colliding frames,
+        // and at the default zero budget it could reject a capture that
+        // delivered every distinguishable PTS.
         var referenceByPts = new Dictionary<TimeSpan, VideoCapture>(reference.Count);
         foreach (var r in reference)
-            referenceByPts[r.Pts] = r;
+        {
+            if (!referenceByPts.TryAdd(r.Pts, r))
+            {
+                Assert.Fail(
+                    $"Reference decode contains PTS {r.Pts.TotalSeconds:F4}s more than once, "
+                        + $"so it cannot be matched against by timestamp. This is the reference "
+                        + $"being wrong rather than the capture: a bare decode should not emit "
+                        + $"two frames at one PTS. Fix that before reading this comparison."
+                );
+            }
+        }
 
         // Delivery order and uniqueness first. Checking these up front is what
         // lets the loss count below be a subtraction rather than a set

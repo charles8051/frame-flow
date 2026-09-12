@@ -28,6 +28,7 @@ namespace FrameFlow.Integration.Tests;
 /// </para>
 /// </remarks>
 [Trait("Category", "Integration")]
+[Collection(ContentCaptureCollection.Name)]
 public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstrapFixture>
 {
     private readonly FfmpegBootstrapFixture _fixture;
