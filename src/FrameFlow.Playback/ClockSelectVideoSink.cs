@@ -102,6 +102,133 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     // fact rather than as a bet. Defaults to TimeProvider.System, so production is unchanged.
     private readonly TimeProvider _timeProvider;
 
+    // ── Park seam (test observability) ──────────────────────────────────
+    //
+    // The delivery loop is a background task. A test that advances the clock and then
+    // asserts has to bridge the gap between "Advance returned" and "the loop reacted",
+    // and before this seam existed the only way to bridge it was to guess a duration:
+    // ten assertions in ClockSelectVideoSinkTests slept and then asserted something had
+    // NOT happened, which is a bet on scheduler latency rather than a fact (#152).
+    //
+    // "Parked" is the condition all of them were reaching for: the loop has consumed
+    // everything available to it and is blocked on one of its four waits. It is edge
+    // triggered rather than level triggered, because a test asserting after an Advance
+    // needs the NEXT park, not the one the loop was already sitting in when it called.
+    // Hence the generation counter: capture it while parked, act, then wait for a park
+    // with a higher generation. The loop must have woken, done its work and parked again
+    // before that completes.
+    //
+    // Production cost is one lock acquisition per blocking wait, on a path that is about
+    // to block anyway.
+    private readonly object _parkGate = new();
+    private long _parkGeneration;
+    private bool _isParked;
+    private readonly List<(long AfterGeneration, TaskCompletionSource Signal)> _parkWaiters = [];
+
+    /// <summary>
+    /// The park generation, which increments each time the delivery loop enters one of its
+    /// blocking waits. Capture before acting, then pass to <see cref="WaitForParkAfterAsync"/>.
+    /// </summary>
+    internal long ParkGeneration
+    {
+        get
+        {
+            lock (_parkGate)
+                return _parkGeneration;
+        }
+    }
+
+    /// <summary>
+    /// Completes once the delivery loop has parked with a generation greater than
+    /// <paramref name="generation"/> — that is, once it has woken, processed whatever the
+    /// caller did, and gone back to waiting.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Only for actions that wake the loop.</b> Presenting a frame, advancing the clock,
+    /// flushing, signalling input complete, and releasing a settle on the <i>current</i> run
+    /// all do. <see cref="Pause"/> on a loop parked for want of frames does not — the arrival
+    /// wait is not linked to the recheck token — and neither does a
+    /// <see cref="ReleaseSeekSettle"/> scoped to a superseded run. Awaiting this after one of
+    /// those never returns, because the generation never moves.
+    /// </para>
+    /// <para>
+    /// For those, park the loop first with a waking action, then act, then assert
+    /// synchronously: a loop that is already parked cannot present anything until something
+    /// wakes it, so there is nothing to wait for.
+    /// </para>
+    /// </remarks>
+    internal Task WaitForParkAfterAsync(long generation)
+    {
+        TaskCompletionSource signal;
+        lock (_parkGate)
+        {
+            if (_isParked && _parkGeneration > generation)
+                return Task.CompletedTask;
+            signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _parkWaiters.Add((generation, signal));
+        }
+        return signal.Task;
+    }
+
+    private void EnterPark()
+    {
+        List<TaskCompletionSource>? ready = null;
+        lock (_parkGate)
+        {
+            _parkGeneration++;
+            _isParked = true;
+            for (int i = _parkWaiters.Count - 1; i >= 0; i--)
+            {
+                if (_parkGeneration > _parkWaiters[i].AfterGeneration)
+                {
+                    (ready ??= []).Add(_parkWaiters[i].Signal);
+                    _parkWaiters.RemoveAt(i);
+                }
+            }
+        }
+        if (ready is not null)
+            foreach (var signal in ready)
+                signal.TrySetResult();
+    }
+
+    private void ExitPark()
+    {
+        lock (_parkGate)
+            _isParked = false;
+    }
+
+    // Teardown with waiters still registered means a test awaited a park that this loop was
+    // never going to reach. Faulting them turns that into a named failure instead of a hang.
+    private void FailPendingParkWaiters()
+    {
+        List<TaskCompletionSource> pending;
+        lock (_parkGate)
+        {
+            if (_parkWaiters.Count == 0)
+                return;
+            pending = [.. _parkWaiters.Select(w => w.Signal)];
+            _parkWaiters.Clear();
+        }
+        foreach (var signal in pending)
+            signal.TrySetException(
+                new InvalidOperationException(
+                    "ClockSelectVideoSink was disposed while a caller awaited WaitForParkAfterAsync. "
+                        + "The action before the wait did not wake the delivery loop; see the remarks "
+                        + "on WaitForParkAfterAsync."
+                )
+            );
+    }
+
+    // Cap source for a pacing wait, armed through _timeProvider because CancelAfter on a
+    // linked source always uses the platform timer queue regardless of the provider.
+    //
+    // A paused run gets an unarmed source rather than no source (#127): the clock is stopped
+    // because the user stopped it, so the frame waits for the resume. An unarmed source never
+    // cancels, which lets the caller link it unconditionally and keeps one shape instead of two.
+    private CancellationTokenSource CreateCapSource(bool paused) =>
+        paused ? new CancellationTokenSource() : new CancellationTokenSource(_maxWait, _timeProvider);
+
     private readonly object _gate = new();
     private readonly ClockSelectBuffer _buffer;
 
@@ -366,7 +493,15 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _shutdownCts.Token);
         try
         {
-            await _space.WaitAsync(linked.Token).ConfigureAwait(false);
+            EnterPark();
+            try
+            {
+                await _space.WaitAsync(linked.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                ExitPark();
+            }
         }
         catch (OperationCanceledException)
         {
@@ -639,6 +774,20 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         }
     }
 
+    /// <summary>
+    /// Whether delivery is currently held pending a post-seek reseat. Synchronous state, so a
+    /// test can assert a release did or did not take effect without waiting to see whether a
+    /// frame comes out.
+    /// </summary>
+    internal bool IsSettleHeld
+    {
+        get
+        {
+            lock (_gate)
+                return _settleHeld;
+        }
+    }
+
     /// <summary>Identifies the current run, for pairing a settle with the hold it releases.</summary>
     public long CurrentRunId
     {
@@ -706,10 +855,18 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     {
         try
         {
-            await _settled
-                .WaitAsync(ct)
-                .WaitAsync(SettleHoldBackstop, _timeProvider, ct)
-                .ConfigureAwait(false);
+            EnterPark();
+            try
+            {
+                await _settled
+                    .WaitAsync(ct)
+                    .WaitAsync(SettleHoldBackstop, _timeProvider, ct)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                ExitPark();
+            }
         }
         catch (TimeoutException)
         {
@@ -798,22 +955,28 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                         bool holdRechecked = false;
                         // The cap is its own source so it can be armed through _timeProvider;
                         // CancelAfter on a linked source always uses the platform timer queue.
-                        using var holdCap = holdPaused
-                            ? null
-                            : new CancellationTokenSource(_maxWait, _timeProvider);
+                        using var holdCap = CreateCapSource(holdPaused);
                         using (
-                            var holdCts = holdCap is null
-                                ? CancellationTokenSource.CreateLinkedTokenSource(ct, holdRecheckToken)
-                                : CancellationTokenSource.CreateLinkedTokenSource(
-                                    ct,
-                                    holdRecheckToken,
-                                    holdCap.Token
-                                )
+                            var holdCts = CancellationTokenSource.CreateLinkedTokenSource(
+                                ct,
+                                holdRecheckToken,
+                                holdCap.Token
+                            )
                         )
                         {
                             try
                             {
-                                await _clock.WaitUntilAsync(holdTarget, holdCts.Token).ConfigureAwait(false);
+                                EnterPark();
+                                try
+                                {
+                                    await _clock
+                                        .WaitUntilAsync(holdTarget, holdCts.Token)
+                                        .ConfigureAwait(false);
+                                }
+                                finally
+                                {
+                                    ExitPark();
+                                }
                             }
                             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                             {
@@ -835,7 +998,15 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                         }
                         continue;
                     }
-                    await _arrival.WaitAsync(ct).ConfigureAwait(false);
+                    EnterPark();
+                    try
+                    {
+                        await _arrival.WaitAsync(ct).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        ExitPark();
+                    }
                     lock (_gate)
                     {
                         // Reset only if still empty — a frame may have landed
@@ -870,16 +1041,28 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                 //
                 // Its own source rather than CancelAfter on the linked one, so the cap is
                 // armed through _timeProvider; CancelAfter always uses the platform queue.
-                using var cap = paused ? null : new CancellationTokenSource(_maxWait, _timeProvider);
+                using (var cap = CreateCapSource(paused))
                 using (
-                    var capCts = cap is null
-                        ? CancellationTokenSource.CreateLinkedTokenSource(ct, recheckToken)
-                        : CancellationTokenSource.CreateLinkedTokenSource(ct, recheckToken, cap.Token)
+                    var capCts = CancellationTokenSource.CreateLinkedTokenSource(
+                        ct,
+                        recheckToken,
+                        cap.Token
+                    )
                 )
                 {
                     try
                     {
-                        await _clock.WaitUntilAsync(earliest.Value, capCts.Token).ConfigureAwait(false);
+                        EnterPark();
+                        try
+                        {
+                            await _clock
+                                .WaitUntilAsync(earliest.Value, capCts.Token)
+                                .ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            ExitPark();
+                        }
                     }
                     catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                     {
@@ -993,6 +1176,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
             return;
 
         _shutdownCts.Cancel();
+        FailPendingParkWaiters();
         lock (_gate)
         {
             _settleHeld = false;
