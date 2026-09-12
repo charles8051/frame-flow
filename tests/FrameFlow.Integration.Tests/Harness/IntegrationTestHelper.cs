@@ -270,6 +270,14 @@ internal static class IntegrationTestHelper
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
             ) ?? [];
     }
+
+    /// <summary>
+    /// The recorded expectation for one corpus file, or <see langword="null"/> when the file
+    /// has no entry.
+    /// </summary>
+    internal static CorpusExpectation? GetCorpusExpectation(string filename) =>
+        LoadExpectations()
+            .Find(e => string.Equals(e.Filename, filename, StringComparison.OrdinalIgnoreCase));
 }
 
 /// <summary>

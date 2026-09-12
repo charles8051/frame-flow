@@ -1,4 +1,5 @@
 using FrameFlow.Media;
+using FrameFlow.Media.Diagnostics;
 using FrameFlow.Graph;
 
 namespace FrameFlow.Integration.Tests.Harness;
@@ -109,6 +110,31 @@ internal sealed class HarnessAudioSink : IAudioSink
         _paused = false;
         return ValueTask.CompletedTask;
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Overridden rather than left to the interface default, which returns
+    /// <see cref="AudioSinkDiagnosticsSnapshot.Empty"/> — so the pipeline rollup reported
+    /// BlocksWritten = 0 on a run that had written three seconds of audio (#140).
+    ///
+    /// <para>
+    /// <b>UnderrunCount and BackpressureEvents are structurally zero here</b>, and a test must
+    /// not read them as a health signal. This double accepts every block immediately and has no
+    /// device behind it, so it cannot starve and cannot push back. The counters that can move
+    /// belong to <c>OpenAlAudioSink</c>; reaching them from an integration run is #146.
+    /// </para>
+    /// </remarks>
+    public AudioSinkDiagnosticsSnapshot GetDiagnostics() =>
+        new(
+            PresentationTime: GetPlaybackTime(),
+            ProcessedSamplesPerChannel: TotalSamplesPerChannel,
+            SampleRate: SampleRate,
+            Channels: 0,
+            BlocksWritten: BlockCount,
+            UnderrunCount: 0,
+            BackpressureEvents: 0,
+            IsActive: IsActive
+        );
 
     public TimeSpan GetPlaybackTime() =>
         _sampleRate > 0

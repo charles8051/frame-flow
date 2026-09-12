@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using FrameFlow.Media;
+using FrameFlow.Media.Diagnostics;
 using FrameFlow.Playback;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -150,6 +151,30 @@ internal sealed class HarnessVideoSink : IVideoSink
 
         return ValueTask.CompletedTask;
     }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Overridden rather than left to the interface default. The default returns
+    /// <see cref="VideoSinkDiagnosticsSnapshot.Empty"/>, so before this the pipeline rollup
+    /// reported FramesPresented = 0 on a run that had presented ninety frames, and any test
+    /// asserting a sink counter against the rollup would have passed no matter what happened
+    /// (#140). The numbers were always here; nothing was handing them up.
+    /// </remarks>
+    /// <para>
+    /// <b>FramesPresented is the submitted count, not the pumped count.</b> A frame is presented
+    /// the moment the pipeline hands it to <see cref="PresentAsync"/>. What the pump does after
+    /// that is this double simulating a display, and <see cref="DroppedFrameCount"/> counts the
+    /// pump losing a race with the next arrival against its single slot — a property of the
+    /// double's scheduling, not of the pipeline. Mapping that to <c>FramesPresented</c> made the
+    /// number flicker between 89 and 90 on the same clip.
+    /// </para>
+    public VideoSinkDiagnosticsSnapshot GetDiagnostics() =>
+        new(
+            FramesPresented: SubmittedFrameCount,
+            FramesDropped: DroppedFrameCount,
+            LastPresentedPresentationTime: FrameCount > 0 ? LastPts : null,
+            LastPresentedAtUtc: null
+        );
 
     /// <inheritdoc />
     public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct)
