@@ -167,13 +167,20 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
             );
             DrainFully(device);
 
-            if (!device.PlayedSamples.Contains(amplitude))
+            // A count, not Contains. One stray sample reaching the device would satisfy
+            // Contains while the rest of the burst was dropped. Amplitudes are distinct per
+            // burst, so counting by value isolates this burst from the cumulative record. One
+            // block of slack, for the same reason IntermittentFeed_PlaysTheWholeSecondBurst
+            // allows it: the sink may hold back a trailing partial block that never reached the
+            // coalesce threshold.
+            var played = device.PlayedSamples.Count(sample => sample == amplitude);
+            if (played < (blocksPerBurst - 1) * ScalarsPerBlock)
                 missing.Add(burst + 1);
         }
 
         Assert.True(
             missing.Count == 0,
-            $"Of {bursts} bursts, {missing.Count} never reached the device: "
+            $"Of {bursts} bursts, {missing.Count} did not reach the device in full: "
                 + $"burst(s) {string.Join(", ", missing)}. Each was accepted by the sink. "
                 + $"Underruns={sink.UnderrunCount}, blocks written={sink.BlocksWritten}, "
                 + $"samples played={device.PlayedSamples.Count}."

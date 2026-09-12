@@ -45,11 +45,16 @@ public sealed class DecodePressureTests : IClassFixture<FfmpegBootstrapFixture>
         _fixture = fixture;
     }
 
-    [RequiresFfmpegAndCorpusFact]
+    // libkvazaar is LGPL and in the pinned runtimes, but a Homebrew or PATH FFmpeg need not
+    // carry it. The generator reports this fixture UNAVL there rather than failing, so this
+    // test has to skip on the file rather than on the corpus as a whole.
+    [RequiresCorpusFileFact(
+        PressureClip,
+        "It needs libkvazaar. Run: dotnet run scripts/generate-test-corpus.cs"
+    )]
     public async Task UnderPressure_EveryFrameIsAccountedFor()
     {
-        var filePath = IntegrationTestEnvironment.GetCorpusFile(PressureClip);
-        Assert.True(filePath is not null, $"Corpus file {PressureClip} not found.");
+        var filePath = IntegrationTestEnvironment.GetCorpusFile(PressureClip)!;
 
         var expectation = IntegrationTestHelper.GetCorpusExpectation(PressureClip);
         Assert.True(expectation is not null, $"No corpus expectation for {PressureClip}.");
@@ -64,7 +69,7 @@ public sealed class DecodePressureTests : IClassFixture<FfmpegBootstrapFixture>
 
             var (load, play) = await IntegrationTestHelper.PlayToCompletionAsync(
                 controller,
-                MediaSource.FromFile(filePath!)
+                MediaSource.FromFile(filePath)
             );
 
             Assert.True(load.IsSuccess, $"LoadAsync failed ({load.Error?.Message}).");
@@ -83,17 +88,34 @@ public sealed class DecodePressureTests : IClassFixture<FfmpegBootstrapFixture>
                 $"{decoder.DecodeErrors} decode errors under pressure."
             );
 
-            // A shortfall against the file's frame count must have a shed recorded against it.
-            // Frames disappearing with every counter reading zero is the #134 shape.
-            var expectedFrames = expectation!.ExpectedVideoFrames;
-            if (expectedFrames is { } expected && decoder.FramesDecoded < expected)
-            {
-                Assert.True(
-                    decoder.PacketsDroppedForBackpressure > 0,
-                    $"decoded {decoder.FramesDecoded} of {expected} frames and shed nothing. "
-                        + "Frames went missing with no counter recording why."
-                );
-            }
+            // The file's frames are fully accounted for on the decode side: each was decoded,
+            // shed for backpressure, or dropped while resynchronising to the next keyframe
+            // after a shed (#137). Not "a shed exists" — the shortfall has to be explained
+            // exactly, or a counter under-reporting by one would pass. Frames disappearing with
+            // every counter reading zero is the #134 shape.
+            //
+            // This sums packets with frames, which is sound for this stream because an MP4
+            // video sample is one coded frame whatever the decode order. The demux count below
+            // checks that rather than assuming it: the clip is video-only, so every packet read
+            // is a video frame.
+            var expected = expectation!.ExpectedVideoFrames!.Value;
+            Assert.True(
+                pipeline.Stream.Demux.PacketsRead == expected,
+                $"demuxed {pipeline.Stream.Demux.PacketsRead} packets from a video-only clip of "
+                    + $"{expected} frames, so packets and frames do not correspond one to one "
+                    + "here and the accounting below would not be sound."
+            );
+
+            var decodeAccounted =
+                decoder.FramesDecoded
+                + decoder.PacketsDroppedForBackpressure
+                + decoder.PacketsDroppedToGopResync;
+            Assert.True(
+                decodeAccounted == expected,
+                $"{expected} frames in the file, {decodeAccounted} accounted for — "
+                    + $"{decoder.FramesDecoded} decoded, {decoder.PacketsDroppedForBackpressure} "
+                    + $"shed, {decoder.PacketsDroppedToGopResync} dropped to GOP resync."
+            );
 
             // Every decoded frame either reached the sink or was counted leaving.
             var accountedFor =
