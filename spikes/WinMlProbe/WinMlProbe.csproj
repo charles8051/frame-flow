@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!--
+      net10.0-windows10.0.18362.0 is the floor for Microsoft.Windows.AI.MachineLearning
+      (Microsoft.WindowsAppSDK.ML goes down to 17763 but adds RegFree WinRT plumbing
+      this probe doesn't need). C# needs .NET 8+ for the Microsoft.ML.OnnxRuntime
+      surface to be usable alongside the WinML APIs.
+    -->
+    <TargetFramework>net10.0-windows10.0.18362.0</TargetFramework>
+    <RootNamespace>WinMlProbe</RootNamespace>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- Throwaway spike: not part of FrameFlow.slnx, not packed, not shipped. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Self-contained Windows ML: this package alone brings the WinML API
+      (Microsoft.Windows.AI.MachineLearning.dll), the ONNX Runtime engine
+      (onnxruntime.dll) and the in-box DirectML EP (DirectML.dll), ~41 MB total.
+      Deliberately NOT referencing Microsoft.WindowsAppSDK.Runtime or the main
+      Microsoft.WindowsAppSDK package — either would flip this to
+      framework-dependent mode and require the WinAppSDK runtime on the box.
+    -->
+    <PackageReference Include="Microsoft.Windows.AI.MachineLearning" Version="2.*" />
+  </ItemGroup>
+
+</Project>
