@@ -102,8 +102,8 @@ FrameFlow.Playback.IPlaybackController.PositionTick.get -> System.IObservable<Sy
 FrameFlow.Playback.IPlaybackController.RepeatMode.get -> FrameFlow.Media.RepeatMode
 FrameFlow.Playback.IPlaybackController.RepeatModeChanged.get -> System.IObservable<FrameFlow.Media.StateTransition<FrameFlow.Media.RepeatMode>>!
 FrameFlow.Playback.IPlaybackController.SeekAsync(System.TimeSpan position, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
-FrameFlow.Playback.IPlaybackController.SeekingState.get -> FrameFlow.Media.SeekState
 FrameFlow.Playback.IPlaybackController.SeekStateChanged.get -> System.IObservable<FrameFlow.Media.StateTransition<FrameFlow.Media.SeekState>>!
+FrameFlow.Playback.IPlaybackController.SeekingState.get -> FrameFlow.Media.SeekState
 FrameFlow.Playback.IPlaybackController.SetRepeatModeAsync(FrameFlow.Media.RepeatMode mode, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
 FrameFlow.Playback.IPlaybackController.State.get -> FrameFlow.Media.PlaybackState
 FrameFlow.Playback.IPlaybackController.UnloadAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
@@ -111,8 +111,6 @@ FrameFlow.Playback.IReadOnlyPlaybackClock
 FrameFlow.Playback.IReadOnlyPlaybackClock.IsPaused.get -> bool
 FrameFlow.Playback.IReadOnlyPlaybackClock.IsRunning.get -> bool
 FrameFlow.Playback.IReadOnlyPlaybackClock.Position.get -> System.TimeSpan
-FrameFlow.Playback.ITimeSource
-FrameFlow.Playback.ITimeSource.UtcNow.get -> System.DateTimeOffset
 FrameFlow.Playback.LatenessRecoveryOptions
 FrameFlow.Playback.LatenessRecoveryOptions.Enabled.get -> bool
 FrameFlow.Playback.LatenessRecoveryOptions.Enabled.init -> void
@@ -166,7 +164,7 @@ FrameFlow.Playback.PlaybackClock.IsPaused.get -> bool
 FrameFlow.Playback.PlaybackClock.IsRunning.get -> bool
 FrameFlow.Playback.PlaybackClock.Pause() -> void
 FrameFlow.Playback.PlaybackClock.PlaybackClock() -> void
-FrameFlow.Playback.PlaybackClock.PlaybackClock(FrameFlow.Playback.ITimeSource! timeSource) -> void
+FrameFlow.Playback.PlaybackClock.PlaybackClock(System.TimeProvider! timeProvider) -> void
 FrameFlow.Playback.PlaybackClock.Position.get -> System.TimeSpan
 FrameFlow.Playback.PlaybackClock.Resume() -> void
 FrameFlow.Playback.PlaybackClock.Seek(System.TimeSpan position) -> void
@@ -175,8 +173,8 @@ FrameFlow.Playback.PlaybackClock.Stop() -> void
 FrameFlow.Playback.PlaybackController
 FrameFlow.Playback.PlaybackGraph
 FrameFlow.Playback.PlaybackGraph.DisposeAsync() -> System.Threading.Tasks.ValueTask
-FrameFlow.Playback.PlaybackGraph.PlaybackGraph(FrameFlow.Decoding.IVideoDecoder? videoDecoder = null, FrameFlow.Decoding.IAudioDecoder? audioDecoder = null, FrameFlow.Media.IVideoSink? videoSink = null, FrameFlow.Media.IAudioSink? audioSink = null) -> void
 FrameFlow.Playback.PlaybackGraph.PlayToCompletionAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+FrameFlow.Playback.PlaybackGraph.PlaybackGraph(FrameFlow.Decoding.IVideoDecoder? videoDecoder = null, FrameFlow.Decoding.IAudioDecoder? audioDecoder = null, FrameFlow.Media.IVideoSink? videoSink = null, FrameFlow.Media.IAudioSink? audioSink = null) -> void
 FrameFlow.Playback.PlaybackObservableExtensions
 FrameFlow.Playback.PlaylistTransition
 FrameFlow.Playback.PlaylistTransition.Index.get -> int

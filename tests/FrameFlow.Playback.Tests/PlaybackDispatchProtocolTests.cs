@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using System.Collections.Concurrent;
 using FrameFlow.Media;
 using FrameFlow.Playback;
@@ -33,7 +34,7 @@ public sealed class PlaybackDispatchProtocolTests
     {
         var session = new FakeSession();
         var factory = new FakeSessionFactory(session);
-        var clock = new PlaybackClock(new ManualTimeSource());
+        var clock = new PlaybackClock(new FakeTimeProvider());
         var options = Microsoft.Extensions.Options.Options.Create(
             new FrameFlowPlaybackOptions { InitialRepeatMode = initialRepeat }
         );
@@ -101,7 +102,7 @@ public sealed class PlaybackDispatchProtocolTests
         // Same teardown, reached the other way. A load failure disposes the session and lands
         // in Error, which is the path a diagnostics consumer most needs to see honestly.
         var session = new FakeSession { WarmUpThrows = new InvalidOperationException("cold") };
-        var clock = new PlaybackClock(new ManualTimeSource());
+        var clock = new PlaybackClock(new FakeTimeProvider());
         await using var controller = new PlaybackControllerCore(
             NullLogger<PlaybackControllerCore>.Instance,
             new FakeSessionFactory(session),
@@ -129,7 +130,7 @@ public sealed class PlaybackDispatchProtocolTests
         // DisposeAsync cannot leave the controller serving a dead session's counters under
         // the pre-teardown generation. Publishing afterwards would skip the write entirely.
         var session = new FakeSession { DisposeThrows = new InvalidOperationException("stuck") };
-        var clock = new PlaybackClock(new ManualTimeSource());
+        var clock = new PlaybackClock(new FakeTimeProvider());
         await using var controller = new PlaybackControllerCore(
             NullLogger<PlaybackControllerCore>.Instance,
             new FakeSessionFactory(session),
@@ -384,7 +385,7 @@ public sealed class PlaybackDispatchProtocolTests
         // InitializeSession faults → the shell routes FatalError as a load failure and
         // LoadAsync surfaces it; the machine lands in Error.
         var session = new FakeSession { InitializeThrows = new InvalidOperationException("nope") };
-        var clock = new PlaybackClock(new ManualTimeSource());
+        var clock = new PlaybackClock(new FakeTimeProvider());
         await using var controller = new PlaybackControllerCore(
             NullLogger<PlaybackControllerCore>.Instance,
             new FakeSessionFactory(session),
@@ -406,7 +407,7 @@ public sealed class PlaybackDispatchProtocolTests
         // routes FatalError from InitialBuffering, so LoadAsync surfaces the failure and the
         // machine lands in Error.
         var session = new FakeSession { WarmUpThrows = new InvalidOperationException("cold") };
-        var clock = new PlaybackClock(new ManualTimeSource());
+        var clock = new PlaybackClock(new FakeTimeProvider());
         await using var controller = new PlaybackControllerCore(
             NullLogger<PlaybackControllerCore>.Instance,
             new FakeSessionFactory(session),
@@ -612,11 +613,6 @@ public sealed class PlaybackDispatchProtocolTests
     }
 
     // ── Fakes ───────────────────────────────────────────────────────────
-
-    private sealed class ManualTimeSource : ITimeSource
-    {
-        public DateTimeOffset UtcNow => DateTimeOffset.UnixEpoch;
-    }
 
     private sealed class FakeSource : IMediaSource
     {

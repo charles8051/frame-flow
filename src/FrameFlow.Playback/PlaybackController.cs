@@ -91,8 +91,8 @@ public static class PlaybackController
     /// <see cref="FrameFlow.Playback.IPlaybackController.SetRepeatModeAsync"/>.
     /// </param>
     /// <param name="clock">
-    /// Optional clock to inject (e.g. a test clock with a fake
-    /// <see cref="ITimeSource"/>). Defaults to a fresh
+    /// Optional clock to inject (e.g. a <see cref="PlaybackClock"/> over a fake
+    /// <see cref="TimeProvider"/>). Defaults to a fresh
     /// <see cref="PlaybackClock"/> with system time.
     /// </param>
     /// <param name="loggerFactory">

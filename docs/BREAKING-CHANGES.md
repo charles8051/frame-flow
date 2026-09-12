@@ -11,6 +11,44 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## Unreleased
+
+### 1. `ITimeSource` is gone; `PlaybackClock` takes a `TimeProvider`
+
+`ITimeSource` was a one-member interface over `DateTimeOffset.UtcNow`, written
+before `System.TimeProvider` existed. Every project here targets `net10.0`, where
+`TimeProvider` covers the same ground and is what the rest of FrameFlow already
+uses — `WallClockSource`, `HeadlessVideoSink`, `OpenAlAudioSink` and
+`RecordingGate` all take one. Keeping both meant two abstractions for one
+concept, and a caller had to know which subsystem picked which.
+
+| Member | Before | After |
+|---|---|---|
+| `PlaybackClock(ITimeSource)` | `ITimeSource` | `System.TimeProvider` |
+| `ITimeSource` | public interface | removed |
+| `SystemTimeSource` | internal | removed |
+
+```csharp
+// Before
+public sealed class FrozenClock : ITimeSource
+{
+    public DateTimeOffset UtcNow => DateTimeOffset.UnixEpoch;
+}
+var clock = new PlaybackClock(new FrozenClock());
+
+// After — no custom type needed
+var time = new FakeTimeProvider();            // Microsoft.Extensions.TimeProvider.Testing
+var clock = new PlaybackClock(time);
+```
+
+`new PlaybackClock()` is unchanged and still reads real wall-clock time; it now
+passes `TimeProvider.System` rather than a `SystemTimeSource`.
+
+`FrameFlow.Graph.IClockSource` is **not** affected and is not going anywhere. It
+carries media time — a position on the presentation timeline that seeks, pauses
+and is mastered by the audio device — which is a different axis from wall time
+and one `TimeProvider` cannot express.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`
