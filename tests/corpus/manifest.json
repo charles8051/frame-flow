@@ -48,6 +48,18 @@
     "description": "AV1, YUV420P, 320x240, 24fps, video-only"
   },
   {
+    "filename": "test-portrait-hevc-pressure.mp4",
+    "category": "decode-pressure",
+    "container": "mp4",
+    "videoCodec": "hevc",
+    "pixelFormat": "yuv420p",
+    "width": 720,
+    "height": 1280,
+    "frameRate": 30,
+    "durationSeconds": 3,
+    "description": "HEVC, YUV420P, 720x1280 portrait, 30fps, 12 Mbps noise-filled, video-only — real decode cost per unit of wall time"
+  },
+  {
     "filename": "test-audio-aac.m4a",
     "category": "basic-audio",
     "container": "m4a",

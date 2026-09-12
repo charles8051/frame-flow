@@ -181,10 +181,10 @@ option 2 without the downloads: the corpus is generated locally, not fetched.
   `PATH` or in `runtimes/{rid}/native/` — run `scripts/fetch-ffmpeg.cs` first.
 - **Output:** `tests/corpus/files/`, gitignored. Nothing media-shaped is
   committed, so Git LFS was never needed.
-- **`tests/corpus/manifest.json`:** checked in. A flat JSON array of 24 entries
+- **`tests/corpus/manifest.json`:** checked in. A flat JSON array of 25 entries
   describing what the generator should produce — `filename`, `category`
   (`basic-video`, `basic-audio`, `combined-av`, `pixel-format`, `edge-case`,
-  `benchmark`),
+  `decode-pressure`, `benchmark`),
   `container`, `videoCodec`, `pixelFormat`, `width`, `height`, `frameRate`,
   `durationSeconds`, `description`. Not the URL-and-checksum shape sketched
   below, because nothing is downloaded.
@@ -197,6 +197,14 @@ option 2 without the downloads: the corpus is generated locally, not fetched.
   throughput under a realistic decode load — `testsrc2` encodes to almost nothing
   and understates it by roughly 30%. When the flag is absent they contribute no
   `test-expectations.json` entry either, so the default corpus is unaffected.
+- **`category: decode-pressure` is in the default tier.** One entry today,
+  `test-portrait-hevc-pressure.mp4`: 720x1280 portrait HEVC at 12 Mbps with the
+  `noise` filter, which is the shape #134 reproduced on and the flat `testsrc2`
+  set cannot reach. It is 6 MB and encodes in about three seconds, so it is not
+  held back behind `--include-benchmarks` the way the throughput fixtures are —
+  a pressure fixture most runs do not generate is one no test exercises.
+  `DecodePressureTests` is its consumer. It asserts accounting rather than zero
+  drops, because how much this clip drops depends on the machine.
 - **Absence is a skip, not a failure.**
   `FfmpegBootstrapFixture` resolves the corpus directory and skips corpus-backed
   tests when it is empty.
