@@ -186,7 +186,7 @@ internal static class OpenAlPlaybackHarness
             // Let the device finish the audio still queued at EOF. The pipeline
             // reports Ended once the last buffer has been handed over, which is
             // earlier than the moment the device has played it.
-            await DrainAsync(device).ConfigureAwait(false);
+            bool drained = await DrainAsync(device).ConfigureAwait(false);
 
             // Stop the pump before reading the device, so the snapshot is of a
             // device nothing is still advancing. Reading it live raced the pump:
@@ -199,6 +199,7 @@ internal static class OpenAlPlaybackHarness
             return new OpenAlPlaybackResult(
                 Device: device,
                 Sink: audioSink,
+                Drained: drained,
                 PlayedAudio: ToCapture(device),
                 Video: videoSink.Captures,
                 FinalState: controller.State,
@@ -216,29 +217,39 @@ internal static class OpenAlPlaybackHarness
     }
 
     /// <summary>
-    /// Waits until the device has played everything queued on it, so the
-    /// comparison runs against everything it played rather than everything it had
-    /// played by the moment the controller said Ended.
+    /// Waits until the device has played everything queued on it. Returns whether
+    /// it got there, so the caller can fail rather than compare against a capture
+    /// that was still growing.
     /// </summary>
     /// <remarks>
-    /// The exit condition is the queue, not a quiet period. A sample count that
-    /// stopped moving is ambiguous — the device may be genuinely finished, or the
-    /// pump thread may simply have been descheduled — and treating a lull as
-    /// completion returns a short capture. An empty source queue is not ambiguous.
-    /// The elapsed cap is a backstop for a sink that has wedged, which is a
-    /// failure the caller's own assertions should report rather than a hang here.
+    /// <para>
+    /// The condition is "nothing queued is still unplayed", not "the queues are
+    /// empty". A buffer leaves a queue when the <i>sink</i> unqueues it, on a
+    /// flush or at deactivation, so after the last buffer is pushed the queue
+    /// stays populated while the device is in fact finished: an empty-queue
+    /// condition is never reached on a clean play-to-EOF and the wait would spend
+    /// the whole cap every run.
+    /// </para>
+    /// <para>
+    /// Timing out is not completion. A sink that wedged leaves audio unplayed, and
+    /// if the missing part happens to fit inside the caller's tail budget the
+    /// content assertion would pass over an incomplete capture. Returning the
+    /// outcome lets the caller say so instead.
+    /// </para>
     /// </remarks>
-    private static async Task DrainAsync(FakeOpenAlDevice device)
+    private static async Task<bool> DrainAsync(FakeOpenAlDevice device)
     {
-        var deadline = Stopwatch.StartNew();
+        var elapsed = Stopwatch.StartNew();
         var cap = TimeSpan.FromSeconds(10);
 
-        while (deadline.Elapsed < cap)
+        while (elapsed.Elapsed < cap)
         {
-            if (device.AllQueuesEmpty)
-                return;
+            if (device.AllQueuedAudioPlayed)
+                return true;
             await Task.Delay(20).ConfigureAwait(false);
         }
+
+        return device.AllQueuedAudioPlayed;
     }
 
     /// <summary>
@@ -278,6 +289,7 @@ internal static class OpenAlPlaybackHarness
 internal sealed record OpenAlPlaybackResult(
     FakeOpenAlDevice Device,
     FrameFlow.Audio.OpenAL.OpenAlAudioSink Sink,
+    bool Drained,
     IReadOnlyList<AudioCapture> PlayedAudio,
     IReadOnlyList<VideoCapture> Video,
     PlaybackState FinalState,

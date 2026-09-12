@@ -68,6 +68,13 @@ public sealed class OpenAlSinkContentTests : IClassFixture<FfmpegBootstrapFixtur
         );
         Assert.Equal(PlaybackState.Ended, result.FinalState);
 
+        Assert.True(
+            result.Drained,
+            "The device still held unplayed audio when the drain gave up, so the capture "
+                + "below was taken while it was still growing. A shortfall inside the tail "
+                + "budget would otherwise pass over an incomplete run."
+        );
+
         Assert.NotEmpty(result.PlayedAudio);
 
         var reference = await ReferenceDecoder.DecodeAsync("test-av-h264-aac.mp4");
@@ -176,6 +183,8 @@ public sealed class OpenAlSinkContentTests : IClassFixture<FfmpegBootstrapFixtur
     /// prefix, so the duplicate was never looked at.
     /// </remarks>
     [Theory]
+    [InlineData(2, "a two-sample duplicated tail")]
+    [InlineData(480, "5 ms of duplicated tail, which the old 10 ms allowance passed")]
     [InlineData(2400, "half a buffer of duplicated tail")]
     [InlineData(4800, "a whole buffer of duplicated tail")]
     public void AudioPcmMatchesReference_RejectsExtraAudio(int extra, string what)

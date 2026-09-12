@@ -337,18 +337,18 @@ internal static class PlaybackInvariants
             (int)(shortfallBudget.TotalSeconds * sampleRate) * channels
         );
 
-        // Overshoot keeps the original 10 ms and is never widened: a caller raising
-        // the shortfall budget is describing a sink that drops a tail, not one
-        // allowed to add to it.
-        int overshootSamples = Math.Max(channels, (sampleRate / 100) * channels);
-
+        // There is no overshoot allowance. Any budget here is a window a replayed
+        // tail fits through unread, because the sample comparison below only walks
+        // the common prefix: a duplicated 5 ms at 48 kHz stereo is 480 samples, and
+        // a 10 ms allowance would wave it past. The decoder is deterministic, so a
+        // capture longer than the reference is audio the runtime invented, and
+        // there is no size of that worth accepting.
         int shortfall = referenceFlat.Length - captureFlat.Length;
 
         Assert.True(
-            shortfall >= -overshootSamples,
+            shortfall >= 0,
             $"Audio is longer than the reference: capture={captureFlat.Length} samples, "
-                + $"reference={referenceFlat.Length} samples, "
-                + $"excess={-shortfall} (allowance {overshootSamples} = ~10 ms × {channels}ch). "
+                + $"reference={referenceFlat.Length} samples, excess={-shortfall}. "
                 + "Extra audio is not a missing tail; a replayed final buffer looks exactly "
                 + "like this, and the sample comparison below only reads the common prefix."
         );

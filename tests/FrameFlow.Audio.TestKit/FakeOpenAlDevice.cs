@@ -144,20 +144,35 @@ public sealed class FakeOpenAlDevice : IOpenAlApi
     }
 
     /// <summary>
-    /// Whether every live source has an empty buffer queue, so there is no audio
-    /// left for the device to play.
+    /// Whether no live source still holds a buffer the device has not played.
     /// </summary>
     /// <remarks>
-    /// An unambiguous drain condition, unlike a sample count that has stopped
-    /// moving: that is equally consistent with a finished device and with a
-    /// descheduled pump thread.
+    /// <para>
+    /// The drain condition. It is about what the device has played, not about
+    /// what the sink has taken back: a buffer leaves a queue when the sink
+    /// unqueues it, which happens on a flush or at deactivation, so after the
+    /// last buffer is pushed the queue can stay populated indefinitely while the
+    /// device is in fact finished. An empty-queue condition is therefore never
+    /// reached on a clean play-to-EOF.
+    /// </para>
+    /// <para>
+    /// A sample count that has stopped moving is no good either: it cannot
+    /// distinguish a finished device from a descheduled pump thread. This can,
+    /// because the played flags are set under the same lock that advances the
+    /// cursor, so there is no moment when a buffer is played but not yet counted.
+    /// </para>
+    /// <para>
+    /// It stays false when a source holds buffers it will never play — the
+    /// stopped-source case behind #133 — which is a failure the caller should see
+    /// as a failed drain rather than as a completed one.
+    /// </para>
     /// </remarks>
-    public bool AllQueuesEmpty
+    public bool AllQueuedAudioPlayed
     {
         get
         {
             lock (_gate)
-                return _sources.Values.All(s => s.Deleted || s.Queue.Count == 0);
+                return _sources.Values.All(s => s.Deleted || s.Queue.All(e => e.Played));
         }
     }
 
