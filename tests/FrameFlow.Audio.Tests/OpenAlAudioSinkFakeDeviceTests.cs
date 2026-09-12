@@ -3,7 +3,7 @@
 
 using System.Buffers;
 using FrameFlow.Audio.OpenAL;
-using FrameFlow.Audio.Tests.Fakes;
+using FrameFlow.Audio.TestKit;
 using FrameFlow.Media;
 
 namespace FrameFlow.Audio.Tests;
@@ -300,7 +300,7 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static OpenAlAudioSink NewSink(FakeOpenAlDevice device) =>
-        new(logger: null, timeProvider: TimeProvider.System, leaseFactory: device.Lease);
+        FakeOpenAlSink.Create(device, timeProvider: TimeProvider.System);
 
     private static async Task PushBlocksAsync(OpenAlAudioSink sink, int blocks, short amplitude)
     {

@@ -32,6 +32,11 @@
          were deleted. -->
     <ProjectReference Include="..\..\src\FrameFlow.Sdl\FrameFlow.Sdl.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
+    <!-- The real OpenAL sink, plus the fake device it can be pointed at, so the
+         content invariants reach the sink itself rather than stopping at a
+         capturing substitute for it (#146). -->
+    <ProjectReference Include="..\..\src\FrameFlow.Audio.OpenAL\FrameFlow.Audio.OpenAL.csproj" />
+    <ProjectReference Include="..\FrameFlow.Audio.TestKit\FrameFlow.Audio.TestKit.csproj" />
   </ItemGroup>
 
   <ItemGroup>

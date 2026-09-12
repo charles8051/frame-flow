@@ -5,8 +5,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <!-- FakeOpenAlDevice implements IOpenAlApi, whose queue and BufferData members
-         take raw pointers because the production Silk.NET signatures do. -->
+    <!-- The fidelity tests drive FakeOpenAlDevice's pointer-taking members directly. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
@@ -23,5 +22,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\FrameFlow.Audio.OpenAL\FrameFlow.Audio.OpenAL.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Audio\FrameFlow.Audio.csproj" />
+    <ProjectReference Include="..\FrameFlow.Audio.TestKit\FrameFlow.Audio.TestKit.csproj" />
   </ItemGroup>
 </Project>

@@ -5,7 +5,7 @@ using System.Text;
 using FrameFlow.Audio.OpenAL;
 using Silk.NET.OpenAL;
 
-namespace FrameFlow.Audio.Tests.Fakes;
+namespace FrameFlow.Audio.TestKit;
 
 /// <summary>
 /// An in-memory OpenAL device that models the 1.1 specification's source and
@@ -50,7 +50,7 @@ namespace FrameFlow.Audio.Tests.Fakes;
 /// and still assert an ordering over <see cref="Calls"/>.
 /// </para>
 /// </remarks>
-internal sealed class FakeOpenAlDevice : IOpenAlApi
+public sealed class FakeOpenAlDevice : IOpenAlApi
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<uint, FakeBuffer> _buffers = new();
@@ -60,6 +60,8 @@ internal sealed class FakeOpenAlDevice : IOpenAlApi
 
     private uint _nextSource = 1;
     private uint _nextBuffer = 1;
+    private int _playedSampleRate;
+    private int _playedChannels;
     private bool _connected = true;
     private int _leasesOutstanding;
     private int _leasesDisposed;
@@ -114,6 +116,33 @@ internal sealed class FakeOpenAlDevice : IOpenAlApi
         }
     }
 
+    /// <summary>
+    /// Sample rate of the audio in <see cref="PlayedSamples"/>, or 0 before
+    /// anything has played. Taken from the buffers as they are played, because a
+    /// queue is single-format (OpenAL 1.1 §4.3.5).
+    /// </summary>
+    public int PlayedSampleRate
+    {
+        get
+        {
+            lock (_gate)
+                return _playedSampleRate;
+        }
+    }
+
+    /// <summary>
+    /// Channel count of the audio in <see cref="PlayedSamples"/>, or 0 before
+    /// anything has played.
+    /// </summary>
+    public int PlayedChannels
+    {
+        get
+        {
+            lock (_gate)
+                return _playedChannels;
+        }
+    }
+
     /// <summary>Leases handed out that have not been disposed.</summary>
     public int LeasesOutstanding
     {
@@ -149,7 +178,12 @@ internal sealed class FakeOpenAlDevice : IOpenAlApi
     /// <see cref="Func{TResult}"/> target so it can be passed straight to
     /// <see cref="OpenAlAudioSink"/>'s internal constructor.
     /// </summary>
-    public IOpenAlContextLease? Lease()
+    /// <remarks>
+    /// Internal because <see cref="IOpenAlContextLease"/> is internal to
+    /// <c>FrameFlow.Audio.OpenAL</c>; a public member cannot name it. Callers
+    /// outside this assembly build a sink through <see cref="FakeOpenAlSink"/>.
+    /// </remarks>
+    internal IOpenAlContextLease? Lease()
     {
         lock (_gate)
         {
@@ -206,7 +240,11 @@ internal sealed class FakeOpenAlDevice : IOpenAlApi
                 continue;
             entry.Played = true;
             if (_buffers.TryGetValue(entry.Buffer, out var buffer))
+            {
                 _playedSamples.AddRange(buffer.Samples);
+                _playedSampleRate = buffer.SampleRate;
+                _playedChannels = buffer.Channels;
+            }
         }
 
         if (source.Cursor >= total)
@@ -728,7 +766,7 @@ internal sealed class FakeOpenAlDevice : IOpenAlApi
 }
 
 /// <summary>A source's execution state, mirroring the four OpenAL states.</summary>
-internal enum AlState
+public enum AlState
 {
     Initial,
     Playing,
@@ -743,7 +781,7 @@ internal enum AlState
 /// <param name="Buffer">Buffer name, when the call names one.</param>
 /// <param name="Detail">Arguments or result, rendered for the failure message.</param>
 /// <param name="ThreadId">Managed thread the call arrived on.</param>
-internal readonly record struct AlCall(
+public readonly record struct AlCall(
     int Index,
     string Name,
     uint? Source,
