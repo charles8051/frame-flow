@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Time.Testing;
+
 namespace FrameFlow.Playback.Tests;
 
 /// <summary>
@@ -16,13 +18,29 @@ namespace FrameFlow.Playback.Tests;
 /// Nothing here polls or sleeps. Each wait is registered before the advance that satisfies
 /// it, and the advance fires the timer synchronously on the test thread.
 /// </para>
+/// <para>
+/// The provider is <c>FakeTimeProvider</c> from
+/// <c>Microsoft.Extensions.TimeProvider.Testing</c>. It replaced a hand-rolled one that lived
+/// in this file. The hand-rolled version was correct for the tests below and wrong in the ways
+/// such a double is usually wrong. Its <c>Advance</c> snapshotted the timer list and fired in
+/// registration order rather than due order, so two timers coming due in one advance ran
+/// backwards if they were registered that way. Its <c>Change</c> only recorded a deadline, so
+/// a timer armed with a due time of zero did not run until the next <c>Advance</c> rather than
+/// immediately. And a timer created from inside a callback was not in that advance's snapshot,
+/// so it could not fire in the same advance that armed it.
+/// </para>
+/// <para>
+/// None of that bit, because every test here registers one wait at a time and advances once to
+/// satisfy it. The next test would not have been so lucky, and this file's own remarks were
+/// inviting it to copy the pattern.
+/// </para>
 /// </remarks>
 public sealed class WallClockSourceManualTimeTests
 {
     [Fact]
     public async Task WaitUntilAsync_CompletesWhenTheProviderReachesTheTarget()
     {
-        var time = new ManualTimeProvider();
+        var time = new FakeTimeProvider();
         await using var clock = new WallClockSource(time);
         clock.Start();
 
@@ -39,7 +57,7 @@ public sealed class WallClockSourceManualTimeTests
     [Fact]
     public async Task Latest_TracksTheProvider()
     {
-        var time = new ManualTimeProvider();
+        var time = new FakeTimeProvider();
         await using var clock = new WallClockSource(time);
         clock.Start();
 
@@ -51,7 +69,7 @@ public sealed class WallClockSourceManualTimeTests
     [Fact]
     public async Task PauseFreezesTheClock_AndResumeContinuesFromThere()
     {
-        var time = new ManualTimeProvider();
+        var time = new FakeTimeProvider();
         await using var clock = new WallClockSource(time);
         clock.Start();
 
@@ -73,7 +91,7 @@ public sealed class WallClockSourceManualTimeTests
     [Fact]
     public async Task Seek_ReseatsTheOriginAndKeepsRunning()
     {
-        var time = new ManualTimeProvider();
+        var time = new FakeTimeProvider();
         await using var clock = new WallClockSource(time);
         clock.Start();
         time.Advance(TimeSpan.FromSeconds(1));
@@ -89,7 +107,7 @@ public sealed class WallClockSourceManualTimeTests
     [Fact]
     public async Task SeekWhilePaused_StaysPaused()
     {
-        var time = new ManualTimeProvider();
+        var time = new FakeTimeProvider();
         await using var clock = new WallClockSource(time);
         clock.Start();
         clock.Pause();
@@ -104,7 +122,7 @@ public sealed class WallClockSourceManualTimeTests
     [Fact]
     public async Task AWaitBehindASeek_ResolvesOnTheNextSlice()
     {
-        var time = new ManualTimeProvider();
+        var time = new FakeTimeProvider();
         await using var clock = new WallClockSource(time);
         clock.Start();
 
@@ -116,105 +134,5 @@ public sealed class WallClockSourceManualTimeTests
         time.Advance(TimeSpan.FromMilliseconds(50));
 
         await wait.WaitAsync(TimeSpan.FromSeconds(5));
-    }
-
-    /// <summary>
-    /// Minimal manual <see cref="TimeProvider"/>: time moves only on <see cref="Advance"/>,
-    /// which fires every timer that has come due, synchronously on the calling thread.
-    /// </summary>
-    private sealed class ManualTimeProvider : TimeProvider
-    {
-        private readonly object _gate = new();
-        private readonly List<ManualTimer> _timers = [];
-        private long _ticks;
-
-        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
-
-        public override long GetTimestamp()
-        {
-            lock (_gate)
-                return _ticks;
-        }
-
-        public override DateTimeOffset GetUtcNow()
-        {
-            lock (_gate)
-                return DateTimeOffset.UnixEpoch + TimeSpan.FromTicks(_ticks);
-        }
-
-        public override ITimer CreateTimer(
-            TimerCallback callback,
-            object? state,
-            TimeSpan dueTime,
-            TimeSpan period
-        )
-        {
-            var timer = new ManualTimer(this, callback, state);
-            lock (_gate)
-                _timers.Add(timer);
-            timer.Change(dueTime, period);
-            return timer;
-        }
-
-        public void Advance(TimeSpan by)
-        {
-            ManualTimer[] due;
-            lock (_gate)
-            {
-                _ticks += by.Ticks;
-                due = [.. _timers];
-            }
-
-            // Outside the gate: a callback may create or dispose timers.
-            foreach (var t in due)
-                t.FireIfDue(GetTimestamp());
-        }
-
-        internal void Remove(ManualTimer timer)
-        {
-            lock (_gate)
-                _timers.Remove(timer);
-        }
-
-        internal sealed class ManualTimer(
-            ManualTimeProvider provider,
-            TimerCallback callback,
-            object? state
-        ) : ITimer
-        {
-            private long _dueAt = long.MaxValue;
-            private TimeSpan _period = Timeout.InfiniteTimeSpan;
-
-            public bool Change(TimeSpan dueTime, TimeSpan period)
-            {
-                _period = period;
-                _dueAt =
-                    dueTime == Timeout.InfiniteTimeSpan
-                        ? long.MaxValue
-                        : provider.GetTimestamp() + dueTime.Ticks;
-                return true;
-            }
-
-            public void FireIfDue(long now)
-            {
-                if (now < _dueAt)
-                    return;
-
-                _dueAt =
-                    _period == Timeout.InfiniteTimeSpan || _period == TimeSpan.Zero
-                        ? long.MaxValue
-                        : now + _period.Ticks;
-
-                callback(state);
-            }
-
-            public void Dispose() => provider.Remove(this);
-
-            public ValueTask DisposeAsync()
-            {
-                Dispose();
-                return ValueTask.CompletedTask;
-            }
-        }
     }
 }
