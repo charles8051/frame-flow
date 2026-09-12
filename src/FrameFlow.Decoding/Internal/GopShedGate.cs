@@ -1,7 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-namespace FrameFlow.Decoding;
+namespace FrameFlow.Decoding.Internal;
 
 /// <summary>
 /// Whether the packet stream is currently intact or waiting to resynchronise at a
@@ -10,14 +10,14 @@ namespace FrameFlow.Decoding;
 /// <param name="AwaitingKeyframe">
 /// True once a packet has been shed and no keyframe has arrived since.
 /// </param>
-public readonly record struct GopShedState(bool AwaitingKeyframe)
+internal readonly record struct GopShedState(bool AwaitingKeyframe)
 {
     /// <summary>The reference chain is intact: every packet is admitted.</summary>
-    public static GopShedState Intact => new(AwaitingKeyframe: false);
+    internal static GopShedState Intact => new(AwaitingKeyframe: false);
 }
 
 /// <summary>What to do with the packet the gate was offered.</summary>
-public enum PacketAdmission
+internal enum PacketAdmission
 {
     /// <summary>Hand it to the decoder's queue.</summary>
     Admit,
@@ -69,7 +69,7 @@ public enum PacketAdmission
 /// what was dropped, not from which policy dropped it.
 /// </para>
 /// </remarks>
-public static class GopShedGate
+internal static class GopShedGate
 {
     /// <summary>
     /// Decides whether one packet may be admitted, given the state left by the packets
@@ -80,7 +80,7 @@ public static class GopShedGate
     /// Whether this packet carries <c>AV_PKT_FLAG_KEY</c>. A keyframe decodes from nothing,
     /// so it is the point at which a broken chain becomes whole again.
     /// </param>
-    public static (GopShedState Next, PacketAdmission Admission) Offer(
+    internal static (GopShedState Next, PacketAdmission Admission) Offer(
         GopShedState state,
         bool isKeyframe
     )
@@ -101,7 +101,7 @@ public static class GopShedGate
     /// Records that the packet just offered was dropped after all — the queue was full and
     /// the send could not block. Every packet from here to the next keyframe is unusable.
     /// </summary>
-    public static GopShedState AfterShed(GopShedState state) =>
+    internal static GopShedState AfterShed(GopShedState state) =>
         state with
         {
             AwaitingKeyframe = true,

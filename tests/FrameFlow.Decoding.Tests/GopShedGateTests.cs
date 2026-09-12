@@ -1,4 +1,4 @@
-using FrameFlow.Decoding;
+using FrameFlow.Decoding.Internal;
 
 namespace FrameFlow.Decoding.Tests;
 
