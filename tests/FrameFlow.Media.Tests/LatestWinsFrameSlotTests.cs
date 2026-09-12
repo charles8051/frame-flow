@@ -177,8 +177,10 @@ public sealed class LatestWinsFrameSlotTests
         foreach (var t in producerThreads)
             t.Join();
 
-        // Let the consumer drain whatever it can, then stop and final-drain on this thread.
-        Thread.Sleep(20);
+        // Stop the consumer and final-drain on this thread. There used to be a 20 ms sleep first to
+        // let the consumer take a few more, but conservation does not depend on who takes the last
+        // frames — the residual Take below collects whatever the consumer left — so it only
+        // decided how the tail was split, not whether the assertion holds.
         Volatile.Write(ref stopConsumer, true);
         consumer.Join();
 
