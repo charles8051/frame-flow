@@ -115,6 +115,25 @@ public sealed class SyncJoinTests
     /// Completes only by throwing when <paramref name="ct"/> fires. For a source that must
     /// never end on its own.
     /// </summary>
+    /// <summary>
+    /// For a test that is already failing: cancels a graph that has not finished and waits for
+    /// it to unwind, so its pumps do not keep running against this test's objects into the next
+    /// test. Bounded, and it swallows what the unwind throws — the exception worth reporting is
+    /// the one that got the test here.
+    /// </summary>
+    private static async Task StopAsync(Task run, CancellationTokenSource cts)
+    {
+        cts.Cancel();
+        try
+        {
+            await run.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Already failing.
+        }
+    }
+
     private static Task UntilCancelled(CancellationToken ct) =>
         new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(
             ct
@@ -465,9 +484,9 @@ public sealed class SyncJoinTests
         }
         catch
         {
-            // Cancel before the CTS is disposed, or a timeout here leaves the
+            // Stop before the CTS is disposed, or a timeout here leaves the
             // graph running against a disposed token for the rest of the run.
-            cts.Cancel();
+            await StopAsync(run, cts);
             throw;
         }
         Assert.Equal(2, got.Count);
@@ -582,15 +601,16 @@ public sealed class SyncJoinTests
         graph.Pipeline(join.Output).To(CollectInto(got));
 
         using var cts = new CancellationTokenSource();
+        var run = graph.RunAsync(cts.Token);
         try
         {
-            await graph.RunAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(15));
+            await run.WaitAsync(TimeSpan.FromSeconds(15));
         }
-        finally
+        catch
         {
-            // On a hang, stop the probe spin rather than leave it running for the rest
-            // of the suite. A no-op after a clean completion.
-            cts.Cancel();
+            // On a hang, stop the graph, probe spin included, before the test ends.
+            await StopAsync(run, cts);
+            throw;
         }
 
         Assert.Equal(2, got.Count);
