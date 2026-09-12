@@ -195,6 +195,36 @@ public readonly record struct AudioClockState
     }
 
     /// <summary>
+    /// Moves the origin so that <see cref="Position"/> reads <paramref name="resumeAt"/>
+    /// against the device's current counters — the re-anchor a resume needs.
+    /// </summary>
+    /// <remarks>
+    /// A pause latches the position it stopped at, and the device's counters are not
+    /// trusted across the pause: a device that dropped its queue reports the whole queue
+    /// processed, which is the 1.09&#160;s the clock used to gain over a long pause (#127).
+    /// Rather than unpick what drained, this seats the origin so the clock continues from
+    /// where the pause left it, whatever the counters now say. A queue that survived the
+    /// pause is unaffected: its offset is already included, so the result is the same
+    /// position either way.
+    /// </remarks>
+    /// <param name="resumeAt">The position the clock should read at this instant.</param>
+    /// <param name="deviceSampleOffset">The live <c>AL_SAMPLE_OFFSET</c> the shell read.</param>
+    /// <param name="sampleRate">Samples per channel per second.</param>
+    public AudioClockState RebaseOnResume(
+        TimeSpan resumeAt,
+        long deviceSampleOffset,
+        int sampleRate
+    )
+    {
+        if (sampleRate <= 0)
+            return this with { BaseSourceTime = resumeAt, OriginSeated = true };
+
+        long consumed = ProcessedSamplesPerChannel + deviceSampleOffset;
+        var origin = resumeAt - TimeSpan.FromSeconds((double)consumed / sampleRate);
+        return this with { BaseSourceTime = origin, OriginSeated = true };
+    }
+
+    /// <summary>
     /// Applies an out-of-band seek reseat (the sink's <c>SeekBaseline</c> body): sets
     /// the origin to <paramref name="position"/>, marks it seated, retains the seed for
     /// the next activation, and zeroes the processed count. The immediate seat covers a

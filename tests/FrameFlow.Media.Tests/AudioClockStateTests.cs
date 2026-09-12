@@ -358,6 +358,59 @@ public sealed class AudioClockStateTests
         Assert.Equal(TimeSpan.Zero, afterBuffer.BaseSourceTime);
     }
 
+    // ── RebaseOnResume (#127) ────────────────────────────────────────
+
+    [Fact]
+    public void RebaseOnResume_ReadsTheGivenPositionImmediately()
+    {
+        // Mid-file with a queue that survived the pause: 4 s of processed audio and a
+        // quarter-second into the buffer on the device.
+        var state = AudioClockState
+            .Initial.SeekBaseline(TimeSpan.FromSeconds(2))
+            .WithProcessed(4 * Rate);
+
+        var rebased = state.RebaseOnResume(TimeSpan.FromSeconds(4.34), Rate / 4, Rate);
+
+        Assert.Equal(TimeSpan.FromSeconds(4.34), rebased.Position(Rate / 4, Rate));
+        Assert.True(rebased.OriginSeated);
+    }
+
+    [Fact]
+    public void RebaseOnResume_KeepsADrainedQueueOutOfThePosition()
+    {
+        // The #127 shape: the device marked the whole 16-buffer pool processed while
+        // paused, so the counter is a second further on than the pause position. The
+        // rebase must report where the pause stopped, not that plus the pool.
+        var pausedAt = TimeSpan.FromSeconds(4.34);
+        var state = AudioClockState.Initial.SeekBaseline(TimeSpan.Zero).WithProcessed(4 * Rate);
+        var drained = state.WithProcessed((long)(1.09 * Rate));
+
+        var rebased = drained.RebaseOnResume(pausedAt, deviceSampleOffset: 0, sampleRate: Rate);
+
+        Assert.Equal(pausedAt, rebased.Position(0, Rate));
+    }
+
+    [Fact]
+    public void RebaseOnResume_AdvancesFromThePausePositionAsTheQueuePlaysOn()
+    {
+        var state = AudioClockState.Initial.SeekBaseline(TimeSpan.Zero).WithProcessed(4 * Rate);
+
+        var rebased = state.RebaseOnResume(TimeSpan.FromSeconds(4), deviceSampleOffset: 0, sampleRate: Rate);
+
+        // Half a second of device offset after the resume reads half a second on.
+        Assert.Equal(TimeSpan.FromSeconds(4.5), rebased.Position(Rate / 2, Rate));
+    }
+
+    [Fact]
+    public void RebaseOnResume_WithNoFormatYetSeatsTheOriginDirectly()
+    {
+        var rebased = AudioClockState.Initial.RebaseOnResume(
+            TimeSpan.FromSeconds(3), deviceSampleOffset: 0, sampleRate: 0);
+
+        Assert.Equal(TimeSpan.FromSeconds(3), rebased.BaseSourceTime);
+        Assert.True(rebased.OriginSeated);
+    }
+
     // ── Value semantics ────────────────────────────────────────────────────────
 
     [Fact]
@@ -371,6 +424,7 @@ public sealed class AudioClockStateTests
         _ = original.SeatOnActivate();
         _ = original.CaptureFirstBufferPts(TimeSpan.FromSeconds(99));
         _ = original.OnDeactivate();
+        _ = original.RebaseOnResume(TimeSpan.FromSeconds(3), 0, Rate);
         _ = original.Position(Rate, Rate);
 
         Assert.Equal(TimeSpan.FromSeconds(10), original.BaseSourceTime);
