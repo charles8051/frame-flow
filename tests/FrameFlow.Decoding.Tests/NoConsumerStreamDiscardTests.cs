@@ -76,33 +76,56 @@ public sealed class NoConsumerStreamDiscardTests : IClassFixture<FfmpegBootstrap
         // This used to drain at ~25 fps with a 40 ms delay and poll the EOF flag every 250 ms
         // for two seconds. The pacing was never the property: what matters is that the consumer
         // is slower than an unthrottled pump, and a consumer that stops is the slowest there is.
+        //
+        // The drain runs on its own task and is raced against the pump. The pump does not
+        // complete the decoder's queue at EOF, so a regression that ends it before 600 frames
+        // were queued would leave a drain awaited inline waiting forever — a hang, not a failure.
         const int drainFrames = 600;
-        var drained = 0;
-        await foreach (var f in videoDecoder.DecodeAsync(cts.Token).ConfigureAwait(false))
-        {
-            f.Dispose();
-            if (++drained == drainFrames)
-                break;
-        }
+        var drain = Task.Run(
+            async () =>
+            {
+                var frames = 0;
+                try
+                {
+                    await foreach (var f in videoDecoder.DecodeAsync(cts.Token).ConfigureAwait(false))
+                    {
+                        f.Dispose();
+                        if (++frames == drainFrames)
+                            break;
+                    }
+                }
+                catch (OperationCanceledException) { }
+                return frames;
+            },
+            cts.Token
+        );
 
-        // The decoder pulls nothing more, so nothing will drain the queue again. A pump that
-        // honours backpressure is now blocked on it, or about to be, and stays blocked. The
-        // regression reads on at IO speed, sheds through the drop path, and reaches EOF.
-        var parked = pipeline.WaitUntilParkedAsync();
-        var first = await Task.WhenAny(pump, parked).WaitAsync(TimeSpan.FromSeconds(30));
+        var consumerFinished = await Task.WhenAny(pump, drain).WaitAsync(TimeSpan.FromSeconds(30)) == drain;
+
+        // Once the drain has finished the decoder pulls nothing more, so nothing will drain the
+        // queue again. A pump that honours backpressure is now blocked on it, or about to be, and
+        // stays blocked. The regression reads on at IO speed, sheds through the drop path, and
+        // reaches EOF.
+        var parkedFirst = false;
+        if (consumerFinished)
+        {
+            var parked = pipeline.WaitUntilParkedAsync();
+            parkedFirst = await Task.WhenAny(pump, parked).WaitAsync(TimeSpan.FromSeconds(30)) == parked;
+        }
 
         var d = demux.GetDiagnostics();
         _output.WriteLine(
-            $"drained={drained}  PacketsRead={d.PacketsRead}  EndOfStream={d.EndOfStreamReached}  pumpDone={pump.IsCompleted}"
+            $"consumerFinished={consumerFinished}  PacketsRead={d.PacketsRead}  EndOfStream={d.EndOfStreamReached}  pumpDone={pump.IsCompleted}"
         );
 
         cts.Cancel();
         try { await pump.ConfigureAwait(false); } catch (OperationCanceledException) { }
+        var drained = await drain.ConfigureAwait(false);
 
         Assert.True(
-            first == parked && !d.EndOfStreamReached,
-            $"Demux pump reported EOF after {d.PacketsRead} packets with the consumer stopped at "
-                + $"{drained} frames, a few seconds into a 45s file. The audio-discard path "
+            parkedFirst && !d.EndOfStreamReached,
+            $"Demux pump reported EOF after {d.PacketsRead} packets with the consumer at "
+                + $"{drained} of {drainFrames} frames, a few seconds into a 45s file. The audio-discard path "
                 + "prematurely ends the pump, so video starves (plays the pre-buffered ~512 "
                 + "frames, then freezes while the clock runs on)."
         );
