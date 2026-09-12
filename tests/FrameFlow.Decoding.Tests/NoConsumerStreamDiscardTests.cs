@@ -21,10 +21,11 @@ public sealed class NoConsumerStreamDiscardTests : IClassFixture<FfmpegBootstrap
     private const string AvFixture = "test-av-h264-aac.mp4";
 
     // A long A/V clip (h264+aac). The precondition the 3s fixtures cannot meet is
-    // that the video stream holds far more packets than the decoder's 512-packet
-    // queue: this one is 45s at 60fps, so ~2700, and the drain loop below consumes
-    // ~125 of them. The pump therefore cannot legitimately reach end-of-stream
-    // inside the poll window, which is what makes a reported EOF a real failure.
+    // that the video stream holds far more packets than the test consumes plus the
+    // decoder's 512-packet queue: this one is 45s at 60fps, so ~2700, and the test
+    // drains 600 frames and then lets the queue fill. The pump therefore cannot
+    // legitimately reach end-of-stream, which is what makes a reported EOF a real
+    // failure.
     //
     // Opt-in fixture: generate-test-corpus.cs writes it only under
     // --include-benchmarks. The attribute below turns its absence into a reported
@@ -32,9 +33,9 @@ public sealed class NoConsumerStreamDiscardTests : IClassFixture<FfmpegBootstrap
     // suite does not read as covering this regression.
     //
     // The default corpus cannot host it. test-1080p60-h264-aac.mp4 is the longest
-    // non-benchmark fixture and is still too short: measured, the pump reaches
-    // EOF at 601 packets inside the first 250 ms poll, so the test fails for a
-    // reason that has nothing to do with the bug.
+    // non-benchmark fixture and is still too short: it has 601 packets, fewer than
+    // the drain alone consumes, so the pump would reach EOF for a reason that has
+    // nothing to do with the bug.
     private const string LongAvFixture = "bench-1080p60-h264-aac.mp4";
 
     /// <summary>
@@ -69,8 +70,17 @@ public sealed class NoConsumerStreamDiscardTests : IClassFixture<FfmpegBootstrap
         using var cts = new CancellationTokenSource();
         var pump = pipeline.RunDemuxPumpAsync(cts.Token);
 
-        // Drain the video decoder at ~25fps to mimic real-time paced playback,
-        // so the pump backpressures on the 512 queue exactly as it does live.
+        // Drain more than one queue's worth of frames, as fast as they decode, so the pump has
+        // blocked on the full queue and been released at least once. Then stop.
+        //
+        // This used to drain at ~25 fps with a 40 ms delay and poll the EOF flag every 250 ms
+        // for two seconds. The pacing was never the property: what matters is that the consumer
+        // is slower than an unthrottled pump, and a consumer that stops is the slowest there is.
+        //
+        // The drain runs on its own task and is raced against the pump. The pump does not
+        // complete the decoder's queue at EOF, so a regression that ends it before 600 frames
+        // were queued would leave a drain awaited inline waiting forever — a hang, not a failure.
+        const int drainFrames = 600;
         var drain = Task.Run(
             async () =>
             {
@@ -80,42 +90,47 @@ public sealed class NoConsumerStreamDiscardTests : IClassFixture<FfmpegBootstrap
                     await foreach (var f in videoDecoder.DecodeAsync(cts.Token).ConfigureAwait(false))
                     {
                         f.Dispose();
-                        frames++;
-                        await Task.Delay(40, cts.Token).ConfigureAwait(false);
+                        if (++frames == drainFrames)
+                            break;
                     }
                 }
                 catch (OperationCanceledException) { }
                 return frames;
             },
-            cts.Token
+            // Not cts.Token. If the pump wins the race before this task has started, cancelling
+            // would cancel the Task.Run itself, the delegate would never run, and awaiting the
+            // drain would throw instead of reporting the assertion. The decoder takes the token.
+            CancellationToken.None
         );
 
-        // Poll the demux EOF/packet counters for ~5s. A 45s 60fps file paced at 25fps
-        // should be nowhere near EOF this early.
-        var eof = false;
-        long packetsRead = 0;
-        for (var i = 0; i < 8; i++)
+        var consumerFinished = await Task.WhenAny(pump, drain).WaitAsync(TimeSpan.FromSeconds(30)) == drain;
+
+        // Once the drain has finished the decoder pulls nothing more, so nothing will drain the
+        // queue again. A pump that honours backpressure is now blocked on it, or about to be, and
+        // stays blocked. The regression reads on at IO speed, sheds through the drop path, and
+        // reaches EOF.
+        var parkedFirst = false;
+        if (consumerFinished)
         {
-            await Task.Delay(250);
-            var d = demux.GetDiagnostics();
-            eof = d.EndOfStreamReached;
-            packetsRead = d.PacketsRead;
-            _output.WriteLine(
-                $"t={(i + 1) * 250,5}ms  PacketsRead={packetsRead,6}  EndOfStream={eof}  pumpDone={pump.IsCompleted}"
-            );
-            if (eof)
-                break;
+            var parked = pipeline.WaitUntilParkedAsync();
+            parkedFirst = await Task.WhenAny(pump, parked).WaitAsync(TimeSpan.FromSeconds(30)) == parked;
         }
+
+        var d = demux.GetDiagnostics();
+        _output.WriteLine(
+            $"consumerFinished={consumerFinished}  PacketsRead={d.PacketsRead}  EndOfStream={d.EndOfStreamReached}  pumpDone={pump.IsCompleted}"
+        );
 
         cts.Cancel();
         try { await pump.ConfigureAwait(false); } catch (OperationCanceledException) { }
-        try { await drain.ConfigureAwait(false); } catch (OperationCanceledException) { }
+        var drained = await drain.ConfigureAwait(false);
 
-        Assert.False(
-            eof,
-            $"Demux pump reported EOF after only {packetsRead} packets, a few seconds into a "
-                + "45s file. The audio-discard path prematurely ends the pump, so video starves "
-                + "(plays the pre-buffered ~512 frames, then freezes while the clock runs on)."
+        Assert.True(
+            parkedFirst && !d.EndOfStreamReached,
+            $"Demux pump reported EOF after {d.PacketsRead} packets with the consumer at "
+                + $"{drained} of {drainFrames} frames, a few seconds into a 45s file. The audio-discard path "
+                + "prematurely ends the pump, so video starves (plays the pre-buffered ~512 "
+                + "frames, then freezes while the clock runs on)."
         );
     }
 
@@ -156,10 +171,15 @@ public sealed class NoConsumerStreamDiscardTests : IClassFixture<FfmpegBootstrap
         using var cts = new CancellationTokenSource();
         var pump = pipeline.RunDemuxPumpAsync(cts.Token);
 
-        var completedFirst = await Task.WhenAny(pump, Task.Delay(TimeSpan.FromSeconds(2)));
+        // Nothing drains the audio decoder, so a pump that honours backpressure suspends on the
+        // ninth audio packet and stays suspended. One that does not reads to EOF and completes.
+        // This used to wait two seconds and assert the pump had not finished, which says nothing
+        // about why; the park signal is the pump saying it is blocked on the full queue.
+        var parked = pipeline.WaitUntilParkedAsync();
+        var completedFirst = await Task.WhenAny(pump, parked).WaitAsync(TimeSpan.FromSeconds(30));
 
-        Assert.False(
-            completedFirst == pump,
+        Assert.True(
+            completedFirst == parked,
             "Demux pump completed instead of blocking on the undrained bounded audio "
                 + "queue. The video-starvation backpressure was not reproduced."
         );

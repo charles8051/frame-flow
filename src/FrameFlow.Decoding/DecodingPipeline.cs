@@ -40,6 +40,24 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
     private int _pendingPacketStreamIndex = -1;
     private bool _disposed;
 
+    // ── Park seam (test observability, ADR-0072) ────────────────────────────
+    //
+    // The pump's defining behaviour is that it blocks when a decoder's queue is full: that is
+    // what paces it to the consumer, and what an undrained stream turns into a deadlock
+    // (ADR-0059, ADR-0060). A test that wants to show the pump blocked used to wait a fixed time
+    // and assert it had not finished — a claim about a duration rather than about the pump.
+    //
+    // "Parked" is the pump suspended on a queue write that did not complete synchronously. Only
+    // writes that actually suspend count, and only the pump's own: a write with room completes
+    // inline and is the pump carrying on. Level-triggered, because every caller so far asks "is
+    // it blocked now, or will it be", after arranging that nothing can unblock it.
+    //
+    // Production cost is an IsCompleted check per packet, and a lock only on the path that is
+    // about to suspend anyway.
+    private readonly object _parkGate = new();
+    private bool _isParked;
+    private readonly List<TaskCompletionSource> _parkWaiters = [];
+
     /// <summary>
     /// Creates a decoding pipeline for the given demux session and decoders.
     /// </summary>
@@ -57,6 +75,27 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
 
         _videoStreamIndex = demuxSession.MediaInfo.VideoStreams.FirstOrDefault()?.StreamIndex ?? -1;
         _audioStreamIndex = demuxSession.MediaInfo.AudioStreams.FirstOrDefault()?.StreamIndex ?? -1;
+    }
+
+    /// <summary>
+    /// Completes when the demux pump is suspended on a full decoder queue: at once if it already
+    /// is, otherwise when it next suspends.
+    /// </summary>
+    /// <remarks>
+    /// Race it against the pump task. A pump that reaches end-of-stream or faults never parks,
+    /// and awaiting this alone would then wait for the test timeout. The answer is only lasting
+    /// if the caller has arranged that nothing will drain the queue afterwards.
+    /// </remarks>
+    internal Task WaitUntilParkedAsync()
+    {
+        lock (_parkGate)
+        {
+            if (_isParked)
+                return Task.CompletedTask;
+            var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _parkWaiters.Add(signal);
+            return signal.Task;
+        }
     }
 
     /// <summary>
@@ -348,11 +387,13 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
         {
             if (streamIndex == _videoStreamIndex && _videoDecoder is not null)
             {
-                await _videoDecoder.SendPacketAsync(clone, cancellationToken).ConfigureAwait(false);
+                await ParkedAwaitAsync(_videoDecoder.SendPacketAsync(clone, cancellationToken))
+                    .ConfigureAwait(false);
             }
             else if (streamIndex == _audioStreamIndex && _audioDecoder is not null)
             {
-                await _audioDecoder.SendPacketAsync(clone, cancellationToken).ConfigureAwait(false);
+                await ParkedAwaitAsync(_audioDecoder.SendPacketAsync(clone, cancellationToken))
+                    .ConfigureAwait(false);
             }
             else
             {
@@ -375,6 +416,50 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
             {
                 FFAvCodec.av_packet_free(ref clone);
             }
+        }
+    }
+
+    // Awaits a decoder queue write, publishing a park only if the write is still pending when the
+    // park goes out. The completion test and the publish share one critical section, so a write
+    // that completed in the meantime publishes nothing. What cannot be excluded is a write that
+    // completes the instant after — a real suspension followed by a real wake — and the pump did
+    // reach a full queue, which is what the waiter was told.
+    private async ValueTask ParkedAwaitAsync(ValueTask send)
+    {
+        if (send.IsCompleted)
+        {
+            await send.ConfigureAwait(false);
+            return;
+        }
+
+        TaskCompletionSource[]? ready = null;
+        lock (_parkGate)
+        {
+            if (!send.IsCompleted)
+            {
+                _isParked = true;
+                ready = [.. _parkWaiters];
+                _parkWaiters.Clear();
+            }
+        }
+
+        if (ready is null)
+        {
+            await send.ConfigureAwait(false);
+            return;
+        }
+
+        foreach (var signal in ready)
+            signal.TrySetResult();
+
+        try
+        {
+            await send.ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_parkGate)
+                _isParked = false;
         }
     }
 
