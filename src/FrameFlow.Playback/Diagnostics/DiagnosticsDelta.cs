@@ -38,6 +38,13 @@ public enum DiagnosticsObservationKind
 
     /// <summary>A single-item loop stopped restarting.</summary>
     LoopStalled,
+
+    /// <summary>
+    /// The video decoder discarded packets to reach the next keyframe after an earlier drop
+    /// broke the reference chain (#134). Appended rather than placed next to
+    /// <see cref="VideoPacketsShed"/> so the existing members keep their values.
+    /// </summary>
+    VideoPacketsShedToGopResync,
 }
 
 /// <summary>

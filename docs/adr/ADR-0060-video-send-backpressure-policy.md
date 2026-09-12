@@ -10,6 +10,7 @@ Accepted.
 - ADR-0059 (discard streams with no consumer — the change that exposed this)
 - ADR-0003 (audio-master sync — a null audio sink falls back to the wallclock pacer)
 - ADR-0057 (pull-based master clock)
+- Amended 2026-09-12 by #134 — see *Amendment*, below
 
 ## Context
 
@@ -149,6 +150,48 @@ clock today, and the per-decoder queue is the existing, sufficient backpressure
 mechanism — it just had the wrong default for video. Revisit only if a future
 need (e.g. multi-pump or seek-heavy prefetch tuning) actually calls for it.
 
+## Amendment (#134): drop-newest did not preserve the GOP prefix
+
+*Added 2026-09-12. The decision above is unchanged. What changed is that one of the
+sentences it rests on became true.*
+
+**Context** above says drop-newest "preserves the queued GOP prefix, so the artifact is
+'video holds the last good frame for a beat' rather than garble." That was the intent and
+it was not what the code did. Freeing the newest packet truncates the tail of a GOP only
+if nothing after it is admitted. Nothing stopped that: the queue drained, `SendPacketAsync`
+resumed mid-GOP, and the decoder was handed P- and B-frames predicting from packets that
+had been freed.
+
+FFmpeg reconstructs those frames and reports no error, because nothing failed — it decoded
+exactly what it was given. `DecodeErrors` stayed at zero while the picture filled with
+macroblock-aligned garbage, green and magenta chroma blocks, and regions holding content
+from several frames earlier. It healed partially at each keyframe and degraded again until
+the next one. The only counter that tracked it was the shed count.
+
+So drop-newest was not the gentler of the two artifacts this ADR chose between. It was a
+third one nobody had named: not a late picture, a wrong one.
+
+**The change.** `GopShedGate` holds the packet stream shut from the first shed packet to
+the next keyframe. Once a packet is lost, every following packet is freed rather than
+queued, until one arrives that decodes from nothing. A shed episode now costs the rest of
+its GOP, and the visible artifact is the one this ADR claimed all along.
+
+**What this does not change.** The block-vs-drop-newest decision, the flag that selects it,
+and the conditions under which each applies are all as decided above. The gate arms on a
+shed rather than on a policy, so it holds whichever mode is active when the chain breaks.
+
+**What it costs.** Fewer frames reach the screen during a shed episode than before — the
+tail of the GOP is given up deliberately. Shedding load *without* losing frames is
+`DecodeDiscardLevel`'s job (see `lateness-driven-decode-skip.md`): it discards with
+knowledge of frame types, so it cannot break a chain. The two mechanisms answer different
+triggers and both remain.
+
+**Diagnostics.** The two causes are counted apart.
+`VideoDecoderDiagnosticsSnapshot.PacketsDroppedForBackpressure` says how far behind the
+video chain fell; `PacketsDroppedToGopResync` says what that cost in picture. Both surface
+through `DiagnosticsInterpreter`, and both feed the one shed-rate warning (#143), which now
+says the drops reach the end of the GOP.
+
 ## Validation
 
 - **Decoding layer (deterministic) —
@@ -182,3 +225,4 @@ need (e.g. multi-pump or seek-heavy prefetch tuning) actually calls for it.
   `audioHasConsumer`.
 - `src/FrameFlow.Decoding/DecodingPipeline.cs` — the single demux pump.
 - ADR-0059 — the discard that removed the audio backpressure this restores.
+- `src/FrameFlow.Decoding/GopShedGate.cs` — the keyframe gate added by #134.

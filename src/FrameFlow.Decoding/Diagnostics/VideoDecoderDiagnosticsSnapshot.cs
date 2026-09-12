@@ -52,11 +52,21 @@ namespace FrameFlow.Decoding.Diagnostics;
 /// "video pauses on the last good frame for a beat" artifact. Audio
 /// is unaffected. See <c>VideoDecoder.SendPacketAsync</c>'s xmldoc.
 /// </param>
+/// <param name="PacketsDroppedToGopResync">
+/// Cumulative count of packets shed because an earlier drop had already
+/// broken the reference chain and no keyframe had arrived since (#134).
+/// These are not the video chain falling further behind; they are the
+/// picture given up to avoid decoding frames whose references are gone.
+/// Read it against <paramref name="PacketsDroppedForBackpressure"/>: that
+/// one says how far behind the chain fell, this one says what it cost.
+/// See <c>GopShedGate</c>.
+/// </param>
 public sealed record VideoDecoderDiagnosticsSnapshot(
     long FramesDecoded,
     long DecodeErrors,
     HardwareDecodeBackendKind? HardwareBackend,
-    long PacketsDroppedForBackpressure = 0
+    long PacketsDroppedForBackpressure = 0,
+    long PacketsDroppedToGopResync = 0
 )
 {
     /// <summary>
@@ -68,6 +78,7 @@ public sealed record VideoDecoderDiagnosticsSnapshot(
             FramesDecoded: 0,
             DecodeErrors: 0,
             HardwareBackend: null,
-            PacketsDroppedForBackpressure: 0
+            PacketsDroppedForBackpressure: 0,
+            PacketsDroppedToGopResync: 0
         );
 }

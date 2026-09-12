@@ -85,7 +85,9 @@ FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareBackend.g
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareBackend.init -> void
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedForBackpressure.get -> long
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedForBackpressure.init -> void
-FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.VideoDecoderDiagnosticsSnapshot(long FramesDecoded, long DecodeErrors, FrameFlow.Media.HardwareDecodeBackendKind? HardwareBackend, long PacketsDroppedForBackpressure = 0) -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedToGopResync.get -> long
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedToGopResync.init -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.VideoDecoderDiagnosticsSnapshot(long FramesDecoded, long DecodeErrors, FrameFlow.Media.HardwareDecodeBackendKind? HardwareBackend, long PacketsDroppedForBackpressure = 0, long PacketsDroppedToGopResync = 0) -> void
 FrameFlow.Decoding.FrameFlowDecodingOptions
 FrameFlow.Decoding.FrameFlowDecodingOptions.AudioDecoderFactory.get -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IAudioDecoder?>?
 FrameFlow.Decoding.FrameFlowDecodingOptions.AudioDecoderFactory.set -> void
