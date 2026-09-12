@@ -16,11 +16,12 @@ namespace FrameFlow.Integration.Tests;
 /// shed a third of its packets and the suite passed (#140).
 /// </para>
 /// <para>
-/// <b>Why zero is the right expectation.</b> These are 3-second 320x240 clips decoded in
-/// software with no inference stage. Nothing in a nominal run has a reason to shed a packet,
-/// drop a frame for sync, or fail a decode. A clip that legitimately cannot be decoded in real
-/// time belongs in a separately marked test with its own stated budget, not in here behind a
-/// loose threshold that makes the gate meaningless.
+/// <b>Where zero is the right expectation, and where it is not.</b> These are 3-second 320x240
+/// clips decoded in software with no inference stage, so nothing in a nominal run has a reason
+/// to shed a packet or fail a decode: those are demanded exactly. Frames dropped for sync are
+/// different, because that counter moves with how the runner was scheduled rather than with
+/// whether the pipeline is correct. Presentation is gated two other ways instead — every
+/// decoded frame must be accounted for, and the large majority must actually reach the sink.
 /// </para>
 /// <para>
 /// <b>What is deliberately not asserted.</b>
@@ -86,6 +87,13 @@ public sealed class NominalRunHealthTests : IClassFixture<FfmpegBootstrapFixture
         var (controller, audioSink, videoSink) = IntegrationTestHelper.CreateController();
         await using (controller)
         {
+            // PlayToCompletionAsync watches state, not errors. A recoverable PlaybackError
+            // leaves the run Ended, so without this a transient fault passes the gate silently.
+            var errors = new List<PlaybackError>();
+            using var errSub = controller.ErrorOccurred.Subscribe(
+                new ActionObserver<PlaybackError>(errors.Add)
+            );
+
             var (load, play) = await IntegrationTestHelper.PlayToCompletionAsync(
                 controller,
                 MediaSource.FromFile(filePath!)
@@ -94,6 +102,7 @@ public sealed class NominalRunHealthTests : IClassFixture<FfmpegBootstrapFixture
             Assert.True(load.IsSuccess, $"{filename}: LoadAsync failed ({load.Error?.Message}).");
             Assert.True(play.IsSuccess, $"{filename}: PlayAsync failed ({play.Error?.Message}).");
             Assert.Equal(PlaybackState.Ended, controller.State);
+            Assert.Empty(errors);
 
             var info = controller.MediaInfo;
             Assert.NotNull(info);
@@ -146,6 +155,21 @@ public sealed class NominalRunHealthTests : IClassFixture<FfmpegBootstrapFixture
                         + $"{accountedFor} — {pipeline.VideoSink.FramesPresented} presented plus "
                         + $"{pipeline.VideoFramesDroppedForSync} dropped for sync. The difference "
                         + "went missing with no counter recording it."
+                );
+
+                // Conservation on its own would pass a run that dropped every frame for sync and
+                // presented none, so it needs a floor under presentation. Half is deliberately
+                // far from both sides it separates: a descheduled runner costs a handful of
+                // frames out of 72–90, and a presentation-loss regression costs most of them.
+                // A tighter bound would start measuring the runner, which is what the sync-drop
+                // counter is kept out of this gate for.
+                var floor = decoder.FramesDecoded / 2;
+                Assert.True(
+                    pipeline.VideoSink.FramesPresented >= floor,
+                    $"{filename}: only {pipeline.VideoSink.FramesPresented} of "
+                        + $"{decoder.FramesDecoded} decoded frames reached the sink "
+                        + $"({pipeline.VideoFramesDroppedForSync} dropped for sync). A stalled "
+                        + $"runner does not lose half a clip; expected at least {floor}."
                 );
             }
 
