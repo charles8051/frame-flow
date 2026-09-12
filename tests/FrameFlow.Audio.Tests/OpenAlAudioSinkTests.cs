@@ -473,16 +473,21 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
         // ── Burst 1: two seconds, then let the source starve ────────────────
         await FeedBurstAsync(sink, blocks: burstBlocks);
 
-        // No real device: the sink is inert, nothing drains, and there is nothing to
-        // exercise. Same trivial-pass gate as the backpressure test above.
-        if (sink.GetPlaybackTime() == TimeSpan.Zero && sink.BackpressureCount == 0)
-            return;
-
-        long backpressureAfterFirst = sink.BackpressureCount;
+        // A device that did not drain two seconds into a sixteen-buffer pool did not open
+        // or is not playing. FRAMEFLOW_AUDIO_DEVICE_TESTS=1 is the operator asserting there
+        // is one, so that is a broken environment and this says so.
+        //
+        // The neighbouring device-gated tests return green here instead. xUnit v2 has no
+        // dynamic skip, so the choice is between failing and passing a test that exercised
+        // nothing, and a regression that turns a sink silently inaudible is exactly the
+        // kind that hides behind the second. CI does not set the variable, so CI skips this
+        // at the attribute rather than reaching here.
         Assert.True(
-            backpressureAfterFirst > 0,
-            "Burst 1 never filled the buffer pool, so the device was not draining and the "
-                + "underrun this test depends on cannot be provoked."
+            sink.BackpressureCount > 0 && sink.GetPlaybackTime() > TimeSpan.Zero,
+            "Burst 1 neither filled the buffer pool nor advanced the clock, so nothing "
+                + "drained it. The underrun this test depends on cannot be provoked, and "
+                + "with FRAMEFLOW_AUDIO_DEVICE_TESTS set that is a device that did not open "
+                + "or did not play — not a reason to pass."
         );
 
         // Two seconds of audio, three seconds of silence: the queue is empty and the
