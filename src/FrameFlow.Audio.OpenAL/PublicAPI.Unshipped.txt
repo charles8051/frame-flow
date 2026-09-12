@@ -24,6 +24,7 @@ FrameFlow.Audio.OpenAL.OpenAlAudioSink.ActivateAsync(System.Threading.Cancellati
 FrameFlow.Audio.OpenAL.OpenAlAudioSink.BackpressureCount.get -> long
 FrameFlow.Audio.OpenAL.OpenAlAudioSink.BlocksWritten.get -> long
 FrameFlow.Audio.OpenAL.OpenAlAudioSink.DeactivateAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Audio.OpenAL.OpenAlAudioSink.DeviceDisconnected.get -> bool
 FrameFlow.Audio.OpenAL.OpenAlAudioSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
 FrameFlow.Audio.OpenAL.OpenAlAudioSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot!
 FrameFlow.Audio.OpenAL.OpenAlAudioSink.GetPlaybackTime() -> System.TimeSpan

@@ -115,6 +115,12 @@ public sealed partial class OpenAlAudioSink
     // _clockAnchor — see InvalidateClockAnchorsUnderLock. Guarded by _stateLock.
     private AudioClockRateAnchor _rateAnchor = AudioClockRateAnchor.None;
 
+    // Latched once the device has reported itself gone, so the error is logged once per
+    // activation rather than once per flush. Read off-thread by DeviceDisconnected without
+    // the sink lock, so it is an int touched through Interlocked/Volatile like the other
+    // lock-free tallies rather than a bool guarded by _stateLock.
+    private int _deviceDisconnected;
+
     // The position the clock stopped at, while it is stopped; null whenever playing.
     // A paused device's counters are not evidence of anything: the clock reads this and
     // ResumeAsync re-anchors onto it, so whatever the queue did meanwhile stays out of
@@ -288,6 +294,32 @@ public sealed partial class OpenAlAudioSink
         _timeProvider = timeProvider ?? HighResolutionTimeProvider.Preferred;
     }
 
+    /// <summary>
+    /// Whether the audio endpoint this sink is playing on has gone away underneath it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A Remote Desktop session disconnecting removes its Remote Audio endpoint, and an
+    /// output device can be disabled or unplugged. OpenAL Soft keeps mixing over the dead
+    /// device either way, marking queued buffers processed without playing them — audible
+    /// as silence, and visible to this sink only as a sample counter that keeps advancing.
+    /// Nothing else distinguishes it from playback, which is how it cost a session before
+    /// it was named (#127).
+    /// </para>
+    /// <para>
+    /// Latched, not momentary: it stays true for the rest of the activation once seen, so
+    /// a consumer polling it cannot miss the transition between polls. The device is shared
+    /// process-wide (ADR-0058), so every sink in the process reports the same endpoint.
+    /// </para>
+    /// <para>
+    /// Reporting only. The clock is held to real time by
+    /// <see cref="FrameFlow.Media.AudioClockRateLimit"/> whether or not anyone reads this,
+    /// and recovering the endpoint is not attempted — that means reopening the device the
+    /// whole process shares, which is a larger change than this observation.
+    /// </para>
+    /// </remarks>
+    public bool DeviceDisconnected => Volatile.Read(ref _deviceDisconnected) != 0;
+
     /// <inheritdoc/>
     public unsafe ValueTask ActivateAsync(CancellationToken cancellationToken = default)
     {
@@ -344,12 +376,13 @@ public sealed partial class OpenAlAudioSink
                 _blocksWritten = 0;
                 _underrunCount = 0;
                 _backpressureCount = 0;
+            _deviceDisconnected = 0;
                 // Source-started latch + staging fill level reset together via the pure
                 // value (was `_sourceStarted = false; _stagingCount = 0;`).
                 _queue = _queue.ResetForActivation();
                 SeatBaseSourceTimeOnActivate();
                 _sessionClock.Restart();
-                LogStarted(_logger, BufferPoolSize, PreBufferCount, CoalesceTargetSamples);
+                LogStarted(_logger, _contextLease?.DeviceName ?? "(no device)", BufferPoolSize, PreBufferCount, CoalesceTargetSamples);
                 return ValueTask.CompletedTask;
             }
 
@@ -382,13 +415,14 @@ public sealed partial class OpenAlAudioSink
             _blocksWritten = 0;
             _underrunCount = 0;
             _backpressureCount = 0;
+            _deviceDisconnected = 0;
             // Source-started latch + staging fill level reset together via the pure
             // value (was `_sourceStarted = false; _stagingCount = 0;`).
             _queue = _queue.ResetForActivation();
             SeatBaseSourceTimeOnActivate();
             _sessionClock.Restart();
 
-            LogStarted(_logger, BufferPoolSize, PreBufferCount, CoalesceTargetSamples);
+            LogStarted(_logger, _contextLease?.DeviceName ?? "(no device)", BufferPoolSize, PreBufferCount, CoalesceTargetSamples);
             return ValueTask.CompletedTask;
         }
     }
@@ -605,6 +639,14 @@ public sealed partial class OpenAlAudioSink
                 return FlushStep.Done;
 
             RecycleProcessedBuffers();
+
+            // Endpoint liveness, at the same once-per-flush cadence as the underrun check
+            // below and for the same reason: it is the other way the device stops being a
+            // place audio goes. It is not folded into that check because the two do not
+            // co-occur — a dead endpoint keeps reporting buffers processed, so the source
+            // never starves and no underrun is ever observed (#127).
+            if (firstPass)
+                ObserveEndpointLivenessUnderLock();
 
             // Underrun check (once per flush, as before). The device SourceState read
             // stays gated behind firstPass && SourceStarted so the hot path never reads
@@ -1177,6 +1219,27 @@ public sealed partial class OpenAlAudioSink
     /// state) maps to <see cref="AlSourceState.PlayingOrInitial"/> — the same two-way split
     /// the old inline <c>(SourceState)state is … Paused or Stopped</c> tests made.
     /// </summary>
+    /// <summary>
+    /// Reads <c>ALC_CONNECTED</c> and latches the first time it says the endpoint is gone.
+    /// Must hold <see cref="_stateLock"/>.
+    /// </summary>
+    /// <remarks>
+    /// Logs once per activation, not once per flush: the condition does not clear on its
+    /// own, and a per-flush error would bury the moment it happened under thousands of
+    /// copies of itself.
+    /// </remarks>
+    private void ObserveEndpointLivenessUnderLock()
+    {
+        if (_contextLease is null || Volatile.Read(ref _deviceDisconnected) != 0)
+            return;
+
+        if (_contextLease.IsConnected)
+            return;
+
+        Volatile.Write(ref _deviceDisconnected, 1);
+        LogDeviceDisconnected(_logger, _contextLease.DeviceName);
+    }
+
     private AlSourceState ReadSourceStateUnderLock()
     {
         _al!.GetSourceProperty(_source, GetSourceInteger.SourceState, out int state);
@@ -1231,14 +1294,21 @@ public sealed partial class OpenAlAudioSink
 
     [LoggerMessage(
         Level = LogLevel.Debug,
-        Message = "OpenAL audio sink started. BufferPoolSize={BufferPoolSize}, PreBufferCount={PreBufferCount}, CoalesceTarget={CoalesceTarget} samples"
+        Message = "OpenAL audio sink started on {Device}. BufferPoolSize={BufferPoolSize}, PreBufferCount={PreBufferCount}, CoalesceTarget={CoalesceTarget} samples"
     )]
     private static partial void LogStarted(
         ILogger logger,
+        string device,
         int bufferPoolSize,
         int preBufferCount,
         int coalesceTarget
     );
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Audio endpoint {Device} reported itself disconnected (ALC_CONNECTED=0). The device is no longer playing; buffers it accepts from here are discarded, not heard. A Remote Desktop session ending, or the output device being disabled or unplugged, does this."
+    )]
+    private static partial void LogDeviceDisconnected(ILogger logger, string device);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "OpenAL: failed to open audio device")]
     private static partial void LogDeviceOpenFailed(ILogger logger);
