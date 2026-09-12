@@ -112,21 +112,23 @@ public sealed class SyncJoinTests
     }
 
     /// <summary>
-    /// Completes only by throwing when <paramref name="ct"/> fires. For a source that must
-    /// never end on its own.
-    /// </summary>
-    /// <summary>
     /// For a test that is already failing: cancels a graph that has not finished and waits for
     /// it to unwind, so its pumps do not keep running against this test's objects into the next
-    /// test. Bounded, and it swallows what the unwind throws — the exception worth reporting is
-    /// the one that got the test here.
+    /// test.
     /// </summary>
+    /// <remarks>
+    /// Deliberately unbounded. A graph that ignores cancellation is a defect in its own right,
+    /// and waiting it out makes that show as this test hanging — until the run settings'
+    /// per-test timeout reports it — rather than as an abandoned graph interfering with whatever
+    /// runs next. What the unwind throws is swallowed; the exception worth reporting is the one
+    /// that got the test here, and the caller rethrows it.
+    /// </remarks>
     private static async Task StopAsync(Task run, CancellationTokenSource cts)
     {
         cts.Cancel();
         try
         {
-            await run.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            await run.ConfigureAwait(false);
         }
         catch
         {
@@ -134,6 +136,10 @@ public sealed class SyncJoinTests
         }
     }
 
+    /// <summary>
+    /// Completes only by throwing when <paramref name="ct"/> fires. For a source that must
+    /// never end on its own.
+    /// </summary>
     private static Task UntilCancelled(CancellationToken ct) =>
         new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(
             ct
