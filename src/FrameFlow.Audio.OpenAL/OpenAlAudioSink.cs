@@ -331,33 +331,10 @@ public sealed partial class OpenAlAudioSink
             if (_al is not null)
             {
                 // Re-activation on loop restart: the device/context/source/buffer pool are
-                // still valid. DeactivateAsync stopped the source and recycled all
-                // playback-queue buffers back to _freeBuffers, but may have re-queued
-                // one buffer onto the stopped source via the trailing FlushStagingBuffer
-                // call (if staging held residual samples at deactivation). That leftover
-                // buffer puts the source in a degenerate state for the next iteration:
-                // SourcePlay then runs over a queue whose head is a stale buffer from
-                // the prior iteration, and OpenAL Soft marks subsequent queued buffers
-                // as "processed" without the device actually playing them — producing
-                // silent loop-2+ playback. Force a clean source state here by reasserting
-                // SourceStop, draining any residual queue, and unconditionally rewinding.
-                unsafe
-                {
-                    _al.SourceStop(_source);
-                    _al.GetSourceProperty(_source, GetSourceInteger.BuffersQueued, out int residual);
-                    if (residual > 0)
-                    {
-                        var bufs = new uint[residual];
-                        fixed (uint* ptr = bufs)
-                            _al.SourceUnqueueBuffers(_source, residual, ptr);
-                        foreach (var buf in bufs)
-                            _freeBuffers.Enqueue(buf);
-                    }
-                    // SourceRewind on AL_STOPPED is a no-op for state, but it resets
-                    // the internal sample-offset cursor — defensive against drivers
-                    // that retain stale offset state across Stop/Play cycles.
-                    _al.SourceRewind(_source);
-                }
+                // still valid, but the source may carry a stale buffer from the prior
+                // iteration. Force a clean slate before the next prime — see
+                // ResetSourceQueueUnderLock for what that leftover does to loop 2.
+                ResetSourceQueueUnderLock();
 
                 // The OpenAL source handle persists across re-activation, so its
                 // AL_GAIN property should too — but re-asserting is defensive and
@@ -619,8 +596,9 @@ public sealed partial class OpenAlAudioSink
     /// that the caller should await a buffer return.
     /// </summary>
     /// <param name="firstPass">
-    /// Whether this is the first attempt of the current flush — the underrun check
-    /// runs once, mirroring the pre-async single check before the wait loop.
+    /// Whether this is the first attempt of the current flush — the endpoint-liveness
+    /// check runs once per flush rather than once per attempt. The underrun check is not
+    /// gated on it; see <see cref="BufferQueueState.ObserveUnderrun"/> for why.
     /// </param>
     /// <param name="writeSw">
     /// Stopwatch started when the flush began, recorded into
@@ -638,22 +616,20 @@ public sealed partial class OpenAlAudioSink
             if (_al is null || _disposed || _queue.StagingCount == 0)
                 return FlushStep.Done;
 
-            RecycleProcessedBuffers();
-
-            // Endpoint liveness, at the same once-per-flush cadence as the underrun check
-            // below and for the same reason: it is the other way the device stops being a
-            // place audio goes. It is not folded into that check because the two do not
-            // co-occur — a dead endpoint keeps reporting buffers processed, so the source
-            // never starves and no underrun is ever observed (#127).
-            if (firstPass)
-                ObserveEndpointLivenessUnderLock();
-
-            // Underrun check (once per flush, as before). The device SourceState read
-            // stays gated behind firstPass && SourceStarted so the hot path never reads
-            // it; the pure value then renders the Stopped → underrun verdict + latch.
-            if (firstPass && _queue.SourceStarted)
+            // Underrun check, before anything reads BuffersProcessed and on every pass,
+            // not just the first. The device SourceState read stays gated behind
+            // SourceStarted, so a priming sink never pays for it; the pure value renders
+            // the Stopped → underrun verdict + latch.
+            //
+            // Every pass, because a source can drain while this flush is parked in the
+            // backpressure wait. A retry that did not look would queue a buffer onto a
+            // source nobody had noticed was stopped — audio that never plays, credited to
+            // the clock by the next flush's recycle and then dropped by the re-prime.
+            // Before the recycle, because a processed count taken from a source whose stop
+            // has not been established yet cannot be read as a record of what played.
+            if (_queue.SourceStarted)
             {
-                var underrun = _queue.ObserveUnderrun(firstPass, ReadSourceStateUnderLock());
+                var underrun = _queue.ObserveUnderrun(ReadSourceStateUnderLock());
                 _queue = underrun.Next;
                 if (underrun.Underran)
                 {
@@ -665,8 +641,32 @@ public sealed partial class OpenAlAudioSink
                         out int queuedAtUnderrun
                     );
                     LogUnderrun(_logger, _underrunCount, _freeBuffers.Count, queuedAtUnderrun);
+
+                    // Credit what the device genuinely played, while that is still what
+                    // the processed count means. The check above runs on every pass, so
+                    // nothing has been queued since the source stopped: every processed
+                    // buffer here really was played. Forced because the latch just cleared
+                    // and the priming guard would otherwise skip it.
+                    RecycleProcessedBuffers(force: true);
+
+                    // Then put the starved source back in the state ActivateAsync hands
+                    // the pre-buffer gate: queue empty, cursor rewound. Without this the
+                    // re-prime queues onto a stopped source whose play cursor sits at the
+                    // end of the old queue, which is the degenerate state #133 and the
+                    // loop-restart comment in ActivateAsync both describe.
+                    ResetSourceQueueUnderLock();
                 }
             }
+
+            RecycleProcessedBuffers();
+
+            // Endpoint liveness, once per flush. It is the other way the device stops
+            // being a place audio goes, and it is deliberately not folded into the
+            // underrun check above: the two do not co-occur, because a dead endpoint keeps
+            // reporting buffers processed, so the source never starves and no underrun is
+            // ever observed (#127).
+            if (firstPass)
+                ObserveEndpointLivenessUnderLock();
 
             // Upload / backpressure plan. The source-state read only happens when the
             // pool is empty (the lazy ReadSourceStateUnderLock keeps the upload hot path
@@ -790,12 +790,14 @@ public sealed partial class OpenAlAudioSink
             else
             {
                 // Source drained (underrun) while we were paused — it is AL_STOPPED.
-                // Clear the source-started latch so FlushStagingBuffer re-arms the
-                // pre-buffer gate and will call SourcePlay again once enough data is
-                // queued.
-                _queue = _queue.MarkSourceStopped();
+                // Rebase first, while the latch still says the source was playing: the
+                // rebase returns that drained queue to the pool, and the priming guard in
+                // RecycleProcessedBuffers would skip it if the latch were already clear.
+                // Then clear the latch so FlushStagingBuffer re-arms the pre-buffer gate
+                // and will call SourcePlay again once enough data is queued.
                 _sessionClock.Start();
                 LogResumed(_logger, RebaseOnResumeUnderLock().TotalSeconds);
+                _queue = _queue.MarkSourceStopped();
             }
 
             return ValueTask.CompletedTask;
@@ -818,7 +820,7 @@ public sealed partial class OpenAlAudioSink
         if (_pausedPosition is not { } resumeAt)
             return GetPlaybackTimeUnderLock();
 
-        RecycleProcessedBuffers();
+        RecycleProcessedBuffers(force: true);
         _al!.GetSourceProperty(_source, GetSourceInteger.SampleOffset, out int sampleOffset);
         _clock = _clock.RebaseOnResume(resumeAt, sampleOffset, _sampleRate);
         _pausedPosition = null;
@@ -861,7 +863,7 @@ public sealed partial class OpenAlAudioSink
             // queues "processed" without playing them — silent loops 2+.
             _queue = _queue.ClearStaging();
 
-            RecycleProcessedBuffers();
+            RecycleProcessedBuffers(force: true);
 
             _sessionClock.Stop();
             LogStopped(
@@ -1251,9 +1253,77 @@ public sealed partial class OpenAlAudioSink
         };
     }
 
-    private unsafe void RecycleProcessedBuffers()
+    /// <summary>
+    /// Stops the source, returns its whole queue to <see cref="_freeBuffers"/>, and rewinds
+    /// the play cursor — the clean slate the pre-buffer gate primes from. Must hold
+    /// <see cref="_stateLock"/>, and <see cref="_al"/> must be non-null.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two paths need it. Re-activation on loop restart: <see cref="DeactivateAsync"/>
+    /// recycled the playback queue, but may have re-queued one buffer onto the stopped
+    /// source through its trailing flush if staging held residual samples. That leftover
+    /// sits at the queue head when the next iteration starts feeding, <c>SourcePlay</c>
+    /// runs over it, and OpenAL Soft marks the buffers queued behind it processed without
+    /// playing them — silent loop-2+ playback.
+    /// </para>
+    /// <para>
+    /// An underrun leaves the same degenerate state by a different route: the source
+    /// stopped on its own with its play cursor at the end of the queue (#133). Both want
+    /// the queue empty and the cursor at zero before the next prime begins.
+    /// </para>
+    /// <para>
+    /// The residual buffers are returned to the pool without crediting the clock. They are
+    /// exactly the buffers the device did <i>not</i> play — the ones it did are credited by
+    /// <see cref="RecycleProcessedBuffers"/> before either caller reaches here.
+    /// </para>
+    /// </remarks>
+    private unsafe void ResetSourceQueueUnderLock()
+    {
+        _al!.SourceStop(_source);
+
+        _al.GetSourceProperty(_source, GetSourceInteger.BuffersQueued, out int residual);
+        if (residual > 0)
+        {
+            var bufs = new uint[residual];
+            fixed (uint* ptr = bufs)
+                _al.SourceUnqueueBuffers(_source, residual, ptr);
+            foreach (var buf in bufs)
+                _freeBuffers.Enqueue(buf);
+        }
+
+        // SourceRewind on AL_STOPPED is a no-op for state, but it resets the internal
+        // sample-offset cursor — defensive against drivers that retain stale offset state
+        // across Stop/Play cycles.
+        _al.SourceRewind(_source);
+    }
+
+    /// <summary>
+    /// Returns every buffer the device has finished with to <see cref="_freeBuffers"/> and
+    /// credits its samples to the clock. A no-op while the queue is priming, unless
+    /// <paramref name="force"/> says the caller is draining the source on purpose.
+    /// </summary>
+    /// <param name="force">
+    /// Recycle even while <see cref="BufferQueueState.Priming"/> holds. Set by the two
+    /// lifecycle paths that stop the source themselves and want its queue back —
+    /// <see cref="RebaseOnResumeUnderLock"/> and <see cref="DeactivateAsync"/> — where the
+    /// processed count really is a drained queue and not the artefact described below.
+    /// </param>
+    /// <remarks>
+    /// The priming guard is the fix for #133. OpenAL Soft reports the entire queue of a
+    /// stopped source as processed, including buffers queued after it stopped, so recycling
+    /// against that count while re-priming unqueues each new buffer before the next one
+    /// arrives. The depth never reaches <see cref="PreBufferCount"/>, the pre-buffer gate
+    /// never fires <c>SourcePlay</c>, and the sink stays silent for the rest of its life
+    /// after a single underrun.
+    /// </remarks>
+    private unsafe void RecycleProcessedBuffers(bool force = false)
     {
         if (_al is null)
+            return;
+
+        // Not playing: the device's processed count is not a record of what it played (#133).
+        if (!force && _queue.Priming)
             return;
 
         _al.GetSourceProperty(_source, GetSourceInteger.BuffersProcessed, out int processed);

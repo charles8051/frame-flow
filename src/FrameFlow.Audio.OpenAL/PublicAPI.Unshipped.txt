@@ -9,8 +9,9 @@ FrameFlow.Audio.OpenAL.BufferQueueState.BufferQueueState() -> void
 FrameFlow.Audio.OpenAL.BufferQueueState.ClearStaging() -> FrameFlow.Audio.OpenAL.BufferQueueState
 FrameFlow.Audio.OpenAL.BufferQueueState.MarkSourceStopped() -> FrameFlow.Audio.OpenAL.BufferQueueState
 FrameFlow.Audio.OpenAL.BufferQueueState.ObserveQueueDepth(int queuedDepth) -> FrameFlow.Audio.OpenAL.StartOutcome
-FrameFlow.Audio.OpenAL.BufferQueueState.ObserveUnderrun(bool firstPass, FrameFlow.Audio.OpenAL.AlSourceState sourceState) -> FrameFlow.Audio.OpenAL.UnderrunOutcome
+FrameFlow.Audio.OpenAL.BufferQueueState.ObserveUnderrun(FrameFlow.Audio.OpenAL.AlSourceState sourceState) -> FrameFlow.Audio.OpenAL.UnderrunOutcome
 FrameFlow.Audio.OpenAL.BufferQueueState.PlanUpload(bool sinkActive, int freeBufferCount, FrameFlow.Audio.OpenAL.AlSourceState sourceState) -> FrameFlow.Audio.OpenAL.UploadDecision
+FrameFlow.Audio.OpenAL.BufferQueueState.Priming.get -> bool
 FrameFlow.Audio.OpenAL.BufferQueueState.ResetForActivation() -> FrameFlow.Audio.OpenAL.BufferQueueState
 FrameFlow.Audio.OpenAL.BufferQueueState.ShouldFlush.get -> bool
 FrameFlow.Audio.OpenAL.BufferQueueState.SourceStarted.get -> bool

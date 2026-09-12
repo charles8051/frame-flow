@@ -88,9 +88,10 @@ public readonly record struct StartOutcome(BufferQueueState Next, bool ShouldSta
 /// <item><see cref="AppendStaging"/> + <see cref="ShouldFlush"/> — the
 /// <c>_stagingCount += samples.Length; flushNeeded = _stagingCount &gt;= CoalesceTargetSamples</c>
 /// gate.</item>
-/// <item><see cref="ObserveUnderrun"/> — the once-per-flush
-/// <c>if (firstPass &amp;&amp; _sourceStarted &amp;&amp; state == Stopped) { underrun++; _sourceStarted = false; }</c>
-/// (the tally bump stays in the shell; this clears the latch and reports the event).</item>
+/// <item><see cref="ObserveUnderrun"/> — the
+/// <c>if (_sourceStarted &amp;&amp; state == Stopped) { underrun++; _sourceStarted = false; }</c>
+/// starve check (the tally bump stays in the shell; this clears the latch and reports the
+/// event).</item>
 /// <item><see cref="PlanUpload"/> — the
 /// <c>_freeBuffers.Count == 0 ? (paused/stopped ? Abort : NeedBuffer) : Upload</c> branch,
 /// plus the empty-staging / inert early-out.</item>
@@ -159,6 +160,32 @@ public readonly record struct BufferQueueState
     public bool SourceStarted { get; init; }
 
     /// <summary>
+    /// Whether the queue is priming: filling towards <see cref="ObserveQueueDepth"/>'s
+    /// pre-buffer threshold on a source that is not playing. While this holds, the
+    /// device's processed-buffer count is not evidence that anything was played, and the
+    /// shell must not recycle against it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Priming is exactly the absence of <see cref="SourceStarted"/>. The latch is only
+    /// ever clear when the source is AL_INITIAL (fresh activation) or AL_STOPPED (an
+    /// underrun, a drain while paused, or a deactivation), and OpenAL Soft reports the
+    /// whole queue of a stopped source as processed — including buffers queued <i>after</i>
+    /// it stopped, which it never played.
+    /// </para>
+    /// <para>
+    /// Recycling against that count is what kept a sink silent for the rest of its life
+    /// after one underrun (#133). Each re-primed buffer was unqueued on the next flush
+    /// before the next one arrived, so the depth oscillated between 0 and 1, never reached
+    /// <c>PreBufferCount</c>, and the pre-buffer gate never fired <c>SourcePlay</c> again.
+    /// The pool stayed full, so nothing backpressured; the count was credited to the clock,
+    /// so the position advanced; the latch stayed clear, so no second underrun was ever
+    /// observed. Every counter agreed the sink was fine.
+    /// </para>
+    /// </remarks>
+    public bool Priming => !SourceStarted;
+
+    /// <summary>
     /// Appends <paramref name="sampleCount"/> interleaved samples to the staging fill
     /// level (the sink's <c>_stagingCount += samples.Length</c>). The bytes themselves are
     /// copied into the shell's <c>short[]</c>; this only advances the count.
@@ -184,19 +211,35 @@ public readonly record struct BufferQueueState
     public BufferQueueState ClearStaging() => this with { StagingCount = 0 };
 
     /// <summary>
-    /// The once-per-flush underrun check (first pass only). Reproduces
-    /// <c>if (firstPass &amp;&amp; _sourceStarted &amp;&amp; state == Stopped) { underrun++; _sourceStarted = false; }</c>:
-    /// an underrun is detected only when this is the first attempt of the flush, playback
-    /// was started, and the device has since stopped (starved). On detection
-    /// <see cref="SourceStarted"/> clears so the pre-buffer gate re-arms, and
+    /// The underrun check: playback was started and the device has since stopped, so the
+    /// source starved. On detection <see cref="SourceStarted"/> clears — the pre-buffer
+    /// gate re-arms, <see cref="Priming"/> starts holding — and
     /// <see cref="UnderrunOutcome.Underran"/> tells the shell to bump its lock-free
-    /// underrun tally and log.
+    /// underrun tally, log, and re-prime the source.
     /// </summary>
-    /// <param name="firstPass">Whether this is the first upload attempt of the current flush.</param>
     /// <param name="sourceState">The live source state the shell just read.</param>
-    public UnderrunOutcome ObserveUnderrun(bool firstPass, AlSourceState sourceState)
+    /// <remarks>
+    /// <para>
+    /// <b>Once per starvation, by the latch alone.</b> This took a <c>firstPass</c>
+    /// argument so the check ran only on the first upload attempt of a flush. The latch
+    /// already gives that: detection clears <see cref="SourceStarted"/>, so every later
+    /// call reports nothing until <see cref="ObserveQueueDepth"/> re-fires, at which point
+    /// a stop really is a new starvation. The argument bought a skipped device read, not
+    /// correctness, and it cost more than it bought.
+    /// </para>
+    /// <para>
+    /// What it cost: a source that drains <i>while a flush is parked in backpressure</i>
+    /// was invisible to the retry pass, which then queued a buffer onto a source nobody
+    /// had noticed was stopped. The next flush's recycle credited that buffer to the clock
+    /// as played and the re-prime reset then dropped it — a block of audio lost and the
+    /// position a block ahead of it. Checking every pass means a buffer is never queued
+    /// onto a source observed stopped, which is what lets the shell treat a processed
+    /// count taken at detection as a record of what genuinely played.
+    /// </para>
+    /// </remarks>
+    public UnderrunOutcome ObserveUnderrun(AlSourceState sourceState)
     {
-        if (firstPass && SourceStarted && sourceState == AlSourceState.Stopped)
+        if (SourceStarted && sourceState == AlSourceState.Stopped)
             return new UnderrunOutcome(this with { SourceStarted = false }, Underran: true);
 
         return new UnderrunOutcome(this, Underran: false);

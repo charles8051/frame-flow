@@ -134,29 +134,50 @@ public sealed class BufferQueueStateTests
     // ── Underrun decision (ObserveUnderrun) ──────────────────────────────────────
 
     [Fact]
-    public void ObserveUnderrun_DetectsWhenStartedSourceStopped_FirstPass()
+    public void ObserveUnderrun_DetectsWhenStartedSourceStopped()
     {
         // The starved-source case: playback was running, the device drained to Stopped.
         var started = New().AppendStaging(CoalesceTarget).ObserveQueueDepth(PreBuffer).Next;
         Assert.True(started.SourceStarted);
 
-        var outcome = started.ObserveUnderrun(firstPass: true, AlSourceState.Stopped);
+        var outcome = started.ObserveUnderrun(AlSourceState.Stopped);
 
         Assert.True(outcome.Underran);
         Assert.False(outcome.Next.SourceStarted); // latch cleared so the gate re-arms
     }
 
     [Fact]
-    public void ObserveUnderrun_IgnoredOnLaterPasses()
+    public void ObserveUnderrun_CountsOneStarvationOnce()
     {
-        // The underrun check runs once per flush (firstPass only) — a later retry pass
-        // must not re-count the same stall.
+        // The latch is what makes the check once-per-starvation, not the caller checking
+        // once. Every later observation of the same stop reports nothing, so the shell can
+        // afford to run the check on every upload attempt — which is what stops a buffer
+        // being queued onto a source that stopped while a flush was parked.
         var started = New().AppendStaging(CoalesceTarget).ObserveQueueDepth(PreBuffer).Next;
 
-        var outcome = started.ObserveUnderrun(firstPass: false, AlSourceState.Stopped);
+        var first = started.ObserveUnderrun(AlSourceState.Stopped);
+        Assert.True(first.Underran);
 
-        Assert.False(outcome.Underran);
-        Assert.True(outcome.Next.SourceStarted); // unchanged
+        for (int pass = 0; pass < 5; pass++)
+        {
+            var again = first.Next.ObserveUnderrun(AlSourceState.Stopped);
+            Assert.False(again.Underran);
+            Assert.False(again.Next.SourceStarted);
+        }
+    }
+
+    [Fact]
+    public void ObserveUnderrun_CountsTheNextStarvationAfterTheGateReFires()
+    {
+        // Once the gate re-fires, the source is playing again, so a later stop is a new
+        // starvation rather than the same one seen twice.
+        var started = New().AppendStaging(CoalesceTarget).ObserveQueueDepth(PreBuffer).Next;
+        var afterFirst = started.ObserveUnderrun(AlSourceState.Stopped).Next;
+        var restarted = afterFirst.ObserveQueueDepth(PreBuffer).Next;
+
+        var second = restarted.ObserveUnderrun(AlSourceState.Stopped);
+
+        Assert.True(second.Underran);
     }
 
     [Fact]
@@ -167,7 +188,7 @@ public sealed class BufferQueueStateTests
         var notStarted = New().AppendStaging(CoalesceTarget);
         Assert.False(notStarted.SourceStarted);
 
-        var outcome = notStarted.ObserveUnderrun(firstPass: true, AlSourceState.Stopped);
+        var outcome = notStarted.ObserveUnderrun(AlSourceState.Stopped);
 
         Assert.False(outcome.Underran);
         Assert.False(outcome.Next.SourceStarted);
@@ -181,7 +202,7 @@ public sealed class BufferQueueStateTests
         // A still-playing or merely-paused source is not starved.
         var started = New().AppendStaging(CoalesceTarget).ObserveQueueDepth(PreBuffer).Next;
 
-        var outcome = started.ObserveUnderrun(firstPass: true, state);
+        var outcome = started.ObserveUnderrun(state);
 
         Assert.False(outcome.Underran);
         Assert.True(outcome.Next.SourceStarted);
@@ -230,12 +251,67 @@ public sealed class BufferQueueStateTests
         // After an underrun clears the latch, the gate must re-arm and fire again once
         // enough buffers are re-queued (the loop-restart-after-starve path).
         var started = New().AppendStaging(CoalesceTarget).ObserveQueueDepth(PreBuffer).Next;
-        var afterUnderrun = started.ObserveUnderrun(firstPass: true, AlSourceState.Stopped).Next;
+        var afterUnderrun = started.ObserveUnderrun(AlSourceState.Stopped).Next;
         Assert.False(afterUnderrun.SourceStarted);
 
         var restarted = afterUnderrun.ObserveQueueDepth(PreBuffer);
         Assert.True(restarted.ShouldStartPlayback);
         Assert.True(restarted.Next.SourceStarted);
+    }
+
+    // ── Priming (#133) ───────────────────────────────────────────────────────────
+    //
+    // Priming says the source is not playing, so the device's processed-buffer count is
+    // not a record of what it played. OpenAL Soft reports the whole queue of a stopped
+    // source as processed, including buffers queued after it stopped; recycling against
+    // that count while re-priming unqueues each new buffer before the next arrives, the
+    // depth never reaches the pre-buffer threshold, and the gate below never fires again.
+
+    [Fact]
+    public void Priming_HoldsBeforeTheGateFires()
+    {
+        var s = New();
+        Assert.True(s.Priming);
+
+        // Still priming at every depth below the threshold.
+        Assert.True(s.ObserveQueueDepth(PreBuffer - 1).Next.Priming);
+    }
+
+    [Fact]
+    public void Priming_ClearsWhenPlaybackStarts()
+    {
+        var started = New().AppendStaging(CoalesceTarget).ObserveQueueDepth(PreBuffer).Next;
+        Assert.False(started.Priming);
+    }
+
+    [Fact]
+    public void Priming_ReturnsAfterUnderrun()
+    {
+        // The regression the guard exists for: one underrun puts the queue back into
+        // priming, and it must stay there until the gate re-fires — for the whole
+        // re-prime, not just the flush that observed the starve.
+        var started = New().AppendStaging(CoalesceTarget).ObserveQueueDepth(PreBuffer).Next;
+        Assert.False(started.Priming);
+
+        var afterUnderrun = started.ObserveUnderrun(AlSourceState.Stopped).Next;
+        Assert.True(afterUnderrun.Priming);
+
+        for (int depth = 0; depth < PreBuffer; depth++)
+            Assert.True(afterUnderrun.ObserveQueueDepth(depth).Next.Priming);
+
+        Assert.False(afterUnderrun.ObserveQueueDepth(PreBuffer).Next.Priming);
+    }
+
+    [Fact]
+    public void Priming_HoldsAfterMarkSourceStoppedAndActivationReset()
+    {
+        // The other two routes to a stopped source: a drain while paused (ResumeAsync's
+        // else-branch) and a fresh activation. Both prime from an unplaying source, so
+        // both must suppress the recycle for the same reason.
+        var started = New().AppendStaging(CoalesceTarget).ObserveQueueDepth(PreBuffer).Next;
+
+        Assert.True(started.MarkSourceStopped().Priming);
+        Assert.True(started.ResetForActivation().Priming);
     }
 
     // ── Latch clears (MarkSourceStopped) ─────────────────────────────────────────
@@ -332,7 +408,7 @@ public sealed class BufferQueueStateTests
         _ = original.ClearStaging();
         _ = original.MarkSourceStopped();
         _ = original.ResetForActivation();
-        _ = original.ObserveUnderrun(true, AlSourceState.Stopped);
+        _ = original.ObserveUnderrun(AlSourceState.Stopped);
         _ = original.ObserveQueueDepth(PreBuffer + 5);
 
         Assert.Equal(1000, original.StagingCount);

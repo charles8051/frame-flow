@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics;
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Media;
 using FrameFlow.Graph;
@@ -427,6 +428,129 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
             "Clock did not advance — the device never consumed the queued buffers, so "
                 + "the backpressure path was not actually exercised."
         );
+    }
+
+    // ── Underrun recovery (#133) ────────────────────────────────────────────
+
+    // An intermittently-fed sink went permanently silent after its first underrun: the
+    // first burst played, every burst after it was accepted, counted and inaudible.
+    //
+    // OpenAL Soft reports the whole queue of a stopped source as processed, including
+    // buffers queued after it stopped. RecycleProcessedBuffers ran at the top of every
+    // flush, so each re-primed buffer was unqueued before the next one arrived, the depth
+    // oscillated between 0 and 1, and the pre-buffer gate never reached PreBufferCount to
+    // fire SourcePlay again.
+    //
+    // Nothing in the sink's own reporting said so, which is what makes the assertion below
+    // the one worth making. BlocksWritten rose by the full count, GetPlaybackTime advanced
+    // by exactly the duration pushed (the fake processed count was credited to the clock),
+    // and UnderrunCount stayed at 1 (the latch it would need to re-observe a starve was
+    // cleared and never re-latched). The one counter that told the truth was backpressure:
+    // a dead sink never fills its pool, so pushing into one returns immediately.
+    //
+    // Device-gated: the mechanism is a real OpenAL Soft behaviour, so a real device is the
+    // only place it reproduces. The device-free half of this fix is
+    // BufferQueueStateTests.Priming_*.
+
+    [RequiresAudioDeviceFact]
+    public async Task Underrun_RefeedAfterSilenceResumesPlayback()
+    {
+        await using var sink = new OpenAlAudioSink();
+        // These play on the machine running the test. Audible enough to check by ear,
+        // quiet enough not to matter.
+        sink.Volume = 0.05f;
+        await sink.ActivateAsync();
+
+        // Twenty blocks into a sixteen-buffer pool. The overflow is what makes the
+        // assertions below arithmetic rather than timing: the producer cannot finish
+        // pushing until the device has finished at least BurstBlocks - BufferPoolSize of
+        // them, and the device finishes buffers in real time, not at memcpy speed.
+        const int burstBlocks = 20;
+        const int bufferPoolSize = 16;
+        const int blockSamplesPerChannel = 2400; // 4800 interleaved / 2 channels
+        const long mustDrainPerChannel = (burstBlocks - bufferPoolSize) * blockSamplesPerChannel;
+
+        // ── Burst 1: two seconds, then let the source starve ────────────────
+        await FeedBurstAsync(sink, blocks: burstBlocks);
+
+        // Is there a device at all. The clock only advances on buffers OpenAL reported
+        // finished, so two seconds that left it at zero is a device that did not open or
+        // is not playing. Availability only — whether the pool saturated is the scenario's
+        // business, asserted below where a failure names the right thing.
+        //
+        // FRAMEFLOW_AUDIO_DEVICE_TESTS=1 is the operator asserting there is a device, so
+        // this fails rather than returning green. The neighbouring device-gated tests
+        // return instead; xUnit v2 has no dynamic skip, so the choice is between failing
+        // and passing a test that exercised nothing, and a regression that turns a sink
+        // silently inaudible is exactly the kind that hides behind the second. CI does not
+        // set the variable and skips at the attribute rather than reaching here.
+        Assert.True(
+            sink.GetPlaybackTime() > TimeSpan.Zero,
+            "Burst 1 left the playback clock at zero, so nothing drained it and the "
+                + "underrun this test depends on cannot be provoked. With "
+                + "FRAMEFLOW_AUDIO_DEVICE_TESTS set that is a device that did not open or "
+                + "did not play — not a reason to pass."
+        );
+
+        // Two seconds of audio, three seconds of silence: the queue is empty and the
+        // source is AL_STOPPED well before the next burst arrives.
+        await Task.Delay(TimeSpan.FromSeconds(3));
+
+        // Everything burst 1 played, credited. Burst 1 is fully drained by now, so the
+        // delta across burst 2 is burst 2's own audio and nothing else.
+        long processedBeforeSecond = sink.GetDiagnostics().ProcessedSamplesPerChannel;
+
+        // ── Burst 2: the same feed into the same sink ───────────────────────
+        var sw = Stopwatch.StartNew();
+        await FeedBurstAsync(sink, blocks: burstBlocks);
+        sw.Stop();
+
+        Assert.True(
+            sink.UnderrunCount >= 1,
+            "The source was expected to starve during the three-second gap, but no "
+                + "underrun was observed — the test never reached the state it guards."
+        );
+
+        // The source restarted. IsActive is the source-started latch, and the only thing
+        // that sets it is the pre-buffer gate firing and the shell calling SourcePlay. A
+        // sink wedged on a stopped source clears the latch at the underrun and never
+        // re-latches, because the queue depth never reaches PreBufferCount again.
+        Assert.True(
+            sink.GetDiagnostics().IsActive,
+            "The source-started latch is still clear after the second burst, so the "
+                + "pre-buffer gate never re-fired and SourcePlay was never re-issued. "
+                + "Everything pushed since the underrun is queued on a stopped source "
+                + "(#133)."
+        );
+
+        // And burst 2's own buffers went through the device. The pool cannot hold the
+        // whole burst, so the push above could not have returned until the device
+        // finished at least the overflow — a lower bound from the pool arithmetic, not
+        // from how fast anything ran. A latched-but-idle source never reaches it.
+        long drainedDuringSecond =
+            sink.GetDiagnostics().ProcessedSamplesPerChannel - processedBeforeSecond;
+        Assert.True(
+            drainedDuringSecond >= mustDrainPerChannel,
+            $"The device finished {drainedDuringSecond} samples/channel of burst 2, below the "
+                + $"{mustDrainPerChannel} the pool overflow requires. Burst 2's push returned in "
+                + $"{sw.Elapsed.TotalSeconds:0.00}s, so the sink accepted {burstBlocks} blocks "
+                + $"into a {bufferPoolSize}-buffer pool without the device draining any of "
+                + "them (#133)."
+        );
+
+        // Neither assertion proves audibility, and nothing short of capturing the output
+        // would: a dead endpoint marks buffers processed without playing them, which is
+        // what DeviceDisconnected rather than any of these counters exists for (#127).
+        Assert.False(
+            sink.DeviceDisconnected,
+            "The output endpoint went away mid-test, so nothing above says what was played."
+        );
+    }
+
+    private static async Task FeedBurstAsync(OpenAlAudioSink sink, int blocks)
+    {
+        for (int i = 0; i < blocks; i++)
+            await sink.PresentAsync(MakePcmBlock(samples: 4800, sampleRate: 48000, channels: 2));
     }
 
     // ── Volume / Mute ───────────────────────────────────────────────────────
