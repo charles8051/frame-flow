@@ -5,11 +5,6 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <!--
-      Opted out of the wall-clock ratchet in tests/Directory.Build.targets (ADR-0072).
-      Temporary. Four delays, all in SyncJoinTests. The smallest remaining entry on the list.
-    -->
-    <FrameFlowBanWallClockInTests>false</FrameFlowBanWallClockInTests>
   </PropertyGroup>
 
   <ItemGroup>

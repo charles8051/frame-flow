@@ -129,8 +129,12 @@ Inject a `TimeProvider` and pass `FakeTimeProvider`, which every test project al
 When the code under test works on another task, wait on a signal from it rather than a duration.
 [ADR-0072](docs/adr/ADR-0072-tests-do-not-depend-on-elapsed-time.md) has the reasoning and the two
 places allowed to read the clock. A project that cannot comply yet sets
-`FrameFlowBanWallClockInTests` to `false` in its `.csproj` with a comment saying why; six do today,
-and that list is meant to get shorter.
+`FrameFlowBanWallClockInTests` to `false` in its `.csproj` with a comment saying why. The list is
+meant to get shorter, so it is not written down here; this is the current one:
+
+```bash
+grep -l "FrameFlowBanWallClockInTests>false" tests/*/*.csproj
+```
 The SDL tests open a real window and stay skipped unless you set it to `1`.
 
 Two corpus fixtures cannot be produced by the pinned FFmpeg build, because x264 and
