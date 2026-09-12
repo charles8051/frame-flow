@@ -141,7 +141,13 @@ internal static class Program
             return 1;
         }
 
-        ReportCoexistence(modelPath);
+        // Non-zero on failure, like the OrtEnv failure above. If FrameFlow's
+        // wrapper does not work against the Windows ML runtime, every later
+        // conclusion about a FrameFlow.Inference.WinML package is moot, and a
+        // check that cannot fail the run is not a check.
+        if (!ReportCoexistence(modelPath))
+            return 1;
+
         Console.WriteLine();
 
         // ---- 2  what ORT sees with no catalog involvement ----
@@ -363,7 +369,8 @@ internal static class Program
     /// <c>CpuInferenceSession</c> drives the base's binding path — session
     /// construction, name and shape reflection — against whichever runtime won.
     /// </summary>
-    private static void ReportCoexistence(string modelPath)
+    /// <returns>False only when the model opened but FrameFlow's wrapper failed against it.</returns>
+    private static bool ReportCoexistence(string modelPath)
     {
         var ortAssembly = typeof(OrtEnv).Assembly;
         Console.WriteLine($"  Microsoft.ML.OnnxRuntime resolved from {ortAssembly.Location}");
@@ -372,7 +379,7 @@ internal static class Program
         {
             Console.WriteLine($"  SKIP  no model at {modelPath}; type load only");
             Console.WriteLine($"  PASS  {typeof(FfOrtBase).FullName} loads");
-            return;
+            return true;   // nothing to open is a skip, not a compatibility failure
         }
 
         try
@@ -383,6 +390,7 @@ internal static class Program
                     + $"{session.InputNames.Count} input(s), {session.OutputNames.Count} output(s), "
                     + $"input shape [{string.Join(",", session.InputShapes[0])}]"
             );
+            return true;
         }
         catch (Exception ex)
         {
@@ -391,6 +399,7 @@ internal static class Program
             // WinML EP package could not inherit the base as-is.
             Console.WriteLine($"  FAIL  FrameFlow {nameof(FfCpuSession)} against the Windows ML runtime");
             Console.WriteLine($"        {ex.GetType().Name}: {Squash(ex.Message)}");
+            return false;
         }
     }
 

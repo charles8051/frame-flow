@@ -119,8 +119,10 @@ So the ~515-line host→ORT staging body carries over with no changes, and a Win
 EP wrapper is the same shape as `DmlInferenceSession`: session-options
 configuration and nothing else. ADR-0049 §3's layering holds without amendment.
 Because the probe is pinned to one WinML package version, a future version that
-breaks this stops the spike building — or changes step 1's output — instead of
-the breakage surfacing inside a new EP package.
+breaks this stops the spike building — or fails step 1 — instead of the breakage
+surfacing inside a new EP package. The check exits non-zero when FrameFlow's
+wrapper fails against the runtime, so it is usable from automation; a missing
+model is a skip rather than a failure.
 
 One naming note for that package: `FrameFlow.Inference.ExecutionProvider` (the
 EP enum) and `Microsoft.Windows.AI.MachineLearning.ExecutionProvider` (a catalog
