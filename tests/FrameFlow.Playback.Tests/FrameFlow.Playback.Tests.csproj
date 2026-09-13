@@ -5,13 +5,6 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <!--
-      Opted out of the wall-clock ratchet in tests/Directory.Build.targets (ADR-0072).
-      Temporary. ClockSelectVideoSinkTests is clean as of #152; the remaining delays are in
-      PlaybackControllerIntegrationTests, PlaybackDispatchProtocolTests and
-      PlaylistIntegrationTests. Remove this line when those three are.
-    -->
-    <FrameFlowBanWallClockInTests>false</FrameFlowBanWallClockInTests>
   </PropertyGroup>
 
   <ItemGroup>

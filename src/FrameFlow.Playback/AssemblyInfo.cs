@@ -10,3 +10,7 @@ using System.Runtime.CompilerServices;
 // to construct one (ADR-0069: the coordinator must not adopt a repeat mode
 // the controller refused).
 [assembly: InternalsVisibleTo("FrameFlow.Player.Tests")]
+// The gapless-playlist integration tests construct a PlaylistCoordinator and call the internal
+// PlaybackController.CreatePlaylist against real media. They moved to the integration suite
+// because they measure real durations (ADR-0072 rule 6).
+[assembly: InternalsVisibleTo("FrameFlow.Integration.Tests")]

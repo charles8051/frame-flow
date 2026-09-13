@@ -1,19 +1,38 @@
-namespace FrameFlow.Playback.Tests;
+using FrameFlow.Decoding;
+using FrameFlow.Graph;
+using FrameFlow.Media;
+using FrameFlow.Playback;
+
+namespace FrameFlow.Integration.Tests;
 
 /// <summary>
 /// End-to-end integration tests for <see cref="PlaybackController"/>
 /// against real corpus media. Skipped when FFmpeg shared libraries or
 /// the test corpus aren't available.
 /// </summary>
-public sealed class PlaybackControllerIntegrationTests
+/// <remarks>
+/// <para>
+/// <b>Why this lives in the integration suite.</b> Moved from <c>FrameFlow.Playback.Tests</c>.
+/// These tests drive real FFmpeg decode through the whole playback stack, and several assert real
+/// durations — that pacing keeps playback near real time, that a loop seam is close to gapless in
+/// wall-clock terms. ADR-0072 rule 6 names this suite as the one allowed to measure elapsed time,
+/// so tests of that kind belong here rather than behind an exemption in a unit project. They take
+/// the suite's <see cref="FfmpegBootstrapFixture"/> instead of bootstrapping FFmpeg themselves.
+/// xUnit builds one fixture instance per class and may build them in parallel; the fixture's
+/// <c>static</c> gate is what makes the bootstrap run once per process regardless, and a class that
+/// bootstrapped by itself would sit outside it.
+/// </para>
+/// </remarks>
+public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBootstrapFixture>
 {
+    public PlaybackControllerIntegrationTests(FfmpegBootstrapFixture fixture) => _ = fixture;
+
     [RequiresFfmpegAndCorpusFact]
     public async Task LoadPlay_VideoOnlyFile_ReachesEnded()
     {
-        var path = TestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
+        var path = IntegrationTestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
         Assert.NotNull(path);
 
-        BootstrapNative();
 
         var presented = 0;
         var sink = new CountingVideoSink(_ => Interlocked.Increment(ref presented));
@@ -73,10 +92,9 @@ public sealed class PlaybackControllerIntegrationTests
         // drained; once ~512 audio packets buffered (~10 s) the single demux pump
         // blocked and video froze. The fix discards the audio stream at the
         // demuxer, so video plays straight to EOS.
-        var path = TestEnvironment.GetCorpusFile("test-av-h264-aac.mp4");
+        var path = IntegrationTestEnvironment.GetCorpusFile("test-av-h264-aac.mp4");
         Assert.NotNull(path);
 
-        BootstrapNative();
 
         var presented = 0;
         var sink = new CountingVideoSink(_ => Interlocked.Increment(ref presented));
@@ -140,10 +158,9 @@ public sealed class PlaybackControllerIntegrationTests
         // left the codec context unstable. With the PausableGate now in
         // the graph, pause closes the gate but the decoder keeps
         // running; resume opens the gate and frames drain.
-        var path = TestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
+        var path = IntegrationTestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
         Assert.NotNull(path);
 
-        BootstrapNative();
 
         var presented = 0;
         var sink = new CountingVideoSink(_ => Interlocked.Increment(ref presented));
@@ -204,10 +221,9 @@ public sealed class PlaybackControllerIntegrationTests
         // strands the existing DecodeAsync iterator). Pre-seek frames
         // can leak through if the channels were full when the gate
         // closed — the test tolerates a few extras.
-        var path = TestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
+        var path = IntegrationTestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
         Assert.NotNull(path);
 
-        BootstrapNative();
 
         var ptsValues = new List<TimeSpan>();
         var sink = new CountingVideoSink(frame =>
@@ -290,10 +306,9 @@ public sealed class PlaybackControllerIntegrationTests
         // Load → Unload state-machine path that doesn't hit those
         // edges; pause/resume against real decoders is exercised once
         // the deferred work lands.
-        var path = TestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
+        var path = IntegrationTestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
         Assert.NotNull(path);
 
-        BootstrapNative();
 
         var sink = new CountingVideoSink(_ => { });
 
@@ -314,7 +329,6 @@ public sealed class PlaybackControllerIntegrationTests
     [RequiresFfmpegAndCorpusFact]
     public async Task DisposeWithoutLoad_DoesNotThrow()
     {
-        BootstrapNative();
         var controller = PlaybackController.Create();
         await controller.DisposeAsync();
         // Just verifying clean teardown.
@@ -339,10 +353,9 @@ public sealed class PlaybackControllerIntegrationTests
         //       epoch would hang the pacer and frame flow would stop advancing);
         //   (4) no frame leaks across the boundary / no native fault — a sustained
         //       multi-loop run with the sink disposing every frame stays alive.
-        var path = TestEnvironment.GetCorpusFile("test-subsecond.mp4");
+        var path = IntegrationTestEnvironment.GetCorpusFile("test-subsecond.mp4");
         Assert.NotNull(path);
 
-        BootstrapNative();
 
         var loopCount = 0; // updated by the LoopRestarted observer (loop epoch id)
         var samples = new List<(int Loop, TimeSpan Pts)>();
@@ -486,10 +499,9 @@ public sealed class PlaybackControllerIntegrationTests
         // loop drives at least one NotSeeking -> SeekPending/SeekInProgress ->
         // NotSeeking cycle, exactly as a user seek would, even though the underlying
         // session operation is now RewindToStartAsync rather than SeekAsync.
-        var path = TestEnvironment.GetCorpusFile("test-subsecond.mp4");
+        var path = IntegrationTestEnvironment.GetCorpusFile("test-subsecond.mp4");
         Assert.NotNull(path);
 
-        BootstrapNative();
 
         var sink = new CountingVideoSink(_ => { });
 
@@ -551,17 +563,6 @@ public sealed class PlaybackControllerIntegrationTests
         );
     }
 
-    private static void BootstrapNative()
-    {
-        // FrameFlow.Native bootstrap is idempotent; doing it here ensures
-        // FFmpeg DLLs are loaded before the controller's session tries
-        // to open files.
-        var bootstrapper = new FrameFlow.Native.FrameFlowBootstrapper(
-            new FrameFlow.Native.FrameFlowNativeOptions { SkipHardwareProbe = true }
-        );
-        var result = bootstrapper.Initialize();
-        Assert.True(result.IsSuccess, $"FFmpeg bootstrap failed: {result.Message}");
-    }
 
     private sealed class CountingVideoSink : IVideoSink
     {
