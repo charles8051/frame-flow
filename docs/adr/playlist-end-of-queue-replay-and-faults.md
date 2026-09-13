@@ -222,16 +222,19 @@ notification the session generation, and the two drop cases are covered this way
   carries the generation like the other notifications. The dispatch loop drops an update whose
   generation is no longer current, and `DisposeSessionAsync` advances the generation before it
   awaits disposal.
-- **An earlier item.** `PlaylistSession` posts the update from inside the advance, under its
-  transition gate, so one session's updates are written to the command channel in hand-off order.
-  The channel is first in, first out, so a later item's update is never dispatched before an
-  earlier one's.
+- **An earlier item.** The update is state, and only the latest one matters, so the controller
+  stores it in a single slot rather than queueing it. `PlaylistSession` reports from inside the
+  advance, under its transition gate, so one session's updates are stored in hand-off order and a
+  later item's replaces an earlier one's.
 
-The update is posted immediately before the coordinator raises `SourceTransitioned`, so a transition
+The controller then queues a wake-up command. The dispatch loop takes the stored update at the top
+of every iteration, not only for the wake-up. If the wake-up finds the bounded command channel full,
+the update is still applied before the next command the loop dispatches. The review of #196 found
+that dropping a queued update there would leave `Duration` describing the previous item.
+
+The update is stored immediately before the coordinator raises `SourceTransitioned`, so a transition
 subscriber can wait on a no-op command and then read the new values. An in-place replay keeps the
-same item and posts nothing. If the command channel is full, the update is dropped and logged, as
-the controller's other notifications are, and `Duration` keeps the previous item's value until the
-next hand-off.
+same item and reports nothing.
 
 ### 6. The docs say `Error` is terminal
 
@@ -701,8 +704,10 @@ Test 6 is implemented, as two tests in `tests/FrameFlow.Integration.Tests/Playli
 over `test-subsecond.mp4` then the 3-second clip. On the tree before decision 5 (commit 9bd87cd),
 `MediaInfo` after the advance still had a 0.5 s duration, and two further passes under `One` raised
 `LoopStalled` twice. `PlaybackDispatchProtocolTests` covers the controller half: an update from the
-current session replaces `Duration`, `MediaInfo` and the diagnostics snapshot's duration, and one
-from an unloaded session is dropped.
+current session replaces `Duration`, `MediaInfo` and the diagnostics snapshot's duration, one
+from an unloaded session is dropped, and one reported while the command channel is full is still
+applied. That last test holds the dispatch loop inside a play and fills the channel. With a queued
+update it failed with the loaded item's `MediaInfo`.
 
 Decision 7's tests are in `tests/FrameFlow.Integration.Tests/PlaylistFaultTests.cs`. They inject a
 fault on the 21st frame of the 3-second clip, well before that clip makes progress at 1.5 seconds.
@@ -823,5 +828,6 @@ the advance, or the tooling #143 asks for. A timing-based test would not show th
   review found and this decision does not close.
 - **Amendment (2026-09-13), decision 5 implemented.** Implements decision 5 with #183. Neither of
   the two drop mechanisms the decision allowed was needed: the session generation decision 7 added
-  to every notification drops an update from an unloaded session, and posting under the playlist's
-  transition gate into a first-in, first-out channel keeps one session's updates in hand-off order.
+  to every notification drops an update from an unloaded session, and storing the latest update
+  from under the playlist's transition gate keeps one session's updates in hand-off order. The
+  dispatch loop applies it before every command, so it survives a full command channel.

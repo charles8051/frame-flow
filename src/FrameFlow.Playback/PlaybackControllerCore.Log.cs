@@ -188,10 +188,10 @@ internal sealed partial class PlaybackControllerCore
     );
 
     [LoggerMessage(
-        Level = LogLevel.Warning,
-        Message = "Current item change dropped — channel full or closed; Duration and MediaInfo keep the previous item's values"
+        Level = LogLevel.Debug,
+        Message = "Current item change wake-up not queued — channel full or closed; the update applies before the next dispatched command"
     )]
-    private partial void LogCurrentItemChangeDropped();
+    private partial void LogCurrentItemChangeWakeDropped();
 
     [LoggerMessage(
         Level = LogLevel.Debug,

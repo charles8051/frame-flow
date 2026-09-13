@@ -394,6 +394,44 @@ public sealed class PlaybackDispatchProtocolTests
     }
 
     [Fact]
+    public async Task CurrentItemChanged_WhileTheCommandChannelIsFull_IsStillApplied()
+    {
+        // The update is state, not an event: a notification dropped for want of room in the
+        // bounded command channel would leave Duration describing the previous item.
+        var (controller, session) = NewController();
+        await using var _ = controller;
+        await controller.LoadAsync(new FakeSource());
+
+        // Hold the dispatch loop inside Play, then fill the channel behind it. A buffer-ready
+        // trigger is dropped as stale when it reaches Playing, so the filler changes nothing.
+        session.PlayBlocker = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var play = controller.PlayAsync();
+        await session.PlayEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        for (var i = 0; i < CommandChannelCapacity; i++)
+            session.RaiseBufferReady();
+
+        var next = new MediaInfo(
+            "next",
+            TimeSpan.FromSeconds(42),
+            VideoStreams: [],
+            AudioStreams: []
+        );
+        session.RaiseCurrentItemChanged(next);
+
+        session.PlayBlocker.SetResult();
+        Assert.True((await play).IsSuccess);
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.Off)).IsSuccess);
+
+        Assert.Same(next, controller.MediaInfo);
+        Assert.Equal(TimeSpan.FromSeconds(42), controller.Duration);
+    }
+
+    // PlaybackControllerCore's bounded command channel.
+    private const int CommandChannelCapacity = 64;
+
+    [Fact]
     public async Task CurrentItemChanged_FromAnUnloadedSession_IsDropped()
     {
         var (controller, session) = NewController();
@@ -911,8 +949,22 @@ public sealed class PlaybackDispatchProtocolTests
         public ValueTask PlayAsync(CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref PlayCalls);
+            if (PlayBlocker is { } blocker)
+            {
+                PlayEntered.TrySetResult();
+                return new ValueTask(blocker.Task);
+            }
             return ValueTask.CompletedTask;
         }
+
+        /// <summary>
+        /// When set, <see cref="PlayAsync"/> completes <see cref="PlayEntered"/> and then waits
+        /// for this, holding the controller's dispatch loop inside the play.
+        /// </summary>
+        public TaskCompletionSource? PlayBlocker;
+
+        public TaskCompletionSource PlayEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ValueTask PauseAsync(CancellationToken cancellationToken = default)
         {

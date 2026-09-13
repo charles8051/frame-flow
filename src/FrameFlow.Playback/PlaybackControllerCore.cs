@@ -131,6 +131,12 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     private MediaInfo? _loadedMediaInfo;
     private TimeSpan _loadedDuration;
 
+    // The latest current item a playlist session reported and the dispatch loop has not yet
+    // applied. See PostCurrentItemChanged.
+    private sealed record CurrentItemUpdate(MediaInfo? Info, int SessionGeneration);
+
+    private CurrentItemUpdate? _pendingCurrentItem;
+
     // ── Active seek orchestration ──────────────────────────────────────
     private Task? _activeSeekTask;
     private CancellationTokenSource? _activeSeekCancellation;
@@ -448,19 +454,44 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     }
 
     /// <summary>
-    /// Posts a playlist session's new current item to the command channel without blocking,
-    /// as for <see cref="PostInternalAsync"/>. The session posts under its transition gate, so
-    /// updates arrive in hand-off order and a later item's is never applied before an earlier
-    /// one's.
+    /// Stores a playlist session's new current item and wakes the dispatch loop to apply it.
     /// </summary>
+    /// <remarks>
+    /// The update is state, and only the latest one matters, so it is stored rather than
+    /// queued: a later item's replaces an earlier one's still waiting. The session calls this
+    /// under its transition gate, so one session's updates are stored in hand-off order. The
+    /// dispatch loop takes the stored update at the top of every iteration
+    /// (<see cref="ApplyPendingCurrentItem"/>), so if the wake-up finds the command channel
+    /// full, the update is applied before the next command the loop dispatches.
+    /// </remarks>
     private void PostCurrentItemChanged(MediaInfo? info, int sessionGeneration)
     {
         if (_disposed)
             return;
 
-        var cmd = new CurrentItemChangedCommand(info, sessionGeneration);
-        if (!_commandChannel.Writer.TryWrite(cmd))
-            LogCurrentItemChangeDropped();
+        Volatile.Write(ref _pendingCurrentItem, new CurrentItemUpdate(info, sessionGeneration));
+        if (!_commandChannel.Writer.TryWrite(new CurrentItemChangedCommand()))
+            LogCurrentItemChangeWakeDropped();
+    }
+
+    /// <summary>
+    /// Applies the latest stored current-item update, if any, to <see cref="Duration"/> and
+    /// <see cref="MediaInfo"/>. Runs on the dispatch loop. An update from a session disposed
+    /// since is dropped by generation.
+    /// </summary>
+    private void ApplyPendingCurrentItem()
+    {
+        if (Interlocked.Exchange(ref _pendingCurrentItem, null) is not { } update)
+            return;
+
+        if (update.SessionGeneration != _sessionBinding.Generation)
+        {
+            LogStaleCurrentItemChange(update.SessionGeneration, _sessionBinding.Generation);
+            return;
+        }
+
+        _loadedMediaInfo = update.Info;
+        _loadedDuration = update.Info?.Duration ?? TimeSpan.Zero;
     }
 
     /// <summary>
@@ -1314,6 +1345,10 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                     continue;
                 }
 
+                // Before every command, not only the wake-up: a wake-up that found the channel
+                // full was never queued, and this is how its update still lands.
+                ApplyPendingCurrentItem();
+
                 switch (cmd)
                 {
                     case InternalTriggerCommand itc:
@@ -1385,23 +1420,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                         }
                         break;
 
-                    case CurrentItemChangedCommand cic:
-                        // A playlist moved to a new item (ADR-0062). Duration, MediaInfo and
-                        // the loop-stall watchdog describe the current item, not the one the
-                        // playlist loaded with. An update from a disposed session is dropped by
-                        // generation; updates from one session arrive in hand-off order.
-                        if (cic.SessionGeneration == _sessionBinding.Generation)
-                        {
-                            _loadedMediaInfo = cic.Info;
-                            _loadedDuration = cic.Info?.Duration ?? TimeSpan.Zero;
-                        }
-                        else
-                        {
-                            LogStaleCurrentItemChange(
-                                cic.SessionGeneration,
-                                _sessionBinding.Generation
-                            );
-                        }
+                    case CurrentItemChangedCommand:
+                        // A playlist moved to a new item (ADR-0062), and the update was applied
+                        // above. This command only woke the loop to do it.
                         break;
 
                     case SeekOutcomeCommand soc:

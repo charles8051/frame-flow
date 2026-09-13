@@ -626,10 +626,10 @@ internal sealed class PlaylistSession : IPlaybackSession
             }
 
             // A successful start does not reset the failure count; see PlaylistFailureGuard.
-            // The controller's Duration and MediaInfo follow the new item. Posted under the
-            // gate, before the transition is reported, so updates reach the controller in
-            // hand-off order and a subscriber to the transition can wait on the controller.
-            // An in-place replay keeps the same item and posts nothing.
+            // The controller's Duration and MediaInfo follow the new item. Reported under the
+            // gate, before the transition, so the controller keeps the latest in hand-off
+            // order and a subscriber to the transition can wait on the controller. An
+            // in-place replay keeps the same item and reports nothing.
             _controllerCallbacks.OnCurrentItemChanged(session.MediaInfo);
             _coordinator.ReportCurrent(nextSource, session.MediaInfo, pending.Wrapped);
             return;
