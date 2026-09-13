@@ -17,6 +17,15 @@ Crossbar-shaping roadmap.
 > (`.ToSink(sink)` becomes `.ToSink(sink.Consumer)` in current code);
 > the gap analysis tables still apply with that substitution.
 
+> **Update 2026-09-13 (ADR-0034).** This target originally asked for
+> diagnostics as an `IObservable` with a library-chosen cadence. That
+> gap is closed as *won't do*: ADR-0034 leaves the polling rate to the
+> consumer, and the stub `IMediaPlayer.Diagnostics` observable, which
+> never emitted, has been removed. Diagnostics are read with
+> `GetDiagnostics()` on a timer the app owns. State, position, errors
+> and loop stalls stay observables, because they are discrete events a
+> poll can miss. The samples below are updated to match.
+
 This document rebuilds the AvaloniaPlayer example from first
 principles, assuming an idealized Crossbar-esque pipeline API. Some
 of the components don't exist yet; they're called out inline as
@@ -88,6 +97,7 @@ using FrameFlow.Player.Diagnostics;
 public partial class MainWindow : Window
 {
     private IMediaPlayer? _player;
+    private DispatcherTimer? _diagnosticsTimer;
 
     public MainWindow()
     {
@@ -117,9 +127,12 @@ public partial class MainWindow : Window
         // ── Reactive UI bindings — one observable per concern. ────────
         _player.State.Subscribe(s => StatusBadge.Text = s.ToString());
         _player.Position.Subscribe(p => SeekBar.Value = p.TotalSeconds);
-        _player.Diagnostics
-            .Sample(TimeSpan.FromMilliseconds(500))   // [gap] Diagnostics as IObservable<PlayerDiagnosticsSnapshot>
-            .Subscribe(d => DiagnosticsPanel.Render(d));
+        // Diagnostics are polled at the app's own rate (ADR-0034).
+        _diagnosticsTimer = new DispatcherTimer(
+            TimeSpan.FromMilliseconds(500),
+            DispatcherPriority.Background,
+            (_, _) => DiagnosticsPanel.Render(_player.GetDiagnostics()));
+        _diagnosticsTimer.Start();
 
         await _player.PlayAsync();
     }
@@ -145,6 +158,9 @@ public partial class MainWindow : Window
 
     private async Task TeardownAsync()
     {
+        _diagnosticsTimer?.Stop();
+        _diagnosticsTimer = null;
+
         if (_player is not null)
         {
             await _player.DisposeAsync();
@@ -159,17 +175,17 @@ That's it. ~50 lines.
 **Things this example demonstrates the ideal API should make easy:**
 
 1. **One line per concern.** Video pipeline, audio pipeline, state
-   observable, position observable, diagnostics observable — each is
-   one line.
+   observable, position observable — each is one line.
 2. **No DI ceremony for a simple app.** `FrameFlowPlayer.Open(path)` is
    the entry point; the builder pulls FFmpeg bootstrap, decoders,
    sinks lazily.
 3. **Pipelines are composable in place.** The video pipeline is
    "convert pixel format then sink." Adding a resize or an overlay
    is `video.ConvertPixelFormat(...).Resize(...).ToSink(...)`.
-4. **State is observable, not polled.** No `DispatcherTimer(500ms)
-   { ... GetDiagnostics() ... }`. Subscribe to the stream; the
-   library handles the cadence.
+4. **Events are observable; counters are polled.** State changes,
+   position and errors arrive as streams, so nothing is missed between
+   samples. Diagnostics counters are read with `GetDiagnostics()` at
+   whatever rate the app wants (ADR-0034).
 5. **Dispose works.** Cancels in-flight pipelines, releases native
    resources, returns the controls to a quiescent state. No bespoke
    `TeardownControllerAsync` in the example.
@@ -268,7 +284,7 @@ The biggest gap. Needs:
   `.WithOptions(FrameFlowOptions)`.
 - `IPlayerBuilder.BuildAsync()` → `IMediaPlayer`.
 - `IMediaPlayer`: `PlayAsync`, `PauseAsync`, `SeekAsync`,
-  `SetRepeatMode`, `State`, `Position`, `Duration`, `Diagnostics`,
+  `SetRepeatMode`, `State`, `Position`, `Duration`, `GetDiagnostics`,
   `LoopRestarted`, `ErrorOccurred`, `DisposeAsync`.
 
 Internally `IMediaPlayer` composes the existing
@@ -283,13 +299,15 @@ it ADR-0041 (future).
 
 - **`IObservable<T>` integration with `FramePipeline<T>`.** The
   pipelines should expose state-event-shaped concerns
-  (`player.State`, `player.Position`, `player.Diagnostics`) as
+  (`player.State`, `player.Position`) as
   `IObservable<T>`. Currently `IPlaybackController` exposes
   `IObservable<StateTransition<PlaybackState>>` etc. directly — the
   shape is fine; just needs to surface on `IMediaPlayer`.
-- **`Sample(TimeSpan)` operator on `IObservable<T>`.** Either pull
+- ~~**`Sample(TimeSpan)` operator on `IObservable<T>`.** Either pull
   in System.Reactive or write a small implementation. Or expose
-  diagnostics with a built-in cadence option.
+  diagnostics with a built-in cadence option.~~ Won't do: diagnostics
+  are polled at the consumer's rate (ADR-0034; see the 2026-09-13
+  update above).
 
 ### Tier 3 operators
 

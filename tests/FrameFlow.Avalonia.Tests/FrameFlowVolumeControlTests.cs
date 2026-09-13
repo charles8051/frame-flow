@@ -155,8 +155,6 @@ public sealed class FrameFlowVolumeControlTests
         public IObservable<TimeSpan> PositionTick { get; } = new Never<TimeSpan>();
         public IObservable<LoopStalled> LoopStalled { get; } = new Never<LoopStalled>();
         public IObservable<PlaybackError> ErrorOccurred { get; } = new Never<PlaybackError>();
-        public IObservable<PlaybackDiagnosticsSnapshot> Diagnostics { get; } =
-            new Never<PlaybackDiagnosticsSnapshot>();
 
         public PlaybackDiagnosticsSnapshot GetDiagnostics() => PlaybackDiagnosticsSnapshot.Empty;
 

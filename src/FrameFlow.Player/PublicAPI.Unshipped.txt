@@ -1,7 +1,6 @@
 #nullable enable
 FrameFlow.Player.FrameFlowPlayer
 FrameFlow.Player.IMediaPlayer
-FrameFlow.Player.IMediaPlayer.Diagnostics.get -> System.IObservable<FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot!>!
 FrameFlow.Player.IMediaPlayer.Duration.get -> System.TimeSpan
 FrameFlow.Player.IMediaPlayer.ErrorOccurred.get -> System.IObservable<FrameFlow.Media.PlaybackError!>!
 FrameFlow.Player.IMediaPlayer.GetDiagnostics() -> FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot!
