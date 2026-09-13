@@ -432,6 +432,45 @@ public sealed class PlaybackDispatchProtocolTests
     private const int CommandChannelCapacity = 64;
 
     [Fact]
+    public async Task CurrentItemChanged_FromAnUnloadedSession_DoesNotDisplaceTheLoadedSessionsUpdate()
+    {
+        // The controller keeps one pending update. A late report from a session it has
+        // unloaded, arriving after the loaded session's and before the dispatch loop applies
+        // it, must not replace it.
+        var (controller, session) = NewController();
+        await using var _ = controller;
+
+        await controller.LoadAsync(new FakeSource());
+        var unloaded = session.Callbacks;
+        Assert.True((await controller.UnloadAsync()).IsSuccess);
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+
+        // Hold the dispatch loop so neither report is applied until both are in.
+        session.PlayBlocker = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var play = controller.PlayAsync();
+        await session.PlayEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var next = new MediaInfo(
+            "next",
+            TimeSpan.FromSeconds(42),
+            VideoStreams: [],
+            AudioStreams: []
+        );
+        session.RaiseCurrentItemChanged(next);
+        unloaded.OnCurrentItemChanged(
+            new MediaInfo("stale", TimeSpan.FromSeconds(99), VideoStreams: [], AudioStreams: [])
+        );
+
+        session.PlayBlocker.SetResult();
+        Assert.True((await play).IsSuccess);
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.Off)).IsSuccess);
+
+        Assert.Same(next, controller.MediaInfo);
+    }
+
+    [Fact]
     public async Task CurrentItemChanged_FromAnUnloadedSession_IsDropped()
     {
         var (controller, session) = NewController();

@@ -219,9 +219,11 @@ No state machine changes.
 notification the session generation, and the two drop cases are covered this way:
 
 - **An unloaded session.** The update travels as `SessionCallbacks.OnCurrentItemChanged`, which
-  carries the generation like the other notifications. The dispatch loop drops an update whose
-  generation is no longer current, and `DisposeSessionAsync` advances the generation before it
-  awaits disposal.
+  carries the generation like the other notifications. The controller drops an update whose
+  generation is no longer current, both when it is reported and when the dispatch loop applies it,
+  and `DisposeSessionAsync` advances the generation before it awaits disposal. A report from an
+  older generation is also never allowed to replace a newer session's update waiting to be applied.
+  `PlaylistSession` cannot report after its disposal, but the controller does not rely on that.
 - **An earlier item.** The update is state, and only the latest one matters, so the controller
   stores it in a single slot rather than queueing it. `PlaylistSession` reports from inside the
   advance, under its transition gate, so one session's updates are stored in hand-off order and a
@@ -705,8 +707,8 @@ over `test-subsecond.mp4` then the 3-second clip. On the tree before decision 5 
 `MediaInfo` after the advance still had a 0.5 s duration, and two further passes under `One` raised
 `LoopStalled` twice. `PlaybackDispatchProtocolTests` covers the controller half: an update from the
 current session replaces `Duration`, `MediaInfo` and the diagnostics snapshot's duration, one
-from an unloaded session is dropped, and one reported while the command channel is full is still
-applied. That last test holds the dispatch loop inside a play and fills the channel. With a queued
+from an unloaded session is dropped, and does not displace the loaded session's waiting update, and
+one reported while the command channel is full is still applied. That last test holds the dispatch loop inside a play and fills the channel. With a queued
 update it failed with the loaded item's `MediaInfo`.
 
 Decision 7's tests are in `tests/FrameFlow.Integration.Tests/PlaylistFaultTests.cs`. They inject a

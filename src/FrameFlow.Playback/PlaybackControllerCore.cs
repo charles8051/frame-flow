@@ -469,7 +469,26 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         if (_disposed)
             return;
 
-        Volatile.Write(ref _pendingCurrentItem, new CurrentItemUpdate(info, sessionGeneration));
+        // A report from a session the controller has replaced is dropped here, before it can
+        // take the slot. Generations only rise, so one that slips past this read is still never
+        // allowed to replace a newer session's update waiting in the slot.
+        var currentGeneration = Volatile.Read(ref _sessionBinding).Generation;
+        if (sessionGeneration != currentGeneration)
+        {
+            LogStaleCurrentItemChange(sessionGeneration, currentGeneration);
+            return;
+        }
+
+        var update = new CurrentItemUpdate(info, sessionGeneration);
+        while (true)
+        {
+            var pending = Volatile.Read(ref _pendingCurrentItem);
+            if (pending is not null && pending.SessionGeneration > sessionGeneration)
+                return;
+            if (Interlocked.CompareExchange(ref _pendingCurrentItem, update, pending) == pending)
+                break;
+        }
+
         if (!_commandChannel.Writer.TryWrite(new CurrentItemChangedCommand()))
             LogCurrentItemChangeWakeDropped();
     }
