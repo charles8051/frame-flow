@@ -2,8 +2,8 @@
 
 A test here has to pass or fail the same way on a fast machine and on a loaded CI runner. The build
 already bans sleeps, wall-clock reads, stopwatches, the tick count and timers built without a
-`TimeProvider` everywhere under `tests/` (RS0030, `tests/BannedSymbols.txt`). These are the rules it
-cannot check. [ADR-0072](../docs/adr/ADR-0072-tests-do-not-depend-on-elapsed-time.md) has the
+`TimeProvider` in every project under `tests/` except the exemptions in rule 3 (RS0030,
+`tests/BannedSymbols.txt`). These are the rules it cannot check. [ADR-0072](../docs/adr/ADR-0072-tests-do-not-depend-on-elapsed-time.md) has the
 reasoning.
 
 1. **Wait on a signal, not a duration.** When the code under test works on another thread, await
