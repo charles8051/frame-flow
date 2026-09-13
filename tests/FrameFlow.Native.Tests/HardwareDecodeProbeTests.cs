@@ -111,6 +111,33 @@ public sealed class HardwareDecodeProbeTests
     }
 
     [RequiresFfmpegFact]
+    public void Initialize_DifferentBuildAfterLoad_FailsWithoutCachedCapabilities()
+    {
+        // The probe cache is only correct because FFmpeg loads once per process. A
+        // bootstrapper that asks for a different build after a load has succeeded must fail
+        // before it reaches the probe, not receive the capabilities of a build it did not get.
+        var ffmpegDir = TestEnvironment.FindFfmpegLibraryDirectory();
+        if (ffmpegDir is null)
+            return;
+
+        var loaded = new FrameFlowBootstrapper(
+            new FrameFlowNativeOptions { CustomFfmpegPath = ffmpegDir },
+            NullLoggerFactory.Instance
+        ).Initialize();
+        var other = new FrameFlowBootstrapper(
+            new FrameFlowNativeOptions
+            {
+                CustomFfmpegPath = Path.Combine(Path.GetTempPath(), "not-the-loaded-ffmpeg"),
+            },
+            NullLoggerFactory.Instance
+        ).Initialize();
+
+        Assert.True(loaded.IsSuccess, $"Bootstrap failed: {loaded.Message}");
+        Assert.False(other.IsSuccess);
+        Assert.Same(HardwareDecodeCapabilities.Empty, other.Capabilities);
+    }
+
+    [RequiresFfmpegFact]
     public void GetOrRun_KeepsOneResultPerUncataloguedSetting()
     {
         // The two settings walk different sets of backends on Linux, so they cannot

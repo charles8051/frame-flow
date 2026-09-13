@@ -89,12 +89,21 @@ namespace FrameFlow.Native;
 internal static partial class HardwareDecodeProbe
 {
     // One walk per process for each value of probeUncatalogued (#37). The walk depends
-    // on the loaded FFmpeg build and on the host, and neither changes within a process:
-    // FFmpeg is loaded once, and ADR-0033 caches capabilities for the process lifetime
-    // with driver changes mid-process out of scope. The cache cannot live on the
-    // bootstrapper, because MediaPlayer.CreateAsync builds a new one for every player.
-    // The two settings get separate slots because on Linux they walk different backends.
-    private static readonly object s_cacheGate = new();
+    // on the loaded FFmpeg build and on the host, and neither changes within a process.
+    //
+    // The build cannot change because FfmpegNativeLibraryLoader enforces one load per
+    // process: once a load has succeeded, a later TryLoad returns that same load, and a
+    // TryLoad that asks for a different search path fails instead of loading a second
+    // build. A bootstrapper whose load fails never reaches the probe, so every walk sees
+    // the one build this process bound its P/Invokes to. ADR-0033 caches capabilities for
+    // the process lifetime and puts driver changes mid-process out of scope.
+    //
+    // The cache cannot live on the bootstrapper, because MediaPlayer.CreateAsync builds a
+    // new one for every player. The two settings get separate slots because on Linux they
+    // walk different backends, and separate locks so a walk for one does not hold up the
+    // other.
+    private static readonly object s_cataloguedGate = new();
+    private static readonly object s_uncataloguedGate = new();
     private static HardwareDecodeCapabilities? s_catalogued;
     private static HardwareDecodeCapabilities? s_uncatalogued;
 
@@ -103,9 +112,9 @@ internal static partial class HardwareDecodeProbe
     /// running <see cref="Run"/> the first time that setting is asked for.
     /// </summary>
     /// <remarks>
-    /// Callers that arrive while the first walk is running wait for it rather than
-    /// starting their own. Only the first walk logs per-backend results, through the
-    /// <paramref name="logger"/> its caller supplied.
+    /// Callers that arrive while the first walk for the same setting is running wait for
+    /// it rather than starting their own. Only the first walk logs per-backend results,
+    /// through the <paramref name="logger"/> its caller supplied.
     /// </remarks>
     /// <param name="logger">Receives the per-backend log lines if this call walks.</param>
     /// <param name="probeUncatalogued">
@@ -120,7 +129,7 @@ internal static partial class HardwareDecodeProbe
         out bool reused
     )
     {
-        lock (s_cacheGate)
+        lock (probeUncatalogued ? s_uncataloguedGate : s_cataloguedGate)
         {
             ref var slot = ref probeUncatalogued ? ref s_uncatalogued : ref s_catalogued;
             if (slot is { } cached)
