@@ -123,10 +123,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     private IMediaSource? _loadedSource;
 
     // ── Loaded-media snapshot (captured after InitializeAsync succeeds) ──
-    // Per ADR-0028 §6, Duration and MediaInfo are immutable once loading
+    // Per ADR-0028 §6, Duration and MediaInfo are captured when loading
     // completes, so the controller caches them directly rather than delegating
-    // through the session on every consumer access. Both are cleared when the
-    // session is disposed.
+    // through the session on every consumer access. A playlist session replaces
+    // them at each item boundary through OnCurrentItemChanged (ADR-0062), which
+    // the dispatch loop applies. Both are cleared when the session is disposed.
     private MediaInfo? _loadedMediaInfo;
     private TimeSpan _loadedDuration;
 
@@ -447,6 +448,22 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     }
 
     /// <summary>
+    /// Posts a playlist session's new current item to the command channel without blocking,
+    /// as for <see cref="PostInternalAsync"/>. The session posts under its transition gate, so
+    /// updates arrive in hand-off order and a later item's is never applied before an earlier
+    /// one's.
+    /// </summary>
+    private void PostCurrentItemChanged(MediaInfo? info, int sessionGeneration)
+    {
+        if (_disposed)
+            return;
+
+        var cmd = new CurrentItemChangedCommand(info, sessionGeneration);
+        if (!_commandChannel.Writer.TryWrite(cmd))
+            LogCurrentItemChangeDropped();
+    }
+
+    /// <summary>
     /// Launches a seek on a background task and records it as the active controller-owned
     /// operation. Completion, cancellation, and faults are serialized back through the
     /// command channel via <see cref="SeekOutcomeCommand"/>.
@@ -581,6 +598,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 command.Completion.TrySetResult(Result.Ok());
                 break;
             case RecoverableErrorCommand:
+            case CurrentItemChangedCommand:
                 command.Completion.TrySetResult(Result.Ok());
                 break;
             case SeekOutcomeCommand seekOutcome:
@@ -647,7 +665,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             OnBufferReady: () => PostInternalAsync(PlaybackTrigger.BufferReady, sessionGeneration),
             OnBufferUnderrun: () =>
                 PostInternalAsync(PlaybackTrigger.BufferUnderrun, sessionGeneration),
-            OnRecoverableError: error => PostRecoverableError(error, sessionGeneration)
+            OnRecoverableError: error => PostRecoverableError(error, sessionGeneration),
+            OnCurrentItemChanged: info => PostCurrentItemChanged(info, sessionGeneration)
         );
 
     // ── Pure-core EXECUTOR (architecture review §2.1, ADR-0055 sibling) ─────────
@@ -1362,6 +1381,25 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                                 rec.SessionGeneration,
                                 _sessionBinding.Generation,
                                 rec.Error.Message
+                            );
+                        }
+                        break;
+
+                    case CurrentItemChangedCommand cic:
+                        // A playlist moved to a new item (ADR-0062). Duration, MediaInfo and
+                        // the loop-stall watchdog describe the current item, not the one the
+                        // playlist loaded with. An update from a disposed session is dropped by
+                        // generation; updates from one session arrive in hand-off order.
+                        if (cic.SessionGeneration == _sessionBinding.Generation)
+                        {
+                            _loadedMediaInfo = cic.Info;
+                            _loadedDuration = cic.Info?.Duration ?? TimeSpan.Zero;
+                        }
+                        else
+                        {
+                            LogStaleCurrentItemChange(
+                                cic.SessionGeneration,
+                                _sessionBinding.Generation
                             );
                         }
                         break;

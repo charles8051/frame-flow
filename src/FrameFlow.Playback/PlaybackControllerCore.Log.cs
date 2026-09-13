@@ -189,6 +189,18 @@ internal sealed partial class PlaybackControllerCore
 
     [LoggerMessage(
         Level = LogLevel.Warning,
+        Message = "Current item change dropped — channel full or closed; Duration and MediaInfo keep the previous item's values"
+    )]
+    private partial void LogCurrentItemChangeDropped();
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Dropping current item change from session generation {Generation}; the current generation is {CurrentGeneration}"
+    )]
+    private partial void LogStaleCurrentItemChange(int generation, int currentGeneration);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
         Message = "Recoverable session error dropped — channel full or closed: {Message}"
     )]
     private partial void LogRecoverableErrorDropped(string message);

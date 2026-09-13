@@ -369,6 +369,51 @@ public sealed class PlaybackDispatchProtocolTests
     }
 
     [Fact]
+    public async Task CurrentItemChanged_ReplacesDurationAndMediaInfo()
+    {
+        // A playlist session reports each new item (#183); the controller's snapshot follows.
+        var (controller, session) = NewController();
+        await using var _ = controller;
+
+        await controller.LoadAsync(new FakeSource());
+        await controller.PlayAsync();
+
+        var next = new MediaInfo(
+            ContainerName: "next",
+            Duration: TimeSpan.FromSeconds(42),
+            VideoStreams: [],
+            AudioStreams: []
+        );
+        session.RaiseCurrentItemChanged(next);
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.Off)).IsSuccess);
+
+        Assert.Same(next, controller.MediaInfo);
+        Assert.Equal(TimeSpan.FromSeconds(42), controller.Duration);
+        Assert.Equal(TimeSpan.FromSeconds(42), controller.GetDiagnostics().Duration);
+        Assert.Equal(PlaybackState.Playing, controller.State);
+    }
+
+    [Fact]
+    public async Task CurrentItemChanged_FromAnUnloadedSession_IsDropped()
+    {
+        var (controller, session) = NewController();
+        await using var _ = controller;
+
+        await controller.LoadAsync(new FakeSource());
+        var unloaded = session.Callbacks;
+        Assert.True((await controller.UnloadAsync()).IsSuccess);
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+        var loadedDuration = controller.Duration;
+
+        unloaded.OnCurrentItemChanged(
+            new MediaInfo("stale", TimeSpan.FromSeconds(99), VideoStreams: [], AudioStreams: [])
+        );
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.Off)).IsSuccess);
+
+        Assert.Equal(loadedDuration, controller.Duration);
+    }
+
+    [Fact]
     public async Task EndOfStream_WhilePaused_EndsPlayback()
     {
         // A playlist skip on its last item while paused reports end-of-stream to a paused
@@ -830,6 +875,9 @@ public sealed class PlaybackDispatchProtocolTests
 
         public void RaiseRecoverableError(PlaybackError error) =>
             _callbacks.OnRecoverableError(error);
+
+        public void RaiseCurrentItemChanged(MediaInfo info) =>
+            _callbacks.OnCurrentItemChanged(info);
 
         /// <summary>The callbacks from the most recent <c>CreateSession</c>.</summary>
         public SessionCallbacks Callbacks => _callbacks;

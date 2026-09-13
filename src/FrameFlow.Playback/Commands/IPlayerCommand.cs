@@ -111,6 +111,24 @@ internal sealed record RecoverableErrorCommand(PlaybackError Error, int SessionG
 }
 
 /// <summary>
+/// Carries the metadata of the item a playlist session has just made current. The dispatch
+/// loop applies it to the controller's <c>Duration</c> and <c>MediaInfo</c> without firing a
+/// trigger.
+/// </summary>
+/// <param name="Info">The new current item's metadata.</param>
+/// <param name="SessionGeneration">
+/// The generation of the session that reported it. An update from a session the controller
+/// has since disposed is dropped.
+/// </param>
+internal sealed record CurrentItemChangedCommand(MediaInfo? Info, int SessionGeneration)
+    : IPlayerCommand
+{
+    public TaskCompletionSource<Result> Completion { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public CancellationToken CancellationToken { get; init; }
+}
+
+/// <summary>
 /// Carries the terminal outcome of an asynchronously launched seek operation back
 /// through the playback controller's command channel.
 /// </summary>

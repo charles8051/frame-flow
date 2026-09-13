@@ -371,7 +371,8 @@ internal sealed class PlaylistSession : IPlaybackSession
             OnWorkerFaulted: ex => OnItemEnded(gen, faulted: true, error: ex),
             OnBufferReady: _controllerCallbacks.OnBufferReady,
             OnBufferUnderrun: _controllerCallbacks.OnBufferUnderrun,
-            OnRecoverableError: _controllerCallbacks.OnRecoverableError
+            OnRecoverableError: _controllerCallbacks.OnRecoverableError,
+            OnCurrentItemChanged: _controllerCallbacks.OnCurrentItemChanged
         );
 
     private SubstrateSession CreateItemSession(int gen) =>
@@ -625,6 +626,11 @@ internal sealed class PlaylistSession : IPlaybackSession
             }
 
             // A successful start does not reset the failure count; see PlaylistFailureGuard.
+            // The controller's Duration and MediaInfo follow the new item. Posted under the
+            // gate, before the transition is reported, so updates reach the controller in
+            // hand-off order and a subscriber to the transition can wait on the controller.
+            // An in-place replay keeps the same item and posts nothing.
+            _controllerCallbacks.OnCurrentItemChanged(session.MediaInfo);
             _coordinator.ReportCurrent(nextSource, session.MediaInfo, pending.Wrapped);
             return;
         }
