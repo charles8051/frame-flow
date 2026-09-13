@@ -24,13 +24,18 @@
     <NoWarn>$(NoWarn);RS0026;RS0027</NoWarn>
   </PropertyGroup>
 
+  <!--
+    PublicAPI.Shipped.txt and PublicAPI.Unshipped.txt are not listed as
+    AdditionalFiles here. The package's buildTransitive targets add both when
+    they exist, and listing them again puts each file in the project twice.
+    The build tolerates that. The RS0016 code fix in CONTRIBUTING.md does not:
+    dotnet format logs "Duplicate source file" and records nothing.
+  -->
   <ItemGroup Condition="'$(FrameFlowTrackPublicApi)' == 'true'">
     <PackageReference
       Include="Microsoft.CodeAnalysis.PublicApiAnalyzers"
       Version="3.*"
       PrivateAssets="All"
     />
-    <AdditionalFiles Include="PublicAPI.Shipped.txt" />
-    <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
   </ItemGroup>
 </Project>
