@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Xunit;
 
 // `Graph` is both a namespace (FrameFlow.Graph) and a type
@@ -165,8 +166,36 @@ public sealed class SyncJoinTests
     private static SyncJoinNode<RefBox<Tick>, RefBox<Span>, RefBox<string>> Join(
         SyncMatch policy,
         TimeSpan window,
-        TimeSpan? maxStaleness = null
-    ) => new("join", Record(), Keys, policy, window, maxStaleness);
+        TimeSpan? maxStaleness = null,
+        TimeSpan? maxLead = null
+    ) => new("join", Record(), Keys, policy, window, maxStaleness, maxLead: maxLead);
+
+    /// <summary>
+    /// Point spans every 50 ms from 0 to 1000 ms, tagged with their time.
+    /// </summary>
+    private static RefBox<Span>[] SpansEvery50Ms() =>
+        Enumerable
+            .Range(0, 21)
+            .Select(i => RefBox.Of(new Span(Ms(i * 50), Ms(i * 50), $"s{i * 50}")))
+            .ToArray();
+
+    /// <summary>
+    /// Like <see cref="Emit{T}"/>, counting every pull in <paramref name="pulled"/>.
+    /// </summary>
+    private static SourceNode<RefBox<Span>> EmitCounting(RefBox<Span>[] items, StrongBox<int> pulled)
+    {
+        int i = 0;
+        return new SourceNode<RefBox<Span>>(
+            "secondary",
+            _ =>
+            {
+                if (i == items.Length)
+                    return ValueTask.FromResult<RefBox<Span>?>(null);
+                Interlocked.Increment(ref pulled.Value);
+                return ValueTask.FromResult<RefBox<Span>?>(items[i++]);
+            }
+        );
+    }
 
     // ── Match policies ──────────────────────────────────────────────────
 
@@ -854,5 +883,223 @@ public sealed class SyncJoinTests
         Assert.All(spans, s => Assert.Equal(0, s.RefCount));
         Assert.All(ticks, t => Assert.Equal(0, t.RefCount));
         Assert.Equal(0, join.RetainedCount);
+    }
+
+    // ── Lead bound ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void MaxLead_RejectsANegativeLead()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => Join(SyncMatch.MostRecentAtOrBefore, window: Ms(100), maxLead: Ms(-1))
+        );
+    }
+
+    /// <summary>
+    /// A secondary that runs ahead of the primary is held on its edge once it leads by more
+    /// than <c>MaxLead</c>, and every span still reaches the primary it belongs to (#90).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Without a bound the window admits whatever arrives. A live camera against a paused or
+    /// gated primary pins every frame until the primary catches up. With one, the join stops
+    /// reading the secondary edge, so a <c>Buffered</c> edge fills and its producer waits.
+    /// </para>
+    /// <para>
+    /// Spans every 50 ms from 0 to 1000 ms against a 100 ms lead. The primary is held back
+    /// before its first tick, which is the gated case, and the test checks the window there.
+    /// After that it ticks every 50 ms. Before each tick it waits for the join to settle: the
+    /// previous tick has come out, and the secondary reader has either parked on the bound or
+    /// admitted every span. A tick every 50 ms matches exactly one span, so a span dropped
+    /// anywhere shows up as a wrong or missing match.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task MaxLead_HoldsALeadingSecondaryOnItsEdgeAndLosesNothing()
+    {
+        const int edgeCapacity = 2;
+        var join = Join(SyncMatch.MostRecentAtOrBefore, window: Ms(10_000), maxLead: Ms(100));
+
+        var spans = SpansEvery50Ms();
+        var ticks = spans.Select(s => RefBox.Of(new Tick(s.Value.From))).ToArray();
+        var expected = spans.Select(s => $"{s.Value.From.TotalMilliseconds:0}={s.Value.Tag}").ToArray();
+        var pulled = new StrongBox<int>();
+
+        var got = new List<string>();
+        var gatedAtFirstTick = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstTick = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int t = 0;
+        var primary = new SourceNode<RefBox<Tick>>(
+            "primary",
+            async ct =>
+            {
+                if (t == ticks.Length)
+                    return null;
+                await SpinUntil(
+                        () =>
+                            Collected(got) == t
+                            && (join.IsSecondaryHeld || join.RetainedCount == spans.Length),
+                        ct
+                    )
+                    .ConfigureAwait(false);
+                if (t == 0)
+                {
+                    gatedAtFirstTick.TrySetResult();
+                    await releaseFirstTick.Task.WaitAsync(ct).ConfigureAwait(false);
+                }
+                return ticks[t++];
+            }
+        );
+
+        var graph = new GraphRunner();
+        graph.Pipeline(EmitCounting(spans, pulled)).ToSecondary(join, EdgeOptions.Buffered(edgeCapacity));
+        graph.Pipeline(primary).ToPrimary(join);
+        graph.Pipeline(join.Output).To(CollectInto(got));
+
+        using var cts = new CancellationTokenSource();
+        var run = graph.RunAsync(cts.Token);
+        try
+        {
+            await gatedAtFirstTick.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            // No primary yet, so the lead is measured from the earliest span retained. 0, 50 and
+            // 100 ms are within 100 ms of it and 150 ms is not.
+            Assert.Equal(3, join.RetainedCount);
+            Assert.True(join.IsSecondaryHeld);
+
+            // The producer is waiting rather than being discarded. The reader holds one span, the
+            // edge holds its capacity, and the source can have pulled one more that it is still
+            // trying to write.
+            Assert.InRange(Volatile.Read(ref pulled.Value), 4, 3 + 1 + edgeCapacity + 1);
+
+            releaseFirstTick.TrySetResult();
+            await run.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        catch
+        {
+            await StopAsync(run, cts);
+            throw;
+        }
+
+        Assert.Equal(expected, got);
+        Assert.False(join.IsSecondaryHeld);
+        Assert.Equal(0, join.RetainedCount);
+        Assert.All(spans, x => Assert.Equal(0, x.RefCount));
+        Assert.All(ticks, x => Assert.Equal(0, x.RefCount));
+    }
+
+    /// <summary>
+    /// Primary EOS releases a held secondary, so the join drains its edge and the graph
+    /// completes, as it does for a secondary that was never held.
+    /// </summary>
+    /// <remarks>
+    /// The sync-window-join ADR §5 requires the pump to keep draining the secondary after
+    /// primary EOS, or a producer blocked on the edge keeps <c>RunAsync</c> from returning. A
+    /// reader parked on the lead bound is not draining, and after EOS no primary will ever
+    /// advance to wake it.
+    /// </remarks>
+    [Fact]
+    public async Task MaxLead_PrimaryEosReleasesAHeldSecondarySoTheGraphCompletes()
+    {
+        var join = Join(SyncMatch.MostRecentAtOrBefore, window: Ms(10_000), maxLead: Ms(100));
+        var spans = SpansEvery50Ms();
+        var ticks = new[] { RefBox.Of(new Tick(Ms(0))) };
+
+        int t = 0;
+        var primary = new SourceNode<RefBox<Tick>>(
+            "primary",
+            async ct =>
+            {
+                if (t == ticks.Length)
+                    return null;
+                await SpinUntil(() => join.IsSecondaryHeld, ct).ConfigureAwait(false);
+                return ticks[t++];
+            }
+        );
+
+        var got = new List<string>();
+        var graph = new GraphRunner();
+        graph.Pipeline(Emit("secondary", spans)).ToSecondary(join, EdgeOptions.Buffered(2));
+        graph.Pipeline(primary).ToPrimary(join);
+        graph.Pipeline(join.Output).To(CollectInto(got));
+
+        using var cts = new CancellationTokenSource();
+        var run = graph.RunAsync(cts.Token);
+        try
+        {
+            await run.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        catch
+        {
+            await StopAsync(run, cts);
+            throw;
+        }
+
+        Assert.Equal(new[] { "0=s0" }, got);
+        Assert.False(join.IsSecondaryHeld);
+        Assert.Equal(0, join.RetainedCount);
+        Assert.All(spans, x => Assert.Equal(0, x.RefCount));
+        Assert.All(ticks, x => Assert.Equal(0, x.RefCount));
+    }
+
+    /// <summary>
+    /// <c>ResetWindow</c> releases a held secondary. An empty window has room, and a primary
+    /// that is paused will not advance to say so.
+    /// </summary>
+    [Fact]
+    public async Task MaxLead_ResetWindowReleasesAHeldSecondary()
+    {
+        var join = Join(SyncMatch.MostRecentAtOrBefore, window: Ms(10_000), maxLead: Ms(100));
+        var spans = SpansEvery50Ms();
+        var pulled = new StrongBox<int>();
+
+        // A primary that never emits: gated from the start.
+        var primary = new SourceNode<RefBox<Tick>>(
+            "primary",
+            async ct =>
+            {
+                await UntilCancelled(ct).ConfigureAwait(false);
+                return null;
+            }
+        );
+
+        var graph = new GraphRunner();
+        graph.Pipeline(EmitCounting(spans, pulled)).ToSecondary(join, EdgeOptions.Buffered(2));
+        graph.Pipeline(primary).ToPrimary(join);
+        graph.Pipeline(join.Output).To(CollectInto(new List<string>()));
+
+        using var cts = new CancellationTokenSource();
+        var run = graph.RunAsync(cts.Token);
+        try
+        {
+            await SpinUntil(() => join.IsSecondaryHeld, cts.Token).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(3, join.RetainedCount);
+
+            // The reset clears the held state along with the window, so the next time it reads
+            // true the reader has been woken, admitted from the span it was holding, and parked
+            // again: 150, 200 and 250 ms are within 100 ms of 150, and 300 is not.
+            join.ResetWindow();
+            await SpinUntil(() => join.IsSecondaryHeld, cts.Token).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(3, join.RetainedCount);
+            Assert.All(spans.Take(3), x => Assert.Equal(0, x.RefCount));
+        }
+        catch
+        {
+            await StopAsync(run, cts);
+            throw;
+        }
+
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => run.WaitAsync(TimeSpan.FromSeconds(10))
+        );
+
+        // Every span the source handed over is disposed: retained, held, and the ones still on
+        // the edge at teardown. The rest were never pulled and are still this test's.
+        Assert.Equal(0, join.RetainedCount);
+        var handedOver = Volatile.Read(ref pulled.Value);
+        Assert.All(spans.Take(handedOver), x => Assert.Equal(0, x.RefCount));
+        foreach (var never in spans.Skip(handedOver))
+            never.Dispose();
     }
 }

@@ -303,6 +303,11 @@ internal static class NodePumps
         var primaryDone = false;
         Exception? secondaryFault = null;
 
+        // Cancelled when the primary ends. A secondary held on the lead bound waits on
+        // this, because after EOS no primary will advance to release it, and the drain
+        // below has to reach the rest of the edge.
+        using var primaryEnded = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
         var secondaryLoop = Task.Run(
             async () =>
             {
@@ -321,7 +326,21 @@ internal static class NodePumps
                         try
                         {
                             var (from, to) = node.Keys.SecondaryInterval(item);
-                            retained.Admit(item, from, to);
+
+                            // Past MaxLead, stop reading the edge until the primary
+                            // catches up. The edge fills, and its overflow policy
+                            // decides what the producer does.
+                            while (retained.TryAdmit(item, from, to, node.MaxLead) is { } room)
+                                await room.WaitAsync(primaryEnded.Token).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (primaryEnded.IsCancellationRequested)
+                        {
+                            // Held when the primary ended or the graph tore down. The
+                            // window never took it. After EOS the loop carries on
+                            // discarding; on teardown it exits.
+                            item.Dispose();
+                            if (ct.IsCancellationRequested)
+                                throw;
                         }
                         catch (Exception ex)
                         {
@@ -444,6 +463,7 @@ internal static class NodePumps
             // output first would be premature: downstream EOS is signalled
             // below, once nothing else can be emitted.
             Volatile.Write(ref primaryDone, true);
+            primaryEnded.Cancel();
             try
             {
                 await secondaryLoop.ConfigureAwait(false);
@@ -454,6 +474,9 @@ internal static class NodePumps
                 // surfacing.
             }
 
+            // The secondary loop exits early on teardown, and a lead bound can leave
+            // the edge full when it does. Whatever is still on it is ours to dispose.
+            await DrainUntilCompletedAsync(secondary).ConfigureAwait(false);
             await DrainUntilCompletedAsync(primary).ConfigureAwait(false);
             retained.Clear();
 
