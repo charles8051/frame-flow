@@ -165,11 +165,20 @@ At each hand-off the session tells the controller the new item's `MediaInfo`. Th
 `Duration`, `MediaInfo` and loop-stall evaluator then use the current item. This is the refresh
 ADR-0062 called for.
 
-The update is applied on the controller's dispatch loop and tagged with the session generation it
-came from. The controller zeroes its snapshot when it disposes a session
-(`PlaybackControllerCore.cs:1439-1440`), and a playlist advance runs on the thread pool. Without the
-tag, a late update from an unloaded session could restore a stale duration, or overwrite the
-snapshot of a session loaded after it. No state machine changes.
+The update is applied on the controller's dispatch loop and carries two tags. The controller applies
+it only when both still hold.
+
+- **The session generation it came from.** The controller zeroes its snapshot when it disposes a
+  session (`PlaybackControllerCore.cs:1439-1440`), and a playlist advance runs on the thread pool.
+  This tag stops a late update from an unloaded session restoring a stale duration, or overwriting
+  the snapshot of a session loaded after it.
+- **The hand-off's transition index.** The coordinator numbers every hand-off
+  (`PlaylistCoordinator.cs:277`), and the controller keeps the highest index it has applied for the
+  current session. An update with a lower or equal index is dropped. This tag is needed because an
+  item boundary does not change the session generation (`PlaybackControllerCore.cs:822`, `:1447`),
+  so the first tag alone would let a late update from an earlier item overwrite the current one.
+
+No state machine changes.
 
 ### 6. The docs say `Error` is terminal
 
@@ -388,3 +397,6 @@ the last item without pausing it, where frames went from 10 to 35.
   one-shot `SetNext` would have changed a documented way to change source. Decision 3 now names the
   pause it uses. Decision 5 now says where its update runs. The review's new defects were added
   under *Not settled here*, and several citations and claims were corrected.
+- **Fourth draft (2026-09-12)**, after automated PR review. Decision 5's update now also carries the
+  hand-off's transition index. The session generation alone did not stop a late update from an
+  earlier item of the same session, because an item boundary does not change it.
