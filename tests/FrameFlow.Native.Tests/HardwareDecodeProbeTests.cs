@@ -142,6 +142,11 @@ public sealed class HardwareDecodeProbeTests
     {
         // The two settings walk different sets of backends on Linux, so they cannot
         // share a result. Each is walked once and then reused.
+        //
+        // The uncatalogued walk is exercised only off Linux. On a Linux host without the
+        // drivers it attempts backends whose lazy-loading stubs abort the process, which is
+        // what HardwareDecodeProbe's remarks describe and why the setting defaults to false.
+        // A GPU-less CI runner is exactly that host: running it there crashed the test host.
         var ffmpegDir = TestEnvironment.FindFfmpegLibraryDirectory();
         if (ffmpegDir is null)
             return;
@@ -160,6 +165,12 @@ public sealed class HardwareDecodeProbeTests
             probeUncatalogued: false,
             out var reusedCatalogued
         );
+        Assert.Same(catalogued, cataloguedAgain);
+        Assert.True(reusedCatalogued);
+
+        if (OperatingSystem.IsLinux())
+            return;
+
         var uncatalogued = HardwareDecodeProbe.GetOrRun(NullLogger.Instance, probeUncatalogued: true, out _);
         var uncataloguedAgain = HardwareDecodeProbe.GetOrRun(
             NullLogger.Instance,
@@ -167,8 +178,6 @@ public sealed class HardwareDecodeProbeTests
             out var reusedUncatalogued
         );
 
-        Assert.Same(catalogued, cataloguedAgain);
-        Assert.True(reusedCatalogued);
         Assert.Same(uncatalogued, uncataloguedAgain);
         Assert.True(reusedUncatalogued);
         Assert.NotSame(catalogued, uncatalogued);
