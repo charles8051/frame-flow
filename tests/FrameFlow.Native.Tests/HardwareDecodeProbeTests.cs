@@ -89,6 +89,100 @@ public sealed class HardwareDecodeProbeTests
         }
     }
 
+    [RequiresFfmpegFact]
+    public void Initialize_SeparateBootstrappers_ShareOneProbe()
+    {
+        // #37: MediaPlayer.CreateAsync builds a new bootstrapper for every player, so a
+        // probe that belonged to the bootstrapper ran again for every player. The walk
+        // depends on the loaded FFmpeg and the host, which do not change within a
+        // process, so a second bootstrapper must get the first one's result.
+        var ffmpegDir = TestEnvironment.FindFfmpegLibraryDirectory();
+        if (ffmpegDir is null)
+            return;
+
+        var options = new FrameFlowNativeOptions { CustomFfmpegPath = ffmpegDir };
+
+        var first = new FrameFlowBootstrapper(options, NullLoggerFactory.Instance).Initialize();
+        var second = new FrameFlowBootstrapper(options, NullLoggerFactory.Instance).Initialize();
+
+        Assert.True(first.IsSuccess, $"Bootstrap failed: {first.Message}");
+        Assert.True(second.IsSuccess, $"Bootstrap failed: {second.Message}");
+        Assert.Same(first.Capabilities, second.Capabilities);
+    }
+
+    [RequiresFfmpegFact]
+    public void Initialize_DifferentBuildAfterLoad_FailsWithoutCachedCapabilities()
+    {
+        // The probe cache is only correct because FFmpeg loads once per process. A
+        // bootstrapper that asks for a different build after a load has succeeded must fail
+        // before it reaches the probe, not receive the capabilities of a build it did not get.
+        var ffmpegDir = TestEnvironment.FindFfmpegLibraryDirectory();
+        if (ffmpegDir is null)
+            return;
+
+        var loaded = new FrameFlowBootstrapper(
+            new FrameFlowNativeOptions { CustomFfmpegPath = ffmpegDir },
+            NullLoggerFactory.Instance
+        ).Initialize();
+        var other = new FrameFlowBootstrapper(
+            new FrameFlowNativeOptions
+            {
+                CustomFfmpegPath = Path.Combine(Path.GetTempPath(), "not-the-loaded-ffmpeg"),
+            },
+            NullLoggerFactory.Instance
+        ).Initialize();
+
+        Assert.True(loaded.IsSuccess, $"Bootstrap failed: {loaded.Message}");
+        Assert.False(other.IsSuccess);
+        Assert.Same(HardwareDecodeCapabilities.Empty, other.Capabilities);
+    }
+
+    [RequiresFfmpegFact]
+    public void GetOrRun_KeepsOneResultPerUncataloguedSetting()
+    {
+        // The two settings walk different sets of backends on Linux, so they cannot
+        // share a result. Each is walked once and then reused.
+        //
+        // The uncatalogued walk is exercised only off Linux. On a Linux host without the
+        // drivers it attempts backends whose lazy-loading stubs abort the process, which is
+        // what HardwareDecodeProbe's remarks describe and why the setting defaults to false.
+        // A GPU-less CI runner is exactly that host: running it there crashed the test host.
+        var ffmpegDir = TestEnvironment.FindFfmpegLibraryDirectory();
+        if (ffmpegDir is null)
+            return;
+        Assert.True(
+            new FrameFlowBootstrapper(
+                new FrameFlowNativeOptions { CustomFfmpegPath = ffmpegDir, SkipHardwareProbe = true },
+                NullLoggerFactory.Instance
+            )
+                .Initialize()
+                .IsSuccess
+        );
+
+        var catalogued = HardwareDecodeProbe.GetOrRun(NullLogger.Instance, probeUncatalogued: false, out _);
+        var cataloguedAgain = HardwareDecodeProbe.GetOrRun(
+            NullLogger.Instance,
+            probeUncatalogued: false,
+            out var reusedCatalogued
+        );
+        Assert.Same(catalogued, cataloguedAgain);
+        Assert.True(reusedCatalogued);
+
+        if (OperatingSystem.IsLinux())
+            return;
+
+        var uncatalogued = HardwareDecodeProbe.GetOrRun(NullLogger.Instance, probeUncatalogued: true, out _);
+        var uncataloguedAgain = HardwareDecodeProbe.GetOrRun(
+            NullLogger.Instance,
+            probeUncatalogued: true,
+            out var reusedUncatalogued
+        );
+
+        Assert.Same(uncatalogued, uncataloguedAgain);
+        Assert.True(reusedUncatalogued);
+        Assert.NotSame(catalogued, uncatalogued);
+    }
+
     [Fact]
     public void HardwareDecodeCapabilities_Empty_IsSingleton()
     {
