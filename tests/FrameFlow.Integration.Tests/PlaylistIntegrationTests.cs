@@ -23,8 +23,10 @@ namespace FrameFlow.Integration.Tests;
 /// durations — that pacing keeps playback near real time, that a loop seam is close to gapless in
 /// wall-clock terms. ADR-0072 rule 6 names this suite as the one allowed to measure elapsed time,
 /// so tests of that kind belong here rather than behind an exemption in a unit project. They take
-/// the suite's <see cref="FfmpegBootstrapFixture"/> instead of bootstrapping FFmpeg themselves,
-/// because that fixture is what serialises native initialisation across parallel test classes.
+/// the suite's <see cref="FfmpegBootstrapFixture"/> instead of bootstrapping FFmpeg themselves.
+/// xUnit builds one fixture instance per class and may build them in parallel; the fixture's
+/// <c>static</c> gate is what makes the bootstrap run once per process regardless, and a class that
+/// bootstrapped by itself would sit outside it.
 /// </para>
 /// </remarks>
 public sealed class PlaylistIntegrationTests : IClassFixture<FfmpegBootstrapFixture>
