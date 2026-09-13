@@ -122,6 +122,20 @@ the item can be sought, its counters can be read, and audio already queued on th
 This covers an item that played to its end. It does not cover a queue whose final item fails to
 open, where the previous item has already been disposed; that case is under *Not settled here*.
 
+A kept item also needs protection from its own late end-of-stream. An item raises end-of-stream on
+its graph thread, and `PlaylistSession` hands it to the advance through the thread pool
+(`PlaylistSession.cs:297`). The advance checks only that the item has not been replaced (`:305`). A
+seek that arrives in between takes the transition gate first and relaunches the item's graph, which
+re-arms its end-of-stream (`SubstrateSession.cs:1505`). The queued advance then runs and ends the
+item that was just sought. Today that disposes it. With the item kept, the controller would report
+`Ended` while the item plays, and the controller's own check for stale triggers does not catch it
+because the state is `Playing` (`PlaybackControllerCore.cs:1286-1291`).
+
+So the session numbers each run of an item. The number advances whenever the session seeks or
+rewinds the item, each end-of-stream carries the number that was current when it was raised, and
+the advance drops an end-of-stream whose number is out of date. This was read from code and has not
+been reproduced.
+
 Evidence:
 
 - The spike under alternative A ran this change through the single-source integration suites, and
@@ -166,27 +180,26 @@ At each hand-off the session tells the controller the new item's `MediaInfo`. Th
 `Duration`, `MediaInfo` and loop-stall evaluator then use the current item. This is the refresh
 ADR-0062 called for.
 
-The update is applied on the controller's dispatch loop and carries two tags. The controller applies
-it only when both still hold.
+The update is applied on the controller's dispatch loop. It must be dropped in two cases, and both
+can happen:
 
-- **The session generation it came from.** The controller zeroes its snapshot when it disposes a
-  session (`PlaybackControllerCore.cs:1439-1440`), and a playlist advance runs on the thread pool.
-  This tag stops a late update from an unloaded session restoring a stale duration, or overwriting
-  the snapshot of a session loaded after it.
-- **The hand-off's transition index.** The coordinator numbers every hand-off
-  (`PlaylistCoordinator.cs:277`), and the controller keeps the highest index it has applied for the
-  current session. An update with a lower or equal index is dropped. This tag is needed because an
-  item boundary does not change the session generation (`PlaybackControllerCore.cs:822`, `:1447`),
-  so the first tag alone would let a late update from an earlier item overwrite the current one.
+- **It came from a session the controller has since unloaded.** The controller zeroes its snapshot
+  when it disposes a session (`PlaybackControllerCore.cs:1439-1440`), and a playlist advance runs on
+  the thread pool, so an update can arrive after the unload.
+- **It came from an item earlier than one already applied.** An item boundary does not change the
+  controller's session generation (`PlaybackControllerCore.cs:822`, `:1447`), so the generation
+  alone cannot tell two items of one session apart.
 
-Neither tag can replace the other, because different owners mint them. The controller mints the
-session generation. The coordinator mints the transition index, and the playlist player keeps one
-coordinator across reloads (`src/FrameFlow.Player/MediaPlaylistPlayer.cs:97`), so its index keeps
-climbing from one session to the next. An advance that is in flight when its session is unloaded
-produces an update with a higher index than any the controller has applied. An index-only check
-would accept it after the unload. A single token covering both would need the controller to mint
-every item's index, which means a round trip from the session's advance to the controller's dispatch
-loop before the item can be reported.
+The coordinator already numbers every hand-off (`PlaylistCoordinator.cs:277`). The playlist player
+keeps one coordinator across reloads (`src/FrameFlow.Player/MediaPlaylistPlayer.cs:97`), so that
+number keeps rising from one session to the next, and an advance in flight at an unload produces a
+higher number than any applied. Checking the hand-off number alone is therefore not enough. Either
+mechanism below is acceptable:
+
+- Tag each update with both the session generation and the hand-off number.
+- Keep one watermark. After disposing a session, which waits for any in-flight advance
+  (`PlaylistSession.cs:241-242`), the controller raises the watermark to that session's last
+  hand-off number, and drops any update at or below the watermark.
 
 No state machine changes.
 
@@ -338,10 +351,11 @@ break a caller, while a replay that later becomes a refusal breaks anyone who re
   generation advances only when it creates or disposes its session
   (`PlaybackControllerCore.cs:822`, `:1447`). Two snapshots either side of a boundary carry the same
   generation while their counters are not comparable. Read from code.
-- **Late end-of-stream after a seek or replay.** `PlaylistSession` handles an item's end-of-stream
-  on the thread pool (`PlaylistSession.cs:297`), and its generation tags guard only against item
-  replacement. An end-of-stream raised just before a seek could land after it. Read from code; this
-  is the kind of interleaving #143 is about.
+- **Late end-of-stream on items that are not kept.** Decision 2 covers a seek or rewind of the kept
+  item. The same thread-pool hop exists for every item (`PlaylistSession.cs:297`), so a seek that
+  lands between a middle item's end-of-stream and its advance would skip to the next item. Decision
+  2's run number would cover that too if applied to every item; this record does not require it.
+  Read from code; this is the kind of interleaving #143 is about.
 
 ## Deferred: one player type
 
@@ -392,6 +406,10 @@ Two guard tests pass today and must keep passing:
 Test 8 cannot fail on today's tree for the reason decision 3 exists. It fails on a build that keeps
 the last item without pausing it, where frames went from 10 to 35.
 
+Decision 2's run number has no row. Testing it means holding an end-of-stream between the item
+raising it and the advance handling it, then seeking. That needs a seam in `PlaylistSession` to hold
+the advance, or the tooling #143 asks for. A timing-based test would not show the race reliably.
+
 ## Revision history
 
 - **First draft (2026-09-12)** proposed running every controller on the playlist session, with a
@@ -412,3 +430,8 @@ the last item without pausing it, where frames went from 10 to 35.
   earlier item of the same session, because an item boundary does not change it. A second turn
   suggested one token instead of two; decision 5 now says why an index-only check fails across an
   unload. The status and positive consequences now say the fixes are proposed, not implemented.
+- **Fifth draft (2026-09-12)**, after a third turn of automated review. Decision 2 now drops a late
+  end-of-stream raised before a seek or rewind of the kept item, which would otherwise end an item
+  that is playing. Decision 5 now states the two cases an update must be dropped in and allows
+  either of two mechanisms. The fourth draft's claim that one token would need a round trip was
+  wrong: a watermark raised after disposal drains the in-flight advance does not.
