@@ -196,10 +196,14 @@ number keeps rising from one session to the next, and an advance in flight at an
 higher number than any applied. Checking the hand-off number alone is therefore not enough. Either
 mechanism below is acceptable:
 
-- Tag each update with both the session generation and the hand-off number.
-- Keep one watermark. After disposing a session, which waits for any in-flight advance
-  (`PlaylistSession.cs:241-242`), the controller raises the watermark to that session's last
-  hand-off number, and drops any update at or below the watermark.
+- Tag each update with both the session generation and the hand-off number. The controller drops an
+  update whose generation is not the current one, or whose number is not higher than the last number
+  it applied for that generation.
+- Keep one watermark. The controller drops any update at or below the watermark. When it applies an
+  update, it raises the watermark to that update's hand-off number, which covers an earlier item of
+  the same session. After disposing a session, which waits for any in-flight advance
+  (`PlaylistSession.cs:241-242`), it raises the watermark to that session's last hand-off number,
+  which covers an unloaded session.
 
 No state machine changes.
 
