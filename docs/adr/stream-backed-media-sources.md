@@ -12,9 +12,9 @@ in *Revision history* at the end — the superseded reasoning is kept because it
 is what three of the open questions were about.
 
 Amended (2026-09-13): `FromStream` takes a factory that opens a fresh stream, not
-a `Stream` instance. A source is reused far more than the first drafts assumed:
-by a loop, by replay from `Ended`, by a playlist, and by a second player. A
-`Stream` instance is spent after one play. *Revision history* records what
+a `Stream` instance. A source is opened again far more than the first drafts
+assumed: by replay from `Ended`, by a playlist that wraps or rebuilds an item,
+and by a second player. A `Stream` instance is spent after one play. *Revision history* records what
 changed.
 
 Resolves the substantial half of
@@ -118,10 +118,15 @@ public static IMediaSource FromStream(
 
 `open` is called once for every open of the source, and each call must return a
 new stream positioned at the start of the media. The source can therefore be
-played more than once: by a `RepeatMode.One` loop, by replay from `Ended`, by a
-playlist that returns to it, and by two players at once. A caller holding bytes
-in memory writes `() => new MemoryStream(bytes, writable: false)`, which wraps
-the same array on every open without copying it.
+opened more than once: by replay from `Ended`, by a playlist that returns to it,
+and by two players at once. A caller holding bytes in memory writes
+`() => new MemoryStream(bytes, writable: false)`, which wraps the same array on
+every open without copying it.
+
+A `RepeatMode.One` loop is a narrower case. Over a seekable stream it seeks the
+stream it already has and needs no reopen. Over a forward-only stream it would
+need to reopen, and the single-source loop has no path that does; *Not settled
+here* keeps that open.
 
 A factory that returns the same instance twice fails at the second open. §6 has
 the player dispose every stream it opened, so the second open receives a disposed
@@ -469,11 +474,12 @@ record, and `FrameFlow.Media` did not grant `InternalsVisibleTo` to Decoding.
 `FromStream(Stream stream, string displayName, bool leaveOpen = false)`, which
 every draft before 2026-09-13 proposed.
 
-Rejected, because a source is not played once. A `RepeatMode.One` loop, replay
-from `Ended`, a playlist that wraps or holds the source twice, and a second
-player all open the same `IMediaSource` again. A `Stream` instance is disposed or
-at its end after the first play, so every one of those fails, and each fails in
-a different place.
+Rejected, because a source is not opened once. Replay from `Ended`, a playlist
+that wraps, rebuilds or holds the source twice, and a second player all open the
+same `IMediaSource` again. A `Stream` instance is disposed or at its end after
+the first play, so every one of those fails, and each fails in a different place.
+Only a `RepeatMode.One` loop over a seekable stream survives, because it seeks
+the stream it already has.
 
 It also pins memory. Once the stream is disposed, anything still holding the
 source still holds the stream object, and a disposed `MemoryStream` keeps its
@@ -483,14 +489,20 @@ would keep every in-memory clip it ever played until the source was dropped.
 The factory costs the caller a lambda, and for the common in-memory case the
 lambda wraps an array the caller already holds.
 
+Changing the signature breaks no caller. No `FromStream` has shipped in any
+form, so there is nothing to migrate. When `FromStream` first ships, its
+`PublicAPI` entry and the `docs/BREAKING-CHANGES.md` entry for `MediaInfo`
+described under *Consequences* cover it.
+
 ## Consequences
 
 ### Good
 
 - The motivating scenarios work without a filesystem.
-- A stream source can be played more than once, like a file source: in a loop,
-  on replay, in a playlist, and by two players. Nothing it opened stays alive
-  between opens.
+- A stream source can be opened more than once, like a file source: on replay,
+  in a playlist, and by two players. A seekable one loops under
+  `RepeatMode.One`; a forward-only one does not yet. Nothing it opened stays
+  alive between opens.
 - `SeekAsync` gains a structured refusal instead of an attempt that fails below.
 - `FrameFlow.Native` gains input-side AVIO interop, the prerequisite for any
   future custom protocol.
@@ -660,8 +672,8 @@ earlier revisions had made:
 **2026-09-13, a factory instead of a stream.** Work on the playlist player's end
 of queue and replay behaviour, recorded in the draft
 [End of queue, replay and faults on the playlist player](playlist-end-of-queue-replay-and-faults.md),
-showed how often one `IMediaSource` is opened again: by a loop, by replay from
-`Ended`, by a playlist that wraps or keeps played items, and by a second player.
+showed how often one `IMediaSource` is opened again: by replay from `Ended`, by a
+playlist that wraps, rebuilds or keeps played items, and by a second player.
 Every earlier revision took a `Stream` instance, which is spent after one play
 and, as a disposed `MemoryStream`, still holds its buffer for as long as the
 source is referenced. The decision changed in five places:
