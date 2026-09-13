@@ -122,6 +122,49 @@ var controller = PlaybackController.Create(videoSink: sink, hardwareDecodeMode: 
 `DecoderFactories.CreateVideo` now accepts `null` capabilities with the same
 meaning. That widens the parameter and breaks no existing call.
 
+### 4. The playlist player reports failed items, and gives up on a run of them
+
+**Not a compile error.** Nothing you write changes; what runs does.
+
+`IMediaPlaylistPlayer` skipped an item that faulted while it played, or that
+could not be started, and reported nothing. A faulted last item ended the
+playlist as if it had played through. An item that faulted on every pass under
+`RepeatMode.All` or `RepeatMode.One` was rebuilt and faulted again, forever
+(#180).
+
+| Case | Before | After |
+|---|---|---|
+| An item faults while playing, or an item after the first cannot be started | skipped, nothing raised | skipped, `ErrorOccurred` raised, state unchanged |
+| The last item faults while playing under `Off` | `Ended` | `ErrorOccurred`, then `Ended` |
+| More than eight items fail in a row | `Error` only if they failed to start; faults looped forever | `Error`, with an `ErrorOccurred` for each failure and one for giving up |
+
+A first item that fails before anything has played is treated as a single
+source's: one that cannot be opened still fails the load, and one that faults
+before the first `PlayAsync` puts the player in `Error`. An item that
+ends or is skipped without failing breaks a run, and so does a fault after an
+item has played for five seconds, or for half its length if that is shorter. A
+bad item in a rotation with items that play is reported on every pass and never
+given up on.
+
+**`ErrorOccurred` no longer means the player stopped.** On a single-source
+player it still does. On a playlist player, check `State` before you treat an
+error as terminal:
+
+```csharp
+// Before — every error was taken to be the end
+player.ErrorOccurred.Subscribe(error => DisposePlayer());
+
+// After — a playlist error may be an item it skipped
+player.ErrorOccurred.Subscribe(error =>
+{
+    Log(error);
+    if (player.State == PlaybackState.Error)
+        DisposePlayer();
+});
+```
+
+The state is `Error` by the time the give-up error is raised.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

@@ -112,9 +112,17 @@ public interface IMediaPlayer : IAsyncDisposable
     /// and is not repeated here.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Forwarded from <see cref="IPlaybackController.ErrorOccurred"/>. Without
     /// it a consumer holding only the player surface has no structured error
     /// channel for anything the decode stack reports mid-stream.
+    /// </para>
+    /// <para>
+    /// An error does not always stop playback. A single-source player raises it
+    /// as it enters <see cref="PlaybackState.Error"/>. An
+    /// <see cref="IMediaPlaylistPlayer"/> also raises it for an item that fails,
+    /// and keeps playing; see that interface.
+    /// </para>
     /// </remarks>
     IObservable<PlaybackError> ErrorOccurred { get; }
 

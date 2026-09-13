@@ -103,6 +103,13 @@ public interface IPlaybackController : IAsyncDisposable
     IObservable<LoopStalled> LoopStalled { get; }
 
     /// <summary>Fires when an error occurs during playback.</summary>
+    /// <remarks>
+    /// An error that stops playback is raised as the controller enters
+    /// <see cref="PlaybackState.Error"/>. A playlist controller also raises an error for
+    /// each item that fails to start or faults while it plays, and then moves on without
+    /// changing state. Failed items put it in <see cref="PlaybackState.Error"/> only when
+    /// they keep failing in a row.
+    /// </remarks>
     IObservable<PlaybackError> ErrorOccurred { get; }
 
     /// <summary>Periodic position updates during playback.</summary>

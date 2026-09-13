@@ -5,16 +5,17 @@
 Proposed (2026-09-12). Draft pending number assignment.
 
 This record proposes fixes for three defects in how the playlist player behaves at the end of its
-queue and on replay. It records three more, and several found in review, without deciding their
-fixes. The proposed changes are to behaviour, not public API. Single-source playback would not
-change.
+queue and on replay, and decides how it reports failed items. It records one more defect, and
+several found in review, without deciding their fixes. The changes are to behaviour, not public
+API. Single-source playback changes in one respect: decision 7 drops notifications from a session
+the controller has replaced.
 
 It started as a proposal to run every player on the playlist session. A spike and two independent
 reviews narrowed it to this. That history is kept under *Alternatives considered* and *Revision
 history*, because it is the reason this record is narrow.
 
-**Nothing here is implemented.** Every defect below was reproduced on this codebase except where
-it says "read from code".
+**Only decision 7 is implemented** (#180). Every defect below was reproduced on this codebase except
+where it says "read from code".
 
 Related: [ADR-0028](ADR-0028-internal-layering-and-ownership-cleanup.md),
 [ADR-0034](ADR-0034-diagnostics-surfaces.md),
@@ -42,6 +43,11 @@ The runs used the generated corpus, software decode, a counting video sink and n
 Most used the 3-second video-only clip. Defect 5 also used the half-second clip, whose audio stream
 was discarded for want of a sink. Faults were injected with a `configureVideo` operator that throws
 on its 21st frame. The probes were scratch tests and were not committed.
+
+Line numbers outside decision 7 cite commit 628083b, the tree this record was first written
+against. Several of those files have changed since, and decision 7 changed `PlaylistSession.cs`
+and `PlaybackControllerCore.cs` itself. Decision 7's own citations are to the tree it was
+implemented on.
 
 ### Defects on the playlist player
 
@@ -102,16 +108,16 @@ at different points depending on how the player was built (#125).
 
 ## Decision
 
-This record decides fixes for defects 1, 2 and 5, and a documentation change for `Error`. Defects 3,
-4 and 6 are recorded here and left under *Not settled here*, because both proposed fixes failed
-review.
+This record decides fixes for defects 1, 2 and 5, a documentation change for `Error`, and in
+decision 7 the fix for defects 3 and 4. Defect 6 is recorded here and left under *Not settled
+here*, because its proposed fix failed review.
 
 ### 1. Single-source playback stays on `SubstrateSession`
 
-The two session types remain. This record changes `PlaylistSession` and two internal points in
-`PlaybackControllerCore`: the replay check in decision 4 and the snapshot update in decision 5.
-`IMediaPlayer`, `IMediaPlaylistPlayer`, `IPlaybackController` and both player factories keep their
-shapes.
+The two session types remain. This record changes `PlaylistSession` and three internal points in
+`PlaybackControllerCore`: the replay check in decision 4, the snapshot update in decision 5, and the
+recoverable error in decision 7. `IMediaPlayer`, `IMediaPlaylistPlayer`, `IPlaybackController` and
+both player factories keep their shapes.
 
 ### 2. The end of the queue keeps the last item
 
@@ -218,15 +224,134 @@ no further commands and must be disposed.
 The docs do not promise that a new player built over the same sinks recovers. That path is untested
 (`tests/FrameFlow.Integration.Tests/ErrorPathTests.cs:18-23`, #29).
 
+### 7. A failed item is reported, and the player gives up only on a run of failures
+
+This fixes defects 3 and 4, and is implemented (#180).
+
+**Failed items are reported.** An item that faults while it plays, or an item after the first that
+cannot be opened or started, raises `ErrorOccurred` with the item's exception as `Inner`. The
+session reports through a new internal callback, `SessionCallbacks.OnRecoverableError`. The
+controller raises the error on its dispatch loop and fires no trigger, so the state does not
+change.
+
+**A first item that fails before anything has played is treated as a single source's.** One that
+cannot be opened is still a load failure. One that opens and then faults before the first
+`PlayAsync`, during warm-up or while paused on the loaded item, goes to the controller as a fatal
+error, and the controller enters `Error`. Skipping it would start the next item while the
+controller is still loading or paused: `SubstrateSession`'s workers catch their own faults, so
+`WarmUpAsync` returns and the load succeeds. This case is read from code. The integration tests'
+injected operator cannot reach it, because the configured video chain receives no frame before the
+first play.
+
+Two reports can be missed or arrive late. A fault that races a skip of the same item is not
+reported if the skip's advance runs first, because the fault then belongs to an item already
+replaced. And `SourceTransitioned` for the next item fires on the advance thread, so it can reach a
+subscriber before the previous item's error, which waits in the controller's command channel. The
+error names its item by display name.
+
+**The playlist carries on as before.** A failed item is skipped as if it had ended. Under `Off`, a
+last item that faults while playing ends the playlist in `Ended`, and a caller can still enqueue
+and play. Under `All` and `One` the rotation continues.
+
+**The player gives up on a run of failures.** `PlaylistFailureGuard` counts items that fail in a
+row without making progress. On the ninth it gives up: the session hands the controller a fatal
+error, and the controller enters `Error` and raises `ErrorOccurred` once more.
+
+An item has made progress once it has played for five seconds, or for half its length if that is
+shorter. An item whose length is not known needs the full five seconds.
+
+| Event | Effect on the count |
+|---|---|
+| An item cannot be opened or started | adds one |
+| An item faults before it has made progress | adds one |
+| An item faults after it has made progress | resets to zero |
+| An item reaches its end, or is skipped, without failing | resets to zero |
+| An item starts | none |
+
+How far an item played is read from the position clock when the fault is raised, not when the
+advance runs, because the advance can wait on the transition gate behind a seek. The clock starts
+at zero for each item and each in-place rewind, and stops while paused. It does not measure play
+alone: a seek moves it, so an item sought past the threshold that then faults counts as having made
+progress.
+
+A successful start does not reset the count. That reset is why defect 4 never tripped the guard: an
+item that faults on every pass starts successfully on every pass.
+
+The guard stops a playlist in which every item keeps failing. It does not stop a rotation in which
+some item plays: a bad item there is reported on every pass and never given up on, because the
+items between its failures reset the count. That includes a queue of an item that cannot be opened
+and an item that ends at once, which reports on every pass with nothing slowing it down. That case
+looped without reporting before this decision.
+
+**Stale notifications are dropped.** Every session notification carries the controller's session
+generation, captured when the session is created: recoverable errors, and the end-of-stream, fatal
+error and buffer triggers. The controller drops one whose generation is no longer current.
+`PlaybackControllerCore.DisposeSessionAsync` advances the generation before it awaits disposal, so
+a notification from a session being torn down cannot reach the next one.
+
+Before this decision only the controller's state filtered triggers, which cannot catch one case.
+Replay from `Ended` unloads and reloads inside one dispatch command. A fatal error or end-of-stream
+the old session posted during its teardown waited in the channel and was dispatched against the new
+session, putting it in `Error` or `Ended`. `PlaybackDispatchProtocolTests` reproduces both. A
+playlist that gives up while the controller replays is one way to post such a fatal error.
+
+**A second fault from one run of an item is ignored.** An item's demux pump and its graph each
+report their own faults (`SubstrateSession.cs:1538`, `:1588`). A faulted item is never rewound in
+place, so the session records the item generation whose fault it handled and drops another fault
+carrying it. Without this, a last item under `Off` whose pump and graph both faulted would be
+reported twice, because reaching the end of the queue does not advance the item generation. Read
+from code; the tests inject a fault into the graph only.
+
+**How this answers the review of the earlier proposal:**
+
+| Review finding | Decision 7 |
+|---|---|
+| The limit was checked only when an item failed to open | The fault path checks it too. |
+| Resetting only on a natural end breaks rotation driven by skips | A skip resets the count, as a natural end does. |
+| A source with no natural end would go fatal on faults hours apart | A fault after five seconds of play resets the count. A source with no known length always needs the full five seconds. |
+| Making the last item's fault fatal makes a recoverable state terminal | It is reported and the playlist ends in `Ended`. Only a run of failures is fatal, and the guard was already fatal for a run of items that failed to start. |
+| "Nothing after it" has no meaning under `One` | The rule does not ask what follows. Under `One` a faulted item is rebuilt and counted like any other. |
+| The controller has no non-fatal error channel | `OnRecoverableError` is one. It is internal. The public carrier is `ErrorOccurred`, whose summary on `IMediaPlayer` says it "fires when a failure arises during playback" and does not tie it to `Error`. |
+
+**The numbers.** Eight is the guard's existing limit. Five seconds is a judgement: it separates an
+item that cannot get going from one that played and then failed. An item that faults later than
+that on every pass is reported on every pass and never given up on. That is not a hot loop, and a
+caller that wants a stricter rule can count the errors.
+
+Half the length covers clips shorter than ten seconds. Without it a three-second clip that faults
+near its end on every pass, such as one whose tail is damaged, could never reach five seconds. It
+would be given up on after nine passes even though it shows nearly all of itself each time. Before
+this decision that clip looped forever, and the review of this change raised it as a regression.
+
+**Alternatives.**
+
+- *A new observable on `IMediaPlaylistPlayer` for failed items.* Rejected: it adds public API for
+  what `ErrorOccurred`'s documentation already covers.
+- *A window of wall-clock time, such as nine failures within thirty seconds.* Rejected: the session
+  would need a `TimeProvider`, and a run of items that each take longer than the window to fail to
+  open, such as unreachable network sources, would never trip it. Today's guard trips on those.
+- *Fatal when nothing follows the faulted item.* Rejected by the review above.
+
 ## Consequences
 
 ### Positive
 
 - Once implemented, defects 1, 2 and 5 are fixed. A playlist at `Ended` can be sought, reports its
   counters, and does not fault when Play finds nothing to play.
-- None of it changes public API, and single-source playback is untouched.
+- With decision 7, defects 3 and 4 are fixed. Failed items are observable, and a playlist whose
+  items all fail before making progress no longer loops forever.
+- None of it changes public API. Single-source playback changes only in that a fatal error or
+  end-of-stream from a session replaced by replay from `Ended` no longer reaches the new session.
 
 ### Negative
+
+- **`ErrorOccurred` no longer means a playlist player stopped.** A consumer that disposes the player
+  on any error would dispose one that is still playing. In this repository the SdlPlayer example
+  logs errors and the Avalonia controls do not subscribe, so neither is affected.
+  `docs/BREAKING-CHANGES.md` has the entry.
+- **A playlist whose items all fail before making progress now stops.** A single item that faults
+  early on every pass used to be rebuilt forever. It now enters `Error` after nine passes and has to
+  be rebuilt.
 
 - **The last item holds its resources after `Ended`.** That is its demuxer, decoders and graph, an
   active audio sink, a hardware decode device when one is in use, and GPU frames under
@@ -291,23 +416,11 @@ break a caller, while a replay that later becomes a refusal breaks anyone who re
 
 ### Defect fixes that failed review
 
-- **Faults at the end of the queue (defects 3 and 4).** The proposal was: a fault with nothing after
-  it becomes fatal, mid-stream faults count toward the consecutive-failure guard, and the guard
-  resets only when an item reaches its natural end. Review found:
-  - The guard would still never trip, because its limit is only checked on an open failure
-    (`PlaylistSession.cs:410`).
-  - An item that is skipped never reaches its natural end. A rotation advanced by
-    `SkipToNextAsync` with one permanently bad item would go fatal after nine wraps, which breaks the
-    skip-a-bad-item behaviour ADR-0062 intends. A source with no natural end, such as a network
-    stream, would go fatal on accumulated transient faults.
-  - Making the fault fatal turns a state a caller can recover from today (enqueue, then play) into
-    terminal `Error`. Recovering onto the same sinks is untested (#29).
-  - "Nothing after it" has no meaning under `RepeatMode.One`, where the next decision is always a
-    replay.
-
-  A fix needs a reset rule that survives skip-driven rotation, a limit check on the fault path, and
-  a decision between a fatal error and a non-fatal channel the controller does not have yet
-  (`PlaybackControllerCore.cs:914` raises `ErrorOccurred` only on the way into `Error`).
+- **Faults at the end of the queue (defects 3 and 4)** are now settled by decision 7. The first
+  proposal failed review: a fault with nothing after it became fatal, mid-stream faults counted
+  toward the guard, and the guard reset only when an item reached its natural end. Decision 7's
+  table lists each review finding and its answer. Recovering onto the same sinks after `Error` is
+  still untested (#29).
 
 - **`SetNext` under `All` (defect 6).** The proposal was that an item placed by `SetNext` plays once
   and never joins the loop buffer. Review found it changes a documented way to change source:
@@ -388,10 +501,12 @@ What it costs:
   the state stayed `Paused`. Enqueue then skip while `Ended` presented, 72 frames to 109, while the
   state stayed `Ended`. A skip on the last item while `Paused` dropped the end-of-stream, because
   `Paused` has no transition for it (`PlaybackProtocol.cs:308-313`), and a later play presented
-  nothing.
+  nothing. A first item that faulted during warm-up did the same until decision 7 sent that fault to
+  the controller.
 - **The final item fails to open.** On `[clean, corrupt]` under `Off`, the clean item is disposed
   before the corrupt one is tried, the queue then ends in `Ended` with no error, and seek then play
-  leaves the sink at 72 frames. Decision 2 does not cover this.
+  leaves the sink at 72 frames. Decision 2 does not cover this. Decision 7 now reports the corrupt
+  item on `ErrorOccurred`; the queue still ends with nothing to seek.
 - **Switching to `All` mid-queue never wraps.** A coordinator created under `Off` and switched to
   `All` after its first item played ran `a b` and ended. Items dequeued under `Off` never enter the
   loop buffer (`PlaylistCoordinator.cs:186-187`, `:249-250`).
@@ -472,6 +587,31 @@ Two guard tests pass today and must keep passing:
 Test 8 cannot fail on today's tree for the reason decision 3 exists. It fails on a build that keeps
 the last item without pausing it, where frames went from 10 to 35.
 
+Decision 7's tests are in `tests/FrameFlow.Integration.Tests/PlaylistFaultTests.cs`. They inject a
+fault on the 21st frame of the 3-second clip, well before that clip makes progress at 1.5 seconds.
+The bracketed results are from the tree before decision 7 (commit 8ea83a7).
+
+| # | Decision | Test | Before |
+|---|---|---|---|
+| 9 | 7 | Playlist, `Off`: the only item faults. One `ErrorOccurred`; `Ended`. | [no `ErrorOccurred`] |
+| 10 | 7 | Playlist of two, `Off`: the first item faults. One `ErrorOccurred`; the second item plays; `Ended`. | [no `ErrorOccurred`] |
+| 11 | 7 | Playlist, `All` and `One`: the item faults on every pass. Nine `ErrorOccurred`, then `Error` and a tenth that says it gave up. | [no `Error` within 60 s] |
+| 12 | 7 | Playlist of two, `All`: the first item faults on every pass and the second is skipped whenever it starts. Twelve `ErrorOccurred`, and no `Error`. | [fewer than twelve `ErrorOccurred` within 60 s; with the reset on a clean end removed, `Error`] |
+
+Test 12 guards the reset rule rather than the defect. It was run against a build with decision 7
+applied and the reset on a clean end removed, and failed there as shown. It would also pass under
+the old rule that reset on a successful start; test 11 is the one that tells those rules apart.
+
+Tests 9 and 10 assert one error when the player reaches `Ended`. A duplicate fault would be posted
+after that, so they do not test the duplicate-fault check.
+
+The counting rule is also unit-tested without FFmpeg in `PlaylistFailureGuardTests`, including the
+five-second threshold and the half-length rule, which the integration tests do not reach.
+`PlaybackDispatchProtocolTests` covers the controller half: a recoverable error is raised without a
+state change or a disposed session, one from an unloaded session is dropped, and a fatal error or
+end-of-stream from the session replay from `Ended` replaced leaves the new session playing. Before
+the generation was added to triggers, those last two ended in `Error` and `Ended`.
+
 Decision 2's run number has no row. Testing it means holding an end-of-stream between the item
 raising it and the advance handling it, then seeking. That needs a seam in `PlaylistSession` to hold
 the advance, or the tooling #143 asks for. A timing-based test would not show the race reliably.
@@ -505,3 +645,20 @@ the advance, or the tooling #143 asks for. A timing-based test would not show th
   up-next queue, with what it answers, what it leaves open and what it costs. No decision changed.
   The stream-source draft was amended at the same time to take a factory, because a playlist that
   keeps played items opens its sources more than once.
+- **Amendment (2026-09-13), decision 7.** Settles defects 3 and 4, and implements the fix with #180.
+  A failed item is reported on `ErrorOccurred` through a new internal session callback, and the
+  playlist carries on. The guard now counts faults as well as failures to start, is checked on both
+  paths, and is reset by an item that ends or is skipped without failing, or that played for five
+  seconds before it faulted. A successful start no longer resets it. The fault proposal moved out of
+  *Not settled here*, and decision 7 answers each finding of the review that sent it there.
+  An independent review of the implementation then changed it: progress became five seconds or
+  half the item's length, after the review showed that a short clip faulting near its end on every
+  pass would be given up on where it had looped before; the played time is read when the fault is
+  raised rather than after the advance waits on the gate; the first-item exception now covers only a
+  first item that cannot be opened; and the decision now says which reports can be missed or arrive
+  late, and that a bad item in a rotation with items that play is never given up on.
+  Automated PR review then found two more, both fixed in the same change: a fatal error from a
+  session replaced by replay from `Ended` could put the new session in `Error`, so every session
+  notification now carries the session generation; and a first item that faulted before the first
+  play was skipped while the controller was still loading, so that fault now goes to the controller
+  as a single source's does.

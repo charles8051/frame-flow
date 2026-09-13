@@ -81,6 +81,30 @@ internal sealed record InternalTriggerCommand(PlaybackTrigger Trigger) : IPlayer
     /// </summary>
     public Exception? Error { get; init; }
 
+    /// <summary>
+    /// The generation of the session that raised the trigger. A trigger from a session the
+    /// controller has since disposed is dropped.
+    /// </summary>
+    public int SessionGeneration { get; init; }
+
+    public TaskCompletionSource<Result> Completion { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public CancellationToken CancellationToken { get; init; }
+}
+
+/// <summary>
+/// Carries an error a session hit and carried on from, such as a playlist item that
+/// failed and was skipped. The dispatch loop raises it on <c>ErrorOccurred</c> without
+/// firing a trigger.
+/// </summary>
+/// <param name="Error">The error to report.</param>
+/// <param name="SessionGeneration">
+/// The generation of the session that reported it. An error from a session the
+/// controller has since disposed is dropped.
+/// </param>
+internal sealed record RecoverableErrorCommand(PlaybackError Error, int SessionGeneration)
+    : IPlayerCommand
+{
     public TaskCompletionSource<Result> Completion { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     public CancellationToken CancellationToken { get; init; }
