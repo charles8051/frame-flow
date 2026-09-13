@@ -274,10 +274,8 @@ public sealed class PlaybackDispatchProtocolTests
         Assert.Equal(PlaybackState.Playing, controller.State);
 
         // The rewind runs on a background seek task (StartSeekRunner), so LoopRestarted
-        // can fire fractionally before SeekAsync lands — poll briefly for it.
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
-        while (Volatile.Read(ref session.SeekCalls) < 1 && DateTimeOffset.UtcNow < deadline)
-            await Task.Delay(20);
+        // can fire fractionally before SeekAsync lands — wait for the session to see it.
+        await CompletesWithin(session.FirstSeek.Task, TimeSpan.FromSeconds(5));
         Assert.True(
             Volatile.Read(ref session.SeekCalls) >= 1,
             "Loop boundary did not route a rewind to the session."
@@ -566,9 +564,7 @@ public sealed class PlaybackDispatchProtocolTests
         );
 
         // The real seek to the requested position ran on the background seek runner.
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
-        while (Volatile.Read(ref session.SeekCalls) < 1 && DateTimeOffset.UtcNow < deadline)
-            await Task.Delay(20);
+        await CompletesWithin(session.FirstSeek.Task, TimeSpan.FromSeconds(5));
         Assert.True(
             Volatile.Read(ref session.SeekCalls) >= 1,
             "Ended-seek did not launch the session seek runner."
@@ -606,10 +602,31 @@ public sealed class PlaybackDispatchProtocolTests
         session.RaiseEndOfStream();
         await loopTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // Give any erroneous extra projection a chance to surface, then assert none did.
-        await Task.Delay(50);
+        // Let any erroneous extra projection surface, then assert none did. Commands and
+        // internal triggers share one serial dispatch channel, and projections are raised
+        // synchronously while a command is dispatched. So a command posted now completes only
+        // after the end-of-stream trigger ahead of it has finished, projections included.
+        // Re-selecting the current repeat mode is a dispatched no-op, which makes it a barrier
+        // with no side effects; it replaces a 50 ms sleep that only made that likely.
+        var barrier = await controller.SetRepeatModeAsync(RepeatMode.One);
+        Assert.True(barrier.IsSuccess);
         Assert.Equal(PlaybackState.Playing, controller.State);
         Assert.Equal(1, publicStates.Count(s => s == PlaybackState.Playing));
+    }
+
+    // Waits for a signal without throwing when it does not come, so the assertion that follows
+    // reports what went wrong instead of a bare TimeoutException. The bound is a safety net: the
+    // signal arrives in microseconds when the behaviour is right (ADR-0072).
+    private static async Task CompletesWithin(Task signal, TimeSpan bound)
+    {
+        try
+        {
+            await signal.WaitAsync(bound);
+        }
+        catch (TimeoutException)
+        {
+            // The assertion after the call names the failure.
+        }
     }
 
     // ── Fakes ───────────────────────────────────────────────────────────
@@ -715,8 +732,17 @@ public sealed class PlaybackDispatchProtocolTests
         )
         {
             Interlocked.Increment(ref SeekCalls);
+            FirstSeek.TrySetResult();
             return ValueTask.CompletedTask;
         }
+
+        /// <summary>
+        /// Completes on the first <see cref="SeekAsync"/>. The controller runs seeks on a
+        /// background runner, so a test waits on this rather than polling
+        /// <see cref="SeekCalls"/> against a deadline.
+        /// </summary>
+        public TaskCompletionSource FirstSeek { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         /// <summary>When set, <see cref="DisposeAsync"/> throws it.</summary>
         public Exception? DisposeThrows;

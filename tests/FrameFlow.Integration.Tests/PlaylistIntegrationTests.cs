@@ -1,8 +1,11 @@
 using System.Diagnostics;
+using FrameFlow.Decoding;
 using FrameFlow.Graph;
+using FrameFlow.Media;
+using FrameFlow.Playback;
 using Xunit.Abstractions;
 
-namespace FrameFlow.Playback.Tests;
+namespace FrameFlow.Integration.Tests;
 
 /// <summary>
 /// End-to-end integration tests for gapless playlist playback over real corpus
@@ -14,22 +17,34 @@ namespace FrameFlow.Playback.Tests;
 /// driven across every item boundary and is <b>never disposed</b> by the
 /// playback stack (ADR-0044) — i.e. the presenter stays warm and is not rebuilt
 /// per item, which is the entire point of the design.
+/// <para>
+/// <b>Why this lives in the integration suite.</b> Moved from <c>FrameFlow.Playback.Tests</c>.
+/// These tests drive real FFmpeg decode through the whole playback stack, and several assert real
+/// durations — that pacing keeps playback near real time, that a loop seam is close to gapless in
+/// wall-clock terms. ADR-0072 rule 6 names this suite as the one allowed to measure elapsed time,
+/// so tests of that kind belong here rather than behind an exemption in a unit project. They take
+/// the suite's <see cref="FfmpegBootstrapFixture"/> instead of bootstrapping FFmpeg themselves,
+/// because that fixture is what serialises native initialisation across parallel test classes.
+/// </para>
 /// </remarks>
-public sealed class PlaylistIntegrationTests
+public sealed class PlaylistIntegrationTests : IClassFixture<FfmpegBootstrapFixture>
 {
     private readonly ITestOutputHelper _output;
 
-    public PlaylistIntegrationTests(ITestOutputHelper output) => _output = output;
+    public PlaylistIntegrationTests(FfmpegBootstrapFixture fixture, ITestOutputHelper output)
+    {
+        _ = fixture;
+        _output = output;
+    }
 
     [RequiresFfmpegAndCorpusFact]
     public async Task Playlist_AdvancesAcrossItems_WithoutRebuildingTheSink()
     {
-        var v = TestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
-        var av = TestEnvironment.GetCorpusFile("test-av-h264-aac.mp4");
+        var v = IntegrationTestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
+        var av = IntegrationTestEnvironment.GetCorpusFile("test-av-h264-aac.mp4");
         Assert.NotNull(v);
         Assert.NotNull(av);
 
-        BootstrapNative();
 
         var sink = new WarmTrackingVideoSink();
 
@@ -128,10 +143,9 @@ public sealed class PlaylistIntegrationTests
         // audio sink records its SeekBaseline reseats; each item boundary must
         // produce one reseat to the item origin (0). Before the fix the advance
         // path never reseated the audio-mastered clock and this stayed at zero.
-        var av = TestEnvironment.GetCorpusFile("test-av-h264-aac.mp4");
+        var av = IntegrationTestEnvironment.GetCorpusFile("test-av-h264-aac.mp4");
         Assert.NotNull(av);
 
-        BootstrapNative();
 
         var videoSink = new WarmTrackingVideoSink();
         var audioSink = new ReseatTrackingAudioSink();
@@ -250,12 +264,11 @@ public sealed class PlaylistIntegrationTests
     public async Task GaplessLoop_SingleClipRepeatAll_NaturalEosBoundaryIsNearZeroGap()
     {
         // A short clip so several natural-EOS loops complete quickly. 0.5 s @ 30 fps.
-        var clip = TestEnvironment.GetCorpusFile("test-subsecond.mp4");
+        var clip = IntegrationTestEnvironment.GetCorpusFile("test-subsecond.mp4");
         Assert.NotNull(clip);
         const double fps = 30.0;
         var frameDuration = TimeSpan.FromSeconds(1.0 / fps);
 
-        BootstrapNative();
 
         var sink = new TimestampedVideoSink();
 
@@ -404,14 +417,6 @@ public sealed class PlaylistIntegrationTests
             await Task.Delay(25);
     }
 
-    private static void BootstrapNative()
-    {
-        var bootstrapper = new FrameFlow.Native.FrameFlowBootstrapper(
-            new FrameFlow.Native.FrameFlowNativeOptions { SkipHardwareProbe = true }
-        );
-        var result = bootstrapper.Initialize();
-        Assert.True(result.IsSuccess, $"FFmpeg bootstrap failed: {result.Message}");
-    }
 
     /// <summary>
     /// A video sink that counts frames presented and disposals, so a test can
