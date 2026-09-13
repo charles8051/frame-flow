@@ -347,10 +347,13 @@ the session receives, with no new channel, under three rules:
   it has ended the queue, because the controller dispatched it before the end-of-stream arrived. The
   controller ends when that end-of-stream arrives, so the session keeps `Ended`. A Play from `Ended`
   never reaches the session: the controller replays on a new one.
-- **The seek out of `Ended` is recorded at its warm-up.** The controller warms up on load and on that
-  seek, before it settles in `Paused`, so a skip issued once it is `Paused` sees the session paused.
-  The seek itself is not used: it runs later, and can be cancelled.
-- **A pause is recorded only from playing.**
+- **The seek out of `Ended` is recorded at the end of its warm-up.** The controller warms up on load
+  and on that seek, and settles in `Paused` straight after, so a skip issued once it is `Paused` sees
+  the session paused. The session holds its transition gate for the whole warm-up, so no advance
+  can replace the item while it warms. The seek itself is not used: it runs later, and can be
+  cancelled.
+- **A pause is recorded only from playing.** `Rebuffering` counts as playing here: the session sees
+  no call when the controller enters it.
 
 A skip, an end-of-stream and a fault all advance, and the advance follows the record:
 
@@ -401,8 +404,11 @@ the item.
   where before the skip had already started the item.
 - **An end-of-stream raised before a seek can end the player after it.** Nothing tells a stale
   end-of-stream from a current one after a seek. That was already true while `Playing`. The new
-  cell extends it to `Paused`: pause, seek back, and an end-of-stream posted before the seek ends
-  the player. Decision 2's run number is the fix for the playlist; the controller has no equivalent.
+  cell extends it to `Paused`, in a narrow window. The end-of-stream has to be raised by the run
+  before the pause, since a paused pacer does not drain, and dispatched after the seek. One posted
+  before the seek command is dispatched ahead of it, which ends the player and lets the seek run
+  from `Ended` as usual. Decision 2's run number is the fix for the playlist; the controller has no
+  equivalent.
 
 **Alternatives.**
 

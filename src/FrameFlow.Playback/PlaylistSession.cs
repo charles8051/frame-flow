@@ -209,22 +209,26 @@ internal sealed class PlaylistSession : IPlaybackSession
 
     public async ValueTask WarmUpAsync(CancellationToken cancellationToken = default)
     {
+        // Held for the whole warm-up, so no advance can dispose the item while it warms.
         await _transitionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (_disposed)
+                return;
+
+            if (_current is not null)
+                await _current.WarmUpAsync(cancellationToken).ConfigureAwait(false);
+
             // The controller warms up on load and on a seek out of Ended. The seek settles
-            // it in Paused, and this is the one call it makes before it gets there, so a skip
-            // issued once it is Paused already sees the session as paused.
-            if (!_disposed && CurrentRunState == RunState.Ended)
+            // it in Paused straight after this returns, and this is the last call it makes
+            // before it gets there, so a skip issued once it is Paused sees the session paused.
+            if (CurrentRunState == RunState.Ended)
                 SetRunState(RunState.Paused);
         }
         finally
         {
             _transitionGate.Release();
         }
-
-        if (_current is not null)
-            await _current.WarmUpAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask PlayAsync(CancellationToken cancellationToken = default)
@@ -253,8 +257,12 @@ internal sealed class PlaylistSession : IPlaybackSession
             {
                 await _current.PlayAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception ex) when (_currentAwaitsPlay)
+            catch (Exception ex)
+                when (_currentAwaitsPlay
+                    && !(ex is OperationCanceledException && cancellationToken.IsCancellationRequested)
+                )
             {
+                // A caller that cancelled its Play gets the cancellation, and the item stays.
                 // An item an advance opened while paused starts here. Failing to start is
                 // what it would have done inside the advance, so handle it the same way.
                 await ItemFailedToStartLockedAsync(ex).ConfigureAwait(false);
