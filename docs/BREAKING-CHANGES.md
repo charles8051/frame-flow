@@ -53,8 +53,14 @@ and one `TimeProvider` cannot express.
 
 The `IObservable<PlaybackDiagnosticsSnapshot>` on `IMediaPlayer` never emitted.
 Both player implementations returned a subscription that did nothing, so any
-code subscribed to it was already receiving nothing. Removing it changes no
-runtime behaviour.
+code subscribed to it was already receiving nothing.
+
+**This is a binary break as well as a source break.** Code that references
+`Diagnostics` stops compiling, which announces itself. An assembly that was
+compiled against an earlier `IMediaPlayer` and is not rebuilt does not: it still
+calls `IMediaPlayer.Diagnostics.get`, and the method that makes that call throws
+`MissingMethodException` when it runs. Rebuild anything that references the
+member against this version. Once rebuilt, nothing changes at runtime.
 
 ADR-0034 decided against a pushed snapshot stream: one rate chosen by the
 library cannot suit every consumer, and a timed stream is polling moved inside
