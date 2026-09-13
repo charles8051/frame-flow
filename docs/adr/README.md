@@ -213,6 +213,20 @@ land.
   setting repeat mode and then asking for a session is a compile error rather than a
   dropped setting. Records the cost of the narrowing — a second overload for every
   builder extension method — and the interface break it accepts to get there.
+- [End of queue, replay and faults on the playlist player](playlist-end-of-queue-replay-and-faults.md) —
+  the playlist player disagrees with the single-source player about what happens at the end. Six
+  defects were reproduced: seek from `Ended` plays nothing, play from `Ended` with an empty queue
+  faults into `Error`, a fault on the last item ends in a clean `Ended`, an item that faults on
+  every pass loops forever without reporting it, the controller keeps the first item's duration and
+  raises a false `LoopStalled`, and `SetNext` under `All` grows the rotation. Decides fixes for
+  three without changing public API or single-source playback: keep the last item at the end of the
+  queue and pause it first on a skip, refuse play from `Ended` on an empty queue with a failed
+  `Result`, and feed the controller the current item from its dispatch loop. The other three, and
+  defects found in review such as a skip while `Paused` presenting the next item, are recorded
+  without decisions because the proposed fixes failed review. Its first draft proposed running
+  every player on the playlist session; a spike passed the suites that way, and a review that
+  reproduced it showed the queue under test never advanced and single-source faults went silent.
+  Two reviews shaped it, and its revision history says what each changed.
 - [Sync-window join for media-time correlation](sync-window-join.md) — the substrate
   fans out and cannot rejoin, so four consumers hand-roll the same correlation outside
   the graph. Adds a two-input node that pairs a slow secondary onto a fast primary by
