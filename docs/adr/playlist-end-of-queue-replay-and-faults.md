@@ -4,9 +4,10 @@
 
 Proposed (2026-09-12). Draft pending number assignment.
 
-This record fixes three defects in how the playlist player behaves at the end of its queue and on
-replay. It records three more, and several found in review, without deciding their fixes. It
-changes behaviour, not public API. Single-source playback does not change.
+This record proposes fixes for three defects in how the playlist player behaves at the end of its
+queue and on replay. It records three more, and several found in review, without deciding their
+fixes. The proposed changes are to behaviour, not public API. Single-source playback would not
+change.
 
 It started as a proposal to run every player on the playlist session. A spike and two independent
 reviews narrowed it to this. That history is kept under *Alternatives considered* and *Revision
@@ -178,6 +179,15 @@ it only when both still hold.
   item boundary does not change the session generation (`PlaybackControllerCore.cs:822`, `:1447`),
   so the first tag alone would let a late update from an earlier item overwrite the current one.
 
+Neither tag can replace the other, because different owners mint them. The controller mints the
+session generation. The coordinator mints the transition index, and the playlist player keeps one
+coordinator across reloads (`src/FrameFlow.Player/MediaPlaylistPlayer.cs:97`), so its index keeps
+climbing from one session to the next. An advance that is in flight when its session is unloaded
+produces an update with a higher index than any the controller has applied. An index-only check
+would accept it after the unload. A single token covering both would need the controller to mint
+every item's index, which means a round trip from the session's advance to the controller's dispatch
+loop before the item can be reported.
+
 No state machine changes.
 
 ### 6. The docs say `Error` is terminal
@@ -195,8 +205,8 @@ The docs do not promise that a new player built over the same sinks recovers. Th
 
 ### Positive
 
-- Defects 1, 2 and 5 are fixed. A playlist at `Ended` can be sought, reports its counters, and does
-  not fault when Play finds nothing to play.
+- Once implemented, defects 1, 2 and 5 are fixed. A playlist at `Ended` can be sought, reports its
+  counters, and does not fault when Play finds nothing to play.
 - None of it changes public API, and single-source playback is untouched.
 
 ### Negative
@@ -399,4 +409,6 @@ the last item without pausing it, where frames went from 10 to 35.
   under *Not settled here*, and several citations and claims were corrected.
 - **Fourth draft (2026-09-12)**, after automated PR review. Decision 5's update now also carries the
   hand-off's transition index. The session generation alone did not stop a late update from an
-  earlier item of the same session, because an item boundary does not change it.
+  earlier item of the same session, because an item boundary does not change it. A second turn
+  suggested one token instead of two; decision 5 now says why an index-only check fails across an
+  unload. The status and positive consequences now say the fixes are proposed, not implemented.
