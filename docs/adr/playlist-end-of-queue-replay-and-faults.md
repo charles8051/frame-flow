@@ -319,6 +319,68 @@ break a caller, while a replay that later becomes a refusal breaks anyone who re
   "next" slot instead (ADR-0062:317). The shipped doc describes a push
   (`src/FrameFlow.Player/IMediaPlaylistPlayer.cs:41-45`).
 
+### A direction for defect 6: a playlist and an up-next queue
+
+This is not decided, and no work on it is planned. It is recorded because it answers defect 6 and
+part of the review's objection above.
+
+The coordinator keeps two structures that can disagree: the upcoming queue and the loop buffer
+(`PlaylistCoordinator.cs:39-40`). Defect 6, and a switch to `All` mid-queue that never wraps, are
+both cases of them disagreeing. The session asks the coordinator only for the first item and for
+what follows the current one (`First`, `DecideNext`), so the structure behind those calls can change
+without touching the session.
+
+The direction replaces the two with structures that do different jobs:
+
+- **The playlist** is an ordered list with a cursor. Under `All` it wraps. Under `Off` it stops at
+  the end and keeps the items that played. A jump verb moves the cursor, and the rotation continues
+  from the chosen item.
+- **Up next** is a queue of one-off items. They play before the cursor's next item, leave once they
+  have played, and never join the loop.
+
+The existing verbs map onto them:
+
+| Verb | Goes to | Under `All` |
+|---|---|---|
+| `EnqueueAsync` | the end of the playlist | joins the loop, as it does today |
+| `SetNextAsync` | up next | plays once, which fixes defect 6 |
+
+What it answers:
+
+- `SetNext` no longer grows the rotation.
+- A switch to `All` mid-queue wraps, because the items that played are still in the playlist.
+- The AvaloniaPlayer example's pick moves the cursor instead of imitating a jump with `SetNext`.
+- Play from `Ended` could later restart from the first item. Decision 4 leaves room for that: a
+  refused call can start succeeding without breaking a caller.
+
+What it does not answer:
+
+- **The other half of the review's objection.** Under `All`, `SetNextAsync` plus `SkipToNextAsync`
+  with a source that is not in the playlist plays it once, and then the old rotation returns.
+  ADR-0068's way to change source still changes meaning. Replacing what plays needs its own verb,
+  such as clearing the playlist and then enqueueing.
+- **Anything between the controller and the session.** Advances that ignore the controller's state,
+  faults at the end of the queue, and a late end-of-stream are unaffected.
+
+What it costs:
+
+- **New public members.** A jump, a way to read the playlist, remove, and clear or replace. These
+  are additions. The change to `SetNextAsync` under `All` is a break that does not show up as a
+  compile error, so it needs an entry in `docs/BREAKING-CHANGES.md`.
+- **A growing playlist under the documented rotation pattern.** Enqueueing on every transition
+  under `Off` (`src/FrameFlow.Player/IMediaPlaylistPlayer.cs:28-30`) keeps working, but the played
+  items stay as a history. The doc should point that pattern at `SetNextAsync`, whose items leave
+  once played. The memory involved is small. An entry is a reference to an `IMediaSource`, and
+  `MediaSource` holds a display name, a `Uri`, a path and a flag (`src/FrameFlow.Media/MediaSource.cs:8-13`).
+  Stream metadata is not kept per item.
+- **Sources must open more than once.** A playlist that keeps played items opens them again on a
+  wrap or a restart. The draft
+  [Stream-backed media sources](stream-backed-media-sources.md) takes a factory for this reason
+  rather than a `Stream` that is spent after one play.
+- **Entries need their own identity.** The same source can appear twice, so marking an entry as
+  played or as an up-next item has to mark the entry, not the source. The coordinator compares
+  sources by reference today (`PlaylistCoordinator.cs:257`).
+
 ### Defects found in review
 
 - **Advances ignore the controller's state.** `AdvanceLockedAsync` always plays the next item
@@ -439,3 +501,7 @@ the advance, or the tooling #143 asks for. A timing-based test would not show th
   that is playing. Decision 5 now states the two cases an update must be dropped in and allows
   either of two mechanisms. The fourth draft's claim that one token would need a round trip was
   wrong: a watermark raised after disposal drains the in-flight advance does not.
+- **Amendment (2026-09-13).** Records a direction for defect 6, a playlist with a cursor plus an
+  up-next queue, with what it answers, what it leaves open and what it costs. No decision changed.
+  The stream-source draft was amended at the same time to take a factory, because a playlist that
+  keeps played items opens its sources more than once.

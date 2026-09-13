@@ -177,11 +177,13 @@ land.
   there is no way to hand FrameFlow bytes. An in-memory clip, an embedded resource or a
   decrypted blob has to be written to a temp file first, which needs a writable filesystem
   and leaves plaintext on disk. Proposes `MediaSource.FromStream` over a custom
-  `AVIOContext`, taking seekability from `Stream.CanSeek` rather than from the caller.
+  `AVIOContext`, taking a factory that opens a fresh stream on every open, and reading
+  seekability from each opened stream's `CanSeek` rather than from the caller. The factory
+  replaced a `Stream` parameter in a 2026-09-13 amendment: a loop, replay, a playlist and a
+  second player all open a source again, and a stream is spent after one play.
   The reason it is an ADR rather than a PR is the lifetime rules: FFmpeg holds raw
   function pointers into managed callbacks, reallocates the buffer it was given, and calls
-  back from the demux thread. It also has to give `IsSeekable` its first consumer — nothing
-  in `src/` reads that property today — and declines the implicit `string` conversion #108
+  back from the demux thread. It declines the implicit `string` conversion #108
   also asks for, because a path and a URL are indistinguishable at the call site. Two
   acceptance conditions stand, neither measured: whether a forward-only stream probes
   completely, and how teardown behaves when the read callback throws. Revised once after
@@ -226,7 +228,9 @@ land.
   without decisions because the proposed fixes failed review. Its first draft proposed running
   every player on the playlist session; a spike passed the suites that way, and a review that
   reproduced it showed the queue under test never advanced and single-source faults went silent.
-  Two reviews shaped it, and its revision history says what each changed.
+  Two reviews shaped it, and its revision history says what each changed. An amendment records,
+  without deciding it, a direction for the `SetNext` defect: a playlist with a cursor for the loop
+  and a separate up-next queue for items that play once.
 - [Sync-window join for media-time correlation](sync-window-join.md) — the substrate
   fans out and cannot rejoin, so four consumers hand-roll the same correlation outside
   the graph. Adds a two-input node that pairs a slow secondary onto a fast primary by

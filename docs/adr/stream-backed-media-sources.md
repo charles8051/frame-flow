@@ -11,6 +11,12 @@ made one rejected alternative unjustifiable. What changed, and why, is recorded
 in *Revision history* at the end — the superseded reasoning is kept because it
 is what three of the open questions were about.
 
+Amended (2026-09-13): `FromStream` takes a factory that opens a fresh stream, not
+a `Stream` instance. A source is reused far more than the first drafts assumed:
+by a loop, by replay from `Ended`, by a playlist, and by a second player. A
+`Stream` instance is spent after one play. *Revision history* records what
+changed.
+
 Resolves the substantial half of
 [#108](https://github.com/charles8051/frame-flow/issues/108). The three small
 items in that issue are settled in *Decision §7*.
@@ -83,9 +89,9 @@ A repository-wide search for `IsSeekable` outside its own declaration finds:
 
 **No production code reads it.** `SeekAsync` does not consult it and the seek
 bar does not gate on it. That is tolerable while every source is a local file.
-A stream source is the first case where non-seekable is both common and
-knowable up front, so this design cannot treat the property as a mechanism it
-plugs into.
+A stream source is the first case where non-seekable is common, and it is known
+exactly when a stream is opened, so this design cannot treat the property as a
+mechanism it plugs into.
 
 ### There is no input-side AVIO interop
 
@@ -106,10 +112,21 @@ for this repository.
 
 ```csharp
 public static IMediaSource FromStream(
-    Stream stream,
-    string displayName,
-    bool leaveOpen = false);
+    Func<Stream> open,
+    string displayName);
 ```
+
+`open` is called once for every open of the source, and each call must return a
+new stream positioned at the start of the media. The source can therefore be
+played more than once: by a `RepeatMode.One` loop, by replay from `Ended`, by a
+playlist that returns to it, and by two players at once. A caller holding bytes
+in memory writes `() => new MemoryStream(bytes, writable: false)`, which wraps
+the same array on every open without copying it.
+
+A factory that returns the same instance twice fails at the second open. §6 has
+the player dispose every stream it opened, so the second open receives a disposed
+stream and the load fails with an `ObjectDisposedException` inside it. That is an
+early, visible failure, not a silent read of an exhausted stream.
 
 It returns `IMediaSource`, not `MediaSource`, and the instance is an
 `internal sealed class StreamMediaSource : IMediaSource` in `FrameFlow.Media`.
@@ -118,9 +135,9 @@ open (see Alternative C):
 
 - `MediaSource` is a `public sealed record`. It cannot be subclassed, and a
   positional record has value equality — two `FromStream` sources with the same
-  display name and null `Uri`/`FilePath` would compare **equal** while wrapping
-  different streams. A class with reference identity is the correct shape for a
-  handle to a one-shot resource, and it also removes the question of what
+  display name and null `Uri`/`FilePath` would compare **equal** while opening
+  different content. A class with reference identity is the correct shape for a
+  handle to a caller's content, and it also removes the question of what
   `with`-cloning such a record would mean.
 - Keeping the stream off the public record is the point of Alternative C's
   rejection. An internal type is how that is achieved rather than asserted.
@@ -129,12 +146,15 @@ open (see Alternative C):
 Audio.OpenAL and Media.Tests — **not** Decoding. It gains Decoding, so
 `DemuxSessionFactory` can type-test for `StreamMediaSource`.
 
-`IsSeekable` is read from `stream.CanSeek`. It is not a parameter: that is the
-authoritative answer and one the caller cannot get wrong.
+`IsSeekable` reports `false` for a stream source. Without a stream there is no
+`CanSeek` to read, and calling the factory from a property getter would run the
+caller's open as a side effect. The decision that matters is made per open, from
+the stream that open produced (§3). `MediaInfo.CanSeek` reports the result after
+the load, as it does for every source.
 
-**The first cut accepts only streams whose synchronous reads are bounded** —
-in practice `MemoryStream`, `UnmanagedMemoryStream`, `FileStream`, and
-wrappers over them. The reason is §6: a blocking `Read` cannot be interrupted
+**The first cut accepts only factories that return streams whose synchronous
+reads are bounded** — in practice `MemoryStream`, `UnmanagedMemoryStream`,
+`FileStream`, and wrappers over them. The reason is §6: a blocking `Read` cannot be interrupted
 by anything, so an unbounded one hangs playback and teardown with no recourse.
 Enforced by documentation rather than a type check, because no property on
 `Stream` answers the question and no list of allowed subclasses is right — a
@@ -181,11 +201,12 @@ the old one. Both exist, and they answer different questions:
 
 | Property | Question | Read by |
 |---|---|---|
-| `IMediaSource.IsSeekable` | can the *source* produce bytes out of order? | the AVIO setup in §2 |
+| `Stream.CanSeek` of the stream this open produced | can the *stream* produce bytes out of order? | the AVIO setup in §2 |
 | `MediaInfo.CanSeek` | can the *opened container* seek? | `SeekAsync`, the seek bar |
 
-`IsSeekable` decides **whether a seek callback is installed at all**. This is
-the correction that matters most:
+The opened stream's `CanSeek` decides **whether a seek callback is installed at
+all**. It is read per open, because each factory call returns a new stream. This
+is the correction that matters most:
 
 > FFmpeg derives seekability from whether the seek function pointer is non-NULL,
 > not from what it returns. `avio_alloc_context` sets
@@ -226,16 +247,24 @@ authority. A tighter derivation is an open question below.
   `RepeatMode.One` would attempt the rewind and fail below the guard — the
   outcome the guard exists to prevent.
 - **Playlist replay.** `PlaylistCoordinator.DecideNext` returns `Replay` for a
-  single-clip `RepeatMode.All` wrap, serviced by `RewindToStartAsync`. Under
-  `RepeatMode.All` the coordinator copies played items into `_loopBuffer` and
-  replays the **same `IMediaSource` instances**, which for a stream means
-  reopening one already consumed to EOF. The coordinator's own doc comment
-  calls the single-clip loop "the canonical signage attract/panel loop", so
-  this is the common case.
+  single-clip `RepeatMode.All` wrap, serviced by `RewindToStartAsync`, which
+  seeks the retained demuxer back to the start. For a non-seekable stream that
+  seek is exactly what the guard must refuse. The coordinator's own doc comment
+  calls the single-clip loop the canonical case (`PlaylistCoordinator.cs:217`),
+  so this is not an edge case.
 
 The guard goes on the session seek entry point that both routes reach, and
 `SeekAsync` surfaces it as `Result.Fail(ErrorCategory.InvalidOperation, ...)`
 per ADR-0069.
+
+The factory changes what a refused rewind costs. When the in-place rewind fails,
+`PlaylistSession` already falls back to rebuilding the item
+(`PlaylistSession.cs:439-457`), and a rebuild opens the source again. With a
+factory that open returns a fresh stream, so a playlist loop over a forward-only
+stream continues through the rebuild path instead of stopping. The refusal has to
+reach `PlaylistSession` as a failure it falls back from, not as a silent
+success. A single-source `RepeatMode.One` loop has no such fallback today; see
+*Not settled here*.
 
 Whether a non-seekable source should additionally be *refused at load* under a
 rewinding repeat mode, rather than failing at the first loop boundary, is in
@@ -304,7 +333,7 @@ this section exists to remove.
 | 2 | `av_free(avio->buffer)` | `av_free(avio->buffer)` |
 | 3 | `avio_context_free(&avio)` | `avio_context_free(&avio)` |
 | 4 | release `GCHandle` | release `GCHandle` |
-| 5 | dispose stream unless `leaveOpen` | dispose stream unless `leaveOpen` |
+| 5 | dispose the stream this open produced | dispose the stream this open produced |
 
 The header states that *"a user-supplied AVFormatContext will be freed on
 failure"*, so calling `avformat_close_input` on that path is a double free,
@@ -326,10 +355,23 @@ establishes, rather than a `finally` that has to get five steps right.
 callback: it would sit on the packet-read path to protect an invariant the
 caller can simply keep.
 
-**The caller gets the stream back at disposal.** §5 row 5 is the point at which
-it is the caller's again. `leaveOpen: false` is the default because the common
-case is a `MemoryStream` the caller built for this purpose; a caller who owns
-the stream beyond the player passes `true`.
+**The session owns every stream it opens.** A stream returned by the factory
+belongs to the demux session that asked for it, and §5 row 5 disposes it when
+that session closes. There is no `leaveOpen`. A caller whose stream must outlive
+playback returns a wrapper whose `Dispose` does nothing, which keeps the unusual
+case explicit at the call site instead of in a flag.
+
+**The factory may be called concurrently.** Two players loading the same source,
+or a playlist that holds it twice, call it from different load threads. Each call
+must return an independent stream. The one-thread rule above applies to each
+returned stream, not to the factory.
+
+**The factory runs on the load path.** `DemuxSessionFactory.OpenAsync` calls it
+before `avformat_open_input`, so an expensive factory, such as one that decrypts
+a blob on every call, delays every open including every rebuild of a looping
+playlist item. Such a caller should do the expensive work once and have the
+factory wrap the result. The factory takes no cancellation token in this cut; see
+*Not settled here*.
 
 **Cancellation: `AVIOInterruptCB`, and an honest limit on it.** ADR-0013 is
 Accepted and says a consumer token on `OpenAsync` means "abort this
@@ -345,14 +387,16 @@ nothing. A `Stream.Read` that blocks is therefore uninterruptible from the
 FFmpeg side, and `Stream.Read` takes no token to honour on ours. Cancellation
 and teardown both wait for it to return.
 
-That is why §1 bounds what `FromStream` accepts rather than taking any
+That is why §1 bounds what the factory may return rather than accepting any
 `Stream`.
 
-**The stream is read from its current position, and offsets are absolute from
-it.** FFmpeg seeks absolutely from byte 0 of what it is given. A stream handed
-over mid-way must therefore have its origin rebased in the callbacks, or the
-"byte range inside a larger archive" scenario silently reads the wrong bytes.
-`FromStream` records the position at construction and treats it as byte 0.
+**Each stream is read from the position it has when the factory returns it, and
+offsets are absolute from there.** FFmpeg seeks absolutely from byte 0 of what it
+is given. A stream handed over mid-way must therefore have its origin rebased in
+the callbacks, or the "byte range inside a larger archive" scenario silently
+reads the wrong bytes. The open records the returned stream's position and treats
+it as byte 0. A factory for a byte range returns a stream already positioned at
+the start of that range.
 
 ### 7. The rest of #108
 
@@ -420,13 +464,34 @@ obvious three did — `OpenAsync` takes `IMediaSource`, `MediaSource` is a seale
 record, and `FrameFlow.Media` did not grant `InternalsVisibleTo` to Decoding.
 §1 settles it.
 
+### D. Take a `Stream` instance
+
+`FromStream(Stream stream, string displayName, bool leaveOpen = false)`, which
+every draft before 2026-09-13 proposed.
+
+Rejected, because a source is not played once. A `RepeatMode.One` loop, replay
+from `Ended`, a playlist that wraps or holds the source twice, and a second
+player all open the same `IMediaSource` again. A `Stream` instance is disposed or
+at its end after the first play, so every one of those fails, and each fails in
+a different place.
+
+It also pins memory. Once the stream is disposed, anything still holding the
+source still holds the stream object, and a disposed `MemoryStream` keeps its
+buffer so that `ToArray` goes on working. A playlist that keeps played items
+would keep every in-memory clip it ever played until the source was dropped.
+
+The factory costs the caller a lambda, and for the common in-memory case the
+lambda wraps an array the caller already holds.
+
 ## Consequences
 
 ### Good
 
 - The motivating scenarios work without a filesystem.
-- `IsSeekable` acquires its first real consumer (§3), and `SeekAsync` gains a
-  structured refusal instead of an attempt that fails below.
+- A stream source can be played more than once, like a file source: in a loop,
+  on replay, in a playlist, and by two players. Nothing it opened stays alive
+  between opens.
+- `SeekAsync` gains a structured refusal instead of an attempt that fails below.
 - `FrameFlow.Native` gains input-side AVIO interop, the prerequisite for any
   future custom protocol.
 - `interrupt_callback` makes `OpenAsync` honour its token for FFmpeg's own
@@ -436,6 +501,13 @@ record, and `FrameFlow.Media` did not grant `InternalsVisibleTo` to Decoding.
 
 - New unmanaged-callback interop on the packet-read path — the highest-risk code
   in this repository. A lifetime mistake is heap corruption at a distance.
+- **The caller's factory runs on every open.** A factory that does expensive
+  work per call slows every load, and in a looping playlist every rebuild of the
+  item. §6 tells callers to do that work once; nothing enforces it.
+- **`IsSeekable` still has no operative reader.** The previous revision made it
+  §3's input. With a factory there is no stream until an open, so §3 reads the
+  opened stream's `CanSeek` and `IsSeekable` reports `false` for a stream source.
+  `MediaInfo.CanSeek` is the property a caller should read.
 - **A blocking read is uninterruptible, by anything.** FFmpeg polls its
   interrupt callback between IO operations, not during ours, and `Stream.Read`
   takes no token. Cancellation and teardown both wait. §1 bounds the accepted
@@ -480,11 +552,17 @@ Two acceptance conditions, neither measured. Do not accept this without both.
 
 Open, and deliberately not decided:
 
-- **Whether a non-seekable source is refused at `LoadAsync` under a rewinding
-  repeat mode**, or allowed to fail at the first loop boundary. Refusing is
-  honest and breaks the signage loop for stream sources; allowing it defers the
-  failure to a point where the cause is less obvious. §4 guards the seek either
-  way.
+- **What a `RepeatMode.One` loop does with a non-seekable stream.** Three
+  options: refuse the source at `LoadAsync` under a rewinding repeat mode, let
+  the loop fail at its first boundary, or rewind by reopening the source instead
+  of seeking. The factory makes the third possible, and it is what a playlist
+  already does through its rebuild fallback (§4). It needs a reopen path in the
+  single-source loop, which does not exist. §4 guards the seek whichever is
+  chosen.
+- **Whether the factory takes a cancellation token.** `Func<CancellationToken,
+  Stream>` would let a slow factory observe `OpenAsync`'s token. It widens the
+  signature for a case §1 already tells callers to avoid, so the first cut does
+  not take one.
 - **Whether `MediaInfo.CanSeek` is the right home**, versus a capability on the
   controller alongside `IsActivelyPresenting`.
 - **Whether this should ship at all before an async read path exists.** The
@@ -578,3 +656,24 @@ earlier revisions had made:
   which decides its own seekability, so the override would change nothing while
   advertising a capability that could contradict the opened context. #108's
   underlying complaint is answered by `MediaInfo.CanSeek` instead.
+
+**2026-09-13, a factory instead of a stream.** Work on the playlist player's end
+of queue and replay behaviour, recorded in the draft
+[End of queue, replay and faults on the playlist player](playlist-end-of-queue-replay-and-faults.md),
+showed how often one `IMediaSource` is opened again: by a loop, by replay from
+`Ended`, by a playlist that wraps or keeps played items, and by a second player.
+Every earlier revision took a `Stream` instance, which is spent after one play
+and, as a disposed `MemoryStream`, still holds its buffer for as long as the
+source is referenced. The decision changed in five places:
+
+- §1 takes `Func<Stream>` and drops `leaveOpen`. `IsSeekable` reports `false` for
+  a stream source, withdrawing the claim that it gains its first real consumer.
+- §3 reads `CanSeek` from the stream each open produced.
+- §4 notes that a playlist's rebuild fallback reopens the source, so a refused
+  rewind no longer ends a playlist loop over a forward-only stream.
+- §5 and §6 give every opened stream to the session that opened it, say the
+  factory may be called concurrently and runs on the load path, and rebase the
+  origin per open.
+- The previous shape is Alternative D. The open question about refusing
+  non-seekable sources under a rewinding repeat mode gains a third option,
+  reopening, and a new open question asks whether the factory takes a token.
