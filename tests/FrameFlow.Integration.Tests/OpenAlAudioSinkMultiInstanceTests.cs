@@ -163,6 +163,13 @@ public sealed class OpenAlAudioSinkMultiInstanceTests
     /// Feeds <paramref name="sink"/> 20ms PCM blocks at ~real-time pace until
     /// cancelled, mirroring how the playback pipeline drives the sink.
     /// </summary>
+    /// <remarks>
+    /// The sleep runs on <see cref="HighResolutionTimeProvider.Preferred"/>, the provider the
+    /// sink paces with. On the system timer, Windows rounded each 20 ms sleep up to its
+    /// 15.6 ms tick. It measured 30.8 ms, which fed the device at 0.65x real time. A clock
+    /// cannot run faster than it is fed, so a healthy sink read 0.62x to 0.66x against the
+    /// 0.6x floor.
+    /// </remarks>
     private static async Task FeedRealtimeAsync(OpenAlAudioSink sink, CancellationToken ct)
     {
         try
@@ -170,7 +177,7 @@ public sealed class OpenAlAudioSinkMultiInstanceTests
             while (!ct.IsCancellationRequested)
             {
                 await sink.PresentAsync(MakeBlock(), ct);
-                await Task.Delay(20, ct);
+                await Task.Delay(TimeSpan.FromMilliseconds(20), HighResolutionTimeProvider.Preferred, ct);
             }
         }
         catch (OperationCanceledException)
