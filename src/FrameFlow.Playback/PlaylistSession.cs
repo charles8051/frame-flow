@@ -88,10 +88,13 @@ internal sealed class PlaylistSession : IPlaybackSession
     // another item.
     private bool _gaveUp;
 
-    // Set by the first PlayAsync. Before it, the controller is loading the first item or
-    // paused on it, so skipping a faulted first item would start the next one behind the
+    // Set by the first PlayAsync, before it consumes a pending skip. It records that the
+    // controller has asked to play, not that an item has presented: from then on the
+    // controller is playing, including an item the pending skip starts, so a faulted item
+    // is skipped and reported. Before it, the controller is loading the first item or
+    // paused on it, and skipping a faulted first item would start the next one behind the
     // controller's back.
-    private bool _played;
+    private bool _playRequested;
     private bool _disposed;
 
     public PlaylistSession(
@@ -180,7 +183,7 @@ internal sealed class PlaylistSession : IPlaybackSession
             if (_disposed)
                 return;
 
-            _played = true;
+            _playRequested = true;
 
             // A pending skip request taking effect at the moment of (re)play.
             if (_coordinator.ConsumeSkipRequest())
@@ -335,7 +338,7 @@ internal sealed class PlaylistSession : IPlaybackSession
 
                 var source = _currentSource?.DisplayName ?? "(unknown)";
 
-                if (!_played)
+                if (!_playRequested)
                 {
                     // Nothing has played, so this is the first item failing to start, as
                     // a single source's would. Hand it to the controller as one.
