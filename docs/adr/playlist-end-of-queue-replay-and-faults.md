@@ -5,17 +5,18 @@
 Proposed (2026-09-12). Draft pending number assignment.
 
 This record proposes fixes for three defects in how the playlist player behaves at the end of its
-queue and on replay, and decides how it reports failed items. It records one more defect, and
-several found in review, without deciding their fixes. The changes are to behaviour, not public
-API. Single-source playback changes in one respect: decision 7 drops notifications from a session
-the controller has replaced.
+queue and on replay, decides how it reports failed items, and decides how an advance follows the
+controller's state. It records one more defect, and several found in review, without deciding their
+fixes. The changes are to behaviour, not public API. Single-source playback changes in two
+respects: decision 7 drops notifications from a session the controller has replaced, and decision 8
+lets an end-of-stream end a paused controller.
 
 It started as a proposal to run every player on the playlist session. A spike and two independent
 reviews narrowed it to this. That history is kept under *Alternatives considered* and *Revision
 history*, because it is the reason this record is narrow.
 
-**Only decision 7 is implemented** (#180). Every defect below was reproduced on this codebase except
-where it says "read from code".
+**Only decisions 7 and 8 are implemented** (#180, #182). Every defect below was reproduced on this
+codebase except where it says "read from code".
 
 Related: [ADR-0028](ADR-0028-internal-layering-and-ownership-cleanup.md),
 [ADR-0034](ADR-0034-diagnostics-surfaces.md),
@@ -44,10 +45,10 @@ Most used the 3-second video-only clip. Defect 5 also used the half-second clip,
 was discarded for want of a sink. Faults were injected with a `configureVideo` operator that throws
 on its 21st frame. The probes were scratch tests and were not committed.
 
-Line numbers outside decision 7 cite commit 628083b, the tree this record was first written
-against. Several of those files have changed since, and decision 7 changed `PlaylistSession.cs`
-and `PlaybackControllerCore.cs` itself. Decision 7's own citations are to the tree it was
-implemented on.
+Line numbers outside decisions 7 and 8 cite commit 628083b, the tree this record was first written
+against. Several of those files have changed since, and decisions 7 and 8 changed
+`PlaylistSession.cs`, `PlaybackControllerCore.cs` and `PlaybackProtocol.cs` themselves. Decision
+7's own citations are to the tree it was implemented on.
 
 ### Defects on the playlist player
 
@@ -108,16 +109,17 @@ at different points depending on how the player was built (#125).
 
 ## Decision
 
-This record decides fixes for defects 1, 2 and 5, a documentation change for `Error`, and in
-decision 7 the fix for defects 3 and 4. Defect 6 is recorded here and left under *Not settled
-here*, because its proposed fix failed review.
+This record decides fixes for defects 1, 2 and 5, a documentation change for `Error`, in decision 7
+the fix for defects 3 and 4, and in decision 8 the fix for advances that ignore the controller's
+state, which review found. Defect 6 is recorded here and left under *Not settled here*, because its
+proposed fix failed review.
 
 ### 1. Single-source playback stays on `SubstrateSession`
 
-The two session types remain. This record changes `PlaylistSession` and three internal points in
-`PlaybackControllerCore`: the replay check in decision 4, the snapshot update in decision 5, and the
-recoverable error in decision 7. `IMediaPlayer`, `IMediaPlaylistPlayer`, `IPlaybackController` and
-both player factories keep their shapes.
+The two session types remain. This record changes `PlaylistSession`, three internal points in
+`PlaybackControllerCore` (the replay check in decision 4, the snapshot update in decision 5, and the
+recoverable error in decision 7) and one cell of `PlaybackProtocol` (decision 8). `IMediaPlayer`,
+`IMediaPlaylistPlayer`, `IPlaybackController` and both player factories keep their shapes.
 
 ### 2. The end of the queue keeps the last item
 
@@ -332,6 +334,89 @@ this decision that clip looped forever, and the review of this change raised it 
   open, such as unreachable network sources, would never trip it. Today's guard trips on those.
 - *Fatal when nothing follows the faulted item.* Rejected by the review above.
 
+### 8. An advance follows the controller's state
+
+This fixes "advances ignore the controller's state", a defect review found, and is implemented
+(#182).
+
+`PlaylistSession` records what the controller last asked of it: nothing yet, play, or pause. Once
+it has reported the end of the queue, it records that instead. The record is kept from the calls
+the session receives, with no new channel, under three rules:
+
+- **`Ended` is replaced only by a seek out of `Ended`.** A Play or Pause can reach the session after
+  it has ended the queue, because the controller dispatched it before the end-of-stream arrived. The
+  controller ends when that end-of-stream arrives, so the session keeps `Ended`. A Play from `Ended`
+  never reaches the session: the controller replays on a new one.
+- **The seek out of `Ended` is recorded at the end of its warm-up.** The controller warms up on load
+  and on that seek, and settles in `Paused` straight after, so a skip issued once it is `Paused` sees
+  the session paused. The session holds its transition gate for the whole warm-up, so no advance
+  can replace the item while it warms. The seek itself is not used: it runs later, and can be
+  cancelled.
+- **A pause is recorded only from playing.** `Rebuffering` counts as playing here: the session sees
+  no call when the controller enters it.
+
+A skip, an end-of-stream and a fault all advance, and the advance follows the record:
+
+| Session record | Skip or end-of-stream | Fault |
+|---|---|---|
+| Not played yet | waits for the first `PlayAsync` | goes to the controller as a fatal error (decision 7) |
+| Playing | the next item plays | reported; the next item plays |
+| Paused | the next item opens and warms, and stays paused until `PlayAsync` | reported; the next item opens and stays paused |
+| Ended | dropped | dropped |
+
+- **A same-source replay rewinds in place only while playing, and only an item that has played.**
+  Otherwise it rebuilds the item. The in-place rewind is built for a loop reached while playing. The
+  comment in `SubstrateSession.RepositionAsync` says a loop rewind is only fired from `Playing`, and
+  its paused branch does not relaunch the graph. An item that never played is the other case: a
+  skip before the first play under `RepeatMode.One` is a replay taken by that first play, and
+  rewinding the unstarted item leaves its clocks stopped.
+- **The skip's two non-advancing cases are settled when the skip is requested.** At `Ended` it is
+  dropped, and before the first play it is latched, before the call returns. A caller that skips and
+  then plays sees the skip's effect in order. If the first `PlayAsync` starts between the check and
+  the latch, the skip takes the latch back and advances.
+- **An item opened while paused starts at `PlayAsync`.** If that start fails, the item is reported
+  and skipped as one that fails to start inside an advance is, and does not escape `PlayAsync`.
+- **When the queue runs out while paused**, the session reports end-of-stream as it does while
+  playing. `PlaybackProtocol` gains `Paused × LastFrameRendered → Ended`, which freezes the clock,
+  unless the repeat mode is `One`. Without it the controller dropped the trigger and stayed `Paused`
+  with nothing current. Under `One` the trigger is still dropped, because `Paused` has no loop to
+  run.
+- **At `Ended`, a skip is dropped and the queue is left alone**, so `PlayAsync`'s replay path takes
+  the enqueued item. Before, the skip took it and started it while the state said `Ended`, and a
+  following Play found an empty queue and hit defect 1. A late notification from the item that ended
+  the queue is dropped for the same reason: that item is gone.
+- **A skip before the first play is latched in the coordinator.** It is the same latch that a skip
+  issued before load uses, and the first `PlayAsync` consumes it.
+
+The new controller cell changes single-source playback in one case: an end-of-stream dispatched
+after a pause. It used to be dropped. `PlaybackDispatchProtocolTests` reproduces that with a fake
+session; the race itself is read from code.
+
+This decision does not implement decision 3. A skip on the last item while playing still disposes
+the item.
+
+**What it leaves open.** Both were found in review and read from code.
+
+- **A seek before an item's first play starts it.** `SubstrateSession.RepositionAsync` decides
+  whether it was paused from the position clock, which reads as not paused before the first play.
+  So a seek taken then relaunches the graph and opens the gates while the controller says `Paused`.
+  A single source does this on Load then Seek. A playlist now reaches it after a skip while paused,
+  where before the skip had already started the item.
+- **An end-of-stream raised before a seek can end the player after it.** Nothing tells a stale
+  end-of-stream from a current one after a seek. That was already true while `Playing`. The new
+  cell extends it to `Paused`, in a narrow window. The end-of-stream has to be raised by the run
+  before the pause, since a paused pacer does not drain, and dispatched after the seek. One posted
+  before the seek command is dispatched ahead of it, which ends the player and lets the seek run
+  from `Ended` as usual. Decision 2's run number is the fix for the playlist; the controller has no
+  equivalent.
+
+**Alternatives.**
+
+- *Refuse a skip unless the player is playing.* Rejected: `SkipToNextAsync` returns no `Result` to
+  refuse with, and "next" pressed while paused is an ordinary control.
+- *Keep playing the next item, and move the controller to `Playing`.* Rejected: a skip is not a
+  request to play, and the controller has no trigger a session can use to start itself.
+
 ## Consequences
 
 ### Positive
@@ -340,8 +425,11 @@ this decision that clip looped forever, and the review of this change raised it 
   counters, and does not fault when Play finds nothing to play.
 - With decision 7, defects 3 and 4 are fixed. Failed items are observable, and a playlist whose
   items all fail before making progress no longer loops forever.
+- With decision 8, a playlist presents only while it says `Playing`, and a skip while paused on the
+  last item ends it.
 - None of it changes public API. Single-source playback changes only in that a fatal error or
-  end-of-stream from a session replaced by replay from `Ended` no longer reaches the new session.
+  end-of-stream from a session replaced by replay from `Ended` no longer reaches the new session,
+  and an end-of-stream that reaches a paused controller ends it.
 
 ### Negative
 
@@ -353,6 +441,9 @@ this decision that clip looped forever, and the review of this change raised it 
   early on every pass used to be rebuilt forever. It now enters `Error` after nine passes and has to
   be rebuilt.
 
+- **A skip no longer resumes a playlist at `Ended`.** A caller that enqueued and then skipped to
+  resume must call `PlayAsync`. The skip used to present while the state said `Ended`.
+  `docs/BREAKING-CHANGES.md` entry 6 has the change.
 - **The last item holds its resources after `Ended`.** That is its demuxer, decoders and graph, an
   active audio sink, a hardware decode device when one is in use, and GPU frames under
   `yieldHardwareFrames`. A single source already holds these at `Ended`. A playlist did not.
@@ -496,13 +587,12 @@ What it costs:
 
 ### Defects found in review
 
-- **Advances ignore the controller's state.** `AdvanceLockedAsync` always plays the next item
-  (`PlaylistSession.cs:401`). A skip while `Paused` presented the next item, 10 frames to 46, while
-  the state stayed `Paused`. Enqueue then skip while `Ended` presented, 72 frames to 109, while the
-  state stayed `Ended`. A skip on the last item while `Paused` dropped the end-of-stream, because
-  `Paused` has no transition for it (`PlaybackProtocol.cs:308-313`), and a later play presented
-  nothing. A first item that faulted during warm-up did the same until decision 7 sent that fault to
-  the controller.
+- **Advances ignore the controller's state.** Settled by decision 8. `AdvanceLockedAsync` always
+  played the next item (`PlaylistSession.cs:401`). A skip while `Paused` presented the next item, 10
+  frames to 46, while the state stayed `Paused`. Enqueue then skip while `Ended` presented, 72 frames
+  to 109, while the state stayed `Ended`. A skip on the last item while `Paused` dropped the
+  end-of-stream, because `Paused` had no transition for it (`PlaybackProtocol.cs:308-313`), and a
+  later play presented nothing.
 - **The final item fails to open.** On `[clean, corrupt]` under `Off`, the clean item is disposed
   before the corrupt one is tried, the queue then ends in `Ended` with no error, and seek then play
   leaves the sink at 72 frames. Decision 2 does not cover this. Decision 7 now reports the corrupt
@@ -612,6 +702,33 @@ state change or a disposed session, one from an unloaded session is dropped, and
 end-of-stream from the session replay from `Ended` replaced leaves the new session playing. Before
 the generation was added to triggers, those last two ended in `Error` and `Ended`.
 
+Decision 8's tests are in `tests/FrameFlow.Integration.Tests/PlaylistSkipStateTests.cs`, over the
+same 3-second clip. The bracketed results are from the tree before decision 8 (commit 3803efa).
+
+| # | Decision | Test | Before |
+|---|---|---|---|
+| 13 | 8 | Playlist of two, `Off`: pause at frame 10, skip. The second item is current, the state is `Paused` and the position is zero. Play presents it. | [position 0.27 ms: the skipped-to item had started] |
+| 14 | 8 | Playlist of one, `Off`: pause at frame 10, skip. `Ended`. | [still `Paused` after 30 s] |
+| 15 | 8 | Playlist of one, `Off`: play to `Ended`, enqueue, skip, play. Play succeeds and the enqueued item plays. | [Play failed: "Session initialization failed"] |
+| 16 | 8 | Playlist of two, `Off`: load, skip, play. The second item plays. | [passes] |
+| 17 | 8 | Playlist of one, `Off`: pause at frame 10; skip, and hold the skip's advance inside its gate while Play is queued; then enqueue, skip, play. Play succeeds and the enqueued item plays. | [with Play allowed to replace `Ended`: Play failed, "Session initialization failed"] |
+| 18 | 8 | Playlist of one, `One`: load, skip, play. Fifteen frames present. | [with the in-place rewind allowed for an unplayed item: timed out after 30 s] |
+
+Test 13's position check is the deterministic one. The item's clock starts on its first play, so
+an item the advance played reads past zero by the time its transition has been observed, and one
+it only warmed reads exactly zero. Test 16 passes before decision 8 and guards the deferral. The
+skip is latched before `RequestSkip` returns, so the first play always takes it.
+
+Tests 17 and 18 guard rules added after review, so their brackets come from builds with decision 8
+applied and that one rule removed. Test 17 holds the advance with a test clock that blocks the
+thread calling `Stop`, which the advance does while it holds the gate. Without the hold, the
+controller's Play usually reached the session first, and the test passed with the rule removed.
+
+`PlaybackProtocolTests` pins the new cell and its `RepeatMode.One` exception, and
+`PlaybackDispatchProtocolTests.EndOfStream_WhilePaused_EndsPlayback` drives it through the
+controller. Before decision 8 those failed with `Handled` false and `Expected: Ended, Actual:
+Paused`.
+
 Decision 2's run number has no row. Testing it means holding an end-of-stream between the item
 raising it and the advance handling it, then seeking. That needs a seam in `PlaylistSession` to hold
 the advance, or the tooling #143 asks for. A timing-based test would not show the race reliably.
@@ -662,3 +779,18 @@ the advance, or the tooling #143 asks for. A timing-based test would not show th
   notification now carries the session generation; and a first item that faulted before the first
   play was skipped while the controller was still loading, so that fault now goes to the controller
   as a single source's does.
+- **Amendment (2026-09-13), decision 8.** Settles "advances ignore the controller's state" and
+  implements the fix with #182. The playlist session records whether the controller last asked it
+  to play or to pause, and whether the queue has ended. An advance plays the next item only while
+  playing, warms it and leaves it paused while paused, waits for the first play before anything has
+  played, and is dropped once the queue has ended. `PlaybackProtocol` gains `Paused ×
+  LastFrameRendered → Ended` outside `RepeatMode.One`, so a skip on the last item while paused ends
+  the playlist.
+  An independent review of the implementation then found that a Play or Pause queued behind the
+  advance that ended the queue replaced `Ended`, which let a later skip start an item while the
+  state said `Ended`; that a skip before the first play under `RepeatMode.One` rewound an item that
+  had never started; and that an item opened while paused could fail to start inside `PlayAsync`
+  and escape it. Decision 8 now keeps `Ended` until the warm-up of a seek out of it, rewinds in
+  place only an item that has played, settles a skip at `Ended` or before the first play when it is
+  requested, and handles a failed deferred start as a failed start. It also records two gaps the
+  review found and this decision does not close.

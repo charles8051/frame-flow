@@ -41,6 +41,7 @@ stateDiagram-v2
     Loading --> Ready : buffer threshold met
 
     Playing --> Ended : last frame\n[repeatMode == Off]
+    Paused --> Ended : last frame\n[repeatMode != One]
 
     Ended --> Stopped : Play()\n(replay teardown)
     Stopped --> Loading : Load(last source)\n(replay recovery)

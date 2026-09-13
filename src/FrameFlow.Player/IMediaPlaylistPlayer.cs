@@ -60,6 +60,24 @@ public interface IMediaPlaylistPlayer : IMediaPlayer
     Task SetNextAsync(IMediaSource? source, CancellationToken cancellationToken = default);
 
     /// <summary>End the current item now and hand off to the next (no presenter rebuild).</summary>
+    /// <remarks>
+    /// <para>
+    /// The skip follows <see cref="IMediaPlayer.State"/>. While
+    /// <see cref="PlaybackState.Playing"/>, the next item plays. While
+    /// <see cref="PlaybackState.Paused"/>, the next item becomes current and stays paused
+    /// until <see cref="IMediaPlayer.PlayAsync"/>. A skip before the playlist has first played
+    /// takes effect when it does. At <see cref="PlaybackState.Ended"/> nothing is current and
+    /// the skip does nothing; call <see cref="IMediaPlayer.PlayAsync"/> to play what is queued.
+    /// </para>
+    /// <para>
+    /// When nothing follows the current item under <see cref="RepeatMode.Off"/>, the skip ends
+    /// the playlist in <see cref="PlaybackState.Ended"/>, whether it was playing or paused.
+    /// </para>
+    /// <para>
+    /// The call returns once the skip is requested, before the next item is current.
+    /// <see cref="SourceTransitioned"/> fires when it is.
+    /// </para>
+    /// </remarks>
     Task SkipToNextAsync(CancellationToken cancellationToken = default);
 
     /// <summary>

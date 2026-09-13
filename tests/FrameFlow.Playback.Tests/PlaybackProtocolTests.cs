@@ -201,7 +201,6 @@ public class PlaybackProtocolTests
             PlaybackTrigger.Pause,
             PlaybackTrigger.Seek,
             PlaybackTrigger.BufferReady,
-            PlaybackTrigger.LastFrameRendered,
         ];
 
         foreach (var trigger in rejected)
@@ -210,6 +209,35 @@ public class PlaybackProtocolTests
             Assert.False(d.Handled, $"Paused should reject {trigger}");
             Assert.Equal(InternalPlaybackState.Paused, d.NextState);
         }
+    }
+
+    [Fact]
+    public void Paused_LastFrameRendered_EntersEnded_FreezesClock()
+    {
+        // An end-of-stream can reach a paused controller: a playlist skip on its last item
+        // while paused (#182), or an end-of-stream posted just before a pause was dispatched.
+        // Dropping it left the player Paused with the stream already over. The ticker is
+        // already stopped in Paused, so only the clock is frozen.
+        var d = Advance(InternalPlaybackState.Paused, PlaybackTrigger.LastFrameRendered);
+
+        Assert.True(d.Handled);
+        Assert.Equal(InternalPlaybackState.Ended, d.NextState);
+        AssertActions(d, PlaybackActionKind.FreezeClock);
+    }
+
+    [Fact]
+    public void Paused_LastFrameRendered_UnderRepeatOne_IsNotHandled()
+    {
+        // A loop is a rewind from Playing. Paused has no loop to run, and ending would stop a
+        // loop the caller asked for, so the trigger is dropped as before.
+        var d = Advance(
+            InternalPlaybackState.Paused,
+            PlaybackTrigger.LastFrameRendered,
+            RepeatOne
+        );
+
+        Assert.False(d.Handled);
+        Assert.Equal(InternalPlaybackState.Paused, d.NextState);
     }
 
     // ─────────────────────────────────────────────────────────────────────

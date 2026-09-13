@@ -181,6 +181,43 @@ A controller subscriber that treats every error as terminal should check `State`
 as in entry 4. Players built by `MediaPlayer` and `MediaPlaylistPlayer` do not
 enable lateness recovery and are not affected.
 
+### 6. A playlist skip follows the player's state
+
+**Not a compile error.** Nothing you write changes; what runs does.
+
+`IMediaPlaylistPlayer.SkipToNextAsync` started the next item playing whatever the
+player's state said, and on the last item while paused it lost the end of the
+playlist (#182). A skip while paused presented the next item while `State` stayed
+`Paused`. A skip at `Ended` with an item enqueued
+presented that item while `State` stayed `Ended`, and took it from the queue, so
+a following `PlayAsync` found nothing to play and put the player in `Error`.
+
+| State when you skip | Before | After |
+|---|---|---|
+| `Playing` | next item plays | unchanged |
+| `Paused` | next item plays; `State` stays `Paused` | next item becomes current and stays paused until `PlayAsync` |
+| `Paused`, last item, `RepeatMode.Off` | nothing plays; `State` stays `Paused`, and `PlayAsync` then reports `Playing` with nothing playing | `Ended` |
+| `Ended`, with an item enqueued | enqueued item plays; `State` stays `Ended` | nothing; `PlayAsync` plays the enqueued item |
+| Loaded, never played | next item plays; `State` stays `Paused` | takes effect on the first `PlayAsync` |
+
+To resume a playlist at `Ended` after enqueueing, call `PlayAsync` rather than
+`SkipToNextAsync`:
+
+```csharp
+// Before — played the item while State said Ended
+await player.EnqueueAsync(next);
+await player.SkipToNextAsync();
+
+// After
+await player.EnqueueAsync(next);
+await player.PlayAsync();
+```
+
+The controller underneath gained one transition to make the paused case end: an
+end-of-stream that reaches `Paused` now moves to `Ended` unless the repeat mode
+is `One`. It used to be dropped. On a single-source player an end-of-stream can
+reach `Paused` when it races a pause.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

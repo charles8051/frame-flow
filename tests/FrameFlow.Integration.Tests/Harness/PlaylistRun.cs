@@ -1,0 +1,292 @@
+using FrameFlow.Graph;
+using FrameFlow.Media;
+using FrameFlow.Playback;
+
+namespace FrameFlow.Integration.Tests.Harness;
+
+/// <summary>
+/// A playlist controller from <see cref="PlaybackController.CreatePlaylist"/> over a video sink
+/// that counts and discards frames, with no audio sink and software decode. It records the
+/// controller's errors and the coordinator's transitions, and hands out signals for states,
+/// transitions and frame counts so a test can wait on them.
+/// </summary>
+internal sealed class PlaylistRun : IAsyncDisposable
+{
+    private readonly Lock _gate = new();
+    private readonly List<PlaybackError> _errors = [];
+    private readonly List<PlaylistTransition> _transitions = [];
+    private readonly List<(PlaybackState State, TaskCompletionSource Signal)> _stateWaiters = [];
+    private readonly List<(IMediaSource Source, TaskCompletionSource Signal)> _sourceWaiters = [];
+    private readonly TaskCompletionSource _gaveUp = new(
+        TaskCreationOptions.RunContinuationsAsynchronously
+    );
+    private readonly IDisposable[] _subscriptions;
+    private readonly IMediaSource _firstItem;
+
+    private PlaylistRun(
+        IPlaybackController controller,
+        PlaylistCoordinator coordinator,
+        PresentCountingVideoSink sink,
+        IMediaSource firstItem
+    )
+    {
+        _firstItem = firstItem;
+        Controller = controller;
+        Coordinator = coordinator;
+        Sink = sink;
+        _subscriptions =
+        [
+            controller.ErrorOccurred.Subscribe(
+                new ActionObserver<PlaybackError>(e =>
+                {
+                    lock (_gate)
+                        _errors.Add(e);
+                    if (e.Message.Contains("gave up", StringComparison.Ordinal))
+                        _gaveUp.TrySetResult();
+                })
+            ),
+            coordinator.SourceTransitioned.Subscribe(
+                new ActionObserver<PlaylistTransition>(t =>
+                {
+                    lock (_gate)
+                    {
+                        _transitions.Add(t);
+                        foreach (var (source, signal) in _sourceWaiters)
+                        {
+                            if (ReferenceEquals(source, t.Source))
+                                signal.TrySetResult();
+                        }
+                    }
+                })
+            ),
+            controller.PlaybackStateChanged.Subscribe(
+                new ActionObserver<StateTransition<PlaybackState>>(t =>
+                {
+                    lock (_gate)
+                    {
+                        foreach (var (state, signal) in _stateWaiters)
+                        {
+                            if (state == t.Current)
+                                signal.TrySetResult();
+                        }
+                    }
+                })
+            ),
+        ];
+    }
+
+    public IPlaybackController Controller { get; }
+
+    public PlaylistCoordinator Coordinator { get; }
+
+    public PresentCountingVideoSink Sink { get; }
+
+    /// <summary>Completes when the playlist's give-up error is raised.</summary>
+    public Task GaveUp => _gaveUp.Task;
+
+    public IReadOnlyList<PlaybackError> Errors
+    {
+        get
+        {
+            lock (_gate)
+                return _errors.ToArray();
+        }
+    }
+
+    public IReadOnlyList<PlaylistTransition> Transitions
+    {
+        get
+        {
+            lock (_gate)
+                return _transitions.ToArray();
+        }
+    }
+
+    public static PlaylistRun Create(
+        IMediaSource[] items,
+        RepeatMode repeat,
+        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? configureVideo = null,
+        IPlaybackClock? clock = null
+    )
+    {
+        var coordinator = new PlaylistCoordinator(items, repeat);
+        var sink = new PresentCountingVideoSink();
+        var controller = PlaybackController.CreatePlaylist(
+            coordinator,
+            videoSink: sink,
+            audioSink: null,
+            hardwareDecodeMode: HardwareDecodeMode.Disabled,
+            initialRepeatMode: repeat,
+            clock: clock,
+            configureVideo: configureVideo
+        );
+        return new PlaylistRun(controller, coordinator, sink, items[0]);
+    }
+
+    /// <summary>Loads the playlist, which starts its first item warming.</summary>
+    public async Task LoadAsync()
+    {
+        // The session takes its first item from the coordinator's queue, not from the source
+        // the controller is handed, so the controller is given the first item for form's sake.
+        var load = await Controller.LoadAsync(_firstItem);
+        Assert.True(load.IsSuccess, $"Load failed: {load.Error?.Message}");
+    }
+
+    /// <summary>Loads the playlist and plays it.</summary>
+    public async Task PlayAsync()
+    {
+        await LoadAsync();
+        var play = await Controller.PlayAsync();
+        Assert.True(play.IsSuccess, $"Play failed: {play.Error?.Message}");
+    }
+
+    /// <summary>
+    /// Completes when the player enters <paramref name="state"/>, or at once if it is already
+    /// there.
+    /// </summary>
+    public Task Settled(PlaybackState state)
+    {
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+            _stateWaiters.Add((state, signal));
+        if (Controller.State == state)
+            signal.TrySetResult();
+        return signal.Task;
+    }
+
+    /// <summary>
+    /// Completes when <paramref name="source"/> becomes the current item. Ask before the action
+    /// that makes it current.
+    /// </summary>
+    public Task Transitioned(IMediaSource source)
+    {
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+            _sourceWaiters.Add((source, signal));
+        return signal.Task;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var subscription in _subscriptions)
+            subscription.Dispose();
+        await Controller.DisposeAsync();
+    }
+}
+
+/// <summary>
+/// A video sink that counts the frames presented to it and discards them, and completes a
+/// signal when the count reaches a given value.
+/// </summary>
+internal sealed class PresentCountingVideoSink : IVideoSink
+{
+    private readonly Lock _gate = new();
+    private readonly List<(int Count, TaskCompletionSource Signal)> _waiters = [];
+    private int _presented;
+
+    public int Presented => Volatile.Read(ref _presented);
+
+    public IFramePool FramePool => null!;
+
+    /// <summary>Completes once at least <paramref name="count"/> frames have been presented.</summary>
+    public Task WhenPresented(int count)
+    {
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+        {
+            if (_presented >= count)
+                signal.TrySetResult();
+            else
+                _waiters.Add((count, signal));
+        }
+        return signal.Task;
+    }
+
+    public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
+    {
+        frame.Dispose();
+        lock (_gate)
+        {
+            var presented = Interlocked.Increment(ref _presented);
+            foreach (var (count, signal) in _waiters)
+            {
+                if (presented >= count)
+                    signal.TrySetResult();
+            }
+        }
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) =>
+        ValueTask.CompletedTask;
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+/// <summary>
+/// A <see cref="PlaybackClock"/> that can hold the thread which next calls
+/// <see cref="Stop"/> until the test releases it. A playlist advance stops the clock while it
+/// holds its session's transition gate, so holding that call holds the gate: a test can then
+/// queue a controller command that is certain to reach the session after the advance.
+/// </summary>
+internal sealed class HoldableClock : IPlaybackClock, IDisposable
+{
+    private static readonly TimeSpan HoldBound = TimeSpan.FromSeconds(30);
+
+    private readonly PlaybackClock _inner = new();
+    private readonly Lock _gate = new();
+    private readonly ManualResetEventSlim _released = new(initialState: true);
+    private TaskCompletionSource? _holding;
+
+    public TimeSpan Position => _inner.Position;
+
+    public bool IsRunning => _inner.IsRunning;
+
+    public bool IsPaused => _inner.IsPaused;
+
+    /// <summary>
+    /// Arms a hold on the next <see cref="Stop"/>. The returned task completes when a thread
+    /// is held there; <see cref="Release"/> lets it go.
+    /// </summary>
+    public Task HoldNextStop()
+    {
+        var holding = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+        {
+            _released.Reset();
+            _holding = holding;
+        }
+        return holding.Task;
+    }
+
+    public void Release() => _released.Set();
+
+    public void Stop()
+    {
+        TaskCompletionSource? holding;
+        lock (_gate)
+        {
+            holding = _holding;
+            _holding = null;
+        }
+
+        if (holding is not null)
+        {
+            holding.TrySetResult();
+            // Bounded so a test that fails before releasing does not hang the run.
+            _released.Wait(HoldBound);
+        }
+
+        _inner.Stop();
+    }
+
+    public void Start(TimeSpan startPosition) => _inner.Start(startPosition);
+
+    public void Pause() => _inner.Pause();
+
+    public void Resume() => _inner.Resume();
+
+    public void Seek(TimeSpan position) => _inner.Seek(position);
+
+    public void Dispose() => _released.Dispose();
+}

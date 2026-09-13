@@ -308,6 +308,15 @@ internal static class PlaybackProtocol
             InternalPlaybackState.Paused => trigger switch
             {
                 PlaybackTrigger.Play => ToPlayingFromPlay(),
+                // End-of-stream while paused: a playlist skip on its last item (#182), or an
+                // end-of-stream posted just before the pause was dispatched. The stream is
+                // over, so end; the ticker already stopped on the way into Paused. Under
+                // RepeatMode.One there is no loop to run from Paused, so the trigger is
+                // dropped as it always was.
+                PlaybackTrigger.LastFrameRendered when !inputs.RepeatOne => PlaybackDecision.To(
+                    InternalPlaybackState.Ended,
+                    PlaybackAction.Of(PlaybackActionKind.FreezeClock)
+                ),
                 PlaybackTrigger.Unload => ToUnloaded(),
                 _ => PlaybackDecision.NotHandled(state),
             },

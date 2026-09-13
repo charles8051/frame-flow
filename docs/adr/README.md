@@ -224,13 +224,14 @@ land.
   three without changing public API or single-source playback: keep the last item at the end of the
   queue and pause it first on a skip, refuse play from `Ended` on an empty queue with a failed
   `Result`, and feed the controller the current item from its dispatch loop. The `SetNext` defect,
-  and defects found in review such as a skip while `Paused` presenting the next item, are recorded
-  without decisions because the proposed fixes failed review. A later decision, implemented with
-  #180, settles the two fault defects: every failed item is reported on `ErrorOccurred` and the
-  playlist carries on, and the player enters `Error` only after nine items fail in a row, where a
-  skip, a natural end, or five seconds or half an item's length of play breaks the run. Its first
-  draft proposed running
-  every player on the playlist session; a spike passed the suites that way, and a review that
+  and other defects found in review, are recorded without decisions because the proposed fixes
+  failed review. A later decision, implemented with #180, settles the two fault defects: every
+  failed item is reported on `ErrorOccurred` and the playlist carries on, and the player enters
+  `Error` only after nine items fail in a row, where a skip, a natural end, or five seconds or half
+  an item's length of play breaks the run. Another, implemented with #182, makes an advance follow
+  the controller's state: a skip while paused leaves the next item paused, a skip at `Ended` does
+  nothing, and under `Off` a skip on the last item while paused ends the playlist. Its first draft proposed
+  running every player on the playlist session; a spike passed the suites that way, and a review that
   reproduced it showed the queue under test never advanced and single-source faults went silent.
   Two reviews shaped it, and its revision history says what each changed. An amendment records,
   without deciding it, a direction for the `SetNext` defect: a playlist with a cursor for the loop

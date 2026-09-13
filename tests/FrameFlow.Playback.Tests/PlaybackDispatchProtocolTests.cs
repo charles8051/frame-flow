@@ -369,6 +369,24 @@ public sealed class PlaybackDispatchProtocolTests
     }
 
     [Fact]
+    public async Task EndOfStream_WhilePaused_EndsPlayback()
+    {
+        // A playlist skip on its last item while paused reports end-of-stream to a paused
+        // controller (#182), and so does an end-of-stream posted just before a pause.
+        var (controller, session) = NewController();
+        await using var _ = controller;
+
+        await controller.LoadAsync(new FakeSource());
+        await controller.PlayAsync();
+        Assert.True((await controller.PauseAsync()).IsSuccess);
+
+        session.RaiseEndOfStream();
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.Off)).IsSuccess);
+
+        Assert.Equal(PlaybackState.Ended, controller.State);
+    }
+
+    [Fact]
     public async Task WorkerFault_FromTheSessionReplayReplaced_DoesNotFaultTheNewSession()
     {
         // Replay from Ended unloads and reloads inside one dispatch command. A fatal error the
