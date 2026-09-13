@@ -200,9 +200,12 @@ public sealed class FrameFlowBootstrapper : IFrameFlowBootstrapper
                 }
                 else
                 {
-                    capabilities = HardwareDecodeProbe.Run(
+                    // Shared across every bootstrapper in the process (#37), so a
+                    // player built per item does not walk the backends per item.
+                    capabilities = HardwareDecodeProbe.GetOrRun(
                         _logger,
-                        _options.ProbeUncataloguedBackends
+                        _options.ProbeUncataloguedBackends,
+                        out var reused
                     );
                     var initializedCount = 0;
                     foreach (var b in capabilities.Available)
@@ -210,11 +213,22 @@ public sealed class FrameFlowBootstrapper : IFrameFlowBootstrapper
                         if (b.Initialized)
                             initializedCount++;
                     }
-                    _logger.LogInformation(
-                        "Hardware decode probe complete: {Initialized}/{Total} backends usable.",
-                        initializedCount,
-                        capabilities.Available.Count
-                    );
+                    if (reused)
+                    {
+                        _logger.LogDebug(
+                            "Hardware decode probe reused from earlier in this process: {Initialized}/{Total} backends usable.",
+                            initializedCount,
+                            capabilities.Available.Count
+                        );
+                    }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "Hardware decode probe complete: {Initialized}/{Total} backends usable.",
+                            initializedCount,
+                            capabilities.Available.Count
+                        );
+                    }
                 }
 
                 result = new FrameFlowBootstrapResult(

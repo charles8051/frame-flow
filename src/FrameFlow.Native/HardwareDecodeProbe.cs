@@ -16,8 +16,9 @@ namespace FrameFlow.Native;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Runs exactly once during <see cref="FrameFlowBootstrapper.Initialize"/> after
-/// the FFmpeg load has been confirmed. The probe enumerates types via
+/// Runs at most once per process for each value of
+/// <see cref="FrameFlowNativeOptions.ProbeUncataloguedBackends"/>, reached through
+/// <see cref="GetOrRun"/> once the FFmpeg load has been confirmed. The probe enumerates types via
 /// <c>av_hwdevice_iterate_types</c> and, for each, attempts
 /// <c>av_hwdevice_ctx_create</c> with a default device specifier. The temporary
 /// context is unref'd immediately — only the success/failure verdict is kept.
@@ -87,6 +88,53 @@ namespace FrameFlow.Native;
 /// </remarks>
 internal static partial class HardwareDecodeProbe
 {
+    // One walk per process for each value of probeUncatalogued (#37). The walk depends
+    // on the loaded FFmpeg build and on the host, and neither changes within a process:
+    // FFmpeg is loaded once, and ADR-0033 caches capabilities for the process lifetime
+    // with driver changes mid-process out of scope. The cache cannot live on the
+    // bootstrapper, because MediaPlayer.CreateAsync builds a new one for every player.
+    // The two settings get separate slots because on Linux they walk different backends.
+    private static readonly object s_cacheGate = new();
+    private static HardwareDecodeCapabilities? s_catalogued;
+    private static HardwareDecodeCapabilities? s_uncatalogued;
+
+    /// <summary>
+    /// Returns this process's probe result for <paramref name="probeUncatalogued"/>,
+    /// running <see cref="Run"/> the first time that setting is asked for.
+    /// </summary>
+    /// <remarks>
+    /// Callers that arrive while the first walk is running wait for it rather than
+    /// starting their own. Only the first walk logs per-backend results, through the
+    /// <paramref name="logger"/> its caller supplied.
+    /// </remarks>
+    /// <param name="logger">Receives the per-backend log lines if this call walks.</param>
+    /// <param name="probeUncatalogued">
+    /// <see cref="FrameFlowNativeOptions.ProbeUncataloguedBackends"/>.
+    /// </param>
+    /// <param name="reused">
+    /// <see langword="true"/> when the result came from an earlier walk in this process.
+    /// </param>
+    internal static HardwareDecodeCapabilities GetOrRun(
+        ILogger? logger,
+        bool probeUncatalogued,
+        out bool reused
+    )
+    {
+        lock (s_cacheGate)
+        {
+            ref var slot = ref probeUncatalogued ? ref s_uncatalogued : ref s_catalogued;
+            if (slot is { } cached)
+            {
+                reused = true;
+                return cached;
+            }
+
+            slot = Run(logger, probeUncatalogued);
+            reused = false;
+            return slot;
+        }
+    }
+
     /// <summary>
     /// Walks the FFmpeg hwdevice types and returns a populated
     /// <see cref="HardwareDecodeCapabilities"/>. Never throws — failures per

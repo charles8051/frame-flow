@@ -142,9 +142,11 @@ public static class MediaPlayer
         ArgumentNullException.ThrowIfNull(source);
         loggerFactory ??= NullLoggerFactory.Instance;
 
-        // Bootstrap the FFmpeg native runtime. Idempotent — the
-        // FrameFlowBootstrapper caches its result so repeated calls
-        // across multiple CreateAsync invocations are cheap. We do it
+        // Bootstrap the FFmpeg native runtime. Repeated calls across
+        // CreateAsync invocations are cheap: FFmpeg is loaded once per
+        // process, and the hardware decode probe runs once per process
+        // too (HardwareDecodeProbe.GetOrRun, #37), even though each call
+        // builds its own FrameFlowBootstrapper. We do it
         // here so consumers don't have to remember to call it
         // separately; the old `FrameFlowPlayer.BuildAsync` path also
         // ran the bootstrap via its DI registration. Skip the HW
