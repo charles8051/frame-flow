@@ -875,7 +875,7 @@ deliberately ahead of any new control — that:
 - defined lifecycle and error contracts
 - created a stable skeleton before native implementation expanded
 
-That skeleton is in place (see `FrameFlow.Player`'s `MediaPlayer.CreateAsync`
-and the `services.AddFrameFlow…()` registrations), and the rest of the
+That skeleton is in place (see `FrameFlow.Player`'s `FrameFlowPlayer.Open(...)`
+builder and the `services.AddFrameFlow…()` registrations), and the rest of the
 architecture has been built on top of it. New work should extend that surface
 rather than reopen the foundation.
