@@ -10,7 +10,7 @@ its two migrations shipped and measured.
 | The node, both match policies, the window | [`src/FrameFlow.Graph/SyncJoin.cs`](../../src/FrameFlow.Graph/SyncJoin.cs) |
 | `PumpSyncJoinAsync` | [`src/FrameFlow.Graph/NodePumps.cs`](../../src/FrameFlow.Graph/NodePumps.cs) |
 | `ToPrimary` / `ToSecondary` chain terminators | [`src/FrameFlow.Graph/GraphChain.cs`](../../src/FrameFlow.Graph/GraphChain.cs) |
-| 21 tests covering everything under *Testing* | [`tests/FrameFlow.Graph.Tests/SyncJoinTests.cs`](../../tests/FrameFlow.Graph.Tests/SyncJoinTests.cs) |
+| 22 tests covering everything under *Testing* | [`tests/FrameFlow.Graph.Tests/SyncJoinTests.cs`](../../tests/FrameFlow.Graph.Tests/SyncJoinTests.cs) |
 | Migration 2, the detection overlay | [`examples/.../LiveCaptioning/MainWindow.axaml.cs`](../../examples/FrameFlow.Examples.LiveCaptioning/MainWindow.axaml.cs) |
 
 Migration 1, the caption overlay, is **not** done. The example still carries its
@@ -240,6 +240,11 @@ a primary gated from the start is bounded too. Primary EOS, `ResetWindow()` and
 graph teardown each release a held secondary, and §5's post-EOS drain carries on
 from there. `IsSecondaryHeld` reports the held state for diagnostics.
 
+`ResetWindow()` drops what the window has admitted. A secondary held on the lead
+has been read but not admitted, so like the secondaries still on the edge behind
+it, it was produced before the reset and is admitted after. §6's consumers that
+need a clean boundary discard upstream as well, which is what a rebuild does.
+
 **Why back-pressure rather than dropping.** Refusing entries past the lead in the
 window would bound memory without ever blocking a producer, but it loses data. A
 finite secondary that leads, such as that subtitle source, would drop every cue
@@ -314,9 +319,9 @@ back-pressuring the shared demux pump into starving audio. That is what
 
 ## Testing
 
-All of the below are covered by the 21 tests in
+All of the below are covered by the 22 tests in
 [`SyncJoinTests.cs`](../../tests/FrameFlow.Graph.Tests/SyncJoinTests.cs); the
-project is green at 35 tests.
+project is green at 36 tests.
 
 - One end-to-end graph test per match policy.
 - The no-match path: body receives `null`, output is emitted, primary is not
@@ -344,6 +349,9 @@ project is green at 35 tests.
   held was lost.
 - Primary EOS while a secondary is held, asserting the graph completes and every
   secondary is disposed.
+- A primary at `TimeSpan.MinValue`, asserting the lead is measured from it rather
+  than from the secondaries, since that value is also the window's starting
+  high-water mark.
 - `ResetWindow()` while a secondary is held, asserting the reader is released
   without a primary advancing, and that spans still on the edge at teardown are
   disposed.

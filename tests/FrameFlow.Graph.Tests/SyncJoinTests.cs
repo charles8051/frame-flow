@@ -1043,6 +1043,76 @@ public sealed class SyncJoinTests
     }
 
     /// <summary>
+    /// The lead is measured from a primary at <see cref="TimeSpan.MinValue"/> like any other.
+    /// </summary>
+    /// <remarks>
+    /// The window's high-water mark starts at <see cref="TimeSpan.MinValue"/>, which is also a
+    /// legal primary time. A bound that took that floor to mean "no primary yet" would measure
+    /// from the secondaries instead, and admit a span that leads the primary by far more than
+    /// the lead.
+    /// </remarks>
+    [Fact]
+    public async Task MaxLead_MeasuresFromAPrimaryAtTimeSpanMinValue()
+    {
+        var join = Join(SyncMatch.MostRecentAtOrBefore, window: Ms(10_000), maxLead: Ms(1000));
+        var tick = RefBox.Of(new Tick(TimeSpan.MinValue));
+        var span = RefBox.Of(new Span(Ms(0), Ms(0), "ahead"));
+        var got = new List<string>();
+
+        bool heldAtEos = false;
+        int retainedAtEos = -1;
+        int t = 0;
+        var primary = new SourceNode<RefBox<Tick>>(
+            "primary",
+            async ct =>
+            {
+                if (t++ == 0)
+                    return tick;
+                await SpinUntil(() => join.IsSecondaryHeld || join.RetainedCount > 0, ct)
+                    .ConfigureAwait(false);
+                heldAtEos = join.IsSecondaryHeld;
+                retainedAtEos = join.RetainedCount;
+                return null;
+            }
+        );
+
+        // The span is sent only once the primary has been matched, so it is measured from it.
+        int s = 0;
+        var secondary = new SourceNode<RefBox<Span>>(
+            "secondary",
+            async ct =>
+            {
+                if (s++ > 0)
+                    return null;
+                await SpinUntil(() => Collected(got) >= 1, ct).ConfigureAwait(false);
+                return span;
+            }
+        );
+
+        var graph = new GraphRunner();
+        graph.Pipeline(secondary).ToSecondary(join, EdgeOptions.Buffered(2));
+        graph.Pipeline(primary).ToPrimary(join);
+        graph.Pipeline(join.Output).To(CollectInto(got));
+
+        using var cts = new CancellationTokenSource();
+        var run = graph.RunAsync(cts.Token);
+        try
+        {
+            await run.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        catch
+        {
+            await StopAsync(run, cts);
+            throw;
+        }
+
+        Assert.True(heldAtEos, $"A span 0 s in was not held against a primary at TimeSpan.MinValue; the window admitted {retainedAtEos}.");
+        Assert.Equal(0, retainedAtEos);
+        Assert.Equal(0, span.RefCount);
+        Assert.Equal(0, tick.RefCount);
+    }
+
+    /// <summary>
     /// <c>ResetWindow</c> releases a held secondary. An empty window has room, and a primary
     /// that is paused will not advance to say so.
     /// </summary>

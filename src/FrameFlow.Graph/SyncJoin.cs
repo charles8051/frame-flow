@@ -247,10 +247,19 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut> : IPumpableNode
     /// pre-seek state and nothing in it correlates to post-seek primaries.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// It drops what the window has admitted and nothing upstream of it. Secondaries
+    /// still on the edge were produced before the reset and are admitted after it, and
+    /// so is one held on <see cref="MaxLead"/>, which the join has read but not
+    /// admitted. A consumer that needs nothing from before its discontinuity to reach
+    /// the join discards upstream too, as a graph rebuild does.
+    /// </para>
+    /// <para>
     /// <see cref="FrameFlow.Graph"/> sits below <c>FrameFlow.Decoding</c> and so
     /// cannot implement its <c>ISeekResettable</c> without inverting the
     /// layering. The session registers an adapter over this method instead. See
     /// the sync-window-join ADR §6.
+    /// </para>
     /// </remarks>
     public void ResetWindow() => _retained.Clear();
 
@@ -277,6 +286,10 @@ internal sealed class SecondaryWindow<T>
     private readonly object _gate = new();
     private readonly List<Entry> _entries = [];
     private TimeSpan _highWater = TimeSpan.MinValue;
+
+    // Whether a primary has been matched since the last Clear. Kept apart from
+    // _highWater, whose TimeSpan.MinValue floor is also a legal primary time.
+    private bool _primarySeen;
 
     // Set while the secondary reader is parked on the lead bound. Completed and cleared by
     // anything that can make room: the primary advancing, or the window being cleared.
@@ -346,9 +359,11 @@ internal sealed class SecondaryWindow<T>
     {
         lock (_gate)
         {
-            if (t > _highWater)
+            if (!_primarySeen || t > _highWater)
             {
-                _highWater = t;
+                _primarySeen = true;
+                if (t > _highWater)
+                    _highWater = t;
                 ReleaseLeadWaiter();
             }
 
@@ -393,6 +408,7 @@ internal sealed class SecondaryWindow<T>
                 e.Item.Dispose();
             _entries.Clear();
             _highWater = TimeSpan.MinValue;
+            _primarySeen = false;
             ReleaseLeadWaiter();
         }
     }
@@ -404,7 +420,7 @@ internal sealed class SecondaryWindow<T>
     private bool HasRoom(TimeSpan from, TimeSpan lead)
     {
         TimeSpan reference;
-        if (_highWater != TimeSpan.MinValue)
+        if (_primarySeen)
             reference = _highWater;
         else if (_entries.Count > 0)
             reference = _entries[0].From;
