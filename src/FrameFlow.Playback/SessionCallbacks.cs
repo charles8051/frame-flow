@@ -35,10 +35,17 @@ namespace FrameFlow.Playback;
 /// fails and is skipped. The controller reports it on <c>ErrorOccurred</c> and does not
 /// change state.
 /// </param>
+/// <param name="OnCurrentItemChanged">
+/// Invoked when a session that presents several items, a playlist, makes a new item
+/// current. Carries that item's <see cref="MediaInfo"/>, which the controller applies to its
+/// <c>Duration</c> and <c>MediaInfo</c>. A session with one item never invokes it: the
+/// controller reads that item's metadata when it loads.
+/// </param>
 internal readonly record struct SessionCallbacks(
     Action OnEndOfStream,
     Action<Exception> OnWorkerFaulted,
     Action OnBufferReady,
     Action OnBufferUnderrun,
-    Action<PlaybackError> OnRecoverableError
+    Action<PlaybackError> OnRecoverableError,
+    Action<MediaInfo?> OnCurrentItemChanged
 );

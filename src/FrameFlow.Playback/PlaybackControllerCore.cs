@@ -123,12 +123,19 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     private IMediaSource? _loadedSource;
 
     // ── Loaded-media snapshot (captured after InitializeAsync succeeds) ──
-    // Per ADR-0028 §6, Duration and MediaInfo are immutable once loading
+    // Per ADR-0028 §6, Duration and MediaInfo are captured when loading
     // completes, so the controller caches them directly rather than delegating
-    // through the session on every consumer access. Both are cleared when the
-    // session is disposed.
+    // through the session on every consumer access. A playlist session replaces
+    // them at each item boundary through OnCurrentItemChanged (ADR-0062), which
+    // the dispatch loop applies. Both are cleared when the session is disposed.
     private MediaInfo? _loadedMediaInfo;
     private TimeSpan _loadedDuration;
+
+    // The latest current item a playlist session reported and the dispatch loop has not yet
+    // applied. See PostCurrentItemChanged.
+    private sealed record CurrentItemUpdate(MediaInfo? Info, int SessionGeneration);
+
+    private CurrentItemUpdate? _pendingCurrentItem;
 
     // ── Active seek orchestration ──────────────────────────────────────
     private Task? _activeSeekTask;
@@ -447,6 +454,66 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     }
 
     /// <summary>
+    /// Stores a playlist session's new current item and wakes the dispatch loop to apply it.
+    /// </summary>
+    /// <remarks>
+    /// The update is state, and only the latest one matters, so it is stored rather than
+    /// queued: a later item's replaces an earlier one's still waiting. The session calls this
+    /// under its transition gate, so one session's updates are stored in hand-off order. The
+    /// dispatch loop takes the stored update at the top of every iteration
+    /// (<see cref="ApplyPendingCurrentItem"/>), so if the wake-up finds the command channel
+    /// full, the update is applied before the next command the loop dispatches.
+    /// </remarks>
+    private void PostCurrentItemChanged(MediaInfo? info, int sessionGeneration)
+    {
+        if (_disposed)
+            return;
+
+        // A report from a session the controller has replaced is dropped here, before it can
+        // take the slot. Generations only rise, so one that slips past this read is still never
+        // allowed to replace a newer session's update waiting in the slot.
+        var currentGeneration = Volatile.Read(ref _sessionBinding).Generation;
+        if (sessionGeneration != currentGeneration)
+        {
+            LogStaleCurrentItemChange(sessionGeneration, currentGeneration);
+            return;
+        }
+
+        var update = new CurrentItemUpdate(info, sessionGeneration);
+        while (true)
+        {
+            var pending = Volatile.Read(ref _pendingCurrentItem);
+            if (pending is not null && pending.SessionGeneration > sessionGeneration)
+                return;
+            if (Interlocked.CompareExchange(ref _pendingCurrentItem, update, pending) == pending)
+                break;
+        }
+
+        if (!_commandChannel.Writer.TryWrite(new CurrentItemChangedCommand()))
+            LogCurrentItemChangeWakeDropped();
+    }
+
+    /// <summary>
+    /// Applies the latest stored current-item update, if any, to <see cref="Duration"/> and
+    /// <see cref="MediaInfo"/>. Runs on the dispatch loop. An update from a session disposed
+    /// since is dropped by generation.
+    /// </summary>
+    private void ApplyPendingCurrentItem()
+    {
+        if (Interlocked.Exchange(ref _pendingCurrentItem, null) is not { } update)
+            return;
+
+        if (update.SessionGeneration != _sessionBinding.Generation)
+        {
+            LogStaleCurrentItemChange(update.SessionGeneration, _sessionBinding.Generation);
+            return;
+        }
+
+        _loadedMediaInfo = update.Info;
+        _loadedDuration = update.Info?.Duration ?? TimeSpan.Zero;
+    }
+
+    /// <summary>
     /// Launches a seek on a background task and records it as the active controller-owned
     /// operation. Completion, cancellation, and faults are serialized back through the
     /// command channel via <see cref="SeekOutcomeCommand"/>.
@@ -581,6 +648,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 command.Completion.TrySetResult(Result.Ok());
                 break;
             case RecoverableErrorCommand:
+            case CurrentItemChangedCommand:
                 command.Completion.TrySetResult(Result.Ok());
                 break;
             case SeekOutcomeCommand seekOutcome:
@@ -647,7 +715,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             OnBufferReady: () => PostInternalAsync(PlaybackTrigger.BufferReady, sessionGeneration),
             OnBufferUnderrun: () =>
                 PostInternalAsync(PlaybackTrigger.BufferUnderrun, sessionGeneration),
-            OnRecoverableError: error => PostRecoverableError(error, sessionGeneration)
+            OnRecoverableError: error => PostRecoverableError(error, sessionGeneration),
+            OnCurrentItemChanged: info => PostCurrentItemChanged(info, sessionGeneration)
         );
 
     // ── Pure-core EXECUTOR (architecture review §2.1, ADR-0055 sibling) ─────────
@@ -1295,6 +1364,10 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                     continue;
                 }
 
+                // Before every command, not only the wake-up: a wake-up that found the channel
+                // full was never queued, and this is how its update still lands.
+                ApplyPendingCurrentItem();
+
                 switch (cmd)
                 {
                     case InternalTriggerCommand itc:
@@ -1364,6 +1437,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                                 rec.Error.Message
                             );
                         }
+                        break;
+
+                    case CurrentItemChangedCommand:
+                        // A playlist moved to a new item (ADR-0062), and the update was applied
+                        // above. This command only woke the loop to do it.
                         break;
 
                     case SeekOutcomeCommand soc:

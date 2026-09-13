@@ -111,6 +111,19 @@ internal sealed record RecoverableErrorCommand(PlaybackError Error, int SessionG
 }
 
 /// <summary>
+/// Wakes the dispatch loop after a playlist session has stored a new current item for the
+/// controller. The update itself is not carried: the loop applies the latest stored one at
+/// the top of every iteration, so an update still lands if this command finds the channel
+/// full.
+/// </summary>
+internal sealed record CurrentItemChangedCommand : IPlayerCommand
+{
+    public TaskCompletionSource<Result> Completion { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public CancellationToken CancellationToken { get; init; }
+}
+
+/// <summary>
 /// Carries the terminal outcome of an asynchronously launched seek operation back
 /// through the playback controller's command channel.
 /// </summary>

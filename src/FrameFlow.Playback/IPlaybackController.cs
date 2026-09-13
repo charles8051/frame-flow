@@ -67,9 +67,17 @@ public interface IPlaybackController : IAsyncDisposable
     TimeSpan Position { get; }
 
     /// <summary>Total duration of the loaded media, or <see cref="TimeSpan.Zero"/> if unknown.</summary>
+    /// <remarks>
+    /// On a playlist controller this is the current item's duration. It changes at each item
+    /// boundary, shortly after the item becomes current.
+    /// </remarks>
     TimeSpan Duration { get; }
 
     /// <summary>Metadata for the loaded media, or <see langword="null"/> if nothing is loaded.</summary>
+    /// <remarks>
+    /// On a playlist controller this is the current item's metadata. It changes at each item
+    /// boundary, shortly after the item becomes current.
+    /// </remarks>
     MediaInfo? MediaInfo { get; }
 
     // ── Observable events ────────────────────────────────────────────────

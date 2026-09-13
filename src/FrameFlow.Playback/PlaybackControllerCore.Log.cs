@@ -188,6 +188,18 @@ internal sealed partial class PlaybackControllerCore
     );
 
     [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Current item change wake-up not queued — channel full or closed; the update applies before the next dispatched command"
+    )]
+    private partial void LogCurrentItemChangeWakeDropped();
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Dropping current item change from session generation {Generation}; the current generation is {CurrentGeneration}"
+    )]
+    private partial void LogStaleCurrentItemChange(int generation, int currentGeneration);
+
+    [LoggerMessage(
         Level = LogLevel.Warning,
         Message = "Recoverable session error dropped — channel full or closed: {Message}"
     )]

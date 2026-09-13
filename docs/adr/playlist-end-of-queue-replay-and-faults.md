@@ -15,8 +15,8 @@ It started as a proposal to run every player on the playlist session. A spike an
 reviews narrowed it to this. That history is kept under *Alternatives considered* and *Revision
 history*, because it is the reason this record is narrow.
 
-**Only decisions 7 and 8 are implemented** (#180, #182). Every defect below was reproduced on this
-codebase except where it says "read from code".
+**Only decisions 5, 7 and 8 are implemented** (#183, #180, #182). Every defect below was reproduced
+on this codebase except where it says "read from code".
 
 Related: [ADR-0028](ADR-0028-internal-layering-and-ownership-cleanup.md),
 [ADR-0034](ADR-0034-diagnostics-surfaces.md),
@@ -214,6 +214,29 @@ mechanism below is acceptable:
   which covers an unloaded session.
 
 No state machine changes.
+
+**As implemented (#183), neither mechanism was needed.** Decision 7 had since given every session
+notification the session generation, and the two drop cases are covered this way:
+
+- **An unloaded session.** The update travels as `SessionCallbacks.OnCurrentItemChanged`, which
+  carries the generation like the other notifications. The controller drops an update whose
+  generation is no longer current, both when it is reported and when the dispatch loop applies it,
+  and `DisposeSessionAsync` advances the generation before it awaits disposal. A report from an
+  older generation is also never allowed to replace a newer session's update waiting to be applied.
+  `PlaylistSession` cannot report after its disposal, but the controller does not rely on that.
+- **An earlier item.** The update is state, and only the latest one matters, so the controller
+  stores it in a single slot rather than queueing it. `PlaylistSession` reports from inside the
+  advance, under its transition gate, so one session's updates are stored in hand-off order and a
+  later item's replaces an earlier one's.
+
+The controller then queues a wake-up command. The dispatch loop takes the stored update at the top
+of every iteration, not only for the wake-up. If the wake-up finds the bounded command channel full,
+the update is still applied before the next command the loop dispatches. The review of #196 found
+that dropping a queued update there would leave `Duration` describing the previous item.
+
+The update is stored immediately before the coordinator raises `SourceTransitioned`, so a transition
+subscriber can wait on a no-op command and then read the new values. An in-place replay keeps the
+same item and reports nothing.
 
 ### 6. The docs say `Error` is terminal
 
@@ -421,8 +444,10 @@ the item.
 
 ### Positive
 
-- Once implemented, defects 1, 2 and 5 are fixed. A playlist at `Ended` can be sought, reports its
+- Once implemented, defects 1 and 2 are fixed. A playlist at `Ended` can be sought, reports its
   counters, and does not fault when Play finds nothing to play.
+- With decision 5, defect 5 is fixed. The controller's `Duration`, `MediaInfo`, diagnostics snapshot
+  and loop-stall watchdog describe the current item.
 - With decision 7, defects 3 and 4 are fixed. Failed items are observable, and a playlist whose
   items all fail before making progress no longer loops forever.
 - With decision 8, a playlist presents only while it says `Playing`, and a skip while paused on the
@@ -677,6 +702,15 @@ Two guard tests pass today and must keep passing:
 Test 8 cannot fail on today's tree for the reason decision 3 exists. It fails on a build that keeps
 the last item without pausing it, where frames went from 10 to 35.
 
+Test 6 is implemented, as two tests in `tests/FrameFlow.Integration.Tests/PlaylistCurrentItemTests.cs`
+over `test-subsecond.mp4` then the 3-second clip. On the tree before decision 5 (commit 9bd87cd),
+`MediaInfo` after the advance still had a 0.5 s duration, and two further passes under `One` raised
+`LoopStalled` twice. `PlaybackDispatchProtocolTests` covers the controller half: an update from the
+current session replaces `Duration`, `MediaInfo` and the diagnostics snapshot's duration, one
+from an unloaded session is dropped, and does not displace the loaded session's waiting update, and
+one reported while the command channel is full is still applied. That last test holds the dispatch loop inside a play and fills the channel. With a queued
+update it failed with the loaded item's `MediaInfo`.
+
 Decision 7's tests are in `tests/FrameFlow.Integration.Tests/PlaylistFaultTests.cs`. They inject a
 fault on the 21st frame of the 3-second clip, well before that clip makes progress at 1.5 seconds.
 The bracketed results are from the tree before decision 7 (commit 8ea83a7).
@@ -794,3 +828,8 @@ the advance, or the tooling #143 asks for. A timing-based test would not show th
   place only an item that has played, settles a skip at `Ended` or before the first play when it is
   requested, and handles a failed deferred start as a failed start. It also records two gaps the
   review found and this decision does not close.
+- **Amendment (2026-09-13), decision 5 implemented.** Implements decision 5 with #183. Neither of
+  the two drop mechanisms the decision allowed was needed: the session generation decision 7 added
+  to every notification drops an update from an unloaded session, and storing the latest update
+  from under the playlist's transition gate keeps one session's updates in hand-off order. The
+  dispatch loop applies it before every command, so it survives a full command channel.
