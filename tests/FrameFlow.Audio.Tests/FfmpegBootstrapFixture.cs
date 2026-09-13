@@ -124,7 +124,8 @@ internal sealed class RequiresFfmpegFactAttribute : FactAttribute
 /// OpenAL Soft. Headless CI runners technically have OpenAL Soft
 /// available but its device-paced playback can stall indefinitely (the
 /// device-pacing path in v0.1.0 hung for 5+ min on
-/// <c>ReActivation_DevicePacedPlaybackMatchesFirstIteration</c>), so
+/// <c>ReActivation_DevicePacedPlaybackMatchesFirstIteration</c>, now in
+/// FrameFlow.Integration.Tests), so
 /// these tests skip unless <c>FRAMEFLOW_AUDIO_DEVICE_TESTS=1</c> is set
 /// to opt in — matching the <c>VisualTestFact</c> pattern in
 /// FrameFlow.Integration.Tests. Tracked in docs/DEFERRED_WORK.md as the

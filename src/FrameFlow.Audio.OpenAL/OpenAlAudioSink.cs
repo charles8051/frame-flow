@@ -172,7 +172,8 @@ public sealed partial class OpenAlAudioSink
     // for the duration of a device-side stall. The signal is advisory: every wake
     // re-checks _freeBuffers under _stateLock and the wait is timeout-bounded, so a
     // missed signal can never lose a buffer or deadlock (see AsyncAutoResetEvent).
-    private readonly AsyncAutoResetEvent _bufferReturned = new();
+    // Its timeout runs on _timeProvider, so the slice and the clock share one source.
+    private readonly AsyncAutoResetEvent _bufferReturned;
 
     // Upper bound on a single async backpressure wait slice. Active draining wakes
     // the waiter via _bufferReturned the instant a buffer recycles; this cap only
@@ -196,10 +197,15 @@ public sealed partial class OpenAlAudioSink
     private long _underrunCount;
     private long _backpressureCount;
 
-    // Supplies the sleep in IClockSource.WaitUntilAsync. Defaulted to the high-resolution
-    // provider because the choice decides the frame rate. See the constructor remarks.
+    // The sink's one source of elapsed time: the sleep in IClockSource.WaitUntilAsync, the
+    // backpressure wait's timeout, and the elapsed time the clock is rate-limited and
+    // interpolated against. Defaulted to the high-resolution provider because the choice
+    // decides the frame rate. See the constructor remarks.
     private readonly TimeProvider _timeProvider;
-    private readonly Stopwatch _sessionClock = new();
+
+    // Elapsed playing time for this activation, read through _timeProvider. It stops on
+    // pause and deactivate and restarts on activation and resume.
+    private readonly SessionClock _sessionClock;
 
     // ── Volume / Mute (persist across Activate/Deactivate cycles) ───────────
     // Stored under _stateLock; effective gain applied via ApplyEffectiveGain
@@ -281,8 +287,9 @@ public sealed partial class OpenAlAudioSink
 
     /// <param name="logger">Optional logger.</param>
     /// <param name="timeProvider">
-    /// Supplies the sleep in <see cref="IClockSource.WaitUntilAsync"/>. Null uses
-    /// <see cref="HighResolutionTimeProvider.Preferred"/>.
+    /// Supplies the sink's elapsed time: the sleep in <see cref="IClockSource.WaitUntilAsync"/>,
+    /// the backpressure wait, and the elapsed time the playback clock is interpolated and
+    /// rate-limited against. Null uses <see cref="HighResolutionTimeProvider.Preferred"/>.
     /// </param>
     /// <remarks>
     /// <para>
@@ -298,12 +305,20 @@ public sealed partial class OpenAlAudioSink
     /// Passing <see cref="TimeProvider.System"/> explicitly opts back out. Off Windows, and
     /// on Windows before 10 1803, the default already <i>is</i> the system provider.
     /// </para>
+    /// <para>
+    /// <b>Why every elapsed-time read goes through it.</b> The clock's interpolation and rate
+    /// limit measure elapsed time between device reads. If they read a
+    /// <see cref="System.Diagnostics.Stopwatch"/> while the sleeps read the provider, a
+    /// provider that moves its own time without moving the wall sees none of that time in
+    /// the clock. Both default providers read the same QPC timestamp a
+    /// <see cref="System.Diagnostics.Stopwatch"/> does, so production is unchanged.
+    /// </para>
     /// </remarks>
     public OpenAlAudioSink(ILogger<OpenAlAudioSink>? logger, TimeProvider? timeProvider)
         : this(logger, timeProvider, leaseFactory: null) { }
 
     /// <param name="logger">Optional logger.</param>
-    /// <param name="timeProvider">Supplies the sleep in <see cref="IClockSource.WaitUntilAsync"/>.</param>
+    /// <param name="timeProvider">Supplies the sink's elapsed time. See the public constructor.</param>
     /// <param name="leaseFactory">
     /// Supplies the device lease at each activation. Null acquires the process-wide
     /// shared OpenAL device (ADR-0058), which is what production does. A test passes a
@@ -318,6 +333,8 @@ public sealed partial class OpenAlAudioSink
     {
         _logger = logger ?? NullLogger<OpenAlAudioSink>.Instance;
         _timeProvider = timeProvider ?? HighResolutionTimeProvider.Preferred;
+        _sessionClock = new SessionClock(_timeProvider);
+        _bufferReturned = new AsyncAutoResetEvent(_timeProvider);
         _leaseFactory = leaseFactory ?? SharedOpenAlContext.Acquire;
     }
 
@@ -1155,8 +1172,8 @@ public sealed partial class OpenAlAudioSink
         var (anchor, position) = AudioClockInterpolation.Read(
             _clockAnchor,
             raw,
-            Stopwatch.GetTimestamp(),
-            Stopwatch.Frequency,
+            _timeProvider.GetTimestamp(),
+            _timeProvider.TimestampFrequency,
             AudioClockInterpolation.DefaultMaxExtrapolation,
             // Interpolate only while audio is genuinely advancing. Both signals already exist
             // and are already maintained at the real transitions, so this needs no flag of its
@@ -1395,6 +1412,48 @@ public sealed partial class OpenAlAudioSink
         // backpressure loop (FlushStagingBufferAsync). Set() takes its own leaf
         // lock; the awaiter re-checks _freeBuffers under _stateLock after waking.
         _bufferReturned.Set();
+    }
+
+    /// <summary>
+    /// A <see cref="Stopwatch"/> that reads its time from a <see cref="TimeProvider"/>.
+    /// </summary>
+    /// <remarks>
+    /// Same semantics as the <see cref="Stopwatch"/> it replaced: <see cref="Start"/> and
+    /// <see cref="Stop"/> are idempotent, and <see cref="Restart"/> clears the accumulator and
+    /// starts. Not thread-safe; every use is under <see cref="_stateLock"/>.
+    /// </remarks>
+    private sealed class SessionClock(TimeProvider timeProvider)
+    {
+        private long _runningSince;
+        private TimeSpan _accumulated;
+
+        public bool IsRunning { get; private set; }
+
+        public TimeSpan Elapsed =>
+            IsRunning ? _accumulated + timeProvider.GetElapsedTime(_runningSince) : _accumulated;
+
+        public void Restart()
+        {
+            _accumulated = TimeSpan.Zero;
+            _runningSince = timeProvider.GetTimestamp();
+            IsRunning = true;
+        }
+
+        public void Start()
+        {
+            if (IsRunning)
+                return;
+            _runningSince = timeProvider.GetTimestamp();
+            IsRunning = true;
+        }
+
+        public void Stop()
+        {
+            if (!IsRunning)
+                return;
+            _accumulated += timeProvider.GetElapsedTime(_runningSince);
+            IsRunning = false;
+        }
     }
 
     // ── Source-generated log methods ─────────────────────────────────────
