@@ -178,6 +178,22 @@ internal sealed partial class PlaybackControllerCore
     private partial void LogStaleInternalTrigger(string trigger, string currentState);
 
     [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Recoverable session error dropped — channel full or closed: {Message}"
+    )]
+    private partial void LogRecoverableErrorDropped(string message);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Dropping recoverable error from session generation {Generation}; the current generation is {CurrentGeneration}: {Message}"
+    )]
+    private partial void LogStaleRecoverableError(
+        int generation,
+        int currentGeneration,
+        string message
+    );
+
+    [LoggerMessage(
         Level = LogLevel.Debug,
         Message = "Ignoring seek outcome after controller disposal — operation: {OperationId}, cancelled: {WasCanceled}, hasError: {HasError}"
     )]

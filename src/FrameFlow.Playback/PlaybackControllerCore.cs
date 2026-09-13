@@ -423,6 +423,21 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     }
 
     /// <summary>
+    /// Posts an error a session carried on from to the command channel without blocking,
+    /// so it reaches <see cref="ErrorOccurred"/> in order with the session's other
+    /// notifications. Failures are swallowed and logged, as for
+    /// <see cref="PostInternalAsync"/>.
+    /// </summary>
+    private void PostRecoverableError(PlaybackError error, int sessionGeneration)
+    {
+        if (_disposed)
+            return;
+
+        if (!_commandChannel.Writer.TryWrite(new RecoverableErrorCommand(error, sessionGeneration)))
+            LogRecoverableErrorDropped(error.Message);
+    }
+
+    /// <summary>
     /// Launches a seek on a background task and records it as the active controller-owned
     /// operation. Completion, cancellation, and faults are serialized back through the
     /// command channel via <see cref="SeekOutcomeCommand"/>.
@@ -556,6 +571,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 LogInternalTriggerIgnoredAfterDisposal(internalTrigger.Trigger.ToString());
                 command.Completion.TrySetResult(Result.Ok());
                 break;
+            case RecoverableErrorCommand:
+                command.Completion.TrySetResult(Result.Ok());
+                break;
             case SeekOutcomeCommand seekOutcome:
                 LogSeekOutcomeIgnoredAfterDisposal(
                     seekOutcome.OperationId,
@@ -602,16 +620,21 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
     /// <summary>
     /// Builds the immutable callback channel that the controller injects into
-    /// every session it creates. Each callback posts an internal trigger through
-    /// the command channel so the dispatch loop processes session notifications
-    /// against the state machines sequentially.
+    /// every session it creates. Each callback posts through the command channel
+    /// so the dispatch loop processes session notifications against the state
+    /// machines sequentially.
     /// </summary>
-    private SessionCallbacks CreateSessionCallbacks() =>
+    /// <param name="sessionGeneration">
+    /// The generation the session will be published under. A recoverable error carries
+    /// it, so one from a session disposed since is dropped.
+    /// </param>
+    private SessionCallbacks CreateSessionCallbacks(int sessionGeneration) =>
         new(
             OnEndOfStream: () => PostInternalAsync(PlaybackTrigger.LastFrameRendered),
             OnWorkerFaulted: ex => PostInternalAsync(PlaybackTrigger.FatalError, ex),
             OnBufferReady: () => PostInternalAsync(PlaybackTrigger.BufferReady),
-            OnBufferUnderrun: () => PostInternalAsync(PlaybackTrigger.BufferUnderrun)
+            OnBufferUnderrun: () => PostInternalAsync(PlaybackTrigger.BufferUnderrun),
+            OnRecoverableError: error => PostRecoverableError(error, sessionGeneration)
         );
 
     // ── Pure-core EXECUTOR (architecture review §2.1, ADR-0055 sibling) ─────────
@@ -812,15 +835,18 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         switch (kind)
         {
             case PlaybackActionKind.CreateSession:
-                // Per ADR-0028 §4, callbacks are injected at construction time so the
-                // callback channel is never partially wired.
-                _session = _sessionFactory.CreateSession(_clock, CreateSessionCallbacks());
-                // Publish the new session and its generation as one reference, after the
-                // session is fully constructed. See SessionBinding.
-                Volatile.Write(
-                    ref _sessionBinding,
-                    new SessionBinding(_session, _sessionBinding.Generation + 1)
-                );
+                {
+                    // Per ADR-0028 §4, callbacks are injected at construction time so the
+                    // callback channel is never partially wired.
+                    var generation = _sessionBinding.Generation + 1;
+                    _session = _sessionFactory.CreateSession(
+                        _clock,
+                        CreateSessionCallbacks(generation)
+                    );
+                    // Publish the new session and its generation as one reference, after the
+                    // session is fully constructed. See SessionBinding.
+                    Volatile.Write(ref _sessionBinding, new SessionBinding(_session, generation));
+                }
                 LogSessionCreated();
                 break;
 
@@ -1288,6 +1314,25 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                             // Stale trigger — e.g. LastFrameRendered arrived after
                             // the user paused or stopped. Drop it silently.
                             LogStaleInternalTrigger(itc.Trigger.ToString(), _state.ToString());
+                        }
+                        break;
+
+                    case RecoverableErrorCommand rec:
+                        // The session carried on, so no trigger fires and the state stands.
+                        // DisposeSessionAsync moves the generation before it awaits disposal,
+                        // so an error a session reports while or after it is torn down is
+                        // dropped here rather than raised against whatever was loaded next.
+                        if (rec.SessionGeneration == _sessionBinding.Generation)
+                        {
+                            _errorSubject.OnNext(rec.Error);
+                        }
+                        else
+                        {
+                            LogStaleRecoverableError(
+                                rec.SessionGeneration,
+                                _sessionBinding.Generation,
+                                rec.Error.Message
+                            );
                         }
                         break;
 

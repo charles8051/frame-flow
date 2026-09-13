@@ -29,6 +29,19 @@ namespace FrameFlow.Player;
 /// <see cref="RepeatMode.Off"/>, enqueue the next item from a
 /// <see cref="SourceTransitioned"/> handler so the queue never empties.
 /// </para>
+/// <para>
+/// <b>Failed items.</b> An item that faults while it plays, or a later item that
+/// cannot be started, raises <see cref="IMediaPlayer.ErrorOccurred"/> and is skipped
+/// as though it had ended. The state does not change: under
+/// <see cref="RepeatMode.Off"/> a last item that faults while playing ends the
+/// playlist in <see cref="PlaybackState.Ended"/>, and under
+/// <see cref="RepeatMode.All"/> or <see cref="RepeatMode.One"/> the rotation
+/// continues. A first item that cannot be opened fails the load instead, as for a
+/// single source. The player gives up and enters <see cref="PlaybackState.Error"/>
+/// when more than eight items fail in a row. An item that ends or is skipped without
+/// failing breaks the run, and so does a fault after an item has played for five
+/// seconds, or for half its length if that is shorter.
+/// </para>
 /// </remarks>
 public interface IMediaPlaylistPlayer : IMediaPlayer
 {

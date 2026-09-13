@@ -311,6 +311,64 @@ public sealed class PlaybackDispatchProtocolTests
     }
 
     [Fact]
+    public async Task RecoverableError_IsRaised_AndPlaybackCarriesOn()
+    {
+        // A playlist item that fails and is skipped (#180): the error reaches ErrorOccurred,
+        // and the controller neither leaves Playing nor disposes the session.
+        var (controller, session) = NewController();
+        await using var _ = controller;
+
+        await controller.LoadAsync(new FakeSource());
+        await controller.PlayAsync();
+
+        var errors = new ConcurrentQueue<PlaybackError>();
+        using var sub = controller.ErrorOccurred.Subscribe(
+            new Relay<PlaybackError>(errors.Enqueue)
+        );
+
+        var reported = new PlaybackError(ErrorCategory.System, "item failed");
+        session.RaiseRecoverableError(reported);
+
+        // The error is dispatched in order with commands, so a no-op command posted after it
+        // completes only once it has been handled.
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.Off)).IsSuccess);
+
+        Assert.Same(reported, Assert.Single(errors));
+        Assert.Equal(PlaybackState.Playing, controller.State);
+        Assert.False(session.Disposed, "A recoverable error disposed the session.");
+    }
+
+    [Fact]
+    public async Task RecoverableError_FromAnUnloadedSession_IsDropped()
+    {
+        // The playlist reports from the thread pool, so a report can arrive after the
+        // controller has unloaded the session that made it and loaded another.
+        var (controller, session) = NewController();
+        await using var _ = controller;
+
+        await controller.LoadAsync(new FakeSource());
+        var unloaded = session.Callbacks;
+        Assert.True((await controller.UnloadAsync()).IsSuccess);
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+
+        var errors = new ConcurrentQueue<PlaybackError>();
+        using var sub = controller.ErrorOccurred.Subscribe(
+            new Relay<PlaybackError>(errors.Enqueue)
+        );
+
+        unloaded.OnRecoverableError(new PlaybackError(ErrorCategory.System, "stale"));
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.Off)).IsSuccess);
+
+        Assert.Empty(errors);
+
+        // The loaded session's own reports still get through.
+        session.RaiseRecoverableError(new PlaybackError(ErrorCategory.System, "current"));
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.Off)).IsSuccess);
+
+        Assert.Equal("current", Assert.Single(errors).Message);
+    }
+
+    [Fact]
     public async Task Play_FromEnded_RunsReplayRecovery_BackToPlaying()
     {
         var (controller, session) = NewController();
@@ -687,6 +745,12 @@ public sealed class PlaybackDispatchProtocolTests
         public void RaiseEndOfStream() => _callbacks.OnEndOfStream();
 
         public void RaiseWorkerFault(Exception ex) => _callbacks.OnWorkerFaulted(ex);
+
+        public void RaiseRecoverableError(PlaybackError error) =>
+            _callbacks.OnRecoverableError(error);
+
+        /// <summary>The callbacks from the most recent <c>CreateSession</c>.</summary>
+        public SessionCallbacks Callbacks => _callbacks;
 
         public void RaiseBufferUnderrun() => _callbacks.OnBufferUnderrun();
 

@@ -1,12 +1,14 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Media;
+
 namespace FrameFlow.Playback;
 
 /// <summary>
 /// Callback channel from an <see cref="IPlaybackSession"/> back to its owning
 /// controller. Injected at session construction time rather than wired through
-/// mutable delegate properties, so all four callbacks are guaranteed to be set
+/// mutable delegate properties, so every callback is guaranteed to be set
 /// before any worker can fire.
 /// </summary>
 /// <remarks>
@@ -28,9 +30,15 @@ namespace FrameFlow.Playback;
 /// <param name="OnWorkerFaulted">Invoked when a pipeline worker faults with an unrecoverable error.</param>
 /// <param name="OnBufferReady">Invoked when the buffer reaches the ready threshold.</param>
 /// <param name="OnBufferUnderrun">Invoked when the buffer underruns during playback.</param>
+/// <param name="OnRecoverableError">
+/// Invoked when the session hits an error and carries on, such as a playlist item that
+/// fails and is skipped. The controller reports it on <c>ErrorOccurred</c> and does not
+/// change state.
+/// </param>
 internal readonly record struct SessionCallbacks(
     Action OnEndOfStream,
     Action<Exception> OnWorkerFaulted,
     Action OnBufferReady,
-    Action OnBufferUnderrun
+    Action OnBufferUnderrun,
+    Action<PlaybackError> OnRecoverableError
 );

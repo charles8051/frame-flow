@@ -38,20 +38,17 @@ namespace FrameFlow.Playback;
 /// lets one warm audio sink span a playlist of mixed audio/silent items.
 /// </para>
 /// <para>
-/// <b>Robustness.</b> An item that fails to open or start is skipped (logged),
-/// so a single corrupt file does not kill the rotation. A spin guard bubbles a
-/// fatal error if too many consecutive items fail, rather than looping hot over
-/// an all-bad queue.
+/// <b>Robustness.</b> An item that fails to open or start, or faults while it
+/// plays, is skipped, so a single corrupt file does not kill the rotation. Each
+/// such failure is reported to the controller through
+/// <see cref="SessionCallbacks.OnRecoverableError"/>, which raises it on
+/// <c>ErrorOccurred</c> without changing state. <see cref="PlaylistFailureGuard"/>
+/// bubbles a fatal error when items keep failing in a row, rather than looping
+/// over a queue that cannot play.
 /// </para>
 /// </remarks>
 internal sealed class PlaylistSession : IPlaybackSession
 {
-    /// <summary>
-    /// Consecutive open/start failures tolerated before a fatal error is bubbled
-    /// to the controller. Bounds a hot spin loop when every queued item is bad.
-    /// </summary>
-    private const int MaxConsecutiveFailures = 8;
-
     private readonly IVideoSink? _videoSink;
     private readonly IAudioSink? _audioSink;
     private readonly IPlaybackClock _clock;
@@ -78,7 +75,17 @@ internal sealed class PlaylistSession : IPlaybackSession
     // Monotonic generation tag stamped into each item's callbacks so a stale
     // end-of-stream / fault from an already-replaced item is ignored.
     private int _currentGen;
-    private int _consecutiveFailures;
+
+    // The generation whose fault was last handled. A faulted item is never rewound
+    // in place, so a second fault carrying it is another worker reporting the same
+    // failure, and is not counted or reported again.
+    private int _lastFaultedGen = -1;
+
+    private readonly PlaylistFailureGuard _failures = new();
+
+    // Set once the guard gives up. The controller disposes this session on its way
+    // into Error; until then a late notification must not start another item.
+    private bool _gaveUp;
     private bool _disposed;
 
     public PlaylistSession(
@@ -261,16 +268,17 @@ internal sealed class PlaylistSession : IPlaybackSession
 
     /// <summary>
     /// Callbacks handed to each per-item <see cref="SubstrateSession"/>. The
-    /// buffer callbacks bubble straight to the controller; end-of-stream and
-    /// faults route into the advance path, tagged with the item's generation so
-    /// a stale notification from a replaced item is ignored.
+    /// buffer callbacks and recoverable errors bubble straight to the controller;
+    /// end-of-stream and faults route into the advance path, tagged with the
+    /// item's generation so a stale notification from a replaced item is ignored.
     /// </summary>
     private SessionCallbacks CreateItemCallbacks(int gen) =>
         new(
             OnEndOfStream: () => OnItemEnded(gen, faulted: false, error: null),
             OnWorkerFaulted: ex => OnItemEnded(gen, faulted: true, error: ex),
             OnBufferReady: _controllerCallbacks.OnBufferReady,
-            OnBufferUnderrun: _controllerCallbacks.OnBufferUnderrun
+            OnBufferUnderrun: _controllerCallbacks.OnBufferUnderrun,
+            OnRecoverableError: _controllerCallbacks.OnRecoverableError
         );
 
     private SubstrateSession CreateItemSession(int gen) =>
@@ -292,23 +300,40 @@ internal sealed class PlaylistSession : IPlaybackSession
         if (_disposed)
             return;
 
+        // How far a faulted item played is read here, when it faulted. The advance may
+        // wait on the gate behind a seek or a slow SourceTransitioned subscriber, and the
+        // position clock keeps running meanwhile. The clock starts from zero for each
+        // item and each in-place rewind, and stops while paused.
+        var playedFor = faulted ? _clock.Position : TimeSpan.Zero;
+
         // Hop off the worker thread that raised the callback; the advance does
         // heavy work (dispose + open + warmup) that must not block the graph.
-        _ = Task.Run(() => AdvanceAsync(gen, faulted, error));
+        _ = Task.Run(() => AdvanceAsync(gen, faulted, error, playedFor));
     }
 
-    private async Task AdvanceAsync(int gen, bool faulted, Exception? error)
+    private async Task AdvanceAsync(int gen, bool faulted, Exception? error, TimeSpan playedFor)
     {
         await _transitionGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_disposed || gen != _currentGen)
+            if (_disposed || _gaveUp || gen != _currentGen)
                 return; // stale notification from an already-replaced item.
 
             if (faulted)
             {
-                _consecutiveFailures++;
-                LogItemFaulted(_logger, _currentSource?.DisplayName ?? "(unknown)", error);
+                if (gen == _lastFaultedGen)
+                    return;
+                _lastFaultedGen = gen;
+
+                var source = _currentSource?.DisplayName ?? "(unknown)";
+                LogItemFaulted(_logger, source, error);
+                ReportItemFailure(source, "faulted during playback", error);
+
+                if (_failures.ItemFailed(playedFor, _current?.Duration ?? TimeSpan.Zero))
+                {
+                    GiveUp(error);
+                    return;
+                }
             }
 
             await AdvanceLockedAsync(faulted).ConfigureAwait(false);
@@ -344,13 +369,17 @@ internal sealed class PlaylistSession : IPlaybackSession
     /// </para>
     /// <para>
     /// <b>Rebuild path.</b> A genuine source change (or a replay fallback) tears
-    /// down the finished item and starts the next playable one, skipping items that
-    /// fail to open/start and bubbling a fatal error only after too many consecutive
-    /// failures.
+    /// down the finished item and starts the next playable one, skipping and
+    /// reporting items that fail to open/start, and bubbling a fatal error only when
+    /// <see cref="PlaylistFailureGuard"/> gives up.
     /// </para>
     /// </remarks>
     private async ValueTask AdvanceLockedAsync(bool faulted)
     {
+        // An item that reached its end or was skipped ended without failing.
+        if (!faulted)
+            _failures.ItemEnded();
+
         // Decide what plays next BEFORE any teardown, so a same-source replay can
         // reuse the live runtime instead of rebuilding it.
         var decision = _coordinator.DecideNext(_currentSource);
@@ -404,18 +433,12 @@ internal sealed class PlaylistSession : IPlaybackSession
             {
                 _current = null;
                 await SafeDisposeAsync(session).ConfigureAwait(false);
-                _consecutiveFailures++;
                 LogItemSkipped(_logger, nextSource.DisplayName, ex);
+                ReportItemFailure(nextSource.DisplayName, "could not be started", ex);
 
-                if (_consecutiveFailures > MaxConsecutiveFailures)
+                if (_failures.ItemFailed(playedFor: TimeSpan.Zero, itemLength: TimeSpan.Zero))
                 {
-                    _controllerCallbacks.OnWorkerFaulted(
-                        new InvalidOperationException(
-                            $"Playlist advance gave up after {_consecutiveFailures} "
-                                + "consecutive item failures.",
-                            ex
-                        )
-                    );
+                    GiveUp(ex);
                     return;
                 }
 
@@ -423,10 +446,39 @@ internal sealed class PlaylistSession : IPlaybackSession
                 continue; // skip the bad item, try the next one.
             }
 
-            _consecutiveFailures = 0;
+            // A successful start does not reset the failure count; see PlaylistFailureGuard.
             _coordinator.ReportCurrent(nextSource, session.MediaInfo, pending.Wrapped);
             return;
         }
+    }
+
+    /// <summary>
+    /// Reports a failed item to the controller, which raises it on <c>ErrorOccurred</c>
+    /// and stays in its current state.
+    /// </summary>
+    private void ReportItemFailure(string source, string what, Exception? error) =>
+        _controllerCallbacks.OnRecoverableError(
+            new PlaybackError(
+                ErrorCategory.System,
+                $"Playlist item '{source}' {what}: {error?.Message}",
+                error
+            )
+        );
+
+    /// <summary>
+    /// Stops advancing and hands the controller a fatal error, which puts it in
+    /// <c>Error</c> and disposes this session.
+    /// </summary>
+    private void GiveUp(Exception? last)
+    {
+        _gaveUp = true;
+        _controllerCallbacks.OnWorkerFaulted(
+            new InvalidOperationException(
+                $"Playlist advance gave up after {_failures.ConsecutiveFailures} "
+                    + "consecutive item failures.",
+                last
+            )
+        );
     }
 
     /// <summary>
@@ -456,7 +508,6 @@ internal sealed class PlaylistSession : IPlaybackSession
             return false;
         }
 
-        _consecutiveFailures = 0;
         _coordinator.ReportCurrent(decision.Source!, current.MediaInfo, decision.Wrapped);
         return true;
     }
