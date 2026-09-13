@@ -88,9 +88,18 @@ public readonly struct GraphChain<T>
     /// Terminates by wiring the head into a sync join's secondary input.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Give this edge a real buffer. <see cref="EdgeOptions.LatestWins(int)"/>,
     /// the habit carried over from fan-out, discards secondaries that a
     /// <see cref="SyncMatch.Within"/> window still needs.
+    /// </para>
+    /// <para>
+    /// Without <see cref="SyncJoinNode{TPrimary, TSecondary, TOut}.MaxLead"/>, the
+    /// join reads this edge as fast as it can, so the buffer only absorbs bursts and
+    /// never holds a producer back. With one, the join stops reading once the
+    /// secondary leads by more than the lead, and this edge's overflow policy
+    /// decides whether the producer waits or items are dropped.
+    /// </para>
     /// </remarks>
     public void ToSecondary<TPrimary, TOut>(
         SyncJoinNode<TPrimary, T, TOut> join,

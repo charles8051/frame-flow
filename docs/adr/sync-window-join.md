@@ -10,7 +10,7 @@ its two migrations shipped and measured.
 | The node, both match policies, the window | [`src/FrameFlow.Graph/SyncJoin.cs`](../../src/FrameFlow.Graph/SyncJoin.cs) |
 | `PumpSyncJoinAsync` | [`src/FrameFlow.Graph/NodePumps.cs`](../../src/FrameFlow.Graph/NodePumps.cs) |
 | `ToPrimary` / `ToSecondary` chain terminators | [`src/FrameFlow.Graph/GraphChain.cs`](../../src/FrameFlow.Graph/GraphChain.cs) |
-| 17 tests covering everything under *Testing* | [`tests/FrameFlow.Graph.Tests/SyncJoinTests.cs`](../../tests/FrameFlow.Graph.Tests/SyncJoinTests.cs) |
+| 22 tests covering everything under *Testing* | [`tests/FrameFlow.Graph.Tests/SyncJoinTests.cs`](../../tests/FrameFlow.Graph.Tests/SyncJoinTests.cs) |
 | Migration 2, the detection overlay | [`examples/.../LiveCaptioning/MainWindow.axaml.cs`](../../examples/FrameFlow.Examples.LiveCaptioning/MainWindow.axaml.cs) |
 
 Migration 1, the caption overlay, is **not** done. The example still carries its
@@ -222,6 +222,50 @@ graph.Pipeline(overlayJoin.Output).To(presenterSink);
 The secondary edge wants a real buffer. `LatestWins(1)`, the habit carried over
 from fan-out, throws away captions a `Within` window still needs.
 
+### 8. An optional lead bound
+
+`Window` bounds retention behind the primary. Nothing bounded it ahead, so every
+secondary that arrived before the primary reached its time was retained (#90). A
+live camera joined as the secondary of a paused or gated primary pins every frame
+it captures until the primary catches up, which exhausts a decoder or hardware
+frame pool. A subtitle source that pushes every cue up front retains all of them.
+
+The node takes an optional `maxLead`. When it is set, a secondary whose `From` is
+more than the lead past the highest primary time seen is held rather than
+admitted, and the join stops reading the secondary edge until the primary
+advances. The edge fills, and its overflow policy decides what upstream does: a
+`Buffered` edge makes the producer wait, a dropping edge discards. Before any
+primary has arrived, the lead is measured from the earliest secondary retained, so
+a primary gated from the start is bounded too. Primary EOS, `ResetWindow()` and
+graph teardown each release a held secondary, and §5's post-EOS drain carries on
+from there. `IsSecondaryHeld` reports the held state for diagnostics.
+
+`ResetWindow()` drops what the window has admitted. A secondary held on the lead
+has been read but not admitted, so like the secondaries still on the edge behind
+it, it was produced before the reset and is admitted after. §6's consumers that
+need a clean boundary discard upstream as well, which is what a rebuild does.
+
+**Why back-pressure rather than dropping.** Refusing entries past the lead in the
+window would bound memory without ever blocking a producer, but it loses data. A
+finite secondary that leads, such as that subtitle source, would drop every cue
+past the lead, and which ones survive would depend on whether they arrived before
+or after the first primary. Holding the edge loses nothing and leaves the drop
+decision with the edge, where the substrate makes it everywhere else.
+
+**Why opt-in rather than measured against `Window`.** Back-pressure can deadlock.
+If one pump produces both sides of the join and its secondary runs further ahead
+than the bound, the held edge blocks that pump, the primary stops arriving, and
+nothing releases the edge. Migration 1 can have that shape: captions transcribed
+from audio, joined to video, both fed by the demux pump, leading by the lookahead.
+Using `Window` as the bound would give `Window` a second meaning and hang any such
+topology whose lookahead exceeds it. A separate, unset-by-default lead changes no
+existing topology, and a consumer that sets it chooses a value above the furthest
+its secondary can lead, or a dropping secondary edge.
+
+A held secondary is admitted by the join's secondary reader once the primary comes
+within the lead of it. The lead should sit well above the primary's item interval,
+so an entry becomes admissible several primary items before it can match.
+
 ## Migration
 
 This primitive ships with adapters or it does not ship.
@@ -275,9 +319,9 @@ back-pressuring the shared demux pump into starving audio. That is what
 
 ## Testing
 
-All of the below are covered by the 17 tests in
+All of the below are covered by the 22 tests in
 [`SyncJoinTests.cs`](../../tests/FrameFlow.Graph.Tests/SyncJoinTests.cs); the
-project is green at 31 tests.
+project is green at 36 tests.
 
 - One end-to-end graph test per match policy.
 - The no-match path: body receives `null`, output is emitted, primary is not
@@ -299,6 +343,18 @@ project is green at 31 tests.
   [the 2026-05-30 fan-out review](../investigations/2026-05-30-graph-fanout-cloner-refcount-review.md):
   every retained, evicted, matched and unmatched secondary disposed exactly once.
 - `ResetWindow()` mid-stream, asserting no pre-reset secondary matches after.
+- A lead bound against a secondary that runs ahead: before the first primary the
+  window holds exactly what is within the lead and the producer waits on the edge;
+  after it, a primary ticking at every span's time matches every span, so nothing
+  held was lost.
+- Primary EOS while a secondary is held, asserting the graph completes and every
+  secondary is disposed.
+- A primary at `TimeSpan.MinValue`, asserting the lead is measured from it rather
+  than from the secondaries, since that value is also the window's starting
+  high-water mark.
+- `ResetWindow()` while a secondary is held, asserting the reader is released
+  without a primary advancing, and that spans still on the edge at teardown are
+  disposed.
 
 ## Consequences
 

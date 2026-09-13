@@ -119,7 +119,8 @@ public delegate ValueTask<TOut?> SyncJoinOperator<in TPrimary, in TSecondary, TO
 /// upstream holding more than the edge's free capacity blocks in
 /// <c>WriteAsync</c> forever if nobody drains it, and the graph would never
 /// complete. A finite secondary therefore ends this pump on its own; an
-/// unbounded one keeps it alive until the graph token fires.
+/// unbounded one keeps it alive until the graph token fires. A secondary held on
+/// <see cref="MaxLead"/> is released at primary EOS and discarded with the rest.
 /// </para>
 /// <para>
 /// The pump does not cancel the graph on clean primary EOS. The join sits on
@@ -157,12 +158,58 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut> : IPumpableNode
     /// </summary>
     public TimeSpan MaxStaleness { get; }
 
+    /// <summary>
+    /// How far ahead of the primary the window may hold a secondary, or
+    /// <see langword="null"/> for no limit. Past it, the join stops reading the
+    /// secondary edge until the primary catches up.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Window"/> bounds retention behind the primary and nothing else bounds it
+    /// ahead. Without a lead, every secondary that arrives before the primary reaches its time
+    /// is retained. A live camera joined as the secondary of a paused primary pins every frame
+    /// it captures, which exhausts a decoder or hardware frame pool (#90).
+    /// </para>
+    /// <para>
+    /// With a lead, a secondary whose <c>From</c> is more than this past the highest primary
+    /// time seen is held rather than admitted, and the join stops reading the edge until the
+    /// primary advances. The edge's overflow policy decides what upstream does:
+    /// <see cref="EdgeOptions.Buffered(int)"/> makes the producer wait, and a dropping edge
+    /// discards. Before any primary has arrived, the lead is measured from the earliest
+    /// secondary retained. Primary EOS, <see cref="ResetWindow"/> and graph teardown each
+    /// release a held secondary.
+    /// </para>
+    /// <para>
+    /// <b>A producer made to wait must not also feed the primary.</b> If one pump produces both
+    /// sides and its secondary runs further ahead than the lead, the held edge blocks that
+    /// pump, the primary stops arriving, and nothing releases the edge. Captions transcribed
+    /// from audio and joined to video from the same demux pump can have this shape. Set the
+    /// lead above the furthest the secondary can run ahead, or give the secondary edge a
+    /// dropping policy.
+    /// </para>
+    /// <para>
+    /// A held secondary is admitted by the join's secondary reader once the primary comes
+    /// within the lead of it. Set the lead well above the primary's item interval, so an entry
+    /// becomes admissible several primary items before it can match. With a lead of about one
+    /// interval, a primary can reach a held entry's time before the reader has admitted it,
+    /// and matches without it.
+    /// </para>
+    /// </remarks>
+    public TimeSpan? MaxLead { get; }
+
     public InputPort<TPrimary> Primary { get; }
     public InputPort<TSecondary> Secondary { get; }
     public OutputPort<TOut> Output { get; }
 
     /// <summary>Secondaries currently held by the window. Diagnostics and tests.</summary>
     public int RetainedCount => _retained.Count;
+
+    /// <summary>
+    /// Whether the join is holding a secondary it has read but not admitted, because it leads
+    /// the primary by more than <see cref="MaxLead"/>. While this is true the join is not
+    /// reading the secondary edge. Diagnostics and tests.
+    /// </summary>
+    public bool IsSecondaryHeld => _retained.HasLeadWaiter;
 
     public SyncJoinNode(
         string id,
@@ -171,13 +218,16 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut> : IPumpableNode
         SyncMatch matchPolicy,
         TimeSpan window,
         TimeSpan? maxStaleness = null,
-        FailureResponse onError = FailureResponse.Propagate
+        FailureResponse onError = FailureResponse.Propagate,
+        TimeSpan? maxLead = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(keys);
         ArgumentOutOfRangeException.ThrowIfLessThan(window, TimeSpan.Zero);
+        if (maxLead is { } lead)
+            ArgumentOutOfRangeException.ThrowIfLessThan(lead, TimeSpan.Zero, nameof(maxLead));
 
         Id = id;
         Body = body;
@@ -185,6 +235,7 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut> : IPumpableNode
         MatchPolicy = matchPolicy;
         Window = window;
         MaxStaleness = maxStaleness ?? TimeSpan.MaxValue;
+        MaxLead = maxLead;
         OnError = onError;
         Primary = new InputPort<TPrimary>(this, "primary");
         Secondary = new InputPort<TSecondary>(this, "secondary");
@@ -196,10 +247,19 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut> : IPumpableNode
     /// pre-seek state and nothing in it correlates to post-seek primaries.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// It drops what the window has admitted and nothing upstream of it. Secondaries
+    /// still on the edge were produced before the reset and are admitted after it, and
+    /// so is one held on <see cref="MaxLead"/>, which the join has read but not
+    /// admitted. A consumer that needs nothing from before its discontinuity to reach
+    /// the join discards upstream too, as a graph rebuild does.
+    /// </para>
+    /// <para>
     /// <see cref="FrameFlow.Graph"/> sits below <c>FrameFlow.Decoding</c> and so
     /// cannot implement its <c>ISeekResettable</c> without inverting the
     /// layering. The session registers an adapter over this method instead. See
     /// the sync-window-join ADR §6.
+    /// </para>
     /// </remarks>
     public void ResetWindow() => _retained.Clear();
 
@@ -227,6 +287,14 @@ internal sealed class SecondaryWindow<T>
     private readonly List<Entry> _entries = [];
     private TimeSpan _highWater = TimeSpan.MinValue;
 
+    // Whether a primary has been matched since the last Clear. Kept apart from
+    // _highWater, whose TimeSpan.MinValue floor is also a legal primary time.
+    private bool _primarySeen;
+
+    // Set while the secondary reader is parked on the lead bound. Completed and cleared by
+    // anything that can make room: the primary advancing, or the window being cleared.
+    private TaskCompletionSource? _leadWaiter;
+
     public int Count
     {
         get
@@ -236,19 +304,43 @@ internal sealed class SecondaryWindow<T>
         }
     }
 
+    public bool HasLeadWaiter
+    {
+        get
+        {
+            lock (_gate)
+                return _leadWaiter is not null;
+        }
+    }
+
     /// <summary>
     /// Takes ownership of <paramref name="item"/> and files it by
-    /// <paramref name="from"/>. Entries usually arrive in order, so the
+    /// <paramref name="from"/>, unless <paramref name="maxLead"/> is set and the
+    /// item leads by more than it. Entries usually arrive in order, so the
     /// insertion point is found by scanning back from the end.
     /// </summary>
-    public void Admit(T item, TimeSpan from, TimeSpan to)
+    /// <returns>
+    /// <see langword="null"/> when the item was admitted. Otherwise the item is
+    /// still the caller's, and the task completes when room may have opened; the
+    /// caller tries again then.
+    /// </returns>
+    public Task? TryAdmit(T item, TimeSpan from, TimeSpan to, TimeSpan? maxLead)
     {
         lock (_gate)
         {
+            if (maxLead is { } lead && !HasRoom(from, lead))
+            {
+                _leadWaiter ??= new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously
+                );
+                return _leadWaiter.Task;
+            }
+
             int i = _entries.Count;
             while (i > 0 && _entries[i - 1].From > from)
                 i--;
             _entries.Insert(i, new Entry(from, to, item));
+            return null;
         }
     }
 
@@ -267,8 +359,13 @@ internal sealed class SecondaryWindow<T>
     {
         lock (_gate)
         {
-            if (t > _highWater)
-                _highWater = t;
+            if (!_primarySeen || t > _highWater)
+            {
+                _primarySeen = true;
+                if (t > _highWater)
+                    _highWater = t;
+                ReleaseLeadWaiter();
+            }
 
             Evict(window);
 
@@ -311,7 +408,35 @@ internal sealed class SecondaryWindow<T>
                 e.Item.Dispose();
             _entries.Clear();
             _highWater = TimeSpan.MinValue;
+            _primarySeen = false;
+            ReleaseLeadWaiter();
         }
+    }
+
+    // Caller holds _gate. The lead is measured from the primary once one has been
+    // seen. Before that it is measured from the earliest retained entry, so a
+    // primary gated from the start bounds the window too. An empty window always
+    // has room.
+    private bool HasRoom(TimeSpan from, TimeSpan lead)
+    {
+        TimeSpan reference;
+        if (_primarySeen)
+            reference = _highWater;
+        else if (_entries.Count > 0)
+            reference = _entries[0].From;
+        else
+            return true;
+
+        // reference + lead overflows near TimeSpan.MaxValue, and nothing can lead
+        // that far anyway.
+        return reference > TimeSpan.MaxValue - lead || from <= reference + lead;
+    }
+
+    // Caller holds _gate.
+    private void ReleaseLeadWaiter()
+    {
+        _leadWaiter?.TrySetResult();
+        _leadWaiter = null;
     }
 
     // Caller holds _gate.
