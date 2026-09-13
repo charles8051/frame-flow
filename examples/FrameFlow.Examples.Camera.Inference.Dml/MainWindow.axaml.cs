@@ -101,7 +101,7 @@ public partial class MainWindow : Window
             StartupLogFilePath ?? "(none)");
 
         // FFmpeg bootstrap for the BGRA32 ConvertPixelFormat (libswscale)
-        // stage. This example never goes through MediaPlayer.CreateAsync, so
+        // stage. This example never goes through the player builder, so
         // the DllImportResolver that maps "swscale" → "swscale-8.dll" must be
         // registered explicitly or the first frame throws DllNotFoundException.
         // Skip the HW-decode probe — cameras don't decode.

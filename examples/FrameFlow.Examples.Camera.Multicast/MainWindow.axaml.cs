@@ -155,7 +155,7 @@ public partial class MainWindow : Window
         // VideoOperators.ConvertPixelFormat (libswscale) to normalise
         // arbitrary camera pixel formats to BGRA32 before the fan-out.
         // Unlike the file Multicast sibling, this example doesn't go
-        // through MediaPlayer.CreateAsync — so we never get the implicit
+        // through the player builder — so we never get the implicit
         // FrameFlowBootstrapper.Initialize() that path runs, and the
         // DllImportResolver that maps "swscale" → "swscale-8.dll" never
         // registers. Without this explicit Initialize the first sws_*

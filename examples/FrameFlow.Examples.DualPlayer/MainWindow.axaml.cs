@@ -185,18 +185,24 @@ public partial class MainWindow : Window
 
         try
         {
+            var builder = FrameFlowPlayer
+                .Open(cfg.CorpusPath)
+                .WithVideoSink(pane.VideoSink)
+                .WithHardwareDecode(cfg.HardwareDecodeMode)
+                .WithRepeatMode(cfg.Loop ? RepeatMode.One : RepeatMode.Off)
+                .WithLogger(_loggerFactory);
+
             // Clock-source selection by sink presence (signage parity):
-            //   Wall  -> audioSink: null. Video paces off WallClockSource
+            //   Wall  -> no audio sink. Video paces off WallClockSource
             //            (ADR-0003); the audio stream is discarded at the
             //            demuxer (ADR-0059), so the pump can't backpressure.
             //   Audio -> an audible OpenAlAudioSink masters the clock off its
             //            sample counter.
-            IAudioSink? audioSink = null;
             if (cfg.ClockSource == ClockSourceKind.Audio)
             {
                 var openAl = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
                 pane.AudioSink = openAl;
-                audioSink = openAl;
+                builder = builder.WithAudioSink(openAl);
             }
 
             _logger.LogInformation(
@@ -205,14 +211,7 @@ public partial class MainWindow : Window
                 DescribeConfig(cfg)
             );
 
-            var player = await MediaPlayer.CreateAsync(
-                source: MediaSource.FromFile(cfg.CorpusPath),
-                videoSink: pane.VideoSink,
-                audioSink: audioSink,
-                hardwareDecodeMode: cfg.HardwareDecodeMode,
-                initialRepeatMode: cfg.Loop ? RepeatMode.One : RepeatMode.Off,
-                loggerFactory: _loggerFactory
-            );
+            var player = await builder.BuildPlayerAsync();
             pane.Player = player;
 
             var played = await player.PlayAsync();

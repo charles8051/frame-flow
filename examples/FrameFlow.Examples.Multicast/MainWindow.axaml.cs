@@ -324,16 +324,16 @@ public partial class MainWindow : Window
 
         try
         {
-            // Built on MediaPlayer.CreateAsync. The video configurator
+            // Built with the fluent player builder. The video configurator
             // replaces the retired Broadcast operator — it
             // builds a StorageNode that fans the converted frames out
             // to three sinks, each running at its own rate via the
             // bounded edge channels (LowLatency=DropIncoming overflow).
             //
             // This is the configurator-terminated path: no main video
-            // sink is passed to MediaPlayer (videoSink: null), so
-            // SubstrateSession skips the default pace+gate+sink chain
-            // and lets the configurator wire everything itself.
+            // sink is set on the builder, so SubstrateSession skips the
+            // default pace+gate+sink chain and lets the configurator
+            // wire everything itself.
             //
             // Pacing: the convert→clone→storage chain doesn't pace
             // (the substrate session's PaceUntil isn't appended in the
@@ -348,24 +348,22 @@ public partial class MainWindow : Window
             var pane2 = Pane2Preview;
             var pane3 = Pane3Preview;
 
-            StartupClock.Mark("PlayFileAsync: MediaPlayer.CreateAsync starting");
-            _player = await MediaPlayer.CreateAsync(
-                source: MediaSource.FromFile(filePath),
-                videoSink: null, // configurator-terminated — see below
-                audioSink: _audioSink,
-                hardwareDecodeMode: HardwareDecodeMode.Auto,
+            StartupClock.Mark("PlayFileAsync: BuildPlayerAsync starting");
+            _player = await FrameFlowPlayer
+                .Open(filePath)
+                .WithAudioSink(_audioSink)
+                .WithRepeatMode(LoopButton.IsChecked == true ? RepeatMode.One : RepeatMode.Off)
+                .WithLogger(_loggerFactory)
                 // GPU mode: keep hardware frames on the GPU so the fan-out can
                 // AddRef one GpuVideoFrame to every presenter (zero-copy). CPU
                 // mode leaves this false and gets readback CpuVideoFrames as before.
-                yieldHardwareFrames: _useGpu,
-                initialRepeatMode: LoopButton.IsChecked == true ? RepeatMode.One : RepeatMode.Off,
-                loggerFactory: _loggerFactory,
-                configureVideo: chain =>
+                .WithHardwareFrames(_useGpu)
+                .ConfigureVideo(chain =>
                 {
                     if (_useGpu)
                     {
                         // GPU fan-out: the decoder yields ONE GpuVideoFrame per
-                        // picture (yieldHardwareFrames: true). We hand each pane its
+                        // picture (WithHardwareFrames(true)). We hand each pane its
                         // own AddRef'd reference to that SAME frame — no convert, no
                         // readback, no clone. All three presenters read the same
                         // D3D11VA decode slice, which stays pinned until the last
@@ -476,10 +474,9 @@ public partial class MainWindow : Window
                     );
 
                     return chain; // returned chain ignored — configurator terminated
-                },
-                cancellationToken: _windowCts.Token
-            );
-            StartupClock.Mark("PlayFileAsync: MediaPlayer.CreateAsync returned");
+                })
+                .BuildPlayerAsync(_windowCts.Token);
+            StartupClock.Mark("PlayFileAsync: BuildPlayerAsync returned");
 
             // Bind the standalone chrome panel to the freshly built
             // player. From this point Play/Pause/Stop/seek/volume on

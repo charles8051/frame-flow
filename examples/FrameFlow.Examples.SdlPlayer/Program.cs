@@ -96,17 +96,17 @@ static int SdlMain(string[] args)
     try
     {
         // Canonical-surface note: this example deliberately drops below
-        // the MediaPlayer.CreateAsync facade to the raw
+        // the FrameFlowPlayer builder to the raw
         // PlaybackController.Create state machine. The interactive SDL
         // shell IS a state-machine consumer — it subscribes to
         // PlaybackStateChanged / SeekStateChanged / RepeatModeChanged /
         // ErrorOccurred, drives Load/Play/Pause/Seek/SetRepeatMode by
         // hand from key + drag-drop events, and inspects controller.State
-        // each tick to detect terminal states. The facade intentionally
+        // each tick to detect terminal states. IMediaPlayer intentionally
         // hides exactly those transitions, so app/host code should prefer
-        // MediaPlayer.CreateAsync; reach for PlaybackController.Create
-        // only when the state machine itself is the thing you're building
-        // around, as here.
+        // FrameFlowPlayer.Open(...).BuildPlayerAsync(); reach for
+        // PlaybackController.Create only when the state machine itself is
+        // the thing you're building around, as here.
         //
         // Closure-style controller factory replaces the old
         // IPlaybackControllerFactory. Each call returns a fresh

@@ -100,15 +100,14 @@ public partial class MainWindow : Window
 
         try
         {
-            _player = await MediaPlayer.CreateAsync(
-                source: MediaSource.FromFile(StartupFilePath),
-                videoSink: videoSink,
-                audioSink: null,
-                hardwareDecodeMode: hwMode,
-                yieldHardwareFrames: _surface.PrefersHardwareFrames,
-                initialRepeatMode: RepeatMode.One,
-                loggerFactory: _loggerFactory
-            );
+            _player = await FrameFlowPlayer
+                .Open(StartupFilePath)
+                .WithVideoSink(videoSink)
+                .WithHardwareDecode(hwMode)
+                .WithHardwareFrames(_surface.PrefersHardwareFrames)
+                .WithRepeatMode(RepeatMode.One)
+                .WithLogger(_loggerFactory)
+                .BuildPlayerAsync();
 
             var played = await _player.PlayAsync();
             if (!played.IsSuccess)

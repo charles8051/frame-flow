@@ -238,16 +238,16 @@ public partial class MainWindow : Window
 
         try
         {
-            // Built on MediaPlayer.CreateAsync. The video configurator
+            // Built with the fluent player builder. The video configurator
             // replaces the retired Broadcast operator — it
             // builds a StorageNode that fans the converted frames out
             // to three sinks, each running at its own rate via the
             // bounded edge channels (LowLatency=DropIncoming overflow).
             //
             // This is the configurator-terminated path: no main video
-            // sink is passed to MediaPlayer (videoSink: null), so
-            // SubstrateSession skips the default pace+gate+sink chain
-            // and lets the configurator wire everything itself.
+            // sink is set on the builder, so SubstrateSession skips the
+            // default pace+gate+sink chain and lets the configurator
+            // wire everything itself.
             //
             // Pacing: the convert→clone→storage chain doesn't pace
             // (the substrate session's PaceUntil isn't appended in the
@@ -262,15 +262,13 @@ public partial class MainWindow : Window
             var pane2 = Pane2Preview;
             var pane3 = Pane3Preview;
 
-            StartupClock.Mark("PlayFileAsync: MediaPlayer.CreateAsync starting");
-            _player = await MediaPlayer.CreateAsync(
-                source: MediaSource.FromFile(filePath),
-                videoSink: null, // configurator-terminated — see below
-                audioSink: _audioSink,
-                hardwareDecodeMode: HardwareDecodeMode.Auto,
-                initialRepeatMode: LoopButton.IsChecked == true ? RepeatMode.One : RepeatMode.Off,
-                loggerFactory: _loggerFactory,
-                configureVideo: chain =>
+            StartupClock.Mark("PlayFileAsync: BuildPlayerAsync starting");
+            _player = await FrameFlowPlayer
+                .Open(filePath)
+                .WithAudioSink(_audioSink)
+                .WithRepeatMode(LoopButton.IsChecked == true ? RepeatMode.One : RepeatMode.Off)
+                .WithLogger(_loggerFactory)
+                .ConfigureVideo(chain =>
                 {
                     // chain: source. Add convert → clone-and-fan-out
                     // operators that hand a fresh deep-clone to each
@@ -327,10 +325,9 @@ public partial class MainWindow : Window
                     );
 
                     return chain; // returned chain ignored — configurator terminated
-                },
-                cancellationToken: _windowCts.Token
-            );
-            StartupClock.Mark("PlayFileAsync: MediaPlayer.CreateAsync returned");
+                })
+                .BuildPlayerAsync(_windowCts.Token);
+            StartupClock.Mark("PlayFileAsync: BuildPlayerAsync returned");
 
             // Bind the standalone chrome panel to the freshly built
             // player. From this point Play/Pause/Stop/seek/volume on

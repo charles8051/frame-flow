@@ -13,7 +13,7 @@ public class App : Application
 
         // Bootstrap FFmpeg once for the whole process before either player
         // starts. The bootstrapper caches its result, so each player's
-        // MediaPlayer.CreateAsync re-invocation is cheap — but doing it here
+        // BuildPlayerAsync re-invocation is cheap — but doing it here
         // surfaces a native-load failure before any window appears.
         var bootstrapper = new FrameFlowBootstrapper(new FrameFlowNativeOptions());
         var result = bootstrapper.Initialize();
