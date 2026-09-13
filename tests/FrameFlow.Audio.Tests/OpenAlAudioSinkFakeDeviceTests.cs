@@ -5,6 +5,7 @@ using System.Buffers;
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Audio.TestKit;
 using FrameFlow.Media;
+using Microsoft.Extensions.Time.Testing;
 
 namespace FrameFlow.Audio.Tests;
 
@@ -38,9 +39,11 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
     private const int ScalarsPerBlock = 4800;
     private static readonly TimeSpan BlockDuration = TimeSpan.FromMilliseconds(50);
 
-    // OpenAlAudioSink's own pool geometry, mirrored so the assertions can name it.
+    // OpenAlAudioSink's own pool geometry and backpressure timeout, mirrored so the
+    // assertions can name them.
     private const int PreBufferCount = 4;
     private const int BufferPoolSize = 16;
+    private static readonly TimeSpan BackpressureWaitSlice = TimeSpan.FromMilliseconds(50);
 
     // ── #133, headless ──────────────────────────────────────────────────────
 
@@ -350,6 +353,167 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
         Assert.Equal(atPause, sink.GetPlaybackTime());
     }
 
+    /// <summary>
+    /// A resume reports the position the pause reported. Neither the time spent paused nor
+    /// what the device's queue did meanwhile may reach the clock (#127).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two things can put a resume ahead of its pause. The queue can drain while paused and
+    /// be credited at the resume; the drained case covers that. Or the interpolator can count
+    /// the pause as playing time, because its last anchor was taken at the pause. That lead
+    /// is however long the pause lasted, up to the extrapolation cap. The sink reads elapsed
+    /// time from its <see cref="TimeProvider"/>, so the pause here is a 300 ms
+    /// <see cref="FakeTimeProvider"/> advance and the lead, if it comes back, is the whole cap
+    /// on every run.
+    /// </para>
+    /// <para>
+    /// Nothing moves between the two reads except what the test moves, so they are compared
+    /// for equality. The device-gated test this replaced allowed drift up to the
+    /// extrapolation cap, because real time kept running between its reads. That is the
+    /// largest lead the interpolator fault can produce, so that test could not see it.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Resume_ReportsThePositionThePauseReported(bool queueDrainedWhilePaused)
+    {
+        var device = new FakeOpenAlDevice();
+        var time = new FakeTimeProvider();
+        await using var sink = FakeOpenAlSink.Create(device, timeProvider: time);
+        await sink.ActivateAsync(CancellationToken.None);
+
+        await PushBlocksAsync(sink, blocks: 8, amplitude: 500);
+        Play(device, time, TimeSpan.FromMilliseconds(120));
+
+        await sink.PauseAsync(CancellationToken.None);
+        var atPause = sink.GetPlaybackTime();
+
+        time.Advance(TimeSpan.FromMilliseconds(300));
+        if (queueDrainedWhilePaused)
+            device.SourceStop(device.SingleSource());
+
+        await sink.ResumeAsync(CancellationToken.None);
+
+        Assert.Equal(atPause, sink.GetPlaybackTime());
+    }
+
+    /// <summary>
+    /// After a pause and a resume the clock runs again, from where the pause left it and at
+    /// the rate the device plays.
+    /// </summary>
+    [Fact]
+    public async Task PauseResume_LeavesTheClockRunningForwards()
+    {
+        var device = new FakeOpenAlDevice();
+        var time = new FakeTimeProvider();
+        await using var sink = FakeOpenAlSink.Create(device, timeProvider: time);
+        await sink.ActivateAsync(CancellationToken.None);
+
+        await PushBlocksAsync(sink, blocks: 8, amplitude: 500);
+        Play(device, time, TimeSpan.FromMilliseconds(120));
+
+        await sink.PauseAsync(CancellationToken.None);
+        var atPause = sink.GetPlaybackTime();
+        time.Advance(TimeSpan.FromMilliseconds(200));
+        await sink.ResumeAsync(CancellationToken.None);
+
+        await PushBlocksAsync(sink, blocks: 8, amplitude: 500, firstBlockIndex: 8);
+        Play(device, time, TimeSpan.FromMilliseconds(250));
+
+        // Exactly the pause plus what played since. The device played 250 ms while 250 ms
+        // passed, so neither the rate limit nor the interpolator has anything to correct.
+        Assert.Equal(atPause + TimeSpan.FromMilliseconds(250), sink.GetPlaybackTime());
+    }
+
+    // ── Backpressure, headless ──────────────────────────────────────────────
+
+    /// <summary>
+    /// A flush parked on a full pool is released by the buffer coming back, not by its
+    /// timeout.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The backpressure wait times out every 50 ms and re-polls the queue. A sink whose
+    /// recycle never signalled the waiter would therefore still make progress, one timeout
+    /// per buffer late, and on a real clock a test cannot tell that from a working signal.
+    /// Here the timeout runs on a <see cref="FakeTimeProvider"/> that never moves, so the
+    /// signal is the only thing that can release the flush.
+    /// </para>
+    /// <para>
+    /// The push starts on the test thread and is not awaited. Against the fake device every
+    /// step up to the wait is synchronous, so when <c>PresentAsync</c> returns the flush has
+    /// either finished or is parked. That is what lets the assertions before the release be
+    /// made straight away.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Backpressure_ABufferReturnReleasesTheParkedFlush()
+    {
+        var device = new FakeOpenAlDevice();
+        var time = new FakeTimeProvider();
+        await using var sink = FakeOpenAlSink.Create(device, timeProvider: time);
+        await sink.ActivateAsync(CancellationToken.None);
+
+        // Every pooled buffer queued, none played.
+        await PushBlocksAsync(sink, blocks: BufferPoolSize, amplitude: 500);
+
+        const short parked = 501;
+        var push = PresentBlockAsync(sink, parked, blockIndex: BufferPoolSize).AsTask();
+        Assert.False(push.IsCompleted, "The pool was full, so this push should be waiting for a buffer.");
+        Assert.Equal(1, sink.BackpressureCount);
+
+        // A buffer finishes, but nothing has taken it back off the source yet.
+        device.AdvancePlayback(BlockDuration);
+        Assert.False(push.IsCompleted);
+
+        // Reading the clock recycles finished buffers. That return has to wake the flush.
+        _ = sink.GetPlaybackTime();
+        await AssertCompletesAsync(
+            push,
+            "The clock read returned a buffer to the pool, but the parked flush did not wake. "
+                + "Its timeout is on a clock that is not moving, so only the buffer-return "
+                + "signal could have released it."
+        );
+
+        DrainFully(device);
+        Assert.Equal((BufferPoolSize + 1) * ScalarsPerBlock, device.PlayedSamples.Count);
+        Assert.Equal(parked, device.PlayedSamples[^1]);
+    }
+
+    /// <summary>
+    /// A flush parked on a full pool gives up when the source is paused. A paused source
+    /// returns no buffers, so the wait's timeout is what notices.
+    /// </summary>
+    [Fact]
+    public async Task Backpressure_APauseWhileParkedAbandonsTheFlushOnTheNextTimeout()
+    {
+        var device = new FakeOpenAlDevice();
+        var time = new FakeTimeProvider();
+        await using var sink = FakeOpenAlSink.Create(device, timeProvider: time);
+        await sink.ActivateAsync(CancellationToken.None);
+
+        await PushBlocksAsync(sink, blocks: BufferPoolSize, amplitude: 500);
+        var push = PresentBlockAsync(sink, amplitude: 501, blockIndex: BufferPoolSize).AsTask();
+        Assert.False(push.IsCompleted, "The pool was full, so this push should be waiting for a buffer.");
+
+        await sink.PauseAsync(CancellationToken.None);
+
+        // Pausing signals nothing, and short of the timeout nothing else fires either.
+        time.Advance(BackpressureWaitSlice - TimeSpan.FromTicks(1));
+        Assert.False(push.IsCompleted);
+
+        time.Advance(TimeSpan.FromTicks(1));
+        await AssertCompletesAsync(
+            push,
+            "The backpressure timeout elapsed on a paused source, but the flush stayed parked."
+        );
+
+        // It abandoned the upload rather than queueing onto the paused source.
+        Assert.Equal(BufferPoolSize, device.Calls.Count(c => c.Name == "SourceQueueBuffers"));
+    }
+
     // ── Content, headless ───────────────────────────────────────────────────
 
     /// <summary>
@@ -396,14 +560,41 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
     )
     {
         for (int i = 0; i < blocks; i++)
+            await PresentBlockAsync(sink, amplitude, firstBlockIndex + i);
+    }
+
+    private static ValueTask PresentBlockAsync(OpenAlAudioSink sink, short amplitude, int blockIndex)
+    {
+        var owner = MemoryPool<short>.Shared.Rent(ScalarsPerBlock);
+        owner.Memory.Span[..ScalarsPerBlock].Fill(amplitude);
+        var pts = TimeSpan.FromTicks(BlockDuration.Ticks * blockIndex);
+        return sink.PresentAsync(
+            new PcmAudioBuffer(owner, ScalarsPerBlock, Rate, Channels, pts),
+            CancellationToken.None
+        );
+    }
+
+    /// <summary>
+    /// Plays <paramref name="duration"/> of audio and lets the same time pass on the sink's
+    /// clock, the way a real device and a real clock move together.
+    /// </summary>
+    private static void Play(FakeOpenAlDevice device, FakeTimeProvider time, TimeSpan duration)
+    {
+        device.AdvancePlayback(duration);
+        time.Advance(duration);
+    }
+
+    // The timeout only bounds a failure: a working sink completes as soon as the release
+    // runs, and a broken one never does.
+    private static async Task AssertCompletesAsync(Task task, string because)
+    {
+        try
         {
-            var owner = MemoryPool<short>.Shared.Rent(ScalarsPerBlock);
-            owner.Memory.Span[..ScalarsPerBlock].Fill(amplitude);
-            var pts = TimeSpan.FromTicks(BlockDuration.Ticks * (firstBlockIndex + i));
-            await sink.PresentAsync(
-                new PcmAudioBuffer(owner, ScalarsPerBlock, Rate, Channels, pts),
-                CancellationToken.None
-            );
+            await task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail(because);
         }
     }
 

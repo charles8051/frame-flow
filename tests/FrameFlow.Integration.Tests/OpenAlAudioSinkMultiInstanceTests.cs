@@ -4,7 +4,7 @@ using FrameFlow.Audio.OpenAL;
 using FrameFlow.Media;
 using Xunit.Abstractions;
 
-namespace FrameFlow.Audio.Tests;
+namespace FrameFlow.Integration.Tests;
 
 /// <summary>
 /// Multi-instance regression tests for <see cref="OpenAlAudioSink"/> (ADR-0058).
@@ -31,9 +31,16 @@ namespace FrameFlow.Audio.Tests;
 /// proof that the two sinks share a single device/context lives in
 /// <c>SharedOpenAlContextTests</c>.
 /// </para>
+/// <para>
+/// <b>Why this lives in the integration suite.</b> Moved from <c>FrameFlow.Audio.Tests</c>.
+/// Both tests feed a real device at real-time pace and compare how far each clock moved
+/// against a <see cref="Stopwatch"/>. Elapsed time is what they measure, and ADR-0072 rule 6
+/// names this suite as the one allowed to measure it. The fixture they used to take bootstrapped
+/// FFmpeg, which nothing here calls, so it did not come with them.
+/// </para>
 /// </remarks>
-[Collection("OpenAL device")]
-public sealed class OpenAlAudioSinkMultiInstanceTests : IClassFixture<FfmpegBootstrapFixture>
+[Collection(OpenAlDeviceCollection.Name)]
+public sealed class OpenAlAudioSinkMultiInstanceTests
 {
     private const int SampleRate = 48000;
     private const int Channels = 2;
@@ -48,8 +55,8 @@ public sealed class OpenAlAudioSinkMultiInstanceTests : IClassFixture<FfmpegBoot
     [RequiresAudioDeviceFact]
     public async Task TwoSinks_PlayingConcurrently_BothClocksAdvanceIndependently()
     {
-        await using var sinkA = new OpenAlAudioSink();
-        await using var sinkB = new OpenAlAudioSink();
+        await using var sinkA = QuietSink();
+        await using var sinkB = QuietSink();
 
         await sinkA.ActivateAsync();
         await sinkB.ActivateAsync();
@@ -108,8 +115,8 @@ public sealed class OpenAlAudioSinkMultiInstanceTests : IClassFixture<FfmpegBoot
         // and driving the master clock when sink B activates. Pre-ADR-0058, B's
         // ActivateAsync called alcMakeContextCurrent(B) and stole the global
         // current context, so A's subsequent clock reads sampled B's source.
-        await using var sinkA = new OpenAlAudioSink();
-        await using var sinkB = new OpenAlAudioSink();
+        await using var sinkA = QuietSink();
+        await using var sinkB = QuietSink();
 
         await sinkA.ActivateAsync();
 
@@ -147,6 +154,10 @@ public sealed class OpenAlAudioSinkMultiInstanceTests : IClassFixture<FfmpegBoot
                 + "Activating a second sink clobbered the first sink's OpenAL context."
         );
     }
+
+    // These play on the machine running the test. Gain is applied at the mix, so it does not
+    // change how fast the device consumes buffers, which is all these tests read.
+    private static OpenAlAudioSink QuietSink() => new() { Volume = 0.05f };
 
     /// <summary>
     /// Feeds <paramref name="sink"/> 20ms PCM blocks at ~real-time pace until

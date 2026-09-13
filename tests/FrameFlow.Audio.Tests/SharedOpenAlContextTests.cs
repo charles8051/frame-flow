@@ -4,7 +4,7 @@ namespace FrameFlow.Audio.Tests;
 
 /// <summary>
 /// Structural tests for the shared OpenAL device/context (ADR-0058). Unlike the
-/// behavioural clock tests in <see cref="OpenAlAudioSinkMultiInstanceTests"/>,
+/// behavioural clock tests in <c>OpenAlAudioSinkMultiInstanceTests</c> (FrameFlow.Integration.Tests),
 /// these assert on the refcount and device-open accounting directly, so given a
 /// device they are fully deterministic — no playback timing involved. They prove
 /// the mechanism the fix relies on: many sinks, one device, one context, made

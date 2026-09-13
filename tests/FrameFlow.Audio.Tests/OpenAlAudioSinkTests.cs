@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Diagnostics;
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Media;
 using FrameFlow.Graph;
@@ -225,10 +224,10 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
     // This test exercises the same Activate → Present×N → Deactivate →
     // Activate → Present×N sequence at the unit level. Without an audio
     // device it pins the bookkeeping (BlocksWritten resets across the cycle,
-    // PresentAsync accepts the second iteration's frames). With a device
-    // available, the playback-time advance after each iteration is the
-    // load-bearing assertion — proving OpenAL actually consumed the queued
-    // samples rather than silently dropping them.
+    // PresentAsync accepts the second iteration's frames). The companion that
+    // compares device-paced playback time across the two iterations measures a
+    // real device over real time, so it lives in FrameFlow.Integration.Tests
+    // (OpenAlAudioSinkRealDeviceTests, ADR-0072 rule 6).
 
     [RequiresAudioDeviceFact]
     public async Task ReActivation_AfterDeactivate_AcceptsNewFrames()
@@ -273,285 +272,13 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
         );
     }
 
-    [RequiresAudioDeviceFact]
-    public async Task ReActivation_DevicePacedPlaybackMatchesFirstIteration()
-    {
-        // Regression for "AvaloniaPlayer has audio on first loop, silent on
-        // loops 2+." The bug signature in OpenAlAudioSink:
-        //
-        //   - Loop 1: feed 20 frames at faster-than-realtime, sink's
-        //     GetPlaybackTime advances at *device-paced* speed (lags input).
-        //   - Loop 2+: feed 20 frames at faster-than-realtime, sink's
-        //     GetPlaybackTime advances at exactly input rate (i.e.,
-        //     OpenAL marks buffers "processed" without playing them).
-        //
-        // Root cause was DeactivateAsync's trailing FlushStagingBuffer()
-        // queueing a leftover buffer onto the stopped source. The next
-        // ActivateAsync re-used the source without rewinding; OpenAL Soft's
-        // queue head was a stale buffer from the prior iteration, and the
-        // driver marked subsequent QueueBuffers as "processed" immediately
-        // without device playback — silent loop 2+.
-        //
-        // This test reproduces both cycles and verifies they show the same
-        // device-paced behaviour. Requires a working audio device — on
-        // headless CI the playback time stays zero, and the test passes
-        // trivially (both iterations equal). On a real machine the
-        // assertion catches the regression: iter 1 and iter 2 must show
-        // the same *fed-versus-played* gap.
-
-        const int blocksPerIteration = 20;
-        const int samplesPerBlock = 4800;
-        const int sampleRate = 48000;
-        const int channels = 2;
-
-        // Samples fed per iteration → expected wall-clock duration if the
-        // device played in real time.
-        var fedDurationMs =
-            (double)(blocksPerIteration * samplesPerBlock / channels) / sampleRate * 1000.0;
-
-        await using var sink = new OpenAlAudioSink();
-
-        TimeSpan iteration1PlaybackTime;
-        TimeSpan iteration2PlaybackTime;
-
-        // ── Iteration 1 ─────────────────────────────────────────────────
-        await sink.ActivateAsync();
-        for (int i = 0; i < blocksPerIteration; i++)
-        {
-            await sink.PresentAsync(MakePcmBlock(samplesPerBlock, sampleRate, channels));
-            await Task.Delay(40); // pace at ~40ms (slower than 50ms/block real-time)
-        }
-        iteration1PlaybackTime = sink.GetPlaybackTime();
-        await sink.DeactivateAsync();
-
-        // ── Iteration 2 (regression candidate) ──────────────────────────
-        await sink.ActivateAsync();
-        for (int i = 0; i < blocksPerIteration; i++)
-        {
-            await sink.PresentAsync(MakePcmBlock(samplesPerBlock, sampleRate, channels));
-            await Task.Delay(40);
-        }
-        iteration2PlaybackTime = sink.GetPlaybackTime();
-        await sink.DeactivateAsync();
-
-        // On a machine without an audio device, both iterations report
-        // TimeSpan.Zero — assertion below is trivially true and the test
-        // passes without flagging false positives.
-        if (iteration1PlaybackTime == TimeSpan.Zero)
-            return;
-
-        // The pre-fix regression: iter 1 reports realistic device-paced
-        // time (e.g. 740ms after feeding 1000ms worth at 40ms intervals),
-        // iter 2 reports exactly the fed-rate (1000ms) because the source
-        // is wedged and OpenAL marks queues processed without playing.
-        //
-        // Tolerance: iter 2 should match iter 1 within 100ms. A larger
-        // gap (e.g. iter 2 at fedDurationMs while iter 1 lags by 250ms)
-        // would indicate the regression has returned.
-        var gap = Math.Abs((iteration2PlaybackTime - iteration1PlaybackTime).TotalMilliseconds);
-        Assert.True(
-            gap < 100,
-            $"Iteration 1 reported {iteration1PlaybackTime.TotalMilliseconds:F0}ms playback "
-                + $"(device-paced); iteration 2 reported "
-                + $"{iteration2PlaybackTime.TotalMilliseconds:F0}ms (gap {gap:F0}ms). "
-                + $"Expected gap < 100ms — large gap suggests OpenAL source is wedged "
-                + $"after Deactivate→Activate (fed rate would be ~{fedDurationMs:F0}ms)."
-        );
-    }
-
-    // ── Backpressure (async wait) — end-to-end, device-gated ─────────────────
+    // ── Backpressure and underrun recovery ──────────────────────────────────
     //
-    // Perf survey A3: FlushStagingBuffer's Thread.Sleep(1) backpressure spin was
-    // replaced with an awaited buffer-return signal (AsyncAutoResetEvent). This
-    // test drives the *real* sink into backpressure by feeding far more PCM than
-    // the 16-buffer pool can hold faster than a real device drains it, so the
-    // staging flush repeatedly finds no free buffer, parks on the async wait, and
-    // is released as the device recycles processed buffers. The load-bearing
-    // assertion is liveness: the run must COMPLETE (not hang) and the sink must
-    // register backpressure while still accepting every frame and advancing the
-    // clock — i.e. the stalled flush was released by buffer recycles, not wedged.
-    //
-    // Device-gated (RequiresAudioDeviceFact): the deterministic proof of the
-    // release mechanism is AsyncAutoResetEventTests, which runs in CI without a
-    // device. On a headless runner with no device the sink stays inert and this
-    // returns trivially.
-
-    [RequiresAudioDeviceFact]
-    public async Task Backpressure_StalledFlush_DrainsAndCompletes()
-    {
-        await using var sink = new OpenAlAudioSink();
-        await sink.ActivateAsync();
-
-        // If no real device opened, the sink is inert (GetPlaybackTime stays zero
-        // and no buffers are ever consumed). Nothing to exercise — pass trivially.
-        await sink.PresentAsync(MakePcmBlock(samples: 4800, sampleRate: 48000, channels: 2));
-        if (sink.GetPlaybackTime() == TimeSpan.Zero && sink.BackpressureCount == 0)
-        {
-            // Feed a couple more to be sure the device truly isn't draining before
-            // declaring "no device"; a real device would start consuming by now.
-            await sink.PresentAsync(MakePcmBlock(samples: 4800, sampleRate: 48000, channels: 2));
-            await sink.PresentAsync(MakePcmBlock(samples: 4800, sampleRate: 48000, channels: 2));
-            if (sink.GetPlaybackTime() == TimeSpan.Zero)
-                return;
-        }
-
-        // Feed well beyond the 16-buffer pool, back-to-back (no pacing), so the
-        // producer outruns the device and the flush must wait for recycles. The
-        // whole loop is bounded by a deadline: if the async wait ever failed to be
-        // released by a buffer recycle, this would block and the timeout would fail
-        // the test rather than hang the suite.
-        const int blocks = 120; // > 16 pool buffers, with margin
-        var feed = Task.Run(async () =>
-        {
-            for (int i = 0; i < blocks; i++)
-                await sink.PresentAsync(MakePcmBlock(samples: 4800, sampleRate: 48000, channels: 2));
-        });
-
-        var finished = await Task.WhenAny(feed, Task.Delay(TimeSpan.FromSeconds(30)));
-        Assert.True(
-            finished == feed,
-            "Feeding past the buffer pool did not complete within 30s — the async "
-                + "backpressure wait appears to have wedged instead of being released "
-                + "by buffer recycles."
-        );
-        await feed; // surface any exception from the feed loop
-
-        // The producer outran the device, so at least one flush must have hit the
-        // empty-pool path and waited. (On a fast/over-buffered device this could in
-        // principle stay zero; assert only that the run made real progress.)
-        Assert.True(
-            sink.BlocksWritten >= blocks,
-            $"Expected ≥{blocks} blocks accepted across the backpressure run; got {sink.BlocksWritten}."
-        );
-        Assert.True(
-            sink.GetPlaybackTime() > TimeSpan.Zero,
-            "Clock did not advance — the device never consumed the queued buffers, so "
-                + "the backpressure path was not actually exercised."
-        );
-    }
-
-    // ── Underrun recovery (#133) ────────────────────────────────────────────
-
-    // An intermittently-fed sink went permanently silent after its first underrun: the
-    // first burst played, every burst after it was accepted, counted and inaudible.
-    //
-    // OpenAL Soft reports the whole queue of a stopped source as processed, including
-    // buffers queued after it stopped. RecycleProcessedBuffers ran at the top of every
-    // flush, so each re-primed buffer was unqueued before the next one arrived, the depth
-    // oscillated between 0 and 1, and the pre-buffer gate never reached PreBufferCount to
-    // fire SourcePlay again.
-    //
-    // Nothing in the sink's own reporting said so, which is what makes the assertion below
-    // the one worth making. BlocksWritten rose by the full count, GetPlaybackTime advanced
-    // by exactly the duration pushed (the fake processed count was credited to the clock),
-    // and UnderrunCount stayed at 1 (the latch it would need to re-observe a starve was
-    // cleared and never re-latched). The one counter that told the truth was backpressure:
-    // a dead sink never fills its pool, so pushing into one returns immediately.
-    //
-    // Device-gated: the mechanism is a real OpenAL Soft behaviour, so a real device is the
-    // only place it reproduces. The device-free half of this fix is
-    // BufferQueueStateTests.Priming_*.
-
-    [RequiresAudioDeviceFact]
-    public async Task Underrun_RefeedAfterSilenceResumesPlayback()
-    {
-        await using var sink = new OpenAlAudioSink();
-        // These play on the machine running the test. Audible enough to check by ear,
-        // quiet enough not to matter.
-        sink.Volume = 0.05f;
-        await sink.ActivateAsync();
-
-        // Twenty blocks into a sixteen-buffer pool. The overflow is what makes the
-        // assertions below arithmetic rather than timing: the producer cannot finish
-        // pushing until the device has finished at least BurstBlocks - BufferPoolSize of
-        // them, and the device finishes buffers in real time, not at memcpy speed.
-        const int burstBlocks = 20;
-        const int bufferPoolSize = 16;
-        const int blockSamplesPerChannel = 2400; // 4800 interleaved / 2 channels
-        const long mustDrainPerChannel = (burstBlocks - bufferPoolSize) * blockSamplesPerChannel;
-
-        // ── Burst 1: two seconds, then let the source starve ────────────────
-        await FeedBurstAsync(sink, blocks: burstBlocks);
-
-        // Is there a device at all. The clock only advances on buffers OpenAL reported
-        // finished, so two seconds that left it at zero is a device that did not open or
-        // is not playing. Availability only — whether the pool saturated is the scenario's
-        // business, asserted below where a failure names the right thing.
-        //
-        // FRAMEFLOW_AUDIO_DEVICE_TESTS=1 is the operator asserting there is a device, so
-        // this fails rather than returning green. The neighbouring device-gated tests
-        // return instead; xUnit v2 has no dynamic skip, so the choice is between failing
-        // and passing a test that exercised nothing, and a regression that turns a sink
-        // silently inaudible is exactly the kind that hides behind the second. CI does not
-        // set the variable and skips at the attribute rather than reaching here.
-        Assert.True(
-            sink.GetPlaybackTime() > TimeSpan.Zero,
-            "Burst 1 left the playback clock at zero, so nothing drained it and the "
-                + "underrun this test depends on cannot be provoked. With "
-                + "FRAMEFLOW_AUDIO_DEVICE_TESTS set that is a device that did not open or "
-                + "did not play — not a reason to pass."
-        );
-
-        // Two seconds of audio, three seconds of silence: the queue is empty and the
-        // source is AL_STOPPED well before the next burst arrives.
-        await Task.Delay(TimeSpan.FromSeconds(3));
-
-        // Everything burst 1 played, credited. Burst 1 is fully drained by now, so the
-        // delta across burst 2 is burst 2's own audio and nothing else.
-        long processedBeforeSecond = sink.GetDiagnostics().ProcessedSamplesPerChannel;
-
-        // ── Burst 2: the same feed into the same sink ───────────────────────
-        var sw = Stopwatch.StartNew();
-        await FeedBurstAsync(sink, blocks: burstBlocks);
-        sw.Stop();
-
-        Assert.True(
-            sink.UnderrunCount >= 1,
-            "The source was expected to starve during the three-second gap, but no "
-                + "underrun was observed — the test never reached the state it guards."
-        );
-
-        // The source restarted. IsActive is the source-started latch, and the only thing
-        // that sets it is the pre-buffer gate firing and the shell calling SourcePlay. A
-        // sink wedged on a stopped source clears the latch at the underrun and never
-        // re-latches, because the queue depth never reaches PreBufferCount again.
-        Assert.True(
-            sink.GetDiagnostics().IsActive,
-            "The source-started latch is still clear after the second burst, so the "
-                + "pre-buffer gate never re-fired and SourcePlay was never re-issued. "
-                + "Everything pushed since the underrun is queued on a stopped source "
-                + "(#133)."
-        );
-
-        // And burst 2's own buffers went through the device. The pool cannot hold the
-        // whole burst, so the push above could not have returned until the device
-        // finished at least the overflow — a lower bound from the pool arithmetic, not
-        // from how fast anything ran. A latched-but-idle source never reaches it.
-        long drainedDuringSecond =
-            sink.GetDiagnostics().ProcessedSamplesPerChannel - processedBeforeSecond;
-        Assert.True(
-            drainedDuringSecond >= mustDrainPerChannel,
-            $"The device finished {drainedDuringSecond} samples/channel of burst 2, below the "
-                + $"{mustDrainPerChannel} the pool overflow requires. Burst 2's push returned in "
-                + $"{sw.Elapsed.TotalSeconds:0.00}s, so the sink accepted {burstBlocks} blocks "
-                + $"into a {bufferPoolSize}-buffer pool without the device draining any of "
-                + "them (#133)."
-        );
-
-        // Neither assertion proves audibility, and nothing short of capturing the output
-        // would: a dead endpoint marks buffers processed without playing them, which is
-        // what DeviceDisconnected rather than any of these counters exists for (#127).
-        Assert.False(
-            sink.DeviceDisconnected,
-            "The output endpoint went away mid-test, so nothing above says what was played."
-        );
-    }
-
-    private static async Task FeedBurstAsync(OpenAlAudioSink sink, int blocks)
-    {
-        for (int i = 0; i < blocks; i++)
-            await sink.PresentAsync(MakePcmBlock(samples: 4800, sampleRate: 48000, channels: 2));
-    }
+    // Both run headless in OpenAlAudioSinkFakeDeviceTests: the parked flush's release (by
+    // buffer return, and by timeout on a paused source, with the timeout on a fake clock) and
+    // recovery from every underrun in a burst-gap-burst feed (#133, #141). The
+    // real-device underrun run, which is what shows OpenAL Soft's own stopped-source
+    // behaviour, lives in FrameFlow.Integration.Tests (OpenAlAudioSinkRealDeviceTests).
 
     // ── Volume / Mute ───────────────────────────────────────────────────────
 
@@ -641,84 +368,11 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
 
     // ── The clock across a pause (#127) ─────────────────────────────
     //
-    // A paused device's counters are not evidence. The reported failure was a source
-    // whose whole 16-buffer queue was marked processed five minutes into a pause: the
-    // clock credited it, resumed 1.09 s past where it paused, and every decoded frame
-    // came due at once. The sink now latches the position at the pause and re-anchors
-    // onto it at the resume, so whatever the queue did in between stays out.
-
-    [RequiresAudioDeviceFact]
-    public async Task Pause_FreezesTheClock()
-    {
-        await using var sink = new OpenAlAudioSink();
-        await sink.ActivateAsync();
-        for (int i = 0; i < 8; i++)
-            await sink.PresentAsync(MakePcmBlock(4800, 48000, 2, TimeSpan.Zero));
-
-        await Task.Delay(120);
-        await sink.PauseAsync();
-
-        var atPause = sink.GetPlaybackTime();
-        await Task.Delay(300);
-
-        // Not "barely moved" — identical. The clock is the latch while paused, and the
-        // device is not consulted at all, so there is nothing to be approximately right
-        // about.
-        Assert.Equal(atPause, sink.GetPlaybackTime());
-        Assert.Equal(atPause, sink.GetPlaybackTime());
-    }
-
-    [RequiresAudioDeviceFact]
-    public async Task Resume_ReportsThePositionThePauseReported()
-    {
-        await using var sink = new OpenAlAudioSink();
-        await sink.ActivateAsync();
-        for (int i = 0; i < 8; i++)
-            await sink.PresentAsync(MakePcmBlock(4800, 48000, 2, TimeSpan.Zero));
-
-        await Task.Delay(120);
-        await sink.PauseAsync();
-        var atPause = sink.GetPlaybackTime();
-
-        await Task.Delay(300);
-        await sink.ResumeAsync();
-
-        // The assertion the report asks for: `Audio resumed at 5.43s` after
-        // `Audio paused at 4.34s` must not be possible. Read immediately, before the
-        // device has had a mixing period to advance it legitimately.
-        var atResume = sink.GetPlaybackTime();
-        Assert.InRange(
-            (atResume - atPause).TotalMilliseconds,
-            -1.0,
-            AudioClockInterpolation.DefaultMaxExtrapolation.TotalMilliseconds + 1.0
-        );
-    }
-
-    [RequiresAudioDeviceFact]
-    public async Task PauseResume_LeavesTheClockRunningForwards()
-    {
-        await using var sink = new OpenAlAudioSink();
-        await sink.ActivateAsync();
-        for (int i = 0; i < 8; i++)
-            await sink.PresentAsync(MakePcmBlock(4800, 48000, 2, TimeSpan.Zero));
-
-        await Task.Delay(120);
-        await sink.PauseAsync();
-        var atPause = sink.GetPlaybackTime();
-        await Task.Delay(200);
-        await sink.ResumeAsync();
-
-        // The re-anchor must leave a working clock behind, not a frozen one: feed it and
-        // let it play, and the position has to move on from where the pause left it.
-        for (int i = 0; i < 8; i++)
-            await sink.PresentAsync(MakePcmBlock(4800, 48000, 2, TimeSpan.Zero));
-        await Task.Delay(250);
-
-        Assert.True(
-            sink.GetPlaybackTime() > atPause,
-            $"clock did not advance after resume (paused at {atPause}, now {sink.GetPlaybackTime()})"
-        );
-    }
+    // Headless in OpenAlAudioSinkFakeDeviceTests: GetPlaybackTime_HoldsStillWhilePaused,
+    // Resume_ReportsThePositionThePauseReported and PauseResume_LeavesTheClockRunningForwards.
+    // The sink latches the position at the pause and re-anchors onto it at the resume, which
+    // is sink logic rather than device behaviour, and the fake clock lets those tests compare
+    // positions exactly instead of within a real-time tolerance.
 
     /// <summary>
     /// Construct a PcmAudioBuffer carrying <paramref name="samples"/>
@@ -843,34 +497,15 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
                 + "Baseline capture in PresentAsync has regressed."
         );
 
-        // Wait long enough for the 5 ms clock ticker to publish
-        // post-baseline. Anything less than 60s after a few ticks
-        // means the ticker is publishing a stale or clamped value —
-        // exactly what PacedUntil would see, exactly what freezes
-        // video for `seek-target` real seconds in the real player.
-        await WaitForClockLatest(clock, atLeast: TimeSpan.FromSeconds(60), within: TimeSpan.FromSeconds(2));
-    }
-
-    private static async Task WaitForClockLatest(
-        IClockSource clock,
-        TimeSpan atLeast,
-        TimeSpan within
-    )
-    {
-        var deadline = DateTime.UtcNow + within;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (clock.Latest >= atLeast)
-                return;
-            await Task.Delay(20);
-        }
-        throw new Xunit.Sdk.XunitException(
-            $"IClockSource.Latest stayed at {clock.Latest} after {within} — expected ≥ {atLeast}. "
-                + "The ticker's published value is what PacedUntil consumes; if Latest stays "
-                + "near zero after a reactivate-with-non-zero-PTS, video freezes for "
-                + "`baseline-PTS` real seconds. Check OpenAlAudioSink.RunTickerAsync's "
-                + "publication arithmetic — earlier the `min(audioTime, sessionTime)` "
-                + "guard clamped it back to 0."
+        // The published value is what PacedUntil consumes. It used to come from a 5 ms
+        // ticker, and this test polled for the ticker to publish. Latest is now computed on
+        // read (ADR-0057), so there is nothing to wait for: if it is below the seek target
+        // here, it is below it for every reader.
+        Assert.True(
+            clock.Latest >= TimeSpan.FromSeconds(60),
+            $"IClockSource.Latest was {clock.Latest} after a reactivate at PTS=60s. If Latest "
+                + "stays near zero, video freezes for `baseline-PTS` real seconds. An earlier "
+                + "`min(audioTime, sessionTime)` guard clamped it back to 0."
         );
     }
 

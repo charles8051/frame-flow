@@ -265,3 +265,30 @@ internal sealed class VisualTestFactAttribute : FactAttribute
             || value.Equals("true", StringComparison.OrdinalIgnoreCase)
         );
 }
+
+/// <summary>
+/// Opt-in gate for tests that play through a real audio device with OpenAL Soft. Skips
+/// unless <c>FRAMEFLOW_AUDIO_DEVICE_TESTS</c> is <c>1</c> or <c>true</c>.
+/// </summary>
+/// <remarks>
+/// The same gate as <c>RequiresAudioDeviceFact</c> in <c>FrameFlow.Audio.Tests</c>, with the
+/// same variable. Headless runners can load OpenAL Soft but have no device that plays in real
+/// time, so these tests do not run in CI. The two suites keep their own copies, as they do
+/// for the FFmpeg bootstrap.
+/// </remarks>
+internal sealed class RequiresAudioDeviceFactAttribute : FactAttribute
+{
+    public RequiresAudioDeviceFactAttribute()
+    {
+        var envValue = Environment.GetEnvironmentVariable("FRAMEFLOW_AUDIO_DEVICE_TESTS");
+        if (!IsTruthy(envValue))
+            Skip = "Audio device tests disabled. Set FRAMEFLOW_AUDIO_DEVICE_TESTS=1 to enable.";
+    }
+
+    private static bool IsTruthy(string? value) =>
+        value is not null
+        && (
+            value.Equals("1", StringComparison.Ordinal)
+            || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+        );
+}
