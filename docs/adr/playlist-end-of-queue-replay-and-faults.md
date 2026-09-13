@@ -7,7 +7,8 @@ Proposed (2026-09-12). Draft pending number assignment.
 This record proposes fixes for three defects in how the playlist player behaves at the end of its
 queue and on replay, and decides how it reports failed items. It records one more defect, and
 several found in review, without deciding their fixes. The changes are to behaviour, not public
-API. Single-source playback does not change.
+API. Single-source playback changes in one respect: decision 7 drops notifications from a session
+the controller has replaced.
 
 It started as a proposal to run every player on the playlist session. A spike and two independent
 reviews narrowed it to this. That history is kept under *Alternatives considered* and *Revision
@@ -228,10 +229,19 @@ The docs do not promise that a new player built over the same sinks recovers. Th
 This fixes defects 3 and 4, and is implemented (#180).
 
 **Failed items are reported.** An item that faults while it plays, or an item after the first that
-cannot be opened or started, raises `ErrorOccurred` with the item's exception as `Inner`. A first
-item that cannot be opened is still a load failure. The session reports through a new internal
-callback, `SessionCallbacks.OnRecoverableError`. The controller raises the error on its dispatch
-loop and fires no trigger, so the state does not change.
+cannot be opened or started, raises `ErrorOccurred` with the item's exception as `Inner`. The
+session reports through a new internal callback, `SessionCallbacks.OnRecoverableError`. The
+controller raises the error on its dispatch loop and fires no trigger, so the state does not
+change.
+
+**A first item that fails before anything has played is treated as a single source's.** One that
+cannot be opened is still a load failure. One that opens and then faults before the first
+`PlayAsync`, during warm-up or while paused on the loaded item, goes to the controller as a fatal
+error, and the controller enters `Error`. Skipping it would start the next item while the
+controller is still loading or paused: `SubstrateSession`'s workers catch their own faults, so
+`WarmUpAsync` returns and the load succeeds. This case is read from code. The integration tests'
+injected operator cannot reach it, because the configured video chain receives no frame before the
+first play.
 
 Two reports can be missed or arrive late. A fault that races a skip of the same item is not
 reported if the skip's advance runs first, because the fault then belongs to an item already
@@ -273,10 +283,17 @@ items between its failures reset the count. That includes a queue of an item tha
 and an item that ends at once, which reports on every pass with nothing slowing it down. That case
 looped without reporting before this decision.
 
-**Stale reports are dropped.** A report carries the controller's session generation, captured when
-the session is created. The controller drops a report whose generation is no longer current.
+**Stale notifications are dropped.** Every session notification carries the controller's session
+generation, captured when the session is created: recoverable errors, and the end-of-stream, fatal
+error and buffer triggers. The controller drops one whose generation is no longer current.
 `PlaybackControllerCore.DisposeSessionAsync` advances the generation before it awaits disposal, so
-a report from a session being torn down cannot reach the next one.
+a notification from a session being torn down cannot reach the next one.
+
+Before this decision only the controller's state filtered triggers, which cannot catch one case.
+Replay from `Ended` unloads and reloads inside one dispatch command. A fatal error or end-of-stream
+the old session posted during its teardown waited in the channel and was dispatched against the new
+session, putting it in `Error` or `Ended`. `PlaybackDispatchProtocolTests` reproduces both. A
+playlist that gives up while the controller replays is one way to post such a fatal error.
 
 **A second fault from one run of an item is ignored.** An item's demux pump and its graph each
 report their own faults (`SubstrateSession.cs:1538`, `:1588`). A faulted item is never rewound in
@@ -323,7 +340,8 @@ this decision that clip looped forever, and the review of this change raised it 
   counters, and does not fault when Play finds nothing to play.
 - With decision 7, defects 3 and 4 are fixed. Failed items are observable, and a playlist whose
   items all fail before making progress no longer loops forever.
-- None of it changes public API, and single-source playback is untouched.
+- None of it changes public API. Single-source playback changes only in that a fatal error or
+  end-of-stream from a session replaced by replay from `Ended` no longer reaches the new session.
 
 ### Negative
 
@@ -483,10 +501,8 @@ What it costs:
   the state stayed `Paused`. Enqueue then skip while `Ended` presented, 72 frames to 109, while the
   state stayed `Ended`. A skip on the last item while `Paused` dropped the end-of-stream, because
   `Paused` has no transition for it (`PlaybackProtocol.cs:308-313`), and a later play presented
-  nothing. The same happens when the first item opens and then faults during warm-up, before the
-  controller has played: `WarmUpAsync` does not throw for a worker fault, so the load succeeds and
-  the session advances while the controller is still loading. Decision 7 reports that fault, but a
-  single item under `Off` then never reaches `Ended`. Read from code.
+  nothing. A first item that faulted during warm-up did the same until decision 7 sent that fault to
+  the controller.
 - **The final item fails to open.** On `[clean, corrupt]` under `Off`, the clean item is disposed
   before the corrupt one is tried, the queue then ends in `Ended` with no error, and seek then play
   leaves the sink at 72 frames. Decision 2 does not cover this. Decision 7 now reports the corrupt
@@ -590,9 +606,11 @@ Tests 9 and 10 assert one error when the player reaches `Ended`. A duplicate fau
 after that, so they do not test the duplicate-fault check.
 
 The counting rule is also unit-tested without FFmpeg in `PlaylistFailureGuardTests`, including the
-five-second threshold and the half-length rule, which the integration tests do not reach. `PlaybackDispatchProtocolTests`
-covers the controller half: a recoverable error is raised without a state change or a disposed
-session, and one from an unloaded session is dropped.
+five-second threshold and the half-length rule, which the integration tests do not reach.
+`PlaybackDispatchProtocolTests` covers the controller half: a recoverable error is raised without a
+state change or a disposed session, one from an unloaded session is dropped, and a fatal error or
+end-of-stream from the session replay from `Ended` replaced leaves the new session playing. Before
+the generation was added to triggers, those last two ended in `Error` and `Ended`.
 
 Decision 2's run number has no row. Testing it means holding an end-of-stream between the item
 raising it and the advance handling it, then seeking. That needs a seam in `PlaylistSession` to hold
@@ -639,3 +657,8 @@ the advance, or the tooling #143 asks for. A timing-based test would not show th
   raised rather than after the advance waits on the gate; the first-item exception now covers only a
   first item that cannot be opened; and the decision now says which reports can be missed or arrive
   late, and that a bad item in a rotation with items that play is never given up on.
+  Automated PR review then found two more, both fixed in the same change: a fatal error from a
+  session replaced by replay from `Ended` could put the new session in `Error`, so every session
+  notification now carries the session generation; and a first item that faulted before the first
+  play was skipped while the controller was still loading, so that fault now goes to the controller
+  as a single source's does.

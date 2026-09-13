@@ -81,6 +81,12 @@ internal sealed record InternalTriggerCommand(PlaybackTrigger Trigger) : IPlayer
     /// </summary>
     public Exception? Error { get; init; }
 
+    /// <summary>
+    /// The generation of the session that raised the trigger. A trigger from a session the
+    /// controller has since disposed is dropped.
+    /// </summary>
+    public int SessionGeneration { get; init; }
+
     public TaskCompletionSource<Result> Completion { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     public CancellationToken CancellationToken { get; init; }

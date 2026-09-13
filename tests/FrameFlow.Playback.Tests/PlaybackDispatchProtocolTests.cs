@@ -369,6 +369,70 @@ public sealed class PlaybackDispatchProtocolTests
     }
 
     [Fact]
+    public async Task WorkerFault_FromTheSessionReplayReplaced_DoesNotFaultTheNewSession()
+    {
+        // Replay from Ended unloads and reloads inside one dispatch command. A fatal error the
+        // old session posts while it is torn down waits in the channel until that command has
+        // loaded the new session, so it must be recognised as the old session's.
+        var (controller, session) = NewController();
+        await using var _ = controller;
+
+        var ended = await PlayToEndedAsync(controller, session);
+        Assert.True((await controller.PlayAsync()).IsSuccess);
+        Assert.Equal(PlaybackState.Playing, controller.State);
+
+        ended.OnWorkerFaulted(new InvalidOperationException("stale"));
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.Off)).IsSuccess);
+
+        Assert.Equal(PlaybackState.Playing, controller.State);
+        Assert.False(session.Disposed, "A stale fault disposed the new session.");
+    }
+
+    [Fact]
+    public async Task EndOfStream_FromTheSessionReplayReplaced_DoesNotEndTheNewSession()
+    {
+        var (controller, session) = NewController();
+        await using var _ = controller;
+
+        var ended = await PlayToEndedAsync(controller, session);
+        Assert.True((await controller.PlayAsync()).IsSuccess);
+
+        ended.OnEndOfStream();
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.Off)).IsSuccess);
+
+        Assert.Equal(PlaybackState.Playing, controller.State);
+    }
+
+    // Loads, plays and ends the fake session, and returns the callbacks it was created with.
+    private static async Task<SessionCallbacks> PlayToEndedAsync(
+        PlaybackControllerCore controller,
+        FakeSession session
+    )
+    {
+        await controller.LoadAsync(new FakeSource());
+        await controller.PlayAsync();
+        var callbacks = session.Callbacks;
+
+        var endedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using (
+            controller.PlaybackStateChanged.Subscribe(
+                new Relay<StateTransition<PlaybackState>>(t =>
+                {
+                    if (t.Current == PlaybackState.Ended)
+                        endedTcs.TrySetResult();
+                })
+            )
+        )
+        {
+            session.RaiseEndOfStream();
+            await CompletesWithin(endedTcs.Task, TimeSpan.FromSeconds(5));
+        }
+
+        Assert.Equal(PlaybackState.Ended, controller.State);
+        return callbacks;
+    }
+
+    [Fact]
     public async Task Play_FromEnded_RunsReplayRecovery_BackToPlaying()
     {
         var (controller, session) = NewController();

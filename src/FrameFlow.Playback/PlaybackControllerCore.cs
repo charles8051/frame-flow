@@ -403,7 +403,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// Failures (channel full or closed) are swallowed and logged — pipeline worker
     /// threads must never block or throw on callback invocation.
     /// </remarks>
-    private void PostInternalAsync(PlaybackTrigger trigger, Exception? error = null)
+    private void PostInternalAsync(
+        PlaybackTrigger trigger,
+        int sessionGeneration,
+        Exception? error = null
+    )
     {
         if (_disposed)
         {
@@ -411,7 +415,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             return;
         }
 
-        var cmd = new InternalTriggerCommand(trigger) { Error = error };
+        var cmd = new InternalTriggerCommand(trigger)
+        {
+            Error = error,
+            SessionGeneration = sessionGeneration,
+        };
         if (!_commandChannel.Writer.TryWrite(cmd))
         {
             LogInternalTriggerDropped(trigger.ToString());
@@ -433,7 +441,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         if (_disposed)
             return;
 
-        if (!_commandChannel.Writer.TryWrite(new RecoverableErrorCommand(error, sessionGeneration)))
+        var cmd = new RecoverableErrorCommand(error, sessionGeneration);
+        if (!_commandChannel.Writer.TryWrite(cmd))
             LogRecoverableErrorDropped(error.Message);
     }
 
@@ -625,15 +634,19 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// machines sequentially.
     /// </summary>
     /// <param name="sessionGeneration">
-    /// The generation the session will be published under. A recoverable error carries
-    /// it, so one from a session disposed since is dropped.
+    /// The generation the session will be published under. Every notification carries
+    /// it, so one from a session disposed since is dropped rather than applied to the
+    /// session loaded after it.
     /// </param>
     private SessionCallbacks CreateSessionCallbacks(int sessionGeneration) =>
         new(
-            OnEndOfStream: () => PostInternalAsync(PlaybackTrigger.LastFrameRendered),
-            OnWorkerFaulted: ex => PostInternalAsync(PlaybackTrigger.FatalError, ex),
-            OnBufferReady: () => PostInternalAsync(PlaybackTrigger.BufferReady),
-            OnBufferUnderrun: () => PostInternalAsync(PlaybackTrigger.BufferUnderrun),
+            OnEndOfStream: () =>
+                PostInternalAsync(PlaybackTrigger.LastFrameRendered, sessionGeneration),
+            OnWorkerFaulted: ex =>
+                PostInternalAsync(PlaybackTrigger.FatalError, sessionGeneration, ex),
+            OnBufferReady: () => PostInternalAsync(PlaybackTrigger.BufferReady, sessionGeneration),
+            OnBufferUnderrun: () =>
+                PostInternalAsync(PlaybackTrigger.BufferUnderrun, sessionGeneration),
             OnRecoverableError: error => PostRecoverableError(error, sessionGeneration)
         );
 
@@ -1285,6 +1298,20 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 switch (cmd)
                 {
                     case InternalTriggerCommand itc:
+                        // A trigger from a session disposed since is dropped. The state
+                        // alone cannot tell: replay from Ended unloads and reloads inside one
+                        // command, so a fault or end-of-stream the old session posted during
+                        // its teardown is dispatched while the new session is loaded.
+                        if (itc.SessionGeneration != _sessionBinding.Generation)
+                        {
+                            LogStaleSessionTrigger(
+                                itc.Trigger.ToString(),
+                                itc.SessionGeneration,
+                                _sessionBinding.Generation
+                            );
+                            break;
+                        }
+
                         // Error triggers carry exception context that must reach the error
                         // state from any state that permits FatalError. RunPlaybackAsync
                         // routes it (DisposeSession + RaiseError) for every permitting state

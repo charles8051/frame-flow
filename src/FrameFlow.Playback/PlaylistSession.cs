@@ -83,9 +83,15 @@ internal sealed class PlaylistSession : IPlaybackSession
 
     private readonly PlaylistFailureGuard _failures = new();
 
-    // Set once the guard gives up. The controller disposes this session on its way
-    // into Error; until then a late notification must not start another item.
+    // Set once this session hands the controller a fatal error. The controller disposes
+    // the session on its way into Error; until then a late notification must not start
+    // another item.
     private bool _gaveUp;
+
+    // Set by the first PlayAsync. Before it, the controller is loading the first item or
+    // paused on it, so skipping a faulted first item would start the next one behind the
+    // controller's back.
+    private bool _played;
     private bool _disposed;
 
     public PlaylistSession(
@@ -173,6 +179,8 @@ internal sealed class PlaylistSession : IPlaybackSession
         {
             if (_disposed)
                 return;
+
+            _played = true;
 
             // A pending skip request taking effect at the moment of (re)play.
             if (_coordinator.ConsumeSkipRequest())
@@ -326,6 +334,21 @@ internal sealed class PlaylistSession : IPlaybackSession
                 _lastFaultedGen = gen;
 
                 var source = _currentSource?.DisplayName ?? "(unknown)";
+
+                if (!_played)
+                {
+                    // Nothing has played, so this is the first item failing to start, as
+                    // a single source's would. Hand it to the controller as one.
+                    _gaveUp = true;
+                    _controllerCallbacks.OnWorkerFaulted(
+                        error
+                            ?? new InvalidOperationException(
+                                $"Playlist item '{source}' faulted before playback started."
+                            )
+                    );
+                    return;
+                }
+
                 LogItemFaulted(_logger, source, error);
                 ReportItemFailure(source, "faulted during playback", error);
 

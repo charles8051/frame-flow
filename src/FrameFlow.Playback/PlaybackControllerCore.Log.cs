@@ -178,6 +178,16 @@ internal sealed partial class PlaybackControllerCore
     private partial void LogStaleInternalTrigger(string trigger, string currentState);
 
     [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Dropping internal trigger {Trigger} from session generation {Generation}; the current generation is {CurrentGeneration}"
+    )]
+    private partial void LogStaleSessionTrigger(
+        string trigger,
+        int generation,
+        int currentGeneration
+    );
+
+    [LoggerMessage(
         Level = LogLevel.Warning,
         Message = "Recoverable session error dropped — channel full or closed: {Message}"
     )]

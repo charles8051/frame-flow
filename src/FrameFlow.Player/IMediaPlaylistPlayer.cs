@@ -36,8 +36,10 @@ namespace FrameFlow.Player;
 /// <see cref="RepeatMode.Off"/> a last item that faults while playing ends the
 /// playlist in <see cref="PlaybackState.Ended"/>, and under
 /// <see cref="RepeatMode.All"/> or <see cref="RepeatMode.One"/> the rotation
-/// continues. A first item that cannot be opened fails the load instead, as for a
-/// single source. The player gives up and enters <see cref="PlaybackState.Error"/>
+/// continues. A first item that fails before anything has played is treated as a
+/// single source's: one that cannot be opened fails the load, and one that faults
+/// before the first <see cref="IMediaPlayer.PlayAsync"/> puts the player in
+/// <see cref="PlaybackState.Error"/>. The player gives up and enters <see cref="PlaybackState.Error"/>
 /// when more than eight items fail in a row. An item that ends or is skipped without
 /// failing breaks the run, and so does a fault after an item has played for five
 /// seconds, or for half its length if that is shorter.

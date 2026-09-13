@@ -138,7 +138,9 @@ playlist as if it had played through. An item that faulted on every pass under
 | The last item faults while playing under `Off` | `Ended` | `ErrorOccurred`, then `Ended` |
 | More than eight items fail in a row | `Error` only if they failed to start; faults looped forever | `Error`, with an `ErrorOccurred` for each failure and one for giving up |
 
-A first item that cannot be opened still fails the load, as before. An item that
+A first item that fails before anything has played is treated as a single
+source's: one that cannot be opened still fails the load, and one that faults
+before the first `PlayAsync` puts the player in `Error`. An item that
 ends or is skipped without failing breaks a run, and so does a fault after an
 item has played for five seconds, or for half its length if that is shorter. A
 bad item in a rotation with items that play is reported on every pass and never
