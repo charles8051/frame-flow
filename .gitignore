@@ -91,8 +91,12 @@ tmp/
 # assistant a contributor happens to use, and none of it describes this
 # library. Ignored as a category rather than file by file, so a new
 # tool's dotfile does not land in a commit before anyone notices it.
+#
+# One exception: tests/CLAUDE.md states this repo's test rules (ADR-0072)
+# for an agent working under tests/, so it describes the library and is kept.
 .claude/
 CLAUDE.md
+!/tests/CLAUDE.md
 AGENTS.md
 GEMINI.md
 .github/copilot-instructions.md
