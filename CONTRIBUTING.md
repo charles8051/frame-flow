@@ -118,7 +118,8 @@ The SDL tests open a real window and stay skipped unless you set it to `1`.
 
 **A test that sleeps, delays, or reads the wall clock fails the build.** Every project under
 `tests/` runs a banned-API analyzer over `Thread.Sleep`, the `Task.Delay` overloads that take no
-`TimeProvider`, `DateTime.Now`/`UtcNow`, and `Stopwatch`:
+`TimeProvider`, `DateTime.Now`/`UtcNow`, `Stopwatch`, `Environment.TickCount`, and timers constructed
+without a `TimeProvider`:
 
 ```
 error RS0030: The symbol 'Task.Delay(int, CancellationToken)' is banned in this project:
