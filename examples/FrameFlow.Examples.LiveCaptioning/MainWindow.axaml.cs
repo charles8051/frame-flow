@@ -425,29 +425,25 @@ public partial class MainWindow : Window
         {
             // ── Build the player ──
             //
-            // configureAudio: tap each decoded audio buffer for the
+            // ConfigureAudio: tap each decoded audio buffer for the
             // Whisper bridge before it reaches the OpenAL sink. The
             // 1→1 operator AddRefs the buffer (PcmAudioBuffer supports
             // refcounting, unlike Media.CpuVideoFrame) and pushes the
             // AddRef'd ref into the bridge; the original passes through
             // unchanged to OpenAL.
             //
-            // configureVideo: configurator-terminated. The video sink is null
+            // ConfigureVideo: configurator-terminated. No video sink is set
             // because the configurator wires its own topology — the detection
             // branch, the join, and the terminal sink that presents.
-            _player = await MediaPlayer.CreateAsync(
-                source: MediaSource.FromFile(path),
-                videoSink: null, // configurator-terminated — see below
-                audioSink: _audioSink,
-                hardwareDecodeMode: HardwareDecodeMode.Auto,
+            _player = await FrameFlowPlayer
+                .Open(path)
+                .WithAudioSink(_audioSink)
+                .WithLogger(_loggerFactory)
                 // GPU mode: keep hardware frames on the GPU so the display branch can
                 // AddRef one GpuVideoFrame and present it zero-copy.
-                yieldHardwareFrames: _useGpu,
-                initialRepeatMode: RepeatMode.Off,
-                loggerFactory: _loggerFactory,
-                configureAudio: chain =>
-                    chain.Then(CreateWhisperTapOperator(pcmBridge)),
-                configureVideo: chain =>
+                .WithHardwareFrames(_useGpu)
+                .ConfigureAudio(chain => chain.Then(CreateWhisperTapOperator(pcmBridge)))
+                .ConfigureVideo(chain =>
                 {
                     // GPU fork keeps pictures on the GPU (no ConvertPixelFormat) so the
                     // display can present one AddRef'd GpuVideoFrame zero-copy. CPU fork
@@ -498,9 +494,8 @@ public partial class MainWindow : Window
                     graph.Connect(detect.Output, join.Secondary, EdgeOptions.Buffered(4));
                     graph.Pipeline(join.Output).To(terminal);
                     return chain;
-                },
-                cancellationToken: _windowCts.Token
-            );
+                })
+                .BuildPlayerAsync(_windowCts.Token);
         }
         catch (Exception ex)
         {

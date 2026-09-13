@@ -31,8 +31,7 @@ namespace FrameFlow.Player;
 /// <b>Prefer the fluent builder.</b>
 /// <c>FrameFlowPlayer.Open(path)…BuildPlayerAsync()</c> runs the same
 /// wiring and returns the same <see cref="IMediaPlayer"/>. This factory
-/// stays as the positional escape hatch for callers that already hold
-/// every argument.
+/// remains for existing callers. New code should use the builder.
 /// </para>
 /// </remarks>
 public static class MediaPlayer

@@ -32,12 +32,10 @@ namespace FrameFlow.Examples.AvaloniaPlayer;
 ///   <item>CLI arg propagation (startup file, loop flag, log file).</item>
 /// </list>
 /// <para>
-/// migrated to the substrate via
-/// <see cref="MediaPlayer.CreateAsync"/>. The <see cref="IMediaPlayer"/>
-/// returned is the same internal wrapper the old
-/// <c>FrameFlowPlayer.Open(...).BuildAsync()</c> path returned, just
-/// pointed at <see cref="FrameFlow.Playback.PlaybackController"/>
-/// instead of the legacy <see cref="FrameFlow.Playback.PlaybackController"/>.
+/// A single file is built with
+/// <c>FrameFlowPlayer.Open(...).BuildPlayerAsync()</c>. A folder is
+/// built with <see cref="MediaPlaylistPlayer.CreateAsync"/>, which has
+/// no builder form.
 /// </para>
 /// </remarks>
 public partial class MainWindow : Window
@@ -174,19 +172,30 @@ public partial class MainWindow : Window
         try
         {
             // ── The heart of the example: construct sinks directly (no
-            //     DI), wire them through MediaPlayer.CreateAsync, and hand
+            //     DI), wire them through the fluent player builder, and hand
             //     the resulting IMediaPlayer to the view.
+
+            // The hosted surface's sink — CPU AvaloniaVideoSink or the GPU presenter's sink.
+            var videoSink = PlayerView.AttachSink(_loggerFactory);
+
+            var builder = FrameFlowPlayer
+                .Open(path)
+                .WithVideoSink(videoSink)
+                .WithHardwareDecode(ResolveHwMode())
+                .WithHardwareFrames(PlayerView.VideoSurface.PrefersHardwareFrames)
+                .WithRepeatMode(StartupLoop ? RepeatMode.One : RepeatMode.Off)
+                .WithLogger(_loggerFactory);
 
             // --no-audio: attach NO audio sink, so the player falls back to the
             // WallClockSource pacer (ADR-0003) — the exact shape a signage
-            // deployment uses (audioSink: null + GPU presenter). With an audio sink,
+            // deployment uses (no audio sink + GPU presenter). With an audio sink,
             // the audio device backpressures the pipeline to realtime; without
             // one, this reproduces whatever the wallclock-paced path does.
             if (StartupNoAudio)
             {
                 _audioSink = null;
                 _logger.LogInformation(
-                    "Audio DISABLED (--no-audio): audioSink=null -> WallClockSource pacing (signage repro)."
+                    "Audio DISABLED (--no-audio): no audio sink -> WallClockSource pacing (signage repro)."
                 );
             }
             else
@@ -194,20 +203,10 @@ public partial class MainWindow : Window
                 _audioSink = new OpenAlAudioSink(
                     _loggerFactory.CreateLogger<OpenAlAudioSink>()
                 );
+                builder = builder.WithAudioSink(_audioSink);
             }
 
-            // The hosted surface's sink — CPU AvaloniaVideoSink or the GPU presenter's sink.
-            var videoSink = PlayerView.AttachSink(_loggerFactory);
-
-            _player = await MediaPlayer.CreateAsync(
-                source: MediaSource.FromFile(path),
-                videoSink: videoSink,
-                audioSink: _audioSink,
-                hardwareDecodeMode: ResolveHwMode(),
-                yieldHardwareFrames: PlayerView.VideoSurface.PrefersHardwareFrames,
-                initialRepeatMode: StartupLoop ? RepeatMode.One : RepeatMode.Off,
-                loggerFactory: _loggerFactory
-            );
+            _player = await builder.BuildPlayerAsync();
 
             // Chrome binds to the player for both surfaces now (the seam keeps the UI).
             PlayerView.MediaPlayer = _player;

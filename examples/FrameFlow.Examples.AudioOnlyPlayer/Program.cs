@@ -64,8 +64,8 @@ internal static class Program
         await using var sink = new OpenAlAudioSink();
 
         // No ActivateAsync here: PlayerSession activates the sink it was
-        // given, the same way SubstrateSession and MediaPlayer.CreateAsync
-        // do. Pre-activating would rebase the sink's sample counter twice —
+        // given, the same way SubstrateSession and BuildPlayerAsync do.
+        // Pre-activating would rebase the sink's sample counter twice —
         // see the contract on IAudioSink.ActivateAsync.
 
         try

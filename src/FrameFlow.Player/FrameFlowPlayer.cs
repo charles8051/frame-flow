@@ -35,9 +35,9 @@ namespace FrameFlow.Player;
 /// </code>
 /// </para>
 /// <para>
-/// <see cref="MediaPlayer.CreateAsync"/> is the positional form of the
-/// second terminal; both run the same wiring. Most of the examples in
-/// this repository still call it directly.
+/// Prefer this builder. <see cref="MediaPlayer.CreateAsync"/> is the older
+/// positional form of the second terminal, runs the same wiring, and
+/// cannot inject a clock.
 /// </para>
 /// </remarks>
 public static class FrameFlowPlayer

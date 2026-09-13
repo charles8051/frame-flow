@@ -38,7 +38,10 @@ you need from playback:
 |---|---|---|
 | App or host playback — seek, pause, repeat, observables | `.BuildPlayerAsync()` | `IMediaPlayer` |
 | Open a file and play it to the end | `.BuildAsync()` | `PlayerSession` |
-| Driving the state machine yourself | `PlaybackController.Create(...)` | `IPlaybackController` |
+
+`PlaybackController.Create(...)` sits below the builder and returns the raw
+`IPlaybackController` state machine. Use it only when that state machine is what
+you are building around.
 
 ### `BuildPlayerAsync` — the full player
 
@@ -59,11 +62,16 @@ if (!played.IsSuccess)
     Console.Error.WriteLine($"{played.Error.Category}: {played.Error.Message}");
 ```
 
-`MediaPlayer.CreateAsync(...)` is the positional form of the same thing — both
-it and the builder run the same wiring. Reach for it directly when you already
-hold all eleven arguments; most of the examples in this repository still do.
-`WithClock` is the one option it cannot express, so a chain that injects a
-clock has to end at `BuildPlayerAsync`.
+Sink methods reject `null`. When a sink is optional, keep the builder in a local
+and add the sink conditionally:
+
+```csharp
+var builder = FrameFlowPlayer.Open(path).WithVideoSink(videoSink);
+if (audioSink is not null)
+    builder = builder.WithAudioSink(audioSink);
+
+await using var player = await builder.BuildPlayerAsync();
+```
 
 ### `BuildAsync` — play to end of stream
 
@@ -88,8 +96,8 @@ so the mismatch is a compile error rather than an ignored setting.
 `services.AddFrameFlow()` registers the engine's *environment* pieces: the
 OpenAL backend, the FFmpeg bootstrap as a hosted service, the Avalonia video
 sink, and options. The playback session itself stays an explicitly created
-runtime object — resolve the registered sinks and hand them to one of the
-surfaces above rather than resolving a player singleton:
+runtime object — resolve the registered sinks and hand them to the builder
+rather than resolving a player singleton:
 
 ```csharp
 builder.Services
@@ -119,10 +127,10 @@ if (!seeked.IsSuccess && seeked.Error.Category == ErrorCategory.InvalidOperation
 `IsSuccess` carries `[MemberNotNullWhen(false, nameof(Error))]`, so a failure
 branch reads `Error` without a null check.
 
-Exceptions still mean what exceptions mean. `MediaPlayer.CreateAsync` throws if
-it cannot build a player, argument validation throws, and anything a sink or the
-decode stack raises comes through. Failures that arise mid-playback rather than
-in answer to a command surface on `IMediaPlayer.ErrorOccurred`.
+Exceptions still mean what exceptions mean. `BuildPlayerAsync` and `BuildAsync`
+throw if they cannot build a player, argument validation throws, and anything a
+sink or the decode stack raises comes through. Failures that arise mid-playback
+rather than in answer to a command surface on `IMediaPlayer.ErrorOccurred`.
 
 See [ADR-0069](docs/adr/ADR-0069-one-error-model-across-the-playback-stack.md).
 

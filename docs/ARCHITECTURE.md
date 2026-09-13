@@ -289,8 +289,9 @@ await using var player = await FrameFlowPlayer.Open(path)
 
 This is a good fit because it configures object graphs and lifetimes before
 processing begins. As built, this is `FrameFlowPlayer.Open(...)` in
-`FrameFlow.Player`, returning an `IPlayerBuilder`; the richer surface with
-seek, pause, and repeat is `MediaPlayer.CreateAsync(...)`.
+`FrameFlow.Player`, returning an `IPlayerBuilder`. `BuildAsync` returns a
+play-to-end `PlayerSession`; `BuildPlayerAsync` on the same chain returns the
+`IMediaPlayer` with seek, pause, and repeat.
 
 ### Processing pipeline surface
 
