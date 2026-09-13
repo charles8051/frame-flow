@@ -162,6 +162,12 @@ internal sealed class PlaylistCoordinator
     internal bool ConsumeSkipRequest() => Interlocked.Exchange(ref _skipRequested, 0) == 1;
 
     /// <summary>
+    /// Latches a skip for the next <c>PlayAsync</c>, as <see cref="RequestSkip"/> does before
+    /// a session is attached. Called by a session that has not played yet.
+    /// </summary>
+    internal void LatchSkip() => Interlocked.Exchange(ref _skipRequested, 1);
+
+    /// <summary>
     /// Wires the active session's skip entry point so <see cref="RequestSkip"/>
     /// can poke it directly. Set by the session in its <c>InitializeAsync</c>.
     /// </summary>

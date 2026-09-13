@@ -113,6 +113,7 @@ internal enum PlaybackTrigger
 | 22 | * (non-terminal) | Error | `FatalError(err)` | Parameterized with PlaybackError |
 | 23 | Error | Idle | `Reset` | |
 | 24 | * | Destroyed | `Release` | Terminal, no transitions out |
+| 25 | Paused | Ended | `LastFrameRendered` | **Guard:** `_repeat.State != RepeatMode.One`. A playlist skip on its last item while paused, or an end-of-stream posted just before a pause (#182). Freezes the clock. |
 
 ### 1.4 Entry / Exit Actions
 

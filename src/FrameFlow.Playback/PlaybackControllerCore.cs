@@ -1338,8 +1338,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                         }
                         else
                         {
-                            // Stale trigger — e.g. LastFrameRendered arrived after
-                            // the user paused or stopped. Drop it silently.
+                            // Not permitted from this state — e.g. LastFrameRendered after
+                            // the user unloaded, or while paused under RepeatMode.One. Drop it.
+                            // (An end-of-stream that reaches Paused otherwise ends playback.
+                            // Nothing yet tells one raised before a later seek from a current
+                            // one; see the playlist ADR draft's decision 8.)
                             LogStaleInternalTrigger(itc.Trigger.ToString(), _state.ToString());
                         }
                         break;

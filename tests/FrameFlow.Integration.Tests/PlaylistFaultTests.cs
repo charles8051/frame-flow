@@ -42,7 +42,7 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
     public async Task FaultOnTheLastItem_IsReported_AndThePlaylistEnds()
     {
         var faults = new FaultInjector(breaks: _ => true);
-        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, faults);
+        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, faults.Configure);
 
         await run.PlayAsync();
         await run.Settled(PlaybackState.Ended).WaitAsync(Bound);
@@ -59,7 +59,7 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         var faults = new FaultInjector(breaks: chain => chain == 0);
         var first = ClipSource();
         var second = ClipSource();
-        await using var run = PlaylistRun.Create([first, second], RepeatMode.Off, faults);
+        await using var run = PlaylistRun.Create([first, second], RepeatMode.Off, faults.Configure);
 
         await run.PlayAsync();
         await run.Settled(PlaybackState.Ended).WaitAsync(Bound);
@@ -78,7 +78,7 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
     )
     {
         var faults = new FaultInjector(breaks: _ => true);
-        await using var run = PlaylistRun.Create([ClipSource()], repeat, faults);
+        await using var run = PlaylistRun.Create([ClipSource()], repeat, faults.Configure);
 
         await run.PlayAsync();
         // Wait for the give-up error, not the state: the controller projects Error before it
@@ -102,7 +102,11 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         var skipped = ClipSource();
         // Items alternate, and each is built once per pass, so even chains are the failing item.
         var faults = new FaultInjector(breaks: chain => chain % 2 == 0);
-        await using var run = PlaylistRun.Create([failing, skipped], RepeatMode.All, faults);
+        await using var run = PlaylistRun.Create(
+            [failing, skipped],
+            RepeatMode.All,
+            faults.Configure
+        );
 
         var target = FailuresBeforeGivingUp + 3;
         var enough = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -138,137 +142,6 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         var path = IntegrationTestEnvironment.GetCorpusFile(Clip);
         Assert.NotNull(path);
         return MediaSource.FromFile(path!);
-    }
-
-    /// <summary>
-    /// A playlist controller over a video sink that discards frames, with no audio sink,
-    /// recording its errors, transitions and public states.
-    /// </summary>
-    private sealed class PlaylistRun : IAsyncDisposable
-    {
-        private readonly Lock _gate = new();
-        private readonly List<PlaybackError> _errors = [];
-        private readonly List<PlaylistTransition> _transitions = [];
-        private readonly List<(PlaybackState State, TaskCompletionSource Signal)> _waiters = [];
-        private readonly TaskCompletionSource _gaveUp = new(
-            TaskCreationOptions.RunContinuationsAsynchronously
-        );
-        private readonly IDisposable[] _subscriptions;
-
-        private PlaylistRun(IPlaybackController controller, PlaylistCoordinator coordinator)
-        {
-            Controller = controller;
-            Coordinator = coordinator;
-            _subscriptions =
-            [
-                controller.ErrorOccurred.Subscribe(
-                    new ActionObserver<PlaybackError>(e =>
-                    {
-                        lock (_gate)
-                            _errors.Add(e);
-                        if (e.Message.Contains("gave up", StringComparison.Ordinal))
-                            _gaveUp.TrySetResult();
-                    })
-                ),
-                coordinator.SourceTransitioned.Subscribe(
-                    new ActionObserver<PlaylistTransition>(t =>
-                    {
-                        lock (_gate)
-                            _transitions.Add(t);
-                    })
-                ),
-                controller.PlaybackStateChanged.Subscribe(
-                    new ActionObserver<StateTransition<PlaybackState>>(t =>
-                    {
-                        lock (_gate)
-                        {
-                            foreach (var (state, signal) in _waiters)
-                            {
-                                if (state == t.Current)
-                                    signal.TrySetResult();
-                            }
-                        }
-                    })
-                ),
-            ];
-        }
-
-        public IPlaybackController Controller { get; }
-
-        public PlaylistCoordinator Coordinator { get; }
-
-        /// <summary>Completes when the playlist's give-up error is raised.</summary>
-        public Task GaveUp => _gaveUp.Task;
-
-        public IReadOnlyList<PlaybackError> Errors
-        {
-            get
-            {
-                lock (_gate)
-                    return _errors.ToArray();
-            }
-        }
-
-        public IReadOnlyList<PlaylistTransition> Transitions
-        {
-            get
-            {
-                lock (_gate)
-                    return _transitions.ToArray();
-            }
-        }
-
-        public static PlaylistRun Create(
-            IMediaSource[] items,
-            RepeatMode repeat,
-            FaultInjector faults
-        )
-        {
-            var coordinator = new PlaylistCoordinator(items, repeat);
-            var controller = PlaybackController.CreatePlaylist(
-                coordinator,
-                videoSink: new DiscardingVideoSink(),
-                audioSink: null,
-                hardwareDecodeMode: HardwareDecodeMode.Disabled,
-                initialRepeatMode: repeat,
-                configureVideo: faults.Configure
-            );
-            return new PlaylistRun(controller, coordinator);
-        }
-
-        /// <summary>Loads the first item and plays it.</summary>
-        public async Task PlayAsync()
-        {
-            // The session takes its first item from the coordinator's queue, not from the
-            // source the controller is handed, so any source satisfies the controller.
-            var load = await Controller.LoadAsync(ClipSource());
-            Assert.True(load.IsSuccess, $"Load failed: {load.Error?.Message}");
-            var play = await Controller.PlayAsync();
-            Assert.True(play.IsSuccess, $"Play failed: {play.Error?.Message}");
-        }
-
-        /// <summary>
-        /// Completes when the player enters <paramref name="state"/>, or at once if it is
-        /// already there.
-        /// </summary>
-        public Task Settled(PlaybackState state)
-        {
-            var signal = new TaskCompletionSource(
-                TaskCreationOptions.RunContinuationsAsynchronously
-            );
-            lock (_gate)
-                _waiters.Add((state, signal));
-            if (Controller.State == state)
-                signal.TrySetResult();
-            return signal.Task;
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            foreach (var subscription in _subscriptions)
-                subscription.Dispose();
-            await Controller.DisposeAsync();
-        }
     }
 
     /// <summary>
@@ -322,21 +195,5 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
             }
             return false;
         }
-    }
-
-    private sealed class DiscardingVideoSink : IVideoSink
-    {
-        public IFramePool FramePool => null!;
-
-        public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
-        {
-            frame.Dispose();
-            return ValueTask.CompletedTask;
-        }
-
-        public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) =>
-            ValueTask.CompletedTask;
-
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
