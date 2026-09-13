@@ -165,6 +165,22 @@ player.ErrorOccurred.Subscribe(error =>
 
 The state is `Error` by the time the give-up error is raised.
 
+### 5. A fault in lateness recovery no longer stops playback
+
+**Not a compile error.** Nothing you write changes; what runs does.
+
+With `PlaybackController.Create(latenessRecovery: ...)` enabled, a fault inside
+the recovery walk put the controller in `Error` and tore down the session. The
+walk is an optimisation, so playback now carries on without it.
+
+| Case | Before | After |
+|---|---|---|
+| The recovery walk faults | `ErrorOccurred`, `Error` | `ErrorOccurred`, state unchanged, playback continues at the rung the walk had reached |
+
+A controller subscriber that treats every error as terminal should check `State`,
+as in entry 4. Players built by `MediaPlayer` and `MediaPlaylistPlayer` do not
+enable lateness recovery and are not affected.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

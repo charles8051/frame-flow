@@ -355,7 +355,13 @@ internal sealed class SubstrateSession : IPlaybackSession
             // The walk is an optimisation. A fault in it must not take playback with
             // it, so it is reported and the pipeline carries on at whatever rung it
             // had reached.
-            _callbacks.OnWorkerFaulted(ex);
+            _callbacks.OnRecoverableError(
+                new PlaybackError(
+                    ErrorCategory.System,
+                    $"Lateness recovery stopped after a fault: {ex.Message}",
+                    ex
+                )
+            );
         }
 
         void ApplyStep(int index)

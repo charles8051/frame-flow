@@ -108,7 +108,8 @@ public interface IPlaybackController : IAsyncDisposable
     /// <see cref="PlaybackState.Error"/>. A playlist controller also raises an error for
     /// each item that fails to start or faults while it plays, and then moves on without
     /// changing state. Failed items put it in <see cref="PlaybackState.Error"/> only when
-    /// they keep failing in a row.
+    /// they keep failing in a row. A controller created with lateness recovery enabled
+    /// raises an error if the recovery walk faults, and plays on without changing state.
     /// </remarks>
     IObservable<PlaybackError> ErrorOccurred { get; }
 
