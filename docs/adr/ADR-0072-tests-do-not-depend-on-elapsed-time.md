@@ -165,8 +165,21 @@ an error. `tests/BannedSymbols.txt` bans:
 - the `Task.Delay` overloads that do **not** take a `TimeProvider`
 - `DateTime.Now`, `DateTime.UtcNow`, `DateTimeOffset.Now`, `DateTimeOffset.UtcNow`
 - `new Stopwatch()`, `Stopwatch.StartNew`, `Stopwatch.GetTimestamp`, `Stopwatch.GetElapsedTime`
+- `Environment.TickCount`, `Environment.TickCount64`
+- the `System.Threading.Timer` and `System.Timers.Timer` constructors
+- the `PeriodicTimer` constructor that does **not** take a `TimeProvider`
 
 Each entry's message names the replacement and cites this record, so the error explains itself.
+
+The last three rows were added on 2026-09-13. None had a use in a covered project. They are the
+same clock under other names, and banning only the first four left them as the obvious way around
+the error. A timer is not banned outright: `TimeProvider.CreateTimer` and
+`new PeriodicTimer(TimeSpan, TimeProvider)` stay allowed, because with a `FakeTimeProvider` they are
+how a test drives time.
+
+`TimeProvider.System` stays allowed too, although passing it reads the real clock. Tests assert on
+it by identity, to pin which provider a component selected, and the analyzer bans a symbol wherever
+it appears.
 
 #### What the ratchet deliberately leaves alone: timeouts that bound a failure
 
