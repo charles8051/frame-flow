@@ -70,7 +70,6 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
     public IObservable<TimeSpan> PositionTick => _controller.PositionTick;
     public IObservable<LoopStalled> LoopStalled => _controller.LoopStalled;
     public IObservable<PlaybackError> ErrorOccurred => _controller.ErrorOccurred;
-    public IObservable<PlaybackDiagnosticsSnapshot> Diagnostics => EmptyDiagnostics.Instance;
 
     public PlaybackDiagnosticsSnapshot GetDiagnostics() => _controller.GetDiagnostics();
 
@@ -192,20 +191,5 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
         }
 
         _coordinator.Dispose();
-    }
-
-    private sealed class EmptyDiagnostics : IObservable<PlaybackDiagnosticsSnapshot>
-    {
-        public static readonly EmptyDiagnostics Instance = new();
-
-        public IDisposable Subscribe(IObserver<PlaybackDiagnosticsSnapshot> observer) =>
-            NoopSubscription.Instance;
-
-        private sealed class NoopSubscription : IDisposable
-        {
-            public static readonly NoopSubscription Instance = new();
-
-            public void Dispose() { }
-        }
     }
 }

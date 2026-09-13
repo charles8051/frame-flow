@@ -49,6 +49,41 @@ carries media time — a position on the presentation timeline that seeks, pause
 and is mastered by the audio device — which is a different axis from wall time
 and one `TimeProvider` cannot express.
 
+### 2. `IMediaPlayer.Diagnostics` is gone
+
+The `IObservable<PlaybackDiagnosticsSnapshot>` on `IMediaPlayer` never emitted.
+Both player implementations returned a subscription that did nothing, so any
+code subscribed to it was already receiving nothing.
+
+**This is a binary break as well as a source break.** Code that references
+`Diagnostics` stops compiling, which announces itself. An assembly that was
+compiled against an earlier `IMediaPlayer` and is not rebuilt does not: it still
+calls `IMediaPlayer.Diagnostics.get`, and the method that makes that call throws
+`MissingMethodException` when it runs. Rebuild anything that references the
+member against this version. Once rebuilt, nothing changes at runtime.
+
+ADR-0034 decided against a pushed snapshot stream: one rate chosen by the
+library cannot suit every consumer, and a timed stream is polling moved inside
+the player. The stub contradicted that decision.
+
+```csharp
+// Before — compiled, and never fired
+_player.Diagnostics.Subscribe(render);
+
+// After — poll on a timer you own, at the rate you need
+var timer = new DispatcherTimer(
+    TimeSpan.FromMilliseconds(500),
+    DispatcherPriority.Background,
+    (_, _) => render(_player.GetDiagnostics()));
+timer.Start();
+```
+
+State changes, errors and loop stalls are discrete events that a poll can miss,
+and they keep their observables: `StateChanged`, `ErrorOccurred`, `LoopStalled`.
+
+If you **implement** `IMediaPlayer`, delete your `Diagnostics` property. Leaving
+it compiles, but nothing reads it.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

@@ -118,15 +118,21 @@ public interface IMediaPlayer : IAsyncDisposable
     /// </remarks>
     IObservable<PlaybackError> ErrorOccurred { get; }
 
-    /// <summary>Stream of diagnostics snapshots.</summary>
-    IObservable<PlaybackDiagnosticsSnapshot> Diagnostics { get; }
-
     /// <summary>Returns a snapshot of diagnostics on demand.</summary>
     /// <remarks>
+    /// <para>
     /// Named for the ADR-0034 convention that every diagnostics-bearing surface
     /// in FrameFlow follows — sinks, decoders, the demux session and the
     /// controller all spell it <c>GetDiagnostics()</c>. Cheap enough for a UI
     /// timer at ~2 Hz; not a hot-path call.
+    /// </para>
+    /// <para>
+    /// There is no pushed stream of snapshots. Poll this on a timer you own, at
+    /// the rate your consumer needs; ADR-0034 leaves the cadence to the caller.
+    /// Discrete events that must not be missed between polls have their own
+    /// observables: <see cref="StateChanged"/>, <see cref="ErrorOccurred"/> and
+    /// <see cref="LoopStalled"/>.
+    /// </para>
     /// </remarks>
     PlaybackDiagnosticsSnapshot GetDiagnostics();
 

@@ -58,7 +58,6 @@ internal sealed class MediaPlayerCore : IMediaPlayer
     public IObservable<TimeSpan> PositionTick => _controller.PositionTick;
     public IObservable<LoopStalled> LoopStalled => _controller.LoopStalled;
     public IObservable<PlaybackError> ErrorOccurred => _controller.ErrorOccurred;
-    public IObservable<PlaybackDiagnosticsSnapshot> Diagnostics => DiagnosticsObservable.Instance;
 
     public PlaybackDiagnosticsSnapshot GetDiagnostics() => _controller.GetDiagnostics();
 
@@ -166,29 +165,6 @@ internal sealed class MediaPlayerCore : IMediaPlayer
                 _logger.LogWarning(ex, "MediaPlayer service provider dispose threw.");
             }
         }
-    }
-
-    /// <summary>
-    /// Empty diagnostics observable — Phase-1 implementation. The
-    /// underlying <see cref="IPlaybackController"/> doesn't push
-    /// diagnostics as an event stream today; consumers use
-    /// <see cref="IMediaPlayer.GetDiagnostics"/> with a timer
-    /// instead. A future revision can add a cadenced diagnostics
-    /// pump driven by the controller's position ticker.
-    /// </summary>
-    private sealed class DiagnosticsObservable : IObservable<PlaybackDiagnosticsSnapshot>
-    {
-        public static readonly DiagnosticsObservable Instance = new();
-
-        public IDisposable Subscribe(IObserver<PlaybackDiagnosticsSnapshot> observer) =>
-            EmptySubscription.Instance;
-    }
-
-    private sealed class EmptySubscription : IDisposable
-    {
-        public static readonly EmptySubscription Instance = new();
-
-        public void Dispose() { }
     }
 }
 
