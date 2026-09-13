@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using FFmpeg.AutoGen.Abstractions;
 using FrameFlow.Decoding.Internal;
 using FrameFlow.Media;
+using FrameFlow.Native;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -83,7 +84,11 @@ public sealed partial class VideoDecoder
     /// software-only overload.
     /// </param>
     /// <param name="capabilities">
-    /// Backends the host was probed to support. <see langword="null"/> re-probes.
+    /// Backends the host was probed to support. <see langword="null"/> uses this process's
+    /// hardware decode probe, running it first if nothing has yet, whenever
+    /// <paramref name="options"/> asks for hardware. The first probe can take a second or
+    /// so on a multi-GPU host; later ones are free. Pass
+    /// <see cref="HardwareDecodeCapabilities.Empty"/> to force software decode.
     /// </param>
     /// <param name="loggerFactory">Optional logger factory; silent when null.</param>
     /// <exception cref="HardwareDecodeUnavailableException">
@@ -124,7 +129,15 @@ public sealed partial class VideoDecoder
     {
         logger ??= NullLogger.Instance;
         options ??= new HardwareDecodeOptions { Mode = HardwareDecodeMode.Disabled };
-        capabilities ??= HardwareDecodeCapabilities.Empty;
+        // Null means "probe" (#181), as this overload and the controller factories document.
+        // It used to become Empty, which is the set that forces software, so a caller asking
+        // for Auto without capabilities never got hardware. The probe runs once per process
+        // (HardwareDecodeProbe.GetOrRun), so honouring null costs nothing after the first
+        // call, and a Disabled decoder never asks for it.
+        capabilities ??=
+            options.Mode == HardwareDecodeMode.Disabled
+                ? HardwareDecodeCapabilities.Empty
+                : HardwareDecodeProbe.GetOrRun(logger, probeUncatalogued: false, out _);
         // Common stream / codec parameter inspection.
         var fmtCtx = new AvFormatContextAccessor(formatContextPtr);
         nint streamPtr = fmtCtx.GetStream(streamIndex);

@@ -78,8 +78,11 @@ public static class PlaybackController
     /// <param name="hardwareDecodeCapabilities">
     /// Backends the host was probed to support. Pass the value from
     /// <see cref="FrameFlow.Media.FrameFlowBootstrapResult.Capabilities"/>.
-    /// <see langword="null"/> re-probes, which costs a second or so on a
-    /// multi-GPU host.
+    /// <see langword="null"/> uses this process's hardware decode probe, running
+    /// it first if nothing has yet. The first probe can take a second or so on a
+    /// multi-GPU host; later ones are free. Pass
+    /// <see cref="FrameFlow.Media.HardwareDecodeCapabilities.Empty"/> to force
+    /// software decode.
     /// </param>
     /// <param name="yieldHardwareFrames">
     /// When <see langword="true"/>, hardware-decoded frames reach the video
@@ -186,7 +189,8 @@ public static class PlaybackController
     /// </param>
     /// <param name="hardwareDecodeCapabilities">
     /// Backends the host was probed to support, probed once and reused for
-    /// every item. <see langword="null"/> re-probes per item.
+    /// every item. <see langword="null"/> uses this process's hardware decode
+    /// probe, as for <see cref="Create"/>.
     /// </param>
     /// <param name="yieldHardwareFrames">
     /// When <see langword="true"/>, hardware-decoded frames reach the video

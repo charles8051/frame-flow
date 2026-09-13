@@ -84,6 +84,44 @@ and they keep their observables: `StateChanged`, `ErrorOccurred`, `LoopStalled`.
 If you **implement** `IMediaPlayer`, delete your `Diagnostics` property. Leaving
 it compiles, but nothing reads it.
 
+### 3. `null` hardware decode capabilities now probe, as documented
+
+**Not a compile error.** Nothing you write changes; what runs does.
+
+`PlaybackController.Create`, `PlaybackController.CreatePlaylist` and
+`VideoDecoder.Open` documented a `null` `hardwareDecodeCapabilities` as
+"re-probes". It did not: the decoder replaced `null` with
+`HardwareDecodeCapabilities.Empty`, which is the set that forces software decode.
+A caller passing `HardwareDecodeMode.Auto` or `Required` with no capabilities
+decoded in software, or failed under `Required`, on hardware that could decode
+(#181).
+
+`null` now resolves to this process's hardware decode probe, the same result a
+bootstrap reports, whenever the mode asks for hardware. `Disabled` never probes.
+
+| Call | Before | After |
+|---|---|---|
+| `Create(hardwareDecodeMode: Auto)`, capabilities omitted | software decode | hardware where a backend binds |
+| `Create(hardwareDecodeMode: Required)`, capabilities omitted | `HardwareDecodeUnavailableException` | hardware where a backend binds |
+| any mode, `HardwareDecodeCapabilities.Empty` | software decode, or the exception under `Required` | unchanged |
+
+`MediaPlayer.CreateAsync` and `MediaPlaylistPlayer.CreateAsync` already passed
+their bootstrap's probed capabilities and are not affected.
+
+If you relied on the old behaviour to keep decoding in software, say so
+explicitly:
+
+```csharp
+// Before — null happened to mean software
+var controller = PlaybackController.Create(videoSink: sink, hardwareDecodeMode: HardwareDecodeMode.Auto);
+
+// After — ask for software directly
+var controller = PlaybackController.Create(videoSink: sink, hardwareDecodeMode: HardwareDecodeMode.Disabled);
+```
+
+`DecoderFactories.CreateVideo` now accepts `null` capabilities with the same
+meaning. That widens the parameter and breaks no existing call.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

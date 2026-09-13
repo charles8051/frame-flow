@@ -52,13 +52,12 @@ internal sealed class BenchSession(
         // and the controller pushes to the sink during its own teardown.
         await using var audioSink = options.NoAudio ? null : new OpenAlAudioSink();
 
-        // The probed capabilities have to be handed over. PlaybackController.Create
-        // defaults them to null, and a null capability set resolves every stream to
-        // software decode — so a bench that skipped this would report
-        // backend=software on a machine that plays back on D3D11VA, and measure the
-        // wrong pipeline while looking like it worked. MediaPlayer.CreateAsync does
-        // the same at MediaPlayer.cs:116; the bench composes the controller itself
-        // and so has to repeat it.
+        // Hand over the capabilities this bench's own bootstrap probed. A null set
+        // would now resolve to the same process-wide probe (#181), but passing them
+        // keeps the bench measuring exactly the capabilities it reported at startup.
+        // Before #181 null resolved every stream to software decode, and a bench
+        // that skipped this reported backend=software on a machine that plays back
+        // on D3D11VA.
         await using var controller = PlaybackController.Create(
             videoSink: videoSink,
             audioSink: audioSink,

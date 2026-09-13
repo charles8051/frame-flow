@@ -48,6 +48,8 @@ public static class DecoderFactories
     /// <param name="capabilities">
     /// The capability set computed at bootstrap. Pass
     /// <see cref="HardwareDecodeCapabilities.Empty"/> to force software fallback.
+    /// <see langword="null"/> uses this process's hardware decode probe when
+    /// <paramref name="options"/> asks for hardware.
     /// </param>
     /// <param name="loggerFactory">
     /// Optional logger factory. When provided, the decoder logs hwaccel
@@ -61,7 +63,7 @@ public static class DecoderFactories
     /// </param>
     public static Func<IDemuxSession, IVideoDecoder?> CreateVideo(
         HardwareDecodeOptions options,
-        HardwareDecodeCapabilities capabilities,
+        HardwareDecodeCapabilities? capabilities,
         ILoggerFactory? loggerFactory,
         VideoDecoderOptions? videoOptions = null
     ) =>

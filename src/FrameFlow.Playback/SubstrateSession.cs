@@ -171,7 +171,8 @@ internal sealed class SubstrateSession : IPlaybackSession
     // ── EOF coordination ────────────────────────────────────────────
     private int _eofFired;
     private bool _disposed;
-    private readonly FrameFlow.Media.HardwareDecodeCapabilities _hwCapabilities;
+    // Null reaches the decoder, which resolves it to the process probe (#181).
+    private readonly FrameFlow.Media.HardwareDecodeCapabilities? _hwCapabilities;
     private readonly bool _yieldHardwareFrames;
 
     public SubstrateSession(
@@ -193,7 +194,7 @@ internal sealed class SubstrateSession : IPlaybackSession
         _audioSink = audioSink;
         _clock = clock;
         _hwMode = hwMode;
-        _hwCapabilities = hardwareDecodeCapabilities ?? FrameFlow.Media.HardwareDecodeCapabilities.Empty;
+        _hwCapabilities = hardwareDecodeCapabilities;
         _yieldHardwareFrames = yieldHardwareFrames;
         _callbacks = callbacks;
         _videoConfigurator = videoConfigurator;
