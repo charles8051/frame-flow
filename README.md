@@ -8,8 +8,8 @@ behind interfaces, and presenters attach at the edges. Avalonia and SDL
 presenters ship in the box, and you can write your own.
 
 > **Pre-1.0.** Public surface and internal contracts change freely between
-> releases. There are no external consumers yet, so the bias is toward getting
-> the shape right rather than staying compatible. Each change is listed with
+> releases. The bias is toward getting the shape right rather than staying
+> compatible. Each change is listed with
 > its fix in [docs/BREAKING-CHANGES.md](docs/BREAKING-CHANGES.md).
 
 ## Install
