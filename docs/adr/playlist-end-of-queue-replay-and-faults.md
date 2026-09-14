@@ -603,6 +603,11 @@ break a caller, while a replay that later becomes a refusal breaks anyone who re
 This is not decided, and no work on it is planned. It is recorded because it answers defect 6 and
 part of the review's objection above.
 
+The draft [The playlist player's queue](playlist-queue-model.md) now proposes a decision for defect 6
+and the mid-queue switch below. It keeps this section's split between kept and one-shot items, but
+maps `EnqueueAsync` to a one-shot item rather than to the kept playlist, and gives kept items a
+verb of their own.
+
 The coordinator keeps two structures that can disagree: the upcoming queue and the loop buffer
 (`PlaylistCoordinator.cs:39-40`). Defect 6, and a switch to `All` mid-queue that never wraps, are
 both cases of them disagreeing. The session asks the coordinator only for the first item and for
@@ -675,7 +680,8 @@ What it costs:
   success. The queue still ends with nothing to seek.
 - **Switching to `All` mid-queue never wraps.** A coordinator created under `Off` and switched to
   `All` after its first item played ran `a b` and ended. Items dequeued under `Off` never enter the
-  loop buffer (`PlaylistCoordinator.cs:186-187`, `:249-250`).
+  loop buffer (`PlaylistCoordinator.cs:186-187`, `:249-250`). The playlist queue draft proposes a
+  decision for this (its probe 2).
 
 ### Open questions
 

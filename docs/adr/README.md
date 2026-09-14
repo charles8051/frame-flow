@@ -238,6 +238,19 @@ land.
   Two reviews shaped it, and its revision history says what each changed. An amendment records,
   without deciding it, a direction for the `SetNext` defect: a playlist with a cursor for the loop
   and a separate up-next queue for items that play once.
+- [The playlist player's queue: a playlist with a cursor, and items that play once](playlist-queue-model.md) —
+  the playlist coordinator keeps an upcoming queue and a loop buffer that disagree: `SetNext` under
+  `All` grows the rotation, a switch to `All` mid-queue loops only what played after it, a skip under
+  `One` restarts the item, and enqueueing on every hand-off under `All` grows without bound. Proposes
+  kept playlist items with a cursor, plus next and queued items that play once, in one defined
+  order. `EnqueueAsync` and `SetNextAsync` keep their orders but stop joining the loop and return
+  the item they add; `AddAsync`, `JumpToAsync`, `RemoveAsync`, `ClearAsync`, an atomic `ReplaceAsync`
+  and a `GetPlaylist` snapshot are new; items have their own identity; a skip under `One` moves on;
+  and Play from `Ended` starts the playlist again. Rejects keeping every enqueued item, on a measured
+  296 bytes per item under the documented rotation pattern, and ADR-0062's replaceable `SetNext`
+  slot. Revised after an independent review found that the first draft's cursor retried a failed
+  item, a jump racing an advance was lost, and removal left the cursor undefined. Nothing is
+  implemented.
 - [Sync-window join for media-time correlation](sync-window-join.md) — the substrate
   fans out and cannot rejoin, so four consumers hand-roll the same correlation outside
   the graph. Adds a two-input node that pairs a slow secondary onto a fast primary by
