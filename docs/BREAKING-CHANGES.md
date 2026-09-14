@@ -293,9 +293,12 @@ still compiles. An assembly compiled against the old signatures and not rebuilt
 throws `MissingMethodException`, as entry 2 describes. Rebuild it.
 
 **Implementers.** `IMediaPlaylistPlayer` gains `AddAsync`, `GetPlaylist`,
-`JumpToAsync`, `RemoveAsync`, `ClearAsync` and `ReplaceAsync`. A type outside
-FrameFlow that implements it, such as a test double, stops compiling until it
-adds them.
+`JumpToAsync`, `RemoveAsync`, `ClearAsync` and `ReplaceAsync`, with no default
+implementations. A type outside FrameFlow that implements it, such as a test
+double or a decorator, stops compiling until it adds them. This is a binary break
+as well: an implementing assembly compiled against the old interface and not
+rebuilt fails to load with `TypeLoadException`, naming the first member it lacks,
+when the application uses the type. Rebuild it against this version.
 
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 

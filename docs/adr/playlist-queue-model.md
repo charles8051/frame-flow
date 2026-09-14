@@ -195,8 +195,8 @@ If the jump was recorded before that check, the check takes it. If it was record
 jump's own request runs as soon as the advance releases the gate. Either way the target becomes
 current straight after the item the advance started, and that item does not play through.
 
-- **A jump to the current item,** including one still opening, does nothing and succeeds. A caller
-  that wants to restart it seeks to zero.
+- **A jump to the current item,** including one still opening, does nothing and succeeds, unless the
+  item has been removed. A caller that wants to restart it seeks to zero.
 - **A jump to an item that is not in the player,** or to any item while the player is in `Error` or
   disposed, is refused with `ErrorCategory.InvalidOperation`.
 - **`ClearAsync` and `ReplaceAsync` discard a pending jump,** and removing the target removes it.
@@ -213,7 +213,8 @@ current straight after the item the advance started, and that item does not play
   `ClearAsync` does, adds the sources as the playlist, and makes the first new item the pending
   jump. It returns the new items. The jump then follows decision 5, so a playing player moves to the
   new playlist at once. An empty list is an `ArgumentException`. The player in `Error` or disposed
-  refuses it.
+  refuses it. If a replay from `Ended` has taken its item but not started its session, the replace
+  discards that item, so the replay starts on the first new item.
 
 `ReplaceAsync` exists because the separate calls race the current item. With `ClearAsync`, then
 `AddAsync`, then a skip under `All`, the current item can end between the clear and the add, and the
@@ -361,7 +362,13 @@ calls:
   replayed with that reason, so decision 3's rules apply to it. A pending jump supersedes a latched
   skip, and both are consumed.
 - **`JumpToAsync` on the current item** is reported to the player as already current and returns
-  success, without recording a pending jump.
+  success, without recording a pending jump. A current item that has been removed is refused as not
+  in the player, as decision 1's definition says; review of #199 found the first implementation
+  accepted it.
+- **A replace discards a replay's reserved item; a clear keeps it.** Decision 7 keeps a taken item
+  through a clear, because the replay would otherwise have nothing to open and would put the player in
+  `Error`. A replace supplies the item to open, so keeping the reservation would only open an item
+  the replace removed before the first play jumped away from it. Review of #199 found that.
 - **The advance's check for a jump after its item starts** shortens the path to the target: the
   target is taken before the gate is released. The jump's own request would take it a moment later
   if the check were absent, so tests cannot observe the check alone (see *Validation*).
@@ -621,3 +628,5 @@ the clip's 72 frames.
   before the failure count gives up, the replay's take is `IPlaybackSession.TryBeginReplay`, and the
   advance's check for a jump is not observable apart from the jump's own request. *Not settled here*
   gains the builder's entry point and a Stop command, both raised while implementing.
+- **Amendment (2026-09-14), review of #199.** A jump to a current item that has been removed is now
+  refused, and a replace discards a replay's reserved item. Decisions 5, 6 and 12 say so.

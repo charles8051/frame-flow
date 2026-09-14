@@ -104,7 +104,8 @@ public interface IMediaPlaylistPlayer : IMediaPlayer
     /// </para>
     /// <para>
     /// A jump to the current item does nothing and succeeds; seek to zero to restart it. A jump
-    /// to an item that is not in the player, or while the player is in
+    /// to an item that is not in the player, including a current item that has been removed, or
+    /// while the player is in
     /// <see cref="PlaybackState.Error"/> or disposed, returns a failed <see cref="Result"/> with
     /// <see cref="ErrorCategory.InvalidOperation"/>. The call returns once the jump is recorded;
     /// <see cref="SourceTransitioned"/> fires when the item starts.

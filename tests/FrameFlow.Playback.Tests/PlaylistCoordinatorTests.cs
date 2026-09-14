@@ -607,6 +607,22 @@ public sealed class PlaylistCoordinatorTests
     }
 
     [Fact]
+    public void Row16_AReplaceAfterTheReplaysTake_StartsTheReplayOnTheNewPlaylist()
+    {
+        // A replace names what should play, so the replay starts on its first item rather than
+        // opening the item it had reserved and then jumping away from it.
+        var coord = new PlaylistCoordinator([S("a")], RepeatMode.Off);
+        Assert.Equal("a |", Walk(coord, 1));
+
+        Assert.True(coord.ReserveStart());
+        var items = coord.Replace([S("d"), S("e")]);
+
+        Assert.Same(items[0], coord.TakeStart());
+        Assert.False(coord.HasPendingJump);
+        Assert.Equal("e |", Advance(coord, 2));
+    }
+
+    [Fact]
     public void Row17_TheFailureCount_IsTheCoordinatorsAcrossSessions()
     {
         var coord = new PlaylistCoordinator([S("a")], RepeatMode.All);
@@ -634,6 +650,9 @@ public sealed class PlaylistCoordinatorTests
         // It can be named while it opens: a jump to it does nothing, and it can be removed.
         Assert.Equal(JumpRequest.AlreadyCurrent, coord.RequestJump(a));
         Assert.True(coord.Remove(a));
+
+        // Once removed, it is no longer in the player, so a jump to it is refused.
+        Assert.Equal(JumpRequest.NotInPlayer, coord.RequestJump(a));
 
         coord.ReportCurrent(a, Info(), wrapped: false);
         var started = coord.Snapshot();

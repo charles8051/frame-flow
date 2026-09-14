@@ -226,7 +226,9 @@ internal sealed class PlaylistCoordinator
         Action? handler;
         lock (_gate)
         {
-            if (ReferenceEquals(item, _current))
+            // A current item that has been removed is no longer in the player, and is refused
+            // like any other item that is not.
+            if (ReferenceEquals(item, _current) && !_currentRemoved)
                 return JumpRequest.AlreadyCurrent;
             if (!InCollectionsLocked(item))
                 return JumpRequest.NotInPlayer;
@@ -313,6 +315,10 @@ internal sealed class PlaylistCoordinator
         lock (_gate)
         {
             ClearLocked();
+            // A replay from Ended that has taken its item but not yet started a session starts on
+            // the new playlist instead. A clear keeps the reservation, because without one the
+            // replay would have nothing to open; a replace gives it the jump target.
+            _reservedStart = null;
             _playlist.AddRange(items);
             _pendingJump = items[0];
             _revision++;
