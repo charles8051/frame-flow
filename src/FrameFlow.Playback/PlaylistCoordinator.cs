@@ -178,15 +178,28 @@ internal sealed class PlaylistCoordinator
             _skipHandler = handler;
     }
 
+    /// <summary>Whether the play queue holds an item <see cref="First"/> can take.</summary>
+    internal bool HasUpcoming
+    {
+        get
+        {
+            lock (_gate)
+                return _upcoming.Count > 0;
+        }
+    }
+
     /// <summary>
-    /// Pops the first item to play. Called once by the session's
-    /// <c>InitializeAsync</c>. Under <see cref="RepeatMode.All"/> the item is
-    /// also recorded in the loop buffer so the first wrap includes it.
+    /// Pops the first item to play, or returns <see langword="null"/> when the queue is empty.
+    /// Called once by the session's <c>InitializeAsync</c>. Under <see cref="RepeatMode.All"/>
+    /// the item is also recorded in the loop buffer so the first wrap includes it.
     /// </summary>
-    internal IMediaSource First()
+    internal IMediaSource? First()
     {
         lock (_gate)
         {
+            if (_upcoming.Count == 0)
+                return null;
+
             var first = _upcoming.First!.Value;
             _upcoming.RemoveFirst();
             if (_repeat == RepeatMode.All)

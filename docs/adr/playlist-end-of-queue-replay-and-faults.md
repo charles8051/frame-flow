@@ -15,8 +15,8 @@ It started as a proposal to run every player on the playlist session. A spike an
 reviews narrowed it to this. That history is kept under *Alternatives considered* and *Revision
 history*, because it is the reason this record is narrow.
 
-**Only decisions 5, 7 and 8 are implemented** (#183, #180, #182). Every defect below was reproduced
-on this codebase except where it says "read from code".
+**Decisions 2, 3, 4, 5, 7 and 8 are implemented** (#170, #183, #180, #182). Decision 6 is not.
+Every defect below was reproduced on this codebase except where it says "read from code".
 
 Related: [ADR-0028](ADR-0028-internal-layering-and-ownership-cleanup.md),
 [ADR-0034](ADR-0034-diagnostics-surfaces.md),
@@ -116,9 +116,10 @@ proposed fix failed review.
 
 ### 1. Single-source playback stays on `SubstrateSession`
 
-The two session types remain. This record changes `PlaylistSession`, three internal points in
-`PlaybackControllerCore` (the replay check in decision 4, the snapshot update in decision 5, and the
-recoverable error in decision 7) and one cell of `PlaybackProtocol` (decision 8). `IMediaPlayer`,
+The two session types remain. This record changes `PlaylistSession`, four internal points in
+`PlaybackControllerCore` (the replay and seek checks at `Ended` in decision 4, the snapshot update in
+decision 5, and the recoverable error in decision 7), one cell of `PlaybackProtocol` (decision 8),
+and one internal counter in `SubstrateSession` (decision 2). `IMediaPlayer`,
 `IMediaPlaylistPlayer`, `IPlaybackController` and both player factories keep their shapes.
 
 ### 2. The end of the queue keeps the last item
@@ -156,6 +157,28 @@ Evidence:
 - The existing playlist tests still passed, but none of them reaches the end of a queue, so they
   are not evidence for this decision.
 
+**As implemented (#170).**
+
+- **What is kept.** An item that reached its end or was skipped is kept when the coordinator decides
+  the queue has ended. An item that faulted is disposed as before. So is the previous item when the
+  final item fails to open, because it was disposed before the final item was tried.
+- **The run number lives in `SubstrateSession`.** `PlaylistSession` cannot number runs itself
+  without a race. Advancing the number before it calls the item's seek lets the interrupted run
+  raise an end-of-stream that reads the new number. Advancing it after the seek returns lets the new
+  run, sought close to its end, raise one that reads the old number, and dropping that would leave
+  the player `Playing` at the end of the item. `SubstrateSession.RunNumber` advances inside the
+  reposition that seeks and rewinds use, after the interrupted run has stopped and before anything
+  relaunches. Stopping a run waits for the task that raises its end-of-stream, so the number read
+  inside the callback is that run's.
+- **The number is checked for every item, and only for end-of-stream.** A skip is not stale: a
+  seek between the request and the advance does not cancel it. A fault is handled as decision 7
+  says.
+- **A seek at `Ended` that did not come through its warm-up is dropped.** The controller dispatches
+  a seek while `Playing` if it has not yet seen the end-of-stream the session posted. That seek
+  used to find no item. With the item kept, it would relaunch the item, and the controller would
+  then end while the item played. The session drops it, as it drops a Play or Pause in the same
+  race (decision 8), and the controller ends. Read from code.
+
 ### 3. A skip at the tail pauses the item and then keeps it
 
 A skip on the last item under `Off` pauses that item before reporting end-of-stream, then keeps it
@@ -166,6 +189,12 @@ transition gate the advance already holds.
 Keeping the item without pausing it lets it run on: frames went from 10 at `Ended` to 35 one second
 later. With the pause, on the scratch build, presentation stopped at 10, seek moved to `Paused`, play
 reached 35 frames, and the item then ended normally.
+
+**As implemented (#170)**, the pause applies to a skip of any item that has played, whether the
+session was playing or paused, because pausing a paused item changes nothing. An item that has
+never played is not paused: its gates have not opened. An item that reached its end is not paused
+either, so the audio already queued on the device plays out. If the pause throws, the item is
+disposed instead, as it was before items were kept.
 
 ### 4. Play from `Ended` on an empty queue is refused
 
@@ -181,6 +210,14 @@ a playlist session with an empty queue answers no. This is an internal member on
 
 Refusing is the smaller change of the two options, and it can be relaxed later without breaking a
 caller. Alternative D records the other.
+
+**As implemented (#170).** `IPlaybackSession.CanReplay` is the member. It defaults to true, and
+`PlaylistSession` answers whether the coordinator's queue holds an item. The same check refuses a
+seek from `Ended` when nothing was kept, through `IPlaybackSession.CanSeekFromEnded`. That covers a
+last item that faulted and a final item that failed to open. Without it, the seek succeeded and a
+following Play reported `Playing` with nothing current, which is defect 2 in the cases decision 2
+does not reach. `PlaylistCoordinator.First` returns null on an empty queue instead of throwing, and
+a `PlaylistSession` loaded over one fails its load with an `InvalidOperationException`.
 
 ### 5. The controller's duration follows the current item
 
@@ -415,8 +452,8 @@ The new controller cell changes single-source playback in one case: an end-of-st
 after a pause. It used to be dropped. `PlaybackDispatchProtocolTests` reproduces that with a fake
 session; the race itself is read from code.
 
-This decision does not implement decision 3. A skip on the last item while playing still disposes
-the item.
+This decision did not implement decision 3, and a skip on the last item while playing still
+disposed the item. #170 implemented decision 3 later.
 
 **What it leaves open.** Both were found in review and read from code.
 
@@ -424,14 +461,17 @@ the item.
   whether it was paused from the position clock, which reads as not paused before the first play.
   So a seek taken then relaunches the graph and opens the gates while the controller says `Paused`.
   A single source does this on Load then Seek. A playlist now reaches it after a skip while paused,
-  where before the skip had already started the item.
+  where before the skip had already started the item. Since #170 it also reaches it on a
+  one-item queue under `Off` that is skipped before its first play: the item is kept unplayed at
+  `Ended`, and a seek from there starts it. Before, the seek found nothing.
 - **An end-of-stream raised before a seek can end the player after it.** Nothing tells a stale
   end-of-stream from a current one after a seek. That was already true while `Playing`. The new
   cell extends it to `Paused`, in a narrow window. The end-of-stream has to be raised by the run
   before the pause, since a paused pacer does not drain, and dispatched after the seek. One posted
   before the seek command is dispatched ahead of it, which ends the player and lets the seek run
-  from `Ended` as usual. Decision 2's run number is the fix for the playlist; the controller has no
-  equivalent.
+  from `Ended` as usual. Decision 2's run number is the fix inside the playlist, implemented with
+  #170: an end-of-stream an item raised before a seek no longer reaches the controller. The
+  controller has no equivalent for a single source (#195).
 
 **Alternatives.**
 
@@ -444,8 +484,8 @@ the item.
 
 ### Positive
 
-- Once implemented, defects 1 and 2 are fixed. A playlist at `Ended` can be sought, reports its
-  counters, and does not fault when Play finds nothing to play.
+- With decisions 2 to 4, defects 1 and 2 are fixed. A playlist at `Ended` can be sought, reports
+  its counters, and does not fault when Play finds nothing to play.
 - With decision 5, defect 5 is fixed. The controller's `Duration`, `MediaInfo`, diagnostics snapshot
   and loop-stall watchdog describe the current item.
 - With decision 7, defects 3 and 4 are fixed. Failed items are observable, and a playlist whose
@@ -621,7 +661,8 @@ What it costs:
 - **The final item fails to open.** On `[clean, corrupt]` under `Off`, the clean item is disposed
   before the corrupt one is tried, the queue then ends in `Ended` with no error, and seek then play
   leaves the sink at 72 frames. Decision 2 does not cover this. Decision 7 now reports the corrupt
-  item on `ErrorOccurred`; the queue still ends with nothing to seek.
+  item on `ErrorOccurred`, and since #170 a seek from `Ended` is refused rather than reporting
+  success. The queue still ends with nothing to seek.
 - **Switching to `All` mid-queue never wraps.** A coordinator created under `Off` and switched to
   `All` after its first item played ran `a b` and ended. Items dequeued under `Off` never enter the
   loop buffer (`PlaylistCoordinator.cs:186-187`, `:249-250`).
@@ -649,9 +690,15 @@ What it costs:
   generation while their counters are not comparable. Read from code.
 - **Late end-of-stream on items that are not kept.** Decision 2 covers a seek or rewind of the kept
   item. The same thread-pool hop exists for every item (`PlaylistSession.cs:297`), so a seek that
-  lands between a middle item's end-of-stream and its advance would skip to the next item. Decision
-  2's run number would cover that too if applied to every item; this record does not require it.
-  Read from code; this is the kind of interleaving #143 is about.
+  lands between a middle item's end-of-stream and its advance would skip to the next item. As
+  implemented with #170, the run number is checked for every item, which covers this too. Read from
+  code; testing it needs the interleaving tooling #143 asks for.
+- **A repeat-mode change that races the end of the queue.** `PlaylistMediaPlayerCore` sets the
+  controller's repeat mode before the coordinator's. If the session decides the queue has ended
+  under `Off` in between, the controller receives the end-of-stream under `One` and runs its own
+  loop rewind, which the session was never built to receive at `Ended`. The player then stays
+  `Playing` after at most one more pass of the kept item. Before #170 it stayed `Playing` with
+  nothing current. Read from code.
 
 ## Deferred: one player type
 
@@ -701,6 +748,39 @@ Two guard tests pass today and must keep passing:
 
 Test 8 cannot fail on today's tree for the reason decision 3 exists. It fails on a build that keeps
 the last item without pausing it, where frames went from 10 to 35.
+
+Tests 1 to 5, 7 and 8 are implemented in `tests/FrameFlow.Integration.Tests/PlaylistEndOfQueueTests.cs`,
+over the 3-second clip. The tests that seek and play wait for the item to end again, so they also
+fail if the run number drops the end-of-stream of the run the seek started. The bracketed results
+are from the tree before decisions 2 to 4 (commit eae3a9e).
+
+| # | Test | Before |
+|---|---|---|
+| 1 | `SeekThenPlayFromEnded_PlaysTheLastItemAgain` | [no further frame within 30 s] |
+| 2 | `DiagnosticsAtEnded_DescribeTheLastItem` | [0 decoded frames] |
+| 3 | `SeekThenPlayFromEnded_OnATwoItemPlaylist_PlaysTheSecondItemAgain` | [no further frame within 30 s] |
+| 4 | `SeekThenPlayAfterSkippingTheLastItem_PlaysIt` | [no further frame within 30 s] |
+| 5 | `PlayFromEndedWithNothingQueued_IsRefused_AndThePlayerStaysEnded` | [`ErrorCategory.System`] |
+| 7 | `PlayFromEndedWithAnItemQueued_PlaysIt` | [passes] |
+| 8 | `SkipOnTheLastItem_StopsPresentation` | [passes; with the pause removed, 10 → 34 frames one second after `Ended`] |
+| 19 | `PlaylistFaultTests.SeekAndPlayFromEnded_AfterTheLastItemFaulted_AreRefused` | [the seek succeeded] |
+
+Test 8 has no signal for frames that stop, so it watches the sink for one second. It cannot fail on
+a correct build; a slow machine only makes it less likely to catch a missing pause. Test 19 covers
+the seek refusal decision 4 gained as implemented.
+
+`PlaybackDispatchProtocolTests` covers the controller half with a fake session: Play from `Ended`
+when the session cannot replay, and Seek from `Ended` when it holds nothing, are each refused
+without unloading or warming up. With the checks removed, both succeeded.
+`PlaylistCoordinatorTests.First_OnASpentQueue_ReturnsNull_UntilSomethingIsEnqueued` failed with a
+`NullReferenceException` against the unguarded `First`.
+
+Test 17 held the advance on the clock's `Stop`, which the advance no longer calls when it keeps the
+item, so it now holds on `Pause`, which the tail skip calls. With Play allowed to replace `Ended`
+it still fails: Play is refused, because the later skip took the enqueued item from the queue.
+
+The run number and the dropped seek at `Ended` have no test, for the reason given for decision 2's
+run number below.
 
 Test 6 is implemented, as two tests in `tests/FrameFlow.Integration.Tests/PlaylistCurrentItemTests.cs`
 over `test-subsecond.mp4` then the 3-second clip. On the tree before decision 5 (commit 9bd87cd),
@@ -833,3 +913,11 @@ the advance, or the tooling #143 asks for. A timing-based test would not show th
   to every notification drops an update from an unloaded session, and storing the latest update
   from under the playlist's transition gate keeps one session's updates in hand-off order. The
   dispatch loop applies it before every command, so it survives a full command channel.
+- **Amendment (2026-09-13), decisions 2, 3 and 4 implemented.** Implements them with #170. The
+  item that ends the queue is kept unless it faulted, and a skip pauses it first. The run number
+  lives in `SubstrateSession`, because a count kept by `PlaylistSession` around the item's seek
+  races either the interrupted run or the new one. It is checked for every item. Play from `Ended`
+  is refused on an empty queue, and the same check refuses a seek from `Ended` when nothing was
+  kept, which decision 4 had not covered. The session also drops a seek that reaches it at `Ended`
+  without the warm-up of a seek out of `Ended`, as it drops a Play or Pause in that race. A
+  repeat-mode change racing the end of the queue is recorded as an open question.

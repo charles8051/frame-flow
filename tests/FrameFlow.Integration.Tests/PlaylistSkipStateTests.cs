@@ -69,9 +69,9 @@ public sealed class PlaylistSkipStateTests : IClassFixture<FfmpegBootstrapFixtur
     [RequiresFfmpegAndCorpusFact]
     public async Task SkipWhileEnded_IsDropped_AndPlayPlaysTheEnqueuedItem()
     {
-        // At Ended nothing is current, so a skip has nothing to end. It used to start the next
-        // queued item while the state said Ended, which also took the item Play would have
-        // started, so Play then found an empty queue.
+        // At Ended the queue has already ended, so a skip has nothing to end. It used to start
+        // the next queued item while the state said Ended, which also took the item Play would
+        // have started, so Play then found an empty queue.
         var first = ClipSource();
         var enqueued = ClipSource();
         await using var run = PlaylistRun.Create([first], RepeatMode.Off);
@@ -124,12 +124,12 @@ public sealed class PlaylistSkipStateTests : IClassFixture<FfmpegBootstrapFixtur
         await using var run = PlaylistRun.Create([first], RepeatMode.Off, clock: clock);
         await PlayThenPauseAsync(run);
 
-        // Hold the skip's advance inside its gate, where it stops the clock while disposing
-        // the item. Play is queued to the controller while it is held, so the controller
+        // Hold the skip's advance inside its gate, where it pauses the clock while pausing the
+        // item it keeps. Play is queued to the controller while it is held, so the controller
         // dispatches Play before the end-of-stream the advance goes on to raise, and the
         // session sees Play only after the advance has ended the queue.
         var ended = run.Settled(PlaybackState.Ended);
-        var held = clock.HoldNextStop();
+        var held = clock.HoldNextPause();
         run.Coordinator.RequestSkip();
         await held.WaitAsync(Bound);
         var queuedPlay = run.Controller.PlayAsync();

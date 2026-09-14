@@ -170,6 +170,10 @@ internal sealed class SubstrateSession : IPlaybackSession
 
     // ── EOF coordination ────────────────────────────────────────────
     private int _eofFired;
+
+    // Numbers the runs of the graph; see RunNumber. Advanced by RepositionAsync once it has
+    // stopped the run it interrupts, and before anything relaunches.
+    private int _runNumber;
     private bool _disposed;
     // Null reaches the decoder, which resolves it to the process probe (#181).
     private readonly FrameFlow.Media.HardwareDecodeCapabilities? _hwCapabilities;
@@ -217,6 +221,19 @@ internal sealed class SubstrateSession : IPlaybackSession
     public MediaInfo? MediaInfo => _demux?.MediaInfo;
 
     public TimeSpan Duration => _demux?.MediaInfo?.Duration ?? TimeSpan.Zero;
+
+    /// <summary>
+    /// The number of the graph's current run. It advances each time a seek or a rewind stops
+    /// the run in progress, before the next run launches.
+    /// </summary>
+    /// <remarks>
+    /// Read it inside <see cref="SessionCallbacks.OnEndOfStream"/>. The run raising the
+    /// end-of-stream cannot have been stopped yet, because stopping a run waits for the task
+    /// that raises it, so the number read there is that run's. A caller that handles the
+    /// end-of-stream later, on another thread, compares it with this property then, and drops
+    /// the end-of-stream if a seek or rewind has replaced the run in between.
+    /// </remarks>
+    internal int RunNumber => Volatile.Read(ref _runNumber);
 
     public PipelineDiagnosticsSnapshot GetPipelineDiagnostics()
     {
@@ -1106,6 +1123,10 @@ internal sealed class SubstrateSession : IPlaybackSession
             else
                 await WaitForSessionTasksAsync(cancellationToken).ConfigureAwait(false);
         }
+
+        // The interrupted run is over, and nothing has relaunched. An end-of-stream it raised
+        // read the old number; any run from here on reads the new one.
+        Interlocked.Increment(ref _runNumber);
 
         cancellationToken.ThrowIfCancellationRequested();
 

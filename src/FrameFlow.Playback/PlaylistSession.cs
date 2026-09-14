@@ -121,12 +121,27 @@ internal sealed class PlaylistSession : IPlaybackSession
         Paused,
 
         /// <summary>
-        /// The queue ran out and end-of-stream was reported. Nothing is current. Only a seek
-        /// out of Ended leaves it: a Play or Pause the controller dispatched before it saw the
-        /// end-of-stream must not replace it, because the controller ends when it does. A Play
-        /// from Ended never reaches this session; the controller replays on a new one.
+        /// The queue ran out and end-of-stream was reported. The item that ended the queue is
+        /// kept if it ended or was skipped without failing, and is not played again until a
+        /// seek out of Ended. Only that seek leaves Ended: a Play, Pause or Seek the controller
+        /// dispatched before it saw the end-of-stream must not replace it, because the
+        /// controller ends when it does. A Play from Ended never reaches this session; the
+        /// controller replays on a new one.
         /// </summary>
         Ended,
+    }
+
+    /// <summary>How an item's run came to an end.</summary>
+    private enum ItemEnding
+    {
+        /// <summary>The item reported end-of-stream.</summary>
+        EndOfStream,
+
+        /// <summary>The caller skipped the item.</summary>
+        Skip,
+
+        /// <summary>The item faulted, or could not be started.</summary>
+        Fault,
     }
 
     private RunState CurrentRunState => (RunState)Volatile.Read(ref _runState);
@@ -173,6 +188,13 @@ internal sealed class PlaylistSession : IPlaybackSession
     public PipelineDiagnosticsSnapshot GetPipelineDiagnostics() =>
         _current?.GetPipelineDiagnostics() ?? PipelineDiagnosticsSnapshot.Empty;
 
+    // A replay from Ended loads a new PlaylistSession, which takes its first item from the queue.
+    public bool CanReplay => _coordinator.HasUpcoming;
+
+    // Read by the controller at Ended. The advance that ended the queue set _current before it
+    // reported the end-of-stream, and nothing changes it while this session is Ended.
+    public bool CanSeekFromEnded => _current is not null;
+
     // ── IPlaybackSession lifecycle ──────────────────────────────────────────
 
     public async ValueTask InitializeAsync(
@@ -183,8 +205,11 @@ internal sealed class PlaylistSession : IPlaybackSession
         // The controller hands us the first source; the coordinator is the
         // authority for the queue, so pop the first item from it (it is the same
         // object the controller was asked to load). Subsequent items are pulled
-        // by the advance path.
-        var first = _coordinator.First();
+        // by the advance path. The controller checks CanReplay before a replay loads
+        // this session, so the queue is empty only if a caller loads a spent playlist.
+        var first =
+            _coordinator.First()
+            ?? throw new InvalidOperationException("The playlist has nothing queued to play.");
         var gen = _currentGen; // 0
         var session = CreateItemSession(gen);
         try
@@ -236,8 +261,8 @@ internal sealed class PlaylistSession : IPlaybackSession
         await _transitionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // At Ended nothing is current. This Play was dispatched before the controller saw
-            // the end-of-stream that is on its way, and the controller ends when it does.
+            // This Play was dispatched before the controller saw the end-of-stream that is on
+            // its way, and the controller ends when it does.
             if (_disposed || CurrentRunState == RunState.Ended)
                 return;
 
@@ -246,7 +271,7 @@ internal sealed class PlaylistSession : IPlaybackSession
             // A pending skip request taking effect at the moment of (re)play.
             if (_coordinator.ConsumeSkipRequest())
             {
-                await AdvanceLockedAsync(faulted: false).ConfigureAwait(false);
+                await AdvanceLockedAsync(ItemEnding.Skip).ConfigureAwait(false);
                 return;
             }
 
@@ -308,6 +333,11 @@ internal sealed class PlaylistSession : IPlaybackSession
         {
             if (_disposed || _current is null)
                 return;
+            // A seek out of Ended has already warmed up, which left Ended. This one was
+            // dispatched before the controller saw the end-of-stream on its way, and the
+            // controller ends when it does, so it must not start the kept item.
+            if (CurrentRunState == RunState.Ended)
+                return;
             // Seek is scoped to the current item's timeline.
             await _current.SeekAsync(position, cancellationToken).ConfigureAwait(false);
         }
@@ -364,23 +394,29 @@ internal sealed class PlaylistSession : IPlaybackSession
     /// buffer callbacks and recoverable errors bubble straight to the controller;
     /// end-of-stream and faults route into the advance path, tagged with the
     /// item's generation so a stale notification from a replaced item is ignored.
+    /// An end-of-stream also carries the item's run number, read when it is raised,
+    /// so one raised before a seek or rewind of the same item is ignored too.
     /// </summary>
-    private SessionCallbacks CreateItemCallbacks(int gen) =>
+    private SessionCallbacks CreateItemCallbacks(int gen, Func<int> runNumber) =>
         new(
-            OnEndOfStream: () => OnItemEnded(gen, faulted: false, error: null),
-            OnWorkerFaulted: ex => OnItemEnded(gen, faulted: true, error: ex),
+            OnEndOfStream: () => OnItemEnded(gen, ItemEnding.EndOfStream, runNumber(), error: null),
+            OnWorkerFaulted: ex => OnItemEnded(gen, ItemEnding.Fault, run: 0, error: ex),
             OnBufferReady: _controllerCallbacks.OnBufferReady,
             OnBufferUnderrun: _controllerCallbacks.OnBufferUnderrun,
             OnRecoverableError: _controllerCallbacks.OnRecoverableError,
             OnCurrentItemChanged: _controllerCallbacks.OnCurrentItemChanged
         );
 
-    private SubstrateSession CreateItemSession(int gen) =>
-        new(
+    private SubstrateSession CreateItemSession(int gen)
+    {
+        // The item raises callbacks only once it is initialized, so the session is assigned
+        // before the end-of-stream callback reads it.
+        SubstrateSession? session = null;
+        session = new SubstrateSession(
             _videoSink,
             _audioSink,
             _clock,
-            CreateItemCallbacks(gen),
+            CreateItemCallbacks(gen, () => session!.RunNumber),
             _hwMode,
             _hwCapabilities,
             _loggerFactory,
@@ -388,6 +424,8 @@ internal sealed class PlaylistSession : IPlaybackSession
             _audioConfigurator,
             _yieldHardwareFrames
         );
+        return session;
+    }
 
     /// <summary>
     /// The coordinator's skip entry point. A skip is an end-of-stream the caller asked for
@@ -403,8 +441,8 @@ internal sealed class PlaylistSession : IPlaybackSession
         switch (CurrentRunState)
         {
             case RunState.Ended:
-                // Nothing is current, so there is nothing to end. PlayAsync from Ended plays
-                // whatever is queued.
+                // The queue has already ended, so there is nothing to end. PlayAsync from
+                // Ended plays whatever is queued.
                 LogAdvanceIgnoredAtEnd(_logger, faulted: false);
                 return;
 
@@ -419,11 +457,12 @@ internal sealed class PlaylistSession : IPlaybackSession
         }
 
         // Tagged with the current generation, so a skip and a natural end-of-stream that race
-        // collapse to a single advance via the gen check under the gate.
-        OnItemEnded(_currentGen, faulted: false, error: null);
+        // collapse to a single advance via the gen check under the gate. A skip is never
+        // stale by run: a seek between the request and the advance does not cancel it.
+        OnItemEnded(_currentGen, ItemEnding.Skip, run: 0, error: null);
     }
 
-    private void OnItemEnded(int gen, bool faulted, Exception? error)
+    private void OnItemEnded(int gen, ItemEnding how, int run, Exception? error)
     {
         if (_disposed)
             return;
@@ -432,28 +471,45 @@ internal sealed class PlaylistSession : IPlaybackSession
         // wait on the gate behind a seek or a slow SourceTransitioned subscriber, and the
         // position clock keeps running meanwhile. The clock starts from zero for each
         // item and each in-place rewind, and stops while paused.
-        var playedFor = faulted ? _clock.Position : TimeSpan.Zero;
+        var playedFor = how == ItemEnding.Fault ? _clock.Position : TimeSpan.Zero;
 
         // Hop off the worker thread that raised the callback; the advance does
         // heavy work (dispose + open + warmup) that must not block the graph.
-        _ = Task.Run(() => AdvanceAsync(gen, faulted, error, playedFor));
+        _ = Task.Run(() => AdvanceAsync(gen, how, run, error, playedFor));
     }
 
-    private async Task AdvanceAsync(int gen, bool faulted, Exception? error, TimeSpan playedFor)
+    private async Task AdvanceAsync(
+        int gen,
+        ItemEnding how,
+        int run,
+        Exception? error,
+        TimeSpan playedFor
+    )
     {
+        var faulted = how == ItemEnding.Fault;
+
         await _transitionGate.WaitAsync().ConfigureAwait(false);
         try
         {
             if (_disposed || _gaveUp || gen != _currentGen)
                 return; // stale notification from an already-replaced item.
 
+            // The end-of-stream came from a run of this item that a seek or rewind has since
+            // replaced (#170). The item is playing again, so acting on it would end the item
+            // that was just sought, or end the playlist while it plays.
+            if (how == ItemEnding.EndOfStream && run != _current?.RunNumber)
+            {
+                LogStaleEndOfStream(_logger, run, _current?.RunNumber ?? -1);
+                return;
+            }
+
             switch (CurrentRunState)
             {
                 case RunState.Ended:
-                    // The item that ended the queue is gone, so a late notification from it
-                    // has nothing to act on, and a skip that raced the end has nothing to
-                    // end. Advancing here would start a queued item while the controller
-                    // says Ended; PlayAsync from Ended plays it instead.
+                    // The item that ended the queue has already been handled: a late
+                    // notification from it has nothing to act on, and a skip that raced the
+                    // end has nothing to end. Advancing here would start a queued item while
+                    // the controller says Ended; PlayAsync from Ended plays it instead.
                     LogAdvanceIgnoredAtEnd(_logger, faulted);
                     return;
 
@@ -496,7 +552,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                 }
             }
 
-            await AdvanceLockedAsync(faulted).ConfigureAwait(false);
+            await AdvanceLockedAsync(how).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -541,9 +597,17 @@ internal sealed class PlaylistSession : IPlaybackSession
     /// for a loop reached while playing; otherwise it rebuilds. When the queue runs out while
     /// paused, the end-of-stream takes the controller from <c>Paused</c> to <c>Ended</c>.
     /// </para>
+    /// <para>
+    /// <b>The end of the queue (#170).</b> An item that ends the queue without failing is
+    /// kept, not disposed, so at <c>Ended</c> it can be sought and played again and its
+    /// counters read, as a single source's can. A skipped item is paused first, so it does
+    /// not go on presenting. A faulted item is disposed as before.
+    /// </para>
     /// </remarks>
-    private async ValueTask AdvanceLockedAsync(bool faulted)
+    private async ValueTask AdvanceLockedAsync(ItemEnding how)
     {
+        var faulted = how == ItemEnding.Fault;
+
         // An item that reached its end or was skipped ended without failing.
         if (!faulted)
             _failures.ItemEnded();
@@ -563,6 +627,21 @@ internal sealed class PlaylistSession : IPlaybackSession
             && await TryReplayCurrentLockedAsync(decision).ConfigureAwait(false)
         )
         {
+            return;
+        }
+
+        if (
+            !faulted
+            && _current is not null
+            && decision.Kind == PlaylistCoordinator.NextKind.End
+        )
+        {
+            // Only a skip needs the pause. An item that reached its end has stopped, and
+            // pausing it would hold back the audio still queued on the device. An item that has
+            // not played has not opened its gates. Pausing an item that is already paused
+            // changes nothing.
+            await EndQueueKeepingCurrentLockedAsync(pause: how == ItemEnding.Skip && _currentPlayed)
+                .ConfigureAwait(false);
             return;
         }
 
@@ -654,7 +733,39 @@ internal sealed class PlaylistSession : IPlaybackSession
             return;
         }
 
-        await AdvanceLockedAsync(faulted: true).ConfigureAwait(false);
+        await AdvanceLockedAsync(ItemEnding.Fault).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Ends the queue and keeps <see cref="_current"/>, pausing it first when
+    /// <paramref name="pause"/> is set. Caller must hold <see cref="_transitionGate"/>.
+    /// </summary>
+    /// <remarks>
+    /// The pause goes to the item itself, which pauses its workers, clock and audio sink.
+    /// <see cref="PauseAsync"/> would wait on the gate the caller holds. If the pause fails,
+    /// the item is disposed instead, as it was before items were kept, so it cannot go on
+    /// presenting while the controller says <c>Ended</c>.
+    /// </remarks>
+    private async ValueTask EndQueueKeepingCurrentLockedAsync(bool pause)
+    {
+        if (pause)
+        {
+            try
+            {
+                await _current!.PauseAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LogKeptItemPauseFailed(_logger, _currentSource?.DisplayName ?? "(unknown)", ex);
+                var current = _current!;
+                _current = null;
+                _currentSource = null;
+                await SafeDisposeAsync(current).ConfigureAwait(false);
+            }
+        }
+
+        SetRunState(RunState.Ended);
+        _controllerCallbacks.OnEndOfStream();
     }
 
     /// <summary>
@@ -766,6 +877,28 @@ internal sealed class PlaylistSession : IPlaybackSession
             new EventId(5, nameof(LogAdvanceIgnoredAtEnd)),
             "Playlist advance ignored: the queue has ended (faulted: {Faulted})."
         );
+
+    private static readonly Action<ILogger, int, int, Exception?> LogStaleEndOfStreamMessage =
+        LoggerMessage.Define<int, int>(
+            LogLevel.Debug,
+            new EventId(6, nameof(LogStaleEndOfStream)),
+            "Playlist end-of-stream ignored: raised by run {Run}, and a seek or rewind has "
+                + "since started run {CurrentRun}."
+        );
+
+    private static readonly Action<ILogger, string, Exception?> LogKeptItemPauseFailedMessage =
+        LoggerMessage.Define<string>(
+            LogLevel.Warning,
+            new EventId(7, nameof(LogKeptItemPauseFailed)),
+            "Pausing skipped playlist item '{Source}' at the end of the queue threw; "
+                + "disposing it instead."
+        );
+
+    private static void LogStaleEndOfStream(ILogger logger, int run, int currentRun) =>
+        LogStaleEndOfStreamMessage(logger, run, currentRun, null);
+
+    private static void LogKeptItemPauseFailed(ILogger logger, string source, Exception? error) =>
+        LogKeptItemPauseFailedMessage(logger, source, error);
 
     private static void LogItemFaulted(ILogger logger, string source, Exception? error) =>
         LogItemFaultedMessage(logger, source, error);

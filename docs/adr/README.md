@@ -223,7 +223,8 @@ land.
   raises a false `LoopStalled`, and `SetNext` under `All` grows the rotation. Decides fixes for
   three without changing public API or single-source playback: keep the last item at the end of the
   queue and pause it first on a skip, refuse play from `Ended` on an empty queue with a failed
-  `Result`, and feed the controller the current item from its dispatch loop, which is implemented
+  `Result`, and feed the controller the current item from its dispatch loop. The first two are
+  implemented with #170, which also refuses a seek from `Ended` when nothing was kept, and the third
   with #183. The `SetNext` defect,
   and other defects found in review, are recorded without decisions because the proposed fixes
   failed review. A later decision, implemented with #180, settles the two fault defects: every

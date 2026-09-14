@@ -1148,7 +1148,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             return true;
         }
 
-        if (!CanFirePlayback(PlaybackTrigger.Seek))
+        if (!CanFirePlayback(PlaybackTrigger.Seek) || _session is { CanSeekFromEnded: false })
         {
             var msg = $"Cannot Seek from {_state}";
             LogInvalidOperation("Seek", _state.ToString());
@@ -1171,7 +1171,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             return false;
         }
 
-        if (_session is null || _loadedSource is null)
+        // A session with nothing to replay, such as a playlist whose queue has run out, is
+        // refused here, before the replay unloads it.
+        if (_session is null || _loadedSource is null || !_session.CanReplay)
         {
             var msg = $"Cannot {command.Trigger} from {_state}";
             LogInvalidOperation(command.Trigger.ToString(), _state.ToString());

@@ -609,6 +609,46 @@ public sealed class PlaybackDispatchProtocolTests
     }
 
     [Fact]
+    public async Task Play_FromEnded_WhenTheSessionHasNothingToReplay_IsRefused_WithoutUnloading()
+    {
+        // A playlist whose queue has run out has nothing to replay (#170). The replay used to
+        // unload it and load a new one over the empty queue, which failed and entered Error.
+        var (controller, session) = NewController();
+        await using var _ = controller;
+        await PlayToEndedAsync(controller, session);
+        var initializeCalls = Volatile.Read(ref session.InitializeCalls);
+        session.CanReplay = false;
+
+        var play = await controller.PlayAsync();
+
+        Assert.False(play.IsSuccess);
+        Assert.Equal(ErrorCategory.InvalidOperation, play.Error!.Category);
+        Assert.Equal(PlaybackState.Ended, controller.State);
+        Assert.False(session.Disposed);
+        Assert.Equal(initializeCalls, Volatile.Read(ref session.InitializeCalls));
+    }
+
+    [Fact]
+    public async Task Seek_FromEnded_WhenTheSessionHoldsNothingToSeek_IsRefused_AndStaysEnded()
+    {
+        // A playlist whose last item faulted keeps nothing at Ended (#170). The seek used to
+        // succeed into Paused, and a Play after it reported Playing with nothing current.
+        var (controller, session) = NewController();
+        await using var _ = controller;
+        await PlayToEndedAsync(controller, session);
+        var warmUpCalls = Volatile.Read(ref session.WarmUpCalls);
+        session.CanSeekFromEnded = false;
+
+        var seek = await controller.SeekAsync(TimeSpan.Zero);
+
+        Assert.False(seek.IsSuccess);
+        Assert.Equal(ErrorCategory.InvalidOperation, seek.Error!.Category);
+        Assert.Equal(PlaybackState.Ended, controller.State);
+        Assert.Equal(warmUpCalls, Volatile.Read(ref session.WarmUpCalls));
+        Assert.Equal(0, Volatile.Read(ref session.SeekCalls));
+    }
+
+    [Fact]
     public async Task Unload_FromPlaying_DisposesSession_AndReachesUnloaded()
     {
         var (controller, session) = NewController();
@@ -965,6 +1005,10 @@ public sealed class PlaybackDispatchProtocolTests
 
         public MediaInfo? MediaInfo => Info;
         public TimeSpan Duration => Info.Duration;
+
+        public bool CanReplay { get; set; } = true;
+
+        public bool CanSeekFromEnded { get; set; } = true;
 
         public ValueTask InitializeAsync(
             IMediaSource source,

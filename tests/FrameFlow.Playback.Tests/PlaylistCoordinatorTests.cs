@@ -29,6 +29,25 @@ public sealed class PlaylistCoordinatorTests
     }
 
     [Fact]
+    public void First_OnASpentQueue_ReturnsNull_UntilSomethingIsEnqueued()
+    {
+        // A playlist that ran out and is loaded again finds nothing to take (#170). First used
+        // to dereference the empty queue's missing head.
+        var (a, b) = (S("a"), S("b"));
+        var coord = new PlaylistCoordinator([a], RepeatMode.Off);
+        Assert.True(coord.HasUpcoming);
+        Assert.Same(a, coord.First());
+        Assert.Equal(PlaylistCoordinator.NextKind.End, coord.DecideNext(a).Kind);
+
+        Assert.False(coord.HasUpcoming);
+        Assert.Null(coord.First());
+
+        coord.Enqueue(b);
+        Assert.True(coord.HasUpcoming);
+        Assert.Same(b, coord.First());
+    }
+
+    [Fact]
     public void Off_AdvancesThroughQueueThenEnds()
     {
         var (a, b, c) = (S("a"), S("b"), S("c"));
