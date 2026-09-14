@@ -609,6 +609,85 @@ public sealed class PlaybackDispatchProtocolTests
     }
 
     [Fact]
+    public async Task Play_FromEnded_WhenTheSessionHasNothingToReplay_IsRefused_WithoutUnloading()
+    {
+        // A playlist whose queue has run out has nothing to replay (#170). The replay used to
+        // unload it and load a new one over the empty queue, which failed and entered Error.
+        var (controller, session) = NewController();
+        await using var _ = controller;
+        await PlayToEndedAsync(controller, session);
+        var initializeCalls = Volatile.Read(ref session.InitializeCalls);
+        session.CanReplay = false;
+
+        var play = await controller.PlayAsync();
+
+        Assert.False(play.IsSuccess);
+        Assert.Equal(ErrorCategory.InvalidOperation, play.Error!.Category);
+        Assert.Equal(PlaybackState.Ended, controller.State);
+        Assert.False(session.Disposed);
+        Assert.Equal(initializeCalls, Volatile.Read(ref session.InitializeCalls));
+    }
+
+    [Fact]
+    public async Task Seek_FromEnded_WhenTheSessionHoldsNothingToSeek_IsRefused_AndStaysEnded()
+    {
+        // A playlist whose last item faulted keeps nothing at Ended (#170). The seek used to
+        // succeed into Paused, and a Play after it reported Playing with nothing current.
+        var (controller, session) = NewController();
+        await using var _ = controller;
+        await PlayToEndedAsync(controller, session);
+        var warmUpCalls = Volatile.Read(ref session.WarmUpCalls);
+        session.CanSeekFromEnded = false;
+
+        var seek = await controller.SeekAsync(TimeSpan.Zero);
+
+        Assert.False(seek.IsSuccess);
+        Assert.Equal(ErrorCategory.InvalidOperation, seek.Error!.Category);
+        Assert.Equal(PlaybackState.Ended, controller.State);
+        Assert.Equal(warmUpCalls, Volatile.Read(ref session.WarmUpCalls));
+        Assert.Equal(0, Volatile.Read(ref session.SeekCalls));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EndOfStream_UnderRepeatOne_FromASessionThatLoopsInternally_EndsPlayback(
+        bool paused
+    )
+    {
+        // A playlist loops its own items and reports end-of-stream only when its queue has ended.
+        // The playlist player sets the controller's repeat mode before the playlist's, so an
+        // end-of-stream from a queue that ended under Off can reach a controller already under
+        // One (#170). The controller used to run its loop rewind on the ended playlist and stay
+        // Playing, or drop the trigger while Paused.
+        var (controller, session) = NewController(RepeatMode.One);
+        await using var _ = controller;
+        session.LoopsInternally = true;
+        await controller.LoadAsync(new FakeSource());
+        await controller.PlayAsync();
+        if (paused)
+            Assert.True((await controller.PauseAsync()).IsSuccess);
+
+        var endedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using (
+            controller.PlaybackStateChanged.Subscribe(
+                new Relay<StateTransition<PlaybackState>>(t =>
+                {
+                    if (t.Current == PlaybackState.Ended)
+                        endedTcs.TrySetResult();
+                })
+            )
+        )
+        {
+            session.RaiseEndOfStream();
+            await CompletesWithin(endedTcs.Task, TimeSpan.FromSeconds(5));
+        }
+
+        Assert.Equal(PlaybackState.Ended, controller.State);
+        Assert.Equal(0, Volatile.Read(ref session.SeekCalls));
+    }
+
+    [Fact]
     public async Task Unload_FromPlaying_DisposesSession_AndReachesUnloaded()
     {
         var (controller, session) = NewController();
@@ -965,6 +1044,12 @@ public sealed class PlaybackDispatchProtocolTests
 
         public MediaInfo? MediaInfo => Info;
         public TimeSpan Duration => Info.Duration;
+
+        public bool CanReplay { get; set; } = true;
+
+        public bool CanSeekFromEnded { get; set; } = true;
+
+        public bool LoopsInternally { get; set; }
 
         public ValueTask InitializeAsync(
             IMediaSource source,

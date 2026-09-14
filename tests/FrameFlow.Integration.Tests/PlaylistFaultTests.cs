@@ -53,6 +53,30 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
     }
 
     [RequiresFfmpegAndCorpusFact]
+    public async Task SeekAndPlayFromEnded_AfterTheLastItemFaulted_AreRefused()
+    {
+        // A faulted item is not kept at the end of the queue, so Ended holds nothing to seek or
+        // play. The seek used to succeed, and the play after it reported Playing with nothing
+        // current.
+        var faults = new FaultInjector(breaks: _ => true);
+        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, faults.Configure);
+        await run.PlayAsync();
+        await run.Settled(PlaybackState.Ended).WaitAsync(Bound);
+
+        var seek = await run.Controller.SeekAsync(TimeSpan.Zero);
+        Assert.False(seek.IsSuccess);
+        Assert.Equal(ErrorCategory.InvalidOperation, seek.Error!.Category);
+        Assert.Equal(PlaybackState.Ended, run.Controller.State);
+
+        var play = await run.Controller.PlayAsync();
+        Assert.False(play.IsSuccess);
+        Assert.Equal(ErrorCategory.InvalidOperation, play.Error!.Category);
+        Assert.Equal(PlaybackState.Ended, run.Controller.State);
+
+        Assert.Single(run.Errors);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
     public async Task FaultBeforeAnotherItem_IsReported_AndTheNextItemPlays()
     {
         // Only the first chain breaks, so the second item plays to its end.

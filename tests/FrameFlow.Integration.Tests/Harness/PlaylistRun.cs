@@ -225,9 +225,10 @@ internal sealed class PresentCountingVideoSink : IVideoSink
 
 /// <summary>
 /// A <see cref="PlaybackClock"/> that can hold the thread which next calls
-/// <see cref="Stop"/> until the test releases it. A playlist advance stops the clock while it
-/// holds its session's transition gate, so holding that call holds the gate: a test can then
-/// queue a controller command that is certain to reach the session after the advance.
+/// <see cref="Pause"/> until the test releases it. A skip that ends a playlist's queue pauses
+/// the item it keeps while it holds its session's transition gate, so holding that call holds
+/// the gate: a test can then queue a controller command that is certain to reach the session
+/// after the advance.
 /// </summary>
 internal sealed class HoldableClock : IPlaybackClock, IDisposable
 {
@@ -245,10 +246,10 @@ internal sealed class HoldableClock : IPlaybackClock, IDisposable
     public bool IsPaused => _inner.IsPaused;
 
     /// <summary>
-    /// Arms a hold on the next <see cref="Stop"/>. The returned task completes when a thread
+    /// Arms a hold on the next <see cref="Pause"/>. The returned task completes when a thread
     /// is held there; <see cref="Release"/> lets it go.
     /// </summary>
-    public Task HoldNextStop()
+    public Task HoldNextPause()
     {
         var holding = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (_gate)
@@ -261,7 +262,7 @@ internal sealed class HoldableClock : IPlaybackClock, IDisposable
 
     public void Release() => _released.Set();
 
-    public void Stop()
+    public void Pause()
     {
         TaskCompletionSource? holding;
         lock (_gate)
@@ -277,12 +278,12 @@ internal sealed class HoldableClock : IPlaybackClock, IDisposable
             _released.Wait(HoldBound);
         }
 
-        _inner.Stop();
+        _inner.Pause();
     }
 
-    public void Start(TimeSpan startPosition) => _inner.Start(startPosition);
+    public void Stop() => _inner.Stop();
 
-    public void Pause() => _inner.Pause();
+    public void Start(TimeSpan startPosition) => _inner.Start(startPosition);
 
     public void Resume() => _inner.Resume();
 

@@ -40,6 +40,27 @@ internal interface IPlaybackSession : IAsyncDisposable
     /// </summary>
     PipelineDiagnosticsSnapshot GetPipelineDiagnostics() => PipelineDiagnosticsSnapshot.Empty;
 
+    /// <summary>
+    /// Whether Play from <c>Ended</c> has something to play. The controller's replay disposes
+    /// this session and loads the same source on a new one, so it asks first, and refuses the
+    /// Play without unloading when the answer is no. A single source always has something.
+    /// </summary>
+    bool CanReplay => true;
+
+    /// <summary>
+    /// Whether this session, at <c>Ended</c>, still holds media a seek can reposition. The
+    /// controller refuses a seek from <c>Ended</c> when it does not. A single source always
+    /// does.
+    /// </summary>
+    bool CanSeekFromEnded => true;
+
+    /// <summary>
+    /// Whether this session runs the repeat mode itself, so an end-of-stream it reports always
+    /// means it has finished. The controller then ends on that end-of-stream whatever its own
+    /// repeat mode, and never runs its loop rewind on this session. A single source does not.
+    /// </summary>
+    bool LoopsInternally => false;
+
     // ── Lifecycle methods (called by PlaybackController entry actions) ──
 
     /// <summary>

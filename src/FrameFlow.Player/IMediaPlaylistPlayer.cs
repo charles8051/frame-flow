@@ -30,6 +30,17 @@ namespace FrameFlow.Player;
 /// <see cref="SourceTransitioned"/> handler so the queue never empties.
 /// </para>
 /// <para>
+/// <b>At the end of the queue.</b> The last item stays loaded at
+/// <see cref="PlaybackState.Ended"/> if it played to its end or was skipped. Its diagnostics
+/// can be read there, and <see cref="IMediaPlayer.SeekAsync"/> pauses on it at the position
+/// sought, so a following <see cref="IMediaPlayer.PlayAsync"/> plays it from there.
+/// <see cref="IMediaPlayer.PlayAsync"/> from <see cref="PlaybackState.Ended"/> plays the next
+/// queued item. With nothing queued it returns a failed <see cref="Result"/> with
+/// <see cref="ErrorCategory.InvalidOperation"/>, and the player stays in
+/// <see cref="PlaybackState.Ended"/>. If the last item failed, nothing stays loaded, and a seek
+/// from <see cref="PlaybackState.Ended"/> is refused the same way.
+/// </para>
+/// <para>
 /// <b>Failed items.</b> An item that faults while it plays, or a later item that
 /// cannot be started, raises <see cref="IMediaPlayer.ErrorOccurred"/> and is skipped
 /// as though it had ended. The state does not change: under
@@ -66,8 +77,8 @@ public interface IMediaPlaylistPlayer : IMediaPlayer
     /// <see cref="PlaybackState.Playing"/>, the next item plays. While
     /// <see cref="PlaybackState.Paused"/>, the next item becomes current and stays paused
     /// until <see cref="IMediaPlayer.PlayAsync"/>. A skip before the playlist has first played
-    /// takes effect when it does. At <see cref="PlaybackState.Ended"/> nothing is current and
-    /// the skip does nothing; call <see cref="IMediaPlayer.PlayAsync"/> to play what is queued.
+    /// takes effect when it does. At <see cref="PlaybackState.Ended"/> the skip does nothing;
+    /// call <see cref="IMediaPlayer.PlayAsync"/> to play what is queued.
     /// </para>
     /// <para>
     /// When nothing follows the current item under <see cref="RepeatMode.Off"/>, the skip ends

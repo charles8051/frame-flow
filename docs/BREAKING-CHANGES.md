@@ -218,6 +218,41 @@ end-of-stream that reaches `Paused` now moves to `Ended` unless the repeat mode
 is `One`. It used to be dropped. On a single-source player an end-of-stream can
 reach `Paused` when it races a pause.
 
+### 7. A playlist at `Ended` keeps its last item, and refuses Play with nothing queued
+
+**Not a compile error.** Nothing you write changes; what runs does.
+
+When `IMediaPlaylistPlayer` ran out of items under `RepeatMode.Off`, it disposed the
+last item before it reported the end. `SeekAsync` from `Ended` then succeeded with
+nothing to seek, and a following `PlayAsync` reported `Playing` while nothing
+played. `PlayAsync` from `Ended` with nothing queued failed to load and put the
+player in `Error` (#170).
+
+| Case | Before | After |
+|---|---|---|
+| `SeekAsync` from `Ended`, then `PlayAsync` | `Paused`, then `Playing` with nothing playing | the last item plays from the position sought |
+| `PlayAsync` from `Ended`, nothing queued | failed `Result` with `ErrorCategory.System`; `Error` | failed `Result` with `ErrorCategory.InvalidOperation`; stays `Ended` |
+| `SeekAsync` from `Ended` after the last item failed | succeeds; `PlayAsync` then reports `Playing` with nothing playing | failed `Result` with `ErrorCategory.InvalidOperation`; stays `Ended` |
+| `GetDiagnostics()` at `Ended` | empty pipeline counters | the last item's counters |
+| `PlayAsync` from `Ended`, an item queued | the queued item plays | unchanged |
+
+The last item keeps its resources until the next item starts, the player is
+unloaded, or it is disposed. That is its demuxer, decoders and graph, an active
+audio sink, and a hardware decode device when one is in use. A single-source
+player already holds these at `Ended`.
+
+To start a playlist over from `Ended`, enqueue its items and call `PlayAsync`:
+
+```csharp
+// Before — faulted into Error with an empty queue
+await player.PlayAsync();
+
+// After — refused unless something is queued
+foreach (var item in items)
+    await player.EnqueueAsync(item);
+await player.PlayAsync();
+```
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`
