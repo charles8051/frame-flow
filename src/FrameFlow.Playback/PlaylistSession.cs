@@ -68,9 +68,12 @@ internal sealed class PlaylistSession : IPlaybackSession
     // Serializes the per-item advance against controller-driven Pause/Seek/Dispose.
     private readonly SemaphoreSlim _transitionGate = new(1, 1);
 
-    // The runtime for the item presenting right now.
+    // The runtime for the item presenting right now, and the coordinator's item it plays.
     private SubstrateSession? _current;
-    private IMediaSource? _currentSource;
+    private PlaylistItem? _currentItem;
+
+    // Returned by the coordinator when this session attaches its skip and jump handlers.
+    private object? _sessionToken;
 
     // Monotonic generation tag stamped into each item's callbacks so a stale
     // end-of-stream / fault from an already-replaced item is ignored.
@@ -81,7 +84,8 @@ internal sealed class PlaylistSession : IPlaybackSession
     // failure, and is not counted or reported again.
     private int _lastFaultedGen = -1;
 
-    private readonly PlaylistFailureGuard _failures = new();
+    // The failure count lives on the coordinator, so it survives a replay from Ended.
+    private PlaylistFailureGuard Failures => _coordinator.Failures;
 
     // Set once this session hands the controller a fatal error. The controller disposes
     // the session on its way into Error; until then a late notification must not start
@@ -140,8 +144,11 @@ internal sealed class PlaylistSession : IPlaybackSession
         /// <summary>The caller skipped the item.</summary>
         Skip,
 
-        /// <summary>The item faulted, or could not be started.</summary>
+        /// <summary>The item faulted while it played.</summary>
         Fault,
+
+        /// <summary>The item could not be started.</summary>
+        FailedStart,
     }
 
     private RunState CurrentRunState => (RunState)Volatile.Read(ref _runState);
@@ -188,8 +195,9 @@ internal sealed class PlaylistSession : IPlaybackSession
     public PipelineDiagnosticsSnapshot GetPipelineDiagnostics() =>
         _current?.GetPipelineDiagnostics() ?? PipelineDiagnosticsSnapshot.Empty;
 
-    // A replay from Ended loads a new PlaylistSession, which takes its first item from the queue.
-    public bool CanReplay => _coordinator.HasUpcoming;
+    // A replay from Ended loads a new PlaylistSession. The item it starts with is taken here,
+    // before the controller unloads this one, so an edit in between cannot leave it nothing.
+    public bool TryBeginReplay() => _coordinator.ReserveStart();
 
     // Read by the controller at Ended. The advance that ended the queue set _current before it
     // reported the end-of-stream, and nothing changes it while this session is Ended.
@@ -206,34 +214,64 @@ internal sealed class PlaylistSession : IPlaybackSession
         CancellationToken cancellationToken = default
     )
     {
-        // The controller hands us the first source; the coordinator is the
-        // authority for the queue, so pop the first item from it (it is the same
-        // object the controller was asked to load). Subsequent items are pulled
-        // by the advance path. The controller checks CanReplay before a replay loads
-        // this session, so the queue is empty only if a caller loads a spent playlist.
-        var first =
-            _coordinator.First()
+        // The controller hands us a source; the coordinator is the authority for the queue, so
+        // take the first item from it. On the first load that is the source the controller was
+        // given. On a replay from Ended it is the item TryBeginReplay reserved. Subsequent items
+        // are taken by the advance path.
+        var item =
+            _coordinator.TakeStart()
             ?? throw new InvalidOperationException("The playlist has nothing queued to play.");
-        var gen = _currentGen; // 0
-        var session = CreateItemSession(gen);
-        try
+
+        SubstrateSession started;
+        while (true)
         {
-            await session.InitializeAsync(first, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            await SafeDisposeAsync(session).ConfigureAwait(false);
-            throw; // first-item failure surfaces as a load failure, like single-source.
+            var session = CreateItemSession(_currentGen);
+            try
+            {
+                await session.InitializeAsync(item.Source, cancellationToken).ConfigureAwait(false);
+                started = session;
+                break;
+            }
+            catch (Exception ex)
+                when (_coordinator.AnyStarted
+                    && !(ex is OperationCanceledException && cancellationToken.IsCancellationRequested)
+                )
+            {
+                // Once the player has started any item, a new session's first item that cannot
+                // be opened is passed over as an advance passes over one (#171). Only the
+                // player's very first item still fails the load, like a single source's.
+                await SafeDisposeAsync(session).ConfigureAwait(false);
+                LogItemSkipped(_logger, item.Source.DisplayName, ex);
+                ReportItemFailure(item.Source.DisplayName, "could not be started", ex);
+
+                if (Failures.ItemFailed(playedFor: TimeSpan.Zero, itemLength: TimeSpan.Zero))
+                    throw GiveUpException(ex);
+
+                var next = _coordinator.DecideNext(PlaylistAdvance.FailedStart);
+                if (next.Kind == PlaylistCoordinator.NextKind.End)
+                    throw new InvalidOperationException(
+                        "No playlist item could be opened.",
+                        ex
+                    );
+
+                item = next.Item!;
+                _currentGen++;
+            }
+            catch
+            {
+                await SafeDisposeAsync(session).ConfigureAwait(false);
+                throw; // first-item failure surfaces as a load failure, like single-source.
+            }
         }
 
-        _current = session;
-        _currentSource = first;
+        _current = started;
+        _currentItem = item;
         _currentPlayed = false;
         _currentAwaitsPlay = false;
 
-        _coordinator.AttachSkipHandler(OnSkipRequested);
+        _sessionToken = _coordinator.AttachSession(OnSkipRequested, OnJumpRequested);
 
-        _coordinator.ReportCurrent(first, session.MediaInfo, wrapped: false);
+        _coordinator.ReportCurrent(item, started.MediaInfo, wrapped: false);
     }
 
     public async ValueTask WarmUpAsync(CancellationToken cancellationToken = default)
@@ -272,10 +310,17 @@ internal sealed class PlaylistSession : IPlaybackSession
 
             SetRunState(RunState.Playing);
 
-            // A pending skip request taking effect at the moment of (re)play.
-            if (_coordinator.ConsumeSkipRequest())
+            // A skip or end-of-stream latched before this play, or a jump waiting for it, takes
+            // effect now. A jump supersedes a latched skip, so both are consumed.
+            var latched = _coordinator.ConsumeLatchedAdvance();
+            if (_coordinator.HasPendingJump || latched is not null)
             {
-                await AdvanceLockedAsync(ItemEnding.Skip).ConfigureAwait(false);
+                await AdvanceLockedAsync(
+                        latched == PlaylistAdvance.EndOfStream && !_coordinator.HasPendingJump
+                            ? ItemEnding.EndOfStream
+                            : ItemEnding.Skip
+                    )
+                    .ConfigureAwait(false);
                 return;
             }
 
@@ -372,6 +417,10 @@ internal sealed class PlaylistSession : IPlaybackSession
     {
         _disposed = true;
 
+        // A skip or jump requested from here on waits on the coordinator for the next session.
+        if (_sessionToken is not null)
+            _coordinator.DetachSession(_sessionToken);
+
         // Drain any in-flight advance before tearing the current item down.
         await _transitionGate.WaitAsync().ConfigureAwait(false);
         try
@@ -452,10 +501,13 @@ internal sealed class PlaylistSession : IPlaybackSession
 
             case RunState.NotStarted:
                 // Nothing has played: the skip takes effect when the first PlayAsync does.
-                _coordinator.LatchSkip();
+                _coordinator.LatchAdvance(PlaylistAdvance.Skip);
                 // That PlayAsync may have started between the read above and the latch, and
                 // missed it. If it has and the latch is still set, take it back and advance.
-                if (CurrentRunState == RunState.NotStarted || !_coordinator.ConsumeSkipRequest())
+                if (
+                    CurrentRunState == RunState.NotStarted
+                    || _coordinator.ConsumeLatchedAdvance() is null
+                )
                     return;
                 break;
         }
@@ -464,6 +516,47 @@ internal sealed class PlaylistSession : IPlaybackSession
         // collapse to a single advance via the gen check under the gate. A skip is never
         // stale by run: a seek between the request and the advance does not cancel it.
         OnItemEnded(_currentGen, ItemEnding.Skip, run: 0, error: null);
+    }
+
+    /// <summary>
+    /// The coordinator's jump entry point. The jump itself waits on the coordinator; this only
+    /// asks for an advance to take it.
+    /// </summary>
+    /// <remarks>
+    /// The advance is not tagged with a generation, because a jump does not end a particular
+    /// item. It runs under the gate and takes the jump only if one is still pending, so it
+    /// collapses with an advance already under way, which looks for a pending jump once its item
+    /// has started. At <c>Ended</c> and before the first play it does nothing: the next
+    /// <see cref="PlayAsync"/>, or the replay the controller loads, takes the jump.
+    /// </remarks>
+    private void OnJumpRequested()
+    {
+        if (_disposed)
+            return;
+        _ = Task.Run(AdvanceForJumpAsync);
+    }
+
+    private async Task AdvanceForJumpAsync()
+    {
+        await _transitionGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_disposed || _gaveUp || !_coordinator.HasPendingJump)
+                return;
+            if (CurrentRunState is RunState.Ended or RunState.NotStarted)
+                return;
+
+            await AdvanceLockedAsync(ItemEnding.Skip).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // An unexpected orchestration failure is fatal — surface it.
+            _controllerCallbacks.OnWorkerFaulted(ex);
+        }
+        finally
+        {
+            _transitionGate.Release();
+        }
     }
 
     private void OnItemEnded(int gen, ItemEnding how, int run, Exception? error)
@@ -519,8 +612,12 @@ internal sealed class PlaylistSession : IPlaybackSession
 
                 case RunState.NotStarted when !faulted:
                     // Nothing has played. The advance waits for the first PlayAsync, as a
-                    // skip issued before the playlist loaded does.
-                    _coordinator.LatchSkip();
+                    // skip issued before the playlist loaded does, and keeps why it happened.
+                    _coordinator.LatchAdvance(
+                        how == ItemEnding.EndOfStream
+                            ? PlaylistAdvance.EndOfStream
+                            : PlaylistAdvance.Skip
+                    );
                     return;
             }
 
@@ -530,7 +627,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                     return;
                 _lastFaultedGen = gen;
 
-                var source = _currentSource?.DisplayName ?? "(unknown)";
+                var source = _currentItem?.Source.DisplayName ?? "(unknown)";
 
                 if (CurrentRunState == RunState.NotStarted)
                 {
@@ -549,7 +646,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                 LogItemFaulted(_logger, source, error);
                 ReportItemFailure(source, "faulted during playback", error);
 
-                if (_failures.ItemFailed(playedFor, _current?.Duration ?? TimeSpan.Zero))
+                if (Failures.ItemFailed(playedFor, _current?.Duration ?? TimeSpan.Zero))
                 {
                     GiveUp(error);
                     return;
@@ -610,22 +707,41 @@ internal sealed class PlaylistSession : IPlaybackSession
     /// </remarks>
     private async ValueTask AdvanceLockedAsync(ItemEnding how)
     {
-        var faulted = how == ItemEnding.Fault;
+        await AdvanceOnceLockedAsync(how).ConfigureAwait(false);
+
+        // A jump recorded while that advance was under way is taken now, before the gate is
+        // released, so the item the advance started does not play through (#171). A jump
+        // recorded after this check is taken by the advance its own request queues.
+        while (
+            !_disposed
+            && !_gaveUp
+            && CurrentRunState is RunState.Playing or RunState.Paused
+            && _coordinator.HasPendingJump
+        )
+        {
+            await AdvanceOnceLockedAsync(ItemEnding.Skip).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask AdvanceOnceLockedAsync(ItemEnding how)
+    {
+        // A fault and a failed start both leave a runtime that is not replayed in place or kept.
+        var failed = how is ItemEnding.Fault or ItemEnding.FailedStart;
 
         // An item that reached its end or was skipped ended without failing.
-        if (!faulted)
-            _failures.ItemEnded();
+        if (!failed)
+            Failures.ItemEnded();
 
         var playing = CurrentRunState == RunState.Playing;
 
         // Decide what plays next BEFORE any teardown, so a same-source replay can
         // reuse the live runtime instead of rebuilding it.
-        var decision = _coordinator.DecideNext(_currentSource);
+        var decision = _coordinator.DecideNext(ToAdvance(how));
 
         if (
             playing
             && _currentPlayed
-            && !faulted
+            && !failed
             && _current is not null
             && decision.Kind == PlaylistCoordinator.NextKind.Replay
             && await TryReplayCurrentLockedAsync(decision).ConfigureAwait(false)
@@ -635,7 +751,7 @@ internal sealed class PlaylistSession : IPlaybackSession
         }
 
         if (
-            !faulted
+            !failed
             && _current is not null
             && decision.Kind == PlaylistCoordinator.NextKind.End
         )
@@ -667,21 +783,21 @@ internal sealed class PlaylistSession : IPlaybackSession
         {
             if (pending.Kind == PlaylistCoordinator.NextKind.End)
             {
-                _currentSource = null;
+                _currentItem = null;
                 SetRunState(RunState.Ended);
                 _controllerCallbacks.OnEndOfStream();
                 return;
             }
 
-            var nextSource = pending.Source!;
+            var nextItem = pending.Item!;
             var gen = ++_currentGen; // invalidates the outgoing item's callbacks.
             var session = CreateItemSession(gen);
 
             try
             {
-                await session.InitializeAsync(nextSource).ConfigureAwait(false);
+                await session.InitializeAsync(nextItem.Source).ConfigureAwait(false);
                 _current = session;
-                _currentSource = nextSource;
+                _currentItem = nextItem;
                 _currentPlayed = false;
                 _currentAwaitsPlay = !playing;
                 await session.WarmUpAsync().ConfigureAwait(false);
@@ -695,17 +811,19 @@ internal sealed class PlaylistSession : IPlaybackSession
             {
                 _current = null;
                 await SafeDisposeAsync(session).ConfigureAwait(false);
-                LogItemSkipped(_logger, nextSource.DisplayName, ex);
-                ReportItemFailure(nextSource.DisplayName, "could not be started", ex);
+                LogItemSkipped(_logger, nextItem.Source.DisplayName, ex);
+                ReportItemFailure(nextItem.Source.DisplayName, "could not be started", ex);
 
-                if (_failures.ItemFailed(playedFor: TimeSpan.Zero, itemLength: TimeSpan.Zero))
+                if (Failures.ItemFailed(playedFor: TimeSpan.Zero, itemLength: TimeSpan.Zero))
                 {
                     GiveUp(ex);
                     return;
                 }
 
-                pending = _coordinator.DecideNext(_currentSource);
-                continue; // skip the bad item, try the next one.
+                // The coordinator moved past the failed item when it was taken, so this takes
+                // the one after it, under every repeat mode.
+                pending = _coordinator.DecideNext(PlaylistAdvance.FailedStart);
+                continue;
             }
 
             // A successful start does not reset the failure count; see PlaylistFailureGuard.
@@ -714,10 +832,19 @@ internal sealed class PlaylistSession : IPlaybackSession
             // order and a subscriber to the transition can wait on the controller. An
             // in-place replay keeps the same item and reports nothing.
             _controllerCallbacks.OnCurrentItemChanged(session.MediaInfo);
-            _coordinator.ReportCurrent(nextSource, session.MediaInfo, pending.Wrapped);
+            _coordinator.ReportCurrent(nextItem, session.MediaInfo, pending.Wrapped);
             return;
         }
     }
+
+    private static PlaylistAdvance ToAdvance(ItemEnding how) =>
+        how switch
+        {
+            ItemEnding.EndOfStream => PlaylistAdvance.EndOfStream,
+            ItemEnding.Skip => PlaylistAdvance.Skip,
+            ItemEnding.Fault => PlaylistAdvance.Fault,
+            _ => PlaylistAdvance.FailedStart,
+        };
 
     /// <summary>
     /// Handles <see cref="_current"/> failing to start when <see cref="PlayAsync"/> starts an
@@ -727,17 +854,17 @@ internal sealed class PlaylistSession : IPlaybackSession
     /// </summary>
     private async ValueTask ItemFailedToStartLockedAsync(Exception error)
     {
-        var source = _currentSource?.DisplayName ?? "(unknown)";
+        var source = _currentItem?.Source.DisplayName ?? "(unknown)";
         LogItemSkipped(_logger, source, error);
         ReportItemFailure(source, "could not be started", error);
 
-        if (_failures.ItemFailed(playedFor: TimeSpan.Zero, itemLength: TimeSpan.Zero))
+        if (Failures.ItemFailed(playedFor: TimeSpan.Zero, itemLength: TimeSpan.Zero))
         {
             GiveUp(error);
             return;
         }
 
-        await AdvanceLockedAsync(ItemEnding.Fault).ConfigureAwait(false);
+        await AdvanceLockedAsync(ItemEnding.FailedStart).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -760,10 +887,10 @@ internal sealed class PlaylistSession : IPlaybackSession
             }
             catch (Exception ex)
             {
-                LogKeptItemPauseFailed(_logger, _currentSource?.DisplayName ?? "(unknown)", ex);
+                LogKeptItemPauseFailed(_logger, _currentItem?.Source.DisplayName ?? "(unknown)", ex);
                 var current = _current!;
                 _current = null;
-                _currentSource = null;
+                _currentItem = null;
                 await SafeDisposeAsync(current).ConfigureAwait(false);
             }
         }
@@ -792,14 +919,15 @@ internal sealed class PlaylistSession : IPlaybackSession
     private void GiveUp(Exception? last)
     {
         _gaveUp = true;
-        _controllerCallbacks.OnWorkerFaulted(
-            new InvalidOperationException(
-                $"Playlist advance gave up after {_failures.ConsecutiveFailures} "
-                    + "consecutive item failures.",
-                last
-            )
-        );
+        _controllerCallbacks.OnWorkerFaulted(GiveUpException(last));
     }
+
+    private InvalidOperationException GiveUpException(Exception? last) =>
+        new(
+            $"Playlist advance gave up after {Failures.ConsecutiveFailures} "
+                + "consecutive item failures.",
+            last
+        );
 
     /// <summary>
     /// Reuses the live item runtime for a same-source boundary via the cheap
@@ -818,17 +946,19 @@ internal sealed class PlaylistSession : IPlaybackSession
             // RewindToStartAsync reseats BOTH the position clock and the master
             // pacing clock to zero and re-runs the retained graph on the same decode
             // device — the same primitive the controller uses for a single-source
-            // RepeatMode.One loop. _currentSource is unchanged (same object), so the
+            // RepeatMode.One loop. The next item plays the same source object, so the
             // open demuxer, decoders, and warm presenter binding all carry over.
             await current.RewindToStartAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            LogReplayFellBack(_logger, _currentSource?.DisplayName ?? "(unknown)", ex);
+            LogReplayFellBack(_logger, _currentItem?.Source.DisplayName ?? "(unknown)", ex);
             return false;
         }
 
-        _coordinator.ReportCurrent(decision.Source!, current.MediaInfo, decision.Wrapped);
+        // The item may be a different item of the same source, such as a back-to-back duplicate.
+        _currentItem = decision.Item;
+        _coordinator.ReportCurrent(decision.Item!, current.MediaInfo, decision.Wrapped);
         return true;
     }
 

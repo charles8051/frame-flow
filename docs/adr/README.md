@@ -249,8 +249,8 @@ land.
   and Play from `Ended` starts the playlist again. Rejects keeping every enqueued item, on a measured
   296 bytes per item under the documented rotation pattern, and ADR-0062's replaceable `SetNext`
   slot. Revised after an independent review found that the first draft's cursor retried a failed
-  item, a jump racing an advance was lost, and removal left the cursor undefined. Nothing is
-  implemented.
+  item, a jump racing an advance was lost, and removal left the cursor undefined. Implemented with
+  #171.
 - [Sync-window join for media-time correlation](sync-window-join.md) — the substrate
   fans out and cannot rejoin, so four consumers hand-roll the same correlation outside
   the graph. Adds a two-input node that pairs a slow secondary onto a fast primary by

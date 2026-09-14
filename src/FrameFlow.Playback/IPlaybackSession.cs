@@ -41,11 +41,13 @@ internal interface IPlaybackSession : IAsyncDisposable
     PipelineDiagnosticsSnapshot GetPipelineDiagnostics() => PipelineDiagnosticsSnapshot.Empty;
 
     /// <summary>
-    /// Whether Play from <c>Ended</c> has something to play. The controller's replay disposes
-    /// this session and loads the same source on a new one, so it asks first, and refuses the
-    /// Play without unloading when the answer is no. A single source always has something.
+    /// Prepares a replay from <c>Ended</c> and says whether it has something to play. The
+    /// controller's replay disposes this session and loads the same source on a new one, so it
+    /// calls this once first, and refuses the Play without unloading when the answer is no. A
+    /// playlist session takes the item the replay starts with here, so an edit before the new
+    /// session loads cannot leave it nothing. A single source always has something.
     /// </summary>
-    bool CanReplay => true;
+    bool TryBeginReplay() => true;
 
     /// <summary>
     /// Whether this session, at <c>Ended</c>, still holds media a seek can reposition. The

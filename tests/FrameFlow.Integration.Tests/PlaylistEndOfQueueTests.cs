@@ -99,22 +99,23 @@ public sealed class PlaylistEndOfQueueTests : IClassFixture<FfmpegBootstrapFixtu
     }
 
     [RequiresFfmpegAndCorpusFact]
-    public async Task PlayFromEndedWithNothingQueued_IsRefused_AndThePlayerStaysEnded()
+    public async Task PlayFromEndedWithNothingQueued_StartsThePlaylistAgain()
     {
-        // The replay used to unload the playlist and load a new one over an empty queue, which
-        // failed and put the player in Error.
-        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off);
+        // The playlist keeps its items (#171), so Play from Ended with nothing queued starts it
+        // again from its first item. Before #170 this faulted into Error; #170 refused it.
+        var first = ClipSource();
+        await using var run = PlaylistRun.Create([first], RepeatMode.Off);
         await PlayToEndAsync(run);
 
+        var firstAgain = run.Transitioned(first);
+        var framesAtEnded = run.Sink.Presented;
         var play = await run.Controller.PlayAsync();
 
-        Assert.False(play.IsSuccess);
-        Assert.Equal(ErrorCategory.InvalidOperation, play.Error!.Category);
-        Assert.Equal(PlaybackState.Ended, run.Controller.State);
+        Assert.True(play.IsSuccess, $"Play failed: {play.Error?.Message}");
+        await firstAgain.WaitAsync(Bound);
+        await run.Sink.WhenPresented(framesAtEnded + 1).WaitAsync(Bound);
         Assert.Empty(run.Errors);
-
-        // The refusal unloaded nothing: the item that ended the queue can still be played.
-        await SeekThenPlayToEndAsync(run);
+        Assert.False(run.Transitions[^1].Wrapped);
     }
 
     [RequiresFfmpegAndCorpusFact]

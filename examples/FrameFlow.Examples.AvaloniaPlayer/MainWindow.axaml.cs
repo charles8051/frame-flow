@@ -395,15 +395,27 @@ public partial class MainWindow : Window
     {
         if (_playlistPlayer is null || PlaylistBox.SelectedItem is not PlaylistEntry entry)
             return;
-        if (ReferenceEquals(_playlistPlayer.CurrentSource, entry.Source))
+
+        // Each file's source object is the one the playlist was created with, so it names
+        // the file's item in the player's playlist.
+        var item = _playlistPlayer
+            .GetPlaylist()
+            .Playlist.FirstOrDefault(i => ReferenceEquals(i.Source, entry.Source));
+        if (item is null)
             return;
 
         try
         {
-            // Steer the preroll target to the picked file, then hand off — the
-            // presenter stays warm across the jump.
-            await _playlistPlayer.SetNextAsync(entry.Source);
-            await _playlistPlayer.SkipToNextAsync();
+            // Move the playlist to the picked file. The presenter stays warm across the
+            // jump, and the loop carries on from there. A jump to the file already playing
+            // does nothing.
+            var jumped = await _playlistPlayer.JumpToAsync(item);
+            if (!jumped.IsSuccess)
+                _logger?.LogWarning(
+                    "Jump to {Name} refused: {Message}",
+                    entry.Name,
+                    jumped.Error.Message
+                );
         }
         catch (Exception ex)
         {

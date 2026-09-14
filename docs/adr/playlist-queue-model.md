@@ -7,7 +7,8 @@ review, and again after automated review of #198; *Revision history* says what c
 
 This record replaces the playlist player's queue with a model that keeps its items. It decides what
 each existing verb means in that model, adds the verbs a caller needs to move around it and edit
-it, and lists the behaviour that changes. **Nothing here is implemented.**
+it, and lists the behaviour that changes. **It is implemented** (#171). Decision 12 records where
+the implementation settles something the decisions left open.
 
 It settles #171, in which `SetNextAsync` under `RepeatMode.All` adds a permanent copy of its source
 to the loop. It also settles the defect
@@ -194,8 +195,8 @@ If the jump was recorded before that check, the check takes it. If it was record
 jump's own request runs as soon as the advance releases the gate. Either way the target becomes
 current straight after the item the advance started, and that item does not play through.
 
-- **A jump to the current item,** including one still opening, does nothing and succeeds. A caller
-  that wants to restart it seeks to zero.
+- **A jump to the current item,** including one still opening, does nothing and succeeds, unless the
+  item has been removed. A caller that wants to restart it seeks to zero.
 - **A jump to an item that is not in the player,** or to any item while the player is in `Error` or
   disposed, is refused with `ErrorCategory.InvalidOperation`.
 - **`ClearAsync` and `ReplaceAsync` discard a pending jump,** and removing the target removes it.
@@ -212,7 +213,8 @@ current straight after the item the advance started, and that item does not play
   `ClearAsync` does, adds the sources as the playlist, and makes the first new item the pending
   jump. It returns the new items. The jump then follows decision 5, so a playing player moves to the
   new playlist at once. An empty list is an `ArgumentException`. The player in `Error` or disposed
-  refuses it.
+  refuses it. If a replay from `Ended` has taken its item but not started its session, the replace
+  discards that item, so the replay starts on the first new item.
 
 `ReplaceAsync` exists because the separate calls race the current item. With `ClearAsync`, then
 `AddAsync`, then a skip under `All`, the current item can end between the clear and the add, and the
@@ -345,6 +347,32 @@ calls:
   by source reference, because it is about reusing the open runtime rather than position.
 - The playlist concept stays out of `PlaybackControllerCore`, as ADR-0062 decided.
 
+### 12. As implemented (#171)
+
+- **A replay whose items all fail to open.** Decision 7 says the load fails only if the failure
+  count gives up. Under `Off` the order can also run out first: a new session that passes over
+  every item left in the pass has nothing to start, and its load fails too, which puts the player
+  in `Error`. A single source whose file has gone does the same on replay.
+- **The replay's take is `IPlaybackSession.TryBeginReplay`.** It replaced `CanReplay`. It defaults
+  to true, and `PlaylistSession` takes the start item there.
+- **A jump before the first play or at `Ended` is linearized by the gate.** The jump's own request
+  does nothing in those states, under the transition gate, and `PlayAsync` looks for a pending jump
+  under the same gate. Whichever runs second sees the other's effect.
+- **A latched advance keeps its reason.** A skip or end-of-stream latched before the first play is
+  replayed with that reason, so decision 3's rules apply to it. A pending jump supersedes a latched
+  skip, and both are consumed.
+- **`JumpToAsync` on the current item** is reported to the player as already current and returns
+  success, without recording a pending jump. A current item that has been removed is refused as not
+  in the player, as decision 1's definition says; review of #199 found the first implementation
+  accepted it.
+- **A replace discards a replay's reserved item; a clear keeps it.** Decision 7 keeps a taken item
+  through a clear, because the replay would otherwise have nothing to open and would put the player in
+  `Error`. A replace supplies the item to open, so keeping the reservation would only open an item
+  the replace removed before the first play jumped away from it. Review of #199 found that.
+- **The advance's check for a jump after its item starts** shortens the path to the target: the
+  target is taken before the gate is released. The jump's own request would take it a moment later
+  if the check were absent, so tests cannot observe the check alone (see *Validation*).
+
 ## Consequences
 
 ### Positive
@@ -361,8 +389,7 @@ calls:
 
 ### Negative
 
-These go in `docs/BREAKING-CHANGES.md` when the record is implemented. No behaviour change below is
-a compile error. The new members and return types are, to implementers and to code that reads the
+`docs/BREAKING-CHANGES.md` entry 8 records these. No behaviour change below is a compile error. The new members and return types are, to implementers and to code that reads the
 results.
 
 - **`EnqueueAsync` and `SetNextAsync` no longer join the loop under `All`.** Today a source added
@@ -464,6 +491,16 @@ Still rejected, for ADR-0062's reason (ADR-0062:479-486).
   to settle which one holds.
 - **A `next` command on the test bench** (ADR-0068). Its table would need `JumpToAsync` and
   `ReplaceAsync` as well.
+- **The builder's entry point.** `FrameFlowPlayer.Open(path)` builds a single-source player, and the
+  builder cannot build a playlist player. The planned direction replaces `Open` with a chain that
+  adds sources, one call per source, so a chain with one source and a chain with several build the
+  same player. That is part of a single player type, not of this record, because a chain with
+  several sources has to return the playlist player and `BuildAsync`'s play-to-the-end session
+  plays exactly one source.
+- **A Stop command.** Neither `IMediaPlayer` nor `IPlaybackController` has one, and the `Stopped`
+  rows in `docs/patterns/playback-states.md` were never built. If one is added, it should mean the
+  same for any queue length: halt, release the decode runtime, keep the queue and cursor, and let
+  Play start the current item again from zero. Moving on is `SkipToNextAsync`.
 
 ## Validation
 
@@ -515,6 +552,35 @@ call the advance makes while it holds the gate.
 The AvaloniaPlayer example moves its jump to `JumpToAsync`, and the rotation pattern's docs say which
 verb keeps items.
 
+**As implemented (#171).** Rows 1 to 18 are in `tests/FrameFlow.Playback.Tests/PlaylistCoordinatorTests.cs`,
+rows 19 to 24 and 26 in `tests/FrameFlow.Integration.Tests/PlaylistQueueTests.cs`, and row 25 in
+`tests/FrameFlow.Player.Tests/PlaylistPlayerQueueTests.cs`, with the refusal after disposal. Row 22
+replaced `PlaylistEndOfQueueTests.PlayFromEndedWithNothingQueued_IsRefused_AndThePlayerStaysEnded`,
+and `PlaylistFaultTests` now expects Play from `Ended` after a faulted last item to start the
+playlist again. Both had asserted #170's refusal.
+
+Rows 1 to 5 and 8 repeat probes run against the coordinator before this record. The new tests could
+not run against that coordinator, which had none of the verbs, so each rule was then removed from
+the new code in turn, behind a temporary switch, to show a test fails for it:
+
+| Rule removed | Result |
+|---|---|
+| The take after a failed start moves past the failed item | row 8 fails under every mode |
+| A skip under `One` moves on | rows 3 and 8 (`One`) fail, and row 24 times out |
+| Removal keeps the cursor between its neighbours | rows 11, 12 and 18 fail, and row 26 times out |
+| Removing the current item marks it removed | row 18 fails |
+| The replay's take takes a pending jump first | row 15's jump case and row 20's first half fail |
+| `PlayAsync` takes a pending jump | row 20's second half fails: the kept item played all 73 frames first |
+| A new session passes over an item that fails to open | row 23 fails: the player entered `Error` |
+| The player refuses a jump or replace in `Error` or after disposal | both row 25 tests fail |
+| A jump requests its own advance | row 19 times out, and row 21's second ordering fails: the item before the jump played all 72 frames |
+| The advance checks for a jump after its item starts | nothing fails: the jump's own request takes the target |
+| Both of the last two | row 21's first ordering fails: 73 frames |
+
+Rows 20 and 21 first passed with a rule removed, because an item that plays through also takes a
+pending jump at its end. They now check that the item before the jump presented fewer than half of
+the clip's 72 frames.
+
 ## Revision history
 
 - **First draft (2026-09-14).** Proposed playlist entries with a cursor that moved when an entry
@@ -557,3 +623,10 @@ verb keeps items.
   - **`PlaylistTransition.Item` had no stated guarantee.** Every transition the player raises now
     sets it. It stays nullable because the four-argument constructor remains for callers that build
     transitions themselves.
+- **Amendment (2026-09-14), implemented.** Implements the record with #171. Decision 12 records
+  what the implementation settled: a replay whose items all fail to open ends in `Error` under `Off`
+  before the failure count gives up, the replay's take is `IPlaybackSession.TryBeginReplay`, and the
+  advance's check for a jump is not observable apart from the jump's own request. *Not settled here*
+  gains the builder's entry point and a Stop command, both raised while implementing.
+- **Amendment (2026-09-14), review of #199.** A jump to a current item that has been removed is now
+  refused, and a replace discards a replay's reserved item. Decisions 5, 6 and 12 say so.

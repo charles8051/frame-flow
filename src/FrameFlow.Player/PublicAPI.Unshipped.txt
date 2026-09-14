@@ -33,8 +33,14 @@ FrameFlow.Player.IMediaPlayerBuilder.WithRepeatMode(FrameFlow.Media.RepeatMode m
 FrameFlow.Player.IMediaPlayerBuilder.WithVideoSink(FrameFlow.Media.IVideoSink! sink) -> FrameFlow.Player.IMediaPlayerBuilder!
 FrameFlow.Player.IMediaPlaylistPlayer
 FrameFlow.Player.IMediaPlaylistPlayer.CurrentSource.get -> FrameFlow.Media.IMediaSource?
-FrameFlow.Player.IMediaPlaylistPlayer.EnqueueAsync(FrameFlow.Media.IMediaSource! source, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
-FrameFlow.Player.IMediaPlaylistPlayer.SetNextAsync(FrameFlow.Media.IMediaSource? source, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+FrameFlow.Player.IMediaPlaylistPlayer.AddAsync(FrameFlow.Media.IMediaSource! source, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Playback.PlaylistItem!>!
+FrameFlow.Player.IMediaPlaylistPlayer.ClearAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+FrameFlow.Player.IMediaPlaylistPlayer.EnqueueAsync(FrameFlow.Media.IMediaSource! source, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Playback.PlaylistItem!>!
+FrameFlow.Player.IMediaPlaylistPlayer.GetPlaylist() -> FrameFlow.Playback.PlaylistSnapshot!
+FrameFlow.Player.IMediaPlaylistPlayer.JumpToAsync(FrameFlow.Playback.PlaylistItem! item, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
+FrameFlow.Player.IMediaPlaylistPlayer.RemoveAsync(FrameFlow.Playback.PlaylistItem! item, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
+FrameFlow.Player.IMediaPlaylistPlayer.ReplaceAsync(System.Collections.Generic.IEnumerable<FrameFlow.Media.IMediaSource!>! sources, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result<System.Collections.Generic.IReadOnlyList<FrameFlow.Playback.PlaylistItem!>!>>!
+FrameFlow.Player.IMediaPlaylistPlayer.SetNextAsync(FrameFlow.Media.IMediaSource? source, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Playback.PlaylistItem?>!
 FrameFlow.Player.IMediaPlaylistPlayer.SkipToNextAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
 FrameFlow.Player.IMediaPlaylistPlayer.SourceTransitioned.get -> System.IObservable<FrameFlow.Playback.PlaylistTransition!>!
 FrameFlow.Player.IPlayerBuilder

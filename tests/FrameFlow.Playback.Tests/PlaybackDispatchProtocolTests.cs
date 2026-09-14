@@ -617,7 +617,7 @@ public sealed class PlaybackDispatchProtocolTests
         await using var _ = controller;
         await PlayToEndedAsync(controller, session);
         var initializeCalls = Volatile.Read(ref session.InitializeCalls);
-        session.CanReplay = false;
+        session.ReplayAvailable = false;
 
         var play = await controller.PlayAsync();
 
@@ -1045,7 +1045,9 @@ public sealed class PlaybackDispatchProtocolTests
         public MediaInfo? MediaInfo => Info;
         public TimeSpan Duration => Info.Duration;
 
-        public bool CanReplay { get; set; } = true;
+        public bool ReplayAvailable { get; set; } = true;
+
+        public bool TryBeginReplay() => ReplayAvailable;
 
         public bool CanSeekFromEnded { get; set; } = true;
 

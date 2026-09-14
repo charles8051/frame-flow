@@ -59,7 +59,7 @@ States marked with `>` are composite (contain substates).
 | **Paused** | Sufficient buffer, playback suspended. Clock paused, workers gated. |
 | **Playing** | Actively decoding and rendering. Clock advancing. |
 | **Rebuffering** | Was playing, but buffer underran. Auto-resumes when refilled if `playWhenReady`. |
-| **Ended** | Final frame rendered. Clock stopped at duration. Only reachable when `RepeatMode == Off`. Public replay tears down the ended runtime and reloads the last source before playback is re-primed from the beginning. A playlist keeps the item that ended its queue loaded here, and its replay starts the next queued item (#170). |
+| **Ended** | Final frame rendered. Clock stopped at duration. Only reachable when `RepeatMode == Off`. Public replay tears down the ended runtime and reloads the last source before playback is re-primed from the beginning. A playlist keeps the item that ended its queue loaded here, and its replay starts the next item its queue yields, or its first item again (#170, #171). |
 | **Stopped** | Explicitly stopped. Session disposed. Controller reusable via new `LoadAsync()`. |
 | **Error** | Unrecoverable failure. Carries a `PlaybackError` with category and message. |
 | **Destroyed** | `DisposeAsync()` called. Terminal — no transitions out. |
@@ -104,7 +104,7 @@ internal enum PlaybackTrigger
 | 13 | Playing | Playing | `LastFrameRendered` | **Internal transition, guard:** `_repeat.State == RepeatMode.One`. Seeks to 0, emits `LoopRestarted`. A session that loops internally, a playlist, never takes this guard: its end-of-stream means its queue has ended (#170). |
 | 14 | Playing | Playing | `LastFrameRendered` | **Internal transition, guard:** `_repeat.State == RepeatMode.All`. Seeks to 0 + wraps, emits `LoopRestarted`. |
 | 15 | Ended | InitialBuffering | `Seek(pos)` | Refused, staying in `Ended`, when the session holds nothing to seek: a playlist whose last item failed (#170). |
-| 16 | Ended | Playing | `Play` | Manual replay. Refused, staying in `Ended`, when the session has nothing to replay: a playlist with an empty queue (#170). |
+| 16 | Ended | Playing | `Play` | Manual replay. Refused, staying in `Ended`, when the session has nothing to replay: a playlist player holding no items (#170, #171). A playlist replay starts with a pending jump's target, the next item its queue yields, or its first item again. |
 | 17 | Ended | Stopped | `Stop` | |
 | 18 | Ready.* | Stopped | `Stop` | Exit from Ready composite |
 | 19 | Loading.* | Stopped | `Stop` | Exit from Loading composite |
