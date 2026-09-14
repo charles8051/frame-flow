@@ -116,9 +116,10 @@ proposed fix failed review.
 
 ### 1. Single-source playback stays on `SubstrateSession`
 
-The two session types remain. This record changes `PlaylistSession`, four internal points in
-`PlaybackControllerCore` (the replay and seek checks at `Ended` in decision 4, the snapshot update in
-decision 5, and the recoverable error in decision 7), one cell of `PlaybackProtocol` (decision 8),
+The two session types remain. This record changes `PlaylistSession`, five internal points in
+`PlaybackControllerCore` (the replay and seek checks at `Ended` in decision 4, the repeat input for a
+session that loops internally in decision 2, the snapshot update in decision 5, and the recoverable
+error in decision 7), one cell of `PlaybackProtocol` (decision 8),
 and one internal counter in `SubstrateSession` (decision 2). `IMediaPlayer`,
 `IMediaPlaylistPlayer`, `IPlaybackController` and both player factories keep their shapes.
 
@@ -178,6 +179,15 @@ Evidence:
   used to find no item. With the item kept, it would relaunch the item, and the controller would
   then end while the item played. The session drops it, as it drops a Play or Pause in the same
   race (decision 8), and the controller ends. Read from code.
+- **The controller never loops a playlist.** `PlaylistMediaPlayerCore` sets the controller's repeat
+  mode before the coordinator's. If the session decided the queue had ended under `Off` in between,
+  the controller received that end-of-stream under `One`. While `Playing` it ran its loop rewind on
+  the kept item and stayed `Playing`; the item's next end-of-stream was dropped at `Ended`, so the
+  player stayed `Playing` after the item finished. While `Paused` it dropped the trigger. A
+  playlist session runs the repeat mode itself and reports end-of-stream only when its queue has
+  ended, so `IPlaybackSession.LoopsInternally` says so, and the controller gives the protocol
+  `RepeatOne` false for such a session. The loop-stall watchdog still reads the controller's own
+  mode. Review of #197 found this.
 
 ### 3. A skip at the tail pauses the item and then keeps it
 
@@ -440,7 +450,7 @@ A skip, an end-of-stream and a fault all advance, and the advance follows the re
   playing. `PlaybackProtocol` gains `Paused × LastFrameRendered → Ended`, which freezes the clock,
   unless the repeat mode is `One`. Without it the controller dropped the trigger and stayed `Paused`
   with nothing current. Under `One` the trigger is still dropped, because `Paused` has no loop to
-  run.
+  run. Since #170 a playlist session never counts as `One` here (decision 2, as implemented).
 - **At `Ended`, a skip is dropped and the queue is left alone**, so `PlayAsync`'s replay path takes
   the enqueued item. Before, the skip took it and started it while the state said `Ended`, and a
   following Play found an empty queue and hit defect 1. A late notification from the item that ended
@@ -693,12 +703,6 @@ What it costs:
   lands between a middle item's end-of-stream and its advance would skip to the next item. As
   implemented with #170, the run number is checked for every item, which covers this too. Read from
   code; testing it needs the interleaving tooling #143 asks for.
-- **A repeat-mode change that races the end of the queue.** `PlaylistMediaPlayerCore` sets the
-  controller's repeat mode before the coordinator's. If the session decides the queue has ended
-  under `Off` in between, the controller receives the end-of-stream under `One` and runs its own
-  loop rewind, which the session was never built to receive at `Ended`. The player then stays
-  `Playing` after at most one more pass of the kept item. Before #170 it stayed `Playing` with
-  nothing current. Read from code.
 
 ## Deferred: one player type
 
@@ -772,6 +776,10 @@ the seek refusal decision 4 gained as implemented.
 `PlaybackDispatchProtocolTests` covers the controller half with a fake session: Play from `Ended`
 when the session cannot replay, and Seek from `Ended` when it holds nothing, are each refused
 without unloading or warming up. With the checks removed, both succeeded.
+`EndOfStream_UnderRepeatOne_FromASessionThatLoopsInternally_EndsPlayback` sends end-of-stream to
+a controller under `One` from a session that loops internally, while playing and while paused.
+With the controller taking its own repeat mode for such a session, it stayed `Playing` and
+`Paused`.
 `PlaylistCoordinatorTests.First_OnASpentQueue_ReturnsNull_UntilSomethingIsEnqueued` failed with a
 `NullReferenceException` against the unguarded `First`.
 
@@ -919,5 +927,7 @@ the advance, or the tooling #143 asks for. A timing-based test would not show th
   races either the interrupted run or the new one. It is checked for every item. Play from `Ended`
   is refused on an empty queue, and the same check refuses a seek from `Ended` when nothing was
   kept, which decision 4 had not covered. The session also drops a seek that reaches it at `Ended`
-  without the warm-up of a seek out of `Ended`, as it drops a Play or Pause in that race. A
-  repeat-mode change racing the end of the queue is recorded as an open question.
+  without the warm-up of a seek out of `Ended`, as it drops a Play or Pause in that race. Automated
+  review of #197 then found that a repeat-mode change racing the end of the queue let the
+  controller loop a playlist that had ended. The draft had recorded that as an open question; the
+  controller now never loops a session that runs its own repeat mode.

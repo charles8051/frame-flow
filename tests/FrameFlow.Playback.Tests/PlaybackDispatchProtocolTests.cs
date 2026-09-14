@@ -648,6 +648,45 @@ public sealed class PlaybackDispatchProtocolTests
         Assert.Equal(0, Volatile.Read(ref session.SeekCalls));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EndOfStream_UnderRepeatOne_FromASessionThatLoopsInternally_EndsPlayback(
+        bool paused
+    )
+    {
+        // A playlist loops its own items and reports end-of-stream only when its queue has ended.
+        // The playlist player sets the controller's repeat mode before the playlist's, so an
+        // end-of-stream from a queue that ended under Off can reach a controller already under
+        // One (#170). The controller used to run its loop rewind on the ended playlist and stay
+        // Playing, or drop the trigger while Paused.
+        var (controller, session) = NewController(RepeatMode.One);
+        await using var _ = controller;
+        session.LoopsInternally = true;
+        await controller.LoadAsync(new FakeSource());
+        await controller.PlayAsync();
+        if (paused)
+            Assert.True((await controller.PauseAsync()).IsSuccess);
+
+        var endedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using (
+            controller.PlaybackStateChanged.Subscribe(
+                new Relay<StateTransition<PlaybackState>>(t =>
+                {
+                    if (t.Current == PlaybackState.Ended)
+                        endedTcs.TrySetResult();
+                })
+            )
+        )
+        {
+            session.RaiseEndOfStream();
+            await CompletesWithin(endedTcs.Task, TimeSpan.FromSeconds(5));
+        }
+
+        Assert.Equal(PlaybackState.Ended, controller.State);
+        Assert.Equal(0, Volatile.Read(ref session.SeekCalls));
+    }
+
     [Fact]
     public async Task Unload_FromPlaying_DisposesSession_AndReachesUnloaded()
     {
@@ -1009,6 +1048,8 @@ public sealed class PlaybackDispatchProtocolTests
         public bool CanReplay { get; set; } = true;
 
         public bool CanSeekFromEnded { get; set; } = true;
+
+        public bool LoopsInternally { get; set; }
 
         public ValueTask InitializeAsync(
             IMediaSource source,

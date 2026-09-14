@@ -101,7 +101,7 @@ internal enum PlaybackTrigger
 | 10 | Rebuffering | Paused | `BufferReady` | `playWhenReady == false` |
 | 11 | Rebuffering | Paused | `Pause` | |
 | 12 | Playing | Ended | `LastFrameRendered` | **Guard:** `_repeat.State == RepeatMode.Off` |
-| 13 | Playing | Playing | `LastFrameRendered` | **Internal transition, guard:** `_repeat.State == RepeatMode.One`. Seeks to 0, emits `LoopRestarted`. |
+| 13 | Playing | Playing | `LastFrameRendered` | **Internal transition, guard:** `_repeat.State == RepeatMode.One`. Seeks to 0, emits `LoopRestarted`. A session that loops internally, a playlist, never takes this guard: its end-of-stream means its queue has ended (#170). |
 | 14 | Playing | Playing | `LastFrameRendered` | **Internal transition, guard:** `_repeat.State == RepeatMode.All`. Seeks to 0 + wraps, emits `LoopRestarted`. |
 | 15 | Ended | InitialBuffering | `Seek(pos)` | Refused, staying in `Ended`, when the session holds nothing to seek: a playlist whose last item failed (#170). |
 | 16 | Ended | Playing | `Play` | Manual replay. Refused, staying in `Ended`, when the session has nothing to replay: a playlist with an empty queue (#170). |
@@ -113,7 +113,7 @@ internal enum PlaybackTrigger
 | 22 | * (non-terminal) | Error | `FatalError(err)` | Parameterized with PlaybackError |
 | 23 | Error | Idle | `Reset` | |
 | 24 | * | Destroyed | `Release` | Terminal, no transitions out |
-| 25 | Paused | Ended | `LastFrameRendered` | **Guard:** `_repeat.State != RepeatMode.One`. A playlist skip on its last item while paused, or an end-of-stream posted just before a pause (#182). Freezes the clock. |
+| 25 | Paused | Ended | `LastFrameRendered` | **Guard:** `_repeat.State != RepeatMode.One`. A playlist skip on its last item while paused, or an end-of-stream posted just before a pause (#182). Freezes the clock. A playlist session counts as not `One` here too (#170). |
 
 ### 1.4 Entry / Exit Actions
 

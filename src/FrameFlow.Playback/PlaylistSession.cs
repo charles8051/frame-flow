@@ -195,6 +195,10 @@ internal sealed class PlaylistSession : IPlaybackSession
     // reported the end-of-stream, and nothing changes it while this session is Ended.
     public bool CanSeekFromEnded => _current is not null;
 
+    // The coordinator runs the repeat mode. This session reports end-of-stream only when the
+    // queue has ended.
+    public bool LoopsInternally => true;
+
     // ── IPlaybackSession lifecycle ──────────────────────────────────────────
 
     public async ValueTask InitializeAsync(

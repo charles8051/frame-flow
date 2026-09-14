@@ -54,6 +54,13 @@ internal interface IPlaybackSession : IAsyncDisposable
     /// </summary>
     bool CanSeekFromEnded => true;
 
+    /// <summary>
+    /// Whether this session runs the repeat mode itself, so an end-of-stream it reports always
+    /// means it has finished. The controller then ends on that end-of-stream whatever its own
+    /// repeat mode, and never runs its loop rewind on this session. A single source does not.
+    /// </summary>
+    bool LoopsInternally => false;
+
     // ── Lifecycle methods (called by PlaybackController entry actions) ──
 
     /// <summary>

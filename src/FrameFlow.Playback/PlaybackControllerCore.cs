@@ -748,8 +748,18 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// (<see cref="TryHandleReplayFromEndedAsync"/> / the <see cref="SeekCommand"/> arm),
     /// not by the <c>CanFire</c> gate.
     /// </summary>
+    /// <remarks>
+    /// A session that loops internally, such as a playlist, reports end-of-stream only once it
+    /// has finished, so the protocol sees <see cref="PlaybackInputs.RepeatOne"/> as false for it.
+    /// The playlist player sets this controller's repeat mode before the playlist's own, so the
+    /// two can disagree for a moment. Taking the controller's then would loop a playlist that
+    /// had just ended its queue (#170).
+    /// </remarks>
     private PlaybackInputs CurrentPlaybackInputs() =>
-        new(RepeatOne: _repeat.State == RepeatMode.One, HasSession: true);
+        new(
+            RepeatOne: _repeat.State == RepeatMode.One && _session is not { LoopsInternally: true },
+            HasSession: true
+        );
 
     /// <summary>
     /// The pure-core authority for "is <paramref name="trigger"/> permitted from the
