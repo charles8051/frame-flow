@@ -197,11 +197,16 @@ and the revert can be restored for the single source.
   players raise it: under `One`, and under `All` when the queue holds only that item.
 - **What is not a loop.** It does not fire for a skip, a jump, or a rebuild after a failure. It does
   not fire when a different item of the same source follows, such as a back-to-back duplicate.
-- **When it fires.** It fires when the repeated item has started again. For a single source, that is
-  when the loop rewind's seek outcome succeeds, not when the rewind is requested. A loop rewind
-  cancelled by a user seek raises none. For a playlist, it is when the in-place rewind returns, or
-  when a rebuilt repeat starts: while paused, or after a failed rewind. A repeat that fails to start
-  is a failed start, reported as one, and raises none.
+- **When it fires.** It fires when the item has been put back at its start, whether the player is
+  playing or paused. It does not wait for a frame to be presented. A consumer that needs to know
+  playback has resumed watches the state and the position.
+  - **A single source** fires it when the loop rewind's seek outcome succeeds, not when the rewind
+    is requested. A loop rewind cancelled by a user seek raises none.
+  - **A playlist** fires it when the in-place rewind returns. If the repeat rebuilds the item, while
+    paused or after a failed rewind, it fires once the rebuilt item is open and warmed, and has
+    started if the player is playing.
+  - **A failed repeat** that cannot be opened or started is a failed start, reported as one, and
+    raises none.
 - **`LoopCount`.** It counts consecutive loops of the current item: the first loop is 1.
   - Anything that is not a loop resets it: a load, a skip, a jump, a rebuild after a failure, or a
     hand-off to another item.
@@ -210,6 +215,14 @@ and the revert can be restored for the single source.
 - **Who counts.** A single source's controller counts. A playlist session counts under its gate and
   passes the count in a new internal session callback. The controller only publishes it, so the
   controller still does not track playlist items.
+- **Loops, skips and jumps are ordered by the session's gate.** A playlist reports a loop from inside
+  the advance that performed it, before the gate is released. A skip, jump or removal that arrives
+  meanwhile waits for the gate, so its effect comes after the loop, including its reset of the
+  count. A jump recorded during the rewind is taken as soon as the item has started again, as the
+  queue record's decision 5 says, so the loop is reported and then the jump moves on.
+- **Loop reports travel in order.** The controller receives them through its channel in the order
+  the session made them, carrying the session generation. It drops a report from a session it has
+  replaced, as it drops that session's other notifications.
 - **`IMediaPlayer` gains `LoopRestarted`,** forwarded from the controller by both player
   implementations.
 - **`SourceTransitioned` keeps firing on a loop,** and `Wrapped` keeps its meaning: the cursor went
@@ -225,16 +238,22 @@ Today the controller computes `RepeatOne` from its own mode. That input becomes 
 which the controller computes for a single source and the session answers for a playlist:
 
 - **A single source** expects a repeat under `One` or `All`.
-- **A playlist** expects one when no advance is in flight, the current item has started, it has not
-  been removed, and either:
+- **A playlist** expects one when the current item has started, it has not been removed, and either:
   - the mode is `One`; or
   - the mode is `All`, the current item is the only playlist item, and nothing is set next or
     queued.
 
-The answer is read on every tick, not held across the end of the item. False during an advance
-keeps a slow hand-off, such as one waiting on a `SourceTransitioned` subscriber, from counting as an
-overrun. What closes an overrun episode on a healthy loop is the rewind resetting the position to
-zero. The loop-count gate is a second guard.
+The answer is read on every tick, not held across the end of the item.
+
+- **A repeat stays eligible while it runs.** A repeat of the same item, by in-place rewind or by
+  rebuild, does not make the item unstarted, so a rewind that hangs is still watched. Today the
+  coordinator's take marks every taken item unstarted, including the same item taken again at a
+  wrap; that changes for a same-item take.
+- **A hand-off to a different item is not eligible.** Taking a different item makes the current
+  item one that has not started, so a slow hand-off does not count as an overrun, such as one
+  waiting on a `SourceTransitioned` subscriber.
+- **What closes an overrun on a healthy loop** is the rewind putting the position back to zero. The
+  loop-count gate is a second guard.
 
 This amends #197's note that the watchdog still reads the controller's own mode.
 
@@ -363,7 +382,7 @@ Unit tests without media:
 | 1 | 1 | `PlaybackDispatchProtocolTests`: a single-source session under `All` reports end-of-stream; the controller runs the loop rewind and stays `Playing`. | [`Ended`] |
 | 2 | 3 | `PlaybackProtocolTests` and `PlaybackDispatchProtocolTests`: under `One`, and under `All` for a single source, end-of-stream while `Paused` runs the loop rewind and stays `Paused`. | [dropped under `One`; `Ended` under `All`] |
 | 3 | 5 | `PlaybackDispatchProtocolTests`: a loop rewind cancelled by a seek raises no `LoopRestarted`; a load resets `LoopCount`. | [raised on request; never reset] |
-| 4 | 6 | `PlaylistCoordinatorTests`: `ExpectsRepeat` is true for a started, unremoved current item under `One`, and under `All` as the only playlist item with nothing next or queued; false for a one-shot current item, a removed current item, a playlist of two under `All`, and while an advance is in flight. | [no member] |
+| 4 | 6 | `PlaylistCoordinatorTests`: `ExpectsRepeat` is true for a started, unremoved current item under `One`, and under `All` as the only playlist item with nothing next or queued, including after that item is taken again at a wrap; false for a one-shot current item, a removed current item, a playlist of two under `All`, and a different item taken and not yet started. | [no member] |
 | 5 | 6 | `LoopStallEvaluatorTests`: the renamed input gates eligibility as `RepeatOne` did. | [renamed] |
 
 Integration tests over real playback, in `FrameFlow.Integration.Tests`:
@@ -416,3 +435,12 @@ revision history without machine identifiers.
     - ADR-0021's edge cases are mapped.
     - The Validation rows gained the pause case, duplicates, a reset after a real loop, and the
       predicate's negative cases.
+- **Revision after automated review of #201 (2026-09-14).** Three changes:
+  - **Timing.** `LoopRestarted` is defined as the item being put back at its start, playing or
+    paused, not as a frame presented. The first revision said "started again", which did not fit a
+    loop that ends while paused.
+  - **Races.** Decision 5 states how a loop, a skip and a jump are ordered by the session's gate, and
+    that loop reports travel in order with the session generation.
+  - **The watchdog.** Decision 6 dropped "no advance in flight", which would have left a playlist of
+    one blind during its own rewind. A same-item repeat now keeps the item started, and only a
+    different item taken and not yet started is ineligible.
