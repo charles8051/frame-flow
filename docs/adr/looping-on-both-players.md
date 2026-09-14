@@ -200,13 +200,18 @@ and the revert can be restored for the single source.
 - **When it fires.** It fires when the item has been put back at its start, whether the player is
   playing or paused. It does not wait for a frame to be presented. A consumer that needs to know
   playback has resumed watches the state and the position.
-  - **A single source** fires it when the loop rewind's seek outcome succeeds, not when the rewind
-    is requested. A loop rewind cancelled by a user seek raises none.
-  - **A playlist** fires it when the in-place rewind returns. If the repeat rebuilds the item, while
-    paused or after a failed rewind, it fires once the rebuilt item is open and warmed, and has
-    started if the player is playing.
-  - **A failed repeat** that cannot be opened or started is a failed start, reported as one, and
-    raises none.
+  - **A single source** fires it when the loop rewind's seek outcome reports success, not when the
+    rewind is requested. A loop rewind cancelled by a user seek raises none.
+  - **A playlist rewinding in place** fires it when `RewindToStartAsync` completes without an
+    exception. If it throws, the repeat falls back to a rebuild, and the rebuild's rule applies.
+  - **A playlist rebuilding the item while playing** fires it when the rebuilt item's `PlayAsync`
+    completes.
+  - **A playlist rebuilding the item while paused** fires it when the rebuilt item's `WarmUpAsync`
+    completes. The item then waits at its start for Play, and Play raises no second event.
+  - **A failed repeat** that cannot be opened, warmed or started is a failed start, reported as one,
+    and raises none.
+
+  At each of these points the item's position clock reads zero, or later if the player is playing.
 - **`LoopCount`.** It counts consecutive loops of the current item: the first loop is 1.
   - Anything that is not a loop resets it: a load, a skip, a jump, a rebuild after a failure, or a
     hand-off to another item.
@@ -444,3 +449,8 @@ revision history without machine identifiers.
   - **The watchdog.** Decision 6 dropped "no advance in flight", which would have left a playlist of
     one blind during its own rewind. A same-item repeat now keeps the item started, and only a
     different item taken and not yet started is ineligible.
+- **Revision after the second turn of automated review of #201 (2026-09-14).** Decision 5 now names
+  one completion point for each path: the seek outcome for a single source, `RewindToStartAsync`
+  completing for an in-place rewind, and `PlayAsync` or `WarmUpAsync` completing for a rebuild while
+  playing or paused. A finding that the in-place rewind should wait for the hardware soak was
+  answered on the PR and not adopted, for the reasons in alternative E.
