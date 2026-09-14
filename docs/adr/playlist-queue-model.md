@@ -3,7 +3,7 @@
 ## Status
 
 Proposed (2026-09-14). Draft pending number assignment. Revised the same day after an independent
-review; *Revision history* says what changed.
+review, and again after automated review of #198; *Revision history* says what changed.
 
 This record replaces the playlist player's queue with a model that keeps its items. It decides what
 each existing verb means in that model, adds the verbs a caller needs to move around it and edit
@@ -116,8 +116,10 @@ the source twice.
   last. Taking a playlist item puts the cursor just after it. Taking a one-shot item does not move
   the cursor. Removing a playlist item closes the space it held, and the cursor stays between the
   items on either side, so the item that followed a removed item is the one after the cursor.
-- **Taking an item** removes it from next or queued, or moves the cursor past it. The session then
-  opens it. Once it starts, it is **the current item** and `SourceTransitioned` reports it.
+- **Taking an item** removes it from next or queued, or moves the cursor past it, and makes it
+  **the current item**. The current item is opening until the session starts it, and
+  `SourceTransitioned` reports it when it starts. An item that fails to start stays current until
+  the next take replaces it.
 - **An item is in the player** while it is in the playlist, next or queued, or is the current item
   and has not been removed.
 
@@ -141,8 +143,8 @@ rest of them, because it is left in the pass.
 Nothing about the repeat mode is stored in the collections. Switching mode at any point applies to
 the whole playlist, which fixes probes 2 and 4.
 
-An item that has been taken plays even if it is removed before it starts. Removal changes only what
-is taken later.
+Removing or clearing never stops the current item, including one still opening. Removal changes
+only what is taken later.
 
 ### 3. `RepeatMode.One` repeats the current item until the caller moves on
 
@@ -179,20 +181,29 @@ Taking the target moves the cursor just after it if it is a playlist item, or re
 collection if it is one-shot. Next and queued items are otherwise untouched and follow the target in
 the usual order.
 
-A jump is never lost to an advance already under way. An advance that took its item before the jump
-arrived starts that item, then finds the pending jump and advances again, so the target becomes
-current straight after and the other item does not play through.
+A jump is never lost to an advance already under way:
 
-- **A jump to the current item** does nothing and succeeds. A caller that wants to restart it seeks
-  to zero.
+- **`JumpToAsync` records the target, then asks the session to advance.** It records the target
+  under the coordinator's lock. Its request is not subject to the session's generation check. It
+  waits for the transition gate and advances only if a jump is still pending when it gets the gate.
+- **An advance already under way also looks.** Once its item has started, it checks for a pending
+  jump before it releases the gate.
+- **Whichever runs first takes the target.** The other finds nothing pending and does nothing.
+
+If the jump was recorded before that check, the check takes it. If it was recorded after, the
+jump's own request runs as soon as the advance releases the gate. Either way the target becomes
+current straight after the item the advance started, and that item does not play through.
+
+- **A jump to the current item,** including one still opening, does nothing and succeeds. A caller
+  that wants to restart it seeks to zero.
 - **A jump to an item that is not in the player,** or to any item while the player is in `Error` or
   disposed, is refused with `ErrorCategory.InvalidOperation`.
 - **`ClearAsync` and `ReplaceAsync` discard a pending jump,** and removing the target removes it.
 
 ### 6. Remove, clear and replace
 
-- **`RemoveAsync(item)`** removes a playlist, next or queued item, or marks the current item removed.
-  A removed current item plays on. When it ends, the player takes the next item in decision 2's
+- **`RemoveAsync(item)`** removes a playlist, next or queued item, or marks the current item removed,
+  including one still opening. A removed current item starts, if it has not, and plays on. When it ends, the player takes the next item in decision 2's
   order. An item that is not in the player is refused with `InvalidOperation`.
 - **`ClearAsync()`** removes every playlist, next and queued item, discards a pending jump, puts the
   cursor before the first position and marks the current item removed. The current item plays on.
@@ -250,6 +261,7 @@ public sealed class PlaylistSnapshot
     public IReadOnlyList<PlaylistItem> Next { get; }
     public IReadOnlyList<PlaylistItem> Queued { get; }
     public PlaylistItem? Current { get; }
+    public bool CurrentStarted { get; }
     public int ResumeIndex { get; }          // index in Playlist of the item after the cursor
     public PlaylistItem? PendingJump { get; }
     public long Revision { get; }
@@ -257,7 +269,7 @@ public sealed class PlaylistSnapshot
 
 public sealed record PlaylistTransition(IMediaSource Source, MediaInfo MediaInfo, int Index, bool Wrapped)
 {
-    public PlaylistItem? Item { get; init; }  // new: the item that became current
+    public PlaylistItem? Item { get; init; }  // new: set on every transition the player raises
 }
 ```
 
@@ -285,16 +297,21 @@ Task<Result<IReadOnlyList<PlaylistItem>>> ReplaceAsync(
   equal sources could name its own item only by position, and a position races the advance
   (alternative E). `SetNextAsync` with null adds nothing and returns null.
 - **`GetPlaylist` is a snapshot,** copied under the coordinator's lock and polled like
-  `GetDiagnostics`. `Playlist` keeps the order items were added in. `Current` may be a one-shot item,
-  and so not in `Playlist`, or a removed item. An item that has been taken and is still opening is in
-  no collection and is not yet `Current`. `ResumeIndex` equals `Playlist.Count` at the end of a pass.
+  `GetDiagnostics`. `Playlist` keeps the order items were added in. `Current` is the item most
+  recently taken. It may be a one-shot item, and so not in `Playlist`, a removed item, or an item
+  still opening, in which case `CurrentStarted` is false. `IMediaPlaylistPlayer.CurrentSource` keeps
+  reporting the source of the last item that started. `ResumeIndex` equals `Playlist.Count` at the
+  end of a pass.
   `Revision` rises on every edit and every hand-off, so a poller can skip a snapshot that has not
   changed.
 - **The snapshot and the item are classes with no public constructor,** not positional records.
   Adding a positional parameter to a record replaces its constructor and `Deconstruct`, which
   `PipelineDiagnosticsSnapshot.VideoPresentationLag` records.
-- **`PlaylistTransition.Item` is init-only** for the same reason. `Index` keeps its meaning, a count of
-  hand-offs (#173); an item's position is in the snapshot.
+- **`PlaylistTransition.Item` is init-only** for the same reason. Every transition the player raises
+  sets it, so a subscriber can tell two items of one source apart. It is nullable only because the
+  four-argument constructor remains for callers that build transitions themselves, such as test
+  doubles, and those carry no item. `Index` keeps its meaning, a count of hand-offs (#173); an item's
+  position is in the snapshot.
 - **`SetNextAsync` keeps its push.** ADR-0062's slot is not adopted (alternative C).
 
 `MediaPlaylistPlayer.CreateAsync` keeps its signature. Its sources become the playlist.
@@ -310,7 +327,9 @@ calls:
 - **A jump has its own entry point.** It cannot go through the skip handler, which drops a skip at
   `Ended` (`PlaylistSession.cs:447-451`). The handler also detaches when its session is disposed,
   so a request during a replay's reload reaches the coordinator and waits for the new session.
-- **The advance checks for a jump after it starts an item** (decision 5).
+- **A jump's advance is keyed on the pending jump,** not on the session's generation, and the
+  advance checks for a pending jump under the gate after it starts an item (decision 5).
+- **The coordinator records the current item when it is taken,** and whether it has started.
 - **`CanReplay` becomes a take.** The controller asks the session to take the replay's item before
   it unloads (decision 7), and is refused when there is none.
 - **`InitializeAsync` passes over items that fail to open** once the player has started any item.
@@ -471,6 +490,7 @@ deterministic unit tests.
 | 15 | 7 | `[a b]` under `Off` at the end of the pass, then switched to `All`: the replay's take is `a`, not wrapped. | [nothing to take] |
 | 16 | 7 | The replay's take, then `ClearAsync`: the taken item is still the new session's first item. | [no verb] |
 | 17 | 8 | Four failures, a new session, five more: the player gives up. | [the count starts again] |
+| 18 | 1, 6 | A take makes its item `Current` with `CurrentStarted` false; `RemoveAsync` and `JumpToAsync` on it succeed; it becomes started when the session reports it. | [no verb] |
 
 Tests 6 and 7 guard today's orders, which the decisions keep. Test 8's `Off` and `All` cases guard
 today's behaviour against a cursor that moves only when an item starts, which the review showed
@@ -480,15 +500,16 @@ Integration tests over real playback, in `FrameFlow.Integration.Tests`:
 
 | # | Decision | Test |
 |---|---|---|
-| 18 | 5 | Jump while `Paused`: the item is current, the state is `Paused` and the position is zero; Play presents it. |
-| 19 | 5 | Jump at `Ended`, then Play: the target plays. Jump at `Ended`, seek to zero, then Play: the target plays. |
-| 20 | 5 | Hold an advance inside the session's gate, jump, then release: the target becomes current straight after the held item starts. |
-| 21 | 7 | Play from `Ended` with nothing queued: the first playlist item plays. |
-| 22 | 7 | Play from `Ended` over a playlist whose first item's file has been removed: one `ErrorOccurred`, the second item plays, and the player is not in `Error`. |
-| 23 | 3 | Under `One`, skip: the next item plays and repeats. |
-| 24 | 5 | Jump while the player is in `Error`: refused with `InvalidOperation`. |
+| 19 | 5 | Jump while `Paused`: the item is current, the state is `Paused` and the position is zero; Play presents it. |
+| 20 | 5 | Jump at `Ended`, then Play: the target plays. Jump at `Ended`, seek to zero, then Play: the target plays. |
+| 21 | 5 | Hold an advance inside the session's gate, jump, then release: the target becomes current straight after the held item starts. Again, jumping just after the held item's transition is observed: the target becomes current. |
+| 22 | 7 | Play from `Ended` with nothing queued: the first playlist item plays. |
+| 23 | 7 | Play from `Ended` over a playlist whose first item's file has been removed: one `ErrorOccurred`, the second item plays, and the player is not in `Error`. |
+| 24 | 3 | Under `One`, skip: the next item plays and repeats. |
+| 25 | 5 | Jump while the player is in `Error`: refused with `InvalidOperation`. |
+| 26 | 6 | Hold an advance after its take and before its item starts, remove that item, then release: the item starts and plays on, and when it ends the next item in order plays. |
 
-Test 20 can hold the advance with `HoldableClock`, as `PlaylistSkipStateTests` does, on a clock
+Tests 21 and 26 can hold the advance with `HoldableClock`, as `PlaylistSkipStateTests` does, on a clock
 call the advance makes while it holds the gate.
 
 The AvaloniaPlayer example moves its jump to `JumpToAsync`, and the rotation pattern's docs say which
@@ -523,3 +544,16 @@ verb keeps items.
     named both the type and the kept collection, and the AvaloniaPlayer example already has a
     `PlaylistEntry`.
   - **A jump to the current item** now does nothing instead of restarting it (alternative F).
+- **Revision after automated review of #198 (2026-09-14).** Three findings, all fixed:
+  - **An item still opening could not be named.** It had been taken, so it was in no collection, and
+    it was not yet current, so `JumpToAsync` and `RemoveAsync` would have refused the item a caller
+    had just been handed. A taken item is now the current item from the take, and the snapshot's
+    `CurrentStarted` says whether it has started. Removing it marks it removed, and it starts and
+    plays on, as a removed playing item does.
+  - **A jump could arrive after the advance's last check.** The previous revision had the advance
+    look for a pending jump after its item started, but nothing picked up a jump recorded just after
+    that look. `JumpToAsync` now requests its own advance, which is keyed on the pending jump rather
+    than on the session's generation, so whichever of the two runs first takes the target.
+  - **`PlaylistTransition.Item` had no stated guarantee.** Every transition the player raises now
+    sets it. It stays nullable because the four-argument constructor remains for callers that build
+    transitions themselves.
