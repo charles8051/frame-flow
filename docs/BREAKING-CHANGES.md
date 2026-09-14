@@ -218,7 +218,7 @@ end-of-stream that reaches `Paused` now moves to `Ended` unless the repeat mode
 is `One`. It used to be dropped. On a single-source player an end-of-stream can
 reach `Paused` when it races a pause.
 
-### 7. A playlist at `Ended` keeps its last item, and refuses Play with nothing queued
+### 7. A playlist at `Ended` keeps its last item, and Play from there no longer faults
 
 **Not a compile error.** Nothing you write changes; what runs does.
 
@@ -226,12 +226,13 @@ When `IMediaPlaylistPlayer` ran out of items under `RepeatMode.Off`, it disposed
 last item before it reported the end. `SeekAsync` from `Ended` then succeeded with
 nothing to seek, and a following `PlayAsync` reported `Playing` while nothing
 played. `PlayAsync` from `Ended` with nothing queued failed to load and put the
-player in `Error` (#170).
+player in `Error` (#170). Entry 8 decides what that Play does now.
 
 | Case | Before | After |
 |---|---|---|
 | `SeekAsync` from `Ended`, then `PlayAsync` | `Paused`, then `Playing` with nothing playing | the last item plays from the position sought |
-| `PlayAsync` from `Ended`, nothing queued | failed `Result` with `ErrorCategory.System`; `Error` | failed `Result` with `ErrorCategory.InvalidOperation`; stays `Ended` |
+| `PlayAsync` from `Ended`, nothing queued | failed `Result` with `ErrorCategory.System`; `Error` | the playlist starts again from its first item (entry 8) |
+| `PlayAsync` from `Ended`, the player holds no items | failed `Result` with `ErrorCategory.System`; `Error` | failed `Result` with `ErrorCategory.InvalidOperation`; stays `Ended` |
 | `SeekAsync` from `Ended` after the last item failed | succeeds; `PlayAsync` then reports `Playing` with nothing playing | failed `Result` with `ErrorCategory.InvalidOperation`; stays `Ended` |
 | `GetDiagnostics()` at `Ended` | empty pipeline counters | the last item's counters |
 | `PlayAsync` from `Ended`, an item queued | the queued item plays | unchanged |
@@ -241,17 +242,60 @@ unloaded, or it is disposed. That is its demuxer, decoders and graph, an active
 audio sink, and a hardware decode device when one is in use. A single-source
 player already holds these at `Ended`.
 
-To start a playlist over from `Ended`, enqueue its items and call `PlayAsync`:
+### 8. The playlist player keeps its playlist, and enqueued items play once
+
+**Mostly not a compile error.** The behaviour changes below compile unchanged. Two
+return types and six new interface members are compile-visible, to the code
+described at the end.
+
+`IMediaPlaylistPlayer` kept an upcoming queue and, under `RepeatMode.All`, a copy
+of what had played. The two disagreed: a jump with `SetNextAsync` added a
+permanent copy of its source to the loop (#171), a switch to `All` looped only
+what played after it, and a skip under `RepeatMode.One` restarted the item.
+
+The player now keeps a playlist with a cursor. Its sources are the playlist, and
+`AddAsync` adds to it. `EnqueueAsync` and `SetNextAsync` add items that play once
+and never join it. `JumpToAsync`, `RemoveAsync`, `ClearAsync`, `ReplaceAsync` and
+`GetPlaylist` are new. The draft ADR
+[The playlist player's queue](adr/playlist-queue-model.md) has the rules.
+
+| Case | Before | After |
+|---|---|---|
+| `EnqueueAsync` or `SetNextAsync` under `All` | the source joins the rotation for good | it plays once; `AddAsync` adds to the rotation |
+| `SetNextAsync` then `SkipToNextAsync` under `All` | the source plays, and each jump adds another copy to the rotation | it plays once, then the playlist resumes |
+| Enqueue on every transition under `All`, then stop | the player loops over every item it enqueued | the player wraps to its playlist |
+| `SkipToNextAsync` under `One` | restarts the current item | the next item plays and repeats |
+| Switch to `All` after items played under `Off` | only items taken after the switch loop | the whole playlist loops |
+| `PlayAsync` from `Ended`, nothing queued | fails and puts the player in `Error` (entry 7) | the playlist starts again from its first item |
+| The factory's sources under `Off` | discarded as they play | kept for the life of the player |
+
+The documented rotation pattern, enqueueing the next item from a
+`SourceTransitioned` handler, plays in the same order as before and holds nothing
+after each item plays.
+
+To move within the playlist, jump to its item instead of setting it next:
 
 ```csharp
-// Before — faulted into Error with an empty queue
-await player.PlayAsync();
+// Before — under All, every jump added a copy to the rotation
+await player.SetNextAsync(source);
+await player.SkipToNextAsync();
 
-// After — refused unless something is queued
-foreach (var item in items)
-    await player.EnqueueAsync(item);
-await player.PlayAsync();
+// After
+var item = player.GetPlaylist().Playlist.First(i => ReferenceEquals(i.Source, source));
+await player.JumpToAsync(item);
 ```
+
+To replace what plays, call `ReplaceAsync` rather than disposing the player.
+
+**Binary break.** `EnqueueAsync` now returns `Task<PlaylistItem>`, and
+`SetNextAsync` returns `Task<PlaylistItem?>`. `await player.EnqueueAsync(source);`
+still compiles. An assembly compiled against the old signatures and not rebuilt
+throws `MissingMethodException`, as entry 2 describes. Rebuild it.
+
+**Implementers.** `IMediaPlaylistPlayer` gains `AddAsync`, `GetPlaylist`,
+`JumpToAsync`, `RemoveAsync`, `ClearAsync` and `ReplaceAsync`. A type outside
+FrameFlow that implements it, such as a test double, stops compiling until it
+adds them.
 
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 

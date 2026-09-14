@@ -1183,7 +1183,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
         // A session with nothing to replay, such as a playlist whose queue has run out, is
         // refused here, before the replay unloads it.
-        if (_session is null || _loadedSource is null || !_session.CanReplay)
+        if (_session is null || _loadedSource is null || !_session.TryBeginReplay())
         {
             var msg = $"Cannot {command.Trigger} from {_state}";
             LogInvalidOperation(command.Trigger.ToString(), _state.ToString());

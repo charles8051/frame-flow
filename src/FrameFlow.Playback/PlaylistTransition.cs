@@ -29,4 +29,12 @@ public sealed record PlaylistTransition(
     MediaInfo MediaInfo,
     int Index,
     bool Wrapped
-);
+)
+{
+    /// <summary>
+    /// The item that became current. Every transition the player raises sets it, so a
+    /// subscriber can tell two items of one source apart. It is <see langword="null"/> only on
+    /// a transition built with the four-argument constructor.
+    /// </summary>
+    public PlaylistItem? Item { get; init; }
+}

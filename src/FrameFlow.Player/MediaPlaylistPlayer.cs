@@ -20,7 +20,8 @@ namespace FrameFlow.Player;
 /// The shape mirrors <see cref="MediaPlayer.CreateAsync"/> — the same sinks,
 /// hardware-decode policy, and pipeline configurators — but takes an ordered set
 /// of sources instead of one, and the returned player exposes the playlist
-/// transport (<see cref="IMediaPlaylistPlayer.EnqueueAsync"/>,
+/// transport (<see cref="IMediaPlaylistPlayer.AddAsync"/>,
+/// <see cref="IMediaPlaylistPlayer.JumpToAsync"/>,
 /// <see cref="IMediaPlaylistPlayer.SkipToNextAsync"/>,
 /// <see cref="IMediaPlaylistPlayer.SourceTransitioned"/>). The sinks are attached
 /// once and stay warm for the life of the playlist.
@@ -33,8 +34,9 @@ public static class MediaPlaylistPlayer
     /// supplied sinks are attached once and reused for every item.
     /// </summary>
     /// <param name="sources">
-    /// The initial play queue, in order. Must contain at least one source. More
-    /// can be added later via <see cref="IMediaPlaylistPlayer.EnqueueAsync"/>.
+    /// The initial playlist, in order. Must contain at least one source. More can be
+    /// added later with <see cref="IMediaPlaylistPlayer.AddAsync"/>, or played once
+    /// with <see cref="IMediaPlaylistPlayer.EnqueueAsync"/>.
     /// </param>
     /// <param name="videoSink">Optional video sink, kept warm across all items.</param>
     /// <param name="audioSink">

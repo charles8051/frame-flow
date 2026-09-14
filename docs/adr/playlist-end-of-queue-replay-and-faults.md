@@ -208,6 +208,10 @@ disposed instead, as it was before items were kept.
 
 ### 4. Play from `Ended` on an empty queue is refused
 
+The draft [The playlist player's queue](playlist-queue-model.md), implemented with #171, relaxes
+this: the playlist keeps its items, and Play from `Ended` with nothing queued starts it again. The
+refusal remains for a player that holds no items.
+
 - If items were enqueued while `Ended`, `PlayAsync` plays the next one. This is today's behaviour.
 - If the queue is empty, `PlayAsync` returns a failed `Result` with `ErrorCategory.InvalidOperation`
   and the player stays in `Ended`. It does not unload, and it does not enter `Error`.

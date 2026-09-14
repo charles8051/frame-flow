@@ -53,13 +53,15 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
     }
 
     [RequiresFfmpegAndCorpusFact]
-    public async Task SeekAndPlayFromEnded_AfterTheLastItemFaulted_AreRefused()
+    public async Task SeekFromEnded_AfterTheLastItemFaulted_IsRefused_AndPlayStartsThePlaylistAgain()
     {
-        // A faulted item is not kept at the end of the queue, so Ended holds nothing to seek or
-        // play. The seek used to succeed, and the play after it reported Playing with nothing
-        // current.
+        // A faulted item is not kept at the end of the queue, so Ended holds nothing to seek.
+        // The seek used to succeed, and the play after it reported Playing with nothing current
+        // (#170). The playlist keeps its items, so Play starts it again (#171); here the item
+        // faults again, is reported again, and the playlist ends again.
         var faults = new FaultInjector(breaks: _ => true);
-        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, faults.Configure);
+        var item = ClipSource();
+        await using var run = PlaylistRun.Create([item], RepeatMode.Off, faults.Configure);
         await run.PlayAsync();
         await run.Settled(PlaybackState.Ended).WaitAsync(Bound);
 
@@ -68,12 +70,14 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.Equal(ErrorCategory.InvalidOperation, seek.Error!.Category);
         Assert.Equal(PlaybackState.Ended, run.Controller.State);
 
+        var itemAgain = run.Transitioned(item);
         var play = await run.Controller.PlayAsync();
-        Assert.False(play.IsSuccess);
-        Assert.Equal(ErrorCategory.InvalidOperation, play.Error!.Category);
-        Assert.Equal(PlaybackState.Ended, run.Controller.State);
+        Assert.True(play.IsSuccess, $"Play failed: {play.Error?.Message}");
+        await itemAgain.WaitAsync(Bound);
+        await run.Settled(PlaybackState.Ended).WaitAsync(Bound);
 
-        Assert.Single(run.Errors);
+        Assert.Equal(2, run.Errors.Count);
+        Assert.All(run.Errors, e => Assert.True(InjectedFault.Caused(e), $"Unexpected error: {e}"));
     }
 
     [RequiresFfmpegAndCorpusFact]

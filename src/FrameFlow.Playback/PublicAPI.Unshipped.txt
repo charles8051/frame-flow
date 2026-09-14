@@ -186,6 +186,20 @@ FrameFlow.Playback.PlaylistTransition.Source.get -> FrameFlow.Media.IMediaSource
 FrameFlow.Playback.PlaylistTransition.Source.init -> void
 FrameFlow.Playback.PlaylistTransition.Wrapped.get -> bool
 FrameFlow.Playback.PlaylistTransition.Wrapped.init -> void
+FrameFlow.Playback.PlaylistTransition.Item.get -> FrameFlow.Playback.PlaylistItem?
+FrameFlow.Playback.PlaylistTransition.Item.init -> void
+FrameFlow.Playback.PlaylistItem
+FrameFlow.Playback.PlaylistItem.Source.get -> FrameFlow.Media.IMediaSource!
+override FrameFlow.Playback.PlaylistItem.ToString() -> string!
+FrameFlow.Playback.PlaylistSnapshot
+FrameFlow.Playback.PlaylistSnapshot.Current.get -> FrameFlow.Playback.PlaylistItem?
+FrameFlow.Playback.PlaylistSnapshot.CurrentStarted.get -> bool
+FrameFlow.Playback.PlaylistSnapshot.Next.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Playback.PlaylistItem!>!
+FrameFlow.Playback.PlaylistSnapshot.PendingJump.get -> FrameFlow.Playback.PlaylistItem?
+FrameFlow.Playback.PlaylistSnapshot.Playlist.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Playback.PlaylistItem!>!
+FrameFlow.Playback.PlaylistSnapshot.Queued.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Playback.PlaylistItem!>!
+FrameFlow.Playback.PlaylistSnapshot.ResumeIndex.get -> int
+FrameFlow.Playback.PlaylistSnapshot.Revision.get -> long
 FrameFlow.Playback.WallClockSource
 FrameFlow.Playback.WallClockSource.DisposeAsync() -> System.Threading.Tasks.ValueTask
 FrameFlow.Playback.WallClockSource.IsRunning.get -> bool

@@ -224,11 +224,11 @@ internal sealed class PresentCountingVideoSink : IVideoSink
 }
 
 /// <summary>
-/// A <see cref="PlaybackClock"/> that can hold the thread which next calls
-/// <see cref="Pause"/> until the test releases it. A skip that ends a playlist's queue pauses
-/// the item it keeps while it holds its session's transition gate, so holding that call holds
-/// the gate: a test can then queue a controller command that is certain to reach the session
-/// after the advance.
+/// A <see cref="PlaybackClock"/> that can hold the thread which next calls <see cref="Pause"/>
+/// or <see cref="Stop"/> until the test releases it. A playlist advance makes both calls while it
+/// holds its session's transition gate: a skip that ends the queue pauses the item it keeps, and
+/// an advance to another item stops the clock after it has taken that item and before it starts
+/// it. Holding the call holds the gate, so a test can act at a known point inside the advance.
 /// </summary>
 internal sealed class HoldableClock : IPlaybackClock, IDisposable
 {
@@ -237,7 +237,8 @@ internal sealed class HoldableClock : IPlaybackClock, IDisposable
     private readonly PlaybackClock _inner = new();
     private readonly Lock _gate = new();
     private readonly ManualResetEventSlim _released = new(initialState: true);
-    private TaskCompletionSource? _holding;
+    private TaskCompletionSource? _holdPause;
+    private TaskCompletionSource? _holdStop;
 
     public TimeSpan Position => _inner.Position;
 
@@ -249,39 +250,27 @@ internal sealed class HoldableClock : IPlaybackClock, IDisposable
     /// Arms a hold on the next <see cref="Pause"/>. The returned task completes when a thread
     /// is held there; <see cref="Release"/> lets it go.
     /// </summary>
-    public Task HoldNextPause()
-    {
-        var holding = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        lock (_gate)
-        {
-            _released.Reset();
-            _holding = holding;
-        }
-        return holding.Task;
-    }
+    public Task HoldNextPause() => Arm(ref _holdPause);
+
+    /// <summary>
+    /// Arms a hold on the next <see cref="Stop"/>. The returned task completes when a thread
+    /// is held there; <see cref="Release"/> lets it go.
+    /// </summary>
+    public Task HoldNextStop() => Arm(ref _holdStop);
 
     public void Release() => _released.Set();
 
     public void Pause()
     {
-        TaskCompletionSource? holding;
-        lock (_gate)
-        {
-            holding = _holding;
-            _holding = null;
-        }
-
-        if (holding is not null)
-        {
-            holding.TrySetResult();
-            // Bounded so a test that fails before releasing does not hang the run.
-            _released.Wait(HoldBound);
-        }
-
+        HoldIfArmed(ref _holdPause);
         _inner.Pause();
     }
 
-    public void Stop() => _inner.Stop();
+    public void Stop()
+    {
+        HoldIfArmed(ref _holdStop);
+        _inner.Stop();
+    }
 
     public void Start(TimeSpan startPosition) => _inner.Start(startPosition);
 
@@ -290,4 +279,32 @@ internal sealed class HoldableClock : IPlaybackClock, IDisposable
     public void Seek(TimeSpan position) => _inner.Seek(position);
 
     public void Dispose() => _released.Dispose();
+
+    private Task Arm(ref TaskCompletionSource? slot)
+    {
+        var holding = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+        {
+            _released.Reset();
+            slot = holding;
+        }
+        return holding.Task;
+    }
+
+    private void HoldIfArmed(ref TaskCompletionSource? slot)
+    {
+        TaskCompletionSource? holding;
+        lock (_gate)
+        {
+            holding = slot;
+            slot = null;
+        }
+
+        if (holding is null)
+            return;
+
+        holding.TrySetResult();
+        // Bounded so a test that fails before releasing does not hang the run.
+        _released.Wait(HoldBound);
+    }
 }

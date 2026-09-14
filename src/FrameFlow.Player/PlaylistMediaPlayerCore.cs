@@ -158,18 +158,30 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
 
     public IObservable<PlaylistTransition> SourceTransitioned => _coordinator.SourceTransitioned;
 
-    public Task EnqueueAsync(IMediaSource source, CancellationToken cancellationToken = default)
+    public Task<PlaylistItem> EnqueueAsync(
+        IMediaSource source,
+        CancellationToken cancellationToken = default
+    )
     {
         ArgumentNullException.ThrowIfNull(source);
-        _coordinator.Enqueue(source);
-        return Task.CompletedTask;
+        return Task.FromResult(_coordinator.Enqueue(source));
     }
 
-    public Task SetNextAsync(IMediaSource? source, CancellationToken cancellationToken = default)
+    public Task<PlaylistItem?> SetNextAsync(
+        IMediaSource? source,
+        CancellationToken cancellationToken = default
+    ) => Task.FromResult(_coordinator.SetNext(source));
+
+    public Task<PlaylistItem> AddAsync(
+        IMediaSource source,
+        CancellationToken cancellationToken = default
+    )
     {
-        _coordinator.SetNext(source);
-        return Task.CompletedTask;
+        ArgumentNullException.ThrowIfNull(source);
+        return Task.FromResult(_coordinator.Add(source));
     }
+
+    public PlaylistSnapshot GetPlaylist() => _coordinator.Snapshot();
 
     public Task SkipToNextAsync(CancellationToken cancellationToken = default)
     {
@@ -177,10 +189,88 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
         return Task.CompletedTask;
     }
 
+    public Task<Result> JumpToAsync(PlaylistItem item, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        if (RefusalWhileUnusable("jump") is { } refused)
+            return Task.FromResult(refused);
+
+        return Task.FromResult(
+            _coordinator.RequestJump(item) switch
+            {
+                JumpRequest.NotInPlayer => Result.Fail(
+                    ErrorCategory.InvalidOperation,
+                    $"Cannot jump to '{item}': it is not in the player."
+                ),
+                _ => Result.Ok(),
+            }
+        );
+    }
+
+    public Task<Result> RemoveAsync(PlaylistItem item, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        return Task.FromResult(
+            _coordinator.Remove(item)
+                ? Result.Ok()
+                : Result.Fail(
+                    ErrorCategory.InvalidOperation,
+                    $"Cannot remove '{item}': it is not in the player."
+                )
+        );
+    }
+
+    public Task ClearAsync(CancellationToken cancellationToken = default)
+    {
+        _coordinator.Clear();
+        return Task.CompletedTask;
+    }
+
+    public Task<Result<IReadOnlyList<PlaylistItem>>> ReplaceAsync(
+        IEnumerable<IMediaSource> sources,
+        CancellationToken cancellationToken = default
+    )
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+        var list = sources.ToList();
+        if (list.Count == 0)
+            throw new ArgumentException(
+                "A replacement playlist requires at least one source.",
+                nameof(sources)
+            );
+
+        if (RefusalWhileUnusable("replace the playlist") is { } refused)
+            return Task.FromResult(Result<IReadOnlyList<PlaylistItem>>.Fail(refused.Error!));
+
+        return Task.FromResult(
+            Result<IReadOnlyList<PlaylistItem>>.Ok(_coordinator.Replace(list))
+        );
+    }
+
+    // A jump or replace needs a player that can still play. In Error the player accepts no
+    // further playback, and once disposed there is no session to take the jump.
+    private Result? RefusalWhileUnusable(string what)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            return Result.Fail(
+                ErrorCategory.InvalidOperation,
+                $"Cannot {what}: the player is disposed."
+            );
+        if (_controller.State == PlaybackState.Error)
+            return Result.Fail(
+                ErrorCategory.InvalidOperation,
+                $"Cannot {what}: the player is in Error."
+            );
+        return null;
+    }
+
     // ── Lifetime ────────────────────────────────────────────────────────────
+
+    private int _disposed;
 
     public async ValueTask DisposeAsync()
     {
+        Interlocked.Exchange(ref _disposed, 1);
         try
         {
             await _controller.DisposeAsync().ConfigureAwait(false);
