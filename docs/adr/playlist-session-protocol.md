@@ -133,9 +133,13 @@ members, and the internal members the player facade uses, keep their signatures.
 ### 2. The session is a pure step function
 
 ```text
-PlaylistSessionProtocol.Step(SessionState, PlaylistQueue, SessionInput)
+PlaylistSessionProtocol.Step(SessionState, PlaylistQueue, SessionInput, StepContext)
     → (SessionState', PlaylistQueue', SessionStep)
 ```
+
+`StepContext` carries what the shell knows at the moment of the call and the core does not own:
+whether the session is disposing (decision 6). The shell reads it from a volatile flag on every call,
+so an input already being handled sees disposal at its next step.
 
 `SessionState` is an immutable record. It holds:
 - the run state;
@@ -201,7 +205,12 @@ channel and one reader.
 The synchronous members of `IPlaybackSession` do not go through the channel:
 - **`TryBeginReplay`** is an operation on the coordinator's cell.
 - **`MediaInfo`, `Duration`, `CanSeekFromEnded` and `GetPipelineDiagnostics`** read a snapshot the
-  shell publishes, as a volatile reference, after each step.
+  shell publishes, as a volatile reference, after each step. They describe the item runtime the
+  session holds, not the queue. Only a step changes that runtime. An edit to the queue does not: a
+  removed or cleared current item keeps playing, as the queue record decides, so these members keep
+  describing it until an advance replaces it. That is what they do today, where they read the
+  current runtime directly. Queue-level metadata, such as `CurrentSource` and the player facade's
+  `MediaInfo` and `Duration`, stays on the coordinator's value.
 
 ### 4. The queue is updated under the coordinator's lock
 
@@ -231,11 +240,18 @@ after its outcome. By then the known run is the one the reposition left:
 `DisposeAsync`:
 1. **Detaches** the session from the coordinator synchronously, so a skip or jump from then on
    latches or waits for the next session, as it does today.
-2. **Marks the session disposing** with a flag the shell passes to `Step` with every input. While it
-   is set, the core completes a command as a no-op, and ends a multi-step advance at its next step.
-3. **Posts `Dispose`.** The reader takes it up after the input it is handling. The controller cancels
-   an active seek before it disposes the session, so that input ends with a `Cancelled` outcome.
-4. **Completes after the drain.** It completes once the item is disposed and the reader has exited.
+2. **Marks the session disposing** with the volatile flag that `StepContext` carries. While it is
+   set, the core completes a command as a no-op, and ends a multi-step advance at its next step.
+3. **Cancels the item operation in flight.** The shell passes a disposal token, linked with any
+   command's token, to every awaited item action: open, warm-up, start, pause, seek, rewind.
+   Disposing cancels it, and the operation's outcome is `Cancelled`. The controller also cancels an
+   active seek before it disposes the session.
+4. **Posts `Dispose`.** The reader takes it up after the input it is handling, which now ends at its
+   next step.
+5. **Completes after the drain.** It completes once the item is disposed and the reader has exited.
+
+`DisposeItem` itself is not cancelled. `SubstrateSession.DisposeAsync` stops its graph with no token,
+as it does today.
 
 ### 7. Tests are tables, transcripts and explored orderings
 
@@ -319,7 +335,7 @@ are chosen per defect class, starting from the transcripts.
    that it finds one.
 
 **No behaviour is meant to change.** Taking one input at a time narrows today's orderings. Every
-ordering the new shell produces is one today's code allows. Three differences are observable, and
+ordering the new shell produces is one today's code allows. Four differences are observable, and
 none changes a documented contract:
 - **The subscriber's thread.** `SourceTransitioned` subscribers always run on the reader's thread.
   Today they can run on the controller's dispatch-loop continuation, when an advance runs inside
@@ -327,6 +343,9 @@ none changes a documented contract:
 - **Detach timing.** The session detaches before it drains, as today.
 - **A subscriber's jump.** A jump requested from a `SourceTransitioned` subscriber is still taken in
   the same advance, before a waiting Pause, through `Continue`.
+- **Disposal during an open or warm-up.** Today `DisposeAsync` waits on the gate until an advance's
+  open or warm-up finishes, because those calls take no token. The new shell cancels them (decision
+  6). A disposal that would have waited on a stuck open now ends it.
 
 A transcript that the core cannot pass is a defect in the core, or a behaviour to decide in another
 record.
@@ -489,3 +508,11 @@ handlers.
   - an item model shared by fakes and the explorer;
   - a visited set and a quiescence phase;
   - corrected and added invariants.
+- **Revision after automated review of #202 (2026-09-14).**
+  - **The disposing flag.** It is now an explicit argument, `StepContext`, read on every call.
+  - **Disposal.** It cancels the item operation in flight through a token passed to every awaited
+    action. Today's dispose waits for an open or warm-up to finish, so this is listed as an
+    observable difference.
+  - **The synchronous members.** Decision 3 now says they describe the item runtime, which only a
+    step changes. A finding that a queue edit leaves them stale was answered on the PR: an edit does
+    not change the loaded runtime, today or in this design.
