@@ -224,8 +224,17 @@ comment goes with the controller's loop. If a single source does not run as a qu
 - **Its successors changed the suspected cause.** The concurrent-`Blt` hang ADR-0063 found is gone
   from the converter.
 
+A rewind that hangs is not rebuilt: the rebuild follows only a rewind that fails. Decision 6 keeps a
+hanging repeat eligible, so the loop-stall watchdog reports it as `LoopStalled`, and the presenter
+stall watchdog reports a wedged presenter. Recovering from the hang is left to the host, as it is on
+a playlist today. *Not settled here* records it.
+
 The on-hardware validation that ADR-0063 and ADR-0064 list is still to be run. *Validation* adds a
-loop soak to it. That is a regression check, not a gate: if it stalls, #172 reopens with evidence.
+loop soak to it. For a playlist, which has rewound in place since ADR-0062's 2026-06-21 update, the
+soak is a regression check, not a gate: if it stalls, #172 reopens with evidence. A single source
+moves to the rewind only when it runs as a queue of one, and the end-of-queue record makes a hardware
+run before and after that change one of its conditions. Decision 8 alone would move it without that
+run, for the reasons in alternative E.
 
 ### 5. A loop is reported the same way on both players
 
@@ -234,8 +243,10 @@ loop soak to it. That is a regression check, not a gate: if it stalls, #172 reop
 - **What is not a loop.** It does not fire for a skip, a jump, or a rebuild after a failure. It does
   not fire when a different item of the same source follows, such as a back-to-back duplicate.
 - **Which advance is a loop.** An advance is a loop when it began with an end-of-stream from the
-  current run of an item that has played, and it takes the same `PlaylistItem` again. Under `One`
-  that is `DecideNext`'s replay. Under `All` it is a wrap to the only playlist item.
+  current run of an item that has played, and the item its decision names is the current
+  `PlaylistItem` itself. The test is on the decision's item, not on whether the queue took one:
+  - Under `One` it is `DecideNext`'s replay of the current item, which takes nothing.
+  - Under `All` it is a wrap that takes the only playlist item again.
   - A different item of the same source is a replay decision, but not a loop.
   - An end-of-stream latched before the first Play is not a loop, because the item has not played.
   - The protocol records the answer on the advance when it decides, so the steps that complete the
@@ -359,16 +370,21 @@ ends the stuck `Playing` state under `One` while a single source still loops on 
 
 ### Positive
 
+The playlist half brings these:
+- **Loops are observable on a playlist.** `LoopRestarted` fires for a playlist's loops, with a
+  per-item count, and joins `IMediaPlayer`.
+- **Every expected loop on a playlist is watched,** including a playlist of one under `All`.
+
+These hold for a single source only once it runs as a queue of one, or under decision 8. Until then
+it keeps today's behaviour, as *Negative* says:
 - **One meaning per mode.** Each repeat mode means the same thing on both players, and the README's
   quick start loops, as it reads. Faults are the exception: under `One` a playlist replays a
   faulted item and counts the failure, while a single source enters `Error`.
-- **Loops are observable.** They are visible from `IMediaPlayer`, with the same event, timing and
-  count on both players.
+- **The same loop event on both players,** with the same timing and count.
 - **A frozen loop is fixed.** A single source paused as its loop ends no longer freezes in `Playing`.
-- **Every expected loop is watched.**
 - **The single-source loop is cheaper.** It stops rebuilding its graph on every pass.
-- **One loop mechanism.** A single source running as a queue of one repeats through the playlist
-  session, so the two loop paths #172 describes become one, tested in the protocol core.
+- **One loop mechanism,** when a single source runs as a queue of one. It repeats through the
+  playlist session, so the two loop paths #172 describes become one, tested in the protocol core.
 
 ### Negative
 
@@ -461,6 +477,8 @@ if that is too long.
   carries no item or transition index, and no order between the two events is promised. Whether it
   should name the item depends on whether every player raises transitions, which the single player
   type's record decides.
+- **Recovering from a rewind that hangs.** A rewind that never completes is reported by the
+  watchdogs, but nothing rebuilds the item or bounds the wait. That is so on a playlist today.
 - **A stall at a hand-off to a different item.** The watchdog covers expected loops only.
 - **A stall on an audio-mastered clock.** The evaluator targets the wall-clock case, where the
   position overruns the duration. An audio-mastered clock stops at the duration instead.
@@ -604,3 +622,13 @@ revision history without machine identifiers.
     now says a one-shot current item repeats under `One`, which the earlier row left ambiguous.
   - **Not settled** gained the queue-of-one record, and #203 for pairing a loop with its transition.
   - **Validation** gained rows 15 to 19 for the protocol core, and groups the rows by where they run.
+- **Revision after automated review of #215 (2026-09-15).** Three changes:
+  - **A rewind that hangs.** Decision 4 now says a hang is not rebuilt, only reported by the
+    watchdogs, and *Not settled* records recovering from it. It also says which changes the hardware
+    soak gates: a single source moves to the rewind only with the hardware run the end-of-queue
+    record requires. For a playlist, which already rewinds in place, the soak stays a regression
+    check. The finding's request to gate the playlist half on the soak was answered on the PR.
+  - **Which advance is a loop.** Decision 5 tests the item the decision names, since a replay under
+    `One` takes nothing from the queue.
+  - **Consequences.** The positive consequences now separate what the playlist half brings from what
+    a single source gains only once it runs as a queue of one, or under decision 8.
