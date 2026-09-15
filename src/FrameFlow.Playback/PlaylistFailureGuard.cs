@@ -4,8 +4,9 @@
 namespace FrameFlow.Playback;
 
 /// <summary>
-/// Decides when a <see cref="PlaylistSession"/> stops skipping failed items and gives up.
-/// It counts items that fail in a row without making progress. More than
+/// The rule that decides when a <see cref="PlaylistSession"/> stops skipping failed items and
+/// gives up. <see cref="PlaylistQueue.ItemFailed"/> and <see cref="PlaylistQueue.ItemEnded"/>
+/// apply it to the queue's count of items that fail in a row without making progress. More than
 /// <see cref="MaxConsecutiveFailures"/> of them and the playlist gives up.
 /// </summary>
 /// <remarks>
@@ -31,11 +32,8 @@ namespace FrameFlow.Playback;
 /// even though no item there reaches its end. Progress resets it so that a source with no
 /// end is not given up on because of faults hours apart.
 /// </para>
-/// <para>
-/// Not thread-safe. The session calls it under its transition gate.
-/// </para>
 /// </remarks>
-internal sealed class PlaylistFailureGuard
+internal static class PlaylistFailureGuard
 {
     /// <summary>Failures tolerated in a row. The next one gives up.</summary>
     internal const int MaxConsecutiveFailures = 8;
@@ -45,32 +43,6 @@ internal sealed class PlaylistFailureGuard
     /// unless half its length is shorter.
     /// </summary>
     internal static readonly TimeSpan ProgressThreshold = TimeSpan.FromSeconds(5);
-
-    /// <summary>Failures counted since the last reset.</summary>
-    public int ConsecutiveFailures { get; private set; }
-
-    /// <summary>Records an item that ended without failing.</summary>
-    public void ItemEnded() => ConsecutiveFailures = 0;
-
-    /// <summary>Records a failed item.</summary>
-    /// <param name="playedFor">
-    /// How far the item had played when it failed. <see cref="TimeSpan.Zero"/> for an item
-    /// that never started.
-    /// </param>
-    /// <param name="itemLength">
-    /// The item's duration, or <see cref="TimeSpan.Zero"/> when it is not known.
-    /// </param>
-    /// <returns><see langword="true"/> when the playlist should give up.</returns>
-    public bool ItemFailed(TimeSpan playedFor, TimeSpan itemLength)
-    {
-        if (playedFor >= ProgressNeeded(itemLength))
-        {
-            ConsecutiveFailures = 0;
-            return false;
-        }
-
-        return ++ConsecutiveFailures > MaxConsecutiveFailures;
-    }
 
     /// <summary>
     /// How long an item of <paramref name="itemLength"/> must play to make progress.

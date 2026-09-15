@@ -74,9 +74,6 @@ internal sealed class PlaylistSession : IPlaybackSession
     // failure, and is not counted or reported again.
     private int _lastFaultedGen = -1;
 
-    // The failure count lives on the coordinator, so it survives a replay from Ended.
-    private PlaylistFailureGuard Failures => _coordinator.Failures;
-
     // Set once this session hands the controller a fatal error. The controller disposes
     // the session on its way into Error; until then a late notification must not start
     // another item.
@@ -232,11 +229,11 @@ internal sealed class PlaylistSession : IPlaybackSession
                 LogItemSkipped(_logger, item.Source.DisplayName, ex);
                 ReportItemFailure(item.Source.DisplayName, "could not be started", ex);
 
-                if (Failures.ItemFailed(playedFor: TimeSpan.Zero, itemLength: TimeSpan.Zero))
+                if (_coordinator.ItemFailed(playedFor: TimeSpan.Zero, itemLength: TimeSpan.Zero))
                     throw GiveUpException(ex);
 
                 var next = _coordinator.DecideNext(PlaylistAdvance.FailedStart);
-                if (next.Kind == PlaylistCoordinator.NextKind.End)
+                if (next.Kind == PlaylistQueue.NextKind.End)
                     throw new InvalidOperationException(
                         "No playlist item could be opened.",
                         ex
@@ -626,7 +623,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                 LogItemFaulted(_logger, source, error);
                 ReportItemFailure(source, "faulted during playback", error);
 
-                if (Failures.ItemFailed(playedFor, _current?.Duration ?? TimeSpan.Zero))
+                if (_coordinator.ItemFailed(playedFor, _current?.Duration ?? TimeSpan.Zero))
                 {
                     GiveUp(error);
                     return;
@@ -654,7 +651,7 @@ internal sealed class PlaylistSession : IPlaybackSession
     /// <para>
     /// <b>Same-source replay (the gapless single-clip loop).</b> The next decision
     /// is consumed <i>before</i> any teardown. When it is a
-    /// <see cref="PlaylistCoordinator.NextKind.Replay"/> — a single-clip
+    /// <see cref="PlaylistQueue.NextKind.Replay"/> — a single-clip
     /// <see cref="RepeatMode.All"/> wrap, or <see cref="RepeatMode.One"/> — and the
     /// runtime is intact (not faulted), the current <see cref="SubstrateSession"/>
     /// is reused in place via its cheap rewind (<see cref="SubstrateSession.RewindToStartAsync"/>):
@@ -710,7 +707,7 @@ internal sealed class PlaylistSession : IPlaybackSession
 
         // An item that reached its end or was skipped ended without failing.
         if (!failed)
-            Failures.ItemEnded();
+            _coordinator.ItemEnded();
 
         var playing = CurrentRunState == RunState.Playing;
 
@@ -723,7 +720,7 @@ internal sealed class PlaylistSession : IPlaybackSession
             && _currentPlayed
             && !failed
             && _current is not null
-            && decision.Kind == PlaylistCoordinator.NextKind.Replay
+            && decision.Kind == PlaylistQueue.NextKind.Replay
             && await TryReplayCurrentLockedAsync(decision).ConfigureAwait(false)
         )
         {
@@ -733,7 +730,7 @@ internal sealed class PlaylistSession : IPlaybackSession
         if (
             !failed
             && _current is not null
-            && decision.Kind == PlaylistCoordinator.NextKind.End
+            && decision.Kind == PlaylistQueue.NextKind.End
         )
         {
             // Only a skip needs the pause. An item that reached its end has stopped, and
@@ -761,7 +758,7 @@ internal sealed class PlaylistSession : IPlaybackSession
         var pending = decision;
         while (!_disposed)
         {
-            if (pending.Kind == PlaylistCoordinator.NextKind.End)
+            if (pending.Kind == PlaylistQueue.NextKind.End)
             {
                 _currentItem = null;
                 SetRunState(RunState.Ended);
@@ -794,7 +791,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                 LogItemSkipped(_logger, nextItem.Source.DisplayName, ex);
                 ReportItemFailure(nextItem.Source.DisplayName, "could not be started", ex);
 
-                if (Failures.ItemFailed(playedFor: TimeSpan.Zero, itemLength: TimeSpan.Zero))
+                if (_coordinator.ItemFailed(playedFor: TimeSpan.Zero, itemLength: TimeSpan.Zero))
                 {
                     GiveUp(ex);
                     return;
@@ -838,7 +835,7 @@ internal sealed class PlaylistSession : IPlaybackSession
         LogItemSkipped(_logger, source, error);
         ReportItemFailure(source, "could not be started", error);
 
-        if (Failures.ItemFailed(playedFor: TimeSpan.Zero, itemLength: TimeSpan.Zero))
+        if (_coordinator.ItemFailed(playedFor: TimeSpan.Zero, itemLength: TimeSpan.Zero))
         {
             GiveUp(error);
             return;
@@ -904,7 +901,7 @@ internal sealed class PlaylistSession : IPlaybackSession
 
     private InvalidOperationException GiveUpException(Exception? last) =>
         new(
-            $"Playlist advance gave up after {Failures.ConsecutiveFailures} "
+            $"Playlist advance gave up after {_coordinator.ConsecutiveFailures} "
                 + "consecutive item failures.",
             last
         );
@@ -917,7 +914,7 @@ internal sealed class PlaylistSession : IPlaybackSession
     /// faults, so the caller falls back to a full rebuild of the same source.
     /// </summary>
     private async ValueTask<bool> TryReplayCurrentLockedAsync(
-        PlaylistCoordinator.NextDecision decision
+        PlaylistQueue.NextDecision decision
     )
     {
         var current = _current!;

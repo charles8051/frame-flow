@@ -557,7 +557,9 @@ rows 19 to 24 and 26 in `tests/FrameFlow.Integration.Tests/PlaylistQueueTests.cs
 `tests/FrameFlow.Player.Tests/PlaylistPlayerQueueTests.cs`, with the refusal after disposal. Row 22
 replaced `PlaylistEndOfQueueTests.PlayFromEndedWithNothingQueued_IsRefused_AndThePlayerStaysEnded`,
 and `PlaylistFaultTests` now expects Play from `Ended` after a faulted last item to start the
-playlist again. Both had asserted #170's refusal.
+playlist again. Both had asserted #170's refusal. Rows 1 to 16 and 18 later moved to
+`tests/FrameFlow.Playback.Tests/PlaylistQueueTests.cs`, when the queue became a value
+([The playlist session as a pure protocol](playlist-session-protocol.md), step 2).
 
 Rows 1 to 5 and 8 repeat probes run against the coordinator before this record. The new tests could
 not run against that coordinator, which had none of the verbs, so each rule was then removed from

@@ -387,7 +387,7 @@ Unit tests without media:
 | 1 | 1 | `PlaybackDispatchProtocolTests`: a single-source session under `All` reports end-of-stream; the controller runs the loop rewind and stays `Playing`. | [`Ended`] |
 | 2 | 3 | `PlaybackProtocolTests` and `PlaybackDispatchProtocolTests`: under `One`, and under `All` for a single source, end-of-stream while `Paused` runs the loop rewind and stays `Paused`. | [dropped under `One`; `Ended` under `All`] |
 | 3 | 5 | `PlaybackDispatchProtocolTests`: a loop rewind cancelled by a seek raises no `LoopRestarted`; a load resets `LoopCount`. | [raised on request; never reset] |
-| 4 | 6 | `PlaylistCoordinatorTests`: `ExpectsRepeat` is true for a started, unremoved current item under `One`, and under `All` as the only playlist item with nothing next or queued, including after that item is taken again at a wrap; false for a one-shot current item, a removed current item, a playlist of two under `All`, and a different item taken and not yet started. | [no member] |
+| 4 | 6 | `PlaylistQueueTests`: `ExpectsRepeat` is true for a started, unremoved current item under `One`, and under `All` as the only playlist item with nothing next or queued, including after that item is taken again at a wrap; false for a one-shot current item, a removed current item, a playlist of two under `All`, and a different item taken and not yet started. | [no member] |
 | 5 | 6 | `LoopStallEvaluatorTests`: the renamed input gates eligibility as `RepeatOne` did. | [renamed] |
 
 Integration tests over real playback, in `FrameFlow.Integration.Tests`:

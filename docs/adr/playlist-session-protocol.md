@@ -3,8 +3,8 @@
 ## Status
 
 Proposed (2026-09-14). Draft pending number assignment. Revised the same day after an independent
-review; *Revision history* says what changed. **Step 1 of the migration is implemented** (decision 8,
-*As implemented: step 1*). Steps 2 to 4 are not.
+review; *Revision history* says what changed. **Steps 1 and 2 of the migration are implemented**
+(decision 8, *As implemented*). Steps 3 and 4 are not.
 
 This record moves the playlist player's decision logic into a pure core. ADR-0055 did the same for
 the codec loop, and `PlaybackProtocol` for the controller's main state machine. The record:
@@ -383,6 +383,28 @@ record.
   draft's `SkipRequested` carried no generation, so the reader would have advanced twice. Decision
   2's input table now gives it one.
 
+#### As implemented: step 2
+
+- **The value.** `PlaylistQueue` is a sealed record with private init accessors, so only its
+  operations make new values. Its collections are `ImmutableList`s. Each rule of the queue record
+  and of `PlaylistFailureGuard` is an operation that returns the new value and, where a caller needs
+  one, a result as a tuple. `NextKind` and `NextDecision` moved onto it from the coordinator.
+- **Equality is structural.** The collections compare item by item, and items by reference. The
+  explorer's visited set needs this, and a record's generated equality would have compared the
+  lists by reference.
+- **The coordinator is the cell.** It holds the current value and applies each operation under its
+  lock. The session's handlers and the transition stream stay on the coordinator, outside the
+  value. Its public members and the members the player facade uses keep their signatures.
+- **What the session calls.** `Failures` is gone. The session calls `ItemFailed`, `ItemEnded` and
+  `ConsecutiveFailures` on the coordinator. `PlaylistFailureGuard` keeps the rule's constants,
+  `ProgressNeeded` and its description, as a static class.
+- **The latch.** A skip with no session attached is now latched under the coordinator's lock, in
+  the same step that reads the handler. It used an `Interlocked` exchange outside the lock.
+- **The tests.** `PlaylistQueueTests` holds the queue record's rows and the basic orders, run
+  against the value. `PlaylistCoordinatorTests` keeps what belongs to the cell: argument checks,
+  the handlers, the transition stream, and the failure count shared across sessions.
+  `PlaylistFailureGuardTests` runs the rule through the value.
+
 ### 9. What stays the same
 
 - `IPlaybackSession`, `PlaybackControllerCore`, `PlaybackProtocol`, `SubstrateSession` and the public
@@ -521,6 +543,17 @@ handlers.
     check, the jump's target plays and is then paused. Without it, the advanced item is paused and
     the jump's target opens paused.
 - **Step 2.** The coordinator's tests pass against the value.
+  - **As implemented.** The Playback tests pass, including step 1's transcripts against the new
+    coordinator. Each rule below was removed on its own, and the tests were run once per removal:
+
+    | Rule removed | Tests that failed |
+    |---|---|
+    | A replace clears a reserved replay start | `Row16_AReplaceAfterTheReplaysTake_StartsTheReplayOnTheNewPlaylist` |
+    | A jump to a removed current item is refused | `Row18_ATakenItem_IsCurrentBeforeItStarts` |
+    | Removing a jump's target discards the jump | `Row10_ClearAndRemovingTheTarget_DiscardAPendingJump` |
+    | A repeat-mode change leaves the revision alone | `Revision_DoesNotRiseOnARepeatModeChangeALatchOrAFailure` |
+    | Equality compares the queued items | `Equality_IsStructural` |
+    | A skip latches only with no session attached | `RequestSkip_InvokesTheAttachedSession`, and the transcripts `DeferredStartFailure_IsSkippedLikeAFailedStart` and `CancelledPlay_OfAnItemWaitingToStart_KeepsTheItem` |
 - **Step 3.** The same transcripts, the table tests and the full suite pass against the protocol.
 - **Step 4.**
   - **The seeded defect.** The explorer is run with the rule that keeps `Ended` against a queued Play
@@ -583,3 +616,6 @@ handlers.
     transcripts use it. Writing them showed that the draft's `SkipRequested` needed the generation
     current at the request, or a skip that races an end-of-stream would advance twice under a single
     reader. Decision 2 now carries it.
+- **Amendment (2026-09-14), step 2 implemented.** `PlaylistQueue` holds the queue as an immutable
+  value with structural equality, and `PlaylistCoordinator` is the cell around it. The queue's
+  tests run against the value. A skip's latch moved under the coordinator's lock.
