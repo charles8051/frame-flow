@@ -90,9 +90,34 @@ internal sealed record PlaylistSessionState
     public bool GaveUp { get; init; }
 
     /// <summary>
+    /// Consecutive loops of the current item: the first loop is 1. A start that is not a loop sets it
+    /// back to 0, and a new session starts at 0. Decision 5 of
+    /// <c>docs/adr/looping-on-both-players.md</c>.
+    /// </summary>
+    public int LoopCount { get; init; }
+
+    /// <summary>
     /// Where the session is in the input it is handling, or <see langword="null"/> between inputs.
     /// </summary>
     public PlaylistSessionWork? Work { get; init; }
+
+    /// <summary>
+    /// Whether the input under way is an advance that repeats the current item. While it is, the
+    /// session expects a repeat whatever the queue now says, so a removal made during the repeat does
+    /// not hide a rewind that hangs from the loop-stall watchdog.
+    /// </summary>
+    public bool LoopUnderWay =>
+        Work switch
+        {
+            PlaylistSessionWork.Replaying w => w.Advance.Loop,
+            PlaylistSessionWork.DisposingOld w => w.Advance.Loop,
+            PlaylistSessionWork.Opening w => w.Advance.Loop,
+            PlaylistSessionWork.Warming w => w.Advance.Loop,
+            PlaylistSessionWork.Starting w => w.Advance.Loop,
+            PlaylistSessionWork.DiscardingFailedStart w => w.Advance.Loop,
+            PlaylistSessionWork.Started w => w.Advance.Loop,
+            _ => false,
+        };
 }
 
 /// <summary>
@@ -174,7 +199,12 @@ internal enum PlaylistItemCommand
 /// <summary>One pass of an advance.</summary>
 /// <param name="Command">The command to complete when the advance ends, if a command started it.</param>
 /// <param name="Playing">Whether the controller was playing when the pass began.</param>
-internal sealed record PlaylistAdvanceRun(int? Command, bool Playing);
+/// <param name="Loop">
+/// Whether the pass repeats the current item after it played to its end, so that starting it again
+/// reports a loop. Decided once, when the pass takes its item. A pass whose item fails to start is no
+/// longer a loop.
+/// </param>
+internal sealed record PlaylistAdvanceRun(int? Command, bool Playing, bool Loop = false);
 
 /// <summary>What the shell knows at the moment it calls the core, and the core does not own.</summary>
 /// <param name="Disposing">Whether the session is being disposed.</param>

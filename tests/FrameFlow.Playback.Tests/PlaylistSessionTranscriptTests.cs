@@ -563,6 +563,68 @@ public sealed class PlaylistSessionTranscriptTests
     ];
 
     /// <summary>
+    /// The looping record's decision 5: a skip requested while an in-place rewind is under way is a
+    /// later input. The loop is reported first. The skip's start is not a loop and ends the run of
+    /// loops, so the next loop counts from 1 again.
+    /// </summary>
+    [Fact]
+    public async Task SkipDuringAnInPlaceRewind_TakesEffectAfterTheLoopIsReported()
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.One, "a");
+
+        var hold = rig.Hold("a", ItemOp.Rewind);
+        rig.Runtime("a#1").RaiseEndOfStream();
+        await hold.EnteredAsync();
+        rig.Coordinator.RequestSkip();
+        hold.Release();
+        await rig.SettleAsync();
+
+        Assert.Equal(
+            [
+                "a#1.Rewind",
+                "transition(a)",
+                "ctl.LoopRestarted(1)",
+                // The skip wraps back to the only item and rewinds it in place, but it is a skip.
+                "a#1.Rewind",
+                "transition(a, wrapped)",
+            ],
+            rig.TakeLog()
+        );
+
+        rig.Runtime("a#1").RaiseEndOfStream();
+        await rig.SettleAsync();
+
+        Assert.Equal(["a#1.Rewind", "transition(a)", "ctl.LoopRestarted(1)"], rig.TakeLog());
+    }
+
+    /// <summary>
+    /// The looping record's decision 6: removing the current item while its rewind is under way does
+    /// not undo the repeat, so the session keeps expecting it until the rewind completes, and a
+    /// rewind that hangs there is still watched. Once the input is handled the queue answers alone.
+    /// </summary>
+    [Fact]
+    public async Task RemovingTheItemDuringAnInPlaceRewind_KeepsARepeatExpected_UntilTheRewindCompletes()
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.One, "a");
+        Assert.True(rig.Session.ExpectsRepeat);
+        var a = rig.PlaylistItem("a");
+
+        var hold = rig.Hold("a", ItemOp.Rewind);
+        rig.Runtime("a#1").RaiseEndOfStream();
+        await hold.EnteredAsync();
+        Assert.True(rig.Coordinator.Remove(a));
+
+        Assert.False(rig.Coordinator.Queue.ExpectsRepeat);
+        Assert.True(rig.Session.ExpectsRepeat);
+
+        hold.Release();
+        await rig.SettleAsync();
+
+        Assert.Equal(["a#1.Rewind", "transition(a)", "ctl.LoopRestarted(1)"], rig.TakeLog());
+        Assert.False(rig.Session.ExpectsRepeat);
+    }
+
+    /// <summary>
     /// A rig paused on <c>b</c> of <c>a, b, c</c>: <c>a</c> played, was paused and was skipped,
     /// so <c>b</c> is opened and warmed and waits for a Play to start it.
     /// </summary>

@@ -100,7 +100,16 @@ public interface IMediaPlayer : IAsyncDisposable
     IObservable<TimeSpan> PositionTick { get; }
 
     /// <summary>
-    /// Fires when a single-item loop appears to have stalled — the position
+    /// Fires when the current item is back at its start after it played to its end. A playlist
+    /// raises it under <see cref="RepeatMode.One"/>, and for its only item under
+    /// <see cref="RepeatMode.All"/>; a single-source player raises it under
+    /// <see cref="RepeatMode.One"/>. It does not fire for a skip, a jump or a rebuild after a
+    /// failure. This is <see cref="IPlaybackController.LoopRestarted"/> unprojected.
+    /// </summary>
+    IObservable<LoopRestarted> LoopRestarted { get; }
+
+    /// <summary>
+    /// Fires when an expected loop appears to have stalled — the position
     /// overran the item duration without a restart (frame delivery stopped while
     /// the clock kept advancing). Hosts can surface this to health/telemetry.
     /// </summary>

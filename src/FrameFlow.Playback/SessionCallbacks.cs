@@ -41,11 +41,18 @@ namespace FrameFlow.Playback;
 /// <c>Duration</c> and <c>MediaInfo</c>. A session with one item never invokes it: the
 /// controller reads that item's metadata when it loads.
 /// </param>
+/// <param name="OnLoopRestarted">
+/// Invoked when a session that loops internally, a playlist, has put its current item back at its
+/// start after it played to its end. Carries the count of consecutive loops of that item, which the
+/// controller publishes on <c>LoopRestarted</c>. A session that does not loop internally never
+/// invokes it: the controller runs that session's loop.
+/// </param>
 internal readonly record struct SessionCallbacks(
     Action OnEndOfStream,
     Action<Exception> OnWorkerFaulted,
     Action OnBufferReady,
     Action OnBufferUnderrun,
     Action<PlaybackError> OnRecoverableError,
-    Action<MediaInfo?> OnCurrentItemChanged
+    Action<MediaInfo?> OnCurrentItemChanged,
+    Action<int> OnLoopRestarted
 );

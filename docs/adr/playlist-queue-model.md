@@ -486,9 +486,10 @@ Still rejected, for ADR-0062's reason (ADR-0062:479-486).
   repository.
 - **Why a transition happened.** Natural end, skip, jump or failure is not on `PlaylistTransition`
   (#173).
-- **`RepeatMode.All` on a playlist of one item.** It loops, while the single-source player's docs
-  say `All` behaves like `Off` (`src/FrameFlow.Media/RepeatMode.cs:17-24`). A single player type has
-  to settle which one holds.
+- **`RepeatMode.All` on a playlist of one item.** Settled by
+  [Looping on both players](looping-on-both-players.md), decision 1: `All` repeats the queue, so a
+  queue of one item repeats that item. The single-source player's docs still say `All` behaves like
+  `Off` (`src/FrameFlow.Media/RepeatMode.cs:17-24`) until a single source runs as a queue of one.
 - **A `next` command on the test bench** (ADR-0068). Its table would need `JumpToAsync` and
   `ReplaceAsync` as well.
 - **The builder's entry point.** `FrameFlowPlayer.Open(path)` builds a single-source player, and the

@@ -369,6 +369,58 @@ public sealed class PlaybackDispatchProtocolTests
     }
 
     [Fact]
+    public async Task LoopRestarted_FromASessionThatLoopsInternally_IsPublished_WithItsCount()
+    {
+        // The looping record's decision 5: a playlist counts its own loops and reports each one.
+        // The controller publishes the session's count with the loaded duration, in order, and
+        // runs no loop of its own.
+        var (controller, session) = NewController(RepeatMode.All);
+        await using var _ = controller;
+        session.LoopsInternally = true;
+
+        await controller.LoadAsync(new FakeSource());
+        await controller.PlayAsync();
+
+        var loops = new ConcurrentQueue<LoopRestarted>();
+        using var sub = controller.LoopRestarted.Subscribe(new Relay<LoopRestarted>(loops.Enqueue));
+
+        session.RaiseLoopRestarted(1);
+        session.RaiseLoopRestarted(2);
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.All)).IsSuccess);
+
+        Assert.Equal(
+            new[] { new LoopRestarted(1, TimeSpan.FromSeconds(10)), new LoopRestarted(2, TimeSpan.FromSeconds(10)) },
+            loops
+        );
+        Assert.Equal(PlaybackState.Playing, controller.State);
+        Assert.Equal(0, Volatile.Read(ref session.SeekCalls));
+    }
+
+    [Fact]
+    public async Task LoopRestarted_FromAnUnloadedSession_IsDropped()
+    {
+        var (controller, session) = NewController(RepeatMode.All);
+        await using var _ = controller;
+        session.LoopsInternally = true;
+
+        await controller.LoadAsync(new FakeSource());
+        var unloaded = session.Callbacks;
+        Assert.True((await controller.UnloadAsync()).IsSuccess);
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+
+        var loops = new ConcurrentQueue<LoopRestarted>();
+        using var sub = controller.LoopRestarted.Subscribe(new Relay<LoopRestarted>(loops.Enqueue));
+
+        unloaded.OnLoopRestarted(7);
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.All)).IsSuccess);
+        Assert.Empty(loops);
+
+        session.RaiseLoopRestarted(1);
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.All)).IsSuccess);
+        Assert.Equal(1, Assert.Single(loops).LoopCount);
+    }
+
+    [Fact]
     public async Task CurrentItemChanged_ReplacesDurationAndMediaInfo()
     {
         // A playlist session reports each new item (#183); the controller's snapshot follows.
@@ -1034,6 +1086,8 @@ public sealed class PlaybackDispatchProtocolTests
 
         public void RaiseCurrentItemChanged(MediaInfo info) =>
             _callbacks.OnCurrentItemChanged(info);
+
+        public void RaiseLoopRestarted(int loopCount) => _callbacks.OnLoopRestarted(loopCount);
 
         /// <summary>The callbacks from the most recent <c>CreateSession</c>.</summary>
         public SessionCallbacks Callbacks => _callbacks;

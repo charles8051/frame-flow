@@ -25,7 +25,7 @@ public class LoopStallEvaluatorTests
         double nowSec,
         double posSec,
         int loopCount,
-        bool repeatOne = true,
+        bool expectsRepeat = true,
         bool playing = true,
         long durationTicks = -1
     ) =>
@@ -33,7 +33,7 @@ public class LoopStallEvaluatorTests
             NowTicks: At(nowSec),
             PositionTicks: Pos(posSec),
             DurationTicks: durationTicks < 0 ? DurationTicks : durationTicks,
-            RepeatOne: repeatOne,
+            ExpectsRepeat: expectsRepeat,
             Playing: playing,
             LoopCount: loopCount
         );
@@ -107,11 +107,11 @@ public class LoopStallEvaluatorTests
     }
 
     [Fact]
-    public void NotRepeatOne_NeverStalls()
+    public void NoRepeatExpected_NeverStalls()
     {
         var ev = LoopStallEvaluator.Create(Timeout);
-        var o0 = ev.Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 0, repeatOne: false));
-        var o1 = o0.Next.Observe(Sample(nowSec: 10, posSec: 20, loopCount: 0, repeatOne: false));
+        var o0 = ev.Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 0, expectsRepeat: false));
+        var o1 = o0.Next.Observe(Sample(nowSec: 10, posSec: 20, loopCount: 0, expectsRepeat: false));
         Assert.False(o1.Stalled);
     }
 

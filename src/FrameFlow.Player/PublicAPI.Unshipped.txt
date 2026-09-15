@@ -4,6 +4,7 @@ FrameFlow.Player.IMediaPlayer
 FrameFlow.Player.IMediaPlayer.Duration.get -> System.TimeSpan
 FrameFlow.Player.IMediaPlayer.ErrorOccurred.get -> System.IObservable<FrameFlow.Media.PlaybackError!>!
 FrameFlow.Player.IMediaPlayer.GetDiagnostics() -> FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot!
+FrameFlow.Player.IMediaPlayer.LoopRestarted.get -> System.IObservable<FrameFlow.Media.LoopRestarted!>!
 FrameFlow.Player.IMediaPlayer.LoopStalled.get -> System.IObservable<FrameFlow.Media.LoopStalled!>!
 FrameFlow.Player.IMediaPlayer.MediaInfo.get -> FrameFlow.Media.MediaInfo!
 FrameFlow.Player.IMediaPlayer.Muted.get -> bool

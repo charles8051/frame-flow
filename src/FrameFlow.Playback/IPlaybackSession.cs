@@ -63,6 +63,13 @@ internal interface IPlaybackSession : IAsyncDisposable
     /// </summary>
     bool LoopsInternally => false;
 
+    /// <summary>
+    /// Whether a session that loops internally expects its current item to repeat at its end. The
+    /// controller reads it on every position tick, for the loop-stall watchdog, and computes the
+    /// answer itself for a session that does not loop internally.
+    /// </summary>
+    bool ExpectsRepeat => false;
+
     // ── Lifecycle methods (called by PlaybackController entry actions) ──
 
     /// <summary>

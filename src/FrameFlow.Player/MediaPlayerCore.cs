@@ -56,6 +56,7 @@ internal sealed class MediaPlayerCore : IMediaPlayer
 
     public IObservable<PlaybackState> StateChanged => _stateChanged;
     public IObservable<TimeSpan> PositionTick => _controller.PositionTick;
+    public IObservable<LoopRestarted> LoopRestarted => _controller.LoopRestarted;
     public IObservable<LoopStalled> LoopStalled => _controller.LoopStalled;
     public IObservable<PlaybackError> ErrorOccurred => _controller.ErrorOccurred;
 

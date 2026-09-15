@@ -153,6 +153,7 @@ public sealed class FrameFlowVolumeControlTests
 
         public IObservable<PlaybackState> StateChanged { get; } = new Never<PlaybackState>();
         public IObservable<TimeSpan> PositionTick { get; } = new Never<TimeSpan>();
+        public IObservable<LoopRestarted> LoopRestarted { get; } = new Never<LoopRestarted>();
         public IObservable<LoopStalled> LoopStalled { get; } = new Never<LoopStalled>();
         public IObservable<PlaybackError> ErrorOccurred { get; } = new Never<PlaybackError>();
 

@@ -308,6 +308,47 @@ controller's state machines. The only method that returned one was internal to
 value. Code that names the type stops compiling. Delete the reference; there is
 no replacement.
 
+### 10. `IMediaPlayer` gained `LoopRestarted`
+
+A loop was visible only on `IPlaybackController`, so a caller of
+`MediaPlayer.CreateAsync`, `MediaPlaylistPlayer.CreateAsync` or the builder had
+no loop event, and a playlist raised none at all. Both players now expose the
+controller's `LoopRestarted`. A playlist raises it when its current item is back
+at its start after it played to its end: under `RepeatMode.One`, and for its only
+item under `RepeatMode.All`. It does not fire for a skip, a jump or a rebuild after
+a failure. `LoopCount` counts consecutive loops of the current item and starts
+again at 1 after any other start.
+
+A type outside FrameFlow that implements `IMediaPlayer`, such as a test double,
+stops compiling until it adds the member:
+
+```csharp
+public IObservable<LoopRestarted> LoopRestarted => _controller.LoopRestarted;
+```
+
+This is a binary break as well: an implementing assembly compiled against the old
+interface and not rebuilt fails to load with `TypeLoadException` when the
+application uses the type. Rebuild it against this version.
+
+### 11. `LoopStallSample.RepeatOne` is renamed `ExpectsRepeat`
+
+The loop-stall watchdog used to watch only while the mode was `RepeatMode.One`, so
+a playlist of one under `RepeatMode.All`, which loops through the same rewind, was
+never watched. Its input now says whether the player expects the current item to
+repeat, and a playlist answers for itself. Code that builds a `LoopStallSample`
+stops compiling until it renames the argument:
+
+```csharp
+// Before
+new LoopStallSample(now, position, duration, RepeatOne: true, Playing: true, loopCount);
+
+// After
+new LoopStallSample(now, position, duration, ExpectsRepeat: true, Playing: true, loopCount);
+```
+
+A host subscribed to `LoopStalled` can now see a stall from a playlist of one under
+`RepeatMode.All`, where it saw none before.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`
@@ -485,6 +526,10 @@ almost all of them.
 
 ## Not breaking, but worth knowing
 
+- **A repeat keeps the playlist's current item started.** When a playlist of one
+  under `RepeatMode.All` wraps to its item, `PlaylistSnapshot.CurrentStarted` stays
+  `true` while the item repeats. It used to read `false` until the repeat
+  completed, as it still does for a hand-off to a different item.
 - **The fluent builder gained a second terminal.** `BuildPlayerAsync()` returns
   `IMediaPlayer`; `BuildAsync()` still returns `PlayerSession`. Additive.
   `WithRepeatMode`, `WithClock`, `WithHardwareFrames` and `WithAudioActivation`

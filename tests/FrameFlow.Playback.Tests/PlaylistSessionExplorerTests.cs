@@ -76,6 +76,18 @@ public sealed class PlaylistSessionExplorerTests(ITestOutputHelper output)
         {
             Failures = ExplorerFailures.Rewind,
         },
+        // A playlist of one under All: its loops wrap to the same item, in place while playing and by a
+        // rebuild while paused, and a skip wraps back to it without being a loop.
+        new(
+            "Loops under All",
+            RepeatMode.All,
+            ["a"],
+            Load(ExplorerCommand.Play, ExplorerCommand.Pause, ExplorerCommand.Play),
+            [EndOfStream, EndOfStream, Skip]
+        )
+        {
+            Failures = ExplorerFailures.Rewind,
+        },
         // Items that fail to open, warm or start, and a worker fault, including one before the first
         // play and one from a runtime an advance has replaced.
         new("Failures", RepeatMode.All, ["a", "b"], Load(ExplorerCommand.Play), [EndOfStream, Fault])
@@ -166,6 +178,18 @@ public sealed class PlaylistSessionExplorerTests(ITestOutputHelper output)
                 input is PlaylistSessionInput.Fault fault && state.Work is null
                     ? PlaylistSessionProtocol.Step(state, queue, fault with { Generation = state.Generation }, context)
                     : PlaylistSessionProtocol.Step(state, queue, input, context)
+        ),
+        // The rule that a skip's advance is not a loop, removed after the core has decided it.
+        ["A skip's advance is counted as a loop"] = new(
+            "Replay under One",
+            ExplorerInvariants.ReportsALoopThatIsNotOne,
+            (state, queue, input, context) =>
+            {
+                var (after, afterQueue, step) = PlaylistSessionProtocol.Step(state, queue, input, context);
+                return input is PlaylistSessionInput.SkipRequested && after.Work is PlaylistSessionWork.Replaying replaying
+                    ? (after with { Work = replaying with { Advance = replaying.Advance with { Loop = true } } }, afterQueue, step)
+                    : (after, afterQueue, step);
+            }
         ),
         ["A jump request starts no advance"] = new(
             "Jumps during advances",

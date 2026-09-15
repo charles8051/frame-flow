@@ -150,6 +150,10 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     // ── Internal bookkeeping ───────────────────────────────────────────
     private readonly ILogger<PlaybackControllerCore> _logger;
     private PlaybackError? _pendingLoadFailure;
+
+    // Every loop observed, from this controller's own loop or a session that loops internally. The
+    // loop-stall watchdog reads it as its loop-count gate, so it only rises. A single source's
+    // LoopRestarted carries it; a playlist's carries the session's per-item count instead.
     private int _loopCount;
     private bool _disposed;
 
@@ -209,7 +213,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             NowTicks: Stopwatch.GetTimestamp(),
             PositionTicks: position.Ticks,
             DurationTicks: _loadedDuration.Ticks,
-            RepeatOne: _repeat.State == RepeatMode.One,
+            ExpectsRepeat: Volatile.Read(ref _sessionBinding).Session is { LoopsInternally: true } looping
+                ? looping.ExpectsRepeat
+                : _repeat.State == RepeatMode.One,
             Playing: IsActivelyPresenting,
             LoopCount: Volatile.Read(ref _loopCount)
         );
@@ -453,6 +459,20 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     }
 
     /// <summary>
+    /// Posts a loop a session that loops internally reported to the command channel without
+    /// blocking, so it reaches <see cref="LoopRestarted"/> in order with the session's other
+    /// notifications. Failures are swallowed and logged, as for <see cref="PostInternalAsync"/>.
+    /// </summary>
+    private void PostLoopRestarted(int loopCount, int sessionGeneration)
+    {
+        if (_disposed)
+            return;
+
+        if (!_commandChannel.Writer.TryWrite(new LoopRestartedCommand(loopCount, sessionGeneration)))
+            LogLoopRestartedDropped(loopCount);
+    }
+
+    /// <summary>
     /// Stores a playlist session's new current item and wakes the dispatch loop to apply it.
     /// </summary>
     /// <remarks>
@@ -648,6 +668,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 break;
             case RecoverableErrorCommand:
             case CurrentItemChangedCommand:
+            case LoopRestartedCommand:
                 command.Completion.TrySetResult(Result.Ok());
                 break;
             case SeekOutcomeCommand seekOutcome:
@@ -715,7 +736,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             OnBufferUnderrun: () =>
                 PostInternalAsync(PlaybackTrigger.BufferUnderrun, sessionGeneration),
             OnRecoverableError: error => PostRecoverableError(error, sessionGeneration),
-            OnCurrentItemChanged: info => PostCurrentItemChanged(info, sessionGeneration)
+            OnCurrentItemChanged: info => PostCurrentItemChanged(info, sessionGeneration),
+            OnLoopRestarted: loopCount => PostLoopRestarted(loopCount, sessionGeneration)
         );
 
     // ── Pure-core EXECUTOR (architecture review §2.1, ADR-0055 sibling) ─────────
@@ -1453,6 +1475,26 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                     case CurrentItemChangedCommand:
                         // A playlist moved to a new item (ADR-0062), and the update was applied
                         // above. This command only woke the loop to do it.
+                        break;
+
+                    case LoopRestartedCommand loop:
+                        // A playlist put its current item back at its start (decision 5 of
+                        // looping-on-both-players.md). A report from a session disposed since is
+                        // dropped, as that session's other notifications are.
+                        if (loop.SessionGeneration == _sessionBinding.Generation)
+                        {
+                            Interlocked.Increment(ref _loopCount);
+                            LogLoopRestarted(loop.LoopCount, "session");
+                            _loopRestartedSubject.OnNext(new LoopRestarted(loop.LoopCount, Duration));
+                        }
+                        else
+                        {
+                            LogStaleLoopRestarted(
+                                loop.SessionGeneration,
+                                _sessionBinding.Generation,
+                                loop.LoopCount
+                            );
+                        }
                         break;
 
                     case SeekOutcomeCommand soc:
