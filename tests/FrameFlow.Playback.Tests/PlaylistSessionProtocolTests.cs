@@ -565,6 +565,43 @@ public sealed class PlaylistSessionProtocolTests
         Assert.IsType<PlaylistSessionAction.DisposeItem>(step.Awaited);
     }
 
+    [Fact]
+    public void AnOpenThatSucceedsDuringDisposal_IsKept_ForTheDisposeInputToDispose()
+    {
+        var disposing = new PlaylistStepContext(Disposing: true);
+
+        // An advance's open: disposal begins while it is in flight, and it succeeds anyway.
+        var (state, queue) = Setup(PlaylistRunState.Playing, Slot.Played, Next.Other);
+        var (s, q, step) = Step(state, queue, new PlaylistSessionInput.EndOfStream(CurrentGeneration, CurrentRun));
+        (s, q, step) = Step(s, q, new PlaylistSessionInput.Outcome(PlaylistOutcome.Ok));
+        Assert.IsType<PlaylistSessionAction.OpenItem>(step.Awaited);
+
+        (s, q, step) = PlaylistSessionProtocol.Step(s, q, new PlaylistSessionInput.Outcome(PlaylistOutcome.Ok, 0, Info), disposing);
+        Assert.True(step.Done);
+        Assert.Empty(step.Actions);
+        Assert.NotNull(s.Item);
+        Assert.Null(s.Work);
+
+        (s, _, step) = PlaylistSessionProtocol.Step(s, q, new PlaylistSessionInput.Dispose(), disposing);
+        Assert.IsType<PlaylistSessionAction.DisposeItem>(step.Awaited);
+        Assert.Null(s.Item);
+
+        // Initialize's open, in the same race: the command completes, nothing is attached or
+        // raised, and the Dispose input disposes the runtime.
+        var a = new PlaylistItem(new FakeSource("a"));
+        (s, q, step) = Step(PlaylistSessionState.Initial, PlaylistQueue.Create([a], RepeatMode.Off), new PlaylistSessionInput.Initialize(Command));
+        Assert.IsType<PlaylistSessionAction.OpenItem>(step.Awaited);
+
+        (s, q, step) = PlaylistSessionProtocol.Step(s, q, new PlaylistSessionInput.Outcome(PlaylistOutcome.Ok, 0, Info), disposing);
+        var complete = Assert.IsType<PlaylistSessionAction.CompleteCommand>(Assert.Single(step.Actions));
+        Assert.Equal(PlaylistOutcome.Ok, complete.Result.Kind);
+        Assert.NotNull(s.Item);
+
+        (s, _, step) = PlaylistSessionProtocol.Step(s, q, new PlaylistSessionInput.Dispose(), disposing);
+        Assert.IsType<PlaylistSessionAction.DisposeItem>(step.Awaited);
+        Assert.Null(s.Item);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static (PlaylistSessionState State, PlaylistQueue Queue, PlaylistSessionStep Step) Step(
