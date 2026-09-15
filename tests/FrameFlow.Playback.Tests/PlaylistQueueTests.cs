@@ -163,6 +163,11 @@ public sealed class PlaylistQueueTests
         Assert.Equal(1, second);
         Assert.Same(d.Item, queue.Reported);
         Assert.Equal(TimeSpan.FromSeconds(5), queue.ReportedDuration);
+
+        // A start with no metadata has no known duration.
+        (queue, d) = queue.DecideNext(PlaylistAdvance.EndOfStream);
+        (queue, _) = queue.ReportCurrent(d.Item!, null);
+        Assert.Equal(TimeSpan.Zero, queue.ReportedDuration);
     }
 
     [Fact]
@@ -294,6 +299,49 @@ public sealed class PlaylistQueueTests
         queue = queue.SetNext(Item("jump"));
 
         Assert.Equal("jump b |", Advance(ref queue, 3));
+    }
+
+    [Fact]
+    public void EachStartTake_FollowsTheAdvanceOrder()
+    {
+        // Each new session takes its first item in the order an advance does: a next item, the
+        // playlist item after the cursor, a queued item, and then the first playlist item again.
+        var queue = Queue(RepeatMode.Off, "a", "b").SetNext(Item("x")).Enqueue(Item("y"));
+
+        var starts = new List<string>();
+        for (var i = 0; i < 5; i++)
+            starts.Add(Take(ref queue)!.Source.DisplayName);
+
+        Assert.Equal("x a b y a", string.Join(" ", starts));
+        Assert.Empty(queue.Next);
+        Assert.Empty(queue.Queued);
+    }
+
+    [Fact]
+    public void RemovingAOneShotItemBeforeItPlays_TakesItOutOfItsCollection()
+    {
+        var queue = Queue(RepeatMode.Off, "a", "b");
+        _ = Take(ref queue);
+        var x = Item("x");
+        var y = Item("y");
+        queue = queue.SetNext(x).Enqueue(y);
+        (queue, _) = queue.RequestJump(y);
+        var revision = queue.Revision;
+
+        (queue, var removedNext) = queue.Remove(x);
+        (queue, var removedQueued) = queue.Remove(y);
+
+        Assert.True(removedNext);
+        Assert.True(removedQueued);
+        Assert.Empty(queue.Next);
+        Assert.Empty(queue.Queued);
+        Assert.Equal(revision + 2, queue.Revision);
+        // Removing the jump's target discards the jump, as it does for a playlist item.
+        Assert.False(queue.HasPendingJump);
+        Assert.Equal("b |", Advance(ref queue, 2));
+
+        (_, var again) = queue.Remove(x);
+        Assert.False(again);
     }
 
     [Fact]
@@ -443,16 +491,20 @@ public sealed class PlaylistQueueTests
         Assert.Equal("c ^a b c", Advance(ref queue, 4, PlaylistAdvance.Skip));
     }
 
-    [Fact]
-    public void Row09_JumpToAOneShotItem_TakesItOutOfItsCollection()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Row09_JumpToAOneShotItem_TakesItOutOfItsCollection(bool setNext)
     {
         var queue = Queue(RepeatMode.Off, "a", "b");
         _ = Take(ref queue);
         var x = Item("x");
-        queue = queue.Enqueue(x);
+        queue = setNext ? queue.SetNext(x) : queue.Enqueue(x);
 
         (queue, _) = queue.RequestJump(x);
         Assert.Equal("x b |", Advance(ref queue, 3, PlaylistAdvance.Skip));
+        Assert.Empty(queue.Next);
+        Assert.Empty(queue.Queued);
     }
 
     [Fact]
@@ -602,6 +654,24 @@ public sealed class PlaylistQueueTests
         (queue, var reserved) = queue.ReserveStart();
         Assert.True(reserved);
         Assert.Equal("b", Take(ref queue)!.Source.DisplayName);
+    }
+
+    [Fact]
+    public void Row15_ReservingAgain_KeepsTheItemAlreadyReserved()
+    {
+        // A reservation that has not been taken is kept. Reserving again takes nothing more, so
+        // the replay does not skip an item.
+        var queue = Queue(RepeatMode.Off, "a", "b");
+        Assert.Equal("a b |", Walk(ref queue, 2));
+
+        (queue, var first) = queue.ReserveStart();
+        var reservedOnce = queue;
+        (queue, var second) = queue.ReserveStart();
+
+        Assert.True(first);
+        Assert.True(second);
+        Assert.Equal(reservedOnce, queue);
+        Assert.Equal("a b |", Walk(ref queue, 2));
     }
 
     [Fact]
