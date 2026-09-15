@@ -207,6 +207,7 @@ public partial class MainWindow : Window
         var videoSink = surface.AttachSink(_loggerFactory);
         _logger.LogInformation("Presentation surface: compositor interop (zero-copy).");
 
+        var handedOver = false;
         try
         {
             var player = await FrameFlowPlayer
@@ -231,6 +232,7 @@ public partial class MainWindow : Window
             // the check above and here.
             _players.Add(player);
             _surfaces.Add(surface);
+            handedOver = true;
 
             var played = await player.PlayAsync();
             if (!played.IsSuccess)
@@ -252,9 +254,9 @@ public partial class MainWindow : Window
         {
             _logger.LogError(ex, "Zero-copy playback failed to start (HW D3D11VA decode required).");
             StatusText.Text = "Failed — see log. (HW D3D11VA decode required for this spike.)";
-            // A build that threw left the surface with this method, so it disposes it. One that
-            // reached the lists is the teardown's.
-            if (!_surfaces.Contains(surface))
+            // A build that threw left the surface with this method, so it disposes it. One handed
+            // over is the teardown's, whether or not the list still holds it.
+            if (!handedOver)
                 await DisposeSurfaceAsync(surface);
             return null;
         }

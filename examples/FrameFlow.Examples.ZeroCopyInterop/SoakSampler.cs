@@ -84,7 +84,17 @@ internal sealed class SoakSampler : IDisposable
                 or NotSupportedException
             )
         {
-            csv?.Dispose();
+            // Disposing flushes, which can throw for the same reason the write did. The failure
+            // being reported is the first one.
+            try
+            {
+                csv?.Dispose();
+            }
+            catch (Exception cleanup)
+            {
+                logger.LogDebug(cleanup, "Closing the soak's CSV threw after it failed to open.");
+            }
+
             logger.LogError(ex, "Soak samples cannot be written to {Path}.", csvPath);
             return null;
         }
