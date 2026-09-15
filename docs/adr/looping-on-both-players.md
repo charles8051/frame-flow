@@ -91,7 +91,8 @@ ways:
   that have already finished (`src/FrameFlow.Playback/SubstrateSession.cs:1104-1125`).
 - **The graph.** The seek builds a new graph; the rewind re-runs the retained one. The video
   configurator therefore runs on every pass of a single-source loop, and once per load on a
-  playlist loop.
+  playlist loop. Operators in a retained graph keep their state across the rewind: the seek reset
+  covers only the decoders and the demux pipeline (`SubstrateSession.cs:565-572`).
 - **The seek state machine.** It runs for the single source (ADR-0028 §2), not for the playlist.
 
 Neither rewind replaces the decode device. The device is created when `VideoDecoder.Open` runs, inside
@@ -403,8 +404,10 @@ The rest change a single source. They land when it runs as a queue of one, or wi
 - **A single-source player under `All` loops instead of ending.** A caller that relied on `All`
   acting as `Off` must pass `Off`.
 - **The video configurator runs once per load on a single source,** not once per loop. A stateful
-  operator in a consumer's chain keeps its state across loops, and a configurator-only chain that
-  wires its own sinks is not rewired each pass.
+  operator in a consumer's chain keeps its state across loops while timestamps go back to zero, with
+  no reset. A `SyncJoin` in the chain then drops its matches for most of the next pass, until #92 is
+  fixed. A playlist that rewinds in place has this today. A configurator-only chain that wires its
+  own sinks is not rewired each pass.
 - **`LoopRestarted` moves.** It fires once the item is back at its start, not when the rewind is
   requested, and a rewind cancelled by a user seek raises none.
 - **`LoopRestarted.LoopCount` resets** on a load and on any non-loop change of item.
@@ -479,6 +482,10 @@ if that is too long.
   type's record decides.
 - **Recovering from a rewind that hangs.** A rewind that never completes is reported by the
   watchdogs, but nothing rebuilds the item or bounds the wait. That is so on a playlist today.
+- **Operator state across a loop (#92).** Nothing resets an operator when a retained graph re-runs
+  from zero, and nothing calls `SyncJoin.ResetWindow`. #92's fix, inside `SyncJoin`, belongs before a
+  single source moves to the rewind. A single-source loop rebuilds its graph today, so it does not
+  hit this yet.
 - **A stall at a hand-off to a different item.** The watchdog covers expected loops only.
 - **A stall on an audio-mastered clock.** The evaluator targets the wall-clock case, where the
   position overruns the duration. An audio-mastered clock stops at the duration instead.
@@ -632,3 +639,6 @@ revision history without machine identifiers.
     `One` takes nothing from the queue.
   - **Consequences.** The positive consequences now separate what the playlist half brings from what
     a single source gains only once it runs as a queue of one, or under decision 8.
+  - **Operator state.** An in-place rewind keeps every operator's state while timestamps go back to
+    zero, which reaches #92 on a playlist today. *Context*, the configurator
+    consequence and *Not settled* now say so.
