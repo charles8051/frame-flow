@@ -97,7 +97,21 @@ public sealed class PresenterStallEvaluatorTests
         var stalled = FoldStalled(
             PresenterStallEvaluator.Create(Timeout),
             new PresenterSample(Ticks(0), 0, 0, 100, 0),
-            new PresenterSample(Ticks(5), 0, 0, 300, 0)); // accepted climbing, presented stuck at 0 -> not a stall
+            new PresenterSample(Ticks(1), 0, 0, 200, 0),  // intake with nothing presented arms Rule A
+            new PresenterSample(Ticks(5), 0, 0, 300, 0)); // unpresented for 4s, presented stuck at 0 -> not a stall
+        Assert.False(stalled);
+    }
+
+    [Fact]
+    public void TheFirstSample_IsABaseline_NotAnArrival()
+    {
+        // The watchdog can start on a presenter that has already enqueued frames the compositor has
+        // not committed. Those frames arrived before it was watching, so they arm nothing: only
+        // frames that arrive between samples do.
+        var stalled = FoldStalled(
+            PresenterStallEvaluator.Create(Timeout),
+            new PresenterSample(Ticks(0), 20, 0, 200, 0),
+            new PresenterSample(Ticks(5), 20, 0, 200, 0)); // idle for longer than the timeout
         Assert.False(stalled);
     }
 
@@ -193,6 +207,36 @@ public sealed class PresenterStallEvaluatorTests
         eval = eval.Observe(new PresenterSample(Ticks(1.5), 20, 20, 10, 0)).Next;
         // New sink idle through the timeout window -> the old arm is gone, so no stall.
         var outcome = eval.Observe(new PresenterSample(Ticks(5.0), 20, 20, 10, 0));
+        Assert.False(outcome.Stalled);
+    }
+
+    [Fact]
+    public void ViewSwapWhileArmed_PresentedCounterResets_DisarmsAndDoesNotStall()
+    {
+        // The view-side sibling of SinkSwapWhileArmed: Rule A arms while the present loop is flat,
+        // then the host swaps the view. The new view has already presented a few frames by the next
+        // sample, so its presented count is lower than the old one but above zero. A decrease is a
+        // reset, which must disarm; the sink is unchanged, so the accepted count does not show it.
+        var eval = PresenterStallEvaluator.Create(Timeout);
+        eval = eval.Observe(Healthy(0.0, 10, 100)).Next;
+        eval = eval.Observe(Healthy(0.5, 20, 110)).Next;
+        eval = eval.Observe(new PresenterSample(Ticks(1.0), 20, 20, 130, 0)).Next; // fed, present flat -> ARMS
+        eval = eval.Observe(new PresenterSample(Ticks(1.5), 3, 3, 130, 0)).Next;   // view swapped
+        var outcome = eval.Observe(new PresenterSample(Ticks(5.0), 3, 3, 130, 0)); // idle past the timeout
+        Assert.False(outcome.Stalled);
+    }
+
+    [Fact]
+    public void ViewSwapBeforeAnyCommit_PresentedCounterResets_DisarmsRuleB()
+    {
+        // Rule B arms on an enqueue the compositor has not committed. Nothing has been committed at
+        // all, so when the view is swapped the committed count cannot go down: only the presented
+        // count shows the swap, and it must disarm Rule B.
+        var eval = PresenterStallEvaluator.Create(Timeout);
+        eval = eval.Observe(new PresenterSample(Ticks(0.0), 10, 0, 100, 0)).Next;
+        eval = eval.Observe(new PresenterSample(Ticks(0.5), 20, 0, 110, 0)).Next;  // enqueued, uncommitted -> ARMS
+        eval = eval.Observe(new PresenterSample(Ticks(1.0), 2, 0, 110, 0)).Next;   // view swapped
+        var outcome = eval.Observe(new PresenterSample(Ticks(5.0), 2, 0, 110, 0)); // idle past the timeout
         Assert.False(outcome.Stalled);
     }
 
@@ -475,6 +519,85 @@ public sealed class PresenterStallEvaluatorTests
         var recoveries = outcomes.FindAll(o => o.Recovered);
         Assert.Single(recoveries);
         Assert.Equal(PresenterStalledReason.PresentLoopWedged, recoveries[0].Reason);
+        // The reset sample counts for nothing, so the 4th advance confirms and the 3rd does not.
+        Assert.True(outcomes[^1].Recovered);
+        Assert.False(outcomes[^2].Recovered);
+    }
+
+    [Fact]
+    public void OutputNotComposited_CounterReset_IsNotProgress_ConfirmsOnTheFourthAdvance()
+    {
+        // The Rule B mirror of the case above: the committed count going down is a re-base, not
+        // commit progress.
+        var outcomes = FoldAll(
+            PresenterStallEvaluator.Create(Timeout, recoverySamples: 4),
+            new PresenterSample(Ticks(0), 10, 10, 100, 0),
+            new PresenterSample(Ticks(1), 20, 20, 200, 0),
+            new PresenterSample(Ticks(2), 24, 20, 224, 0),   // arms Rule B
+            new PresenterSample(Ticks(5), 30, 20, 300, 0),   // STALL (OutputNotComposited)
+            new PresenterSample(Ticks(5.5), 0, 0, 0, 0),     // view+sink swap, counters re-based
+            Healthy(6.0, 1, 10),
+            Healthy(6.5, 2, 20),
+            Healthy(7.0, 3, 30),
+            Healthy(7.5, 4, 40));
+
+        var recoveries = outcomes.FindAll(o => o.Recovered);
+        Assert.Single(recoveries);
+        Assert.Equal(PresenterStalledReason.OutputNotComposited, recoveries[0].Reason);
+        Assert.True(outcomes[^1].Recovered);
+    }
+
+    [Fact]
+    public void PresentLoopWedged_RecoversOnEnqueueProgress_WhileCommitLags()
+    {
+        // The enqueue loop froze, so enqueue progress is the evidence, whatever the compositor does.
+        // Commit lags for these four samples, well inside the timeout, so Rule B does not trip.
+        var outcomes = FoldAll(
+            PresenterStallEvaluator.Create(Timeout, recoverySamples: 4),
+            [.. WedgePrefix,
+             new PresenterSample(Ticks(5.5), 21, 20, 310, 0),
+             new PresenterSample(Ticks(6.0), 22, 20, 320, 0),
+             new PresenterSample(Ticks(6.5), 23, 20, 330, 0),
+             new PresenterSample(Ticks(7.0), 24, 20, 340, 0)]);
+
+        var recovery = Assert.Single(outcomes, o => o.Recovered);
+        Assert.Equal(PresenterStalledReason.PresentLoopWedged, recovery.Reason);
+        Assert.True(outcomes[^1].Recovered);
+    }
+
+    [Fact]
+    public void OutputNotComposited_RecoversOnCommitProgress_WhileTheBacklogDrains()
+    {
+        // The compositor froze, so commit progress is the evidence. Here it drains the backlog with
+        // no new enqueue, so the presented count stays flat throughout.
+        var outcomes = FoldAll(
+            PresenterStallEvaluator.Create(Timeout, recoverySamples: 4),
+            new PresenterSample(Ticks(0), 10, 10, 100, 0),
+            new PresenterSample(Ticks(1), 20, 20, 200, 0),
+            new PresenterSample(Ticks(2), 24, 20, 224, 0),   // arms Rule B
+            new PresenterSample(Ticks(5), 30, 20, 300, 0),   // STALL (OutputNotComposited)
+            new PresenterSample(Ticks(5.5), 30, 22, 300, 0),
+            new PresenterSample(Ticks(6.0), 30, 24, 300, 0),
+            new PresenterSample(Ticks(6.5), 30, 26, 300, 0),
+            new PresenterSample(Ticks(7.0), 30, 28, 300, 0));
+
+        var recovery = Assert.Single(outcomes, o => o.Recovered);
+        Assert.Equal(PresenterStalledReason.OutputNotComposited, recovery.Reason);
+        Assert.True(outcomes[^1].Recovered);
+    }
+
+    [Fact]
+    public void Recovery_IsReportedOnce_AsPresentingContinues()
+    {
+        // Recovery clears the outstanding stall, so the progress that follows confirms nothing more.
+        var outcomes = FoldAll(
+            PresenterStallEvaluator.Create(Timeout, recoverySamples: 4),
+            [.. WedgePrefix,
+             .. Enumerable.Range(1, 8).Select(i => Healthy(5.0 + i * 0.5, 20 + i, 300 + i * 10L))]);
+
+        // The 4th advancing sample confirms; the four after it confirm nothing.
+        Assert.Single(outcomes, o => o.Recovered);
+        Assert.True(outcomes[WedgePrefix.Length + 3].Recovered);
     }
 
     [Fact]
@@ -574,6 +697,8 @@ public sealed class PresenterStallEvaluatorTests
         var recoveries = outcomes.FindAll(o => o.Recovered);
         Assert.Single(recoveries);
         Assert.Equal(PresenterStalledReason.OutputNotComposited, recoveries[0].Reason);
+        // The streak of 3 was not carried into the new stall: it takes all four commit advances.
+        Assert.True(outcomes[^1].Recovered);
     }
 
     [Fact]

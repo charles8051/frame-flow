@@ -235,13 +235,18 @@ public sealed class AudioClockStateTests
         Assert.Null(seated.PendingSeekBaseline); // consumed
     }
 
-    [Fact]
-    public void SeatOnActivate_ZeroesProcessedSamples()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SeatOnActivate_ZeroesProcessedSamples(bool withSeed)
     {
         // Every activation path starts the device-sample accounting fresh (the sink
-        // resets _processedSamplesPerChannel = 0 on activate).
-        var s = AudioClockState.Initial.WithProcessed(5 * Rate).SeatOnActivate();
-        Assert.Equal(0, s.ProcessedSamplesPerChannel);
+        // resets _processedSamplesPerChannel = 0 on activate), with or without a seek seed.
+        var dirty = withSeed
+            ? AudioClockState.Initial.SeekBaseline(TimeSpan.FromSeconds(42)).WithProcessed(5 * Rate)
+            : AudioClockState.Initial.WithProcessed(5 * Rate);
+
+        Assert.Equal(0, dirty.SeatOnActivate().ProcessedSamplesPerChannel);
     }
 
     // ── SeekBaseline (ISeekableClock reseat) ───────────────────────────────────
@@ -399,6 +404,20 @@ public sealed class AudioClockStateTests
 
         // Half a second of device offset after the resume reads half a second on.
         Assert.Equal(TimeSpan.FromSeconds(4.5), rebased.Position(Rate / 2, Rate));
+    }
+
+    [Fact]
+    public void RebaseOnResume_SeatsAnUnseatedOrigin_SoALaterBufferDoesNotMoveIt()
+    {
+        // A resume before the first buffer's PTS was captured. The rebase decides the origin, so
+        // the first buffer that follows must not replace it.
+        var unseated = AudioClockState.Initial.WithProcessed(Rate);
+
+        var rebased = unseated.RebaseOnResume(TimeSpan.FromSeconds(4), deviceSampleOffset: 0, sampleRate: Rate);
+
+        Assert.True(rebased.OriginSeated);
+        var afterBuffer = rebased.CaptureFirstBufferPts(TimeSpan.FromSeconds(30));
+        Assert.Equal(TimeSpan.FromSeconds(4), afterBuffer.Position(0, Rate));
     }
 
     [Fact]
