@@ -161,7 +161,7 @@ A `SessionStep` is:
 |---|---|
 | The controller | `Initialize`, `WarmUp`, `Play`, `Pause`, `Seek(position)`, `Rewind`, `Dispose`. Each carries a command id. |
 | An item runtime | `EndOfStream(generation, run)`, `Fault(generation, playedFor, error)` |
-| The coordinator | `SkipRequested`, `JumpRequested` |
+| The coordinator | `SkipRequested(generation)`, `JumpRequested` |
 
 **Inputs the shell feeds back:**
 
@@ -369,9 +369,19 @@ record.
   first await that does not complete at once, and keeps its task. `SettleAsync` waits for every
   hop. The draft named a manual scheduler that queues hops. Running them at once is closer to the
   thread pool, and it lets a test assert what a request did before it releases a hold.
+- **Deferred hops.** On the thread pool a hop can also start after a later call. That differs from
+  making the request later only in what the session reads when the request is made: an
+  end-of-stream's run number, and the generation an end-of-stream or skip is tagged with. A test can
+  defer hops to reproduce it. Two transcripts do: an end-of-stream whose advance starts after a seek
+  is stale, and a skip requested before an end-of-stream's advance starts collapses into that
+  advance.
 - **What step 3 changes.** The transcripts use controller calls, item notifications, queue requests,
-  holds and `SettleAsync`, and nothing about hops. Step 3 changes `SettleAsync` to wait for the
-  reader, not the transcripts.
+  holds, deferred hops and `SettleAsync`. Step 3 changes `SettleAsync` to wait for the reader. A
+  deferred hop becomes an input posted before the later call, which the single reader takes first.
+  The two deferred transcripts keep their outcome only because the inputs carry what today's session
+  reads at the request: the run number on `EndOfStream`, and the generation on `SkipRequested`. The
+  draft's `SkipRequested` carried no generation, so the reader would have advanced twice. Decision
+  2's input table now gives it one.
 
 ### 9. What stays the same
 
@@ -504,7 +514,8 @@ handlers.
     | An advance takes a pending jump once its item has started (#199) | `JumpDuringAnAdvance_IsTakenBeforeAWaitingPause`, `JumpFromATransitionSubscriber_IsTakenBeforeAWaitingPause` |
     | The jump's advance acts only on a jump still pending (#199) | `JumpDuringAnAdvance_IsTakenBeforeAWaitingPause`, `JumpFromATransitionSubscriber_IsTakenBeforeAWaitingPause` |
     | A jump request starts an advance (#199) | `JumpDuringASeek_IsTakenWhenTheSeekCompletes`, `WarmUpOutOfEnded_HoldsOffAJumpUntilItFinishes` |
-    | An end-of-stream from a run a seek replaced is dropped (#197) | `EndOfStreamRaisedDuringASeek_IsDropped_AndOneAfterItIsNot` |
+    | An end-of-stream from a run a seek replaced is dropped (#197) | `EndOfStreamRaisedDuringASeek_IsDropped_AndOneAfterItIsNot`, `EndOfStreamWhoseAdvanceStartsAfterASeek_IsDropped` |
+    | A notification tagged with a replaced generation is dropped | `SkipRequestedBeforeAnEndOfStreamsAdvanceStarts_AdvancesOnce` |
 
     The advance's check for a jump is isolated by a Pause that waits behind the advance. With the
     check, the jump's target plays and is then paused. Without it, the advanced item is paused and
@@ -564,6 +575,11 @@ handlers.
     step changes. A finding that a queue edit leaves them stale was answered on the PR: an edit does
     not change the loaded runtime, today or in this design.
 - **Amendment (2026-09-14), step 1 implemented.** The session creates item runtimes through a
-  factory and starts its hops through a scheduler. Thirteen transcripts pin today's behaviour, and
-  twelve rules were each shown to fail their transcripts when removed. The rig runs hops inline
+  factory and starts its hops through a scheduler. Fifteen transcripts pin today's behaviour, and
+  thirteen rules were each shown to fail their transcripts when removed. The rig runs hops inline
   rather than queueing them, which decision 8 records.
+  - **Deferred hops, after automated review of #204.** The review found that a hop the thread pool
+    starts late is an ordering the inline rig did not reproduce. The rig can now defer hops, and two
+    transcripts use it. Writing them showed that the draft's `SkipRequested` needed the generation
+    current at the request, or a skip that races an end-of-stream would advance twice under a single
+    reader. Decision 2 now carries it.

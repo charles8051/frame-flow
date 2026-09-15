@@ -374,6 +374,53 @@ public sealed class PlaylistSessionTranscriptTests
         );
     }
 
+    /// <summary>
+    /// #197 (#170): an end-of-stream raised before a seek, whose advance starts only after the
+    /// seek has replaced the run, is stale. This is the race the run number was added for.
+    /// </summary>
+    [Fact]
+    public async Task EndOfStreamWhoseAdvanceStartsAfterASeek_IsDropped()
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b");
+
+        rig.DeferHops();
+        rig.Runtime("a#1").RaiseEndOfStream();
+        await rig.Session.SeekAsync(TimeSpan.FromSeconds(1));
+        rig.StartDeferredHops();
+        await rig.SettleAsync();
+
+        Assert.Equal(["a#1.Seek(00:00:01)"], rig.TakeLog());
+    }
+
+    /// <summary>
+    /// A skip requested before the advance for an end-of-stream has started ends the same item,
+    /// so the two collapse into one advance.
+    /// </summary>
+    [Fact]
+    public async Task SkipRequestedBeforeAnEndOfStreamsAdvanceStarts_AdvancesOnce()
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b", "c");
+
+        rig.DeferHops();
+        rig.Runtime("a#1").RaiseEndOfStream();
+        rig.Coordinator.RequestSkip();
+        rig.StartDeferredHops();
+        await rig.SettleAsync();
+
+        Assert.Equal(
+            [
+                "a#1.Dispose",
+                "clock.Stop",
+                "b#1.Open",
+                "b#1.WarmUp",
+                "b#1.Play",
+                "ctl.ItemChanged(b)",
+                "transition(b)",
+            ],
+            rig.TakeLog()
+        );
+    }
+
     private static readonly string[] JumpTakenBeforeTheWaitingPause =
     [
         "a#1.Dispose",

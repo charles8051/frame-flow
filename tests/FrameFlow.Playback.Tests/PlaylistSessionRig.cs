@@ -33,6 +33,14 @@ namespace FrameFlow.Playback.Tests;
 /// end before the call that caused it returns. <see cref="SettleAsync"/> waits for every hop to
 /// finish, after which nothing more happens until the test acts.
 /// </para>
+/// <para>
+/// <b>Deferred hops.</b> On the thread pool a hop can also start after a later call. That differs
+/// from making the request later only in what the session reads when the request is made: an
+/// end-of-stream's run number, and the item generation an end-of-stream or skip is tagged with.
+/// <see cref="DeferHops"/> and <see cref="StartDeferredHops"/> reproduce it. A single reader takes
+/// inputs in the order they were posted, so step 3 of the protocol ADR does not produce these
+/// orderings, and its core has to carry those values to keep their outcome.
+/// </para>
 /// </remarks>
 internal sealed class PlaylistSessionRig : IAsyncDisposable
 {
@@ -119,8 +127,16 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
         }
     }
 
-    /// <summary>Waits until every hop the session has started has finished.</summary>
+    /// <summary>
+    /// Waits until every hop the session has started has finished. A deferred hop has not started.
+    /// </summary>
     public Task SettleAsync() => _scheduler.IdleAsync().WaitAsync(Bound);
+
+    /// <summary>Queues the session's hops from now on instead of starting them.</summary>
+    public void DeferHops() => _scheduler.Defer();
+
+    /// <summary>Starts the deferred hops in order, and starts later hops at once again.</summary>
+    public void StartDeferredHops() => _scheduler.StartDeferred();
 
     /// <summary>The runtime named in the transcript, such as <c>a#1</c>.</summary>
     public FakeItem Runtime(string name)
@@ -179,6 +195,7 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
             hold.Release();
 
         await Session.DisposeAsync().AsTask().WaitAsync(Bound);
+        StartDeferredHops();
         await SettleAsync();
         _transitions.Dispose();
         Coordinator.Dispose();
@@ -347,14 +364,55 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
 
     /// <summary>
     /// Runs each hop on the calling thread until its first await that does not complete at once,
-    /// and keeps its task so <see cref="IdleAsync"/> can wait for it.
+    /// and keeps its task so <see cref="IdleAsync"/> can wait for it. While deferring, it queues
+    /// hops instead, until <see cref="StartDeferred"/>.
     /// </summary>
     private sealed class InlineScheduler : IPlaylistSessionScheduler
     {
         private readonly object _gate = new();
         private readonly List<Task> _running = [];
+        private readonly Queue<Func<Task>> _deferred = new();
+        private bool _deferring;
 
         public void Schedule(Func<Task> work)
+        {
+            lock (_gate)
+            {
+                if (_deferring)
+                {
+                    _deferred.Enqueue(work);
+                    return;
+                }
+            }
+            Start(work);
+        }
+
+        public void Defer()
+        {
+            lock (_gate)
+                _deferring = true;
+        }
+
+        /// <summary>
+        /// Stops deferring, and starts the queued hops in the order they were scheduled. A hop
+        /// they schedule starts at once, before the rest of the queue.
+        /// </summary>
+        public void StartDeferred()
+        {
+            while (true)
+            {
+                Func<Task> work;
+                lock (_gate)
+                {
+                    _deferring = false;
+                    if (!_deferred.TryDequeue(out work!))
+                        return;
+                }
+                Start(work);
+            }
+        }
+
+        private void Start(Func<Task> work)
         {
             var task = work();
             lock (_gate)
