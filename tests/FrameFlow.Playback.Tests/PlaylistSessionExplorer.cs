@@ -346,11 +346,21 @@ internal sealed class PlaylistSessionExplorer
             );
         }
 
-        // The events.
-        foreach (var happening in world.Remaining.Distinct())
+        // The events, one move per occurrence. Two equal occurrences lead to the same state, which the
+        // visited set explores once.
+        for (var i = 0; i < world.Remaining.Count; i++)
         {
+            var happening = world.Remaining[i];
             if (Happen(world, happening) is { } next)
-                yield return ($"{Describe(happening)} happens", next with { Remaining = world.Remaining.Remove(happening) });
+            {
+                yield return (
+                    $"{Describe(happening)} happens",
+                    next with
+                    {
+                        Remaining = world.Remaining.RemoveAt(i),
+                    }
+                );
+            }
         }
     }
 

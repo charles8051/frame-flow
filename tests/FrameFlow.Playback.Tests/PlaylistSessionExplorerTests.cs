@@ -195,8 +195,8 @@ public sealed class PlaylistSessionExplorerTests(ITestOutputHelper output)
     [Fact]
     public void RepeatedEvents_EachHappen()
     {
-        // Two equal events are explored as one move from any state, since either leads to the same
-        // state. The other stays to happen later, so both reach the core.
+        // Each occurrence of an event is its own move. Two equal occurrences lead to the same state,
+        // and the one not taken stays to happen later, so both reach the core.
         var generations = new HashSet<int>();
         _ = PlaylistSessionExplorer.Explore(
             Scenario("Seeks and stale end-of-stream"),
