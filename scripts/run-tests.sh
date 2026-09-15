@@ -30,8 +30,36 @@ if [ "${1:-}" = "--build" ]; then
   dotnet build FrameFlow.slnx -nologo -clp:NoSummary -v:q
 fi
 
-# Discover test projects via the slnx → /tests/ convention.
-projects=( tests/*/*.csproj )
+# Discover test projects via the slnx → /tests/ convention. A support library
+# under tests/ sets <IsTestProject>false</IsTestProject>; `dotnet test` runs
+# nothing for it and prints no summary, so the worker would flag it NOSUMMARY.
+#
+# The property is read from MSBuild evaluation, not grepped from the csproj, so
+# a commented-out or conditional element counts only when MSBuild applies it.
+# Only an evaluated false is excluded. A project that evaluates to anything
+# else, or fails to evaluate, stays in the run and fails loudly if it cannot
+# start, instead of dropping out unnoticed.
+#
+# Evaluation uses the framework the worker passes to `dotnet test -f`, which sets
+# the same TargetFramework global property, so a property conditioned on it
+# reads the same in discovery and in the run.
+framework=net10.0
+projects=()
+while read -r is_test csproj; do
+  if [ "$is_test" = "false" ]; then
+    echo "==> skipping ${csproj} (IsTestProject=false)"
+  else
+    projects+=( "$csproj" )
+  fi
+done < <(
+  printf '%s\n' tests/*/*.csproj \
+    | xargs -P 8 -I{} bash -c '
+        value=$(dotnet msbuild "$1" -getProperty:IsTestProject -p:TargetFramework="$2" -nologo 2>/dev/null \
+          | tail -1 | tr -d "[:space:]" | tr "[:upper:]" "[:lower:]")
+        printf "%s %s\n" "${value:-unset}" "$1"
+      ' _ {} "$framework" \
+    | sort -k2
+)
 
 echo "==> running ${#projects[@]} test assemblies in parallel"
 start=$(date +%s)
@@ -46,7 +74,7 @@ start=$(date +%s)
 results=$(
   printf '%s\n' "${projects[@]}" \
     | xargs -P 8 -I{} bash -c '
-        out=$(dotnet test "$1" -f net10.0 --no-build --no-restore --nologo --verbosity quiet 2>&1)
+        out=$(dotnet test "$1" -f "$2" --no-build --no-restore --nologo --verbosity quiet 2>&1)
         rc=$?
         line=$(printf "%s\n" "$out" | tail -1)
         if printf "%s" "$line" | grep -qE "Failed:[[:space:]]+[0-9]+"; then
@@ -66,7 +94,7 @@ results=$(
           printf "%s\n" "$out" | tail -15 >&2
         fi
         exit 0
-      ' _ {} \
+      ' _ {} "$framework" \
     | sort
 )
 printf '%s\n' "$results"
