@@ -300,6 +300,14 @@ as well: an implementing assembly compiled against the old interface and not
 rebuilt fails to load with `TypeLoadException`, naming the first member it lacks,
 when the application uses the type. Rebuild it against this version.
 
+### 9. `DotGraphSet` is gone
+
+`FrameFlow.Playback.DotGraphSet` held Graphviz renderings of the playback
+controller's state machines. The only method that returned one was internal to
+`FrameFlow.Playback` and had no callers, so no FrameFlow API ever handed you a
+value. Code that names the type stops compiling. Delete the reference; there is
+no replacement.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

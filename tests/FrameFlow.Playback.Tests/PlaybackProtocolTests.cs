@@ -664,45 +664,6 @@ public class PlaybackProtocolTests
         }
     }
 
-    [Fact]
-    public void ToDotGraph_DrawsEachHandledCellOnce()
-    {
-        var lines = PlaybackProtocol
-            .ToDotGraph()
-            .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        Assert.Equal("digraph PlaybackProtocol {", lines[0]);
-        Assert.Equal("}", lines[^1]);
-
-        var edges = lines.Where(l => l.Contains(" -> ")).ToList();
-
-        // One edge per handled cell, and no edge for a cell that is not handled. Playing ×
-        // LastFrameRendered is the one cell whose decision changes with the inputs, so it has
-        // two edges: the loop and the end.
-        Assert.Equal(HandledCells.Count + 1, edges.Count);
-        Assert.Equal(edges.Count, edges.Distinct().Count());
-        foreach (var (state, trigger) in HandledCells.Keys)
-        {
-            Assert.Contains(
-                edges,
-                e => e.StartsWith($"{state} -> ", StringComparison.Ordinal) && e.Contains($"[label=\"{trigger}")
-            );
-        }
-
-        // A label names the trigger, then the actions in order with a follow-up trigger's payload.
-        Assert.Contains(
-            "Idle -> Initializing [label=\"Load / CreateSession, InitializeSession, FireTrigger(HeadersReceived)\"];",
-            edges
-        );
-        Assert.Contains("InitialBuffering -> Paused [label=\"BufferReady\"];", edges);
-        Assert.Contains("Playing -> Ended [label=\"LastFrameRendered / StopTicker, FreezeClock\"];", edges);
-
-        // Only the internal transition, which runs actions without leaving its state, is dashed.
-        Assert.Equal(
-            "Playing -> Playing [label=\"LastFrameRendered / RunLoopRewind\" style=dashed];",
-            Assert.Single(edges, e => e.Contains("style=dashed"))
-        );
-    }
-
     // ─────────────────────────────────────────────────────────────────────
     // End-to-end transcripts — drive the machine through whole flows by
     // following the FireTrigger auto-chain, the way the shell does.
