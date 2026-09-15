@@ -89,10 +89,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        // A soak measures the hardware path, so it requires hardware decode unless the caller
+        // named a mode. Auto would fall back to software and report a soak that proved nothing.
         var hwMode = StartupHwMode?.Trim().ToLowerInvariant() switch
         {
             "disabled" or "software" => HardwareDecodeMode.Disabled,
             "required" => HardwareDecodeMode.Required,
+            null or "" when Soak is not null => HardwareDecodeMode.Required,
             _ => HardwareDecodeMode.Auto,
         };
         _logger.LogInformation(
@@ -120,7 +123,13 @@ public partial class MainWindow : Window
         };
         VideoHost.Children.Add(grid);
 
-        _sampler = new SoakSampler(soak.CsvPath, soak.Label, _logger);
+        _sampler = SoakSampler.TryCreate(soak.CsvPath, soak.Label, _logger);
+        if (_sampler is null)
+        {
+            StatusText.Text = $"Soak aborted — cannot write {soak.CsvPath}.";
+            return;
+        }
+
         StatusText.Text = $"Soak '{soak.Label}' → {soak.CsvPath}";
         _logger.LogInformation(
             "Soak '{Label}': left={Left}, right={Right}, every {N}s → {Csv}.",
@@ -132,9 +141,19 @@ public partial class MainWindow : Window
         );
 
         var leftPlayer = await StartPlayerAsync(left, hwMode, Host(grid, column: 0));
-        var rightPlayer = await StartPlayerAsync(right, hwMode, Host(grid, column: 1));
-        if (leftPlayer is null || rightPlayer is null)
+        var rightPlayer = leftPlayer is null
+            ? null
+            : await StartPlayerAsync(right, hwMode, Host(grid, column: 1));
+
+        // A soak is two panes or nothing: one pane measures a condition the soak is not about, and
+        // a player left running unsampled says nothing. Stop what started.
+        if (leftPlayer is null || rightPlayer is null || _isClosing)
+        {
+            _logger.LogWarning("Soak '{Label}' did not start both panes; stopping.", soak.Label);
+            StatusText.Text = "Soak aborted — a pane did not start. See the log.";
+            await StopPlaybackAsync();
             return;
+        }
 
         _sampler.Watch("left", Path.GetFileName(left), leftPlayer);
         _sampler.Watch("right", Path.GetFileName(right), rightPlayer);
@@ -142,7 +161,14 @@ public partial class MainWindow : Window
         _sampleTimer = new DispatcherTimer(
             TimeSpan.FromSeconds(soak.SampleSeconds),
             DispatcherPriority.Background,
-            (_, _) => StatusText.Text = _sampler?.Sample() ?? string.Empty
+            (_, _) =>
+            {
+                if (_sampler is null)
+                    return;
+                StatusText.Text = _sampler.Sample();
+                if (_sampler.Faulted)
+                    _sampleTimer?.Stop();
+            }
         );
         _sampleTimer.Start();
     }
@@ -188,6 +214,19 @@ public partial class MainWindow : Window
                 .WithRepeatMode(RepeatMode.One)
                 .WithLogger(_loggerFactory)
                 .BuildPlayerAsync();
+
+            // The window can start closing while a player is being built. Its teardown may have
+            // walked the lists already, so this player and its surface dispose themselves rather
+            // than waiting to be found there.
+            if (_isClosing)
+            {
+                await player.DisposeAsync();
+                _surfaces.Remove(surface);
+                if (surface is IAsyncDisposable closing)
+                    await closing.DisposeAsync();
+                return null;
+            }
+
             _players.Add(player);
 
             var played = await player.PlayAsync();
@@ -214,18 +253,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
+    /// <summary>Disposes the sampler, every player and every surface, in that order.</summary>
+    private async Task StopPlaybackAsync()
     {
-        if (_isClosing)
-            return;
-        e.Cancel = true;
-        _isClosing = true;
-        Closing -= OnWindowClosing;
-        _exitTimer?.Stop();
         _sampleTimer?.Stop();
-
-        // A last sample, so a run that ends mid-window still records what that window did.
-        _sampler?.Sample();
         _sampler?.Dispose();
         _sampler = null;
 
@@ -242,6 +273,21 @@ public partial class MainWindow : Window
                 await surfaceDisposable.DisposeAsync();
         }
         _surfaces.Clear();
+    }
+
+    private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (_isClosing)
+            return;
+        e.Cancel = true;
+        _isClosing = true;
+        Closing -= OnWindowClosing;
+        _exitTimer?.Stop();
+        _sampleTimer?.Stop();
+
+        // A last sample, so a run that ends mid-window still records what that window did.
+        _sampler?.Sample();
+        await StopPlaybackAsync();
 
         _logger.LogInformation("Shutdown complete; flushing log.");
         _loggerFactory.Dispose();

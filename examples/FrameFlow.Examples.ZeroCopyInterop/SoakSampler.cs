@@ -18,11 +18,21 @@ namespace FrameFlow.Examples.ZeroCopyInterop;
 /// the difference since the previous row, so a pass that presents nothing shows as a zero.
 /// </para>
 /// <para>
-/// The sampler owns nothing but its writer. It is driven by a timer the window starts.
+/// Rows are appended, and the header is written only for a new file, so a before run and an after
+/// run can share one file and be told apart by the run column.
+/// </para>
+/// <para>
+/// A write that fails leaves the samples incomplete, which would read as a soak with a gap in it.
+/// The sampler stops and says so through <see cref="Faulted"/> instead, and the window stops
+/// sampling.
 /// </para>
 /// </remarks>
 internal sealed class SoakSampler : IDisposable
 {
+    private const string Header =
+        "run,elapsed_s,pane,clip,state,repeat,position_s,presented,presented_total,"
+        + "dropped_total,dropped_for_sync_total,loops,loop_stalled,errors,fps";
+
     private readonly StreamWriter _csv;
     private readonly ILogger _logger;
     private readonly string _label;
@@ -31,20 +41,42 @@ internal sealed class SoakSampler : IDisposable
 
     private int _samples;
 
-    public SoakSampler(string csvPath, string label, ILogger logger)
+    private SoakSampler(StreamWriter csv, string csvPath, string label, ILogger logger)
     {
+        _csv = csv;
         _logger = logger;
         _label = label;
-        Directory.CreateDirectory(Path.GetDirectoryName(csvPath)!);
-        _csv = new StreamWriter(csvPath, append: false, Encoding.UTF8) { AutoFlush = true };
-        _csv.WriteLine(
-            "run,elapsed_s,pane,clip,state,repeat,position_s,presented,presented_total,"
-                + "dropped_total,dropped_for_sync_total,loops,loop_stalled,errors,fps"
-        );
         CsvPath = csvPath;
     }
 
+    /// <summary>
+    /// Opens <paramref name="csvPath"/> for appending, writing the header when the file is new.
+    /// Returns <see langword="null"/> when the file cannot be opened, which aborts the soak rather
+    /// than running it with nowhere to record it.
+    /// </summary>
+    public static SoakSampler? TryCreate(string csvPath, string label, ILogger logger)
+    {
+        try
+        {
+            if (Path.GetDirectoryName(csvPath) is { Length: > 0 } directory)
+                Directory.CreateDirectory(directory);
+            var isNew = !File.Exists(csvPath) || new FileInfo(csvPath).Length == 0;
+            var csv = new StreamWriter(csvPath, append: true, Encoding.UTF8) { AutoFlush = true };
+            if (isNew)
+                csv.WriteLine(Header);
+            return new SoakSampler(csv, csvPath, label, logger);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            logger.LogError(ex, "Soak samples cannot be written to {Path}.", csvPath);
+            return null;
+        }
+    }
+
     public string CsvPath { get; }
+
+    /// <summary>Whether a write failed. The run's samples stop at that point.</summary>
+    public bool Faulted { get; private set; }
 
     /// <summary>Watches <paramref name="player"/> as the pane named <paramref name="name"/>.</summary>
     public void Watch(string name, string clip, IMediaPlayer player)
@@ -57,32 +89,45 @@ internal sealed class SoakSampler : IDisposable
     /// <summary>Writes one row per pane, and returns a line for the window's status text.</summary>
     public string Sample()
     {
+        if (Faulted)
+            return "Soak stopped: the samples could not be written.";
+
         _samples++;
         var elapsed = (DateTimeOffset.UtcNow - _started).TotalSeconds;
         var status = new StringBuilder();
         foreach (var pane in _panes)
         {
             var row = pane.Read(elapsed);
-            _csv.WriteLine(
-                string.Join(
-                    ',',
-                    _label,
-                    F(elapsed),
-                    pane.Name,
-                    pane.Clip,
-                    row.State,
-                    row.Repeat,
-                    F(row.PositionSeconds),
-                    row.Presented,
-                    row.PresentedTotal,
-                    row.DroppedTotal,
-                    row.DroppedForSyncTotal,
-                    row.Loops,
-                    row.LoopStalls,
-                    row.Errors,
-                    F(row.Fps)
-                )
+            var line = string.Join(
+                ',',
+                Field(_label),
+                Number(elapsed),
+                Field(pane.Name),
+                Field(pane.Clip),
+                Field(row.State),
+                Field(row.Repeat),
+                Number(row.PositionSeconds),
+                row.Presented,
+                row.PresentedTotal,
+                row.DroppedTotal,
+                row.DroppedForSyncTotal,
+                row.Loops,
+                row.LoopStalls,
+                row.Errors,
+                Number(row.Fps)
             );
+
+            try
+            {
+                _csv.WriteLine(line);
+            }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+            {
+                Faulted = true;
+                _logger.LogError(ex, "Soak sample {N} could not be written; sampling stops.", _samples);
+                return "Soak stopped: the samples could not be written.";
+            }
+
             status.Append(
                 CultureInfo.InvariantCulture,
                 $"{pane.Name}: {row.State} {row.Fps:F1} fps · {row.Loops} loops · "
@@ -103,7 +148,16 @@ internal sealed class SoakSampler : IDisposable
         _csv.Dispose();
     }
 
-    private static string F(double value) => value.ToString("F3", CultureInfo.InvariantCulture);
+    private static string Number(double value) => value.ToString("F3", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Quotes a field that holds a comma, a quote or a line break, doubling any quote inside it.
+    /// A label or a file name carrying one would otherwise shift every column after it.
+    /// </summary>
+    private static string Field(string value) =>
+        value.AsSpan().IndexOfAny(",\"\r\n") >= 0
+            ? $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\""
+            : value;
 
     private sealed record Row(
         string State,
