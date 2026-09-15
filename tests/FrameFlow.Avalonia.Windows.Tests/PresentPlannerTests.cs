@@ -175,6 +175,18 @@ public sealed class PresentPlannerTests
     }
 
     [Fact]
+    public void HeightOnlyChange_UpdatesLayout()
+    {
+        var state = PresentState.Initial(Ring)
+            .WithActiveSource(true)
+            .WithVideoSize(1920, 1080);
+
+        var plan = PresentPlanner.Advance(state, Frame(isGpu: true, 1920, 1000), AllFree);
+
+        Assert.True(plan.UpdateLayout);
+    }
+
+    [Fact]
     public void UnchangedShape_NoFlip_NoLayout_ReusesCleanly()
     {
         // The common case: same source, same size, free ring. No re-import, no layout update,

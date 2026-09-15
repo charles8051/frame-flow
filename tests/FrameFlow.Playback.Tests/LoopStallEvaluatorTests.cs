@@ -134,6 +134,69 @@ public class LoopStallEvaluatorTests
     }
 
     [Fact]
+    public void AtExactlyTheDuration_IsNotAnOverrun()
+    {
+        // Only a position past the duration opens an overrun. One resting on the end does not.
+        var o0 = LoopStallEvaluator.Create(Timeout).Observe(Sample(nowSec: 0, posSec: 10, loopCount: 1));
+        var o1 = o0.Next.Observe(Sample(nowSec: 5, posSec: 10, loopCount: 1));
+
+        Assert.False(o1.Stalled);
+    }
+
+    [Fact]
+    public void AnOverrunOfExactlyTheTimeout_Stalls()
+    {
+        var o0 = LoopStallEvaluator.Create(Timeout).Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 1));
+        var o1 = o0.Next.Observe(Sample(nowSec: 2.0, posSec: 12.2, loopCount: 1));
+
+        Assert.True(o1.Stalled);
+        Assert.Equal(At(2.0), o1.OverrunTicks);
+    }
+
+    [Fact]
+    public void DroppingBackWithinTheDuration_EndsTheOverrun()
+    {
+        // The overrun opens at t=0, and a seek brings the position back inside the item. The next
+        // overrun is timed from when it opens, not from t=0.
+        var o0 = LoopStallEvaluator.Create(Timeout).Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 1));
+        var o1 = o0.Next.Observe(Sample(nowSec: 1.5, posSec: 5.0, loopCount: 1));
+        var o2 = o1.Next.Observe(Sample(nowSec: 2.5, posSec: 10.1, loopCount: 1));
+
+        Assert.False(o2.Stalled);
+        Assert.Equal(0, o2.OverrunTicks);
+    }
+
+    [Fact]
+    public void ARestartThatLeavesThePositionPastTheEnd_CanStillStall()
+    {
+        // The loop counter advances, which resets the evaluator, but the position stays past the
+        // end: the restart did not take. A new overrun opens from there and stalls on its own
+        // timeout.
+        var o0 = LoopStallEvaluator.Create(Timeout).Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 3));
+        var o1 = o0.Next.Observe(Sample(nowSec: 1, posSec: 10.5, loopCount: 4));
+        Assert.False(o1.Stalled);
+
+        var o2 = o1.Next.Observe(Sample(nowSec: 2, posSec: 11.5, loopCount: 4));
+        var o3 = o2.Next.Observe(Sample(nowSec: 4.5, posSec: 14.0, loopCount: 4));
+
+        Assert.False(o2.Stalled);
+        Assert.True(o3.Stalled);
+    }
+
+    [Fact]
+    public void AfterAReset_ANewOverrunGetsTheFullTimeout()
+    {
+        var o0 = LoopStallEvaluator.Create(Timeout).Observe(Sample(nowSec: 0, posSec: 5, loopCount: 1));
+        var o1 = o0.Next.Observe(Sample(nowSec: 1, posSec: 10.2, loopCount: 1));
+        var o2 = o1.Next.Observe(Sample(nowSec: 2.5, posSec: 11.7, loopCount: 1));
+        var o3 = o2.Next.Observe(Sample(nowSec: 3.1, posSec: 12.3, loopCount: 1));
+
+        Assert.False(o1.Stalled);
+        Assert.False(o2.Stalled);
+        Assert.True(o3.Stalled);
+    }
+
+    [Fact]
     public void RecoveryThenRelapse_CanStallAgain()
     {
         var ev = LoopStallEvaluator.Create(Timeout);
