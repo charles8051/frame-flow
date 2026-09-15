@@ -11,6 +11,10 @@ using System.Runtime.CompilerServices;
 // lock cross-assembly EOF-vs-fault semantics without real FFmpeg runtime setup.
 [assembly: InternalsVisibleTo("FrameFlow.Playback.Tests")]
 
+// PlayerSession forwards DecodingPipeline's park signal so player tests can
+// barrier on the pump being blocked on a full decoder queue.
+[assembly: InternalsVisibleTo("FrameFlow.Player")]
+
 // ADR-0038: expose GpuVideoFrame's internal AVFrame pointer to the
 // FrameFlow.Video pipeline operators so the ToCpu() operator can perform
 // av_hwframe_transfer_data + sws_scale without round-tripping through
