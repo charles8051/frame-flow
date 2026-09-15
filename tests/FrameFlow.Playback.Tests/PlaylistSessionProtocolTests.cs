@@ -725,8 +725,10 @@ public sealed class PlaylistSessionProtocolTests
             actions.Where(a => a is PlaylistSessionAction.ReportItemFailed or PlaylistSessionAction.ReportEndOfStream),
             a =>
                 Assert.Equal(
-                    faults ? PlaylistItemFailure.FaultedDuringPlayback : PlaylistItemFailure.CouldNotStart,
-                    Assert.IsType<PlaylistSessionAction.ReportItemFailed>(a).What
+                    faults
+                        ? new PlaylistSessionAction.ReportItemFailed("a", PlaylistItemFailure.FaultedDuringPlayback, boom)
+                        : new PlaylistSessionAction.ReportItemFailed("b", PlaylistItemFailure.CouldNotStart, boom),
+                    a
                 ),
             a => Assert.IsType<PlaylistSessionAction.ReportEndOfStream>(a)
         );
@@ -865,6 +867,7 @@ public sealed class PlaylistSessionProtocolTests
     public void AFirstItemThatFailsToOpen_FailsTheLoad(LoadFailure why)
     {
         var boom = new InvalidOperationException("boom");
+        var cancellation = new OperationCanceledException();
         var queue = why switch
         {
             LoadFailure.FirstItemEver => PlaylistQueue.Create(
@@ -881,7 +884,7 @@ public sealed class PlaylistSessionProtocolTests
         var (s, q, step) = Step(PlaylistSessionState.Initial, queue, new PlaylistSessionInput.Initialize(Command));
         Assert.IsType<PlaylistSessionAction.OpenItem>(step.Awaited);
         var failure = why == LoadFailure.Cancelled
-            ? new PlaylistSessionInput.Outcome(PlaylistOutcome.Cancelled, Error: new OperationCanceledException())
+            ? new PlaylistSessionInput.Outcome(PlaylistOutcome.Cancelled, Error: cancellation)
             : new PlaylistSessionInput.Outcome(PlaylistOutcome.Failed, Error: boom);
         (s, q, step) = Step(s, q, failure);
         Assert.IsType<PlaylistSessionAction.DisposeItem>(step.Awaited);
@@ -906,7 +909,7 @@ public sealed class PlaylistSessionProtocolTests
                 break;
             case LoadFailure.Cancelled:
                 Assert.Equal(PlaylistOutcome.Cancelled, result.Kind);
-                Assert.IsType<OperationCanceledException>(result.Error);
+                Assert.Same(cancellation, result.Error);
                 break;
             case LoadFailure.NothingLeft:
                 Assert.Equal(PlaylistOutcome.Failed, result.Kind);
