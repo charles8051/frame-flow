@@ -28,6 +28,8 @@ coverage/
 
 ## Logs
 *.log
+# Where the examples write their logs and the soak run writes its samples.
+logs/
 
 ## NuGet / package artifacts
 *.nupkg
