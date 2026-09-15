@@ -218,6 +218,17 @@ land.
   players once a loop has started again, carries a per-item count, and joins `IMediaPlayer`; and the
   watchdog watches every expected loop. Revised after an independent review measured the decode
   device and loop gaps on both paths. Nothing is implemented.
+- [The playlist session as a pure protocol, with its queue as a value](playlist-session-protocol.md) —
+  the playlist session's decisions are spread over 1,051 lines of async code behind a transition
+  gate, and the session builds its own item runtimes, so its orderings are tested only over real
+  playback with holds inside the gate. Proposes the ADR-0055 and `PlaybackProtocol` pattern for it:
+  the queue becomes an immutable value with pure operations under the coordinator's lock, and the
+  session becomes a pure step function whose shell awaits each step on an unbounded channel, as the
+  controller's does. Tests become tables over an abstraction of the state, transcripts that fail
+  with their fix reverted, and an ordering explorer over an item model with invariants. Migration
+  first adds seams so transcripts pin today's behaviour. Revised after an independent review found
+  that the first draft's non-awaiting event loop hung disposal and dropped live end-of-stream.
+  Nothing is implemented.
 - [One builder, two terminals](one-builder-two-terminals.md) — the fluent surface
   returned the weaker object: `BuildAsync` yields a single-shot `PlayerSession`, while
   the eleven-parameter `MediaPlayer.CreateAsync` holds the whole state machine. Adds
