@@ -207,6 +207,17 @@ land.
   measured against a running policy before the default changes. Its rejected alternative F
   records the packet-pacing design this replaced, and the measurement that ruled it
   out.
+- [Looping on both players](looping-on-both-players.md) — the single-source and playlist players
+  disagree about looping. `RepeatMode.All` ends a single source and loops a playlist of one, the
+  two players rewind differently (#172), a single source reports a loop with `LoopRestarted` and a
+  playlist only with `SourceTransitioned` (#173), `IMediaPlayer` exposes no loop event, and the
+  loop-stall watchdog does not watch a playlist of one under `All`. Proposes to supersede ADR-0021:
+  `All` repeats the queue, so a single source loops under it; the queue decides repeats; a loop
+  that ends while paused rewinds and stays paused; both players rewind in place, because the full
+  seek the single source reverted to keeps the same decode device; `LoopRestarted` fires on both
+  players once a loop has started again, carries a per-item count, and joins `IMediaPlayer`; and the
+  watchdog watches every expected loop. Revised after an independent review measured the decode
+  device and loop gaps on both paths. Nothing is implemented.
 - [The playlist session as a pure protocol, with its queue as a value](playlist-session-protocol.md) —
   the playlist session's decisions are spread over 1,051 lines of async code behind a transition
   gate, and the session builds its own item runtimes, so its orderings are tested only over real
