@@ -52,7 +52,7 @@ namespace FrameFlow.Playback;
 /// rough edges around frames-pre-seek leaking through."
 /// </para>
 /// </remarks>
-internal sealed class SubstrateSession : IPlaybackSession
+internal sealed class SubstrateSession : IPlaylistItemRuntime
 {
     // Upper bound on a single video frame's pacing wait (PaceUntil defense-in-depth).
     // Orders of magnitude above any legitimate per-frame wait (~one frame interval) or
@@ -233,7 +233,7 @@ internal sealed class SubstrateSession : IPlaybackSession
     /// end-of-stream later, on another thread, compares it with this property then, and drops
     /// the end-of-stream if a seek or rewind has replaced the run in between.
     /// </remarks>
-    internal int RunNumber => Volatile.Read(ref _runNumber);
+    public int RunNumber => Volatile.Read(ref _runNumber);
 
     public PipelineDiagnosticsSnapshot GetPipelineDiagnostics()
     {

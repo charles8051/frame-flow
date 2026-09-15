@@ -19,17 +19,8 @@ namespace FrameFlow.Playback;
 internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory
 {
     private readonly PlaylistCoordinator _coordinator;
-    private readonly IVideoSink? _videoSink;
-    private readonly IAudioSink? _audioSink;
-    private readonly HardwareDecodeMode _hwMode;
-    private readonly HardwareDecodeCapabilities? _hwCapabilities;
+    private readonly IPlaylistItemRuntimeFactory _itemFactory;
     private readonly ILoggerFactory _loggerFactory;
-    private readonly Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? _videoConfigurator;
-    private readonly Func<
-        GraphChain<PcmAudioBufferRef>,
-        GraphChain<PcmAudioBufferRef>
-    >? _audioConfigurator;
-    private readonly bool _yieldHardwareFrames;
 
     public PlaylistSessionFactory(
         PlaylistCoordinator coordinator,
@@ -44,32 +35,25 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory
     )
     {
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-        _videoSink = videoSink;
-        _audioSink = audioSink;
-        _hwMode = hwMode;
-        _hwCapabilities = hardwareDecodeCapabilities;
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
-        _videoConfigurator = videoConfigurator;
-        _audioConfigurator = audioConfigurator;
-        _yieldHardwareFrames = yieldHardwareFrames;
+
+        // Every item runs on the same warm sinks, with the same options and configurators.
+        _itemFactory = new SubstrateSessionFactory(
+            videoSink,
+            audioSink,
+            hwMode,
+            hardwareDecodeCapabilities,
+            _loggerFactory,
+            videoConfigurator,
+            audioConfigurator,
+            yieldHardwareFrames
+        );
     }
 
     public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks)
     {
         ArgumentNullException.ThrowIfNull(clock);
 
-        return new PlaylistSession(
-            _coordinator,
-            _videoSink,
-            _audioSink,
-            clock,
-            callbacks,
-            _hwMode,
-            _hwCapabilities,
-            _loggerFactory,
-            _videoConfigurator,
-            _audioConfigurator,
-            _yieldHardwareFrames
-        );
+        return new PlaylistSession(_coordinator, clock, callbacks, _itemFactory, _loggerFactory);
     }
 }

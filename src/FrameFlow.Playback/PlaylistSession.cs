@@ -1,7 +1,6 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Playback.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -49,27 +48,18 @@ namespace FrameFlow.Playback;
 /// </remarks>
 internal sealed class PlaylistSession : IPlaybackSession
 {
-    private readonly IVideoSink? _videoSink;
-    private readonly IAudioSink? _audioSink;
     private readonly IPlaybackClock _clock;
     private readonly SessionCallbacks _controllerCallbacks;
     private readonly PlaylistCoordinator _coordinator;
-    private readonly HardwareDecodeMode _hwMode;
-    private readonly HardwareDecodeCapabilities? _hwCapabilities;
-    private readonly bool _yieldHardwareFrames;
-    private readonly Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? _videoConfigurator;
-    private readonly Func<
-        GraphChain<PcmAudioBufferRef>,
-        GraphChain<PcmAudioBufferRef>
-    >? _audioConfigurator;
-    private readonly ILoggerFactory _loggerFactory;
+    private readonly IPlaylistItemRuntimeFactory _itemFactory;
+    private readonly IPlaylistSessionScheduler _scheduler;
     private readonly ILogger<PlaylistSession> _logger;
 
     // Serializes the per-item advance against controller-driven Pause/Seek/Dispose.
     private readonly SemaphoreSlim _transitionGate = new(1, 1);
 
     // The runtime for the item presenting right now, and the coordinator's item it plays.
-    private SubstrateSession? _current;
+    private IPlaylistItemRuntime? _current;
     private PlaylistItem? _currentItem;
 
     // Returned by the coordinator when this session attaches its skip and jump handlers.
@@ -155,35 +145,33 @@ internal sealed class PlaylistSession : IPlaybackSession
 
     private void SetRunState(RunState state) => Volatile.Write(ref _runState, (int)state);
 
+    /// <param name="coordinator">The queue this session plays, shared with the player.</param>
+    /// <param name="clock">The controller's position clock, rebased at each item.</param>
+    /// <param name="controllerCallbacks">Where the session reports to the controller.</param>
+    /// <param name="itemFactory">Creates the runtime for each item.</param>
+    /// <param name="loggerFactory">Optional logger factory.</param>
+    /// <param name="scheduler">
+    /// Runs the advances moved off the thread that asked for them. Defaults to the thread pool.
+    /// </param>
     public PlaylistSession(
         PlaylistCoordinator coordinator,
-        IVideoSink? videoSink,
-        IAudioSink? audioSink,
         IPlaybackClock clock,
         SessionCallbacks controllerCallbacks,
-        HardwareDecodeMode hwMode = HardwareDecodeMode.Auto,
-        HardwareDecodeCapabilities? hardwareDecodeCapabilities = null,
+        IPlaylistItemRuntimeFactory itemFactory,
         ILoggerFactory? loggerFactory = null,
-        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? videoConfigurator = null,
-        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? audioConfigurator = null,
-        bool yieldHardwareFrames = false
+        IPlaylistSessionScheduler? scheduler = null
     )
     {
         ArgumentNullException.ThrowIfNull(coordinator);
         ArgumentNullException.ThrowIfNull(clock);
+        ArgumentNullException.ThrowIfNull(itemFactory);
 
         _coordinator = coordinator;
-        _videoSink = videoSink;
-        _audioSink = audioSink;
         _clock = clock;
         _controllerCallbacks = controllerCallbacks;
-        _hwMode = hwMode;
-        _hwCapabilities = hardwareDecodeCapabilities;
-        _yieldHardwareFrames = yieldHardwareFrames;
-        _videoConfigurator = videoConfigurator;
-        _audioConfigurator = audioConfigurator;
-        _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
-        _logger = _loggerFactory.CreateLogger<PlaylistSession>();
+        _itemFactory = itemFactory;
+        _scheduler = scheduler ?? ThreadPoolPlaylistSessionScheduler.Instance;
+        _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<PlaylistSession>();
     }
 
     // ── IPlaybackSession read-only surface (delegates to the current item) ──
@@ -222,7 +210,7 @@ internal sealed class PlaylistSession : IPlaybackSession
             _coordinator.TakeStart()
             ?? throw new InvalidOperationException("The playlist has nothing queued to play.");
 
-        SubstrateSession started;
+        IPlaylistItemRuntime started;
         while (true)
         {
             var session = CreateItemSession(_currentGen);
@@ -443,7 +431,7 @@ internal sealed class PlaylistSession : IPlaybackSession
     // ── Advance orchestration ───────────────────────────────────────────────
 
     /// <summary>
-    /// Callbacks handed to each per-item <see cref="SubstrateSession"/>. The
+    /// Callbacks handed to each item runtime. The
     /// buffer callbacks and recoverable errors bubble straight to the controller;
     /// end-of-stream and faults route into the advance path, tagged with the
     /// item's generation so a stale notification from a replaced item is ignored.
@@ -460,22 +448,14 @@ internal sealed class PlaylistSession : IPlaybackSession
             OnCurrentItemChanged: _controllerCallbacks.OnCurrentItemChanged
         );
 
-    private SubstrateSession CreateItemSession(int gen)
+    private IPlaylistItemRuntime CreateItemSession(int gen)
     {
         // The item raises callbacks only once it is initialized, so the session is assigned
         // before the end-of-stream callback reads it.
-        SubstrateSession? session = null;
-        session = new SubstrateSession(
-            _videoSink,
-            _audioSink,
+        IPlaylistItemRuntime? session = null;
+        session = _itemFactory.CreateItem(
             _clock,
-            CreateItemCallbacks(gen, () => session!.RunNumber),
-            _hwMode,
-            _hwCapabilities,
-            _loggerFactory,
-            _videoConfigurator,
-            _audioConfigurator,
-            _yieldHardwareFrames
+            CreateItemCallbacks(gen, () => session!.RunNumber)
         );
         return session;
     }
@@ -533,7 +513,7 @@ internal sealed class PlaylistSession : IPlaybackSession
     {
         if (_disposed)
             return;
-        _ = Task.Run(AdvanceForJumpAsync);
+        _scheduler.Schedule(AdvanceForJumpAsync);
     }
 
     private async Task AdvanceForJumpAsync()
@@ -572,7 +552,7 @@ internal sealed class PlaylistSession : IPlaybackSession
 
         // Hop off the worker thread that raised the callback; the advance does
         // heavy work (dispose + open + warmup) that must not block the graph.
-        _ = Task.Run(() => AdvanceAsync(gen, how, run, error, playedFor));
+        _scheduler.Schedule(() => AdvanceAsync(gen, how, run, error, playedFor));
     }
 
     private async Task AdvanceAsync(
@@ -962,7 +942,7 @@ internal sealed class PlaylistSession : IPlaybackSession
         return true;
     }
 
-    private async ValueTask SafeDisposeAsync(SubstrateSession session)
+    private async ValueTask SafeDisposeAsync(IPlaylistItemRuntime session)
     {
         try
         {

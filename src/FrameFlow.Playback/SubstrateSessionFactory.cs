@@ -12,7 +12,8 @@ namespace FrameFlow.Playback;
 /// Factory that creates <see cref="SubstrateSession"/> instances bound
 /// to the configured <see cref="IVideoSink"/> / <see cref="IAudioSink"/>
 /// and hardware-decode policy. Implements the controller-facing
-/// <see cref="IPlaybackSessionFactory"/> contract.
+/// <see cref="IPlaybackSessionFactory"/> contract, and creates the per-item
+/// runtimes of a <see cref="PlaylistSession"/>.
 /// </summary>
 /// <remarks>
 /// The factory captures the long-lived sinks + options + optional
@@ -20,7 +21,7 @@ namespace FrameFlow.Playback;
 /// fresh session per controller load. The controller owns session
 /// disposal; the factory owns nothing beyond the captured config.
 /// </remarks>
-internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory
+internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlaylistItemRuntimeFactory
 {
     private readonly IVideoSink? _videoSink;
     private readonly IAudioSink? _audioSink;
@@ -66,7 +67,13 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory
         _yieldHardwareFrames = yieldHardwareFrames;
     }
 
-    public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks)
+    public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks) =>
+        Create(clock, callbacks);
+
+    public IPlaylistItemRuntime CreateItem(IPlaybackClock clock, SessionCallbacks callbacks) =>
+        Create(clock, callbacks);
+
+    private SubstrateSession Create(IPlaybackClock clock, SessionCallbacks callbacks)
     {
         ArgumentNullException.ThrowIfNull(clock);
 

@@ -3,7 +3,8 @@
 ## Status
 
 Proposed (2026-09-14). Draft pending number assignment. Revised the same day after an independent
-review; *Revision history* says what changed. **Nothing here is implemented.**
+review; *Revision history* says what changed. **Step 1 of the migration is implemented** (decision 8,
+*As implemented: step 1*). Steps 2 to 4 are not.
 
 This record moves the playlist player's decision logic into a pure core. ADR-0055 did the same for
 the codec loop, and `PlaybackProtocol` for the controller's main state machine. The record:
@@ -350,6 +351,28 @@ none changes a documented contract:
 A transcript that the core cannot pass is a defect in the core, or a behaviour to decide in another
 record.
 
+#### As implemented: step 1
+
+- **The item-runtime seam.** `IPlaylistItemRuntime` is `IPlaybackSession` plus `RunNumber`, and
+  `IPlaylistItemRuntimeFactory` creates one per item. `SubstrateSession` implements the first and
+  `SubstrateSessionFactory` the second. `PlaylistSessionFactory` builds the substrate factory from
+  the sinks and options it already took, so `PlaylistSession` no longer holds them.
+- **The scheduler.** `IPlaylistSessionScheduler` starts the session's two hops: the advance after an
+  item ends, faults or is skipped, and the advance that takes a jump. The default runs them on the
+  thread pool, as before.
+- **The clock.** Nothing was added. The session already takes the controller's clock.
+- **The rig.** `PlaylistSessionRig`, in `FrameFlow.Playback.Tests`, runs the session over fake item
+  runtimes. It records each item call, controller report, clock call and transition as a transcript
+  line. A test can hold an item call until it releases it, or make one throw. A fake seek or rewind
+  advances the run number when it completes, so a hold on it is a hold before the increment.
+- **Hops run inline.** The rig's scheduler runs each hop on the thread that asked for it, up to its
+  first await that does not complete at once, and keeps its task. `SettleAsync` waits for every
+  hop. The draft named a manual scheduler that queues hops. Running them at once is closer to the
+  thread pool, and it lets a test assert what a request did before it releases a hold.
+- **What step 3 changes.** The transcripts use controller calls, item notifications, queue requests,
+  holds and `SettleAsync`, and nothing about hops. Step 3 changes `SettleAsync` to wait for the
+  reader, not the transcripts.
+
 ### 9. What stays the same
 
 - `IPlaybackSession`, `PlaybackControllerCore`, `PlaybackProtocol`, `SubstrateSession` and the public
@@ -462,6 +485,30 @@ handlers.
     with it reverted.
   - **The jump check.** This includes the advance's check for a jump, which no integration test could
     isolate.
+  - **As implemented.** The transcripts are in
+    `tests/FrameFlow.Playback.Tests/PlaylistSessionTranscriptTests.cs`, and run in milliseconds. Each
+    rule below was removed behind a temporary switch, and the suite was run once per switch. Each
+    removal failed the transcripts in its row and no others. `LoadPlayHandOffAndEnd` pins a load, a
+    hand-off and the end of the queue, and has no fix of its own.
+
+    | Rule removed | Transcripts that failed |
+    |---|---|
+    | A fault before the first play goes to the controller as fatal (#191) | `FaultBeforeTheFirstPlay_IsFatal_AndNothingAdvances` |
+    | A Play at `Ended` does nothing (#194) | `PlayQueuedBehindTheEndOfTheQueue_LeavesTheSessionEnded` |
+    | A Pause is recorded only from `Playing` (#194) | `PauseQueuedBehindTheEndOfTheQueue_LeavesTheSessionEnded` |
+    | A seek at `Ended` does nothing (#197) | `SeekQueuedBehindTheEndOfTheQueue_IsDropped` |
+    | The warm-up holds the gate throughout (#194) | `WarmUpOutOfEnded_HoldsOffAJumpUntilItFinishes` |
+    | Only an item that has played is rewound in place (#194) | `LatchedSkipUnderOne_RebuildsTheUnplayedItem` |
+    | A failed deferred start is handled as a failed start (#194) | `DeferredStartFailure_IsSkippedLikeAFailedStart` |
+    | A cancelled Play is not an item failure (#194) | `CancelledPlay_OfAnItemWaitingToStart_KeepsTheItem` |
+    | An advance takes a pending jump once its item has started (#199) | `JumpDuringAnAdvance_IsTakenBeforeAWaitingPause`, `JumpFromATransitionSubscriber_IsTakenBeforeAWaitingPause` |
+    | The jump's advance acts only on a jump still pending (#199) | `JumpDuringAnAdvance_IsTakenBeforeAWaitingPause`, `JumpFromATransitionSubscriber_IsTakenBeforeAWaitingPause` |
+    | A jump request starts an advance (#199) | `JumpDuringASeek_IsTakenWhenTheSeekCompletes`, `WarmUpOutOfEnded_HoldsOffAJumpUntilItFinishes` |
+    | An end-of-stream from a run a seek replaced is dropped (#197) | `EndOfStreamRaisedDuringASeek_IsDropped_AndOneAfterItIsNot` |
+
+    The advance's check for a jump is isolated by a Pause that waits behind the advance. With the
+    check, the jump's target plays and is then paused. Without it, the advanced item is paused and
+    the jump's target opens paused.
 - **Step 2.** The coordinator's tests pass against the value.
 - **Step 3.** The same transcripts, the table tests and the full suite pass against the protocol.
 - **Step 4.**
@@ -516,3 +563,7 @@ handlers.
   - **The synchronous members.** Decision 3 now says they describe the item runtime, which only a
     step changes. A finding that a queue edit leaves them stale was answered on the PR: an edit does
     not change the loaded runtime, today or in this design.
+- **Amendment (2026-09-14), step 1 implemented.** The session creates item runtimes through a
+  factory and starts its hops through a scheduler. Thirteen transcripts pin today's behaviour, and
+  twelve rules were each shown to fail their transcripts when removed. The rig runs hops inline
+  rather than queueing them, which decision 8 records.
