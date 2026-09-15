@@ -44,37 +44,32 @@ start=$(date +%s)
 # and exit 0. `tail` masks the exit status, so it is captured explicitly rather
 # than inferred from the pipeline.
 results=$(
-  printf '%s
-' "${projects[@]}"     | xargs -P 8 -I{} bash -c '
+  printf '%s\n' "${projects[@]}" \
+    | xargs -P 8 -I{} bash -c '
         out=$(dotnet test "$1" -f net10.0 --no-build --no-restore --nologo --verbosity quiet 2>&1)
         rc=$?
-        line=$(printf "%s
-" "$out" | tail -1)
+        line=$(printf "%s\n" "$out" | tail -1)
         if printf "%s" "$line" | grep -qE "Failed:[[:space:]]+[0-9]+"; then
-          printf "%s
-" "$line"
+          printf "%s\n" "$line"
         else
-          printf "NOSUMMARY (exit %s) - %s
-" "$rc" "$1"
-          printf "%s
-" "$out" | tail -15 >&2
+          printf "NOSUMMARY (exit %s) - %s\n" "$rc" "$1"
+          printf "%s\n" "$out" | tail -15 >&2
         fi
         # A summary is not proof of success. dotnet test can print "Failed: 0"
         # and still exit non-zero — a host crash during shutdown, a collector
         # that could not write, an MSBuild error after the run. Flag only that
         # case: a non-zero exit the summary already explains needs no marker,
         # because the Failed: count carries it.
-        if [ "$rc" -ne 0 ]            && printf "%s" "$line" | grep -qE "Failed:[[:space:]]+0([^0-9]|$)"; then
-          printf "UNEXPLAINEDEXIT (exit %s) - %s
-" "$rc" "$1"
-          printf "%s
-" "$out" | tail -15 >&2
+        if [ "$rc" -ne 0 ] \
+           && printf "%s" "$line" | grep -qE "Failed:[[:space:]]+0([^0-9]|$)"; then
+          printf "UNEXPLAINEDEXIT (exit %s) - %s\n" "$rc" "$1"
+          printf "%s\n" "$out" | tail -15 >&2
         fi
         exit 0
-      ' _ {}     | sort
+      ' _ {} \
+    | sort
 )
-printf '%s
-' "$results"
+printf '%s\n' "$results"
 
 # Roll the per-assembly lines up into one line. A per-assembly "Passed!" is
 # printed even when most of that assembly skipped, so a suite with no FFmpeg
@@ -84,8 +79,7 @@ printf '%s
 sum_field() {
   local total=0 n
   while read -r n; do total=$(( total + n )); done < <(
-    printf '%s
-' "$results" | grep -oE "$1:[[:space:]]+[0-9]+" | grep -oE '[0-9]+'
+    printf '%s\n' "$results" | grep -oE "$1:[[:space:]]+[0-9]+" | grep -oE '[0-9]+'
   )
   echo "$total"
 }
@@ -98,10 +92,8 @@ skipped=$(sum_field Skipped)
 # summary, or exited non-zero while claiming zero failures, did not succeed even
 # though it contributed no failure count. The two markers are mutually
 # exclusive, so an assembly is counted at most once.
-nosummary=$(printf '%s
-' "$results" | grep -c '^NOSUMMARY' || true)
-unexplained=$(printf '%s
-' "$results" | grep -c '^UNEXPLAINEDEXIT' || true)
+nosummary=$(printf '%s\n' "$results" | grep -c '^NOSUMMARY' || true)
+unexplained=$(printf '%s\n' "$results" | grep -c '^UNEXPLAINEDEXIT' || true)
 anomalies=$(( nosummary + unexplained ))
 
 elapsed=$(( $(date +%s) - start ))
