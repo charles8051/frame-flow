@@ -61,6 +61,12 @@ internal sealed class PlaylistCoordinator
         _queue = PlaylistQueue.Create(items, repeat);
     }
 
+    /// <summary>
+    /// An empty coordinator for a controller that plays one source at a time. Each load makes the
+    /// loaded source the only item (<see cref="LoadSource"/>).
+    /// </summary>
+    internal PlaylistCoordinator(RepeatMode repeat) => _queue = PlaylistQueue.Create([], repeat);
+
     /// <summary>The queue as it is now.</summary>
     internal PlaylistQueue Queue
     {
@@ -230,6 +236,32 @@ internal sealed class PlaylistCoordinator
     /// </summary>
     internal bool ItemFailed(TimeSpan playedFor, TimeSpan itemLength) =>
         Apply(q => q.ItemFailed(playedFor, itemLength));
+
+    /// <summary>
+    /// Makes <paramref name="source"/> the only item, in a new queue with the same repeat mode.
+    /// The queue is kept when it already plays that source: a replay from <c>Ended</c> reloads the
+    /// source it is playing, and anything enqueued meanwhile still plays.
+    /// </summary>
+    /// <remarks>
+    /// A new queue has started nothing, so a first item that cannot be opened fails the load, as it
+    /// does on a controller's first load. Called before the new session attaches, so no handler is
+    /// poked.
+    /// </remarks>
+    internal void LoadSource(IMediaSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        lock (_gate)
+        {
+            if (Plays(_queue, source))
+                return;
+            _queue = PlaylistQueue.Create([new PlaylistItem(source)], _queue.Repeat);
+        }
+
+        // The queue's only playlist item is this source, or a replay has reserved an item of it.
+        static bool Plays(PlaylistQueue queue, IMediaSource source) =>
+            (queue.Playlist is [{ } only] && ReferenceEquals(only.Source, source))
+            || (queue.ReservedStart is { } reserved && ReferenceEquals(reserved.Source, source));
+    }
 
     /// <summary>Whether any item has started since the player was created.</summary>
     internal bool AnyStarted => Queue.AnyStarted;

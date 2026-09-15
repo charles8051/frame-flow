@@ -130,30 +130,26 @@ public static class PlaybackController
         LatenessRecoveryOptions? latenessRecovery = null
     )
     {
+        // One source at a time, as a queue of one on the playlist session. Each load makes the
+        // loaded source the queue's only item.
         loggerFactory ??= NullLoggerFactory.Instance;
-        clock ??= new PlaybackClock();
-
-        var sessionFactory = new SubstrateSessionFactory(
-            videoSink,
-            audioSink,
-            hardwareDecodeMode,
-            hardwareDecodeCapabilities,
-            loggerFactory,
-            configureVideo,
-            configureAudio,
-            yieldHardwareFrames,
-            latenessRecovery
-        );
-
-        var options = Options.Create(
-            new FrameFlowPlaybackOptions { InitialRepeatMode = initialRepeatMode }
-        );
-
-        return new PlaybackControllerCore(
-            loggerFactory.CreateLogger<PlaybackControllerCore>(),
-            sessionFactory,
+        return Assemble(
+            new PlaylistSessionFactory(
+                new PlaylistCoordinator(initialRepeatMode),
+                videoSink,
+                audioSink,
+                hardwareDecodeMode,
+                hardwareDecodeCapabilities,
+                loggerFactory,
+                configureVideo,
+                configureAudio,
+                yieldHardwareFrames,
+                latenessRecovery,
+                loadsSource: true
+            ),
+            initialRepeatMode,
             clock,
-            options
+            loggerFactory
         );
     }
 
@@ -230,29 +226,38 @@ public static class PlaybackController
     {
         ArgumentNullException.ThrowIfNull(coordinator);
         loggerFactory ??= NullLoggerFactory.Instance;
-        clock ??= new PlaybackClock();
-
-        var sessionFactory = new PlaylistSessionFactory(
-            coordinator,
-            videoSink,
-            audioSink,
-            hardwareDecodeMode,
-            hardwareDecodeCapabilities,
-            loggerFactory,
-            configureVideo,
-            configureAudio,
-            yieldHardwareFrames
-        );
-
-        var options = Options.Create(
-            new FrameFlowPlaybackOptions { InitialRepeatMode = initialRepeatMode }
-        );
-
-        return new PlaybackControllerCore(
-            loggerFactory.CreateLogger<PlaybackControllerCore>(),
-            sessionFactory,
+        return Assemble(
+            new PlaylistSessionFactory(
+                coordinator,
+                videoSink,
+                audioSink,
+                hardwareDecodeMode,
+                hardwareDecodeCapabilities,
+                loggerFactory,
+                configureVideo,
+                configureAudio,
+                yieldHardwareFrames
+            ),
+            initialRepeatMode,
             clock,
-            options
+            loggerFactory
         );
     }
+
+    /// <summary>
+    /// Builds the controller over <paramref name="sessionFactory"/>. Both entry points build their
+    /// factory and call this (#44).
+    /// </summary>
+    private static PlaybackControllerCore Assemble(
+        IPlaybackSessionFactory sessionFactory,
+        RepeatMode initialRepeatMode,
+        IPlaybackClock? clock,
+        ILoggerFactory loggerFactory
+    ) =>
+        new(
+            loggerFactory.CreateLogger<PlaybackControllerCore>(),
+            sessionFactory,
+            clock ?? new PlaybackClock(),
+            Options.Create(new FrameFlowPlaybackOptions { InitialRepeatMode = initialRepeatMode })
+        );
 }

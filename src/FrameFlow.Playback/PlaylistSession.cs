@@ -65,6 +65,7 @@ internal sealed class PlaylistSession : IPlaybackSession
     private readonly IPlaylistItemRuntimeFactory _itemFactory;
     private readonly IPlaylistSessionScheduler _scheduler;
     private readonly ILogger<PlaylistSession> _logger;
+    private readonly bool _loadsSource;
 
     // Holds inputs, and the probes WhenIdleAsync posts. Unbounded, so posting never blocks: a
     // transition subscriber that skips or jumps posts from the reader's own thread.
@@ -106,19 +107,25 @@ internal sealed class PlaylistSession : IPlaybackSession
     /// <param name="scheduler">
     /// Delivers item notifications and the coordinator's requests. Defaults to delivering at once.
     /// </param>
+    /// <param name="loadsSource">
+    /// Whether <see cref="InitializeAsync"/> makes the loaded source the queue's only item. Set for
+    /// a controller that plays one source at a time.
+    /// </param>
     public PlaylistSession(
         PlaylistCoordinator coordinator,
         IPlaybackClock clock,
         SessionCallbacks controllerCallbacks,
         IPlaylistItemRuntimeFactory itemFactory,
         ILoggerFactory? loggerFactory = null,
-        IPlaylistSessionScheduler? scheduler = null
+        IPlaylistSessionScheduler? scheduler = null,
+        bool loadsSource = false
     )
     {
         ArgumentNullException.ThrowIfNull(coordinator);
         ArgumentNullException.ThrowIfNull(clock);
         ArgumentNullException.ThrowIfNull(itemFactory);
 
+        _loadsSource = loadsSource;
         _coordinator = coordinator;
         _clock = clock;
         _controllerCallbacks = controllerCallbacks;
@@ -161,14 +168,21 @@ internal sealed class PlaylistSession : IPlaybackSession
     public ValueTask InitializeAsync(
         IMediaSource source,
         CancellationToken cancellationToken = default
-    ) =>
+    )
+    {
+        // A controller that plays one source at a time loads it as a queue of one. A playlist
+        // player seeded the queue itself, and the source the controller passes is its first item.
+        if (_loadsSource)
+            _coordinator.LoadSource(source);
+
         // The first item is taken from the queue even when the token is already cancelled, and the
         // open then fails with the cancellation, so Initialize is never cancelled while it waits.
-        RunCommandAsync(
+        return RunCommandAsync(
             id => new PlaylistSessionInput.Initialize(id),
             cancellationToken,
             cancellable: false
         );
+    }
 
     public ValueTask WarmUpAsync(CancellationToken cancellationToken = default) =>
         RunCommandAsync(id => new PlaylistSessionInput.WarmUp(id), cancellationToken);

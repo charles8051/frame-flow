@@ -21,7 +21,22 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory
     private readonly PlaylistCoordinator _coordinator;
     private readonly IPlaylistItemRuntimeFactory _itemFactory;
     private readonly ILoggerFactory _loggerFactory;
+    private readonly bool _loadsSource;
 
+    /// <param name="coordinator">The queue every session plays.</param>
+    /// <param name="videoSink">Warm video sink, reused across every item.</param>
+    /// <param name="audioSink">Warm audio sink, reused across every item.</param>
+    /// <param name="hwMode">Hardware-decode policy applied to each item's video decoder.</param>
+    /// <param name="hardwareDecodeCapabilities">Backends the host was probed to support.</param>
+    /// <param name="loggerFactory">Optional logger factory.</param>
+    /// <param name="videoConfigurator">Optional video-chain configurator, applied to every item.</param>
+    /// <param name="audioConfigurator">Optional audio-chain configurator, applied to every item.</param>
+    /// <param name="yieldHardwareFrames">Whether hardware-decoded frames reach the sink as GPU frames.</param>
+    /// <param name="latenessRecovery">Tuning for the lateness-recovery walk, applied to every item.</param>
+    /// <param name="loadsSource">
+    /// Whether each session makes the source the controller loads the queue's only item. A
+    /// controller that plays one source at a time sets it; a playlist player seeds the queue itself.
+    /// </param>
     public PlaylistSessionFactory(
         PlaylistCoordinator coordinator,
         IVideoSink? videoSink = null,
@@ -31,11 +46,14 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory
         ILoggerFactory? loggerFactory = null,
         Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? videoConfigurator = null,
         Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? audioConfigurator = null,
-        bool yieldHardwareFrames = false
+        bool yieldHardwareFrames = false,
+        LatenessRecoveryOptions? latenessRecovery = null,
+        bool loadsSource = false
     )
     {
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        _loadsSource = loadsSource;
 
         // Every item runs on the same warm sinks, with the same options and configurators.
         _itemFactory = new SubstrateSessionFactory(
@@ -46,14 +64,27 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory
             _loggerFactory,
             videoConfigurator,
             audioConfigurator,
-            yieldHardwareFrames
+            yieldHardwareFrames,
+            latenessRecovery
         );
     }
+
+    /// <summary>The queue every session this factory creates plays.</summary>
+    internal PlaylistCoordinator Coordinator => _coordinator;
 
     public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks)
     {
         ArgumentNullException.ThrowIfNull(clock);
 
-        return new PlaylistSession(_coordinator, clock, callbacks, _itemFactory, _loggerFactory);
+        return new PlaylistSession(
+            _coordinator,
+            clock,
+            callbacks,
+            _itemFactory,
+            _loggerFactory,
+            loadsSource: _loadsSource
+        );
     }
+
+    public void RepeatModeChanged(RepeatMode mode) => _coordinator.RepeatMode = mode;
 }

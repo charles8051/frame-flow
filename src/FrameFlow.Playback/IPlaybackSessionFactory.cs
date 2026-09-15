@@ -1,6 +1,8 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Media;
+
 namespace FrameFlow.Playback;
 
 internal interface IPlaybackSessionFactory
@@ -12,4 +14,11 @@ internal interface IPlaybackSessionFactory
     /// never observes a partially wired callback channel.
     /// </summary>
     IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks);
+
+    /// <summary>
+    /// Called with the controller's repeat mode when the controller is created and each time the
+    /// mode changes, on the controller's dispatch loop. A factory whose sessions loop internally
+    /// passes it to the queue they share. A single-source factory ignores it.
+    /// </summary>
+    void RepeatModeChanged(RepeatMode mode) { }
 }

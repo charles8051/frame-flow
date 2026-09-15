@@ -26,7 +26,6 @@ namespace FrameFlow.Integration.Tests;
 public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
 {
     private const string Clip = "test-video-h264-yuv420p.mp4";
-    private const int FaultFrame = 21;
 
     // PlaylistSession gives up on the failure after this many in a row.
     private const int FailuresBeforeGivingUp = 9;
@@ -170,58 +169,5 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         var path = IntegrationTestEnvironment.GetCorpusFile(Clip);
         Assert.NotNull(path);
         return MediaSource.FromFile(path!);
-    }
-
-    /// <summary>
-    /// Supplies the playlist's video configurator. Chains are numbered in the order they are
-    /// built, and the chains <c>breaks</c> selects throw on their 21st frame.
-    /// </summary>
-    private sealed class FaultInjector(Func<int, bool> breaks)
-    {
-        private int _chains;
-
-        public GraphChain<VideoFrameRef> Configure(GraphChain<VideoFrameRef> chain)
-        {
-            var index = Interlocked.Increment(ref _chains) - 1;
-            if (!breaks(index))
-                return chain;
-
-            var frames = 0;
-            return chain.Then(
-                new OperatorNode<VideoFrameRef, VideoFrameRef>(
-                    "inject-fault",
-                    (frame, _) =>
-                        ++frames == FaultFrame
-                            ? throw new InjectedFault(index)
-                            : ValueTask.FromResult<VideoFrameRef?>(frame)
-                )
-            );
-        }
-    }
-
-    private sealed class InjectedFault(int chain) : Exception($"Injected fault in chain {chain}.")
-    {
-        /// <summary>Whether the error's exception chain contains an injected fault.</summary>
-        public static bool Caused(PlaybackError error)
-        {
-            var pending = new Stack<Exception>();
-            if (error.Inner is { } inner)
-                pending.Push(inner);
-            while (pending.TryPop(out var ex))
-            {
-                if (ex is InjectedFault)
-                    return true;
-                if (ex is AggregateException aggregate)
-                {
-                    foreach (var child in aggregate.InnerExceptions)
-                        pending.Push(child);
-                }
-                else if (ex.InnerException is { } next)
-                {
-                    pending.Push(next);
-                }
-            }
-            return false;
-        }
     }
 }

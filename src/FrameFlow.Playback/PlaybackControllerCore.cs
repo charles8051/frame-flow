@@ -64,6 +64,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
     private readonly Task _dispatchLoop;
 
+    /// <summary>The factory this controller creates its sessions with.</summary>
+    internal IPlaybackSessionFactory SessionFactory => _sessionFactory;
+
     // ── Observable subjects ────────────────────────────────────────────
     private readonly PlaybackSubject<StateTransition<PlaybackState>> _playbackStateSubject = new();
     private readonly PlaybackSubject<StateTransition<SeekState>> _seekStateSubject = new();
@@ -186,6 +189,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         var initialRepeatMode = playbackOptions?.Value?.InitialRepeatMode ?? RepeatMode.Off;
         _seeking = new StateMachine<SeekState, SeekTrigger>(SeekState.NotSeeking);
         _repeat = new StateMachine<RepeatMode, RepeatTrigger>(initialRepeatMode);
+        _sessionFactory.RepeatModeChanged(initialRepeatMode);
 
         ConfigureSeekingMachine();
         ConfigureRepeatMachine();
@@ -1360,6 +1364,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 t.Destination.ToString(),
                 t.Trigger.ToString()
             );
+            _sessionFactory.RepeatModeChanged(t.Destination);
             _repeatModeSubject.OnNext(new StateTransition<RepeatMode>(t.Source, t.Destination));
             return Task.CompletedTask;
         });

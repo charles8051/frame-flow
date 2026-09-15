@@ -77,7 +77,6 @@ public static class MediaPlaylistPlayer
     )
     {
         ArgumentNullException.ThrowIfNull(sources);
-        loggerFactory ??= NullLoggerFactory.Instance;
 
         var initial = sources.ToList();
         if (initial.Count == 0)
@@ -86,8 +85,45 @@ public static class MediaPlaylistPlayer
                 nameof(sources)
             );
 
-        // Bootstrap the FFmpeg native runtime (idempotent), matching
-        // MediaPlayer.CreateAsync.
+        return await CreateCoreAsync(
+                initial,
+                videoSink,
+                audioSink,
+                hardwareDecodeMode,
+                yieldHardwareFrames,
+                initialRepeatMode,
+                loggerFactory,
+                activateAudioSink,
+                configureVideo,
+                configureAudio,
+                clock: null,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The construction path both players share. <see cref="MediaPlayer"/> passes a queue of one.
+    /// </summary>
+    internal static async Task<PlaylistMediaPlayerCore> CreateCoreAsync(
+        IReadOnlyList<IMediaSource> initial,
+        IVideoSink? videoSink,
+        IAudioSink? audioSink,
+        HardwareDecodeMode hardwareDecodeMode,
+        bool yieldHardwareFrames,
+        RepeatMode initialRepeatMode,
+        ILoggerFactory? loggerFactory,
+        bool activateAudioSink,
+        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? configureVideo,
+        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? configureAudio,
+        IPlaybackClock? clock,
+        CancellationToken cancellationToken
+    )
+    {
+        loggerFactory ??= NullLoggerFactory.Instance;
+
+        // Bootstrap the FFmpeg native runtime (idempotent). Skip the hardware probe when the
+        // caller disabled hardware decoding, matching the fluent builder.
         var nativeOptions = new FrameFlowNativeOptions
         {
             SkipHardwareProbe = hardwareDecodeMode == HardwareDecodeMode.Disabled,
@@ -107,7 +143,7 @@ public static class MediaPlaylistPlayer
             hardwareDecodeCapabilities: bootstrap.Capabilities,
             yieldHardwareFrames: yieldHardwareFrames,
             initialRepeatMode: initialRepeatMode,
-            clock: null,
+            clock: clock,
             loggerFactory: loggerFactory,
             configureVideo: configureVideo,
             configureAudio: configureAudio
