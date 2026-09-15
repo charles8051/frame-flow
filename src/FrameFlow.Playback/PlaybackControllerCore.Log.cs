@@ -206,6 +206,18 @@ internal sealed partial class PlaybackControllerCore
     private partial void LogRecoverableErrorDropped(string message);
 
     [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Session loop report dropped — channel full or closed: loop {LoopCount}"
+    )]
+    private partial void LogLoopRestartedDropped(int loopCount);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Dropping loop report from session generation {Generation}; the current generation is {CurrentGeneration}: loop {LoopCount}"
+    )]
+    private partial void LogStaleLoopRestarted(int generation, int currentGeneration, int loopCount);
+
+    [LoggerMessage(
         Level = LogLevel.Debug,
         Message = "Dropping recoverable error from session generation {Generation}; the current generation is {CurrentGeneration}: {Message}"
     )]

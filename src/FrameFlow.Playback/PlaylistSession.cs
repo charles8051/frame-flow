@@ -83,6 +83,7 @@ internal sealed class PlaylistSession : IPlaybackSession
     private IPlaylistItemRuntime? _published;
     private int _publishedRun;
     private int _publishedGeneration;
+    private bool _publishedLoopUnderWay;
 
     // Returned by the coordinator when this session attaches its skip and jump handlers.
     private object? _sessionToken;
@@ -149,6 +150,11 @@ internal sealed class PlaylistSession : IPlaybackSession
     // The coordinator runs the repeat mode. This session reports end-of-stream only when the
     // queue has ended.
     public bool LoopsInternally => true;
+
+    // Read by the controller's loop-stall watchdog on every position tick. While a loop is under way
+    // the answer is true whatever the queue now says, so removing the item mid-repeat does not hide a
+    // rewind that hangs. Otherwise the queue decides (decision 6 of looping-on-both-players.md).
+    public bool ExpectsRepeat => Volatile.Read(ref _publishedLoopUnderWay) || _coordinator.Queue.ExpectsRepeat;
 
     // ── IPlaybackSession lifecycle ──────────────────────────────────────────
 
@@ -337,7 +343,9 @@ internal sealed class PlaylistSession : IPlaybackSession
             OnBufferReady: _controllerCallbacks.OnBufferReady,
             OnBufferUnderrun: _controllerCallbacks.OnBufferUnderrun,
             OnRecoverableError: _controllerCallbacks.OnRecoverableError,
-            OnCurrentItemChanged: _controllerCallbacks.OnCurrentItemChanged
+            OnCurrentItemChanged: _controllerCallbacks.OnCurrentItemChanged,
+            // An item runtime does not loop: this session decides and reports every repeat.
+            OnLoopRestarted: static _ => { }
         );
 
     /// <summary>
@@ -471,6 +479,7 @@ internal sealed class PlaylistSession : IPlaybackSession
     {
         Volatile.Write(ref _publishedRun, (int)_state.Run);
         Volatile.Write(ref _publishedGeneration, _state.Generation);
+        Volatile.Write(ref _publishedLoopUnderWay, _state.LoopUnderWay);
         Volatile.Write(ref _published, _state.Item is null ? null : _runtime);
     }
 
@@ -518,6 +527,10 @@ internal sealed class PlaylistSession : IPlaybackSession
 
             case PlaylistSessionAction.ReportEndOfStream:
                 _controllerCallbacks.OnEndOfStream();
+                break;
+
+            case PlaylistSessionAction.ReportLoopRestarted loop:
+                _controllerCallbacks.OnLoopRestarted(loop.LoopCount);
                 break;
 
             case PlaylistSessionAction.ReportFatal fatal:

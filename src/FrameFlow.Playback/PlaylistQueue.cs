@@ -105,6 +105,33 @@ internal sealed record PlaylistQueue
     /// <summary>Whether a jump is waiting to be taken.</summary>
     public bool HasPendingJump => PendingJump is not null;
 
+    /// <summary>
+    /// Whether the current item is expected to repeat at its end, which is when the loop-stall
+    /// watchdog watches it. The item has started and has not been removed, no jump is pending, and
+    /// either the mode is <see cref="RepeatMode.One"/>, or the mode is <see cref="RepeatMode.All"/>
+    /// and the item is the only playlist item with nothing set next or queued.
+    /// </summary>
+    /// <remarks>
+    /// Decision 6 of <c>docs/adr/looping-on-both-players.md</c>. A repeat of the same item keeps it
+    /// started, so a repeat that hangs is still watched. A pending jump is taken by the next advance
+    /// ahead of any repeat.
+    /// </remarks>
+    public bool ExpectsRepeat =>
+        Current is { } current
+        && CurrentStarted
+        && !CurrentRemoved
+        && PendingJump is null
+        && (
+            Repeat == RepeatMode.One
+            || (
+                Repeat == RepeatMode.All
+                && Playlist.Count == 1
+                && ReferenceEquals(Playlist[0], current)
+                && Next.IsEmpty
+                && Queued.IsEmpty
+            )
+        );
+
     /// <summary>A queue with <paramref name="playlist"/> as its playlist, before any item is taken.</summary>
     public static PlaylistQueue Create(IEnumerable<PlaylistItem> playlist, RepeatMode repeat)
     {
@@ -309,7 +336,7 @@ internal sealed record PlaylistQueue
     public (PlaylistQueue Queue, NextDecision Decision) DecideNext(PlaylistAdvance reason)
     {
         if (PendingJump is { } jump)
-            return (this with { PendingJump = null }).Take(jump, wrapped: false);
+            return (this with { PendingJump = null }).Take(jump, wrapped: false, byAdvance: true);
 
         var movesOn = reason is PlaylistAdvance.Skip or PlaylistAdvance.FailedStart || CurrentRemoved;
 
@@ -317,20 +344,20 @@ internal sealed record PlaylistQueue
             return (this, new NextDecision(NextKind.Replay, current, Wrapped: false));
 
         if (!Next.IsEmpty)
-            return (this with { Next = Next.RemoveAt(0) }).Take(Next[0], wrapped: false);
+            return (this with { Next = Next.RemoveAt(0) }).Take(Next[0], wrapped: false, byAdvance: true);
 
         if (Cursor < Playlist.Count)
-            return Take(Playlist[Cursor], wrapped: false);
+            return Take(Playlist[Cursor], wrapped: false, byAdvance: true);
 
         if (!Queued.IsEmpty)
-            return (this with { Queued = Queued.RemoveAt(0) }).Take(Queued[0], wrapped: false);
+            return (this with { Queued = Queued.RemoveAt(0) }).Take(Queued[0], wrapped: false, byAdvance: true);
 
         if (
             !Playlist.IsEmpty
             && (Repeat == RepeatMode.All || (Repeat == RepeatMode.One && movesOn))
         )
         {
-            return Take(Playlist[0], wrapped: true);
+            return Take(Playlist[0], wrapped: true, byAdvance: true);
         }
 
         return (this, new NextDecision(NextKind.End, null, Wrapped: false));
@@ -446,8 +473,10 @@ internal sealed record PlaylistQueue
     ) => (take.Queue, take.Decision.Item);
 
     // Makes item current. A playlist item moves the cursor to just after it; a one-shot item leaves
-    // its collection.
-    private (PlaylistQueue Queue, NextDecision Decision) Take(PlaylistItem item, bool wrapped)
+    // its collection. An advance that takes the current item again repeats it, and the repeat keeps
+    // it started, so the loop-stall watchdog still watches it (ExpectsRepeat). A new session's first
+    // take has not started anything yet.
+    private (PlaylistQueue Queue, NextDecision Decision) Take(PlaylistItem item, bool wrapped, bool byAdvance = false)
     {
         var queue = this;
         var index = Playlist.IndexOf(item);
@@ -467,7 +496,7 @@ internal sealed record PlaylistQueue
             queue with
             {
                 Current = item,
-                CurrentStarted = false,
+                CurrentStarted = byAdvance && CurrentStarted && !CurrentRemoved && ReferenceEquals(item, Current),
                 CurrentRemoved = false,
                 Revision = Revision + 1,
             },

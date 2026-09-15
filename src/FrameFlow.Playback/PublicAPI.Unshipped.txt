@@ -135,15 +135,15 @@ FrameFlow.Playback.LoopStallSample.DurationTicks.init -> void
 FrameFlow.Playback.LoopStallSample.LoopCount.get -> int
 FrameFlow.Playback.LoopStallSample.LoopCount.init -> void
 FrameFlow.Playback.LoopStallSample.LoopStallSample() -> void
-FrameFlow.Playback.LoopStallSample.LoopStallSample(long NowTicks, long PositionTicks, long DurationTicks, bool RepeatOne, bool Playing, int LoopCount) -> void
+FrameFlow.Playback.LoopStallSample.LoopStallSample(long NowTicks, long PositionTicks, long DurationTicks, bool ExpectsRepeat, bool Playing, int LoopCount) -> void
 FrameFlow.Playback.LoopStallSample.NowTicks.get -> long
 FrameFlow.Playback.LoopStallSample.NowTicks.init -> void
 FrameFlow.Playback.LoopStallSample.Playing.get -> bool
 FrameFlow.Playback.LoopStallSample.Playing.init -> void
 FrameFlow.Playback.LoopStallSample.PositionTicks.get -> long
 FrameFlow.Playback.LoopStallSample.PositionTicks.init -> void
-FrameFlow.Playback.LoopStallSample.RepeatOne.get -> bool
-FrameFlow.Playback.LoopStallSample.RepeatOne.init -> void
+FrameFlow.Playback.LoopStallSample.ExpectsRepeat.get -> bool
+FrameFlow.Playback.LoopStallSample.ExpectsRepeat.init -> void
 FrameFlow.Playback.PaceUntil
 FrameFlow.Playback.PausableGate<T>
 FrameFlow.Playback.PausableGate<T>.AsOperator(string! id) -> FrameFlow.Graph.OperatorNode<T!, T!>!

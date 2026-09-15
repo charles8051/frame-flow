@@ -17,6 +17,7 @@ internal sealed class PlaylistRun : IAsyncDisposable
     private readonly List<PlaylistTransition> _transitions = [];
     private readonly List<(PlaybackState State, TaskCompletionSource Signal)> _stateWaiters = [];
     private readonly List<(IMediaSource Source, TaskCompletionSource Signal)> _sourceWaiters = [];
+    private readonly List<(int Count, TaskCompletionSource Signal)> _countWaiters = [];
     private readonly TaskCompletionSource _gaveUp = new(
         TaskCreationOptions.RunContinuationsAsynchronously
     );
@@ -54,6 +55,11 @@ internal sealed class PlaylistRun : IAsyncDisposable
                         foreach (var (source, signal) in _sourceWaiters)
                         {
                             if (ReferenceEquals(source, t.Source))
+                                signal.TrySetResult();
+                        }
+                        foreach (var (count, signal) in _countWaiters)
+                        {
+                            if (_transitions.Count >= count)
                                 signal.TrySetResult();
                         }
                     }
@@ -163,6 +169,20 @@ internal sealed class PlaylistRun : IAsyncDisposable
         var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (_gate)
             _sourceWaiters.Add((source, signal));
+        return signal.Task;
+    }
+
+    /// <summary>Completes once at least <paramref name="count"/> transitions have been raised.</summary>
+    public Task WhenTransitions(int count)
+    {
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+        {
+            if (_transitions.Count >= count)
+                signal.TrySetResult();
+            else
+                _countWaiters.Add((count, signal));
+        }
         return signal.Task;
     }
 

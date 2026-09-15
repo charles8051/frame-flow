@@ -111,6 +111,22 @@ internal sealed record RecoverableErrorCommand(PlaybackError Error, int SessionG
 }
 
 /// <summary>
+/// Carries a loop a session that loops internally reported: it put its current item back at its
+/// start after the item played to its end. The dispatch loop raises <c>LoopRestarted</c>.
+/// </summary>
+/// <param name="LoopCount">The count of consecutive loops of the item, the first being 1.</param>
+/// <param name="SessionGeneration">
+/// The generation of the session that reported it. A loop from a session the controller has since
+/// disposed is dropped.
+/// </param>
+internal sealed record LoopRestartedCommand(int LoopCount, int SessionGeneration) : IPlayerCommand
+{
+    public TaskCompletionSource<Result> Completion { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public CancellationToken CancellationToken { get; init; }
+}
+
+/// <summary>
 /// Wakes the dispatch loop after a playlist session has stored a new current item for the
 /// controller. The update itself is not carried: the loop applies the latest stored one at
 /// the top of every iteration, so an update still lands if this command finds the channel

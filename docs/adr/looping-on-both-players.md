@@ -4,7 +4,8 @@
 
 Proposed (2026-09-14). Draft pending number assignment. Revised the same day after an independent
 review, and on 2026-09-15 onto the playlist session protocol; *Revision history* says what changed.
-**Nothing here is implemented.**
+**The playlist half is implemented** (decisions 5 and 6 on a playlist); *As implemented* says how.
+Nothing for a single source is.
 
 This record supersedes [ADR-0021](ADR-0021-looped-playback-strategy.md). It decides:
 - what each `RepeatMode` means on a single-source player and on a playlist player;
@@ -303,8 +304,8 @@ The watchdog is eligible on a tick when the player expects the current item to l
 Today the controller computes `RepeatOne` from its own mode. That input becomes `ExpectsRepeat`,
 which the session answers:
 
-- **A queue** expects a repeat when its current item has started, it has not been removed, and
-  either:
+- **A queue** expects a repeat when its current item has started, it has not been removed, no jump
+  is pending, and either:
   - the mode is `One`, including for a one-shot current item, which `One` replays; or
   - the mode is `All`, the current item is the only playlist item, and nothing is set next or
     queued.
@@ -535,7 +536,7 @@ Unit tests without media:
 | 17 | 5 | `PlaylistSessionProtocolTests`: a skip, a jump, a fault's rebuild, a failed start, an end-of-stream latched before the first Play, a hand-off to another item of the same source, and a repeat completed during disposal report no loop. Each start that is not a loop resets the count. | [no report or count] |
 | 18 | 5 | `PlaylistSessionTranscriptTests`: a skip requested during an in-place rewind takes effect after the loop is reported, and the next loop's count is 1. | [no report] |
 | 19 | 5 | `PlaylistSessionExplorerTests`: a loop is reported only by an input begun with an end-of-stream from the current run of a played item, and never while disposing or after giving up. A seeded defect that reports a loop on a skip is found. | [no invariant] |
-| 4 | 6 | `PlaylistQueueTests`: `ExpectsRepeat` is true for a started, unremoved current item under `One`, a one-shot one included, and under `All` for the only playlist item with nothing next or queued, including after that item is taken again at a wrap. It is false for a one-shot current item under `All`, a removed current item, a playlist of two under `All`, and a different item taken and not yet started. | [no member] |
+| 4 | 6 | `PlaylistQueueTests`: `ExpectsRepeat` is true for a started, unremoved current item under `One`, a one-shot one included, and under `All` for the only playlist item with nothing next or queued, including after that item is taken again at a wrap. It is false for a one-shot current item under `All`, a removed current item, a playlist of two under `All`, a different item taken and not yet started, and a current item under `One` while a jump is pending. | [no member] |
 | 5 | 6 | `LoopStallEvaluatorTests`: the renamed input gates eligibility as `RepeatOne` did. | [renamed] |
 | 20 | 6 | `PlaylistSessionTranscriptTests`: removing the current item while its in-place rewind is held leaves the session expecting a repeat until the rewind completes, and expecting none once the input is handled. | [no member] |
 
@@ -574,6 +575,39 @@ because two presenters on one GPU was the condition of the hang ADR-0063 found. 
 presented-frame counter must not fall below 90 percent of the clip's frame rate over any one-minute
 window, for at least an hour. A stall reopens #172, and the result is recorded in this record's
 revision history without machine identifiers.
+
+## As implemented: the playlist half
+
+- **The queue.** `PlaylistQueue.ExpectsRepeat` is decision 6's predicate. An advance that takes the
+  current item again keeps it started; a new session's first take does not.
+- **The core.** `PlaylistAdvanceRun.Loop` records whether a pass is a loop when the pass takes its
+  item: an end-of-stream of a played item, whose decision names that same item. A failed start
+  clears it. `PlaylistSessionState.LoopCount` counts loops, and every other start resets it. The
+  report is a new action, `ReportLoopRestarted`, emitted after the transition when the item is back
+  at its start. `PlaylistSessionState.LoopUnderWay` is true while such a pass is under way.
+- **The shell and the controller.** The shell passes the report to a new session callback,
+  `OnLoopRestarted`, and publishes `LoopUnderWay` after each step. `PlaylistSession.ExpectsRepeat` is
+  that flag or the queue's predicate. The controller posts the report through its channel with the
+  session generation, drops it from a replaced session, and publishes the session's count on
+  `LoopRestarted`. Its `_loopCount`, the watchdog's gate, rises on every loop. The watchdog reads the
+  session's `ExpectsRepeat` for a session that loops internally.
+- **The public surface.** `IMediaPlayer.LoopRestarted` forwards the controller's event on both
+  players. `LoopStallSample.RepeatOne` is `ExpectsRepeat`. `docs/BREAKING-CHANGES.md` has both.
+- **The tests.**
+  - Row 4: `PlaylistQueueTests.ExpectsRepeat_*`.
+  - Row 5: the existing `LoopStallEvaluatorTests`, over the renamed input.
+  - Rows 15 to 17: `PlaylistSessionProtocolTests.ALoopRewoundInPlace_ReportsItsCount_WhenTheRewindSucceeds`,
+    `ALoopThatRebuilds_ReportsWhenTheItemIsBackAtItsStart` and `ANonLoopStart_ReportsNoLoop_AndEndsTheCount`.
+  - Row 18: `PlaylistSessionTranscriptTests.SkipDuringAnInPlaceRewind_TakesEffectAfterTheLoopIsReported`.
+  - Row 19: the explorer's `ReportsALoopThatIsNotOne` invariant, a new scenario for a playlist of one
+    under `All`, and the seeded defect "A skip's advance is counted as a loop".
+  - Row 20: `PlaylistSessionTranscriptTests.RemovingTheItemDuringAnInPlaceRewind_KeepsARepeatExpected_UntilTheRewindCompletes`.
+  - Rows 9 and 11 to 13: `PlaylistLoopReportingTests`, over real playback.
+  - Row 10: `PlaylistLoopReportingTests.APlaylistOfOneUnderOne_ReportsEachLoop`, without its paused
+    case. An end-of-stream that arrives after a pause took effect cannot be produced on demand over
+    real playback, so row 16 pins the loop rebuilt while paused.
+  - Row 14: `PlayerLoopEventTests`, as a unit test that both players hand out the controller's event.
+  - The controller's handling: `PlaybackDispatchProtocolTests.LoopRestarted_From*`.
 
 ## Revision history
 
@@ -652,3 +686,6 @@ revision history without machine identifiers.
   - **A removal during a repeat.** Decision 6 read eligibility only from the queue, so removing the
     item mid-repeat would have hidden a rewind that hangs. The session now answers true while it
     performs a loop, and row 20 tests it.
+- **Revision after automated review of #222 (2026-09-15).** Decision 6 now excludes a pending jump.
+  The next advance takes a pending jump ahead of any repeat, so under `One` the queue expected a
+  repeat that would not happen. Row 4 gained the case.

@@ -170,6 +170,104 @@ public sealed class PlaylistQueueTests
         Assert.Equal(TimeSpan.Zero, queue.ReportedDuration);
     }
 
+    // ── Expected repeats (the looping record's decision 6) ──────────────────
+
+    [Fact]
+    public void ExpectsRepeat_UnderOne_ForAStartedCurrentItem_AOneShotIncluded()
+    {
+        var queue = Queue(RepeatMode.One, "a", "b");
+        var a = Take(ref queue)!;
+        Assert.False(queue.ExpectsRepeat); // taken, not yet started
+
+        (queue, _) = queue.ReportCurrent(a, Info());
+        Assert.True(queue.ExpectsRepeat);
+
+        // One replays a one-shot current item too.
+        var x = Item("x");
+        queue = queue.SetNext(x);
+        (queue, _) = queue.DecideNext(PlaylistAdvance.Skip);
+        (queue, _) = queue.ReportCurrent(x, Info());
+        Assert.Same(x, queue.Current);
+        Assert.True(queue.ExpectsRepeat);
+    }
+
+    [Fact]
+    public void ExpectsRepeat_UnderAll_OnlyForTheOnlyPlaylistItem_WithNothingNextOrQueued()
+    {
+        var queue = Queue(RepeatMode.All, "a");
+        var a = Take(ref queue)!;
+        (queue, _) = queue.ReportCurrent(a, Info());
+        Assert.True(queue.ExpectsRepeat);
+
+        Assert.False(queue.SetNext(Item("x")).ExpectsRepeat);
+        Assert.False(queue.Enqueue(Item("y")).ExpectsRepeat);
+        Assert.False(queue.Add(Item("b")).ExpectsRepeat);
+        Assert.False(queue.WithRepeatMode(RepeatMode.Off).ExpectsRepeat);
+    }
+
+    [Fact]
+    public void ExpectsRepeat_UnderAll_SurvivesTheWrapThatTakesTheSameItemAgain()
+    {
+        // The repeat is a take of the same item. It must stay watched while it runs, so the take
+        // keeps the item started.
+        var queue = Queue(RepeatMode.All, "a");
+        var a = Take(ref queue)!;
+        (queue, _) = queue.ReportCurrent(a, Info());
+
+        (queue, var wrap) = queue.DecideNext(PlaylistAdvance.EndOfStream);
+
+        Assert.Same(a, wrap.Item);
+        Assert.True(wrap.Wrapped);
+        Assert.True(queue.CurrentStarted);
+        Assert.True(queue.ExpectsRepeat);
+    }
+
+    [Fact]
+    public void ExpectsRepeat_IsFalse_ForARemovedItem_AOneShotUnderAll_OrADifferentItemNotYetStarted()
+    {
+        // Removed.
+        var queue = Queue(RepeatMode.One, "a");
+        var a = Take(ref queue)!;
+        (queue, _) = queue.ReportCurrent(a, Info());
+        Assert.False(queue.Remove(a).Queue.ExpectsRepeat);
+
+        // A one-shot current item under All is not the only playlist item.
+        var all = Queue(RepeatMode.All, "a");
+        var first = Take(ref all)!;
+        (all, _) = all.ReportCurrent(first, Info());
+        var x = Item("x");
+        all = all.SetNext(x);
+        (all, _) = all.DecideNext(PlaylistAdvance.EndOfStream);
+        (all, _) = all.ReportCurrent(x, Info());
+        Assert.Same(x, all.Current);
+        Assert.False(all.ExpectsRepeat);
+
+        // A playlist of two under All, and a different item taken but not yet started.
+        var two = Queue(RepeatMode.All, "a", "b");
+        var twoA = Take(ref two)!;
+        (two, _) = two.ReportCurrent(twoA, Info());
+        Assert.False(two.ExpectsRepeat);
+        (two, _) = two.DecideNext(PlaylistAdvance.EndOfStream);
+        Assert.False(two.CurrentStarted);
+        Assert.False(two.ExpectsRepeat);
+    }
+
+    [Fact]
+    public void ExpectsRepeat_IsFalse_WhileAJumpIsPending_BecauseTheNextAdvanceTakesTheJump()
+    {
+        var queue = Queue(RepeatMode.One, "a", "b");
+        var a = Take(ref queue)!;
+        (queue, _) = queue.ReportCurrent(a, Info());
+        Assert.True(queue.ExpectsRepeat);
+
+        (queue, var request) = queue.RequestJump(queue.Playlist[1]);
+        Assert.Equal(JumpRequest.Pending, request);
+        Assert.False(queue.ExpectsRepeat);
+
+        (_, var decision) = queue.DecideNext(PlaylistAdvance.EndOfStream);
+        Assert.Same(queue.Playlist[1], decision.Item);
+    }
+
     [Fact]
     public void ALatchedAdvance_IsConsumedOnce()
     {

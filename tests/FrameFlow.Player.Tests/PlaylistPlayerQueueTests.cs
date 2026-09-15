@@ -108,7 +108,7 @@ public sealed class PlaylistPlayerQueueTests
 
     private static IMediaSource Source(string name) => new MediaSource(name);
 
-    private sealed class StubController : IPlaybackController
+    internal sealed class StubController : IPlaybackController
     {
         public PlaybackState State { get; init; } = PlaybackState.Idle;
 

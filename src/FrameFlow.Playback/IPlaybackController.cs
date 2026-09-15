@@ -99,14 +99,20 @@ public interface IPlaybackController : IAsyncDisposable
     /// <summary>Fires on every repeat mode change.</summary>
     IObservable<StateTransition<RepeatMode>> RepeatModeChanged { get; }
 
-    /// <summary>Fires when a loop restart occurs.</summary>
+    /// <summary>
+    /// Fires when the current item is back at its start after it played to its end. For a single
+    /// source the controller's own loop raises it under <c>RepeatMode.One</c>. A session that loops
+    /// internally, a playlist, reports its own loops: under <c>RepeatMode.One</c>, and for its only
+    /// item under <c>RepeatMode.All</c>. See <see cref="FrameFlow.Media.LoopRestarted"/>.
+    /// </summary>
     IObservable<LoopRestarted> LoopRestarted { get; }
 
     /// <summary>
-    /// Fires when a single-item loop (<c>RepeatMode.One</c>) appears to have
-    /// stalled — the position overran the item duration without a restart, i.e.
-    /// frame delivery stopped while the clock kept advancing. Hosts can surface
-    /// this to health/telemetry. See <see cref="FrameFlow.Media.LoopStalled"/>.
+    /// Fires when an expected loop appears to have stalled — the current item was expected to
+    /// repeat, and the position overran the item duration without a restart, i.e. frame delivery
+    /// stopped while the clock kept advancing. A single source expects a repeat under
+    /// <c>RepeatMode.One</c>; a playlist answers for itself. Hosts can surface this to
+    /// health/telemetry. See <see cref="FrameFlow.Media.LoopStalled"/>.
     /// </summary>
     IObservable<LoopStalled> LoopStalled { get; }
 

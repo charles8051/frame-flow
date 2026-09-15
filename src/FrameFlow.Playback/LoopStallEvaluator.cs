@@ -12,14 +12,18 @@ namespace FrameFlow.Playback;
 /// <param name="NowTicks"><see cref="Stopwatch.GetTimestamp"/> when sampled (monotonic).</param>
 /// <param name="PositionTicks">Current playback position, in <see cref="TimeSpan.Ticks"/>.</param>
 /// <param name="DurationTicks">Loaded item duration, in <see cref="TimeSpan.Ticks"/> (0 if unknown).</param>
-/// <param name="RepeatOne">Whether repeat mode is <c>RepeatMode.One</c> (single-item loop).</param>
+/// <param name="ExpectsRepeat">
+/// Whether the player expects the current item to repeat at its end: under <c>RepeatMode.One</c>, or
+/// for the only item of a playlist under <c>RepeatMode.All</c>. A playlist session answers it, and the
+/// controller answers it for a single source.
+/// </param>
 /// <param name="Playing">Whether playback is actively presenting (Playing and not seeking).</param>
 /// <param name="LoopCount">The controller's monotonic successful-loop-restart counter.</param>
 public readonly record struct LoopStallSample(
     long NowTicks,
     long PositionTicks,
     long DurationTicks,
-    bool RepeatOne,
+    bool ExpectsRepeat,
     bool Playing,
     int LoopCount
 );
@@ -42,9 +46,9 @@ public readonly record struct LoopStallOutcome(
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>The signature it catches.</b> While <c>RepeatMode.One</c> is active and
-/// playback is Playing, a healthy loop wraps the position back to zero at every
-/// item boundary, so the position never sits past the item duration for more
+/// <b>The signature it catches.</b> While the player expects the current item to
+/// repeat and playback is Playing, a healthy loop wraps the position back to zero
+/// at every item boundary, so the position never sits past the item duration for more
 /// than a wrap's worth of time. When the loop restart silently fails, frame
 /// delivery stops but the (wall) clock keeps advancing, so the position climbs
 /// <i>past</i> the duration and never returns — exactly the "video frozen on the
@@ -110,7 +114,7 @@ public readonly struct LoopStallEvaluator
         // known-duration item AND the position has actually overrun the duration.
         // Anything else closes the overrun episode (not stalled).
         bool pastEnd =
-            sample.RepeatOne
+            sample.ExpectsRepeat
             && sample.Playing
             && sample.DurationTicks > 0
             && sample.PositionTicks > sample.DurationTicks;

@@ -730,12 +730,19 @@ internal static class PlaylistSessionProtocol
             if (!failed)
                 Queue = Queue.ItemEnded();
 
-            var advance = new PlaylistAdvanceRun(command, State.Run == PlaylistRunState.Playing);
-
             // Decide what plays next before any teardown, so a same-source replay can reuse the live
             // runtime instead of rebuilding it.
             var (queue, decision) = Queue.DecideNext(ToAdvance(how));
             Queue = queue;
+
+            // A loop is the current item taken again after it played to its end: a replay under One,
+            // or a wrap to the only playlist item under All. Another item of the same source is not
+            // one, and neither is an end-of-stream latched before the first Play.
+            var loop =
+                how == ItemEnding.EndOfStream
+                && State.Item is { Played: true } ended
+                && ReferenceEquals(decision.Item, ended.Item);
+            var advance = new PlaylistAdvanceRun(command, State.Run == PlaylistRunState.Playing, loop);
 
             if (
                 advance.Playing
@@ -970,9 +977,11 @@ internal static class PlaylistSessionProtocol
             PlaylistItem item,
             PlaylistSessionInput.Outcome failure
         ) =>
+            // A repeat that cannot be started is a failed start, and the item started after it is
+            // not a loop.
             Await(
                 new PlaylistSessionAction.DisposeItem(),
-                new PlaylistSessionWork.DiscardingFailedStart(advance, item, failure)
+                new PlaylistSessionWork.DiscardingFailedStart(advance with { Loop = false }, item, failure)
             );
 
         private void OnFailedStartDiscarded(PlaylistSessionWork.DiscardingFailedStart work)
@@ -1017,6 +1026,19 @@ internal static class PlaylistSessionProtocol
             var (queue, index) = Queue.ReportCurrent(item, info);
             Queue = queue;
             Emit(new PlaylistSessionAction.RaiseTransition(item, info, index, wrapped));
+
+            // The item is back at its start, so a loop is reported here: after an in-place rewind, or
+            // after the rebuilt item's Play or, while paused, its warm-up. Any other start ends the run
+            // of loops.
+            if (advance.Loop)
+            {
+                State = State with { LoopCount = State.LoopCount + 1 };
+                Emit(new PlaylistSessionAction.ReportLoopRestarted(State.LoopCount));
+            }
+            else
+            {
+                State = State with { LoopCount = 0 };
+            }
 
             // The next step reads the queue again, after a transition subscriber has run.
             State = State with { Work = new PlaylistSessionWork.Started(advance) };

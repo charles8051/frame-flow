@@ -131,6 +131,9 @@ internal static class ExplorerInvariants
     public const string ReplacedRunActs =
         "Notifications: an end-of-stream from a run that was replaced has an effect";
 
+    public const string ReportsALoopThatIsNotOne =
+        "Reports: a loop is reported by an input that did not begin with the end of a played item's current run";
+
     public const string ChangeWithoutTransition =
         "Reports: a changed item is reported without its transition straight after";
 
@@ -310,6 +313,12 @@ internal sealed class PlaylistSessionExplorer
                     Channel = world.Channel.RemoveAt(0),
                     Handling = input,
                     RunAtHandling = world.State.Run,
+                    HandlingCanLoop =
+                        input is PlaylistSessionInput.EndOfStream end
+                        && world.Runtime is { Opened: true } runtime
+                        && runtime.Generation == end.Generation
+                        && runtime.Model.Run == end.Run
+                        && world.State.Item is { Played: true },
                 },
                 input
             );
@@ -701,12 +710,16 @@ internal sealed class PlaylistSessionExplorer
         if (actions.Count(a => a is PlaylistSessionAction.RaiseTransition) > 1)
             Violate(ExplorerInvariants.TwoTransitions, Describe(handling));
 
+        if (actions.Any(a => a is PlaylistSessionAction.ReportLoopRestarted) && !world.HandlingCanLoop)
+            Violate(ExplorerInvariants.ReportsALoopThatIsNotOne, Describe(handling));
+
         var reports = actions.Any(a =>
             a
                 is PlaylistSessionAction.ReportCurrentItemChanged
                     or PlaylistSessionAction.ReportItemFailed
                     or PlaylistSessionAction.ReportEndOfStream
                     or PlaylistSessionAction.ReportFatal
+                    or PlaylistSessionAction.ReportLoopRestarted
         );
         if (reports && world.FatalReported)
             Violate(ExplorerInvariants.ReportsAfterFatal, Describe(handling));
@@ -829,6 +842,12 @@ internal sealed class PlaylistSessionExplorer
         public ImmutableList<PlaylistSessionInput> Channel { get; init; } = [];
         public PlaylistSessionInput? Handling { get; init; }
         public PlaylistRunState RunAtHandling { get; init; }
+
+        /// <summary>
+        /// Whether the input being handled is an end-of-stream from the current run of the item
+        /// runtime, while that item has played: the only input that can perform a loop.
+        /// </summary>
+        public bool HandlingCanLoop { get; init; }
         public PlaylistSessionAction? Awaiting { get; init; }
         public bool ContinueDue { get; init; }
         public ModelRuntime? Runtime { get; init; }
@@ -861,7 +880,8 @@ internal sealed class PlaylistSessionExplorer
             .Append('/').Append(q.LatchedAdvance).Append('/').Append(q.Revision)
             .Append('/').Append(q.TransitionCount).Append('|');
         key.Append(string.Join(";", world.Channel.Select(Describe))).Append('|');
-        key.Append(world.Handling is null ? "-" : Describe(world.Handling)).Append(world.RunAtHandling).Append('|');
+        key.Append(world.Handling is null ? "-" : Describe(world.Handling)).Append(world.RunAtHandling)
+            .Append(world.HandlingCanLoop).Append('|');
         key.Append(world.Awaiting is null ? "-" : Describe(world.Awaiting)).Append(world.ContinueDue).Append('|');
         key.Append(world.Runtime).Append('|');
         key.Append(world.NextCall).Append(world.AwaitingCommand).Append(world.ControllerStopped).Append('|');

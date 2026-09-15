@@ -175,6 +175,12 @@ internal abstract record PlaylistSessionAction
     /// <summary>Tell the controller the queue has ended.</summary>
     public sealed record ReportEndOfStream : PlaylistSessionAction;
 
+    /// <summary>
+    /// Tell the controller the current item repeated after it played to its end, with the count of
+    /// consecutive loops. Decision 5 of <c>docs/adr/looping-on-both-players.md</c>.
+    /// </summary>
+    public sealed record ReportLoopRestarted(int LoopCount) : PlaylistSessionAction;
+
     /// <summary>Hand the controller a fatal error.</summary>
     public sealed record ReportFatal(Exception Error) : PlaylistSessionAction;
 
