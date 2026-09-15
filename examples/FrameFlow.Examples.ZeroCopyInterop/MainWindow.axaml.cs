@@ -16,12 +16,19 @@ namespace FrameFlow.Examples.ZeroCopyInterop;
 /// <see cref="CompositionInteropVideoView"/> sink which presents them with no
 /// CPU round-trip.
 /// </summary>
+/// <remarks>
+/// With <see cref="Soak"/> set it runs two such players side by side, each on its own presenter,
+/// and samples both into a CSV. Two presenters on one GPU is the condition ADR-0063's hang needed,
+/// and the samples are what a before/after comparison of a playback change reads.
+/// </remarks>
 public partial class MainWindow : Window
 {
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<MainWindow> _logger;
-    private IMediaPlayer? _player;
-    private IVideoSurface? _surface;
+    private readonly List<IVideoSurface> _surfaces = [];
+    private readonly List<IMediaPlayer> _players = [];
+    private SoakSampler? _sampler;
+    private DispatcherTimer? _sampleTimer;
     private DispatcherTimer? _exitTimer;
     private bool _isClosing;
 
@@ -39,6 +46,9 @@ public partial class MainWindow : Window
     /// a graceful shutdown that flushes the log, for autonomous/headless runs.</summary>
     public int ExitAfterSeconds { get; set; }
 
+    /// <summary>Set by <c>--soak</c>: two players, sampled into a CSV.</summary>
+    public SoakOptions? Soak { get; set; }
+
     public MainWindow(ILoggerFactory loggerFactory)
     {
         _loggerFactory = loggerFactory;
@@ -54,14 +64,6 @@ public partial class MainWindow : Window
 
         if (StartupFullscreen)
             WindowState = WindowState.FullScreen;
-
-        // Present via the compositor-interop zero-copy view: the hardware-decoded NV12
-        // frame stays on the GPU, is color-converted to BGRA, and is imported straight
-        // into Avalonia's compositor with no CPU round-trip.
-        _surface = new CompositionInteropVideoView();
-        VideoHost.Children.Add(_surface.Control);
-        var videoSink = _surface.AttachSink(_loggerFactory);
-        _logger.LogInformation("Presentation surface: compositor interop (zero-copy).");
 
         if (ExitAfterSeconds > 0)
         {
@@ -87,8 +89,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        StatusText.Text = $"Presenting {Path.GetFileName(StartupFilePath)} …";
-
         var hwMode = StartupHwMode?.Trim().ToLowerInvariant() switch
         {
             "disabled" or "software" => HardwareDecodeMode.Disabled,
@@ -98,18 +98,99 @@ public partial class MainWindow : Window
         _logger.LogInformation(
             "Hardware decode mode: {Mode} (from --hw-mode '{Raw}').", hwMode, StartupHwMode ?? "(unset)");
 
+        if (Soak is { } soak)
+        {
+            await StartSoakAsync(soak, hwMode);
+            return;
+        }
+
+        StatusText.Text = $"Presenting {Path.GetFileName(StartupFilePath)} …";
+        await StartPlayerAsync(StartupFilePath, hwMode, Host(VideoHost, column: null));
+    }
+
+    /// <summary>Starts both players, then samples them on the interval the options set.</summary>
+    private async Task StartSoakAsync(SoakOptions soak, HardwareDecodeMode hwMode)
+    {
+        var left = StartupFilePath!;
+        var right = soak.SecondFilePath is { } second && File.Exists(second) ? second : left;
+
+        var grid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,*"),
+        };
+        VideoHost.Children.Add(grid);
+
+        _sampler = new SoakSampler(soak.CsvPath, soak.Label, _logger);
+        StatusText.Text = $"Soak '{soak.Label}' → {soak.CsvPath}";
+        _logger.LogInformation(
+            "Soak '{Label}': left={Left}, right={Right}, every {N}s → {Csv}.",
+            soak.Label,
+            Path.GetFileName(left),
+            Path.GetFileName(right),
+            soak.SampleSeconds,
+            soak.CsvPath
+        );
+
+        var leftPlayer = await StartPlayerAsync(left, hwMode, Host(grid, column: 0));
+        var rightPlayer = await StartPlayerAsync(right, hwMode, Host(grid, column: 1));
+        if (leftPlayer is null || rightPlayer is null)
+            return;
+
+        _sampler.Watch("left", Path.GetFileName(left), leftPlayer);
+        _sampler.Watch("right", Path.GetFileName(right), rightPlayer);
+
+        _sampleTimer = new DispatcherTimer(
+            TimeSpan.FromSeconds(soak.SampleSeconds),
+            DispatcherPriority.Background,
+            (_, _) => StatusText.Text = _sampler?.Sample() ?? string.Empty
+        );
+        _sampleTimer.Start();
+    }
+
+    /// <summary>A panel inside <paramref name="parent"/>, in <paramref name="column"/> if it is a grid.</summary>
+    private static Panel Host(Panel parent, int? column)
+    {
+        if (column is null)
+            return parent;
+
+        var host = new Panel();
+        Grid.SetColumn(host, column.Value);
+        parent.Children.Add(host);
+        return host;
+    }
+
+    /// <summary>
+    /// Builds a zero-copy presenter inside <paramref name="host"/> and plays <paramref name="path"/>
+    /// through it, looping. Returns the player, or <see langword="null"/> when it could not start.
+    /// </summary>
+    private async Task<IMediaPlayer?> StartPlayerAsync(
+        string path,
+        HardwareDecodeMode hwMode,
+        Panel host
+    )
+    {
+        // Present via the compositor-interop zero-copy view: the hardware-decoded NV12
+        // frame stays on the GPU, is color-converted to BGRA, and is imported straight
+        // into Avalonia's compositor with no CPU round-trip.
+        IVideoSurface surface = new CompositionInteropVideoView();
+        _surfaces.Add(surface);
+        host.Children.Add(surface.Control);
+        var videoSink = surface.AttachSink(_loggerFactory);
+        _logger.LogInformation("Presentation surface: compositor interop (zero-copy).");
+
         try
         {
-            _player = await FrameFlowPlayer
-                .Open(StartupFilePath)
+            var player = await FrameFlowPlayer
+                .Open(path)
                 .WithVideoSink(videoSink)
                 .WithHardwareDecode(hwMode)
-                .WithHardwareFrames(_surface.PrefersHardwareFrames)
+                .WithHardwareFrames(surface.PrefersHardwareFrames)
                 .WithRepeatMode(RepeatMode.One)
                 .WithLogger(_loggerFactory)
                 .BuildPlayerAsync();
+            _players.Add(player);
 
-            var played = await _player.PlayAsync();
+            var played = await player.PlayAsync();
             if (!played.IsSuccess)
             {
                 _logger.LogError(
@@ -119,15 +200,17 @@ public partial class MainWindow : Window
                     played.Error.Message
                 );
                 StatusText.Text = $"Refused — {played.Error.Message}";
-                return;
+                return null;
             }
 
             _logger.LogInformation("Playback started on the zero-copy composition-interop sink.");
+            return player;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Zero-copy playback failed to start (HW D3D11VA decode required).");
             StatusText.Text = "Failed — see log. (HW D3D11VA decode required for this spike.)";
+            return null;
         }
     }
 
@@ -139,16 +222,27 @@ public partial class MainWindow : Window
         _isClosing = true;
         Closing -= OnWindowClosing;
         _exitTimer?.Stop();
+        _sampleTimer?.Stop();
 
-        if (_player is not null)
+        // A last sample, so a run that ends mid-window still records what that window did.
+        _sampler?.Sample();
+        _sampler?.Dispose();
+        _sampler = null;
+
+        foreach (var player in _players)
         {
-            try { await _player.DisposeAsync(); }
+            try { await player.DisposeAsync(); }
             catch (Exception ex) { _logger.LogWarning(ex, "Player teardown threw"); }
-            _player = null;
         }
+        _players.Clear();
 
-        if (_surface is IAsyncDisposable surfaceDisposable)
-            await surfaceDisposable.DisposeAsync();
+        foreach (var surface in _surfaces)
+        {
+            if (surface is IAsyncDisposable surfaceDisposable)
+                await surfaceDisposable.DisposeAsync();
+        }
+        _surfaces.Clear();
+
         _logger.LogInformation("Shutdown complete; flushing log.");
         _loggerFactory.Dispose();
         Close();

@@ -36,6 +36,7 @@ public class App : Application
             var exitAfter = int.TryParse(GetArg(args, "--exit-after"), out var s) ? s : 0;
             var hwMode = GetArg(args, "--hw-mode");
             var fullscreen = args.Contains("--fullscreen");
+            var soak = args.Contains("--soak") ? ParseSoak(args) : null;
 
             // Build the logger here (before the window shows) so the bootstrap
             // result and any window-creation problems are captured even if the
@@ -62,10 +63,29 @@ public class App : Application
                 ExitAfterSeconds = exitAfter,
                 StartupHwMode = hwMode,
                 StartupFullscreen = fullscreen,
+                Soak = soak,
             };
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>
+    /// Reads the soak flags: <c>--second &lt;path&gt;</c> for the right pane's clip,
+    /// <c>--sample &lt;seconds&gt;</c> for the sampling interval (60 by default),
+    /// <c>--csv &lt;name|path&gt;</c> for the samples (a bare name lands beside the logs), and
+    /// <c>--label &lt;name&gt;</c> for the name every row carries.
+    /// </summary>
+    private static SoakOptions ParseSoak(string[] args)
+    {
+        var label = GetArg(args, "--label") ?? "soak";
+        var csv = GetArg(args, "--csv") ?? $"{label}.csv";
+        return new SoakOptions(
+            SecondFilePath: GetArg(args, "--second"),
+            SampleSeconds: int.TryParse(GetArg(args, "--sample"), out var s) && s > 0 ? s : 60,
+            CsvPath: ExampleLogPaths.Resolve(csv),
+            Label: label
+        );
     }
 
     private static string? GetArg(string[] args, string name)
