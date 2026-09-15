@@ -125,6 +125,29 @@ public sealed class SingleSourceAsAQueueOfOneTests : IClassFixture<FfmpegBootstr
         Assert.Empty(run.Errors);
     }
 
+    [RequiresFfmpegAndCorpusFact]
+    public async Task AReload_ReplacesTheQueue_SoNothingEnqueuedBeforeItSurvives()
+    {
+        // Every load but a replay makes the loaded source the queue's only item. A reload that
+        // kept the queue would play an item enqueued before it, which is not what the caller
+        // asked for.
+        var source = SourceOf(ShortClip);
+        await using var run = PlaylistRun.Create([source], RepeatMode.Off, asSingleSource: true);
+        await run.LoadAsync();
+
+        run.Coordinator.Enqueue(SourceOf(LongClip));
+        Assert.True((await run.Controller.UnloadAsync()).IsSuccess);
+        await run.LoadAsync();
+
+        // The load takes the item it will start with, so the current item says what the reload
+        // plays. A kept queue would have taken the enqueued item instead.
+        var snapshot = run.Coordinator.Snapshot();
+        Assert.Same(source, snapshot.Current?.Source);
+        Assert.Empty(snapshot.Queued);
+        var only = Assert.Single(snapshot.Playlist);
+        Assert.Same(source, only.Source);
+    }
+
     private static IMediaSource SourceOf(string clip)
     {
         var path = IntegrationTestEnvironment.GetCorpusFile(clip);

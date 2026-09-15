@@ -238,29 +238,32 @@ internal sealed class PlaylistCoordinator
         Apply(q => q.ItemFailed(playedFor, itemLength));
 
     /// <summary>
-    /// Makes <paramref name="source"/> the only item, in a new queue with the same repeat mode.
-    /// The queue is kept when it already plays that source: a replay from <c>Ended</c> reloads the
-    /// source it is playing, and anything enqueued meanwhile still plays.
+    /// Makes <paramref name="source"/> the only item, in a new queue with the same repeat mode. A
+    /// replay from <c>Ended</c> keeps the queue instead, so the item it reserved is what plays.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// A reserved item is the replay's marker: <see cref="ReserveStart"/> is called on the old
+    /// session, by the controller's replay and by nothing else, and the new session's first take
+    /// consumes it. Every other load replaces the queue, so an ordinary reload plays the source it
+    /// was given and nothing that was enqueued before it.
+    /// </para>
+    /// <para>
     /// A new queue has started nothing, so a first item that cannot be opened fails the load, as it
-    /// does on a controller's first load. Called before the new session attaches, so no handler is
-    /// poked.
+    /// does on a controller's first load. A replay whose load fails leaves the reservation behind,
+    /// and the controller is then in <c>Error</c>, which takes no further load.
+    /// </para>
+    /// <para>Called before the new session attaches, so no handler is poked.</para>
     /// </remarks>
     internal void LoadSource(IMediaSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
         lock (_gate)
         {
-            if (Plays(_queue, source))
+            if (_queue.ReservedStart is not null)
                 return;
             _queue = PlaylistQueue.Create([new PlaylistItem(source)], _queue.Repeat);
         }
-
-        // The queue's only playlist item is this source, or a replay has reserved an item of it.
-        static bool Plays(PlaylistQueue queue, IMediaSource source) =>
-            (queue.Playlist is [{ } only] && ReferenceEquals(only.Source, source))
-            || (queue.ReservedStart is { } reserved && ReferenceEquals(reserved.Source, source));
     }
 
     /// <summary>Whether any item has started since the player was created.</summary>
