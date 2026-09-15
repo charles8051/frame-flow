@@ -161,9 +161,16 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
     /// Holds the next <paramref name="op"/> on a runtime of <paramref name="source"/> until
     /// released.
     /// </summary>
-    public Hold Hold(string source, ItemOp op)
+    /// <param name="source">The source whose runtime's call is held.</param>
+    /// <param name="op">The call to hold.</param>
+    /// <param name="runAdvancesFirst">
+    /// For a seek or rewind: advance the run number before holding, as <see cref="SubstrateSession"/>
+    /// does once it has stopped the run it interrupts. A seek held this way and then cancelled leaves
+    /// the new run stopped. Without it, the hold is before the run advances.
+    /// </param>
+    public Hold Hold(string source, ItemOp op, bool runAdvancesFirst = false)
     {
-        var hold = new Hold();
+        var hold = new Hold(runAdvancesFirst);
         lock (_gate)
         {
             _holds.Add(hold);
@@ -252,18 +259,48 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
         CancellationToken cancellationToken
     )
     {
-        Script? script = null;
-        lock (_gate)
-        {
-            _log.Add($"{item.Name}.{line}");
-            if (_scripts.TryGetValue((item.Source, op), out var queue) && queue.Count > 0)
-                script = queue.Dequeue();
-        }
-
+        var script = TakeScript(item, op, line);
         if (script?.Error is { } error)
             throw error;
         if (script?.Hold is { } hold)
             await hold.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    // A seek or rewind follows the model through the point where its run advances: before a hold
+    // that asks for it, or once the call completes.
+    private async ValueTask RepositionAsync(
+        FakeItem item,
+        ItemOp op,
+        string line,
+        CancellationToken cancellationToken
+    )
+    {
+        var script = TakeScript(item, op, line);
+        if (script?.Error is { } error)
+            throw error;
+
+        if (script?.Hold is { RunAdvancesFirst: true } advancing)
+        {
+            item.Follow(m => m.RunAdvanced());
+            await advancing.WaitAsync(cancellationToken).ConfigureAwait(false);
+            item.Follow(m => m.Relaunched());
+            return;
+        }
+
+        if (script?.Hold is { } hold)
+            await hold.WaitAsync(cancellationToken).ConfigureAwait(false);
+        item.Follow(m => m.Repositioned());
+    }
+
+    private Script? TakeScript(FakeItem item, ItemOp op, string line)
+    {
+        lock (_gate)
+        {
+            _log.Add($"{item.Name}.{line}");
+            return _scripts.TryGetValue((item.Source, op), out var queue) && queue.Count > 0
+                ? queue.Dequeue()
+                : null;
+        }
     }
 
     private sealed record Script(Hold? Hold, Exception? Error);
@@ -282,14 +319,15 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
     }
 
     /// <summary>
-    /// An item runtime that records each call. A seek or a rewind advances the run number when it
-    /// completes, as <see cref="SubstrateSession"/> advances it once the run it interrupts has
-    /// stopped; a hold on either is a hold before that point.
+    /// An item runtime that records each call, and follows <see cref="PlaylistItemModel"/> when a
+    /// call completes. A seek or a rewind advances the run number then, as
+    /// <see cref="SubstrateSession"/> advances it once the run it interrupts has stopped; a hold on
+    /// either is a hold before that point.
     /// </summary>
     internal sealed class FakeItem(PlaylistSessionRig rig, SessionCallbacks callbacks)
         : IPlaylistItemRuntime
     {
-        private int _runNumber;
+        private PlaylistItemModel _model = PlaylistItemModel.Opened;
 
         public string Name { get; private set; } = "?";
 
@@ -299,7 +337,7 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
 
         public TimeSpan Duration => MediaInfo?.Duration ?? TimeSpan.Zero;
 
-        public int RunNumber => Volatile.Read(ref _runNumber);
+        public int RunNumber => Volatile.Read(ref _model).Run;
 
         /// <summary>
         /// Raises end-of-stream, as the item's last worker does when the run drains.
@@ -323,29 +361,39 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
         public ValueTask WarmUpAsync(CancellationToken cancellationToken = default) =>
             rig.PerformAsync(this, ItemOp.WarmUp, "WarmUp", cancellationToken);
 
-        public ValueTask PlayAsync(CancellationToken cancellationToken = default) =>
-            rig.PerformAsync(this, ItemOp.Play, "Play", cancellationToken);
+        public async ValueTask PlayAsync(CancellationToken cancellationToken = default)
+        {
+            await rig.PerformAsync(this, ItemOp.Play, "Play", cancellationToken);
+            Follow(m => m.Played());
+        }
 
-        public ValueTask PauseAsync(CancellationToken cancellationToken = default) =>
-            rig.PerformAsync(this, ItemOp.Pause, "Pause", cancellationToken);
+        public async ValueTask PauseAsync(CancellationToken cancellationToken = default)
+        {
+            await rig.PerformAsync(this, ItemOp.Pause, "Pause", cancellationToken);
+            Follow(m => m.PausedNow());
+        }
 
         public async ValueTask SeekAsync(
             TimeSpan position,
             CancellationToken cancellationToken = default
         )
         {
-            await rig.PerformAsync(this, ItemOp.Seek, $"Seek({position})", cancellationToken);
-            Interlocked.Increment(ref _runNumber);
+            await rig.RepositionAsync(this, ItemOp.Seek, $"Seek({position})", cancellationToken);
         }
 
         public async ValueTask RewindToStartAsync(CancellationToken cancellationToken = default)
         {
-            await rig.PerformAsync(this, ItemOp.Rewind, "Rewind", cancellationToken);
-            Interlocked.Increment(ref _runNumber);
+            await rig.RepositionAsync(this, ItemOp.Rewind, "Rewind", cancellationToken);
         }
 
-        public ValueTask DisposeAsync() =>
-            rig.PerformAsync(this, ItemOp.Dispose, "Dispose", CancellationToken.None);
+        public async ValueTask DisposeAsync()
+        {
+            await rig.PerformAsync(this, ItemOp.Dispose, "Dispose", CancellationToken.None);
+            Follow(m => m.DisposedNow());
+        }
+
+        internal void Follow(Func<PlaylistItemModel, PlaylistItemModel> transition) =>
+            Volatile.Write(ref _model, transition(Volatile.Read(ref _model)));
     }
 
     private sealed class FakeClock(PlaylistSessionRig rig) : IPlaybackClock
@@ -466,9 +514,12 @@ internal enum ItemOp
 /// <summary>
 /// Holds one item call until the test releases it, or the call's token is cancelled.
 /// </summary>
-internal sealed class Hold
+internal sealed class Hold(bool runAdvancesFirst = false)
 {
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
+
+    /// <summary>For a seek or rewind: whether the run advances before the hold.</summary>
+    public bool RunAdvancesFirst => runAdvancesFirst;
 
     private readonly TaskCompletionSource _entered = new(
         TaskCreationOptions.RunContinuationsAsynchronously

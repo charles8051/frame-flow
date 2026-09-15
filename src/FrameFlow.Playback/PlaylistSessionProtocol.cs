@@ -42,7 +42,8 @@ namespace FrameFlow.Playback;
 /// <b>Failures.</b> An item that cannot be opened, warmed or started, or faults while it plays, is
 /// reported and skipped. <see cref="PlaylistFailureGuard"/> decides when the session gives up and
 /// hands the controller a fatal error instead. A fault before the first Play is the first item
-/// failing to start, and goes to the controller as a single source's would.
+/// failing to start, and goes to the controller as a single source's would. Once the session has given
+/// up, a command completes as a no-op, as it does during disposal.
 /// </para>
 /// <para>
 /// <b>Disposal.</b> While <see cref="PlaylistStepContext.Disposing"/> is set, a command completes as
@@ -101,6 +102,10 @@ internal static class PlaylistSessionProtocol
         public PlaylistQueue Queue { get; private set; } = queue;
 
         private bool Disposing => context.Disposing;
+
+        // Once the session is disposing, or has handed the controller a fatal error, the controller is
+        // about to dispose it. A command then completes as a no-op, so nothing starts an item.
+        private bool Stopping => Disposing || State.GaveUp;
 
         public PlaylistSessionStep Build() =>
             new(_actions.ToImmutable(), _awaited, _awaited is null && _done);
@@ -200,7 +205,7 @@ internal static class PlaylistSessionProtocol
 
         private void OnWarmUp(int command)
         {
-            if (Disposing)
+            if (Stopping)
             {
                 Complete(command, PlaylistCommandResult.Ok);
                 return;
@@ -223,7 +228,7 @@ internal static class PlaylistSessionProtocol
         {
             // A Play at Ended was dispatched before the controller saw the end-of-stream on its
             // way, and the controller ends when it does.
-            if (Disposing || State.Run == PlaylistRunState.Ended)
+            if (Stopping || State.Run == PlaylistRunState.Ended)
             {
                 Complete(command, PlaylistCommandResult.Ok);
                 return;
@@ -260,7 +265,7 @@ internal static class PlaylistSessionProtocol
 
         private void OnPause(int command)
         {
-            if (Disposing)
+            if (Stopping)
             {
                 Complete(command, PlaylistCommandResult.Ok);
                 return;
@@ -288,7 +293,7 @@ internal static class PlaylistSessionProtocol
             // A seek out of Ended has already warmed up, which left Ended. A seek at Ended was
             // dispatched before the controller saw the end-of-stream, and must not start the kept
             // item.
-            if (Disposing || State.Item is null || State.Run == PlaylistRunState.Ended)
+            if (Stopping || State.Item is null || State.Run == PlaylistRunState.Ended)
             {
                 Complete(command, PlaylistCommandResult.Ok);
                 return;
@@ -302,7 +307,7 @@ internal static class PlaylistSessionProtocol
 
         private void OnRewind(int command)
         {
-            if (Disposing || State.Item is null)
+            if (Stopping || State.Item is null)
             {
                 Complete(command, PlaylistCommandResult.Ok);
                 return;

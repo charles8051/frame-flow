@@ -3,8 +3,8 @@
 ## Status
 
 Proposed (2026-09-14). Draft pending number assignment. Revised the same day after an independent
-review; *Revision history* says what changed. **Steps 1 to 3 of the migration are implemented**
-(decision 8, *As implemented*). Step 4 is not.
+review; *Revision history* says what changed. **All four steps of the migration are implemented**
+(decision 8, *As implemented*).
 
 This record moves the playlist player's decision logic into a pure core. ADR-0055 did the same for
 the codec loop, and `PlaybackProtocol` for the controller's main state machine. The record:
@@ -336,7 +336,7 @@ are chosen per defect class, starting from the transcripts.
    that it finds one.
 
 **No behaviour is meant to change.** Taking one input at a time narrows today's orderings. Every
-ordering the new shell produces is one today's code allows. Four differences are observable, and
+ordering the new shell produces is one today's code allows. Five differences are observable, and
 none changes a documented contract:
 - **The subscriber's thread.** `SourceTransitioned` subscribers always run on the reader's thread.
   Today they can run on the controller's dispatch-loop continuation, when an advance runs inside
@@ -344,6 +344,9 @@ none changes a documented contract:
 - **Detach timing.** The session detaches before it drains, as today.
 - **A subscriber's jump.** A jump requested from a `SourceTransitioned` subscriber is still taken in
   the same advance, before a waiting Pause, through `Continue`.
+- **A command after giving up.** Step 4's explorer found that a command could still start an item
+  after the session had handed the controller a fatal error. Once the session has given up, a command
+  completes as a no-op.
 - **Disposal during an open or warm-up.** Today `DisposeAsync` waits on the gate until an advance's
   open or warm-up finishes, because those calls take no token. The new shell cancels them (decision
   6). A disposal that would have waited on a stuck open now ends it.
@@ -474,6 +477,63 @@ record.
   - The rig's deferred hops became deferred deliveries. A held delivery is posted after the later
     call, with what was read when it was raised.
 
+#### As implemented: step 4
+
+- **The item model.** `PlaylistItemModel`, in `FrameFlow.Playback.Tests`, is the model decision 7
+  describes. The rig's fake runtimes follow it when a call completes, and the explorer draws its
+  outcomes from it.
+- **The explorer.** `PlaylistSessionExplorer` runs the shell's loop over the core, one step per move,
+  so events land between steps. A state of the search holds:
+  - the core's state and queue;
+  - the channel, and the input the reader is handling with what it waits for;
+  - the item runtime, as the model describes it;
+  - the controller's progress through its calls, and the events still to happen;
+  - what has been reported.
+- **The moves.** From each state it explores every move that can come next:
+  - The reader takes its next step: the next input, a continue, or one outcome of the action it
+    awaits. An action succeeds, and can fail where the scenario allows it. It can be cancelled during
+    disposal, or when the scenario lets the controller cancel its commands. A seek or rewind can be
+    cancelled before or after the run advances.
+  - The controller makes its next call, once its previous call has completed.
+  - One of the scenario's events happens: a skip, a jump, removing the current item, an enqueue, an
+    end-of-stream from a launched run, a worker fault, or disposal.
+- **Pruning and quiescence.** A visited set holds a SHA-256 prefix of each state, including the
+  events still to happen. Every state where the reader is idle and the channel is empty is a point of
+  quiescence, and the liveness invariants are checked there.
+- **Scenarios**, in `PlaylistSessionExplorerTests`, start from the transcripts' defect classes:
+  - the end of the queue;
+  - seeks and a stale end-of-stream;
+  - jumps during advances;
+  - replay under `One`;
+  - failures;
+  - disposal;
+  - edits;
+  - a seek before the first play.
+
+  The largest has about 16,000 states. All of them, and the seeded defects, run in about a second in
+  the unit suite.
+- **The invariants.** They are decision 7's, as the code checks them, with these differences:
+  - A changed item must be reported with its transition straight after it, and no step raises two
+    transitions. That stands in for "each item that starts raises one transition".
+  - A command must not complete in a step that awaits an action or expects a continue. That stands in
+    for "none completes before the advance it triggers has settled".
+  - Giving up is checked as "nothing starts an item after a fatal report". The ninth failure in a row
+    is not counted; `PlaylistQueueTests` and `PlaylistFailureGuardTests` cover the count.
+  - Three invariants were added. An advance must not open an item before the first play. An item
+    whose worker faulted must not be rewound in place. An item call needs an opened runtime.
+  - A latched skip must be consumed by the first Play the session acts on. A Play during disposal, or
+    after the session has given up, is a no-op, and the latch waits for a later session.
+  - The checks at quiescence while playing are skipped once a command has failed or been cancelled.
+    The controller is then in `Error`, or not playing.
+- **What it found.** A command could still start an item after the session had given up. For
+  example, a fault before the first play hands the controller a fatal error, but a Play the controller
+  sent before it saw that error then played the item. The gated session did the same. The core now
+  completes every command as a no-op once it has given up, as it does during disposal.
+  `FaultBeforeTheFirstPlay_IsFatal_AndNothingAdvances` and
+  `AfterGivingUp_NotificationsAreDropped_AndCommandsComplete` pin it.
+- **The expected failure** is found twice: a seek before the first play, and a seek after a skip
+  while paused, which leaves the next item open and unplayed.
+
 ### 9. What stays the same
 
 - `IPlaybackSession`, `PlaybackControllerCore`, `PlaybackProtocol`, `SubstrateSession` and the public
@@ -568,7 +628,11 @@ handlers.
 - **One protocol for a single player type.** Whether the controller's and the session's protocols
   merge when a single source runs on the playlist session.
 - **The explorer's bounds.** How many inputs a scenario may hold before enumeration is too slow for
-  the unit suite, and whether larger bounds run in a separate CI job.
+  the unit suite, and whether larger bounds run in a separate CI job. Today's scenarios run in about
+  a second, so they stay in the unit suite.
+- **Rules the explorer does not see.** Some rules decide which item plays or what is reported, and
+  breaking them breaks no invariant. They are pinned by the transcripts and tables. Step 4's
+  *Validation* lists which rules those are.
 
 ## Validation
 
@@ -658,6 +722,44 @@ handlers.
   - **The seeded defect.** The explorer is run with the rule that keeps `Ended` against a queued Play
     removed from the core. It must report an ordering that breaks the invariant on the end.
   - **The unchanged core.** It then passes, apart from the expected failure named under *Presenting*.
+  - **As implemented.**
+    - **The seeded defects.** `ASeededDefect_IsFound` removes a rule at the core's boundary, by
+      changing the state or input one step sees, and requires the invariant that rule keeps to break.
+      It covers four defects:
+      - a Play at `Ended` that plays: the invariant on the end;
+      - an end-of-stream whose run is not compared: an end-of-stream from a replaced run has an effect;
+      - a fault whose generation is not compared: a notification from a replaced runtime has an
+        effect;
+      - a jump request that starts no advance: a jump is left pending while the session could take it.
+    - **The unchanged core.** `TheCore_BreaksNoInvariant_OtherThanTheExpectedFailure` passes for every
+      scenario, and `TheExpectedFailure_IsFound` finds the expected failure.
+    - **Rules removed from the core.** Step 3's rules were removed again, one at a time, with the
+      explorer's tests run alone. The explorer caught ten of the nineteen:
+
+      | Rule removed | Explorer alone |
+      |---|---|
+      | A fault before the first play is fatal (#191) | caught: an advance opens an item before the first play |
+      | A Play at `Ended` does nothing (#194) | caught |
+      | A Pause is recorded only from `Playing` (#194) | caught |
+      | A seek at `Ended` does nothing (#197) | caught |
+      | `Ended` is left only once the warm-up has finished (#194) | not caught |
+      | Only an item that has played is rewound in place (#194) | caught |
+      | A failed deferred start is handled as a failed start (#194) | not caught |
+      | A cancelled Play is not an item failure (#194) | not caught |
+      | An advance takes a pending jump once its item has started (#199) | not caught |
+      | A jump request acts only on a jump still pending (#199) | not caught |
+      | A jump request starts an advance (#199) | caught |
+      | An end-of-stream from a replaced run is dropped (#197) | caught |
+      | A skip tagged with a replaced generation is dropped | not caught |
+      | A skip requested at `Ended` is dropped | not caught |
+      | A command keeps the run number its item operation reports | caught |
+      | Only a skip pauses an item that ends the queue | not caught |
+      | A failed item is never rewound in place | caught: an item whose worker faulted is rewound in place |
+      | A skip before the first Play is latched during disposal | not caught |
+      | Once the session has given up, a command is a no-op | caught |
+
+      Every rule the explorer misses fails a transcript or table test when removed. The rules it
+      misses decide which item plays, or when, and breaking them breaks no safety invariant.
 
 ## Revision history
 
@@ -732,3 +834,10 @@ handlers.
     Each is fixed, with a test where one can pin it.
   - **A correction.** The step 1 text on what step 3 changes said a deferred hop would become an input
     posted before the later call. It becomes a delivery posted after it, and that text is corrected.
+- **Amendment (2026-09-15), step 4 implemented.** `PlaylistSessionExplorer` enumerates orderings of
+  scenarios over the core, with `PlaylistItemModel` shared with the rig's fakes. The unchanged core
+  breaks no invariant apart from the expected failure, and four seeded defects are each found.
+  - **What the explorer found.** A command could start an item after the session had given up. Commands
+    are now no-ops once it has.
+  - **What changed from decision 7.** It added three invariants, restated two in checkable form, and
+    left the ninth-failure count to the queue's tests. *As implemented: step 4* lists each.

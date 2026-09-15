@@ -49,6 +49,8 @@ public sealed class PlaylistSessionTranscriptTests
     /// <summary>
     /// #191 (#180): a first item that faulted before the first play was skipped while the
     /// controller was still loading. It goes to the controller as a single source's fault would.
+    /// A Play the controller sent before it saw that error does not start the item; the explorer in
+    /// step 4 of the protocol ADR found that one did.
     /// </summary>
     [Fact]
     public async Task FaultBeforeTheFirstPlay_IsFatal_AndNothingAdvances()
@@ -59,6 +61,11 @@ public sealed class PlaylistSessionTranscriptTests
         await rig.SettleAsync();
 
         Assert.Equal(["ctl.Fatal(boom)"], rig.TakeLog());
+
+        await rig.Session.PlayAsync();
+        await rig.SettleAsync();
+
+        Assert.Empty(rig.TakeLog());
     }
 
     /// <summary>
@@ -508,6 +515,32 @@ public sealed class PlaylistSessionTranscriptTests
             async () => await rig.Session.SeekAsync(TimeSpan.FromSeconds(1))
         );
         Assert.Null(rig.Session.MediaInfo);
+    }
+
+    /// <summary>
+    /// #197 (#170), decision 5 of the protocol ADR: a seek cancelled after it has advanced the run
+    /// still reports the new run, so an end-of-stream raised by the run before the seek is stale.
+    /// </summary>
+    [Fact]
+    public async Task EndOfStreamBeforeASeekCancelledAfterTheRunAdvanced_IsDropped()
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b");
+
+        rig.DeferHops();
+        rig.Runtime("a#1").RaiseEndOfStream();
+
+        var hold = rig.Hold("a", ItemOp.Seek, runAdvancesFirst: true);
+        using var cts = new CancellationTokenSource();
+        var seek = rig.Session.SeekAsync(TimeSpan.FromSeconds(1), cts.Token);
+        await hold.EnteredAsync();
+        await cts.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await seek);
+
+        rig.StartDeferredHops();
+        await rig.SettleAsync();
+
+        Assert.Equal(["a#1.Seek(00:00:01)"], rig.TakeLog());
+        Assert.Equal(1, rig.Runtime("a#1").RunNumber);
     }
 
     private static readonly string[] JumpTakenBeforeTheWaitingPause =
