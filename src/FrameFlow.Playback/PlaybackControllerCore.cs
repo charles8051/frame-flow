@@ -10,7 +10,6 @@ using FrameFlow.Playback.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Stateless;
-using Stateless.Graph;
 
 namespace FrameFlow.Playback;
 
@@ -1640,30 +1639,6 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             return;
 
         await session.PlayAsync().ConfigureAwait(false);
-    }
-
-    // ── DOT graph diagnostics (R017) ──────────────────────────────────
-
-    /// <summary>
-    /// Generates DOT graph strings for all three state machines. The seeking and repeat
-    /// regions render from their live Stateless <see cref="UmlDotGraph"/>; the primary
-    /// playback graph renders from the pure <see cref="PlaybackProtocol"/> transition
-    /// table (its authoritative source now that the Stateless playback machine is retired).
-    /// Useful for visualizing configured transitions during development and diagnostics.
-    /// </summary>
-    /// <returns>
-    /// A <see cref="DotGraphSet"/> containing named DOT strings for the
-    /// playback, seeking, and repeat state machines.
-    /// </returns>
-    public DotGraphSet GenerateDotGraphs()
-    {
-        LogDotGraphGeneration();
-
-        var playbackDot = PlaybackProtocol.ToDotGraph();
-        var seekingDot = UmlDotGraph.Format(_seeking.GetInfo());
-        var repeatDot = UmlDotGraph.Format(_repeat.GetInfo());
-
-        return new DotGraphSet(playbackDot, seekingDot, repeatDot);
     }
 
     // ── IAsyncDisposable ───────────────────────────────────────────────

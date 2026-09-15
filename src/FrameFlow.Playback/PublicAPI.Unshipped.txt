@@ -70,14 +70,6 @@ FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot.SessionGeneration.get
 FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot.SessionGeneration.init -> void
 FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot.State.get -> FrameFlow.Media.PlaybackState
 FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot.State.init -> void
-FrameFlow.Playback.DotGraphSet
-FrameFlow.Playback.DotGraphSet.DotGraphSet(string! Playback, string! Seeking, string! Repeat) -> void
-FrameFlow.Playback.DotGraphSet.Playback.get -> string!
-FrameFlow.Playback.DotGraphSet.Playback.init -> void
-FrameFlow.Playback.DotGraphSet.Repeat.get -> string!
-FrameFlow.Playback.DotGraphSet.Repeat.init -> void
-FrameFlow.Playback.DotGraphSet.Seeking.get -> string!
-FrameFlow.Playback.DotGraphSet.Seeking.init -> void
 FrameFlow.Playback.FrameFlowPlaybackServiceCollectionExtensions
 FrameFlow.Playback.IPlaybackClock
 FrameFlow.Playback.IPlaybackClock.Pause() -> void

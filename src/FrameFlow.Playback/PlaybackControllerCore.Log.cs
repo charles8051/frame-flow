@@ -254,14 +254,6 @@ internal sealed partial class PlaybackControllerCore
     [LoggerMessage(Level = LogLevel.Debug, Message = "Position ticker stopped")]
     private partial void LogPositionTickerStopped();
 
-    // ── DOT graph diagnostics (Debug) ─────────────────────────────────
-
-    [LoggerMessage(
-        Level = LogLevel.Debug,
-        Message = "Generating DOT graphs for all state machines"
-    )]
-    private partial void LogDotGraphGeneration();
-
     // ── Dispatch loop (Trace) ──────────────────────────────────────────
 
     [LoggerMessage(Level = LogLevel.Trace, Message = "Dispatching command: {CommandType}")]
