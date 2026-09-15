@@ -30,8 +30,20 @@ if [ "${1:-}" = "--build" ]; then
   dotnet build FrameFlow.slnx -nologo -clp:NoSummary -v:q
 fi
 
-# Discover test projects via the slnx → /tests/ convention.
-projects=( tests/*/*.csproj )
+# Discover test projects via the slnx → /tests/ convention. A support library
+# under tests/ sets <IsTestProject>false</IsTestProject>; `dotnet test` runs
+# nothing for it and prints no summary, so the worker would flag it NOSUMMARY.
+# Exclude on an explicit false rather than include on an explicit true: a new
+# test project that omits the property then still runs, and fails loudly if it
+# cannot start, instead of dropping out of the run unnoticed.
+projects=()
+for csproj in tests/*/*.csproj; do
+  if grep -qiE '<IsTestProject>[[:space:]]*false[[:space:]]*</IsTestProject>' "$csproj"; then
+    echo "==> skipping ${csproj} (IsTestProject=false)"
+  else
+    projects+=( "$csproj" )
+  fi
+done
 
 echo "==> running ${#projects[@]} test assemblies in parallel"
 start=$(date +%s)
