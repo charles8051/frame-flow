@@ -27,19 +27,19 @@ namespace FrameFlow.Playback.Tests;
 /// A request that has not yet had an effect adds nothing.
 /// </para>
 /// <para>
-/// <b>Scheduling.</b> The session's hops run inline, on the thread that asked for them, up to their
-/// first await that does not complete at once. That is a hop that starts at once. Fake item calls
-/// complete at once unless a test holds or fails them, so an advance with nothing held runs to its
-/// end before the call that caused it returns. <see cref="SettleAsync"/> waits for every hop to
-/// finish, after which nothing more happens until the test acts.
+/// <b>Scheduling.</b> The session's reader takes one input at a time from its channel. Item
+/// notifications and the coordinator's requests are delivered through the rig's scheduler, which
+/// posts them at once. Fake item calls complete at once unless a test holds or fails them.
+/// <see cref="SettleAsync"/> waits until the reader has handled every input posted, after which
+/// nothing more happens until the test acts. While the reader awaits a held call, an input posted
+/// meanwhile waits in the channel.
 /// </para>
 /// <para>
-/// <b>Deferred hops.</b> On the thread pool a hop can also start after a later call. That differs
-/// from making the request later only in what the session reads when the request is made: an
-/// end-of-stream's run number, and the item generation an end-of-stream or skip is tagged with.
-/// <see cref="DeferHops"/> and <see cref="StartDeferredHops"/> reproduce it. A single reader takes
-/// inputs in the order they were posted, so step 3 of the protocol ADR does not produce these
-/// orderings, and its core has to carry those values to keep their outcome.
+/// <b>Deferred delivery.</b> A notification can reach the session after a later call, with what was
+/// read when it was raised: an end-of-stream's run number, and the generation an end-of-stream or
+/// skip is tagged with. <see cref="DeferHops"/> holds deliveries back and
+/// <see cref="StartDeferredHops"/> posts them, in order. Before step 3 of the protocol ADR these
+/// were thread-pool hops that started late; the names are kept from then.
 /// </para>
 /// </remarks>
 internal sealed class PlaylistSessionRig : IAsyncDisposable
@@ -128,14 +128,19 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
     }
 
     /// <summary>
-    /// Waits until every hop the session has started has finished. A deferred hop has not started.
+    /// Waits until the session has handled every input posted to it. A deferred delivery has not
+    /// been posted.
     /// </summary>
-    public Task SettleAsync() => _scheduler.IdleAsync().WaitAsync(Bound);
+    public async Task SettleAsync()
+    {
+        await _scheduler.IdleAsync().WaitAsync(Bound);
+        await Session.WhenIdleAsync().WaitAsync(Bound);
+    }
 
-    /// <summary>Queues the session's hops from now on instead of starting them.</summary>
+    /// <summary>Holds the session's deliveries from now on instead of posting them.</summary>
     public void DeferHops() => _scheduler.Defer();
 
-    /// <summary>Starts the deferred hops in order, and starts later hops at once again.</summary>
+    /// <summary>Posts the held deliveries in order, and posts later ones at once again.</summary>
     public void StartDeferredHops() => _scheduler.StartDeferred();
 
     /// <summary>The runtime named in the transcript, such as <c>a#1</c>.</summary>
@@ -363,9 +368,9 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
     }
 
     /// <summary>
-    /// Runs each hop on the calling thread until its first await that does not complete at once,
-    /// and keeps its task so <see cref="IdleAsync"/> can wait for it. While deferring, it queues
-    /// hops instead, until <see cref="StartDeferred"/>.
+    /// Runs each delivery on the calling thread, and keeps its task so <see cref="IdleAsync"/> can
+    /// wait for it. While deferring, it queues deliveries instead, until
+    /// <see cref="StartDeferred"/>.
     /// </summary>
     private sealed class InlineScheduler : IPlaylistSessionScheduler
     {
@@ -394,8 +399,8 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
         }
 
         /// <summary>
-        /// Stops deferring, and starts the queued hops in the order they were scheduled. A hop
-        /// they schedule starts at once, before the rest of the queue.
+        /// Stops deferring, and runs the queued deliveries in the order they were scheduled. A
+        /// delivery they schedule runs at once, before the rest of the queue.
         /// </summary>
         public void StartDeferred()
         {
