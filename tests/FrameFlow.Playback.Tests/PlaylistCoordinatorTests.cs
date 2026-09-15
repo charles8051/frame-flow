@@ -36,6 +36,20 @@ public sealed class PlaylistCoordinatorTests
     }
 
     [Fact]
+    public void AddAndEnqueue_RejectANullSource_AndLeaveTheQueueAlone()
+    {
+        var coord = new PlaylistCoordinator([S("a")], RepeatMode.Off);
+        var before = coord.Queue;
+
+        var add = Assert.Throws<ArgumentNullException>(() => coord.Add(null!));
+        var enqueue = Assert.Throws<ArgumentNullException>(() => coord.Enqueue(null!));
+
+        Assert.Equal("source", add.ParamName);
+        Assert.Equal("source", enqueue.ParamName);
+        Assert.Same(before, coord.Queue);
+    }
+
+    [Fact]
     public void SetNext_Null_AddsNothing()
     {
         var coord = new PlaylistCoordinator([S("a"), S("b")], RepeatMode.Off);
