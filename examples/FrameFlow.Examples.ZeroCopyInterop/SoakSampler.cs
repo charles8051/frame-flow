@@ -56,21 +56,46 @@ internal sealed class SoakSampler : IDisposable
     /// </summary>
     public static SoakSampler? TryCreate(string csvPath, string label, ILogger logger)
     {
+        StreamWriter? csv = null;
         try
         {
             if (Path.GetDirectoryName(csvPath) is { Length: > 0 } directory)
                 Directory.CreateDirectory(directory);
+
             var isNew = !File.Exists(csvPath) || new FileInfo(csvPath).Length == 0;
-            var csv = new StreamWriter(csvPath, append: true, Encoding.UTF8) { AutoFlush = true };
+            var endsMidRow = !isNew && !EndsWithNewLine(csvPath);
+
+            csv = new StreamWriter(csvPath, append: true, Encoding.UTF8) { AutoFlush = true };
             if (isNew)
                 csv.WriteLine(Header);
-            return new SoakSampler(csv, csvPath, label, logger);
+            else if (endsMidRow)
+                // A file another tool wrote, or one a run was killed in the middle of, can end
+                // mid-row. Start on a line of our own rather than extending that one.
+                csv.WriteLine();
+
+            var sampler = new SoakSampler(csv, csvPath, label, logger);
+            csv = null;
+            return sampler;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception ex)
+            when (ex is IOException
+                or UnauthorizedAccessException
+                or ArgumentException
+                or NotSupportedException
+            )
         {
+            csv?.Dispose();
             logger.LogError(ex, "Soak samples cannot be written to {Path}.", csvPath);
             return null;
         }
+    }
+
+    /// <summary>Whether the file's last byte is a line feed.</summary>
+    private static bool EndsWithNewLine(string path)
+    {
+        using var probe = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        probe.Seek(-1, SeekOrigin.End);
+        return probe.ReadByte() == '\n';
     }
 
     public string CsvPath { get; }

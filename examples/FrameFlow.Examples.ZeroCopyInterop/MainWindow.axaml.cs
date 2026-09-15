@@ -198,8 +198,11 @@ public partial class MainWindow : Window
         // Present via the compositor-interop zero-copy view: the hardware-decoded NV12
         // frame stays on the GPU, is color-converted to BGRA, and is imported straight
         // into Avalonia's compositor with no CPU round-trip.
+        //
+        // The surface joins the teardown list only once its player is built, so a teardown that
+        // runs while it is being built cannot dispose a surface that build is still using. Until
+        // then this method owns it.
         IVideoSurface surface = new CompositionInteropVideoView();
-        _surfaces.Add(surface);
         host.Children.Add(surface.Control);
         var videoSink = surface.AttachSink(_loggerFactory);
         _logger.LogInformation("Presentation surface: compositor interop (zero-copy).");
@@ -215,19 +218,19 @@ public partial class MainWindow : Window
                 .WithLogger(_loggerFactory)
                 .BuildPlayerAsync();
 
-            // The window can start closing while a player is being built. Its teardown may have
-            // walked the lists already, so this player and its surface dispose themselves rather
-            // than waiting to be found there.
+            // The window can start closing while a player is being built. Its teardown has already
+            // run, so this player and its surface dispose themselves instead of joining the lists.
             if (_isClosing)
             {
                 await player.DisposeAsync();
-                _surfaces.Remove(surface);
-                if (surface is IAsyncDisposable closing)
-                    await closing.DisposeAsync();
+                await DisposeSurfaceAsync(surface);
                 return null;
             }
 
+            // Both are handed to the teardown together, on the UI thread, with no await between
+            // the check above and here.
             _players.Add(player);
+            _surfaces.Add(surface);
 
             var played = await player.PlayAsync();
             if (!played.IsSuccess)
@@ -249,8 +252,18 @@ public partial class MainWindow : Window
         {
             _logger.LogError(ex, "Zero-copy playback failed to start (HW D3D11VA decode required).");
             StatusText.Text = "Failed — see log. (HW D3D11VA decode required for this spike.)";
+            // A build that threw left the surface with this method, so it disposes it. One that
+            // reached the lists is the teardown's.
+            if (!_surfaces.Contains(surface))
+                await DisposeSurfaceAsync(surface);
             return null;
         }
+    }
+
+    private static async Task DisposeSurfaceAsync(IVideoSurface surface)
+    {
+        if (surface is IAsyncDisposable disposable)
+            await disposable.DisposeAsync();
     }
 
     /// <summary>Disposes the sampler, every player and every surface, in that order.</summary>
@@ -269,8 +282,7 @@ public partial class MainWindow : Window
 
         foreach (var surface in _surfaces)
         {
-            if (surface is IAsyncDisposable surfaceDisposable)
-                await surfaceDisposable.DisposeAsync();
+            await DisposeSurfaceAsync(surface);
         }
         _surfaces.Clear();
     }
