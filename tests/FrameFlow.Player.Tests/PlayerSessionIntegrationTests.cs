@@ -245,10 +245,38 @@ public sealed class PlayerSessionIntegrationTests
         );
     }
 
+    [RequiresFfmpegAndCorpusFact]
+    public async Task PlayToCompletionAsync_CancelledWhilePumpIsParkedOnFullQueue_Returns()
+    {
+        var path = TestEnvironment.GetCorpusFile("test-audio-aac.m4a");
+        Assert.NotNull(path);
+
+        await using var session = await ((PlayerBuilder)FrameFlowPlayer.Open(path!))
+            .WithDecoderOptions(audio: new AudioDecoderOptions { PacketQueueCapacity = 1 })
+            .WithAudioSink(new BlockingAudioSink())
+            .WithHardwareDecode(HardwareDecodeMode.Disabled)
+            .BuildAsync();
+
+        using var cts = new CancellationTokenSource();
+        var play = session.PlayToCompletionAsync(cts.Token);
+
+        // The sink never returns a buffer, so once the pump parks on the full audio
+        // queue nothing drains it again.
+        var parked = session.WaitUntilPumpParkedAsync();
+        Assert.Same(parked, await Task.WhenAny(play, parked).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        // Cancelling stops the graph. The pump then finalizes the decoders, whose
+        // flush marker has to give up on the full queue for the run to return.
+        cts.Cancel();
+        var thrown = await Record.ExceptionAsync(() => play.WaitAsync(TimeSpan.FromSeconds(30)));
+
+        Assert.False(thrown is TimeoutException, "PlayToCompletionAsync did not return after cancellation.");
+        Assert.IsAssignableFrom<OperationCanceledException>(thrown);
+    }
+
     // The timeout only bounds a stalled run. A healthy run ends at end of stream.
-    // The bound is on the wait, not a cancellation token: a stalled session does not
-    // return when cancelled, because finalizing the decoders writes a flush marker
-    // into the same full queue. Disposing the session completes that queue.
+    // The bound is on the wait, not a cancellation token, so it holds even for a
+    // session that does not unwind when cancelled.
     private static async Task PlayOrFailOnStallAsync(PlayerSession session, Func<string> progress)
     {
         using var cts = new CancellationTokenSource();
@@ -381,6 +409,32 @@ public sealed class PlayerSessionIntegrationTests
             _onBuffer();
             buffer.Dispose();
             return ValueTask.CompletedTask;
+        }
+
+        public ValueTask ActivateAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.CompletedTask;
+
+        public ValueTask PauseAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.CompletedTask;
+
+        public ValueTask ResumeAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.CompletedTask;
+
+        public ValueTask DeactivateAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    /// <summary>Holds the first buffer until the graph cancels.</summary>
+    private sealed class BlockingAudioSink : IAudioSink
+    {
+        public async ValueTask PresentAsync(IAudioBuffer buffer, CancellationToken ct)
+        {
+            buffer.Dispose();
+            var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using (ct.Register(() => cancelled.TrySetCanceled(ct)))
+                await cancelled.Task.ConfigureAwait(false);
         }
 
         public ValueTask ActivateAsync(CancellationToken cancellationToken = default) =>

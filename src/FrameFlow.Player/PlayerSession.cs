@@ -81,6 +81,12 @@ public sealed class PlayerSession : IAsyncDisposable
         _demux.GetDiagnostics();
 
     /// <summary>
+    /// Completes when the demux pump is suspended on a full decoder queue.
+    /// Internal: tests race it against <see cref="PlayToCompletionAsync"/>.
+    /// </summary>
+    internal Task WaitUntilPumpParkedAsync() => _pipeline.WaitUntilParkedAsync();
+
+    /// <summary>
     /// Runs the graph to natural end-of-stream (both decoders EOF) or
     /// until <paramref name="ct"/> cancels. Single-shot per session —
     /// throws on second call.
@@ -177,9 +183,13 @@ public sealed class PlayerSession : IAsyncDisposable
                 }
                 finally
                 {
+                    // The flush marker waits for space in the decoder queue. Once
+                    // the run is cancelled or faulted the graph stops draining, so
+                    // a full queue never frees up: pass the linked token so the
+                    // flush gives up. The queue is completed either way.
                     try
                     {
-                        await _pipeline.FinalizeDecodersAsync().ConfigureAwait(false);
+                        await _pipeline.FinalizeDecodersAsync(cts.Token).ConfigureAwait(false);
                     }
                     catch
                     { /* swallow — graph will unwind on its own */
