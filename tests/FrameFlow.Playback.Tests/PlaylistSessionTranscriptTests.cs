@@ -517,6 +517,32 @@ public sealed class PlaylistSessionTranscriptTests
         Assert.Null(rig.Session.MediaInfo);
     }
 
+    /// <summary>
+    /// #197 (#170), decision 5 of the protocol ADR: a seek cancelled after it has advanced the run
+    /// still reports the new run, so an end-of-stream raised by the run before the seek is stale.
+    /// </summary>
+    [Fact]
+    public async Task EndOfStreamBeforeASeekCancelledAfterTheRunAdvanced_IsDropped()
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b");
+
+        rig.DeferHops();
+        rig.Runtime("a#1").RaiseEndOfStream();
+
+        var hold = rig.Hold("a", ItemOp.Seek, runAdvancesFirst: true);
+        using var cts = new CancellationTokenSource();
+        var seek = rig.Session.SeekAsync(TimeSpan.FromSeconds(1), cts.Token);
+        await hold.EnteredAsync();
+        await cts.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await seek);
+
+        rig.StartDeferredHops();
+        await rig.SettleAsync();
+
+        Assert.Equal(["a#1.Seek(00:00:01)"], rig.TakeLog());
+        Assert.Equal(1, rig.Runtime("a#1").RunNumber);
+    }
+
     private static readonly string[] JumpTakenBeforeTheWaitingPause =
     [
         "a#1.Dispose",

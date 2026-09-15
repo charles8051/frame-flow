@@ -47,22 +47,25 @@ internal sealed record PlaylistItemModel(
     public PlaylistItemModel PausedNow() => this with { Paused = true };
 
     /// <summary>A seek or rewind that succeeded: a new run, launched unless paused.</summary>
-    public PlaylistItemModel Repositioned() =>
-        this with
-        {
-            Run = Run + 1,
-            Launched = !Paused,
-            EndRaised = false,
-        };
+    public PlaylistItemModel Repositioned() => RunAdvanced().Relaunched();
 
-    /// <summary>A seek or rewind cancelled after the run advanced: the new run is stopped.</summary>
-    public PlaylistItemModel CancelledAfterTheRunAdvanced() =>
+    /// <summary>
+    /// A seek or rewind has stopped the run it interrupts and advanced the run number, and has not
+    /// relaunched. A seek or rewind cancelled at this point leaves the new run stopped.
+    /// </summary>
+    public PlaylistItemModel RunAdvanced() =>
         this with
         {
             Run = Run + 1,
             Launched = false,
             EndRaised = false,
         };
+
+    /// <summary>A seek or rewind that had advanced the run finishes: it launches unless paused.</summary>
+    public PlaylistItemModel Relaunched() => this with { Launched = !Paused };
+
+    /// <summary>A seek or rewind cancelled after the run advanced: the new run is stopped.</summary>
+    public PlaylistItemModel CancelledAfterTheRunAdvanced() => RunAdvanced();
 
     /// <summary>The current run raised its end-of-stream.</summary>
     public PlaylistItemModel RaisedEndOfStream() => this with { EndRaised = true };

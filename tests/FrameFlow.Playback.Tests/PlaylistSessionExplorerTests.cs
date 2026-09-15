@@ -192,5 +192,25 @@ public sealed class PlaylistSessionExplorerTests(ITestOutputHelper output)
         output.WriteLine(found.ToString());
     }
 
+    [Fact]
+    public void RepeatedEvents_EachHappen()
+    {
+        // Two equal events are explored as one move from any state, since either leads to the same
+        // state. The other stays to happen later, so both reach the core.
+        var generations = new HashSet<int>();
+        _ = PlaylistSessionExplorer.Explore(
+            Scenario("Seeks and stale end-of-stream"),
+            (state, queue, input, context) =>
+            {
+                if (input is PlaylistSessionInput.EndOfStream end)
+                    generations.Add(end.Generation);
+                return PlaylistSessionProtocol.Step(state, queue, input, context);
+            }
+        );
+
+        Assert.Contains(0, generations);
+        Assert.Contains(1, generations);
+    }
+
     private static ExplorerScenario Scenario(string name) => Scenarios.Single(s => s.Name == name);
 }
