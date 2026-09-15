@@ -316,6 +316,12 @@ value its coordinator holds, under the coordinator's lock and without entering i
 the protocol record's synchronous members do. The answer is read on every tick, not held across the
 end of the item.
 
+While the session performs a loop, it answers true whatever the queue now says. After each step the
+shell publishes whether the input under way is a loop, and clears it when that input is handled. A
+removal made during the repeat therefore does not hide a rewind that hangs, which keeps decision 5's
+rule that a removal does not undo a repeat already under way. Between inputs the queue's predicate
+answers alone.
+
 - **A repeat stays eligible while it runs.** A repeat of the same item, by in-place rewind or by
   rebuild, does not make the item unstarted, so a rewind that hangs is still watched. A replay under
   `One` takes nothing, so it already keeps the item started. Today a take marks every taken item
@@ -531,6 +537,7 @@ Unit tests without media:
 | 19 | 5 | `PlaylistSessionExplorerTests`: a loop is reported only by an input begun with an end-of-stream from the current run of a played item, and never while disposing or after giving up. A seeded defect that reports a loop on a skip is found. | [no invariant] |
 | 4 | 6 | `PlaylistQueueTests`: `ExpectsRepeat` is true for a started, unremoved current item under `One`, a one-shot one included, and under `All` for the only playlist item with nothing next or queued, including after that item is taken again at a wrap. It is false for a one-shot current item under `All`, a removed current item, a playlist of two under `All`, and a different item taken and not yet started. | [no member] |
 | 5 | 6 | `LoopStallEvaluatorTests`: the renamed input gates eligibility as `RepeatOne` did. | [renamed] |
+| 20 | 6 | `PlaylistSessionTranscriptTests`: removing the current item while its in-place rewind is held leaves the session expecting a repeat until the rewind completes, and expecting none once the input is handled. | [no member] |
 
 Integration tests over real playback, in `FrameFlow.Integration.Tests`:
 
@@ -629,7 +636,7 @@ revision history without machine identifiers.
     now says a one-shot current item repeats under `One`, which the earlier row left ambiguous.
   - **Not settled** gained the queue-of-one record, and #203 for pairing a loop with its transition.
   - **Validation** gained rows 15 to 19 for the protocol core, and groups the rows by where they run.
-- **Revision after automated review of #215 (2026-09-15).** Three changes:
+- **Revision after automated review of #215 (2026-09-15).** Five changes:
   - **A rewind that hangs.** Decision 4 now says a hang is not rebuilt, only reported by the
     watchdogs, and *Not settled* records recovering from it. It also says which changes the hardware
     soak gates: a single source moves to the rewind only with the hardware run the end-of-queue
@@ -642,3 +649,6 @@ revision history without machine identifiers.
   - **Operator state.** An in-place rewind keeps every operator's state while timestamps go back to
     zero, except `SyncJoin`, which clears its window on each run. *Context*, the configurator
     consequence and *Not settled* now say so.
+  - **A removal during a repeat.** Decision 6 read eligibility only from the queue, so removing the
+    item mid-repeat would have hidden a rewind that hangs. The session now answers true while it
+    performs a loop, and row 20 tests it.
