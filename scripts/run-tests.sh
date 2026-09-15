@@ -39,6 +39,11 @@ fi
 # Only an evaluated false is excluded. A project that evaluates to anything
 # else, or fails to evaluate, stays in the run and fails loudly if it cannot
 # start, instead of dropping out unnoticed.
+#
+# Evaluation uses the framework the worker passes to `dotnet test -f`, which sets
+# the same TargetFramework global property, so a property conditioned on it
+# reads the same in discovery and in the run.
+framework=net10.0
 projects=()
 while read -r is_test csproj; do
   if [ "$is_test" = "false" ]; then
@@ -49,11 +54,10 @@ while read -r is_test csproj; do
 done < <(
   printf '%s\n' tests/*/*.csproj \
     | xargs -P 8 -I{} bash -c '
-        value=$(dotnet msbuild "$1" -getProperty:IsTestProject -p:TargetFramework=net10.0 -nologo 2>/dev/null) \
-          || value=unevaluated
-        value=$(printf "%s\n" "$value" | tail -1 | tr -d "[:space:]" | tr "[:upper:]" "[:lower:]")
+        value=$(dotnet msbuild "$1" -getProperty:IsTestProject -p:TargetFramework="$2" -nologo 2>/dev/null \
+          | tail -1 | tr -d "[:space:]" | tr "[:upper:]" "[:lower:]")
         printf "%s %s\n" "${value:-unset}" "$1"
-      ' _ {} \
+      ' _ {} "$framework" \
     | sort -k2
 )
 
@@ -70,7 +74,7 @@ start=$(date +%s)
 results=$(
   printf '%s
 ' "${projects[@]}"     | xargs -P 8 -I{} bash -c '
-        out=$(dotnet test "$1" -f net10.0 --no-build --no-restore --nologo --verbosity quiet 2>&1)
+        out=$(dotnet test "$1" -f "$2" --no-build --no-restore --nologo --verbosity quiet 2>&1)
         rc=$?
         line=$(printf "%s
 " "$out" | tail -1)
@@ -95,7 +99,7 @@ results=$(
 " "$out" | tail -15 >&2
         fi
         exit 0
-      ' _ {}     | sort
+      ' _ {} "$framework"     | sort
 )
 printf '%s
 ' "$results"
