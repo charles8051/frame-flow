@@ -66,7 +66,8 @@ public sealed class PlaylistSnapshot
     public PlaylistItem? Current { get; }
 
     /// <summary>
-    /// Whether <see cref="Current"/> has started. <see langword="false"/> while it is opening.
+    /// Whether <see cref="Current"/> has started. <see langword="false"/> while it is opening, except
+    /// while an advance repeats the same item, which keeps it started.
     /// </summary>
     public bool CurrentStarted { get; }
 
