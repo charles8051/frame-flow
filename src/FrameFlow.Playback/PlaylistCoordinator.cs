@@ -245,8 +245,9 @@ internal sealed class PlaylistCoordinator
     /// <para>
     /// A reserved item is the replay's marker: <see cref="ReserveStart"/> is called on the old
     /// session, by the controller's replay and by nothing else, and the new session's first take
-    /// consumes it. Every other load replaces the queue, so an ordinary reload plays the source it
-    /// was given and nothing that was enqueued before it.
+    /// consumes it. The replay reserves and loads inside one dispatched command, so no other load
+    /// runs in between. Every other load replaces the queue, so an ordinary reload plays the source
+    /// it was given and nothing that was enqueued before it.
     /// </para>
     /// <para>
     /// A new queue has started nothing, so a first item that cannot be opened fails the load, as it
