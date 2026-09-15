@@ -33,17 +33,29 @@ fi
 # Discover test projects via the slnx → /tests/ convention. A support library
 # under tests/ sets <IsTestProject>false</IsTestProject>; `dotnet test` runs
 # nothing for it and prints no summary, so the worker would flag it NOSUMMARY.
-# Exclude on an explicit false rather than include on an explicit true: a new
-# test project that omits the property then still runs, and fails loudly if it
-# cannot start, instead of dropping out of the run unnoticed.
+#
+# The property is read from MSBuild evaluation, not grepped from the csproj, so
+# a commented-out or conditional element counts only when MSBuild applies it.
+# Only an evaluated false is excluded. A project that evaluates to anything
+# else, or fails to evaluate, stays in the run and fails loudly if it cannot
+# start, instead of dropping out unnoticed.
 projects=()
-for csproj in tests/*/*.csproj; do
-  if grep -qiE '<IsTestProject>[[:space:]]*false[[:space:]]*</IsTestProject>' "$csproj"; then
+while read -r is_test csproj; do
+  if [ "$is_test" = "false" ]; then
     echo "==> skipping ${csproj} (IsTestProject=false)"
   else
     projects+=( "$csproj" )
   fi
-done
+done < <(
+  printf '%s\n' tests/*/*.csproj \
+    | xargs -P 8 -I{} bash -c '
+        value=$(dotnet msbuild "$1" -getProperty:IsTestProject -p:TargetFramework=net10.0 -nologo 2>/dev/null) \
+          || value=unevaluated
+        value=$(printf "%s\n" "$value" | tail -1 | tr -d "[:space:]" | tr "[:upper:]" "[:lower:]")
+        printf "%s %s\n" "${value:-unset}" "$1"
+      ' _ {} \
+    | sort -k2
+)
 
 echo "==> running ${#projects[@]} test assemblies in parallel"
 start=$(date +%s)
