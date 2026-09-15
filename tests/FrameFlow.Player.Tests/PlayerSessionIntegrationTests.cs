@@ -1,3 +1,4 @@
+using FrameFlow.Decoding;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Playback;
@@ -171,6 +172,117 @@ public sealed class PlayerSessionIntegrationTests
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             session.PlayToCompletionAsync(CancellationToken.None)
         );
+    }
+
+    // ADR-0059 on the BuildAsync path. The demux pump feeds every decoder's bounded
+    // packet queue and waits when one is full. A stream with a decoder but no sink
+    // has no graph branch draining its queue, so once that queue fills the pump
+    // stops and the stream that does have a sink never reaches end of stream.
+    //
+    // The queue of the stream without a sink is shrunk to one packet, so the stall
+    // does not depend on the fixture holding more packets than the default depth.
+    // At that depth a decoder built for a discarded stream also stalls: the packet
+    // the probe buffered before the discard fills the queue, and the end-of-stream
+    // flush then waits on it. The packet count pins the discard itself.
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task PlayToCompletionAsync_AvFileWithVideoSinkOnly_PresentsEveryVideoFrame()
+    {
+        var path = TestEnvironment.GetCorpusFile("test-av-h264-aac.mp4");
+        Assert.NotNull(path);
+
+        var presented = 0;
+        var sink = new CountingVideoSink(() => Interlocked.Increment(ref presented));
+
+        await using var session = await ((PlayerBuilder)FrameFlowPlayer.Open(path!))
+            .WithDecoderOptions(audio: new AudioDecoderOptions { PacketQueueCapacity = 1 })
+            .WithVideoSink(sink)
+            .WithHardwareDecode(HardwareDecodeMode.Disabled)
+            .BuildAsync();
+
+        Assert.NotEmpty(session.Info.AudioStreams);
+
+        await PlayOrFailOnStallAsync(session, () => $"{presented} video frames presented");
+
+        var packets = await CountPacketsAsync(path!);
+        Assert.Equal(packets.Video, presented);
+        AssertDiscarded(session, played: packets.Video, discarded: packets.Audio);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task PlayToCompletionAsync_AvFileWithAudioSinkOnly_PlaysToEnd()
+    {
+        var path = TestEnvironment.GetCorpusFile("test-av-h264-aac.mp4");
+        Assert.NotNull(path);
+
+        var buffers = 0;
+        var sink = new CountingAudioSink(() => Interlocked.Increment(ref buffers));
+
+        await using var session = await ((PlayerBuilder)FrameFlowPlayer.Open(path!))
+            .WithDecoderOptions(video: new VideoDecoderOptions { PacketQueueCapacity = 1 })
+            .WithAudioSink(sink)
+            .WithHardwareDecode(HardwareDecodeMode.Disabled)
+            .BuildAsync();
+
+        Assert.NotEmpty(session.Info.VideoStreams);
+
+        await PlayOrFailOnStallAsync(session, () => $"{buffers} audio buffers presented");
+
+        var packets = await CountPacketsAsync(path!);
+        Assert.True(buffers > 0, $"Expected audio buffers; got {buffers}.");
+        AssertDiscarded(session, played: packets.Audio, discarded: packets.Video);
+    }
+
+    // The stream without a sink is discarded at the demuxer, so the pump reads the
+    // played stream's packets plus the few the probe buffered before the discard.
+    private static void AssertDiscarded(PlayerSession session, int played, int discarded)
+    {
+        var read = session.GetDemuxDiagnostics().PacketsRead;
+        Assert.True(
+            read - played < discarded / 10,
+            $"The pump read {read} packets: {played} from the played stream and "
+                + $"{read - played} of {discarded} from the stream with no sink."
+        );
+    }
+
+    // The timeout only bounds a stalled run. A healthy run ends at end of stream.
+    // The bound is on the wait, not a cancellation token: a stalled session does not
+    // return when cancelled, because finalizing the decoders writes a flush marker
+    // into the same full queue. Disposing the session completes that queue.
+    private static async Task PlayOrFailOnStallAsync(PlayerSession session, Func<string> progress)
+    {
+        using var cts = new CancellationTokenSource();
+        var play = session.PlayToCompletionAsync(cts.Token);
+        try
+        {
+            await play.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+        catch (TimeoutException)
+        {
+            cts.Cancel();
+            Assert.Fail(
+                $"PlayToCompletionAsync did not reach end of stream ({progress()}). "
+                    + "The stream without a sink has a decoder whose full packet queue blocked the demux pump."
+            );
+        }
+    }
+
+    private static async Task<(int Video, int Audio)> CountPacketsAsync(string path)
+    {
+        await using var demux = await new DemuxSessionFactory().OpenAsync(MediaSource.FromFile(path));
+        var videoIndex = demux.MediaInfo.VideoStreams[0].StreamIndex;
+        var audioIndex = demux.MediaInfo.AudioStreams[0].StreamIndex;
+
+        int video = 0,
+            audio = 0;
+        while (await demux.ReadPacketAsync() is { } packet)
+        {
+            if (packet.StreamIndex == videoIndex)
+                video++;
+            else if (packet.StreamIndex == audioIndex)
+                audio++;
+        }
+        return (video, audio);
     }
 
     // ─── Sinks ──────────────────────────────────────────────────────

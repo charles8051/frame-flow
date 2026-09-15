@@ -75,6 +75,12 @@ public sealed class PlayerSession : IAsyncDisposable
     public MediaInfo Info => _demux.MediaInfo;
 
     /// <summary>
+    /// Demux counters. Internal: tests read how many packets the pump read.
+    /// </summary>
+    internal FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot GetDemuxDiagnostics() =>
+        _demux.GetDiagnostics();
+
+    /// <summary>
     /// Runs the graph to natural end-of-stream (both decoders EOF) or
     /// until <paramref name="ct"/> cancels. Single-shot per session —
     /// throws on second call.

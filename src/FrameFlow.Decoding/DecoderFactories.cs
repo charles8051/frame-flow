@@ -117,7 +117,16 @@ public static class DecoderFactories
     /// factory available; falls back to <see cref="Audio"/>'s
     /// no-logger behaviour otherwise.
     /// </summary>
-    public static Func<IDemuxSession, IAudioDecoder?> CreateAudio(ILoggerFactory? loggerFactory) =>
+    /// <param name="loggerFactory">Optional logger factory for decoder diagnostics.</param>
+    /// <param name="audioOptions">
+    /// Optional decoder configuration (e.g.
+    /// <see cref="AudioDecoderOptions.PacketQueueCapacity"/>). When null the
+    /// <see cref="AudioDecoder"/> constructor's own defaults apply.
+    /// </param>
+    public static Func<IDemuxSession, IAudioDecoder?> CreateAudio(
+        ILoggerFactory? loggerFactory,
+        AudioDecoderOptions? audioOptions = null
+    ) =>
         session =>
         {
             if (session is not DemuxSession demux)
@@ -134,7 +143,7 @@ public static class DecoderFactories
             return new AudioDecoder(
                 demux.FormatContextPtr,
                 audioStream.StreamIndex,
-                options: null,
+                options: audioOptions,
                 logger: logger
             );
         };
