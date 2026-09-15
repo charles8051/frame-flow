@@ -308,12 +308,29 @@ internal sealed class PlaylistCoordinator
     {
         ArgumentNullException.ThrowIfNull(item);
         var index = Apply(q => q.ReportCurrent(item, info));
+        RaiseTransition(item, info, index, wrapped);
+    }
 
+    /// <summary>
+    /// Fires <see cref="SourceTransitioned"/> for a start already recorded on the queue. Call it
+    /// outside <see cref="Update{T}"/>, so a subscriber can call back into the coordinator. Nothing
+    /// fires for an item with no metadata.
+    /// </summary>
+    internal void RaiseTransition(PlaylistItem item, MediaInfo? info, int index, bool wrapped)
+    {
         if (info is not null)
             _transitioned.OnNext(
                 new PlaylistTransition(item.Source, info, index, wrapped) { Item = item }
             );
     }
+
+    /// <summary>
+    /// Applies <paramref name="operation"/> to the queue under the lock and stores the queue it
+    /// returns. The session steps its protocol through this, so a player edit and a step never
+    /// interleave. The operation must not call back into the coordinator.
+    /// </summary>
+    internal T Update<T>(Func<PlaylistQueue, (PlaylistQueue Queue, T Result)> operation) =>
+        Apply(operation);
 
     /// <summary>Disposes the transition subject. Called by the owning player wrapper.</summary>
     internal void Dispose() => _transitioned.Dispose();

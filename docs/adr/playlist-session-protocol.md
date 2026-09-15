@@ -3,8 +3,8 @@
 ## Status
 
 Proposed (2026-09-14). Draft pending number assignment. Revised the same day after an independent
-review; *Revision history* says what changed. **Steps 1 and 2 of the migration are implemented**
-(decision 8, *As implemented*). Steps 3 and 4 are not.
+review; *Revision history* says what changed. **Steps 1 to 3 of the migration are implemented**
+(decision 8, *As implemented*). Step 4 is not.
 
 This record moves the playlist player's decision logic into a pure core. ADR-0055 did the same for
 the codec loop, and `PlaybackProtocol` for the controller's main state machine. The record:
@@ -161,7 +161,7 @@ A `SessionStep` is:
 |---|---|
 | The controller | `Initialize`, `WarmUp`, `Play`, `Pause`, `Seek(position)`, `Rewind`, `Dispose`. Each carries a command id. |
 | An item runtime | `EndOfStream(generation, run)`, `Fault(generation, playedFor, error)` |
-| The coordinator | `SkipRequested(generation)`, `JumpRequested` |
+| The coordinator | `SkipRequested(generation, runAtRequest)`, `JumpRequested` |
 
 **Inputs the shell feeds back:**
 
@@ -376,12 +376,12 @@ record.
   is stale, and a skip requested before an end-of-stream's advance starts collapses into that
   advance.
 - **What step 3 changes.** The transcripts use controller calls, item notifications, queue requests,
-  holds, deferred hops and `SettleAsync`. Step 3 changes `SettleAsync` to wait for the reader. A
-  deferred hop becomes an input posted before the later call, which the single reader takes first.
-  The two deferred transcripts keep their outcome only because the inputs carry what today's session
-  reads at the request: the run number on `EndOfStream`, and the generation on `SkipRequested`. The
-  draft's `SkipRequested` carried no generation, so the reader would have advanced twice. Decision
-  2's input table now gives it one.
+  holds, deferred hops and `SettleAsync`. Step 3 changes `SettleAsync` to wait for the reader, and a
+  deferred hop becomes a delivery the rig posts after the later call. The two deferred transcripts
+  keep their outcome because the inputs carry what today's session reads at the request: the run
+  number on `EndOfStream`, and the generation on `SkipRequested`. The draft's `SkipRequested` carried
+  no generation, so the skip would have advanced a second time. Decision 2's input table now gives it
+  one.
 
 #### As implemented: step 2
 
@@ -404,6 +404,75 @@ record.
   against the value. `PlaylistCoordinatorTests` keeps what belongs to the cell: argument checks,
   the handlers, the transition stream, and the failure count shared across sessions.
   `PlaylistFailureGuardTests` runs the rule through the value.
+
+#### As implemented: step 3
+
+- **The core.** `PlaylistSessionProtocol.Step` is in `PlaylistSessionProtocol.cs`. Its types are in
+  `PlaylistSessionState.cs` (`PlaylistSessionState`, `PlaylistItemSlot`, `PlaylistRunState`,
+  `PlaylistSessionWork`, `PlaylistStepContext`) and `PlaylistSessionInput.cs` (the inputs, the
+  actions, `PlaylistSessionStep` and `PlaylistCommandResult`). The names carry a `Playlist` prefix,
+  since they share the `FrameFlow.Playback` namespace with the controller's.
+- **Where a multi-step input is.** The state has a `Work` member that decision 2 did not list. It names
+  what the core is waiting for: an awaited action, such as an advance's open or warm-up, the in-place
+  rewind or the pause at the end of the queue, or the `Continue` after a transition. It is null
+  between inputs.
+- **The skip's run state.** `SkipRequested` carries the run state the session had published when the
+  skip was requested, as well as the generation. Today's skip is dropped when it is requested at
+  `Ended`, even if the warm-up of a seek out of `Ended` has finished by the time it is handled.
+  `SkipDuringTheWarmUpOutOfEnded_IsDropped` pins that.
+- **Actions.** Besides decision 2's, there is `AttachToCoordinator`. `ReportItemFailed(source, what,
+  error)` replaces `ReportRecoverableError`, so the shell writes both the log line and the message.
+  `Log` covers the log lines with no report. `RaiseTransition` carries the index the queue's
+  `ReportCurrent` returned. `DisposeItem` carries no generation: the session holds at most one
+  runtime.
+- **Delivery.** An item callback, or the coordinator's skip or jump handler, reads what it needs at
+  once and delivers the input through `IPlaylistSessionScheduler`. What it reads is the run number,
+  the generation and run state, or the fault's played time. The default posts at once, on the calling
+  thread. Nothing hops to the thread pool.
+- **The coordinator.** `Update<T>` applies a function to the queue under the lock, and the shell steps
+  through it. `RaiseTransition` raises `SourceTransitioned` for a start the queue has already
+  recorded.
+- **Commands.**
+  - A command posts its input and waits for the core's `CompleteCommand`. The command method rethrows
+    a failure or a cancellation, so callers see today's exceptions.
+  - A command cancelled while it waits in the channel completes with the cancellation and has no
+    effect, as a wait on the gate did.
+  - `Initialize` is never cancelled while it waits. It takes its start item from the queue first, as
+    today, and its open then fails with the cancellation.
+- **The synchronous members** read the runtime the shell publishes after each step. That is the held
+  runtime only while the state has an item slot, which is when today's `_current` was set.
+- **Disposal** follows decision 6, with these details:
+  - A command still running when disposal begins completes as a no-op, as one that arrives during
+    disposal does.
+  - Nothing is reported to the controller once disposal has begun. Today's session could report an
+    end-of-stream or a failed item from an advance that finished during disposal.
+  - The clock still stops once an advance has disposed its old item.
+  - A skip requested before the first Play, and handled during disposal, is latched on the queue.
+    The next session's first Play takes it, as it took today's skip, which was latched at once.
+  - Once disposal has closed the channel, a command throws `ObjectDisposedException`, as the disposed
+    gate did. `Initialize` threw nothing today and opened a runtime that was never disposed. It now
+    throws too.
+  - The token is cancelled with `CancelAsync`, so its callbacks run on the thread pool. `Dispose` is
+    posted whether or not a callback throws. A second `DisposeAsync` waits for the first.
+- **If the reader stops.** A failure outside an input's handling stops the reader, such as a controller
+  callback that throws while the shell reports an earlier failure. The reader then closes the channel
+  and fails every waiting command with `ObjectDisposedException`, so no caller waits forever.
+- **Real item runtimes.** Disposal can now cancel a `SubstrateSession`'s open, warm-up or play.
+  `SubstrateSession.DisposeAsync` already stops the graph without a token, and handles a runtime that
+  never finished loading or never played. Today's session reaches both, when an open fails and when a
+  paused item is skipped.
+- **A test hook.** `WhenIdleAsync` sends probes through the channel until every input posted has been
+  handled. The rig's `SettleAsync` uses it.
+- **The tests.**
+  - `PlaylistSessionTranscriptTests` ran unchanged apart from `SettleAsync`. Four transcripts were
+    added: `DisposalDuringAnAdvancesOpen_CancelsTheOpen`, `SkipDuringTheWarmUpOutOfEnded_IsDropped`,
+    `SkipBeforeTheFirstPlay_OutlivesADisposalThatStartsFirst` and
+    `AfterDisposal_ACommandThrows_AndASecondDisposalCompletes`.
+  - `PlaylistSessionProtocolTests` holds the table tests, 63 cases. Each row is a run state, an item
+    slot, what the queue takes next, a pending jump or a latch, and whether an input's generation and
+    run are current.
+  - The rig's deferred hops became deferred deliveries. A held delivery is posted after the later
+    call, with what was read when it was raised.
 
 ### 9. What stays the same
 
@@ -555,6 +624,36 @@ handlers.
     | Equality compares the queued items | `Equality_IsStructural` |
     | A skip latches only with no session attached | `RequestSkip_InvokesTheAttachedSession`, and the transcripts `DeferredStartFailure_IsSkippedLikeAFailedStart` and `CancelledPlay_OfAnItemWaitingToStart_KeepsTheItem` |
 - **Step 3.** The same transcripts, the table tests and the full suite pass against the protocol.
+  - **As implemented.** The 19 transcripts and 63 table cases pass, and passed 30 runs in a row. The
+    full suite passes. Each rule below was removed on its own, and the session's tests were run once
+    per removal:
+
+    | Rule removed | Tests that failed |
+    |---|---|
+    | A fault before the first play is fatal (#191) | `FaultBeforeTheFirstPlay_IsFatal_AndNothingAdvances`, `Fault_FromTheCurrentGeneration` |
+    | A Play at `Ended` does nothing (#194) | `PlayQueuedBehindTheEndOfTheQueue_LeavesTheSessionEnded`, `Play` |
+    | A Pause is recorded only from `Playing` (#194) | `PauseQueuedBehindTheEndOfTheQueue_LeavesTheSessionEnded`, `Pause_RecordsPausedOnlyFromPlaying_AndPausesTheItem` |
+    | A seek at `Ended` does nothing (#197) | `SeekQueuedBehindTheEndOfTheQueue_IsDropped`, `Seek_ReachesTheItemExceptAtEnded` |
+    | `Ended` is left only once the warm-up has finished (#194) | `SkipDuringTheWarmUpOutOfEnded_IsDropped`, `WarmUp_LeavesEnded_OnlyOnceTheItemHasWarmed` |
+    | Only an item that has played is rewound in place (#194) | `LatchedSkipUnderOne_RebuildsTheUnplayedItem`, `EndOfStream_ByWhatComesNext` |
+    | A failed deferred start is handled as a failed start (#194) | `DeferredStartFailure_IsSkippedLikeAFailedStart` |
+    | A cancelled Play is not an item failure (#194) | `CancelledPlay_OfAnItemWaitingToStart_KeepsTheItem` |
+    | An advance takes a pending jump once its item has started (#199) | `JumpDuringAnAdvance_IsTakenBeforeAWaitingPause`, `JumpFromATransitionSubscriber_IsTakenBeforeAWaitingPause`, `AStartedItem_IsReportedThenRaised_AndTheQueueIsReadAgain` |
+    | A jump request acts only on a jump still pending (#199) | `JumpDuringAnAdvance_IsTakenBeforeAWaitingPause`, `JumpFromATransitionSubscriber_IsTakenBeforeAWaitingPause`, `JumpRequested` |
+    | A jump request starts an advance (#199) | `JumpDuringASeek_IsTakenWhenTheSeekCompletes`, `WarmUpOutOfEnded_HoldsOffAJumpUntilItFinishes`, `JumpRequested` |
+    | An end-of-stream from a replaced run is dropped (#197) | `EndOfStreamRaisedDuringASeek_IsDropped_AndOneAfterItIsNot`, `EndOfStreamWhoseAdvanceStartsAfterASeek_IsDropped`, `StaleInputs_AreDropped_InEveryRunStateAndSlot` |
+    | A command keeps the run number its item operation reports | `EndOfStreamRaisedDuringASeek_IsDropped_AndOneAfterItIsNot`, `EndOfStreamWhoseAdvanceStartsAfterASeek_IsDropped` |
+    | A skip tagged with a replaced generation is dropped | `SkipRequestedBeforeAnEndOfStreamsAdvanceStarts_AdvancesOnce`, `StaleInputs_AreDropped_InEveryRunStateAndSlot` |
+    | A skip requested at `Ended` is dropped | `SkipDuringTheWarmUpOutOfEnded_IsDropped`, `StaleInputs_AreDropped_InEveryRunStateAndSlot` |
+    | Only a skip pauses an item that ends the queue | `LoadPlayHandOffAndEnd`, `EndOfStream_ByWhatComesNext` |
+    | A failed item is never rewound in place | `Fault_FromTheCurrentGeneration` |
+    | Disposal cancels the item operation in flight | `DisposalDuringAnAdvancesOpen_CancelsTheOpen`, `SkipBeforeTheFirstPlay_OutlivesADisposalThatStartsFirst` |
+    | A skip before the first Play is latched during disposal | `SkipBeforeTheFirstPlay_OutlivesADisposalThatStartsFirst`, `WhileDisposing_NotificationsAreDropped_AndCommandsComplete` |
+    | A command after disposal throws | `AfterDisposal_ACommandThrows_AndASecondDisposalCompletes` |
+
+    Moving the end of `Ended` to the start of the warm-up fails no jump transcript. The reader takes
+    no input while it awaits the warm-up, so a jump waits either way. A skip requested during the
+    warm-up is what shows it.
 - **Step 4.**
   - **The seeded defect.** The explorer is run with the rule that keeps `Ended` against a queued Play
     removed from the core. It must report an ordering that breaks the invariant on the end.
@@ -619,3 +718,17 @@ handlers.
 - **Amendment (2026-09-14), step 2 implemented.** `PlaylistQueue` holds the queue as an immutable
   value with structural equality, and `PlaylistCoordinator` is the cell around it. The queue's
   tests run against the value. A skip's latch moved under the coordinator's lock.
+- **Amendment (2026-09-15), step 3 implemented.** `PlaylistSessionProtocol` holds the session's rules
+  as a pure step, and `PlaylistSession` is a shell around it. Decision 2's state gained `Work`, and
+  `SkipRequested` gained the run state at the request.
+  - **Independent reviews.** Two reviews compared the rewrite with the gated session and read the
+    shell for races. They found:
+    - a skip requested before the first Play that disposal dropped instead of latching;
+    - reports and a clock stop that disposal handled inconsistently;
+    - an `Initialize` with a cancelled token that could skip taking its start item;
+    - failure paths where a stopped reader, or a cancellation callback that throws, left callers or
+      `DisposeAsync` waiting.
+
+    Each is fixed, with a test where one can pin it.
+  - **A correction.** The step 1 text on what step 3 changes said a deferred hop would become an input
+    posted before the later call. It becomes a delivery posted after it, and that text is corrected.

@@ -6,10 +6,11 @@ namespace FrameFlow.Playback.Tests;
 /// <see cref="PlaylistSessionRig"/> describes the transcript's lines.
 /// </summary>
 /// <remarks>
-/// These pin today's behaviour before the session is rewritten as a pure protocol, step 1 of the
-/// draft ADR <c>docs/adr/playlist-session-protocol.md</c>. Each one names the change whose review
-/// settled it. The integration tests for the same changes stay, for the mechanism: decode, present
-/// and rewind.
+/// These pinned the session's behaviour before it was rewritten as a pure protocol, in step 1 of the
+/// draft ADR <c>docs/adr/playlist-session-protocol.md</c>, and ran unchanged against the rewrite in
+/// step 3. Each one names the change whose review settled it. The integration tests for the same
+/// changes stay, for the mechanism: decode, present and rewind. The rules themselves are tabled in
+/// <c>PlaylistSessionProtocolTests</c>.
 /// </remarks>
 public sealed class PlaylistSessionTranscriptTests
 {
@@ -173,6 +174,32 @@ public sealed class PlaylistSessionTranscriptTests
             ],
             rig.TakeLog()
         );
+    }
+
+    /// <summary>
+    /// #194 (#182): the seek out of <c>Ended</c> is recorded at the end of its warm-up. A skip
+    /// requested during that warm-up was requested at <c>Ended</c>, so it is dropped, even though the
+    /// session is paused by the time it is handled.
+    /// </summary>
+    [Fact]
+    public async Task SkipDuringTheWarmUpOutOfEnded_IsDropped()
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b");
+        rig.Runtime("a#1").RaiseEndOfStream();
+        await rig.SettleAsync();
+        rig.Runtime("b#1").RaiseEndOfStream();
+        await rig.SettleAsync();
+        Assert.Contains("ctl.EndOfStream", rig.TakeLog());
+
+        var hold = rig.Hold("b", ItemOp.WarmUp);
+        var warmUp = rig.Session.WarmUpAsync();
+        await hold.EnteredAsync();
+        rig.Coordinator.RequestSkip();
+        hold.Release();
+        await warmUp;
+        await rig.SettleAsync();
+
+        Assert.Equal(["b#1.WarmUp"], rig.TakeLog());
     }
 
     /// <summary>
@@ -419,6 +446,68 @@ public sealed class PlaylistSessionTranscriptTests
             ],
             rig.TakeLog()
         );
+    }
+
+    /// <summary>
+    /// Step 3 of the protocol ADR: disposal cancels the item operation in flight. The open an
+    /// advance was waiting on ends, its runtime is disposed, and nothing is reported. Before step 3,
+    /// disposal waited for the open to finish.
+    /// </summary>
+    [Fact]
+    public async Task DisposalDuringAnAdvancesOpen_CancelsTheOpen()
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b");
+
+        var open = rig.Hold("b", ItemOp.Open);
+        rig.Runtime("a#1").RaiseEndOfStream();
+        await open.EnteredAsync();
+        Assert.Equal(["a#1.Dispose", "clock.Stop", "b#1.Open"], rig.TakeLog());
+
+        await rig.Session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.Equal(["b#1.Dispose"], rig.TakeLog());
+    }
+
+    /// <summary>
+    /// A skip requested before the first Play is latched on the queue, so the next session's first
+    /// Play takes it. That holds when disposal starts before the session has handled the skip.
+    /// </summary>
+    [Fact]
+    public async Task SkipBeforeTheFirstPlay_OutlivesADisposalThatStartsFirst()
+    {
+        await using var rig = PlaylistSessionRig.Create(RepeatMode.Off, "a", "b");
+        await rig.Session.InitializeAsync(rig.PlaylistItem("a").Source);
+        rig.TakeLog();
+
+        var hold = rig.Hold("a", ItemOp.WarmUp);
+        var warmUp = rig.Session.WarmUpAsync();
+        await hold.EnteredAsync();
+        rig.Coordinator.RequestSkip();
+        await rig.Session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(30));
+        await warmUp;
+
+        Assert.Equal(["a#1.WarmUp", "a#1.Dispose"], rig.TakeLog());
+        Assert.Equal(PlaylistAdvance.Skip, rig.Coordinator.Queue.LatchedAdvance);
+    }
+
+    /// <summary>
+    /// A command after disposal throws, as the disposed gate did before step 3, and two disposals at
+    /// once both complete, having disposed the item once.
+    /// </summary>
+    [Fact]
+    public async Task AfterDisposal_ACommandThrows_AndASecondDisposalCompletes()
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a");
+
+        await Task.WhenAll(rig.Session.DisposeAsync().AsTask(), rig.Session.DisposeAsync().AsTask())
+            .WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.Equal(["a#1.Dispose"], rig.TakeLog());
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () => await rig.Session.PlayAsync());
+        await Assert.ThrowsAsync<ObjectDisposedException>(
+            async () => await rig.Session.SeekAsync(TimeSpan.FromSeconds(1))
+        );
+        Assert.Null(rig.Session.MediaInfo);
     }
 
     private static readonly string[] JumpTakenBeforeTheWaitingPause =

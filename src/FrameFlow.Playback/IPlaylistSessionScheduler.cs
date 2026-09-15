@@ -4,21 +4,27 @@
 namespace FrameFlow.Playback;
 
 /// <summary>
-/// Runs the work a <see cref="PlaylistSession"/> moves off the thread that asked for it: the
-/// advance after an item ends, faults or is skipped, and the advance that takes a jump.
+/// Delivers what a <see cref="PlaylistSession"/> is told from outside a command: an item runtime's
+/// end-of-stream or fault, and the coordinator's skip and jump requests. The session reads what it
+/// needs at the moment it is told, such as the run number and the generation, and hands the
+/// delivery of that input to this.
 /// </summary>
+/// <remarks>
+/// The default delivers at once, on the thread that told the session. A test can deliver later, to
+/// reproduce a notification that reaches the session after a later call.
+/// </remarks>
 internal interface IPlaylistSessionScheduler
 {
-    /// <summary>Starts <paramref name="work"/> without waiting for it.</summary>
+    /// <summary>Runs <paramref name="work"/>, now or later, without waiting for it.</summary>
     void Schedule(Func<Task> work);
 }
 
-/// <summary>Runs a <see cref="PlaylistSession"/>'s work on the thread pool.</summary>
-internal sealed class ThreadPoolPlaylistSessionScheduler : IPlaylistSessionScheduler
+/// <summary>Delivers a <see cref="PlaylistSession"/>'s inputs at once, on the calling thread.</summary>
+internal sealed class InlinePlaylistSessionScheduler : IPlaylistSessionScheduler
 {
-    public static ThreadPoolPlaylistSessionScheduler Instance { get; } = new();
+    public static InlinePlaylistSessionScheduler Instance { get; } = new();
 
-    private ThreadPoolPlaylistSessionScheduler() { }
+    private InlinePlaylistSessionScheduler() { }
 
-    public void Schedule(Func<Task> work) => _ = Task.Run(work);
+    public void Schedule(Func<Task> work) => _ = work();
 }
