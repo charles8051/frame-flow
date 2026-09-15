@@ -570,6 +570,140 @@ public class PlaybackProtocolTests
     }
 
     // ─────────────────────────────────────────────────────────────────────
+    // The whole table — every (state, trigger, inputs) cell
+    // ─────────────────────────────────────────────────────────────────────
+
+    private static readonly PlaybackInputs[] AllInputs =
+    [
+        new(RepeatOne: false, HasSession: true),
+        new(RepeatOne: true, HasSession: true),
+        new(RepeatOne: false, HasSession: false),
+        new(RepeatOne: true, HasSession: false),
+    ];
+
+    private static bool Always(PlaybackInputs inputs) => true;
+
+    /// <summary>
+    /// The cells the table handles, each with the inputs it is handled under. The tests above
+    /// assert what each does. Every other cell is not handled.
+    /// </summary>
+    private static readonly Dictionary<
+        (InternalPlaybackState State, PlaybackTrigger Trigger),
+        Func<PlaybackInputs, bool>
+    > HandledCells = new()
+    {
+        [(InternalPlaybackState.Idle, PlaybackTrigger.Load)] = Always,
+
+        [(InternalPlaybackState.Initializing, PlaybackTrigger.HeadersReceived)] = Always,
+        [(InternalPlaybackState.Initializing, PlaybackTrigger.Unload)] = Always,
+        [(InternalPlaybackState.Initializing, PlaybackTrigger.FatalError)] = Always,
+
+        [(InternalPlaybackState.Preparing, PlaybackTrigger.MetadataParsed)] = Always,
+        [(InternalPlaybackState.Preparing, PlaybackTrigger.Unload)] = Always,
+        [(InternalPlaybackState.Preparing, PlaybackTrigger.FatalError)] = Always,
+
+        [(InternalPlaybackState.InitialBuffering, PlaybackTrigger.BufferReady)] = Always,
+        [(InternalPlaybackState.InitialBuffering, PlaybackTrigger.Play)] = Always,
+        [(InternalPlaybackState.InitialBuffering, PlaybackTrigger.Unload)] = Always,
+        [(InternalPlaybackState.InitialBuffering, PlaybackTrigger.FatalError)] = Always,
+
+        [(InternalPlaybackState.Paused, PlaybackTrigger.Play)] = Always,
+        [(InternalPlaybackState.Paused, PlaybackTrigger.LastFrameRendered)] = i => !i.RepeatOne,
+        [(InternalPlaybackState.Paused, PlaybackTrigger.Unload)] = Always,
+        [(InternalPlaybackState.Paused, PlaybackTrigger.FatalError)] = Always,
+
+        [(InternalPlaybackState.Playing, PlaybackTrigger.LastFrameRendered)] = Always,
+        [(InternalPlaybackState.Playing, PlaybackTrigger.Pause)] = Always,
+        [(InternalPlaybackState.Playing, PlaybackTrigger.BufferUnderrun)] = Always,
+        [(InternalPlaybackState.Playing, PlaybackTrigger.Unload)] = Always,
+        [(InternalPlaybackState.Playing, PlaybackTrigger.FatalError)] = Always,
+
+        [(InternalPlaybackState.Rebuffering, PlaybackTrigger.BufferReady)] = Always,
+        [(InternalPlaybackState.Rebuffering, PlaybackTrigger.Pause)] = Always,
+        [(InternalPlaybackState.Rebuffering, PlaybackTrigger.Unload)] = Always,
+        [(InternalPlaybackState.Rebuffering, PlaybackTrigger.FatalError)] = Always,
+
+        [(InternalPlaybackState.Ended, PlaybackTrigger.Seek)] = Always,
+        [(InternalPlaybackState.Ended, PlaybackTrigger.Play)] = i => i.HasSession,
+        [(InternalPlaybackState.Ended, PlaybackTrigger.Unload)] = Always,
+        [(InternalPlaybackState.Ended, PlaybackTrigger.FatalError)] = Always,
+
+        [(InternalPlaybackState.Unloaded, PlaybackTrigger.Load)] = Always,
+        [(InternalPlaybackState.Unloaded, PlaybackTrigger.Reset)] = Always,
+
+        [(InternalPlaybackState.Error, PlaybackTrigger.Reset)] = Always,
+    };
+
+    [Fact]
+    public void EveryCellOutsideTheTable_IsNotHandled_AndLeavesTheStateAlone()
+    {
+        // Every state, trigger and guard input. The shell drops a stale trigger and fails a
+        // command on a cell that is not handled, so a cell handled by mistake would act on both.
+        foreach (var state in Enum.GetValues<InternalPlaybackState>())
+        foreach (var trigger in Enum.GetValues<PlaybackTrigger>())
+        foreach (var inputs in AllInputs)
+        {
+            var expected = HandledCells.TryGetValue((state, trigger), out var when) && when(inputs);
+            var d = PlaybackProtocol.Advance(state, trigger, inputs);
+
+            Assert.True(expected == d.Handled, $"{state} × {trigger} under {inputs}: handled is {d.Handled}");
+            if (!d.Handled)
+            {
+                Assert.Equal(state, d.NextState);
+                Assert.Empty(d.Actions);
+            }
+        }
+
+        // The function is total: a state outside the enum is not handled either, and does not throw.
+        var unknown = (InternalPlaybackState)(-1);
+        foreach (var trigger in Enum.GetValues<PlaybackTrigger>())
+        {
+            var d = PlaybackProtocol.Advance(unknown, trigger, Default);
+            Assert.False(d.Handled);
+            Assert.Equal(unknown, d.NextState);
+        }
+    }
+
+    [Fact]
+    public void ToDotGraph_DrawsEachHandledCellOnce()
+    {
+        var lines = PlaybackProtocol
+            .ToDotGraph()
+            .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal("digraph PlaybackProtocol {", lines[0]);
+        Assert.Equal("}", lines[^1]);
+
+        var edges = lines.Where(l => l.Contains(" -> ")).ToList();
+
+        // One edge per handled cell, and no edge for a cell that is not handled. Playing ×
+        // LastFrameRendered is the one cell whose decision changes with the inputs, so it has
+        // two edges: the loop and the end.
+        Assert.Equal(HandledCells.Count + 1, edges.Count);
+        Assert.Equal(edges.Count, edges.Distinct().Count());
+        foreach (var (state, trigger) in HandledCells.Keys)
+        {
+            Assert.Contains(
+                edges,
+                e => e.StartsWith($"{state} -> ", StringComparison.Ordinal) && e.Contains($"[label=\"{trigger}")
+            );
+        }
+
+        // A label names the trigger, then the actions in order with a follow-up trigger's payload.
+        Assert.Contains(
+            "Idle -> Initializing [label=\"Load / CreateSession, InitializeSession, FireTrigger(HeadersReceived)\"];",
+            edges
+        );
+        Assert.Contains("InitialBuffering -> Paused [label=\"BufferReady\"];", edges);
+        Assert.Contains("Playing -> Ended [label=\"LastFrameRendered / StopTicker, FreezeClock\"];", edges);
+
+        // Only the internal transition, which runs actions without leaving its state, is dashed.
+        Assert.Equal(
+            "Playing -> Playing [label=\"LastFrameRendered / RunLoopRewind\" style=dashed];",
+            Assert.Single(edges, e => e.Contains("style=dashed"))
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
     // End-to-end transcripts — drive the machine through whole flows by
     // following the FireTrigger auto-chain, the way the shell does.
     // ─────────────────────────────────────────────────────────────────────
