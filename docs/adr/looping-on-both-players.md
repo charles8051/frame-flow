@@ -304,8 +304,8 @@ The watchdog is eligible on a tick when the player expects the current item to l
 Today the controller computes `RepeatOne` from its own mode. That input becomes `ExpectsRepeat`,
 which the session answers:
 
-- **A queue** expects a repeat when its current item has started, it has not been removed, and
-  either:
+- **A queue** expects a repeat when its current item has started, it has not been removed, no jump
+  is pending, and either:
   - the mode is `One`, including for a one-shot current item, which `One` replays; or
   - the mode is `All`, the current item is the only playlist item, and nothing is set next or
     queued.
@@ -536,7 +536,7 @@ Unit tests without media:
 | 17 | 5 | `PlaylistSessionProtocolTests`: a skip, a jump, a fault's rebuild, a failed start, an end-of-stream latched before the first Play, a hand-off to another item of the same source, and a repeat completed during disposal report no loop. Each start that is not a loop resets the count. | [no report or count] |
 | 18 | 5 | `PlaylistSessionTranscriptTests`: a skip requested during an in-place rewind takes effect after the loop is reported, and the next loop's count is 1. | [no report] |
 | 19 | 5 | `PlaylistSessionExplorerTests`: a loop is reported only by an input begun with an end-of-stream from the current run of a played item, and never while disposing or after giving up. A seeded defect that reports a loop on a skip is found. | [no invariant] |
-| 4 | 6 | `PlaylistQueueTests`: `ExpectsRepeat` is true for a started, unremoved current item under `One`, a one-shot one included, and under `All` for the only playlist item with nothing next or queued, including after that item is taken again at a wrap. It is false for a one-shot current item under `All`, a removed current item, a playlist of two under `All`, and a different item taken and not yet started. | [no member] |
+| 4 | 6 | `PlaylistQueueTests`: `ExpectsRepeat` is true for a started, unremoved current item under `One`, a one-shot one included, and under `All` for the only playlist item with nothing next or queued, including after that item is taken again at a wrap. It is false for a one-shot current item under `All`, a removed current item, a playlist of two under `All`, a different item taken and not yet started, and a current item under `One` while a jump is pending. | [no member] |
 | 5 | 6 | `LoopStallEvaluatorTests`: the renamed input gates eligibility as `RepeatOne` did. | [renamed] |
 | 20 | 6 | `PlaylistSessionTranscriptTests`: removing the current item while its in-place rewind is held leaves the session expecting a repeat until the rewind completes, and expecting none once the input is handled. | [no member] |
 
@@ -686,3 +686,6 @@ revision history without machine identifiers.
   - **A removal during a repeat.** Decision 6 read eligibility only from the queue, so removing the
     item mid-repeat would have hidden a rewind that hangs. The session now answers true while it
     performs a loop, and row 20 tests it.
+- **Revision after automated review of #222 (2026-09-15).** Decision 6 now excludes a pending jump.
+  The next advance takes a pending jump ahead of any repeat, so under `One` the queue expected a
+  repeat that would not happen. Row 4 gained the case.

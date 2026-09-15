@@ -253,6 +253,22 @@ public sealed class PlaylistQueueTests
     }
 
     [Fact]
+    public void ExpectsRepeat_IsFalse_WhileAJumpIsPending_BecauseTheNextAdvanceTakesTheJump()
+    {
+        var queue = Queue(RepeatMode.One, "a", "b");
+        var a = Take(ref queue)!;
+        (queue, _) = queue.ReportCurrent(a, Info());
+        Assert.True(queue.ExpectsRepeat);
+
+        (queue, var request) = queue.RequestJump(queue.Playlist[1]);
+        Assert.Equal(JumpRequest.Pending, request);
+        Assert.False(queue.ExpectsRepeat);
+
+        (_, var decision) = queue.DecideNext(PlaylistAdvance.EndOfStream);
+        Assert.Same(queue.Playlist[1], decision.Item);
+    }
+
+    [Fact]
     public void ALatchedAdvance_IsConsumedOnce()
     {
         var queue = Queue(RepeatMode.All, "a").LatchAdvance(PlaylistAdvance.Skip);

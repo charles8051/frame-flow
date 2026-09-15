@@ -107,18 +107,20 @@ internal sealed record PlaylistQueue
 
     /// <summary>
     /// Whether the current item is expected to repeat at its end, which is when the loop-stall
-    /// watchdog watches it. The item has started and has not been removed, and either the mode is
-    /// <see cref="RepeatMode.One"/>, or the mode is <see cref="RepeatMode.All"/> and the item is the
-    /// only playlist item with nothing set next or queued.
+    /// watchdog watches it. The item has started and has not been removed, no jump is pending, and
+    /// either the mode is <see cref="RepeatMode.One"/>, or the mode is <see cref="RepeatMode.All"/>
+    /// and the item is the only playlist item with nothing set next or queued.
     /// </summary>
     /// <remarks>
     /// Decision 6 of <c>docs/adr/looping-on-both-players.md</c>. A repeat of the same item keeps it
-    /// started, so a repeat that hangs is still watched.
+    /// started, so a repeat that hangs is still watched. A pending jump is taken by the next advance
+    /// ahead of any repeat.
     /// </remarks>
     public bool ExpectsRepeat =>
         Current is { } current
         && CurrentStarted
         && !CurrentRemoved
+        && PendingJump is null
         && (
             Repeat == RepeatMode.One
             || (
