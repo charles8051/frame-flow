@@ -322,7 +322,7 @@ public sealed class PlaylistSessionProtocolTests
     }
 
     [Fact]
-    public void AfterGivingUp_EveryNotificationIsDropped()
+    public void AfterGivingUp_NotificationsAreDropped_AndCommandsComplete()
     {
         foreach (var run in Enum.GetValues<PlaylistRunState>())
         {
@@ -333,6 +333,16 @@ public sealed class PlaylistSessionProtocolTests
             {
                 var (_, after, step) = Step(state, queue, input);
                 Assert.True(Classify(queue, after, step) == Decision.Drop, $"{run}, {input}");
+            }
+
+            // The controller is about to dispose the session, so nothing starts an item. A
+            // session gives up only after it has loaded, so Initialize is not among these.
+            foreach (var input in Commands().Where(c => c is not PlaylistSessionInput.Initialize))
+            {
+                var (_, _, step) = Step(state, queue, input);
+                Assert.Null(step.Awaited);
+                var complete = Assert.IsType<PlaylistSessionAction.CompleteCommand>(Assert.Single(step.Actions));
+                Assert.Equal(PlaylistOutcome.Ok, complete.Result.Kind);
             }
         }
     }

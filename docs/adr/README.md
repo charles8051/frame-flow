@@ -228,8 +228,9 @@ land.
   with their fix reverted, and an ordering explorer over an item model with invariants. Migration
   first adds seams so transcripts pin today's behaviour. Revised after an independent review found
   that the first draft's non-awaiting event loop hung disposal and dropped live end-of-stream.
-  Steps 1 to 3 of the migration are implemented: the seams, transcripts that fail with their fix
-  removed, the queue as an immutable value, and the session as a pure core with an awaiting shell.
+  All four steps of the migration are implemented: the seams, transcripts that fail with their fix
+  removed, the queue as an immutable value, the session as a pure core with an awaiting shell, and an
+  ordering explorer over the core.
 - [One builder, two terminals](one-builder-two-terminals.md) — the fluent surface
   returned the weaker object: `BuildAsync` yields a single-shot `PlayerSession`, while
   the eleven-parameter `MediaPlayer.CreateAsync` holds the whole state machine. Adds

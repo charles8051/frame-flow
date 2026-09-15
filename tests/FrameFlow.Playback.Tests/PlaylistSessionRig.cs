@@ -282,14 +282,15 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
     }
 
     /// <summary>
-    /// An item runtime that records each call. A seek or a rewind advances the run number when it
-    /// completes, as <see cref="SubstrateSession"/> advances it once the run it interrupts has
-    /// stopped; a hold on either is a hold before that point.
+    /// An item runtime that records each call, and follows <see cref="PlaylistItemModel"/> when a
+    /// call completes. A seek or a rewind advances the run number then, as
+    /// <see cref="SubstrateSession"/> advances it once the run it interrupts has stopped; a hold on
+    /// either is a hold before that point.
     /// </summary>
     internal sealed class FakeItem(PlaylistSessionRig rig, SessionCallbacks callbacks)
         : IPlaylistItemRuntime
     {
-        private int _runNumber;
+        private PlaylistItemModel _model = PlaylistItemModel.Opened;
 
         public string Name { get; private set; } = "?";
 
@@ -299,7 +300,7 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
 
         public TimeSpan Duration => MediaInfo?.Duration ?? TimeSpan.Zero;
 
-        public int RunNumber => Volatile.Read(ref _runNumber);
+        public int RunNumber => Volatile.Read(ref _model).Run;
 
         /// <summary>
         /// Raises end-of-stream, as the item's last worker does when the run drains.
@@ -323,11 +324,17 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
         public ValueTask WarmUpAsync(CancellationToken cancellationToken = default) =>
             rig.PerformAsync(this, ItemOp.WarmUp, "WarmUp", cancellationToken);
 
-        public ValueTask PlayAsync(CancellationToken cancellationToken = default) =>
-            rig.PerformAsync(this, ItemOp.Play, "Play", cancellationToken);
+        public async ValueTask PlayAsync(CancellationToken cancellationToken = default)
+        {
+            await rig.PerformAsync(this, ItemOp.Play, "Play", cancellationToken);
+            Follow(m => m.Played());
+        }
 
-        public ValueTask PauseAsync(CancellationToken cancellationToken = default) =>
-            rig.PerformAsync(this, ItemOp.Pause, "Pause", cancellationToken);
+        public async ValueTask PauseAsync(CancellationToken cancellationToken = default)
+        {
+            await rig.PerformAsync(this, ItemOp.Pause, "Pause", cancellationToken);
+            Follow(m => m.PausedNow());
+        }
 
         public async ValueTask SeekAsync(
             TimeSpan position,
@@ -335,17 +342,23 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
         )
         {
             await rig.PerformAsync(this, ItemOp.Seek, $"Seek({position})", cancellationToken);
-            Interlocked.Increment(ref _runNumber);
+            Follow(m => m.Repositioned());
         }
 
         public async ValueTask RewindToStartAsync(CancellationToken cancellationToken = default)
         {
             await rig.PerformAsync(this, ItemOp.Rewind, "Rewind", cancellationToken);
-            Interlocked.Increment(ref _runNumber);
+            Follow(m => m.Repositioned());
         }
 
-        public ValueTask DisposeAsync() =>
-            rig.PerformAsync(this, ItemOp.Dispose, "Dispose", CancellationToken.None);
+        public async ValueTask DisposeAsync()
+        {
+            await rig.PerformAsync(this, ItemOp.Dispose, "Dispose", CancellationToken.None);
+            Follow(m => m.DisposedNow());
+        }
+
+        private void Follow(Func<PlaylistItemModel, PlaylistItemModel> transition) =>
+            Volatile.Write(ref _model, transition(Volatile.Read(ref _model)));
     }
 
     private sealed class FakeClock(PlaylistSessionRig rig) : IPlaybackClock

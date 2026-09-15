@@ -49,6 +49,8 @@ public sealed class PlaylistSessionTranscriptTests
     /// <summary>
     /// #191 (#180): a first item that faulted before the first play was skipped while the
     /// controller was still loading. It goes to the controller as a single source's fault would.
+    /// A Play the controller sent before it saw that error does not start the item; the explorer in
+    /// step 4 of the protocol ADR found that one did.
     /// </summary>
     [Fact]
     public async Task FaultBeforeTheFirstPlay_IsFatal_AndNothingAdvances()
@@ -59,6 +61,11 @@ public sealed class PlaylistSessionTranscriptTests
         await rig.SettleAsync();
 
         Assert.Equal(["ctl.Fatal(boom)"], rig.TakeLog());
+
+        await rig.Session.PlayAsync();
+        await rig.SettleAsync();
+
+        Assert.Empty(rig.TakeLog());
     }
 
     /// <summary>
