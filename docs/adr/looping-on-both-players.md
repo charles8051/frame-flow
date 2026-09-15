@@ -3,7 +3,8 @@
 ## Status
 
 Proposed (2026-09-14). Draft pending number assignment. Revised the same day after an independent
-review; *Revision history* says what changed. **Nothing here is implemented.**
+review, and on 2026-09-15 onto the playlist session protocol; *Revision history* says what changed.
+**Nothing here is implemented.**
 
 This record supersedes [ADR-0021](ADR-0021-looped-playback-strategy.md). It decides:
 - what each `RepeatMode` means on a single-source player and on a playlist player;
@@ -16,7 +17,13 @@ It answers three of the questions that
 says must have recorded answers before a single player type is proposed: `RepeatMode.All` on one
 item, loop ownership, and loop reporting. It settles #172, and the reporting half of #173.
 
-Line numbers cite commit f4aa57a.
+The playlist half is a change to the playlist session's protocol core. A single source gets the same
+behaviour by running as a queue of one on the playlist session, which a separate record decides
+(decision 2). If that record is rejected, decision 8 changes the controller instead.
+
+Line numbers cite commit 930a84e. The probes and measurements in *Context* ran on f4aa57a, before
+the playlist session became a protocol. None of the five behaviour differences that record lists
+touches a loop.
 
 Related: [ADR-0021](ADR-0021-looped-playback-strategy.md),
 [ADR-0027](ADR-0027-public-api-surface-cleanup.md),
@@ -51,13 +58,14 @@ Related: [ADR-0021](ADR-0021-looped-playback-strategy.md),
 
 A single-source player loops in the controller. On `LastFrameRendered` under `RepeatMode.One`, the
 controller increments its loop count and raises `LoopRestarted`. It then starts a seek to zero
-through its seek state machine (`src/FrameFlow.Playback/PlaybackControllerCore.cs:1051-1062`).
+through its seek state machine (`src/FrameFlow.Playback/PlaybackControllerCore.cs:1050-1062`).
 
-A playlist player loops in its session. `PlaylistCoordinator.DecideNext` replays the current item
-under `One` (`src/FrameFlow.Playback/PlaylistCoordinator.cs:506`). It also wraps to the first item
-under `All` (`:525-526`), which is the same item in a playlist of one. `PlaylistSession` rewinds that
-item in place (`src/FrameFlow.Playback/PlaylistSession.cs:939-961`). Since #197 the controller never
-loops a playlist.
+A playlist player loops in its session. `PlaylistQueue.DecideNext` replays the current item under
+`One` (`src/FrameFlow.Playback/PlaylistQueue.cs:316-317`). It also wraps to the first item under
+`All` (`:333`), which is the same item in a playlist of one. When the player is playing and the item
+has played, the session's protocol rewinds that item in place
+(`src/FrameFlow.Playback/PlaylistSessionProtocol.cs:740-752`); otherwise it rebuilds it. Since #197
+the controller never loops a playlist.
 
 The probes were scratch integration tests over `PlaybackController.Create` and
 `PlaybackController.CreatePlaylist`. They used the 3-second video-only clip, software decode and a
@@ -80,10 +88,11 @@ The single-source loop calls `SubstrateSession.SeekAsync(0)`. The playlist loop 
 ways:
 
 - **Stopping the run.** The seek cancels the session's token and waits; the rewind waits for tasks
-  that have already finished (`src/FrameFlow.Playback/SubstrateSession.cs:1113-1125`).
+  that have already finished (`src/FrameFlow.Playback/SubstrateSession.cs:1104-1125`).
 - **The graph.** The seek builds a new graph; the rewind re-runs the retained one. The video
   configurator therefore runs on every pass of a single-source loop, and once per load on a
-  playlist loop.
+  playlist loop. Operators in a retained graph keep their state across the rewind: the seek reset
+  covers only the decoders and the demux pipeline (`SubstrateSession.cs:565-572`).
 - **The seek state machine.** It runs for the single source (ADR-0028 §2), not for the playlist.
 
 Neither rewind replaces the decode device. The device is created when `VideoDecoder.Open` runs, inside
@@ -111,7 +120,7 @@ The review also measured the gap at five loop boundaries on a 0.5-second clip:
 - **The revert (#172).** A comment records why the single-source loop uses the full seek. The cheap
   rewind was reverted on 2026-06-12, because the decode device it kept across loops was suspected
   of causing a present stall, and "a full seek hands out a clean device each loop"
-  (`PlaybackControllerCore.cs:564-572`). On this tree the full seek keeps the same device, so it does
+  (`PlaybackControllerCore.cs:563-573`). On this tree the full seek keeps the same device, so it does
   not do what the comment relies on. The hang ADR-0063 later root-caused was two concurrent
   `VideoProcessorBlt` calls in the converter, and ADR-0063 replaced that call with a pixel shader.
   ADR-0064 gave the converter a device of its own. Both are accepted, and both still list a final
@@ -131,9 +140,26 @@ The review also measured the gap at five loop boundaries on a 0.5-second clip:
   not `LoopRestarted` (`src/FrameFlow.Player/IMediaPlayer.cs:107`), so a caller of
   `MediaPlayer.CreateAsync` or the builder has no loop event.
 - **Which loops are watched.** The loop-stall watchdog is eligible only while the controller's mode
-  is `One` (`PlaybackControllerCore.cs:213`, `src/FrameFlow.Playback/LoopStallEvaluator.cs:112-116`).
+  is `One` (`PlaybackControllerCore.cs:212`, `src/FrameFlow.Playback/LoopStallEvaluator.cs:112-116`).
   A playlist of one under `All` loops through the same in-place rewind as under `One`, and is not
   watched.
+
+### What the playlist session protocol changed
+
+The first two drafts were written against `PlaylistSession` and `PlaylistCoordinator`, before
+[The playlist session as a pure protocol](playlist-session-protocol.md) landed (#204, #208, #209 and
+#210). Three things they relied on have moved:
+
+- **Ordering.** The session's gate is gone. Its shell steps one input at a time, and an advance runs
+  from its take to its settled item, including a jump taken on the way, before the next input.
+- **The queue.** `PlaylistQueue` is an immutable value that the coordinator holds. The predicate
+  decision 6 needs is a property of that value.
+- **Run numbers.** Every item runtime numbers its runs, and the core drops an end-of-stream from a
+  run that a seek or rewind replaced. The controller has no run numbers, which is #195.
+
+The playlist session is now the one place where a repeat is decided, performed and tested with
+transcripts, tables and an explorer. What decisions 1, 3 and 4 of the first two drafts added to the
+controller's loop, that session already does for a queue of one.
 
 ## Decision
 
@@ -144,9 +170,9 @@ The review also measured the gap at five loop boundaries on a 0.5-second clip:
   says.
 - **`All`** repeats the queue. A queue of one item repeats that item.
 
-A single-source player is a queue of one, so under `All` it loops. Today it ends (probe 2). The
-controller gives its protocol `RepeatOne` true for `One`, and for `All` when its session does not
-loop internally.
+A single-source player is a queue of one, so under `All` it loops. Today it ends (probe 2). It gets
+this by running as a queue of one on the playlist session (decision 2), or through the controller's
+protocol input under decision 8.
 
 `One` and `All` behave the same on a queue of one item, and ADR-0027 §3 removed `All` for exactly
 that reason. This record accepts it. `All` differs from `One` on every queue of two or more items,
@@ -156,29 +182,41 @@ shows two states that behave the same. It can hide `All` there.
 
 ### 2. The queue decides that an item repeats
 
-On a playlist player the coordinator decides, and the session performs the repeat. That is already
-so. On a single-source player the controller's repeat region decides, until a single source runs on
-the playlist session. A single player type removes the controller's loop instead of extending it.
+The queue decides, and the playlist session's protocol performs the repeat. On a playlist player
+that is already so.
 
-This record adds no second loop mechanism to the controller. It changes the controller's protocol
-input (decision 1), one protocol cell (decision 3), the rewind it calls (decision 4), and what it
-publishes and watches (decisions 5 and 6).
+A single-source player gets the same by running as a queue of one on the playlist session. Its own
+record decides that change, after a spike and the conditions the end-of-queue record lists for a
+single player type. That change removes the controller's loop instead of extending it.
 
-### 3. A loop that ends while paused rewinds and stays paused
+This record therefore adds nothing to the controller's loop. It changes the playlist session's
+protocol and queue, what the controller publishes (decision 5), and what the watchdog reads
+(decision 6). Decision 8 lists the controller changes to make instead, if a single source does not
+come to run as a queue of one.
 
-Under a repeating mode, `Paused × LastFrameRendered` becomes an internal transition that runs the
-loop rewind. The item is rewound while paused, the state stays `Paused`, and the next Play starts
-it from zero. `SubstrateSession`'s reposition already handles a rewind while paused: it re-arms
-audio paused and leaves the relaunch to the next Play (`SubstrateSession.cs:1216-1227`). Outside a
-repeating mode the cell keeps ending the player, as #194 decided.
+### 3. A loop that ends while paused puts the item back at its start and stays paused
 
-This fixes the stuck `Playing` state the review reproduced under `One`, and keeps a single source
-under `All` from inheriting it. It matches what the playlist session does in the same race.
+The item returns to its start while the player is paused, the state stays `Paused`, and the next
+Play starts it from zero. Outside a repeating mode the player ends, as #194 decided.
 
-### 4. Both players rewind in place
+The playlist session does this today. An in-place rewind needs a playing player, so an end-of-stream
+while paused rebuilds the item instead. The session opens and warms the new runtime and leaves it
+waiting for Play (`PlaylistSessionProtocol.cs:724-773`, `:908-935`). A queue of one does the same.
 
-The single-source loop calls `RewindToStartAsync` instead of `SeekAsync(0)`, still through the seek
-state machine that ADR-0028 §2 set up. The revert comment is deleted.
+A single-source player on the controller does not. Under `One` the review left it `Playing` with its
+frames stuck, and decision 1 would spread that to `All`. Decision 8 fixes it on the controller, if a
+single source does not run as a queue of one.
+
+### 4. Both players rewind in place while playing
+
+A repeat while the player is playing rewinds the retained runtime in place, through
+`RewindToStartAsync`, instead of rebuilding or seeking it. If the rewind fails, the item is rebuilt.
+A repeat while paused rebuilds, as decision 3 says.
+
+The playlist session does this today (`PlaylistSessionProtocol.cs:740-752`, `:775-803`). A queue of
+one does the same, so a single source stops using the full seek when it runs as one. The revert
+comment goes with the controller's loop. If a single source does not run as a queue of one, decision
+8 moves the controller's loop to the rewind.
 
 - **The revert's reason does not hold.** A full seek keeps the same decode device, so it hands out no
   clean one.
@@ -187,9 +225,17 @@ state machine that ADR-0028 §2 set up. The revert comment is deleted.
 - **Its successors changed the suspected cause.** The concurrent-`Blt` hang ADR-0063 found is gone
   from the converter.
 
+A rewind that hangs is not rebuilt: the rebuild follows only a rewind that fails. Decision 6 keeps a
+hanging repeat eligible, so the loop-stall watchdog reports it as `LoopStalled`, and the presenter
+stall watchdog reports a wedged presenter. Recovering from the hang is left to the host, as it is on
+a playlist today. *Not settled here* records it.
+
 The on-hardware validation that ADR-0063 and ADR-0064 list is still to be run. *Validation* adds a
-loop soak to it. That is a regression check, not a gate: if it stalls, #172 reopens with evidence,
-and the revert can be restored for the single source.
+loop soak to it. For a playlist, which has rewound in place since ADR-0062's 2026-06-21 update, the
+soak is a regression check, not a gate: if it stalls, #172 reopens with evidence. A single source
+moves to the rewind only when it runs as a queue of one, and the end-of-queue record makes a hardware
+run before and after that change one of its conditions. Decision 8 alone would move it without that
+run, for the reasons in alternative E.
 
 ### 5. A loop is reported the same way on both players
 
@@ -197,19 +243,29 @@ and the revert can be restored for the single source.
   players raise it: under `One`, and under `All` when the queue holds only that item.
 - **What is not a loop.** It does not fire for a skip, a jump, or a rebuild after a failure. It does
   not fire when a different item of the same source follows, such as a back-to-back duplicate.
+- **Which advance is a loop.** An advance is a loop when it began with an end-of-stream from the
+  current run of an item that has played, and the item its decision names is the current
+  `PlaylistItem` itself. The test is on the decision's item, not on whether the queue took one:
+  - Under `One` it is `DecideNext`'s replay of the current item, which takes nothing.
+  - Under `All` it is a wrap that takes the only playlist item again.
+  - A different item of the same source is a replay decision, but not a loop.
+  - An end-of-stream latched before the first Play is not a loop, because the item has not played.
+  - The protocol records the answer on the advance when it decides, so the steps that complete the
+    advance do not work it out again.
 - **When it fires.** It fires when the item has been put back at its start, whether the player is
   playing or paused. It does not wait for a frame to be presented. A consumer that needs to know
   playback has resumed watches the state and the position.
-  - **A single source** fires it when the loop rewind's seek outcome reports success, not when the
-    rewind is requested. A loop rewind cancelled by a user seek raises none.
-  - **A playlist rewinding in place** fires it when `RewindToStartAsync` completes without an
-    exception. If it throws, the repeat falls back to a rebuild, and the rebuild's rule applies.
-  - **A playlist rebuilding the item while playing** fires it when the rebuilt item's `PlayAsync`
-    completes.
-  - **A playlist rebuilding the item while paused** fires it when the rebuilt item's `WarmUpAsync`
-    completes. The item then waits at its start for Play, and Play raises no second event.
+  - **In place.** When the rewind's outcome is `Ok` (`PlaylistSessionProtocol.cs:775-803`). If the
+    rewind fails, the repeat falls back to a rebuild, and the rebuild's rule applies.
+  - **Rebuilt while playing.** When the rebuilt item's Play outcome is `Ok` (`:937-956`).
+  - **Rebuilt while paused.** When the rebuilt item's warm-up outcome is `Ok` (`:908-935`). The item
+    then waits at its start for Play, and that Play reports no second loop.
   - **A failed repeat** that cannot be opened, warmed or started is a failed start, reported as one,
-    and raises none.
+    and reports no loop.
+  - **During disposal, or after the session has given up,** no loop is reported, as no other report
+    is.
+  - **A single source** fires it at the same points when it runs as a queue of one. On the
+    controller, decision 8 says when it fires.
 
   At each of these points the item's position clock reads zero, or later if the player is playing.
 - **`LoopCount`.** It counts consecutive loops of the current item: the first loop is 1.
@@ -217,14 +273,19 @@ and the revert can be restored for the single source.
     hand-off to another item.
   - A user seek does not reset it.
   - Today the controller's count never resets.
-- **Who counts.** A single source's controller counts. A playlist session counts under its gate and
-  passes the count in a new internal session callback. The controller only publishes it, so the
-  controller still does not track playlist items.
-- **Loops, skips and jumps are ordered by the session's gate.** A playlist reports a loop from inside
-  the advance that performed it, before the gate is released. A skip, jump or removal that arrives
-  meanwhile waits for the gate, so its effect comes after the loop, including its reset of the
-  count. A jump recorded during the rewind is taken as soon as the item has started again, as the
-  queue record's decision 5 says, so the loop is reported and then the jump moves on.
+- **Who counts.** The playlist session's protocol counts, in its state. It reports each loop with a
+  new report action, which the shell passes to the controller through a new internal session
+  callback. The controller only publishes it, so it still does not track playlist items. On the
+  controller, decision 8 counts.
+- **Loops, skips and jumps are ordered by the session's inputs.** The shell steps one input at a
+  time, and a loop is reported by a step of the end-of-stream input that performed it.
+  - A skip requested meanwhile is a later input, so its effect comes after the loop, including its
+    reset of the count.
+  - A jump recorded on the queue during the rewind is taken by the same input once the item has
+    started again, as the queue record's decision 5 says. The loop is reported, and then the jump
+    moves on.
+  - A removal edits the queue. It does not undo a repeat already under way, and the next end of the
+    item moves on.
 - **Loop reports travel in order.** The controller receives them through its channel in the order
   the session made them, carrying the session generation. It drops a report from a session it has
   replaced, as it drops that session's other notifications.
@@ -234,26 +295,38 @@ and the revert can be restored for the single source.
   back to the first playlist item, for any reason. The docs on `SourceTransitioned` and
   `PlaylistTransition.Wrapped` say both, which is the documentation fix #173 asks for.
 - **No order is promised between `LoopRestarted` and `SourceTransitioned` for the same loop.** The
-  first is raised on the controller's dispatch loop, and the second on the session's advance.
+  first is raised on the controller's dispatch loop, and the second by the session's shell.
 
 ### 6. The watchdog watches every expected loop
 
 The watchdog is eligible on a tick when the player expects the current item to loop at its end.
 Today the controller computes `RepeatOne` from its own mode. That input becomes `ExpectsRepeat`,
-which the controller computes for a single source and the session answers for a playlist:
+which the session answers:
 
-- **A single source** expects a repeat under `One` or `All`.
-- **A playlist** expects one when the current item has started, it has not been removed, and either:
-  - the mode is `One`; or
+- **A queue** expects a repeat when its current item has started, it has not been removed, and
+  either:
+  - the mode is `One`, including for a one-shot current item, which `One` replays; or
   - the mode is `All`, the current item is the only playlist item, and nothing is set next or
     queued.
+- **A single source** is a queue of one. On the controller, decision 8 says when it expects a
+  repeat.
 
-The answer is read on every tick, not held across the end of the item.
+`ExpectsRepeat` is a property of the `PlaylistQueue` value. The playlist session reads it from the
+value its coordinator holds, under the coordinator's lock and without entering its input channel, as
+the protocol record's synchronous members do. The answer is read on every tick, not held across the
+end of the item.
+
+While the session performs a loop, it answers true whatever the queue now says. After each step the
+shell publishes whether the input under way is a loop, and clears it when that input is handled. A
+removal made during the repeat therefore does not hide a rewind that hangs, which keeps decision 5's
+rule that a removal does not undo a repeat already under way. Between inputs the queue's predicate
+answers alone.
 
 - **A repeat stays eligible while it runs.** A repeat of the same item, by in-place rewind or by
-  rebuild, does not make the item unstarted, so a rewind that hangs is still watched. Today the
-  coordinator's take marks every taken item unstarted, including the same item taken again at a
-  wrap; that changes for a same-item take.
+  rebuild, does not make the item unstarted, so a rewind that hangs is still watched. A replay under
+  `One` takes nothing, so it already keeps the item started. Today a take marks every taken item
+  unstarted, including the same item taken again at a wrap (`PlaylistQueue.cs:470`); that changes
+  for a same-item take.
 - **A hand-off to a different item is not eligible.** Taking a different item makes the current
   item one that has not started, so a slow hand-off does not count as an overrun, such as one
   waiting on a `SourceTransitioned` subscriber.
@@ -278,32 +351,54 @@ This amends #197's note that the watchdog still reads the controller's own mode.
 
 ADR-0021's status becomes *Superseded* when this record is accepted.
 
+### 8. If a single source does not run as a queue of one
+
+If the record that runs a single source as a queue of one is rejected, the controller keeps
+single-source looping, and these changes apply to it instead. The first two drafts made them the plan.
+
+- **Decision 1.** The controller gives its protocol `RepeatOne` true for `One`, and for `All` when
+  its session does not loop internally (`PlaybackControllerCore.cs:759`).
+- **Decision 3.** Under a repeating mode, `Paused × LastFrameRendered` becomes an internal transition
+  that runs the loop rewind (`PlaybackProtocol.cs:316`). The item is rewound while paused, and the
+  next Play starts it from zero. `SubstrateSession`'s reposition already handles a rewind while
+  paused: it re-arms audio paused and leaves the relaunch to the next Play
+  (`SubstrateSession.cs:1216-1227`).
+- **Decision 4.** The loop calls `RewindToStartAsync` instead of `SeekAsync(0)`, still through the
+  seek state machine that ADR-0028 §2 set up. The revert comment is deleted.
+- **Decision 5.** `LoopRestarted` fires when the loop rewind's seek outcome reports success, not
+  when the rewind is requested. A loop rewind cancelled by a user seek raises none. The controller
+  counts, and a load resets the count.
+- **Decision 6.** The controller expects a repeat under `One` or `All`.
+
+The decision 3 cell can ship on its own, ahead of either path. It changes no loop ownership, and it
+ends the stuck `Playing` state under `One` while a single source still loops on the controller.
+
 ## Consequences
 
 ### Positive
 
+The playlist half brings these:
+- **Loops are observable on a playlist.** `LoopRestarted` fires for a playlist's loops, with a
+  per-item count, and joins `IMediaPlayer`.
+- **Every expected loop on a playlist is watched,** including a playlist of one under `All`.
+
+These hold for a single source only once it runs as a queue of one, or under decision 8. Until then
+it keeps today's behaviour, as *Negative* says:
 - **One meaning per mode.** Each repeat mode means the same thing on both players, and the README's
   quick start loops, as it reads. Faults are the exception: under `One` a playlist replays a
   faulted item and counts the failure, while a single source enters `Error`.
-- **Loops are observable.** They are visible from `IMediaPlayer`, with the same event, timing and
-  count on both players.
+- **The same loop event on both players,** with the same timing and count.
 - **A frozen loop is fixed.** A single source paused as its loop ends no longer freezes in `Playing`.
-- **Every expected loop is watched.**
 - **The single-source loop is cheaper.** It stops rebuilding its graph on every pass.
+- **One loop mechanism,** when a single source runs as a queue of one. It repeats through the
+  playlist session, so the two loop paths #172 describes become one, tested in the protocol core.
 
 ### Negative
 
-These go in `docs/BREAKING-CHANGES.md` when the record is implemented. Only the new member and the
-renamed property are compile-visible.
+These go in `docs/BREAKING-CHANGES.md` when they land. Only the new member and the renamed property
+are compile-visible.
 
-- **A single-source player under `All` loops instead of ending.** A caller that relied on `All`
-  acting as `Off` must pass `Off`.
-- **The video configurator runs once per load on a single source,** not once per loop. A stateful
-  operator in a consumer's chain keeps its state across loops, and a configurator-only chain that
-  wires its own sinks is not rewired each pass.
-- **`LoopRestarted` moves.** It fires after the item starts again, not when the rewind is requested,
-  and a rewind cancelled by a user seek raises none.
-- **`LoopRestarted.LoopCount` resets** on a load and on any non-loop change of item.
+The playlist half brings two:
 - **`IMediaPlayer` gains `LoopRestarted`.** An implementing type stops compiling until it adds it. In
   this repository that includes the double in
   `tests/FrameFlow.Avalonia.Tests/FrameFlowVolumeControlTests.cs:143`. An implementing assembly that
@@ -311,9 +406,26 @@ renamed property are compile-visible.
 - **`LoopStallSample.RepeatOne` is renamed `ExpectsRepeat`.** The type is public, so this is a
   source break for code that builds samples.
 
+The rest change a single source. They land when it runs as a queue of one, or with decision 8:
+- **A single-source player under `All` loops instead of ending.** A caller that relied on `All`
+  acting as `Off` must pass `Off`.
+- **The video configurator runs once per load on a single source,** not once per loop. A stateful
+  operator in a consumer's chain keeps its state across loops while timestamps go back to zero, with
+  no reset. `SyncJoin` is the exception: it clears its window at the start of every run of the graph
+  (`src/FrameFlow.Graph/NodePumps.cs:287-290`). A playlist that rewinds in place has this today. A
+  configurator-only chain that wires its own sinks is not rewired each pass.
+- **`LoopRestarted` moves.** It fires once the item is back at its start, not when the rewind is
+  requested, and a rewind cancelled by a user seek raises none.
+- **`LoopRestarted.LoopCount` resets** on a load and on any non-loop change of item.
+
+Until then, a single-source player under `One` still freezes in `Playing` when its loop ends while
+paused, and one under `All` still ends. The decision 8 cell for the paused case can ship first if
+that wait is too long.
+
 ### Neutral
 
-- The controller still owns single-source looping until a single player type.
+- The controller still owns single-source looping until a single source runs as a queue of one, and
+  for good if decision 8 applies.
 
 ## Alternatives considered
 
@@ -347,12 +459,39 @@ a device refreshed by the full seek, is false on this tree.
 
 Rejected. Every section of it describes members and a class that no longer exist.
 
+### G. Change the controller's loop first
+
+The first two drafts did. Decisions 1, 3 and 4 changed the controller's loop, and a single player
+type would later remove it. Rejected as the plan, and kept as decision 8.
+
+- **The playlist session already does it.** It loops a queue of one under `All`, puts a paused loop
+  back at its start, and rewinds in place, in a core with transcripts, tables and an explorer.
+- **It builds what the next change deletes.** Running a single source as a queue of one removes the
+  controller's loop. Every change to that loop would be written, tested and then removed.
+- **The session drops a stale end-of-stream by run number.** That is the case #195 describes for a
+  single source, which the controller cannot tell apart today.
+
+The cost is time. A single-source player keeps the paused freeze under `One`, and keeps ending under
+`All`, until it runs as a queue of one. The decision 8 cell for the paused case can ship on its own
+if that is too long.
+
 ## Not settled here
 
+- **Running a single source as a queue of one.** Its own record decides it, after the spike and the
+  conditions the end-of-queue record lists for a single player type. This record's single-source
+  rows in *Validation* run against it.
 - **Why a transition happened.** `PlaylistTransition` does not carry a natural end, skip, jump or
   failure (#173). `LoopRestarted` answers the question for loops.
-- **Pairing a loop with its transition.** `LoopRestarted` lives in `FrameFlow.Media` and carries no
-  item or transition index, and no order between the two events is promised.
+- **Pairing a loop with its transition (#203).** `LoopRestarted` lives in `FrameFlow.Media` and
+  carries no item or transition index, and no order between the two events is promised. Whether it
+  should name the item depends on whether every player raises transitions, which the single player
+  type's record decides.
+- **Recovering from a rewind that hangs.** A rewind that never completes is reported by the
+  watchdogs, but nothing rebuilds the item or bounds the wait. That is so on a playlist today.
+- **Operator state across a loop.** When a retained graph re-runs from zero, nothing resets an
+  operator except `SyncJoin`, which clears its own window. A stateful operator a consumer adds to the
+  chain sees its timestamps return to zero. A playlist that rewinds in place does this today. A
+  single-source loop rebuilds its graph, so it does not do it until it moves to the rewind.
 - **A stall at a hand-off to a different item.** The watchdog covers expected loops only.
 - **A stall on an audio-mastered clock.** The evaluator targets the wall-clock case, where the
   position overruns the duration. An audio-mastered clock stops at the duration instead.
@@ -361,42 +500,49 @@ Rejected. Every section of it describes members and a class that no longer exist
 
 ## Implementation touches
 
-Besides the code, implementing this record changes:
-- **`FrameFlow.Media` docs:** the summaries of `RepeatMode.All`, `LoopRestarted`, `LoopStalled` and
+Besides the code, the playlist half changes:
+- **`FrameFlow.Media` docs:** the summaries of `LoopRestarted`, `LoopStalled` and
   `LoopStallEvaluator`.
 - **`FrameFlow.Playback` docs:** the summaries of `IPlaybackController.LoopStalled` and
   `IPlaybackController.LoopRestarted`.
-- **The API baseline:** a `FrameFlow.Player` `PublicAPI` entry for `IMediaPlayer.LoopRestarted`.
+- **The API baselines:** a `FrameFlow.Player` `PublicAPI` entry for `IMediaPlayer.LoopRestarted`,
+  and the `FrameFlow.Playback` entries for the renamed `LoopStallSample` member.
+- **The queue record's** *Not settled* **entry** on `All` for a playlist of one.
+
+A single source's move to a queue of one, or decision 8, changes:
+- **`FrameFlow.Media` docs:** the summary of `RepeatMode.All`.
 - **The playback pattern docs:** rows 12 to 14 of `docs/patterns/playback-states.md` and its
   repeat-mode notes, `docs/patterns/playback-statechart.md`, and
   `docs/patterns/playback-controller.md`.
 - **ADR-0062's implementation note** that `All` on a single source behaves like `Off`.
-- **The queue record's** *Not settled* **entry** on `All` for a playlist of one.
 - **The test bench's `repeat all`** on a single source.
 - **The summary of `LoopRestartTests`,** which describes a fresh graph per loop.
 
 ## Validation
 
-Write each test first and confirm it fails on the tree before this record lands, for the reason
-given.
+Write each test first and confirm it fails on the tree before it lands, for the reason given. Test
+numbers are stable across revisions, so the tables below are grouped by where each test runs, not in
+number order.
+
+### The playlist half
 
 Unit tests without media:
 
 | # | Decision | Test | Today |
 |---|---|---|---|
-| 1 | 1 | `PlaybackDispatchProtocolTests`: a single-source session under `All` reports end-of-stream; the controller runs the loop rewind and stays `Playing`. | [`Ended`] |
-| 2 | 3 | `PlaybackProtocolTests` and `PlaybackDispatchProtocolTests`: under `One`, and under `All` for a single source, end-of-stream while `Paused` runs the loop rewind and stays `Paused`. | [dropped under `One`; `Ended` under `All`] |
-| 3 | 5 | `PlaybackDispatchProtocolTests`: a loop rewind cancelled by a seek raises no `LoopRestarted`; a load resets `LoopCount`. | [raised on request; never reset] |
-| 4 | 6 | `PlaylistQueueTests`: `ExpectsRepeat` is true for a started, unremoved current item under `One`, and under `All` as the only playlist item with nothing next or queued, including after that item is taken again at a wrap; false for a one-shot current item, a removed current item, a playlist of two under `All`, and a different item taken and not yet started. | [no member] |
+| 15 | 5 | `PlaylistSessionProtocolTests`: under `One`, an end-of-stream from the current run of a played item rewinds in place and reports a loop with count 1 when the rewind succeeds; the next loop reports 2. | [no report] |
+| 16 | 5 | `PlaylistSessionProtocolTests`: a rewind that fails reports the loop when the rebuilt item's Play succeeds. A loop that ends while paused reports it when the rebuilt item's warm-up succeeds, and the Play that follows reports none. | [no report] |
+| 17 | 5 | `PlaylistSessionProtocolTests`: a skip, a jump, a fault's rebuild, a failed start, an end-of-stream latched before the first Play, a hand-off to another item of the same source, and a repeat completed during disposal report no loop. Each start that is not a loop resets the count. | [no report or count] |
+| 18 | 5 | `PlaylistSessionTranscriptTests`: a skip requested during an in-place rewind takes effect after the loop is reported, and the next loop's count is 1. | [no report] |
+| 19 | 5 | `PlaylistSessionExplorerTests`: a loop is reported only by an input begun with an end-of-stream from the current run of a played item, and never while disposing or after giving up. A seeded defect that reports a loop on a skip is found. | [no invariant] |
+| 4 | 6 | `PlaylistQueueTests`: `ExpectsRepeat` is true for a started, unremoved current item under `One`, a one-shot one included, and under `All` for the only playlist item with nothing next or queued, including after that item is taken again at a wrap. It is false for a one-shot current item under `All`, a removed current item, a playlist of two under `All`, and a different item taken and not yet started. | [no member] |
 | 5 | 6 | `LoopStallEvaluatorTests`: the renamed input gates eligibility as `RepeatOne` did. | [renamed] |
+| 20 | 6 | `PlaylistSessionTranscriptTests`: removing the current item while its in-place rewind is held leaves the session expecting a repeat until the rewind completes, and expecting none once the input is handled. | [no member] |
 
 Integration tests over real playback, in `FrameFlow.Integration.Tests`:
 
 | # | Decision | Test | Today |
 |---|---|---|---|
-| 6 | 1, 5 | Single source under `All`: two loops, with `LoopRestarted` counts 1 and 2. | [one pass, then `Ended`] |
-| 7 | 3 | Single source under `One`, end-of-stream held until after a pause: `Paused`, then Play presents from zero and raises `LoopRestarted`. | [`Playing` with frames stuck; `LoopStalled`] |
-| 8 | 4 | Single source under `One`: the video configurator runs once across two loops. | [three times] |
 | 9 | 5 | Playlist of one under `All`: `LoopRestarted` on each loop, with counts 1 and 2, and `SourceTransitioned` with `Wrapped` true as before. | [no `LoopRestarted`] |
 | 10 | 5 | Playlist of one under `One`: `LoopRestarted` on each loop, including a loop rebuilt while paused. | [no `LoopRestarted`] |
 | 11 | 5 | Playlist `[a, a]` of one source object, and a playlist of two, under `All`: no `LoopRestarted` at either hand-off. | [passes] |
@@ -405,6 +551,22 @@ Integration tests over real playback, in `FrameFlow.Integration.Tests`:
 | 14 | 5 | `MediaPlayer` and `MediaPlaylistPlayer`: `IMediaPlayer.LoopRestarted` fires with the controller's event. | [no member] |
 
 Test 11 guards today's behaviour against a rule that reported every same-source hand-off.
+
+### A single source
+
+Rows 6 to 8 run against a single source running as a queue of one, in that record's spike. Rows 1 to
+3 test the controller, so they apply only if decision 8 is taken. On a queue of one, rows 15 to 17
+check the session's rules, and rows 6 and 7 check the behaviour over real playback. A seek cannot
+cancel a repeat there: the session takes the seek as a later input, after the repeat completes.
+
+| # | Decision | Test | Today |
+|---|---|---|---|
+| 1 | 8 | `PlaybackDispatchProtocolTests`: a single-source session under `All` reports end-of-stream; the controller runs the loop rewind and stays `Playing`. | [`Ended`] |
+| 2 | 8 | `PlaybackProtocolTests` and `PlaybackDispatchProtocolTests`: under `One`, and under `All` for a single source, end-of-stream while `Paused` runs the loop rewind and stays `Paused`. | [dropped under `One`; `Ended` under `All`] |
+| 3 | 8 | `PlaybackDispatchProtocolTests`: a loop rewind cancelled by a seek raises no `LoopRestarted`; a load resets `LoopCount`. | [raised on request; never reset] |
+| 6 | 1, 5 | Integration. Single source under `All`: two loops, with `LoopRestarted` counts 1 and 2. | [one pass, then `Ended`] |
+| 7 | 3 | Integration. Single source under `One`, end-of-stream held until after a pause: `Paused`, then Play presents from zero and raises `LoopRestarted`. | [`Playing` with frames stuck; `LoopStalled`] |
+| 8 | 4 | Integration. Single source under `One`: the video configurator runs once across two loops. | [three times] |
 
 **The loop soak.** It is added to the on-hardware validation ADR-0063 and ADR-0064 list, and is not a
 gate. Both players loop a clip at the same time, with hardware decode and the GPU presenter each,
@@ -454,3 +616,39 @@ revision history without machine identifiers.
   completing for an in-place rewind, and `PlayAsync` or `WarmUpAsync` completing for a rebuild while
   playing or paused. A finding that the in-place rewind should wait for the hardware soak was
   answered on the PR and not adopted, for the reasons in alternative E.
+- **Revision onto the playlist session protocol (2026-09-15).** The protocol record landed after the
+  second revision (#204, #208, #209 and #210), and this record was rebased onto it:
+  - **Citations.** Line numbers now cite 930a84e. `PlaylistCoordinator` and `PlaylistSession`
+    citations moved to `PlaylistQueue` and `PlaylistSessionProtocol`. The probes and measurements
+    still stand: none of the protocol record's five behaviour differences touches a loop.
+  - **The controller half.** Decisions 1, 3 and 4 no longer change the controller. A single source
+    gets them by running as a queue of one on the playlist session, which its own record decides.
+    The controller changes moved to decision 8, the path if that record is rejected. Alternative G
+    records why.
+  - **Decision 3** now says the item is put back at its start. A playlist rebuilds an item whose loop
+    ends while paused; only a playing loop rewinds in place.
+  - **Decision 5** now orders loops, skips and jumps by the session's inputs instead of its gate. It
+    names each completion point as a protocol outcome, and says which advance is a loop: one begun by
+    an end-of-stream from the current run of a played item that takes the same item again. That
+    excludes an end-of-stream latched before the first Play, which the earlier text did not decide.
+    The count lives in the protocol's state, and a report action carries it.
+  - **Decision 6** puts `ExpectsRepeat` on `PlaylistQueue`, read under the coordinator's lock. Row 4
+    now says a one-shot current item repeats under `One`, which the earlier row left ambiguous.
+  - **Not settled** gained the queue-of-one record, and #203 for pairing a loop with its transition.
+  - **Validation** gained rows 15 to 19 for the protocol core, and groups the rows by where they run.
+- **Revision after automated review of #215 (2026-09-15).** Five changes:
+  - **A rewind that hangs.** Decision 4 now says a hang is not rebuilt, only reported by the
+    watchdogs, and *Not settled* records recovering from it. It also says which changes the hardware
+    soak gates: a single source moves to the rewind only with the hardware run the end-of-queue
+    record requires. For a playlist, which already rewinds in place, the soak stays a regression
+    check. The finding's request to gate the playlist half on the soak was answered on the PR.
+  - **Which advance is a loop.** Decision 5 tests the item the decision names, since a replay under
+    `One` takes nothing from the queue.
+  - **Consequences.** The positive consequences now separate what the playlist half brings from what
+    a single source gains only once it runs as a queue of one, or under decision 8.
+  - **Operator state.** An in-place rewind keeps every operator's state while timestamps go back to
+    zero, except `SyncJoin`, which clears its window on each run. *Context*, the configurator
+    consequence and *Not settled* now say so.
+  - **A removal during a repeat.** Decision 6 read eligibility only from the queue, so removing the
+    item mid-repeat would have hidden a rewind that hangs. The session now answers true while it
+    performs a loop, and row 20 tests it.

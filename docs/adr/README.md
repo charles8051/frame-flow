@@ -213,11 +213,14 @@ land.
   playlist only with `SourceTransitioned` (#173), `IMediaPlayer` exposes no loop event, and the
   loop-stall watchdog does not watch a playlist of one under `All`. Proposes to supersede ADR-0021:
   `All` repeats the queue, so a single source loops under it; the queue decides repeats; a loop
-  that ends while paused rewinds and stays paused; both players rewind in place, because the full
-  seek the single source reverted to keeps the same decode device; `LoopRestarted` fires on both
-  players once a loop has started again, carries a per-item count, and joins `IMediaPlayer`; and the
-  watchdog watches every expected loop. Revised after an independent review measured the decode
-  device and loop gaps on both paths. Nothing is implemented.
+  that ends while paused goes back to its start and stays paused; a playing loop rewinds in place,
+  because the full seek the single source reverted to keeps the same decode device; `LoopRestarted`
+  fires on both players once the item is back at its start, carries a per-item count, and joins
+  `IMediaPlayer`; and the watchdog watches every expected loop. The playlist half changes the
+  playlist session's protocol core. A single source gets the rest by running as a queue of one,
+  which a separate record decides; the controller changes it would otherwise need are kept as a
+  fallback. Revised after an independent review measured the decode device and loop gaps on both
+  paths, and again onto the playlist session protocol. Nothing is implemented.
 - [The playlist session as a pure protocol, with its queue as a value](playlist-session-protocol.md) —
   the playlist session's decisions are spread over 1,051 lines of async code behind a transition
   gate, and the session builds its own item runtimes, so its orderings are tested only over real
