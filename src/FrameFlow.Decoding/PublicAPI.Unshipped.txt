@@ -191,7 +191,7 @@ FrameFlow.Decoding.VideoDecoderOptions.PacketQueueCapacity.get -> int?
 FrameFlow.Decoding.VideoDecoderOptions.PacketQueueCapacity.init -> void
 FrameFlow.Decoding.VideoDecoderOptions.VideoDecoderOptions() -> void
 static FrameFlow.Decoding.DecoderFactories.Audio.get -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IAudioDecoder?>!
-static FrameFlow.Decoding.DecoderFactories.CreateAudio(Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory) -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IAudioDecoder?>!
+static FrameFlow.Decoding.DecoderFactories.CreateAudio(Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory, FrameFlow.Decoding.AudioDecoderOptions? audioOptions = null) -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IAudioDecoder?>!
 static FrameFlow.Decoding.DecoderFactories.CreateVideo(FrameFlow.Media.HardwareDecodeOptions! options, FrameFlow.Media.HardwareDecodeCapabilities? capabilities, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory, FrameFlow.Decoding.VideoDecoderOptions? videoOptions = null) -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IVideoDecoder?>!
 static FrameFlow.Decoding.DecoderFactories.Video.get -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IVideoDecoder?>!
 static FrameFlow.Decoding.DecoderSourceAdapters.AsSourceNode(this FrameFlow.Decoding.IAudioDecoder! decoder, string! id = "audio-decoder") -> FrameFlow.Graph.SourceNode<FrameFlow.Media.PcmAudioBufferRef!>!

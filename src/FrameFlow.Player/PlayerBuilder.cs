@@ -38,6 +38,8 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
     private Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? _audioConfigurator;
     private HardwareDecodeMode _hwMode = HardwareDecodeMode.Auto;
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
+    private VideoDecoderOptions? _videoDecoderOptions;
+    private AudioDecoderOptions? _audioDecoderOptions;
 
     // Player-only state. Ignored by BuildAsync, which cannot be
     // reached once any of these has been set — the setters return
@@ -96,6 +98,20 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
         {
             _loggerFactory = loggerFactory;
         }
+        return this;
+    }
+
+    /// <summary>
+    /// Decoder options for <see cref="BuildAsync"/>. Internal: tests shrink the
+    /// packet queues so a full queue shows up after a few packets.
+    /// </summary>
+    internal PlayerBuilder WithDecoderOptions(
+        VideoDecoderOptions? video = null,
+        AudioDecoderOptions? audio = null
+    )
+    {
+        _videoDecoderOptions = video;
+        _audioDecoderOptions = audio;
         return this;
     }
 
@@ -218,34 +234,6 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
         {
             demux = await demuxFactory.OpenAsync(_source, cancellationToken).ConfigureAwait(false);
 
-            // Build the decoder factory delegates. CreateVideo wires
-            // HardwareDecodeOptions + capabilities; CreateAudio threads
-            // the logger factory so AudioDecoder diagnostics aren't
-            // silently swallowed by NullLogger.Instance (the asymmetry
-            // that hid the post-seek freeze bug fixed in d03e4b0).
-            var videoFactory = DecoderFactories.CreateVideo(
-                new HardwareDecodeOptions { Mode = _hwMode },
-                bootstrapResult.Capabilities,
-                _loggerFactory
-            );
-            var audioFactory = DecoderFactories.CreateAudio(_loggerFactory);
-
-            // DecoderFactories return interfaces, but the concrete types
-            // are always VideoDecoder / AudioDecoder — DecodingPipeline
-            // constructor requires the concrete types because it reaches
-            // into their packet-queue surface that isn't on the public
-            // interfaces.
-            videoDecoder = videoFactory(demux) as VideoDecoder;
-            audioDecoder = audioFactory(demux) as AudioDecoder;
-
-            if (videoDecoder is null && audioDecoder is null)
-            {
-                throw new InvalidOperationException(
-                    $"Source '{_source.DisplayName}' has neither a video nor audio stream "
-                        + "the registered factories can decode."
-                );
-            }
-
             // DecodingPipeline owns the demux pump; it requires the
             // concrete DemuxSession (it reaches FormatContextPtr through
             // it). The demux factory always returns DemuxSession today.
@@ -255,6 +243,64 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
                     $"DemuxSessionFactory returned unexpected type {demux.GetType().Name}; "
                         + $"DecodingPipeline requires {nameof(DemuxSession)}."
                 );
+
+            if (
+                demux.MediaInfo.VideoStreams.Count == 0
+                && demux.MediaInfo.AudioStreams.Count == 0
+            )
+            {
+                throw new InvalidOperationException(
+                    $"Source '{_source.DisplayName}' has neither a video nor audio stream."
+                );
+            }
+
+            // ADR-0059: decode a stream only when a sink will drain it. The
+            // demux pump feeds every decoder's bounded packet queue and waits
+            // while any of them is full, and PlayToCompletionAsync builds a
+            // graph branch only for a stream that has a sink. A decoder with
+            // no sink fills its queue, stops the pump, and freezes the stream
+            // that is playing. A configurator alone is not a consumer here:
+            // PlayToCompletionAsync applies it only on a branch with a sink.
+            //
+            // A stream with no sink is discarded at the demuxer so its packets
+            // are never read, and gets no decoder, so the few packets the probe
+            // buffered before the discard have no queue to fill.
+            //
+            // DecoderFactories return interfaces, but the concrete types
+            // are always VideoDecoder / AudioDecoder — DecodingPipeline
+            // constructor requires the concrete types because it reaches
+            // into their packet-queue surface that isn't on the public
+            // interfaces.
+            if (_videoSink is not null)
+            {
+                videoDecoder =
+                    DecoderFactories.CreateVideo(
+                        new HardwareDecodeOptions { Mode = _hwMode },
+                        bootstrapResult.Capabilities,
+                        _loggerFactory,
+                        _videoDecoderOptions
+                    )(demux) as VideoDecoder;
+            }
+            else
+            {
+                foreach (var stream in demux.MediaInfo.VideoStreams)
+                    concreteDemux.DiscardStream(stream.StreamIndex);
+            }
+
+            // CreateAudio threads the logger factory so AudioDecoder
+            // diagnostics aren't silently swallowed by NullLogger.Instance
+            // (the asymmetry that hid the post-seek freeze bug fixed in d03e4b0).
+            if (_audioSink is not null)
+            {
+                audioDecoder =
+                    DecoderFactories.CreateAudio(_loggerFactory, _audioDecoderOptions)(demux)
+                    as AudioDecoder;
+            }
+            else
+            {
+                foreach (var stream in demux.MediaInfo.AudioStreams)
+                    concreteDemux.DiscardStream(stream.StreamIndex);
+            }
 
             var pipeline = new DecodingPipeline(
                 concreteDemux,
