@@ -108,7 +108,7 @@ public sealed class OutputPort<T> : IPort
 /// </param>
 /// <param name="Inherit">
 /// Whether this edge is the trunk of a chain-built fork, and so takes the incoming ref rather
-/// than a clone or an <c>AddRef</c>. Set only by <see cref="GraphChain{T}.Branch"/>'s trunk;
+/// than a clone or an <c>AddRef</c>. Set only by <see cref="GraphChain{T}.Branch(EdgeConfig{T})"/>'s trunk;
 /// a <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeConfig{T})"/> edge is never
 /// marked and keeps ADR-0054's first-cloner-less rule.
 /// </param>

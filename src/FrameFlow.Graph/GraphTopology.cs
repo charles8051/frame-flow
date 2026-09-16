@@ -69,7 +69,7 @@ internal interface IRequiresEveryInput
 /// is a double release. It is not reachable through
 /// <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeConfig{T})"/>, which never marks
 /// an edge, and is reachable by wiring a chain's trunk twice after
-/// <see cref="GraphChain{T}.Branch"/>.
+/// <see cref="GraphChain{T}.Branch(EdgeConfig{T})"/>.
 /// </para>
 /// </remarks>
 internal static class GraphTopology

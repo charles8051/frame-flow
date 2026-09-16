@@ -141,7 +141,7 @@ public sealed class Graph
         where T : class, IRefCounted => Connect(from, to, config, inherit: false);
 
     /// <summary>
-    /// Records that a chain forked this port with <see cref="GraphChain{T}.Branch"/>, so the
+    /// Records that a chain forked this port with <see cref="GraphChain{T}.Branch(EdgeConfig{T})"/>, so the
     /// next edge it takes that is not a branch is the fork's trunk.
     /// </summary>
     internal void DeclareFork(IPort head)

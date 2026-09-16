@@ -48,7 +48,7 @@ public readonly struct GraphChain<T>
 
     /// <summary>
     /// The edge this chain's next hop takes, and whether that edge is the fork's trunk. A branch
-    /// uses the config <see cref="Branch"/> was given; anything else uses the options passed at
+    /// uses the config <see cref="Branch(EdgeConfig{T})"/> was given; anything else uses the options passed at
     /// the call site. The trunk is the first non-branch edge to leave a forked port.
     /// </summary>
     private (EdgeConfig<T> Config, bool Inherit) NextEdge(EdgeOptions? options)
@@ -79,7 +79,7 @@ public readonly struct GraphChain<T>
 
     /// <summary>
     /// Declares a branch off this chain: a second consumer of the same output, wired with its
-    /// own edge config. The chain <see cref="Branch"/> was called on stays the trunk and takes
+    /// own edge config. The chain <see cref="Branch(EdgeConfig{T})"/> was called on stays the trunk and takes
     /// the incoming ref; the branch clones or <c>AddRef</c>s according to its config.
     /// </summary>
     /// <param name="config">
@@ -139,7 +139,7 @@ public readonly struct GraphChain<T>
     /// the chain over the join's output. This chain is the primary, which sets the join's firing
     /// cadence.
     /// </summary>
-    /// <param name="secondary">The chain to pair onto this one, usually a <see cref="Branch"/>.</param>
+    /// <param name="secondary">The chain to pair onto this one, usually a <see cref="Branch(EdgeConfig{T})"/>.</param>
     /// <param name="join">The join node.</param>
     /// <param name="primaryOptions">The primary edge's options.</param>
     /// <param name="secondaryOptions">
