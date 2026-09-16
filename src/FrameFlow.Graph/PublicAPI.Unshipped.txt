@@ -9,13 +9,6 @@ FrameFlow.Graph.AudioSampleFormat.Int16Planar = 4 -> FrameFlow.Graph.AudioSample
 FrameFlow.Graph.AudioSampleFormat.Int32 = 1 -> FrameFlow.Graph.AudioSampleFormat
 FrameFlow.Graph.AudioSampleFormat.Int32Planar = 5 -> FrameFlow.Graph.AudioSampleFormat
 FrameFlow.Graph.AudioSampleFormatExtensions
-FrameFlow.Graph.ClockSubject
-FrameFlow.Graph.ClockSubject.ClockSubject() -> void
-FrameFlow.Graph.ClockSubject.ClockSubject(System.TimeSpan initial) -> void
-FrameFlow.Graph.ClockSubject.Dispose() -> void
-FrameFlow.Graph.ClockSubject.Latest.get -> System.TimeSpan
-FrameFlow.Graph.ClockSubject.Publish(System.TimeSpan value) -> void
-FrameFlow.Graph.ClockSubject.WaitUntilAsync(System.TimeSpan target, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 FrameFlow.Graph.Consumer<TIn>
 FrameFlow.Graph.CpuTensor<T>
 FrameFlow.Graph.CpuTensor<T>.AddRef() -> FrameFlow.Graph.ITensor!

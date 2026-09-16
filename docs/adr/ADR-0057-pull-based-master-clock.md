@@ -94,8 +94,17 @@ time source; there is no publish ticker.
 
 ### Neutral
 
-- `ClockSubject` stays in `FrameFlow.Graph` as a general utility; it's just no longer used
-  by these two sources.
+- ~~`ClockSubject` stays in `FrameFlow.Graph` as a general utility; it's just no longer used
+  by these two sources.~~
+
+  **Removed 2026-09-16.** No caller ever arrived. After this ADR the type had zero
+  references in `src/`, `tests/` and `examples/` — only two doc comments naming it as the
+  producer-side example. Every `IClockSource` in the tree now computes its value on demand
+  (`OpenAlAudioSink` off the sample counter, `WallClockSource` off a stopwatch), so a
+  publish-and-cache subject is the shape this ADR argued against. `FrameFlow.Graph` is
+  internal-only (no package metadata, `ProjectReference` from sibling projects), so the
+  deletion is not a consumer break. Recover it from git history if a push-mode producer
+  ever appears.
 - A/V sync is unchanged: video still paces against the same audio clock, sampled the same
   way (frame PTS vs. audio time). Only the *delivery mechanism* of the clock changed.
 

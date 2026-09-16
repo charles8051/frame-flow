@@ -85,8 +85,7 @@ public static class SinkAdapters
     /// for graph wiring. Works uniformly with <c>OpenAlAudioSink</c>,
     /// test capturing sinks, etc. The sink's <see cref="IClockSource"/>
     /// integration (e.g. OpenAL as master clock) is independent of this
-    /// adapter — callers wire it directly to a
-    /// <see cref="ClockSubject"/> or equivalent.
+    /// adapter.
     /// </summary>
     /// <param name="sink">The existing audio sink to wrap.</param>
     /// <param name="id">Node id for graph diagnostics.</param>
