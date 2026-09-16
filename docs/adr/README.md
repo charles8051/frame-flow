@@ -316,6 +316,8 @@ land.
   ADR-0057's carve-out, so every configured graph is a single-sink graph whose configured segment
   sits upstream of the pacer. The cost is a behaviour break that is not a compile error, for the
   three examples that terminate inside their configurator.
+  **Implemented** in #242, #243, #244 and #245; its amendment records three departures,
+  two motivations the code does not support, and a corrected cycle search.
 
 (Most recently, tests stopped depending on elapsed time as
 [ADR-0072](ADR-0072-tests-do-not-depend-on-elapsed-time.md) — wall time is `TimeProvider`

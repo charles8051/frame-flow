@@ -35,7 +35,11 @@ sink. Building a player without one now throws, naming the call that needs a par
 ```
 
 A consumer that needs more than one sink wires the extras on `Branch` edges inside the
-configurator and returns its trunk open. `FrameFlow.Examples.Multicast` and
+configurator and returns its trunk open. `Branch` takes either an `EdgeConfig<T>`, for a branch
+that clones, or an `EdgeOptions`, for one that takes its own ref; both require the options,
+because a defaulted edge would be capacity-1 and blocking and would hold the trunk back frame
+for frame. The branch's first edge is configured by `Branch`, so passing options to the `Then`
+that follows it throws rather than silently winning or losing. `FrameFlow.Examples.Multicast` and
 `FrameFlow.Examples.Multicast.Dml` show the shape: one delegate sink registered with
 `WithVideoSink`, fanning out to three panes.
 
