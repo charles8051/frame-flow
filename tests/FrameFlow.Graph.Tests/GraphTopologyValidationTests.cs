@@ -7,7 +7,7 @@ using GraphRunner = FrameFlow.Graph.Graph;
 namespace FrameFlow.Graph.Tests;
 
 /// <summary>
-/// The graph refuses to run a topology whose shape cannot work, and says which port is wrong.
+/// The graph refuses to run when a node that needs every input is missing one, and says which.
 /// </summary>
 /// <remarks>
 /// <para>

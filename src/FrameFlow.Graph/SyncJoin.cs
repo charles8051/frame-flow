@@ -202,7 +202,7 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut> : IPumpableNode, IR
 
     // A join reads both sides before it emits, so a graph that wired only one of them runs and
     // produces nothing. GraphTopology refuses that before the run starts.
-    IEnumerable<IPort> IRequiresEveryInput.RequiredInputs => [Primary, Secondary];
+    IEnumerable<IWireableInput> IRequiresEveryInput.RequiredInputs => [Primary, Secondary];
     public OutputPort<TOut> Output { get; }
 
     /// <summary>Secondaries currently held by the window. Diagnostics and tests.</summary>
