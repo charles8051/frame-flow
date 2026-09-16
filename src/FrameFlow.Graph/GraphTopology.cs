@@ -153,54 +153,66 @@ internal static class GraphTopology
             if (node is not IHoldsItsSecondary join || !join.StopsReadingSecondary)
                 continue;
 
-            foreach (var primaryEdge in edges.Where(e => e.To == join.PrimaryInput))
+            // Every port whose items can still be blocked on their way to the secondary, and
+            // every port whose items reach the primary at all. A port in both feeds both sides,
+            // and is the one that stalls.
+            var blockedIntoSecondary = PortsThatReach(join.SecondaryInput, edges, blockingOnly: true);
+            var feedingPrimary = PortsThatReach(join.PrimaryInput, edges, blockingOnly: false);
+
+            foreach (var shared in blockedIntoSecondary.Where(feedingPrimary.Contains))
             {
-                if (ReachesBlocking(primaryEdge.From, join.SecondaryInput, edges))
-                {
-                    yield return
-                        $"'{node.Id}' sets a lead and both of its inputs come from "
-                        + $"'{Name(primaryEdge.From)}', over edges that all block when full. The "
-                        + "join stops reading the secondary, the branch blocks, and the primary "
-                        + "that would release it never arrives. Give one edge on the branch a "
-                        + "dropping policy, or leave the lead unset.";
-                }
+                yield return
+                    $"'{node.Id}' sets a lead, and '{Name(shared)}' feeds both of its inputs "
+                    + "over a branch that blocks when full. The join stops reading the "
+                    + "secondary, the branch blocks, and the primary that would release it never "
+                    + "arrives. Give one edge on the branch a dropping policy, or leave the lead "
+                    + "unset.";
             }
         }
     }
 
     /// <summary>
-    /// Whether <paramref name="target"/> is reachable from <paramref name="from"/> over edges
-    /// that all block. Breadth-first over nodes, so a cycle in the wiring cannot loop it.
+    /// Every output port from which <paramref name="target"/> is reachable downstream. With
+    /// <paramref name="blockingOnly"/>, only over edges that make their producer wait: a
+    /// dropping edge anywhere breaks the chain of back-pressure, which is what makes a fork-
+    /// rejoin safe.
     /// </summary>
-    private static bool ReachesBlocking(
-        IPort from,
+    /// <remarks>
+    /// Walks upstream rather than down, because the port that matters is the one that feeds both
+    /// sides, and it can sit any number of hops above the join. A trunk that passes through an
+    /// operator before the join is the case that a search from the primary's own edge misses.
+    /// </remarks>
+    private static HashSet<IPort> PortsThatReach(
         IPort target,
-        IReadOnlyList<EdgeSpec> edges
+        IReadOnlyList<EdgeSpec> edges,
+        bool blockingOnly
     )
     {
-        var queue = new Queue<IPort>();
-        var seen = new HashSet<INode>();
-        queue.Enqueue(from);
+        var reaching = new HashSet<IPort>();
+        var pending = new Queue<IPort>();
+        var seen = new HashSet<IPort> { target };
+        pending.Enqueue(target);
 
-        while (queue.Count > 0)
+        while (pending.Count > 0)
         {
-            var port = queue.Dequeue();
-            foreach (var edge in edges.Where(e => e.From == port && e.Blocks))
+            var input = pending.Dequeue();
+            foreach (var edge in edges.Where(e => e.To == input))
             {
-                if (edge.To == target)
-                    return true;
-
-                // Walk on through the node this edge feeds, by way of every edge leaving it.
-                var next = edge.To.Owner;
-                if (!seen.Add(next))
+                if (blockingOnly && !edge.Blocks)
                     continue;
 
-                foreach (var onward in edges.Where(e => e.From.Owner == next))
-                    queue.Enqueue(onward.From);
+                reaching.Add(edge.From);
+
+                // Keep going up: every edge that feeds the node this output belongs to.
+                foreach (var upstream in edges.Where(e => e.To.Owner == edge.From.Owner))
+                {
+                    if (seen.Add(upstream.To))
+                        pending.Enqueue(upstream.To);
+                }
             }
         }
 
-        return false;
+        return reaching;
     }
 
     private static string Name(IPort port) => $"{port.Owner.Id}/{port.Name}";

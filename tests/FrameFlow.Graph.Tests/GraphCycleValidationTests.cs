@@ -41,6 +41,29 @@ public sealed class GraphCycleValidationTests
     }
 
     [Fact]
+    public async Task ATrunkThatPassesThroughAnOperator_IsStillTheSharedProducer()
+    {
+        // The port feeding the join's primary is the operator's output, not the fork. Searching
+        // from there finds nothing, but the fork above it still feeds both sides, and it is the
+        // one that stalls: its write to the blocked branch never completes, so the operator
+        // never sees the item it would turn into the primary.
+        var graph = new GraphRunner();
+        var head = graph.Pipeline(Source(3));
+        var join = JoinWithLead(TimeSpan.FromMilliseconds(50));
+
+        var branch = head.Branch(EdgeOptions.Buffered(4)).Then(Passthrough("detect"));
+        head.Then(Passthrough("convert"))
+            .Join(branch, join, EdgeOptions.Default, EdgeOptions.Buffered(4))
+            .To(Sink());
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => graph.RunAsync(CancellationToken.None)
+        );
+
+        Assert.Contains("feeds both of its inputs", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ADroppingBranchEdge_BreaksTheCycle()
     {
         // This is LiveCaptioning's shape: the inference branch drops rather than waits, so the
