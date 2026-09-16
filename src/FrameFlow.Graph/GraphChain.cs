@@ -82,6 +82,19 @@ public readonly struct GraphChain<T>
     /// </remarks>
     public GraphChain<T> Branch(EdgeConfig<T> config)
     {
+        // A default-constructed config carries no options, and Connect would read that as
+        // EdgeOptions.Default: a capacity-1 blocking edge, which is the shape this overload
+        // requires a config in order to avoid. Reject it rather than silently supply it.
+        if (config.Options is null)
+        {
+            throw new ArgumentException(
+                "A branch needs explicit edge options. A default EdgeConfig would give the "
+                    + "branch a capacity-1 blocking edge, which holds the trunk back frame for "
+                    + "frame.",
+                nameof(config)
+            );
+        }
+
         _graph.DeclareFork(_head);
         return new GraphChain<T>(_graph, _head, config, isBranch: true);
     }
@@ -126,6 +139,19 @@ public readonly struct GraphChain<T>
         ArgumentNullException.ThrowIfNull(join);
         ArgumentNullException.ThrowIfNull(primaryOptions);
         ArgumentNullException.ThrowIfNull(secondaryOptions);
+
+        // Both sides have to belong to the same graph. Wired across two, each graph would hold
+        // one of the join's edges: the one that runs reaches a join whose other input was never
+        // wired, and refuses to start. Checked before either edge is connected, so a rejected
+        // call leaves no half-wired join behind.
+        if (!ReferenceEquals(_graph, secondary.Graph))
+        {
+            throw new ArgumentException(
+                "The secondary chain belongs to a different graph. A join and both of its "
+                    + "inputs are wired and run by one graph.",
+                nameof(secondary)
+            );
+        }
 
         ToPrimary(join, primaryOptions);
         secondary.ToSecondary(join, secondaryOptions);

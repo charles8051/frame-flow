@@ -186,6 +186,42 @@ public sealed class GraphChainForkTests
     }
 
     [Fact]
+    public void AJoinAcrossTwoGraphs_IsRejectedBeforeEitherEdgeIsWired()
+    {
+        var graphA = new GraphRunner();
+        var graphB = new GraphRunner();
+        var primary = graphA.Pipeline(CountedSource(1));
+        var secondary = graphB.Pipeline(CountedSource(1));
+        var join = PairingJoin();
+
+        var ex = Assert.Throws<ArgumentException>(
+            () => primary.Join(secondary, join, EdgeOptions.Default, EdgeOptions.Buffered(4))
+        );
+        Assert.Contains("different graph", ex.Message, StringComparison.Ordinal);
+
+        // Neither edge was wired, so the join is still free to be wired properly afterwards.
+        // A half-wired join would fail this second call with "already connected".
+        primary.Join(
+            graphA.Pipeline(CountedSource(1)),
+            join,
+            EdgeOptions.Default,
+            EdgeOptions.Buffered(4)
+        );
+    }
+
+    [Fact]
+    public void ABranchWithADefaultConfig_IsRejected()
+    {
+        // A default EdgeConfig carries no options, and Connect reads that as EdgeOptions.Default:
+        // the capacity-1 blocking edge this overload exists to stop a caller getting by accident.
+        var graph = new GraphRunner();
+        var head = graph.Pipeline(CountedSource(1));
+
+        var ex = Assert.Throws<ArgumentException>(() => head.Branch(default(EdgeConfig<RefBox<int>>)));
+        Assert.Contains("explicit edge options", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ALinearChain_IsUnchanged()
     {
         var graph = new GraphRunner();
