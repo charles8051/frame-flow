@@ -106,5 +106,11 @@ public sealed class OutputPort<T> : IPort
 /// Required for one-shot frame types (e.g. converter outputs) where
 /// <c>AddRef</c> throws by design.
 /// </param>
-internal sealed record OutputEdge<T>(ChannelWriter<T> Writer, Func<T, T>? Cloner)
+/// <param name="Inherit">
+/// Whether this edge is the trunk of a chain-built fork, and so takes the incoming ref rather
+/// than a clone or an <c>AddRef</c>. Set only by <see cref="GraphChain{T}.Branch"/>'s trunk;
+/// a <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeConfig{T})"/> edge is never
+/// marked and keeps ADR-0054's first-cloner-less rule.
+/// </param>
+internal sealed record OutputEdge<T>(ChannelWriter<T> Writer, Func<T, T>? Cloner, bool Inherit = false)
     where T : class, IRefCounted;

@@ -522,18 +522,22 @@ internal static class NodePumps
             return;
         }
 
-        // First cloner-less branch (if any) inherits the incoming ref.
-        // All other cloner-less branches AddRef; cloner branches clone.
-        // If every branch has a cloner, the incoming ref has no
-        // inheritor and is disposed below after the clones land.
+        // Who inherits the incoming ref. A chain-built fork names its trunk, because Branch
+        // wires the sibling first and the scan below would otherwise hand the ref to a
+        // cloner-less sibling. Everything else keeps ADR-0054's rule: the first cloner-less
+        // branch inherits, other cloner-less branches AddRef, cloner branches clone, and if
+        // every branch clones the incoming ref has no inheritor and is disposed below.
         int firstNoCloner = -1;
         for (int i = 0; i < outputs.Count; i++)
         {
-            if (outputs[i].Cloner is null)
+            if (outputs[i].Inherit)
             {
                 firstNoCloner = i;
                 break;
             }
+
+            if (outputs[i].Cloner is null && firstNoCloner < 0)
+                firstNoCloner = i;
         }
 
         // Materialise per-branch items up front so a cloner that

@@ -38,6 +38,14 @@ public sealed class Graph
     private readonly List<INode> _nodes = new();
     private readonly List<Action> _wireUps = new();
 
+    // What each wire-up wires, as a value. The closures say how an edge is built; this says what
+    // shape the graph has, which is what GraphTopology's rules are about.
+    private readonly List<EdgeSpec> _edges = new();
+
+    // Output ports a chain has forked with Branch. The next edge such a port takes that is not
+    // itself a branch is the trunk, and inherits the incoming ref.
+    private readonly HashSet<IPort> _forkedPorts = new();
+
 
     // Per-edge reset actions, run at the top of every RunAsync BEFORE the
     // wire-ups. They clear the prior run's edge state (output-port writers +
@@ -130,6 +138,27 @@ public sealed class Graph
         InputPort<T> to,
         EdgeConfig<T> config
     )
+        where T : class, IRefCounted => Connect(from, to, config, inherit: false);
+
+    /// <summary>
+    /// Records that a chain forked this port with <see cref="GraphChain{T}.Branch"/>, so the
+    /// next edge it takes that is not a branch is the fork's trunk.
+    /// </summary>
+    internal void DeclareFork(IPort head)
+    {
+        ArgumentNullException.ThrowIfNull(head);
+        _forkedPorts.Add(head);
+    }
+
+    /// <summary>Whether <see cref="DeclareFork"/> has been called for this port.</summary>
+    internal bool IsForked(IPort head) => _forkedPorts.Contains(head);
+
+    internal Graph Connect<T>(
+        OutputPort<T> from,
+        InputPort<T> to,
+        EdgeConfig<T> config,
+        bool inherit
+    )
         where T : class, IRefCounted
     {
         ArgumentNullException.ThrowIfNull(from);
@@ -148,6 +177,7 @@ public sealed class Graph
 
         var opts = config.Options ?? EdgeOptions.Default;
         var cloner = config.Cloner;
+        _edges.Add(new EdgeSpec(from, to, inherit));
         // Reset clears the prior run's edge state so RunAsync can be called again.
         // For a fan-out output port (multiple edges share one `from`), each edge
         // registers a Clear(); they all run before any wire-up Add(), so clearing
@@ -160,7 +190,7 @@ public sealed class Graph
         _wireUps.Add(() =>
         {
             var channel = CreateChannel<T>(opts);
-            from.Writers.Add(new OutputEdge<T>(channel.Writer, cloner));
+            from.Writers.Add(new OutputEdge<T>(channel.Writer, cloner, inherit));
             to.Reader = channel.Reader;
         });
         return this;
@@ -203,7 +233,7 @@ public sealed class Graph
         // The topology is checked before anything is reset or wired, so a malformed graph fails
         // the run it was started for rather than hanging in a pump that waits for an item no
         // edge can deliver.
-        var errors = GraphTopology.Validate(_nodes);
+        var errors = GraphTopology.Validate(_nodes, _edges);
         if (errors.Count > 0)
         {
             throw new InvalidOperationException(
