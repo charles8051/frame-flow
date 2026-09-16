@@ -2,7 +2,9 @@
 
 ## Status
 
-Proposed (2026-09-15). Draft pending number assignment. **Nothing here is implemented.** The
+Proposed (2026-09-15). Draft pending number assignment. **Implemented in #242, #243, #244 and
+#245**; see the amendment at the foot of this record for where the implementation departed from
+what is written here, and for two motivations below that the code does not support. The
 *Decision* section is written in the present tense, as this repo's records are, and describes the
 contract the implementing change will establish. `Branch`, `Join`, the inherit marker and `Validate`
 do not exist in the tree yet, and `docs/BREAKING-CHANGES.md` gets its entry with the change that
@@ -287,3 +289,58 @@ second arm, and the ordering claim in the frame-pool record assumes this contrac
   `RefBox<DetectionSet>`, whose `AddRef` returns `this`. Until #91 lands, `Join` is safe for an
   `AddRef`-able secondary and carries #91's defect for a one-shot one, which is the constraint
   `ToSecondary` already carries today.
+
+## Amendment, 2026-09-16: what shipped
+
+Implemented in four slices: the topology as a value (#242), `Branch` and `Join` (#243), the
+deadlock check (#244), and the single configurator contract with its three example migrations
+(#245). `docs/BREAKING-CHANGES.md` entry 1 carries the break.
+
+### Two motivations here are wrong
+
+**An unwired join input hangs.** Decision 5 justifies the required-input rule as catching a join
+that "never fires and reports nothing about why". A pump does refuse an unconnected input, but it
+exits while the producer is still writing into the primary's capacity-1 channel, so the run never
+returns. Measured by disabling the check: the test for an unwired secondary stops terminating
+rather than failing. The rule is worth more than this record claims for it.
+
+**The marker does nothing on the case decision 1 uses to justify it.** For a one-shot frame every
+branch must carry a cloner, so the trunk is the only cloner-less edge and the scan already picks
+it — as decision 1 itself says, then treats as the marker's reason for existing. The marker only
+changes anything when a branch takes no cloner, which needs an `AddRef`-able item. The test that
+earns its keep uses an item whose `AddRef` returns a fresh wrapper, and checks which consumer
+holds the producer's original.
+
+### Three departures
+
+**The trunk-with-cloner rule is not implemented.** Decision 1 asks `Validate` to reject a marked
+edge that carries a cloner. The chain cannot express it: a branch chain is never the trunk, so a
+config with a cloner never lands on a marked edge, and the rule would be a check no caller can
+trigger — the objection that shrank #242. If a `Connect`-level marker is ever added, the rule
+comes with it, and the failure it would catch is a silently ignored cloner rather than a crash.
+
+**`Branch` also takes an `EdgeOptions`.** Decision 2 requires an `EdgeConfig` so that an omitted
+one cannot default to a capacity-1 blocking edge. That reasoning is about the options, not the
+cloner, and requiring a config makes the common `AddRef`-able branch construct one by hand. Both
+overloads require the options, and a default-constructed config is rejected.
+
+**Configuring a branch edge twice throws.** Not in this record. `Branch` configures the branch's
+first edge, and `Then` on that chain was silently ignoring options passed to it; both ways of
+resolving the collision are silent. A runtime `ArgumentException` is the smaller fix. A distinct
+branch-chain type whose first hop takes no options would put it in the type system, which is what
+this record prefers elsewhere.
+
+### One correction to decision 5's check
+
+The cycle search walks upstream from both join inputs rather than forward from the port feeding
+the primary. A trunk that passes through an operator before the join puts that operator's output
+at the primary, so the fork above it is not reachable from there — and that is LiveCaptioning's
+shape, whose trunk goes through a pixel-format convert. The primary side is not required to
+block: a stalled fork stops producing for every branch it feeds.
+
+### Not verified
+
+The three example migrations are verified by compilation and by reading the topology. They are
+GUI apps and nothing in CI runs them. In particular, that keying LiveCaptioning's overlays off
+`IFramePresentedSource.FramePresented` holds the 40 ms pairing now that its configured chain sits
+upstream of the pacer is unmeasured, and is what #231 exists to settle.
