@@ -4,17 +4,17 @@
 
 Proposed (2026-09-15). Draft pending number assignment.
 
-This record decides that a fork's ref inheritance is declared on the edge rather than derived from
-wiring order, that a fork and a join are expressible in `GraphChain<T>`, and that a configurator has
+This record decides that a fork and a join are expressible in `GraphChain<T>`, that a chain-built
+fork names its inheritor instead of leaving it to wiring order, and that a configurator has
 one contract: it returns an open chain and the builder terminates it. The configurator-terminated
 mode goes away, so every configured graph is a single-sink graph whose configured segment sits
 upstream of the pacer, at decode rate.
 
 It supersedes:
 
-- **[ADR-0054](ADR-0054-fan-out-with-explicit-cloning.md) "Substrate semantics" step 1**, which
-  makes the first cloner-less edge the inheritor of the incoming ref. That rule stays as the
-  fallback; it stops being the only way to say which branch inherits.
+- **[ADR-0054](ADR-0054-fan-out-with-explicit-cloning.md) "Substrate semantics" step 1** in part,
+  which makes the first cloner-less edge the inheritor of the incoming ref. The rule is unchanged
+  for `Connect`; an edge that a chain-built fork marked as the trunk takes precedence over it.
 - **[ADR-0045](ADR-0045-unified-pipeline-termination.md) "Termination"**, which says the pump runs
   whatever the configurator returns and that "the configurator always says how to terminate." The
   code stopped doing that when the substrate changed; this record says what replaces it.
@@ -92,20 +92,26 @@ both.
 
 ## Decision
 
-### 1. Inheritance is declared on the edge
+### 1. The trunk is the inheritor, and the marker that says so stays internal
 
-`EdgeConfig<T>` gains an init-only `Inherit` flag, default unset, plus a `WithInherit()` helper
-alongside `WithCloner`. An init-only member rather than a third positional parameter, so existing
-positional construction keeps compiling.
+`OutputEdge<T>` carries an internal inherit marker that only `Branch` and `Join` set. `ForwardAsync`
+prefers a marked edge and otherwise runs ADR-0054's first-cloner-less scan unchanged. `EdgeConfig<T>`
+and `Connect` are untouched, so there is no second ownership protocol on the public surface and a
+`Connect` fan-out behaves exactly as ADR-0054 specifies.
 
-`ForwardAsync` uses the declared inheritor when a port has one, and falls back to the
-first-cloner-less scan when none of a port's edges declares. `Graph` rejects at wiring time a port
-with more than one declared inheritor, and an inheritor that also carries a cloner. The all-cloner
-case is unchanged: no inheritor, and the incoming ref is disposed once the branch items exist
-(`NodePumps.cs:583-584`).
+The marker exists because `Branch` wires the sibling edge before the trunk's, so under the scan alone
+a cloner-less sibling would inherit ahead of the trunk. For a one-shot frame that never arises: every
+sibling must carry a cloner or its `AddRef` throws, so the trunk is the only cloner-less edge either
+way. For an `AddRef`-able frame it is the difference between the trunk inheriting and the trunk
+paying an `AddRef`/`Dispose` pair, which is an allocation, not a correctness bug.
 
-Keeping the scan matters for correctness, not compatibility. A plain `Connect` fan-out that declares
-nothing must keep working on one-shot frames, and `RecorderPipeline` is exactly that shape.
+`Validate` rejects a port with more than one marked edge, and a marked edge that also carries a
+cloner.
+
+This is a smaller decision than the draft reviewed on #241 turn 1, which put a public `Inherit` flag
+on `EdgeConfig<T>`. The panel was right that the two in-tree fan-outs each have exactly one
+cloner-less edge and are already unambiguous under the scan. `Branch` still needs a deterministic
+trunk, and an internal marker buys that without a second public rule.
 
 ### 2. `Branch` declares a fork
 
@@ -228,10 +234,16 @@ path keeps its in-graph `PaceUntil` and its missing ring, which leaves the looka
 the convergence question it deferred. The split exists because the chain could not express a fork;
 once decisions 2 and 3 land, keeping it would be preserving a workaround past its cause.
 
-**Replace the first-cloner-less scan with the declared marker outright.** Rejected. A plain `Connect`
+**Replace the first-cloner-less scan with the marker outright.** Rejected. A plain `Connect`
 fan-out would then have no inheritor and would `AddRef` every cloner-less edge, which throws for
 one-shot frames and breaks `RecorderPipeline` on its first frame. The existing fan-out tests would
 not catch it: they use `RefBox`, whose `AddRef` returns `this` (`RefBox.cs:40-51`).
+
+**Put the marker on `EdgeConfig<T>` as a public `Inherit` flag.** Rejected on #241's review. It gives
+`Connect` callers a second way to express ownership for a case none of them has: both in-tree
+fan-outs have exactly one cloner-less edge, so the scan already picks the only valid inheritor
+regardless of wiring order. The chain needs a deterministic trunk; the public surface does not need
+to know.
 
 **Leave it and keep dropping to `Connect`.** Rejected. It is what blocks #8, #9, #93 and #231's
 second arm, and the ordering claim in the frame-pool record assumes this contract lands first.
@@ -248,5 +260,9 @@ second arm, and the ordering claim in the frame-pool record assumes this contrac
 - What `PlayerSession` does with a configured chain. It terminates at the sink and has no pacer, so
   one contract holds there, but the missing pacer is the part of #125 this record does not answer.
 - #91 is adjacent and not answered here: `SyncJoinNode.AdvanceAndMatch` `AddRef`s the retained
-  secondary, which throws for one-shot frame types. A join reached through `Join` hits it the same
-  way it does through `ToSecondary`.
+  secondary (`SyncJoin.cs:281`), which throws for one-shot frame types. `Join` neither introduces
+  nor fixes that; a join reached through it hits #91 exactly as one wired through `ToSecondary`
+  does. The shape in decision 4 is not exposed to it, because its secondary is
+  `RefBox<DetectionSet>`, whose `AddRef` returns `this`. Until #91 lands, `Join` is safe for an
+  `AddRef`-able secondary and carries #91's defect for a one-shot one, which is the constraint
+  `ToSecondary` already carries today.

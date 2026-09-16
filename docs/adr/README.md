@@ -309,9 +309,9 @@ land.
   `GraphChain<T>` covers a linear segment and cannot carry a cloner, so every fork-and-rejoin
   consumer drops to port-level `Connect`, and which branch inherits the incoming ref is a
   wiring-order fact that both call sites restate wrongly. Adds `Branch` and a chain-returning
-  `Join`, and moves inheritance onto the edge as a declared flag with ADR-0054's
-  first-cloner-less scan kept as the fallback, because a plain `Connect` fan-out over a one-shot
-  frame depends on it. Then collapses the configurator to one contract: it returns an open chain
+  `Join`, and has a chain-built fork mark its trunk as the inheritor, with ADR-0054's
+  first-cloner-less scan unchanged for `Connect`, because a plain fan-out over a one-shot frame
+  depends on it. Then collapses the configurator to one contract: it returns an open chain
   and the builder terminates it, which removes the configurator-terminated path and with it
   ADR-0057's carve-out, so every configured graph is a single-sink graph whose configured segment
   sits upstream of the pacer. The cost is a behaviour break that is not a compile error, for the
