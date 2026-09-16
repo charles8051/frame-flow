@@ -71,6 +71,7 @@ FrameFlow.Graph.FrameMemoryDomain.Cpu = 0 -> FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Graph.FrameMemoryDomain.Gpu = 1 -> FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Graph.Graph
 FrameFlow.Graph.Graph.Add<T>(T node) -> T
+FrameFlow.Graph.Graph.BeforeEachRun(System.Action! beforeRun) -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.Graph.Connect<T>(FrameFlow.Graph.OutputPort<T!>! from, FrameFlow.Graph.InputPort<T!>! to, FrameFlow.Graph.EdgeConfig<T!> config) -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.Graph.Connect<T>(FrameFlow.Graph.OutputPort<T!>! from, FrameFlow.Graph.InputPort<T!>! to, FrameFlow.Graph.EdgeOptions? options = null) -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.Graph.Graph() -> void
@@ -106,10 +107,6 @@ FrameFlow.Graph.IFrame.Width.get -> int
 FrameFlow.Graph.INode
 FrameFlow.Graph.INode.Id.get -> string!
 FrameFlow.Graph.INode.OnError.get -> FrameFlow.Graph.FailureResponse
-FrameFlow.Graph.InputPort<T>
-FrameFlow.Graph.InputPort<T>.InputPort(FrameFlow.Graph.INode! owner, string! name) -> void
-FrameFlow.Graph.InputPort<T>.Name.get -> string!
-FrameFlow.Graph.InputPort<T>.Owner.get -> FrameFlow.Graph.INode!
 FrameFlow.Graph.IPort
 FrameFlow.Graph.IPort.Name.get -> string!
 FrameFlow.Graph.IPort.Owner.get -> FrameFlow.Graph.INode!
@@ -123,6 +120,10 @@ FrameFlow.Graph.ITensor.ByteCount.get -> long
 FrameFlow.Graph.ITensor.Dtype.get -> FrameFlow.Graph.DType
 FrameFlow.Graph.ITensor.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Graph.ITensor.Shape.get -> FrameFlow.Graph.TensorShape
+FrameFlow.Graph.InputPort<T>
+FrameFlow.Graph.InputPort<T>.InputPort(FrameFlow.Graph.INode! owner, string! name) -> void
+FrameFlow.Graph.InputPort<T>.Name.get -> string!
+FrameFlow.Graph.InputPort<T>.Owner.get -> FrameFlow.Graph.INode!
 FrameFlow.Graph.MultiOperator<TIn, TOut>
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Body.get -> FrameFlow.Graph.MultiOperator<TIn!, TOut!>!
@@ -201,8 +202,8 @@ FrameFlow.Graph.TensorShape.ElementCount.get -> long
 FrameFlow.Graph.TensorShape.Equals(FrameFlow.Graph.TensorShape other) -> bool
 FrameFlow.Graph.TensorShape.Rank.get -> int
 FrameFlow.Graph.TensorShape.TensorShape() -> void
-FrameFlow.Graph.TensorShape.TensorShape(params int[]! dims) -> void
 FrameFlow.Graph.TensorShape.TensorShape(System.Collections.Immutable.ImmutableArray<int> dims) -> void
+FrameFlow.Graph.TensorShape.TensorShape(params int[]! dims) -> void
 FrameFlow.Graph.TensorShape.this[int index].get -> int
 override FrameFlow.Graph.CpuTensor<T>.ToString() -> string!
 override FrameFlow.Graph.TensorShape.Equals(object? obj) -> bool

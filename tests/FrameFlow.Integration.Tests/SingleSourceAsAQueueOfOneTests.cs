@@ -1,3 +1,4 @@
+using FrameFlow.Graph;
 using FrameFlow.Integration.Tests.Harness;
 using FrameFlow.Media;
 using FrameFlow.Playback;
@@ -101,6 +102,29 @@ public sealed class SingleSourceAsAQueueOfOneTests : IClassFixture<FfmpegBootstr
     }
 
     [RequiresFfmpegAndCorpusFact]
+    public async Task AStatefulOperator_IsToldWhenTheLoopStartsItsItemOver()
+    {
+        // #217. The loop keeps the graph, so an operator's state outlives the rewind while its
+        // timestamps go back to zero. The graph resets the node before each run, so an operator
+        // that remembers the last timestamp it saw starts each pass over.
+        var timeline = new TimestampWatcher();
+        await using var run = PlaylistRun.Create(
+            [SourceOf(ShortClip)],
+            RepeatMode.One,
+            configureVideo: timeline.Configure,
+            asSingleSource: true
+        );
+
+        await run.PlayAsync();
+        await run.WhenLoops(2).WaitAsync(Bound);
+
+        // One chain, so one operator instance across every pass.
+        Assert.Equal(1, timeline.Chains);
+        Assert.True(timeline.Resets >= 2, $"The operator was reset {timeline.Resets} times.");
+        Assert.Equal(0, timeline.BackwardStepsWithoutAReset);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
     public async Task AnItemEnqueuedAtEnded_PlaysWhenThePlayerReplays()
     {
         // The load makes the source the queue's only item, and a replay from Ended reloads that
@@ -153,6 +177,54 @@ public sealed class SingleSourceAsAQueueOfOneTests : IClassFixture<FfmpegBootstr
         var path = IntegrationTestEnvironment.GetCorpusFile(clip);
         Assert.NotNull(path);
         return MediaSource.FromFile(path!);
+    }
+
+    /// <summary>
+    /// A video operator that watches the timestamps it is handed, and counts a step backwards that
+    /// nothing announced. It registers its reset on the graph the chain belongs to. A loop hands it
+    /// a timestamp before the one it saw last, so without the reset the count rises on the first
+    /// frame of the second pass.
+    /// </summary>
+    private sealed class TimestampWatcher
+    {
+        private int _chains;
+        private int _resets;
+        private int _backwardSteps;
+        private TimeSpan _last = TimeSpan.MinValue;
+        private bool _reset = true;
+
+        public int Chains => Volatile.Read(ref _chains);
+
+        public int Resets => Volatile.Read(ref _resets);
+
+        public int BackwardStepsWithoutAReset => Volatile.Read(ref _backwardSteps);
+
+        public GraphChain<VideoFrameRef> Configure(GraphChain<VideoFrameRef> chain)
+        {
+            Interlocked.Increment(ref _chains);
+            chain.Graph.BeforeEachRun(() =>
+            {
+                Interlocked.Increment(ref _resets);
+                _last = TimeSpan.MinValue;
+                _reset = true;
+            });
+
+            return chain.Then(
+                new OperatorNode<VideoFrameRef, VideoFrameRef>(
+                    "watch-timestamps",
+                    (frame, _) =>
+                    {
+                        // The pump is single-threaded, and the registered action runs before it
+                        // starts.
+                        if (frame.Frame.Pts < _last && !_reset)
+                            Interlocked.Increment(ref _backwardSteps);
+                        _reset = false;
+                        _last = frame.Frame.Pts;
+                        return ValueTask.FromResult<VideoFrameRef?>(frame);
+                    }
+                )
+            );
+        }
     }
 
     private static PlaylistRun Run(string clip, RepeatMode repeat, FaultInjector? faults = null)

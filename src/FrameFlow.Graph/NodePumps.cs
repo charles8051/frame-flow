@@ -284,9 +284,9 @@ internal static class NodePumps
         var retained = node.Retained;
         bool faulted = false;
 
-        // Clear any window left from a previous run, so a re-run of the graph
-        // (RepeatMode.One's cheap rewind) doesn't match post-rewind primaries
-        // against pre-rewind secondaries.
+        // The pump's teardown clears the window, so a run starts with an empty one. Cleared here
+        // as well because a run that never reached that teardown — a graph abandoned mid-run —
+        // must not leave its secondaries to match the next run's primaries.
         retained.Clear();
 
         // After primary EOS the secondary loop keeps reading, but discards
