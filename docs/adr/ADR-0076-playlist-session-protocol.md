@@ -1,10 +1,10 @@
-# ADR-XXXX: The playlist session as a pure protocol, with its queue as a value
+# ADR-0076: The playlist session as a pure protocol, with its queue as a value
 
 ## Status
 
-Proposed (2026-09-14). Draft pending number assignment. Revised the same day after an independent
-review; *Revision history* says what changed. **All four steps of the migration are implemented**
-(decision 8, *As implemented*).
+Accepted (2026-09-16). Proposed 2026-09-14; numbered and accepted once the implementation landed.
+Revised the same day after an independent review; *Revision history* says what changed. **All four
+steps of the migration are implemented** (decision 8, *As implemented*).
 
 This record moves the playlist player's decision logic into a pure core. ADR-0055 did the same for
 the codec loop, and `PlaybackProtocol` for the controller's main state machine. The record:
@@ -14,7 +14,7 @@ the codec loop, and `PlaybackProtocol` for the controller's main state machine. 
 - adds deterministic tests for orderings of events, including an explorer that checks invariants
   over a model.
 
-It is meant to land before the draft [Looping on both players](looping-on-both-players.md) is
+It is meant to land before the draft [Looping on both players](ADR-0075-looping-on-both-players.md) is
 implemented and before a single player type is proposed. Both then become changes to a tested core
 rather than to async code.
 
@@ -28,8 +28,8 @@ Related: [ADR-0023](ADR-0023-hierarchical-state-machine-with-channel-dispatch.md
 [ADR-0055](ADR-0055-decode-protocol-as-a-pure-mealy-core.md),
 [ADR-0072](ADR-0072-tests-do-not-depend-on-elapsed-time.md),
 [End of queue, replay and faults on the playlist player](playlist-end-of-queue-replay-and-faults.md),
-[The playlist player's queue](playlist-queue-model.md),
-[Looping on both players](looping-on-both-players.md). Issues #143, #195.
+[The playlist player's queue](ADR-0074-playlist-queue-model.md),
+[Looping on both players](ADR-0075-looping-on-both-players.md). Issues #143, #195.
 
 ## Context
 
@@ -120,7 +120,7 @@ fake session, and #199's by `PlaylistCoordinatorTests`. The session has no such 
 - the latched advance;
 - the revision and the transition count.
 
-Every rule of [The playlist player's queue](playlist-queue-model.md) becomes a pure operation, such
+Every rule of [The playlist player's queue](ADR-0074-playlist-queue-model.md) becomes a pure operation, such
 as `(queue, reason) → (queue', decision)` for a take, or `(queue, item) → (queue', result)` for a
 remove. `PlaylistFailureGuard`'s rules become operations on the same value. The revision rises on the
 same changes that raise it today: edits and hand-offs. A repeat-mode change, a latch and a failure

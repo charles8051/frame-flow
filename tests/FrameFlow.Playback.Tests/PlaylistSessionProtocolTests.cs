@@ -6,7 +6,7 @@ namespace FrameFlow.Playback.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The abstraction is the one decision 7 of <c>docs/adr/playlist-session-protocol.md</c> names: the
+/// The abstraction is the one decision 7 of <c>docs/adr/ADR-0076-playlist-session-protocol.md</c> names: the
 /// run state; the item slot's kind, and whether the item has played; whether a jump is pending or
 /// an advance latched; and whether an input's generation and run are the current ones. The queue
 /// behind each row is fixed: its current item is <c>a</c>, and what an advance takes next is chosen
@@ -924,7 +924,7 @@ public sealed class PlaylistSessionProtocolTests
         }
     }
 
-    // ── Loops (decision 5 of docs/adr/looping-on-both-players.md) ───────────
+    // ── Loops (decision 5 of docs/adr/ADR-0075-looping-on-both-players.md) ───────────
 
     [Fact]
     public void ALoopRewoundInPlace_ReportsItsCount_WhenTheRewindSucceeds()

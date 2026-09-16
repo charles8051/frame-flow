@@ -13,7 +13,7 @@ namespace FrameFlow.Integration.Tests;
 /// <remarks>
 /// These tests wait on real playback, which is why they are in this suite (ADR-0072 rule 6).
 /// Each wait completes on a signal; the bound only stops a failing run. The numbers in the test
-/// comments are the Validation rows of the draft ADR <c>docs/adr/playlist-queue-model.md</c>.
+/// comments are the Validation rows of <c>docs/adr/ADR-0074-playlist-queue-model.md</c>.
 /// </remarks>
 [Trait("Category", "Integration")]
 public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>

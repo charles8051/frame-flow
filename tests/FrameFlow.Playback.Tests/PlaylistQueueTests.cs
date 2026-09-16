@@ -6,9 +6,9 @@ namespace FrameFlow.Playback.Tests;
 /// immutable value. No FFmpeg, no lock and no session.
 /// </summary>
 /// <remarks>
-/// The numbered tests are the Validation rows of <c>docs/adr/playlist-queue-model.md</c>. They ran
+/// The numbered tests are the Validation rows of <c>docs/adr/ADR-0074-playlist-queue-model.md</c>. They ran
 /// against <see cref="PlaylistCoordinator"/> until the queue became a value, step 2 of
-/// <c>docs/adr/playlist-session-protocol.md</c>. <c>PlaylistCoordinatorTests</c> keeps what
+/// <c>docs/adr/ADR-0076-playlist-session-protocol.md</c>. <c>PlaylistCoordinatorTests</c> keeps what
 /// belongs to the cell: the attached session, the transition stream and argument checks.
 /// </remarks>
 public sealed class PlaylistQueueTests

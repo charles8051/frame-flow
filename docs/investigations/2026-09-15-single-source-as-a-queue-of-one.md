@@ -4,7 +4,7 @@
 **Trigger:** The spike
 [End of queue, replay and faults on the playlist player](../adr/playlist-end-of-queue-replay-and-faults.md)
 asks for under *Deferred: one player type*, and the one
-[Looping on both players](../adr/looping-on-both-players.md) defers its single-source half to.
+[Looping on both players](../adr/ADR-0075-looping-on-both-players.md) defers its single-source half to.
 
 ## What was built
 

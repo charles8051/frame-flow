@@ -7,7 +7,7 @@ namespace FrameFlow.Playback.Tests;
 /// </summary>
 /// <remarks>
 /// These pinned the session's behaviour before it was rewritten as a pure protocol, in step 1 of the
-/// draft ADR <c>docs/adr/playlist-session-protocol.md</c>, and ran unchanged against the rewrite in
+/// <c>docs/adr/ADR-0076-playlist-session-protocol.md</c>, and ran unchanged against the rewrite in
 /// step 3. Each one names the change whose review settled it. The integration tests for the same
 /// changes stay, for the mechanism: decode, present and rewind. The rules themselves are tabled in
 /// <c>PlaylistSessionProtocolTests</c>.

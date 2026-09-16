@@ -156,7 +156,7 @@ internal sealed class PlaylistSession : IPlaybackSession
 
     // Read by the controller's loop-stall watchdog on every position tick. While a loop is under way
     // the answer is true whatever the queue now says, so removing the item mid-repeat does not hide a
-    // rewind that hangs. Otherwise the queue decides (decision 6 of looping-on-both-players.md).
+    // rewind that hangs. Otherwise the queue decides (decision 6 of ADR-0075-looping-on-both-players.md).
     public bool ExpectsRepeat => Volatile.Read(ref _publishedLoopUnderWay) || _coordinator.Queue.ExpectsRepeat;
 
     // ── IPlaybackSession lifecycle ──────────────────────────────────────────

@@ -7,7 +7,7 @@ namespace FrameFlow.Integration.Tests;
 
 /// <summary>
 /// A playlist reports its loops on <see cref="IPlaybackController.LoopRestarted"/>, with a count of
-/// consecutive loops of the current item: decision 5 of <c>docs/adr/looping-on-both-players.md</c>,
+/// consecutive loops of the current item: decision 5 of <c>docs/adr/ADR-0075-looping-on-both-players.md</c>,
 /// validation rows 9 to 13.
 /// </summary>
 /// <remarks>

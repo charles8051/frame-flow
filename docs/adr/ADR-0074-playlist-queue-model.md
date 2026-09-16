@@ -1,9 +1,10 @@
-# ADR-XXXX: The playlist player's queue: a playlist with a cursor, and items that play once
+# ADR-0074: The playlist player's queue: a playlist with a cursor, and items that play once
 
 ## Status
 
-Proposed (2026-09-14). Draft pending number assignment. Revised the same day after an independent
-review, and again after automated review of #198; *Revision history* says what changed.
+Accepted (2026-09-16). Proposed 2026-09-14; numbered and accepted once the implementation landed.
+Revised the same day after an independent review, and again after automated review of #198;
+*Revision history* says what changed.
 
 This record replaces the playlist player's queue with a model that keeps its items. It decides what
 each existing verb means in that model, adds the verbs a caller needs to move around it and edit
@@ -487,7 +488,7 @@ Still rejected, for ADR-0062's reason (ADR-0062:479-486).
 - **Why a transition happened.** Natural end, skip, jump or failure is not on `PlaylistTransition`
   (#173).
 - **`RepeatMode.All` on a playlist of one item.** Settled by
-  [Looping on both players](looping-on-both-players.md), decision 1: `All` repeats the queue, so a
+  [Looping on both players](ADR-0075-looping-on-both-players.md), decision 1: `All` repeats the queue, so a
   queue of one item repeats that item. The single-source player's docs still say `All` behaves like
   `Off` (`src/FrameFlow.Media/RepeatMode.cs:17-24`) until a single source runs as a queue of one.
 - **A `next` command on the test bench** (ADR-0068). Its table would need `JumpToAsync` and
@@ -560,7 +561,7 @@ replaced `PlaylistEndOfQueueTests.PlayFromEndedWithNothingQueued_IsRefused_AndTh
 and `PlaylistFaultTests` now expects Play from `Ended` after a faulted last item to start the
 playlist again. Both had asserted #170's refusal. Rows 1 to 16 and 18 later moved to
 `tests/FrameFlow.Playback.Tests/PlaylistQueueTests.cs`, when the queue became a value
-([The playlist session as a pure protocol](playlist-session-protocol.md), step 2).
+([The playlist session as a pure protocol](ADR-0076-playlist-session-protocol.md), step 2).
 
 Rows 1 to 5 and 8 repeat probes run against the coordinator before this record. The new tests could
 not run against that coordinator, which had none of the verbs, so each rule was then removed from

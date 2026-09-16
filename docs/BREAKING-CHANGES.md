@@ -48,7 +48,7 @@ terminated itself ran behind an in-graph `PaceUntil`, which holds a decode-textu
 across the clock wait; a single-sink graph runs upstream of `ClockSelectVideoSink`, which
 does not. Keeping both meant the same lambda had different behaviour depending on whether
 a sink happened to be registered. The full reasoning is in
-`docs/adr/graph-chain-forks-joins-and-termination.md`.
+`docs/adr/ADR-0078-graph-chain-forks-joins-and-termination.md`.
 
 **If your overlay drew from the configurator**, it is now upstream of the pacer and runs
 ahead of the display. Key it off `IFramePresentedSource.FramePresented` on your sink,
@@ -299,7 +299,7 @@ The player now keeps a playlist with a cursor. Its sources are the playlist, and
 `AddAsync` adds to it. `EnqueueAsync` and `SetNextAsync` add items that play once
 and never join it. `JumpToAsync`, `RemoveAsync`, `ClearAsync`, `ReplaceAsync` and
 `GetPlaylist` are new. The draft ADR
-[The playlist player's queue](adr/playlist-queue-model.md) has the rules.
+[The playlist player's queue](adr/ADR-0074-playlist-queue-model.md) has the rules.
 
 | Case | Before | After |
 |---|---|---|
@@ -394,7 +394,7 @@ A host subscribed to `LoopStalled` can now see a stall from a playlist of one un
 ### 12. `MediaPlayer.CreateAsync` returns `Task<IMediaPlaylistPlayer>`
 
 Every player is a queue now, and a single source is a queue of one
-(`docs/adr/one-player-type.md`), so the single-source factory returns the same player
+(`docs/adr/ADR-0077-one-player-type.md`), so the single-source factory returns the same player
 the playlist factory does. `IMediaPlaylistPlayer` derives from `IMediaPlayer`, so the
 awaited value still satisfies the smaller surface:
 

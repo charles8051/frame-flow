@@ -8,7 +8,7 @@ namespace FrameFlow.Integration.Tests;
 /// <summary>
 /// A single source runs as a queue of one on the playlist session: the spike the end-of-queue
 /// record's <i>Deferred: one player type</i> asks for, and rows 6 and 8 of
-/// <c>docs/adr/looping-on-both-players.md</c>.
+/// <c>docs/adr/ADR-0075-looping-on-both-players.md</c>.
 /// </summary>
 /// <remarks>
 /// <para>

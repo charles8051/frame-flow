@@ -1420,7 +1420,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
                     case LoopRestartedCommand loop:
                         // A playlist put its current item back at its start (decision 5 of
-                        // looping-on-both-players.md). A report from a session disposed since is
+                        // ADR-0075-looping-on-both-players.md). A report from a session disposed since is
                         // dropped, as that session's other notifications are.
                         if (loop.SessionGeneration == _sessionBinding.Generation)
                         {

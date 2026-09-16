@@ -178,7 +178,7 @@ written except where struck through above, and the record as a whole is **provis
 operators, and absorbing a late wakeup. The second rests on the Windows ~15 ms timer granularity
 quoted on `ClockSelectVideoSink.DefaultCapacity`, which ADR-0067 replaced with a high-resolution
 timer measuring a 16.39 ms mean against a 16.67 ms frame period. The first is argued against by
-[sync-window-join](sync-window-join.md), which measured 40 ms frame-to-detection lag and calls it
+[sync-window-join](ADR-0073-sync-window-join.md), which measured 40 ms frame-to-detection lag and calls it
 the tightest pairing the join can produce, and by
 [lateness-driven-decode-skip](lateness-driven-decode-skip.md), whose table shows a healthy 1080p60
 run dropping zero frames and which names the ring never filling as the binding constraint. The 3

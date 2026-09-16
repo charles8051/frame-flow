@@ -208,7 +208,7 @@ disposed instead, as it was before items were kept.
 
 ### 4. Play from `Ended` on an empty queue is refused
 
-The draft [The playlist player's queue](playlist-queue-model.md), implemented with #171, relaxes
+The draft [The playlist player's queue](ADR-0074-playlist-queue-model.md), implemented with #171, relaxes
 this: the playlist keeps its items, and Play from `Ended` with nothing queued starts it again. The
 refusal remains for a player that holds no items.
 
@@ -607,7 +607,7 @@ break a caller, while a replay that later becomes a refusal breaks anyone who re
 This is not decided, and no work on it is planned. It is recorded because it answers defect 6 and
 part of the review's objection above.
 
-The draft [The playlist player's queue](playlist-queue-model.md) now proposes a decision for defect 6
+The draft [The playlist player's queue](ADR-0074-playlist-queue-model.md) now proposes a decision for defect 6
 and the mid-queue switch below. It keeps this section's split between kept and one-shot items, but
 maps `EnqueueAsync` to a one-shot item rather than to the kept playlist, and gives kept items a
 verb of their own.

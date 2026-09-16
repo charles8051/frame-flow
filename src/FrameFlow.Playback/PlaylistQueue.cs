@@ -112,7 +112,7 @@ internal sealed record PlaylistQueue
     /// and the item is the only playlist item with nothing set next or queued.
     /// </summary>
     /// <remarks>
-    /// Decision 6 of <c>docs/adr/looping-on-both-players.md</c>. A repeat of the same item keeps it
+    /// Decision 6 of <c>docs/adr/ADR-0075-looping-on-both-players.md</c>. A repeat of the same item keeps it
     /// started, so a repeat that hangs is still watched. A pending jump is taken by the next advance
     /// ahead of any repeat.
     /// </remarks>

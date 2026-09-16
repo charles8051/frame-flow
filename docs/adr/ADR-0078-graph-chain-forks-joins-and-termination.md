@@ -1,14 +1,13 @@
-# ADR-XXXX: The chain declares its forks and joins, and the builder always terminates it
+# ADR-0078: The chain declares its forks and joins, and the builder always terminates it
 
 ## Status
 
-Proposed (2026-09-15). Draft pending number assignment. **Implemented in #242, #243, #244 and
-#245**; see the amendment at the foot of this record for where the implementation departed from
-what is written here, and for two motivations below that the code does not support. The
-*Decision* section is written in the present tense, as this repo's records are, and describes the
-contract the implementing change will establish. `Branch`, `Join`, the inherit marker and `Validate`
-do not exist in the tree yet, and `docs/BREAKING-CHANGES.md` gets its entry with the change that
-breaks something rather than with this one.
+Accepted (2026-09-16). Proposed 2026-09-15; numbered and accepted once the implementation landed.
+**Implemented in #242, #243, #244 and #245**; see the amendment at the foot of this record for
+where the implementation departed from what is written here, and for two motivations below that
+the code does not support. The *Decision* section is written in the present tense, as this repo's
+records are, and describes the contract the implementing change established. `Branch`, `Join`, the
+inherit marker and `Validate` are in the tree, and `docs/BREAKING-CHANGES.md` carries its entry.
 
 This record decides that a fork and a join are expressible in `GraphChain<T>`, that a chain-built
 fork names its inheritor instead of leaving it to wiring order, and that a configurator has

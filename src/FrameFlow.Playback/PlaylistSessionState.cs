@@ -92,7 +92,7 @@ internal sealed record PlaylistSessionState
     /// <summary>
     /// Consecutive loops of the current item: the first loop is 1. A start that is not a loop sets it
     /// back to 0, and a new session starts at 0. Decision 5 of
-    /// <c>docs/adr/looping-on-both-players.md</c>.
+    /// <c>docs/adr/ADR-0075-looping-on-both-players.md</c>.
     /// </summary>
     public int LoopCount { get; init; }
 

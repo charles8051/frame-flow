@@ -4,7 +4,7 @@ namespace FrameFlow.Player.Tests;
 
 /// <summary>
 /// One configurator contract: it returns its chain open, and the builder terminates it at the
-/// registered sink. Decision 4 of <c>docs/adr/graph-chain-forks-joins-and-termination.md</c>.
+/// registered sink. Decision 4 of <c>docs/adr/ADR-0078-graph-chain-forks-joins-and-termination.md</c>.
 /// </summary>
 /// <remarks>
 /// <para>

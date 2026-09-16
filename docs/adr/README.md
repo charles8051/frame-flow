@@ -207,33 +207,6 @@ land.
   measured against a running policy before the default changes. Its rejected alternative F
   records the packet-pacing design this replaced, and the measurement that ruled it
   out.
-- [Looping on both players](looping-on-both-players.md) — the single-source and playlist players
-  disagree about looping. `RepeatMode.All` ends a single source and loops a playlist of one, the
-  two players rewind differently (#172), a single source reports a loop with `LoopRestarted` and a
-  playlist only with `SourceTransitioned` (#173), `IMediaPlayer` exposes no loop event, and the
-  loop-stall watchdog does not watch a playlist of one under `All`. Proposes to supersede ADR-0021:
-  `All` repeats the queue, so a single source loops under it; the queue decides repeats; a loop
-  that ends while paused goes back to its start and stays paused; a playing loop rewinds in place,
-  because the full seek the single source reverted to keeps the same decode device; `LoopRestarted`
-  fires on both players once the item is back at its start, carries a per-item count, and joins
-  `IMediaPlayer`; and the watchdog watches every expected loop. The playlist half changes the
-  playlist session's protocol core. A single source gets the rest by running as a queue of one,
-  which a separate record decides; the controller changes it would otherwise need are kept as a
-  fallback. Revised after an independent review measured the decode device and loop gaps on both
-  paths, and again onto the playlist session protocol. Nothing is implemented.
-- [The playlist session as a pure protocol, with its queue as a value](playlist-session-protocol.md) —
-  the playlist session's decisions are spread over 1,051 lines of async code behind a transition
-  gate, and the session builds its own item runtimes, so its orderings are tested only over real
-  playback with holds inside the gate. Proposes the ADR-0055 and `PlaybackProtocol` pattern for it:
-  the queue becomes an immutable value with pure operations under the coordinator's lock, and the
-  session becomes a pure step function whose shell awaits each step on an unbounded channel, as the
-  controller's does. Tests become tables over an abstraction of the state, transcripts that fail
-  with their fix reverted, and an ordering explorer over an item model with invariants. Migration
-  first adds seams so transcripts pin today's behaviour. Revised after an independent review found
-  that the first draft's non-awaiting event loop hung disposal and dropped live end-of-stream.
-  All four steps of the migration are implemented: the seams, transcripts that fail with their fix
-  removed, the queue as an immutable value, the session as a pure core with an awaiting shell, and an
-  ordering explorer over the core.
 - [One builder, two terminals](one-builder-two-terminals.md) — the fluent surface
   returned the weaker object: `BuildAsync` yields a single-shot `PlayerSession`, while
   the eleven-parameter `MediaPlayer.CreateAsync` holds the whole state machine. Adds
@@ -265,7 +238,42 @@ land.
   Two reviews shaped it, and its revision history says what each changed. An amendment records,
   without deciding it, a direction for the `SetNext` defect: a playlist with a cursor for the loop
   and a separate up-next queue for items that play once.
-- [The playlist player's queue: a playlist with a cursor, and items that play once](playlist-queue-model.md) —
+- [Frame-pool ownership for buffered decoded video](frame-pool-ownership.md) — a held
+  D3D11VA frame pins a slice of a fixed decode pool, so the pacing ring cannot grow past the
+  spare slices, while VideoToolbox and software decode have no such ceiling. Gives fixed-pool
+  backends a FrameFlow-owned pool that each decode slice is copied into, which is the copy the
+  presenter's converter already performs per frame, and leaves ADR-0025's sink-owned pool
+  alone. Paired with the [video lookahead](../feature-specs/video-lookahead/spec.md) spec,
+  which is the only thing that would spend the depth.
+- [Declared pull: the master clock as a graph-visible dependency](declared-pull-clock.md) — the
+  substrate models edges and nodes, and the master clock is neither, so no rule and no diagnostic
+  can see which nodes depend on one. It set out to register clock readers on the `Graph`. Drafting
+  it against the wiring found that the clock's author sits outside the graph on the no-audio path,
+  so a reader-only registry validates nothing, and that the one in-graph clock reader, `PaceUntil`,
+  has no call site left. It decides the rule instead: the clock stays a pull, no pump body awaits
+  it, and `PaceUntil` goes. The registry is deferred, with the condition that would revive it.
+- [An immutable blueprint for the graph](immutable-graph-blueprint.md) — `Graph` is a description
+  and a runner in one type, so the topology is assembled by side effect, validated only inside
+  `RunAsync`, and re-run by resetting mutable port state. `_resets`, `BeforeEachRun` and
+  `SubstrateSession`'s `GraphPolicy` are three answers to one question. Proposes a `GraphBlueprint`
+  value validated at construction, a separate `GraphInstance` owning the channels and the pumps,
+  and node specs as factories, which is the layer [ADR-0078](ADR-0078-graph-chain-forks-joins-and-termination.md)
+  named as missing when it rejected reusable blueprints. The costs are the typed `Connect`'s
+  compile-time proof and a break across 80 construction sites. `FrameFlow.Graph` has shipped
+  nothing, so that break is free until it does.
+
+## Recently numbered
+
+Numbered and accepted on 2026-09-16, once each record's implementation had landed. The
+summaries below were written while they were drafts; the records themselves are current.
+
+- [Sync-window join for media-time correlation](ADR-0073-sync-window-join.md) — the substrate
+  fans out and cannot rejoin, so four consumers hand-roll the same correlation outside
+  the graph. Adds a two-input node that pairs a slow secondary onto a fast primary by
+  media time, with two match policies sized to those four. Ships with the LiveCaptioning
+  detection overlay migrated onto it, which deletes the `_inferenceBusy` gating in
+  favour of a `LatestWins(1)` edge; the caption overlay waits on ADR-0047's lookahead.
+- [The playlist player's queue: a playlist with a cursor, and items that play once](ADR-0074-playlist-queue-model.md) —
   the playlist coordinator keeps an upcoming queue and a loop buffer that disagree: `SetNext` under
   `All` grows the rotation, a switch to `All` mid-queue loops only what played after it, a skip under
   `One` restarts the item, and enqueueing on every hand-off under `All` grows without bound. Proposes
@@ -278,7 +286,34 @@ land.
   slot. Revised after an independent review found that the first draft's cursor retried a failed
   item, a jump racing an advance was lost, and removal left the cursor undefined. Implemented with
   #171.
-- [One player type: every player is a queue](one-player-type.md) — the single-source player and the
+- [Looping on both players](ADR-0075-looping-on-both-players.md) — the single-source and playlist players
+  disagree about looping. `RepeatMode.All` ends a single source and loops a playlist of one, the
+  two players rewind differently (#172), a single source reports a loop with `LoopRestarted` and a
+  playlist only with `SourceTransitioned` (#173), `IMediaPlayer` exposes no loop event, and the
+  loop-stall watchdog does not watch a playlist of one under `All`. Proposes to supersede ADR-0021:
+  `All` repeats the queue, so a single source loops under it; the queue decides repeats; a loop
+  that ends while paused goes back to its start and stays paused; a playing loop rewinds in place,
+  because the full seek the single source reverted to keeps the same decode device; `LoopRestarted`
+  fires on both players once the item is back at its start, carries a per-item count, and joins
+  `IMediaPlayer`; and the watchdog watches every expected loop. The playlist half changes the
+  playlist session's protocol core. A single source gets the rest by running as a queue of one,
+  which a separate record decides; the controller changes it would otherwise need are kept as a
+  fallback. Revised after an independent review measured the decode device and loop gaps on both
+  paths, and again onto the playlist session protocol. Nothing is implemented.
+- [The playlist session as a pure protocol, with its queue as a value](ADR-0076-playlist-session-protocol.md) —
+  the playlist session's decisions are spread over 1,051 lines of async code behind a transition
+  gate, and the session builds its own item runtimes, so its orderings are tested only over real
+  playback with holds inside the gate. Proposes the ADR-0055 and `PlaybackProtocol` pattern for it:
+  the queue becomes an immutable value with pure operations under the coordinator's lock, and the
+  session becomes a pure step function whose shell awaits each step on an unbounded channel, as the
+  controller's does. Tests become tables over an abstraction of the state, transcripts that fail
+  with their fix reverted, and an ordering explorer over an item model with invariants. Migration
+  first adds seams so transcripts pin today's behaviour. Revised after an independent review found
+  that the first draft's non-awaiting event loop hung disposal and dropped live end-of-stream.
+  All four steps of the migration are implemented: the seams, transcripts that fail with their fix
+  removed, the queue as an immutable value, the session as a pure core with an awaiting shell, and an
+  ordering explorer over the core.
+- [One player type: every player is a queue](ADR-0077-one-player-type.md) — the single-source player and the
   playlist player run different sessions, and every fix since #170 has had to say which one it was
   for. Proposes that `PlaybackController.Create` build the playlist session over a coordinator of
   its own, so a single source is a queue of one: each load makes the loaded source that queue's only
@@ -292,20 +327,7 @@ land.
   two builds present the same frames at the same rate with no stall. Defers folding
   `IMediaPlaylistPlayer` into `IMediaPlayer`, which would break external implementers for no
   behaviour. Nothing is implemented.
-- [Sync-window join for media-time correlation](sync-window-join.md) — the substrate
-  fans out and cannot rejoin, so four consumers hand-roll the same correlation outside
-  the graph. Adds a two-input node that pairs a slow secondary onto a fast primary by
-  media time, with two match policies sized to those four. Ships with the LiveCaptioning
-  detection overlay migrated onto it, which deletes the `_inferenceBusy` gating in
-  favour of a `LatestWins(1)` edge; the caption overlay waits on ADR-0047's lookahead.
-- [Frame-pool ownership for buffered decoded video](frame-pool-ownership.md) — a held
-  D3D11VA frame pins a slice of a fixed decode pool, so the pacing ring cannot grow past the
-  spare slices, while VideoToolbox and software decode have no such ceiling. Gives fixed-pool
-  backends a FrameFlow-owned pool that each decode slice is copied into, which is the copy the
-  presenter's converter already performs per frame, and leaves ADR-0025's sink-owned pool
-  alone. Paired with the [video lookahead](../feature-specs/video-lookahead/spec.md) spec,
-  which is the only thing that would spend the depth.
-- [The chain declares its forks and joins, and the builder always terminates it](graph-chain-forks-joins-and-termination.md) —
+- [The chain declares its forks and joins, and the builder always terminates it](ADR-0078-graph-chain-forks-joins-and-termination.md) —
   `GraphChain<T>` covers a linear segment and cannot carry a cloner, so every fork-and-rejoin
   consumer drops to port-level `Connect`, and which branch inherits the incoming ref is a
   wiring-order fact that both call sites restate wrongly. Adds `Branch` and a chain-returning
@@ -318,6 +340,7 @@ land.
   three examples that terminate inside their configurator.
   **Implemented** in #242, #243, #244 and #245; its amendment records three departures,
   two motivations the code does not support, and a corrected cycle search.
+
 
 (Most recently, tests stopped depending on elapsed time as
 [ADR-0072](ADR-0072-tests-do-not-depend-on-elapsed-time.md) — wall time is `TimeProvider`

@@ -1,12 +1,13 @@
-# ADR-XXXX: Looping on both players: what the repeat modes mean, who loops, and how a loop is reported
+# ADR-0075: Looping on both players: what the repeat modes mean, who loops, and how a loop is reported
 
 ## Status
 
-Proposed (2026-09-14). Draft pending number assignment. Revised the same day after an independent
-review, and on 2026-09-15 onto the playlist session protocol; *Revision history* says what changed.
+Accepted (2026-09-16). Proposed 2026-09-14; numbered and accepted once the implementation landed.
+Revised the same day after an independent review, and on 2026-09-15 onto the playlist session
+protocol; *Revision history* says what changed.
 **Implemented.** The playlist half landed first (decisions 5 and 6 on a playlist); *As implemented*
 says how. A single source then became a queue of one, which is
-[One player type](one-player-type.md), so decisions 1, 3, 4, 5 and 6 reach it through the same
+[One player type](ADR-0077-one-player-type.md), so decisions 1, 3, 4, 5 and 6 reach it through the same
 session. Decision 8, the controller's fallback, is superseded by that record and its code is gone.
 
 This record supersedes [ADR-0021](ADR-0021-looped-playback-strategy.md). It decides:
@@ -34,8 +35,8 @@ Related: [ADR-0021](ADR-0021-looped-playback-strategy.md),
 [ADR-0062](ADR-0062-gapless-playlist-warm-presenter.md),
 [ADR-0063](ADR-0063-nv12-pixel-shader-color-conversion.md),
 [ADR-0064](ADR-0064-zero-copy-converter-device-ownership.md),
-[The playlist player's queue](playlist-queue-model.md),
-[The playlist session as a pure protocol](playlist-session-protocol.md). Issues #172, #173.
+[The playlist player's queue](ADR-0074-playlist-queue-model.md),
+[The playlist session as a pure protocol](ADR-0076-playlist-session-protocol.md). Issues #172, #173.
 
 ## Context
 
@@ -150,7 +151,7 @@ The review also measured the gap at five loop boundaries on a 0.5-second clip:
 ### What the playlist session protocol changed
 
 The first two drafts were written against `PlaylistSession` and `PlaylistCoordinator`, before
-[The playlist session as a pure protocol](playlist-session-protocol.md) landed (#204, #208, #209 and
+[The playlist session as a pure protocol](ADR-0076-playlist-session-protocol.md) landed (#204, #208, #209 and
 #210). Three things they relied on have moved:
 
 - **Ordering.** The session's gate is gone. Its shell steps one input at a time, and an advance runs
@@ -356,7 +357,7 @@ ADR-0021's status becomes *Superseded* when this record is accepted.
 
 ### 8. If a single source does not run as a queue of one
 
-**Superseded by [One player type](one-player-type.md).** A single source does run as a queue of one,
+**Superseded by [One player type](ADR-0077-one-player-type.md).** A single source does run as a queue of one,
 so the controller's loop path is deleted rather than extended. This decision is kept for the record
 of what the alternative was.
 

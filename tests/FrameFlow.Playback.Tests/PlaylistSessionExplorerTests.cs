@@ -17,7 +17,7 @@ namespace FrameFlow.Playback.Tests;
 /// <summary>
 /// Runs <see cref="PlaylistSessionExplorer"/> over scenarios chosen per defect class, starting from the
 /// transcripts in <c>PlaylistSessionTranscriptTests</c>. Step 4 of
-/// <c>docs/adr/playlist-session-protocol.md</c>.
+/// <c>docs/adr/ADR-0076-playlist-session-protocol.md</c>.
 /// </summary>
 /// <remarks>
 /// The core must break no invariant in any scenario, apart from the expected failure decision 7

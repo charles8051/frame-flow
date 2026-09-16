@@ -6,7 +6,7 @@ namespace FrameFlow.Player.Tests;
 
 /// <summary>
 /// One player type: the player a single source builds is the one a playlist builds, over a queue
-/// of one. Decisions 1 and 2 of <c>docs/adr/one-player-type.md</c>, validation row 1.
+/// of one. Decisions 1 and 2 of <c>docs/adr/ADR-0077-one-player-type.md</c>, validation row 1.
 /// </summary>
 /// <remarks>
 /// <see cref="MediaPlayer.CreateAsync"/> needs FFmpeg and a real source, so the wiring is checked

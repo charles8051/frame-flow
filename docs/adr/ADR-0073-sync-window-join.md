@@ -1,7 +1,7 @@
-# Sync-window join for media-time correlation
+# ADR-0073: Sync-window join for media-time correlation
 
-**Status:** Draft, pending number assignment at merge. Implemented, with one of
-its two migrations shipped and measured.
+**Status:** Accepted (2026-09-16). Proposed 2026-09-09; numbered and accepted once the
+implementation landed. Implemented, with one of its two migrations shipped and measured.
 
 ### What exists
 

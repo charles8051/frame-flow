@@ -192,7 +192,7 @@ internal sealed record ExplorerResult(int States, IReadOnlyList<ExplorerViolatio
 
 /// <summary>
 /// Enumerates the orderings of a scenario over <see cref="PlaylistSessionProtocol.Step"/>, and checks
-/// the invariants of decision 7 of <c>docs/adr/playlist-session-protocol.md</c> along each one.
+/// the invariants of decision 7 of <c>docs/adr/ADR-0076-playlist-session-protocol.md</c> along each one.
 /// </summary>
 /// <remarks>
 /// <para>

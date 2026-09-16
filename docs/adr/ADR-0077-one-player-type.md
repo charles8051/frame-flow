@@ -1,8 +1,9 @@
-# ADR-XXXX: One player type: every player is a queue
+# ADR-0077: One player type: every player is a queue
 
 ## Status
 
-Proposed (2026-09-15). Draft pending number assignment. **Implemented**; *As implemented* says how.
+Accepted (2026-09-16). Proposed 2026-09-15; numbered and accepted once the implementation landed.
+**Implemented**; *As implemented* says how.
 It grew out of the spike in
 [docs/investigations/2026-09-15-single-source-as-a-queue-of-one.md](../investigations/2026-09-15-single-source-as-a-queue-of-one.md),
 which is also where the hardware run is recorded.
@@ -15,13 +16,13 @@ It supersedes:
 - **[End of queue, replay and faults on the playlist player](playlist-end-of-queue-replay-and-faults.md)
   decision 1**, which kept single-source playback on `SubstrateSession`. Its *Deferred: one player
   type* section lists the conditions this record answers.
-- **[Looping on both players](looping-on-both-players.md) decision 8**, the controller's fallback
+- **[Looping on both players](ADR-0075-looping-on-both-players.md) decision 8**, the controller's fallback
   loop, which exists only for a single source that does not run as a queue of one.
 - **ADR-0028 §2**, which routed the single-source loop through the controller's seek state machine.
 - **ADR-0027 §3** on `RepeatMode.All`, already answered by the looping record's decision 1.
 
-Related: [The playlist player's queue](playlist-queue-model.md),
-[The playlist session as a pure protocol](playlist-session-protocol.md),
+Related: [The playlist player's queue](ADR-0074-playlist-queue-model.md),
+[The playlist session as a pure protocol](ADR-0076-playlist-session-protocol.md),
 [ADR-0062](ADR-0062-gapless-playlist-warm-presenter.md),
 [ADR-0069](ADR-0069-one-error-model-across-the-playback-stack.md),
 [ADR-0072](ADR-0072-tests-do-not-depend-on-elapsed-time.md).
