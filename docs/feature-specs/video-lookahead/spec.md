@@ -1,6 +1,7 @@
 # Video lookahead
 
-**Status:** Draft. Not implemented. Living document, rewritten as the feature changes.
+**Status:** Draft. Not implemented, and **provisional on #231**, which asks whether this surface
+is worth having at all. Living document, rewritten as the feature changes.
 
 **Date:** 2026-09-15
 
@@ -12,8 +13,13 @@ slices, and this feature has nothing to sell.
 ## What
 
 A consumer asks for a lead: the media time by which decoding runs ahead of the displayed
-picture. Operators placed ahead of the pacer then have that long to finish work on a frame
-before it is shown, and a late wakeup costs a buffered frame rather than a dropped one.
+picture. Operators placed ahead of the pacer then have that long to finish work on a frame before
+it is shown.
+
+The second reason first written here, that a late wakeup costs a buffered frame rather than a
+dropped one, was inherited from the remark on `ClockSelectVideoSink.DefaultCapacity` and does not
+survive review: it rests on the Windows ~15 ms timer granularity that ADR-0067 replaced with a
+high-resolution timer. The first reason is what #231 measures.
 
 Today the lead is 3 frames, because `SubstrateSession` never passes a capacity to
 `ClockSelectVideoSink`.
@@ -38,9 +44,11 @@ Today the lead is 3 frames, because `SubstrateSession` never passes a capacity t
    reached. They differ whenever decode does not outrun realtime, which makes "I asked for a
    second and got two frames" visible rather than mysterious.
 
-5. **The decision repeats per playlist item.** Frame size and rate change between items, so
-   the resolve runs per item. That needs the per-item media info #216 proposes handing to the
-   configurator.
+5. **The decision repeats per playlist item.** Frame size and rate change between items, so the
+   resolve runs per item. ~~That needs the per-item media info #216 proposes handing to the
+   configurator.~~ It does not: `SubstrateSession` already reads `MediaInfo` before it builds the
+   pacer, and builds one pacer per item. What a size change does force is a pool rebuild rather
+   than a rebind, since the textures and the per-frame copy box are sized at construction.
 
 ## Affected layers
 
@@ -60,4 +68,9 @@ Today the lead is 3 frames, because `SubstrateSession` never passes a capacity t
   is the real fix, this surface serves throughput cases only, and requirement 1 waits.
 - **Which consumers want it.** LiveCaptioning is the candidate, and it can only use a lead
   once its fork and join terminate in an open chain (#218).
-- **The default budget, and whether it is per player or process-wide.**
+- **The default budget, and whether it is per player or process-wide.** Nothing in `src/`
+  queries adapter memory, so requirement 2's `byteBudget` has no supplier yet.
+- **What the depth is resolved against.** The engaged backend is not known where the pacer is
+  built: FFmpeg picks the hwaccel in `get_format` on the first decoded frame, and the ring's
+  capacity is fixed in its constructor. Either the ring becomes resizable, or the depth is a
+  prediction the resolve clamps conservatively.
