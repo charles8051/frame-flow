@@ -115,8 +115,10 @@ public partial class MainWindow : Window
     private readonly ConcurrentDictionary<TimeSpan, DetectionSet?> _detections = new();
     private DetectionSet? _lastPostedDetections;
 
-    // The sink we subscribed to, so teardown can unsubscribe from the same one.
+    // The sink we subscribed to and the delegate we gave it, so teardown unsubscribes exactly
+    // what it added: the delegate closes over the generation of the open that created it.
     private IFramePresentedSource? _presentedSource;
+    private EventHandler<FramePresentedInfo>? _presentedHandler;
 
     // Which open a presented-frame callback belongs to. Unsubscribing does not stop a callback
     // already running, and a UI post it queued outlives the teardown that follows, so without
@@ -426,8 +428,15 @@ public partial class MainWindow : Window
         _lastPostedDetections = null;
         if (viewSink is IFramePresentedSource presented)
         {
+            // The generation is captured here, not read when a callback runs. A callback from
+            // the previous open can be delayed past this point, and reading the counter then
+            // would hand it this open's generation and let its stale boxes through the guard.
+            var generation = Volatile.Read(ref _openGeneration);
+            EventHandler<FramePresentedInfo> handler = (_, e) => OnFramePresented(e, generation);
+
             _presentedSource = presented;
-            presented.FramePresented += OnFramePresented;
+            _presentedHandler = handler;
+            presented.FramePresented += handler;
         }
         else
         {
@@ -680,10 +689,14 @@ public partial class MainWindow : Window
     /// Raised on whichever thread finished the present, so everything here marshals to the UI
     /// thread and does as little as possible on the way.
     /// </remarks>
-    private void OnFramePresented(object? sender, FramePresentedInfo e)
+    private void OnFramePresented(FramePresentedInfo e, int generation)
     {
         var pts = e.PresentationTime;
-        var generation = Volatile.Read(ref _openGeneration);
+
+        // A callback from a previous open can still be running here. Everything below is either
+        // scoped to this open's state or discarded by the generation it was subscribed with.
+        if (Volatile.Read(ref _openGeneration) != generation)
+            return;
 
         var timeline = _captionTimeline;
         var queue = _captionQueue;
@@ -841,10 +854,11 @@ public partial class MainWindow : Window
         // it posted a moment ago.
         Interlocked.Increment(ref _openGeneration);
 
-        if (_presentedSource is not null)
+        if (_presentedSource is not null && _presentedHandler is not null)
         {
-            _presentedSource.FramePresented -= OnFramePresented;
+            _presentedSource.FramePresented -= _presentedHandler;
             _presentedSource = null;
+            _presentedHandler = null;
         }
 
         _detections.Clear();
