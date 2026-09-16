@@ -100,7 +100,7 @@
 <h1>Decoding pipeline — pull model</h1>
 <p class="subtitle">How decoded video frames and audio buffers flow from FFmpeg to the sinks, how the two streams stay synchronized, and where backpressure lives now that channels are bounded(1).</p>
 <p class="meta">ADR-0030 (Crossbar frame contracts) · ADR-0032 (pull-shape controller) · ADR-0033 (HW decode) · ADR-0035 (<code>IMasterClock</code> split) · ADR-0036 (decode/playback decoupling). Generated 2026-05-12.</p>
-<p class="meta"><strong>Stale as of 2026-08-26:</strong> the clock contract shown here as <code>IAudioSink &middot; IMasterClock</code> no longer exists. It shipped as <code>FrameFlow.Graph.IClockSource</code> &mdash; a published signal rather than an inherited pull &mdash; per the proposal in <a href="decoding-pipeline-proposed.html">decoding-pipeline-proposed.html</a>. The rest of the pull-model description still holds.</p>
+<p class="meta"><strong>Stale as of 2026-08-26:</strong> the clock contract shown here as <code>IAudioSink &middot; IMasterClock</code> no longer exists. It shipped as <code>FrameFlow.Graph.IClockSource</code> &mdash; a separate contract rather than an inherited one &mdash; per the proposal in <a href="decoding-pipeline-proposed.html">decoding-pipeline-proposed.html</a>. That proposal's published signal was built and then withdrawn: ADR-0057 has both clocks compute their value on read, so the clock is a pull again. The rest of the pull-model description still holds.</p>
 
 <h2>The short version</h2>
 
