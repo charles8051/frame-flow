@@ -210,6 +210,21 @@ public sealed class GraphChainForkTests
     }
 
     [Fact]
+    public void ConfiguringABranchEdgeTwice_IsRejected()
+    {
+        // The branch's first edge is configured by Branch. Passing options on that hop as well
+        // would have to silently win or silently lose, and the caller reads one at the call site
+        // either way.
+        var graph = new GraphRunner();
+        var head = graph.Pipeline(CountedSource(1));
+
+        var ex = Assert.Throws<ArgumentException>(
+            () => head.Branch(EdgeOptions.Buffered(4)).Then(Double("double"), EdgeOptions.LatestWins(1))
+        );
+        Assert.Contains("configured by Branch", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ABranchWithADefaultConfig_IsRejected()
     {
         // A default EdgeConfig carries no options, and Connect reads that as EdgeOptions.Default:

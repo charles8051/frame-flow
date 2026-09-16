@@ -177,7 +177,7 @@ public sealed class Graph
 
         var opts = config.Options ?? EdgeOptions.Default;
         var cloner = config.Cloner;
-        _edges.Add(new EdgeSpec(from, to, inherit));
+        _edges.Add(new EdgeSpec(from, to, inherit, Blocks: opts.Overflow == Overflow.Block));
         // Reset clears the prior run's edge state so RunAsync can be called again.
         // For a fan-out output port (multiple edges share one `from`), each edge
         // registers a Clear(); they all run before any wire-up Add(), so clearing

@@ -53,8 +53,28 @@ public readonly struct GraphChain<T>
     /// </summary>
     private (EdgeConfig<T> Config, bool Inherit) NextEdge(EdgeOptions? options)
     {
-        var config = _pending ?? new EdgeConfig<T>(options ?? EdgeOptions.Default, Cloner: null);
-        return (config, !_isBranch && _graph.IsForked(_head));
+        // A branch's first hop is already configured, by Branch. Options passed here as well
+        // would have to be either ignored or preferred, and both are silent: the caller reads
+        // one of the two settings at the call site and gets the other. Say so instead.
+        if (_pending is { } pending)
+        {
+            if (options is not null)
+            {
+                throw new ArgumentException(
+                    "This edge was configured by Branch, so it cannot take options here as "
+                        + "well. Configure the branch's first edge in the Branch call, and pass "
+                        + "options on later hops.",
+                    nameof(options)
+                );
+            }
+
+            return (pending, Inherit: false);
+        }
+
+        return (
+            new EdgeConfig<T>(options ?? EdgeOptions.Default, Cloner: null),
+            _graph.IsForked(_head)
+        );
     }
 
     /// <summary>
