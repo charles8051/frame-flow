@@ -298,6 +298,13 @@ land.
   media time, with two match policies sized to those four. Ships with the LiveCaptioning
   detection overlay migrated onto it, which deletes the `_inferenceBusy` gating in
   favour of a `LatestWins(1)` edge; the caption overlay waits on ADR-0047's lookahead.
+- [Frame-pool ownership for buffered decoded video](frame-pool-ownership.md) — a held
+  D3D11VA frame pins a slice of a fixed decode pool, so the pacing ring cannot grow past the
+  spare slices, while VideoToolbox and software decode have no such ceiling. Gives fixed-pool
+  backends a FrameFlow-owned pool that each decode slice is copied into, which is the copy the
+  presenter's converter already performs per frame, and leaves ADR-0025's sink-owned pool
+  alone. Paired with the [video lookahead](../feature-specs/video-lookahead/spec.md) spec,
+  which is the only thing that would spend the depth.
 
 (Most recently, tests stopped depending on elapsed time as
 [ADR-0072](ADR-0072-tests-do-not-depend-on-elapsed-time.md) — wall time is `TimeProvider`

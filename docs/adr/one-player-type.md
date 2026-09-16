@@ -77,7 +77,14 @@ in-place rewind.
 
 `MediaPlayer.CreateAsync` and `MediaPlaylistPlayer.CreateAsync` build the same player. The
 single-source factory passes a queue of one, and its declared return type becomes
-`Task<IMediaPlaylistPlayer>`.
+`Task<IMediaPlaylistPlayer>`, which says what the caller is given.
+
+`Task<T>` is invariant, so this is a source break as well as a binary one. `var player = await
+MediaPlayer.CreateAsync(…)` and `IMediaPlayer player = await MediaPlayer.CreateAsync(…)` both keep
+compiling, because the awaited value is assignable. What stops compiling is naming the task:
+`Task<IMediaPlayer> t = MediaPlayer.CreateAsync(…)`, and passing the call where a
+`Task<IMediaPlayer>` or a `Func<…, Task<IMediaPlayer>>` is expected. The edit is to name the new
+type, or to await first.
 
 `IMediaPlaylistPlayer` stays a separate interface. Folding its eleven members into `IMediaPlayer`
 would break every type outside FrameFlow that implements the smaller surface — test doubles, UI
@@ -125,8 +132,12 @@ report, and the loop-stall watchdog keeps reading the session's `ExpectsRepeat`.
 A loop no longer drives the seek state machine. `SeekStateChanged` is silent across a loop and
 `IsActivelyPresenting` stays true, where ADR-0028 §2 made a loop look like a seek so a user seek
 could cancel it. The session orders a seek against a loop itself: both are its inputs, taken one at
-a time. A host that used `SeekStateChanged` to gate UI during a loop sees fewer transitions, and a
-host that used it to detect looping should take `LoopRestarted`.
+a time.
+
+A host that used `SeekStateChanged` to gate UI during a loop sees fewer transitions. One that used
+it to detect looping takes `LoopRestarted` instead, which #222 put on `IMediaPlayer` as well as on
+`IPlaybackController`, so the smaller surface has the replacement without reaching for the
+controller. It carries the loop's count, which the seek transitions never did.
 
 ### 6. A load replaces the queue; a replay keeps it
 
@@ -172,7 +183,8 @@ leaves that one ownerless.
 - **A loop is no longer a seek.** Hosts reading `SeekStateChanged` see fewer transitions.
 - **Every player carries a queue**, including the caller who will only ever play one file. The queue
   is a value with no thread of its own, so the cost is a coordinator per player.
-- **`MediaPlayer.CreateAsync`'s return type changes**, so callers recompile.
+- **`MediaPlayer.CreateAsync`'s return type changes.** Callers that name `Task<IMediaPlayer>` edit
+  one line; the rest recompile.
 
 ### Neutral
 
@@ -245,7 +257,8 @@ broken. The edits are:
 
 `docs/BREAKING-CHANGES.md` gains entries for:
 
-1. `MediaPlayer.CreateAsync`'s return type, which needs a recompile and no source edit.
+1. `MediaPlayer.CreateAsync`'s return type: a binary break for every caller, and a source break for
+   one that names the task rather than awaiting it. Decision 2 has the cases.
 2. `RepeatMode.All` looping a single source, where it used to end.
 3. A mid-stream fault reaching `Ended` with `ErrorOccurred`, where it used to reach `Error`.
 4. `SeekStateChanged` staying silent across a loop.
