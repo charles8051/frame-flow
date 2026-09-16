@@ -11,10 +11,10 @@ namespace FrameFlow.Graph;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>The producer side</b> is typically a concrete <see cref="ClockSubject"/>
-/// that the clock-owning subsystem publishes into (an audio sink reading a
-/// sample counter, a wallclock timer, an RTSP NPT-derived source, a test
-/// fixture). The producer-consumer split keeps clock-driven consumers
+/// <b>The producer side</b> is the clock-owning subsystem itself: an audio
+/// sink reading a sample counter (<c>OpenAlAudioSink</c>), a wallclock timer
+/// (<c>WallClockSource</c>), an RTSP NPT-derived source, a test fixture.
+/// The producer-consumer split keeps clock-driven consumers
 /// (video pacing, position UI, drift monitors, subtitle windows) coupled to
 /// the narrow <c>IClockSource</c> read surface rather than to whatever
 /// subsystem happens to author the clock.
