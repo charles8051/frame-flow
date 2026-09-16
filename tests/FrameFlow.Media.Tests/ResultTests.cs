@@ -99,4 +99,142 @@ public sealed class ResultTests
         Assert.Equal(ErrorCategory.InvalidOperation, result.Error.Category);
         Assert.Throws<InvalidOperationException>(() => result.Value);
     }
+
+    // -----------------------------------------------------------------------
+    // Result<T>.TryGetValue — the non-throwing accessor
+    //
+    // The difference from Value is the nullable flow, not the absence of the
+    // throw: the false branch may pass `error` on without a null check, and
+    // the true branch may read `value` without one. Forward() below is the
+    // compile-time half of that claim.
+    // -----------------------------------------------------------------------
+
+    // Result.Fail(PlaybackError) takes a non-null argument, and `error` is
+    // known non-null on this branch only because of [NotNullWhen(false)] on
+    // TryGetValue's error parameter. Drop that attribute and this line becomes
+    // CS8604.
+    private static Result Forward<T>(Result<T> result) =>
+        result.TryGetValue(out _, out var error) ? Result.Ok() : Result.Fail(error);
+
+    [Fact]
+    public void Generic_TryGetValue_OnOk_YieldsTheValueAndNoError()
+    {
+        var result = Result<int>.Ok(42);
+
+        Assert.True(result.TryGetValue(out var value, out var error));
+        Assert.Equal(42, value);
+        Assert.Null(error);
+    }
+
+    [Fact]
+    public void Generic_TryGetValue_OnFail_YieldsTheErrorAndTheDefaultValue()
+    {
+        var result = Result<string>.Fail(ErrorCategory.Io, "file not found");
+
+        Assert.False(result.TryGetValue(out var value, out var error));
+        Assert.Null(value);
+        Assert.NotNull(error);
+        Assert.Equal(ErrorCategory.Io, error.Category);
+        Assert.Equal("file not found", error.Message);
+    }
+
+    [Fact]
+    public void Generic_TryGetValue_OnDefault_YieldsTheDefaultError()
+    {
+        // Same state the Value property has to guard: no factory produced it,
+        // so there is no stored error to hand back.
+        Result<string> result = default;
+
+        Assert.False(result.TryGetValue(out _, out var error));
+        Assert.NotNull(error);
+        Assert.Equal(ErrorCategory.InvalidOperation, error.Category);
+    }
+
+    [Fact]
+    public void Generic_TryGetValue_OnOkCarryingNull_StillSucceeds()
+    {
+        // Why the value parameter is [MaybeNullWhen(false)] and not
+        // [NotNullWhen(true)]: T is unconstrained, so null is a legitimate
+        // success value and a non-null promise would not hold.
+        var result = Result<string?>.Ok(null);
+
+        Assert.True(result.TryGetValue(out var value, out var error));
+        Assert.Null(value);
+        Assert.Null(error);
+    }
+
+    [Fact]
+    public void Forwarding_A_Failure_KeepsTheError()
+    {
+        var error = new PlaybackError(ErrorCategory.Network, "timed out");
+
+        var forwarded = Forward(Result<int>.Fail(error));
+
+        Assert.False(forwarded.IsSuccess);
+        Assert.Same(error, forwarded.Error);
+    }
+
+    [Fact]
+    public void Forwarding_A_Success_Succeeds()
+    {
+        Assert.True(Forward(Result<int>.Ok(1)).IsSuccess);
+    }
+
+    // -----------------------------------------------------------------------
+    // Deconstruct — ergonomics only
+    //
+    // It carries no flow between its outputs, so these assert the values and
+    // nothing about nullability.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void Deconstruct_Ok_YieldsSuccessAndNoError()
+    {
+        var (isSuccess, error) = Result.Ok();
+
+        Assert.True(isSuccess);
+        Assert.Null(error);
+    }
+
+    [Fact]
+    public void Deconstruct_Fail_YieldsFailureAndTheError()
+    {
+        var (isSuccess, error) = Result.Fail(ErrorCategory.Source, "no such stream");
+
+        Assert.False(isSuccess);
+        Assert.NotNull(error);
+        Assert.Equal(ErrorCategory.Source, error.Category);
+        Assert.Equal("no such stream", error.Message);
+    }
+
+    [Fact]
+    public void Generic_Deconstruct_Ok_YieldsSuccessTheValueAndNoError()
+    {
+        var (isSuccess, value, error) = Result<int>.Ok(7);
+
+        Assert.True(isSuccess);
+        Assert.Equal(7, value);
+        Assert.Null(error);
+    }
+
+    [Fact]
+    public void Generic_Deconstruct_Fail_YieldsFailureTheDefaultValueAndTheError()
+    {
+        var (isSuccess, value, error) = Result<string>.Fail(ErrorCategory.Decode, "corrupt");
+
+        Assert.False(isSuccess);
+        Assert.Null(value);
+        Assert.NotNull(error);
+        Assert.Equal(ErrorCategory.Decode, error.Category);
+    }
+
+    [Fact]
+    public void Deconstruct_Default_YieldsFailureAndTheDefaultError()
+    {
+        var (isSuccess, error) = default(Result);
+
+        Assert.False(isSuccess);
+        Assert.NotNull(error);
+        Assert.Equal(ErrorCategory.InvalidOperation, error.Category);
+    }
 }
