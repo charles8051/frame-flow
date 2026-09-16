@@ -118,6 +118,12 @@ public partial class MainWindow : Window
     // The sink we subscribed to, so teardown can unsubscribe from the same one.
     private IFramePresentedSource? _presentedSource;
 
+    // Which open a presented-frame callback belongs to. Unsubscribing does not stop a callback
+    // already running, and a UI post it queued outlives the teardown that follows, so without
+    // this a frame from the previous file could paint its boxes over the next one. Bumped before
+    // teardown touches anything else; every posted update checks it is still current.
+    private int _openGeneration;
+
     // The caption state the presented-frame handler reads. Both are rebuilt per open.
     private ConcurrentQueue<Caption>? _captionQueue;
 
@@ -677,11 +683,12 @@ public partial class MainWindow : Window
     private void OnFramePresented(object? sender, FramePresentedInfo e)
     {
         var pts = e.PresentationTime;
+        var generation = Volatile.Read(ref _openGeneration);
 
         var timeline = _captionTimeline;
         var queue = _captionQueue;
         if (timeline is not null && queue is not null)
-            PublishCaptions(queue, timeline, pts);
+            PublishCaptions(queue, timeline, pts, generation);
 
         if (_yoloDetector is null)
             return;
@@ -703,15 +710,28 @@ public partial class MainWindow : Window
         var height = set?.Height ?? 0;
         if (width == 0 || height == 0)
         {
-            Dispatcher.UIThread.Post(
-                () => DetectionOverlay.Update(Array.Empty<Detection>(), 1, 1),
-                DispatcherPriority.Background
+            PostIfCurrent(
+                generation,
+                () => DetectionOverlay.Update(Array.Empty<Detection>(), 1, 1)
             );
             return;
         }
 
+        PostIfCurrent(generation, () => DetectionOverlay.Update(detections, width, height));
+    }
+
+    /// <summary>
+    /// Queues a UI update that runs only while the open it belongs to is still the current one.
+    /// </summary>
+    private void PostIfCurrent(int generation, Action update)
+    {
         Dispatcher.UIThread.Post(
-            () => DetectionOverlay.Update(detections, width, height),
+            () =>
+            {
+                if (Volatile.Read(ref _openGeneration) != generation)
+                    return;
+                update();
+            },
             DispatcherPriority.Background
         );
     }
@@ -723,14 +743,15 @@ public partial class MainWindow : Window
     private void PublishCaptions(
         ConcurrentQueue<Caption> captionQueue,
         CaptionTimeline captionTimeline,
-        TimeSpan pts
+        TimeSpan pts,
+        int generation
     )
     {
         while (captionQueue.TryDequeue(out var caption))
             captionTimeline.Add(caption, pts);
 
         var active = new ActiveCaptions(captionTimeline.GetActive(pts));
-        Dispatcher.UIThread.Post(() => UpdateCaptionsUi(active), DispatcherPriority.Background);
+        PostIfCurrent(generation, () => UpdateCaptionsUi(active));
     }
 
     /// <summary>
@@ -816,6 +837,10 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task TeardownPlayerAsync()
     {
+        // First, so a callback already running is stale by the time it posts, and so is anything
+        // it posted a moment ago.
+        Interlocked.Increment(ref _openGeneration);
+
         if (_presentedSource is not null)
         {
             _presentedSource.FramePresented -= OnFramePresented;
