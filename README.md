@@ -91,8 +91,9 @@ await player.EnqueueAsync(once);   // plays once, then leaves
 await player.SkipToNextAsync();
 ```
 
-`MediaPlayer.CreateAsync(source, ...)` is the same player over a queue of one.
-The sinks stay warm across every item, so nothing is rebuilt at a boundary.
+`MediaPlayer.CreateAsync(source, ...)` returns the same `IMediaPlaylistPlayer`
+over a queue of one. The sinks stay warm across every item, so nothing is
+rebuilt at a boundary.
 
 `PlaybackController.Create(...)` sits below both and returns the raw
 `IPlaybackController` state machine. Use it only when that state machine is what
@@ -130,9 +131,9 @@ if (!seeked.IsSuccess && seeked.Error.Category == ErrorCategory.InvalidOperation
     DisableTheSeekBar();
 ```
 
-Building throws if it cannot build a player, and a failure that arises
-mid-playback rather than in answer to a command surfaces on
-`IMediaPlayer.ErrorOccurred`.
+Construction is the exception to that: a null sink, a bad argument or a source
+that cannot be opened throws. A failure that arises mid-playback rather than in
+answer to a command surfaces on `IMediaPlayer.ErrorOccurred`.
 
 See [ADR-0069](docs/adr/ADR-0069-one-error-model-across-the-playback-stack.md).
 
