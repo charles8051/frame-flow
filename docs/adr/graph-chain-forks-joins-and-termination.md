@@ -2,7 +2,11 @@
 
 ## Status
 
-Proposed (2026-09-15). Draft pending number assignment.
+Proposed (2026-09-15). Draft pending number assignment. **Nothing here is implemented.** The
+*Decision* section is written in the present tense, as this repo's records are, and describes the
+contract the implementing change will establish. `Branch`, `Join`, the inherit marker and `Validate`
+do not exist in the tree yet, and `docs/BREAKING-CHANGES.md` gets its entry with the change that
+breaks something rather than with this one.
 
 This record decides that a fork and a join are expressible in `GraphChain<T>`, that a chain-built
 fork names its inheritor instead of leaving it to wiring order, and that a configurator has
