@@ -34,7 +34,7 @@ public interface IPort
 /// from this port. Wired by <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeOptions)"/> to one
 /// <see cref="OutputPort{T}"/> on an upstream node.
 /// </summary>
-public sealed class InputPort<T> : IPort
+public sealed class InputPort<T> : IPort, IWireableInput
     where T : class, IRefCounted
 {
     public InputPort(INode owner, string name)
@@ -54,6 +54,8 @@ public sealed class InputPort<T> : IPort
     /// build time rather than at run time.
     /// </summary>
     internal bool IsConnected { get; set; }
+
+    bool IWireableInput.IsWired => IsConnected;
 
     /// <summary>
     /// Set by <see cref="Graph"/> at wire-up time (inside
