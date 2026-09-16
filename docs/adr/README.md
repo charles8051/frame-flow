@@ -278,6 +278,20 @@ land.
   slot. Revised after an independent review found that the first draft's cursor retried a failed
   item, a jump racing an advance was lost, and removal left the cursor undefined. Implemented with
   #171.
+- [One player type: every player is a queue](one-player-type.md) — the single-source player and the
+  playlist player run different sessions, and every fix since #170 has had to say which one it was
+  for. Proposes that `PlaybackController.Create` build the playlist session over a coordinator of
+  its own, so a single source is a queue of one: each load makes the loaded source that queue's only
+  item, a replay from `Ended` keeps what was enqueued, and both player factories build one
+  implementation. `RepeatMode.All` then loops a single source, a mid-stream fault is reported and
+  ends the player instead of entering the terminal `Error`, and the loop is the session's in-place
+  rewind, which deletes the controller's loop path, its repeat input and two protocol cells, and
+  takes a loop out of the seek state machine that ADR-0028 §2 routed it through. Supersedes the
+  end-of-queue record's decision 1 and the looping record's decision 8. Rests on a spike whose
+  suites pass with every one-item playlist built as a single source, and on a hardware run where the
+  two builds present the same frames at the same rate with no stall. Defers folding
+  `IMediaPlaylistPlayer` into `IMediaPlayer`, which would break external implementers for no
+  behaviour. Nothing is implemented.
 - [Sync-window join for media-time correlation](sync-window-join.md) — the substrate
   fans out and cannot rejoin, so four consumers hand-roll the same correlation outside
   the graph. Adds a two-input node that pairs a slow secondary onto a fast primary by
