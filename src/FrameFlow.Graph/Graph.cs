@@ -132,11 +132,18 @@ public sealed class Graph
     /// </summary>
     public async Task RunAsync(CancellationToken ct = default)
     {
-        // Reset any edge state left over from a previous run, then (re)wire fresh
-        // channels. Resets run before wire-ups so a fan-out output port's writers
-        // are cleared once and rebuilt, never accumulated across runs. On the first
-        // run the resets act on empty ports (no-op). This is what makes a graph
-        // instance re-runnable for the cheap RepeatMode.One loop rewind.
+        // Drop the state a node keeps between runs, reset any edge state left over from a
+        // previous run, then (re)wire fresh channels. Resets run before wire-ups so a fan-out
+        // output port's writers are cleared once and rebuilt, never accumulated across runs. On
+        // the first run they act on empty ports and fresh nodes (no-op). This is what makes a
+        // graph instance re-runnable for the loop's in-place rewind, and the node reset is what
+        // tells an operator that the run it is about to see starts over.
+        foreach (var node in _nodes)
+        {
+            if (node is IResettableNode resettable)
+                resettable.ResetForRun();
+        }
+
         foreach (var reset in _resets)
             reset();
 

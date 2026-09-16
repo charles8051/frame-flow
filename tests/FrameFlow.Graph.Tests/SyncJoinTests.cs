@@ -430,6 +430,63 @@ public sealed class SyncJoinTests
         Assert.All(spans, s => Assert.Equal(0, s.RefCount));
     }
 
+    [Fact]
+    public async Task ARerunOfTheGraph_StartsWithAnEmptyWindow()
+    {
+        // The loop path: the same graph runs again after the item is rewound in place, so a
+        // secondary retained in one run must not match a primary in the next. The window is
+        // cleared by the node reset the graph runs before each run, not by the pump.
+        var join = Join(SyncMatch.Within, window: Ms(10_000));
+
+        var got = new List<string>();
+        var run = 0;
+
+        // Run one hands over a span covering the whole clip; run two hands over nothing, so a
+        // match there could only come from the window the first run left.
+        var secondaryPulls = 0;
+        var secondary = new SourceNode<RefBox<Span>>(
+            "secondary",
+            _ =>
+            {
+                if (run > 0 || secondaryPulls++ > 0)
+                    return ValueTask.FromResult<RefBox<Span>?>(null);
+                return ValueTask.FromResult<RefBox<Span>?>(
+                    RefBox.Of(new Span(Ms(0), Ms(1000), "first-run"))
+                );
+            }
+        );
+
+        var primaryPulls = 0;
+        var primary = new SourceNode<RefBox<Tick>>(
+            "primary",
+            async ct =>
+            {
+                if (primaryPulls++ > 0)
+                {
+                    primaryPulls = 0;
+                    return null;
+                }
+                if (run == 0)
+                    await SpinUntil(() => join.RetainedCount >= 1, ct).ConfigureAwait(false);
+                return RefBox.Of(new Tick(Ms(100)));
+            }
+        );
+
+        var graph = new GraphRunner();
+        graph.Pipeline(secondary).ToSecondary(join, EdgeOptions.Buffered(8));
+        graph.Pipeline(primary).ToPrimary(join);
+        graph.Pipeline(join.Output).To(CollectInto(got));
+
+        await graph.RunAsync();
+        run++;
+        await graph.RunAsync();
+
+        // The second run's primary is the same media time as the first: only a window carried
+        // over from the first run could match it.
+        Assert.Equal(new[] { "100=first-run", "100=none" }, got);
+        Assert.Equal(0, join.RetainedCount);
+    }
+
     // ── Termination ─────────────────────────────────────────────────────
 
     [Fact]
