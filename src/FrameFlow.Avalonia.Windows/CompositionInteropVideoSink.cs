@@ -28,7 +28,7 @@ namespace FrameFlow.Avalonia.Windows;
 /// (software decode / no D3D11VA) take the view's BGRA upload fallback.
 /// </para>
 /// </remarks>
-public sealed class CompositionInteropVideoSink : IVideoSink
+public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSource
 {
     private readonly ILogger _logger;
     private readonly IFramePool _framePool;
@@ -87,6 +87,41 @@ public sealed class CompositionInteropVideoSink : IVideoSink
     /// <c>PlaybackDiagnosticsSnapshot</c>.
     /// </remarks>
     internal Func<VideoSinkDiagnosticsSnapshot>? DiagnosticsSource { get; set; }
+
+    /// <inheritdoc />
+    public event EventHandler<FramePresentedInfo>? FramePresented;
+
+    /// <summary>
+    /// Raises <see cref="FramePresented"/>. The sink hands frames to the view and never sees
+    /// them reach the screen, so the view calls this from its present loop, at the same point
+    /// it stamps the presented PTS for the diagnostics snapshot.
+    /// </summary>
+    /// <remarks>
+    /// A throwing handler is swallowed and logged: a consumer that cannot process one present
+    /// is not a reason to stall the UI thread's present loop.
+    /// </remarks>
+    internal void RaiseFramePresented(TimeSpan pts)
+    {
+        var handler = FramePresented;
+        if (handler is null)
+            return;
+
+        var info = new FramePresentedInfo(pts, DateTime.UtcNow);
+
+        // One subscriber at a time: a chain invocation abandons every handler after the one
+        // that threw, so a broken consumer would silently stop an unrelated overlay updating.
+        foreach (var subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                ((EventHandler<FramePresentedInfo>)subscriber)(this, info);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "A FramePresented handler threw; the present stands.");
+            }
+        }
+    }
 
     /// <summary>
     /// Raised on the presenting (graph) thread once <see cref="PresentAsync"/> has installed a

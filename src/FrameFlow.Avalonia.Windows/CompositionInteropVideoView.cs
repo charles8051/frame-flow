@@ -1020,14 +1020,28 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         // bumps the committed counter — a faulted/cancelled present did not reach the screen.
         // Fire-and-forget off the UI thread; the drain/availability logic keys off the
         // original task (presentTask) so this continuation does not perturb sequencing.
+        // The sink this frame belongs to, captured now rather than read when the hand-off
+        // completes: the Sink setter can swap in a replacement while a present is still in
+        // flight, and the successor must not be told it presented a frame it never saw. Same
+        // rule the diagnostics attachment follows, where a replaced sink keeps reporting its
+        // own window.
+        var presentingSink = _sink;
+
         presentTask.ContinueWith(
             static (_, state) =>
             {
-                var self = (CompositionInteropVideoView)state!;
+                var (self, sink, framePts) =
+                    ((CompositionInteropVideoView, CompositionInteropVideoSink?, TimeSpan))state!;
                 Interlocked.Increment(ref self._framesCommitted);
                 Volatile.Write(ref self._lastCommittedAtUtcTicks, DateTime.UtcNow.Ticks);
+
+                // FramePresented rides the commit, not the enqueue, so it means the same
+                // thing the committed counter does: this frame reached the screen. A
+                // faulted or cancelled hand-off never runs this continuation, so a consumer
+                // is never told about a frame that device loss ate.
+                sink?.RaiseFramePresented(framePts);
             },
-            this,
+            (this, presentingSink, pts),
             CancellationToken.None,
             TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default
