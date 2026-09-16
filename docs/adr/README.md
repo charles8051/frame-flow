@@ -305,6 +305,17 @@ land.
   presenter's converter already performs per frame, and leaves ADR-0025's sink-owned pool
   alone. Paired with the [video lookahead](../feature-specs/video-lookahead/spec.md) spec,
   which is the only thing that would spend the depth.
+- [The chain declares its forks and joins, and the builder always terminates it](graph-chain-forks-joins-and-termination.md) —
+  `GraphChain<T>` covers a linear segment and cannot carry a cloner, so every fork-and-rejoin
+  consumer drops to port-level `Connect`, and which branch inherits the incoming ref is a
+  wiring-order fact that both call sites restate wrongly. Adds `Branch` and a chain-returning
+  `Join`, and has a chain-built fork mark its trunk as the inheritor, with ADR-0054's
+  first-cloner-less scan unchanged for `Connect`, because a plain fan-out over a one-shot frame
+  depends on it. Then collapses the configurator to one contract: it returns an open chain
+  and the builder terminates it, which removes the configurator-terminated path and with it
+  ADR-0057's carve-out, so every configured graph is a single-sink graph whose configured segment
+  sits upstream of the pacer. The cost is a behaviour break that is not a compile error, for the
+  three examples that terminate inside their configurator.
 
 (Most recently, tests stopped depending on elapsed time as
 [ADR-0072](ADR-0072-tests-do-not-depend-on-elapsed-time.md) — wall time is `TimeProvider`
