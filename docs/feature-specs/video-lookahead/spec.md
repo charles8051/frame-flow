@@ -64,8 +64,10 @@ Today the lead is 3 frames, because `SubstrateSession` never passes a capacity t
 - **Does a lead help an overlay at all without a presented-PTS signal?** An operator that
   finishes early still posts its result when the graph runs it, not when the frame reaches the
   screen, so a deeper lead moves overlays further ahead of the picture rather than closer to
-  it. A sink-side signal carrying the presented PTS is proposed in a comment on #218. If that
-  is the real fix, this surface serves throughput cases only, and requirement 1 waits.
+  it. The competing fix now exists: `IFramePresentedSource` shipped in #240, and both Avalonia
+  sinks raise the PTS of the frame that reached the screen. If keying an overlay off that
+  matches or beats a deeper ring, this surface serves throughput cases only, and requirement 1
+  waits. #231 measures it.
 - **Which consumers want it.** LiveCaptioning is the candidate, and it can only use a lead
   once its fork and join terminate in an open chain (#218).
 - **The default budget, and whether it is per player or process-wide.** Nothing in `src/`
