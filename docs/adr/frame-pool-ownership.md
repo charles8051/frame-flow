@@ -22,6 +22,8 @@
   spends what this record makes available. It is the only planned consumer.
 - #125 — where the configurator runs relative to pacing, and the record that a lookahead
   buffer was explored and dropped.
+- #218 — the open/closed configurator contract. A consumer whose video path forks and
+  rejoins needs that contract before it can spend a lead at all, so it orders first.
 - #7 — memory-aware (byte-bounded) backpressure on graph edges, the same budget question one
   layer down. Its `docs/DEFERRED_WORK.md` bullet cites it as `#3`, a pre-reseed number that
   now points at an unrelated merged PR (#154 tracks that class of stale citation).
