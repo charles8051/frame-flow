@@ -477,13 +477,16 @@ FrameFlow.Media.RepeatMode.All = 2 -> FrameFlow.Media.RepeatMode
 FrameFlow.Media.RepeatMode.Off = 0 -> FrameFlow.Media.RepeatMode
 FrameFlow.Media.RepeatMode.One = 1 -> FrameFlow.Media.RepeatMode
 FrameFlow.Media.Result
+FrameFlow.Media.Result.Deconstruct(out bool isSuccess, out FrameFlow.Media.PlaybackError? error) -> void
 FrameFlow.Media.Result.Error.get -> FrameFlow.Media.PlaybackError?
 FrameFlow.Media.Result.IsSuccess.get -> bool
 FrameFlow.Media.Result.Result() -> void
 FrameFlow.Media.Result<T>
+FrameFlow.Media.Result<T>.Deconstruct(out bool isSuccess, out T? value, out FrameFlow.Media.PlaybackError? error) -> void
 FrameFlow.Media.Result<T>.Error.get -> FrameFlow.Media.PlaybackError?
 FrameFlow.Media.Result<T>.IsSuccess.get -> bool
 FrameFlow.Media.Result<T>.Result() -> void
+FrameFlow.Media.Result<T>.TryGetValue(out T value, out FrameFlow.Media.PlaybackError? error) -> bool
 FrameFlow.Media.Result<T>.Value.get -> T
 FrameFlow.Media.ScrubSeekDispatcher
 FrameFlow.Media.ScrubSeekDispatcher.IsSeeking.get -> bool

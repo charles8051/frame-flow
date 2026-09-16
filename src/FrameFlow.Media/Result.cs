@@ -103,6 +103,25 @@ public readonly record struct Result
 
     /// <summary>Creates a failed result from an existing <see cref="PlaybackError"/>.</summary>
     public static Result Fail(PlaybackError error) => new(false, error);
+
+    /// <summary>
+    /// Deconstructs the result into its outcome and its error, so a call site
+    /// can read both in one statement:
+    /// <c>var (ok, error) = await player.PlayAsync();</c>
+    /// </summary>
+    /// <param name="isSuccess">Receives <see cref="IsSuccess"/>.</param>
+    /// <param name="error">Receives <see cref="Error"/>: null on success, non-null on failure.</param>
+    /// <remarks>
+    /// Deconstruction is ergonomics only. The compiler does not correlate the
+    /// two outputs, so a branch on <paramref name="isSuccess"/> does not make
+    /// <paramref name="error"/> non-null. Branch on <see cref="IsSuccess"/>
+    /// directly where that flow matters.
+    /// </remarks>
+    public void Deconstruct(out bool isSuccess, out PlaybackError? error)
+    {
+        isSuccess = IsSuccess;
+        error = Error;
+    }
 }
 
 /// <summary>
@@ -152,4 +171,63 @@ public readonly record struct Result<T>
 
     /// <summary>Creates a failed result from an existing <see cref="PlaybackError"/>.</summary>
     public static Result<T> Fail(PlaybackError error) => new(false, default, error);
+
+    /// <summary>
+    /// Gets the success value without throwing, in the BCL <c>Try</c> shape:
+    /// <code>
+    /// if (!result.TryGetValue(out var items, out var error))
+    ///     return Result.Fail(error);
+    /// </code>
+    /// </summary>
+    /// <param name="value">
+    /// Receives the success value when this returns <see langword="true"/>;
+    /// otherwise <see langword="default"/>.
+    /// </param>
+    /// <param name="error">
+    /// Receives the error when this returns <see langword="false"/>; otherwise
+    /// <see langword="null"/>.
+    /// </param>
+    /// <returns><see cref="IsSuccess"/>.</returns>
+    /// <remarks>
+    /// This is the flow-carrying accessor, and the reason to prefer it over
+    /// <see cref="Value"/>: the annotations let the failure branch pass
+    /// <paramref name="error"/> on without a null check, and the success
+    /// branch read <paramref name="value"/> without one. <see cref="Value"/>
+    /// throws on a failed result, so it is only correct after a separate
+    /// <see cref="IsSuccess"/> test.
+    ///
+    /// <para>
+    /// <paramref name="value"/> is annotated <c>[MaybeNullWhen(false)]</c>
+    /// rather than <c>[NotNullWhen(true)]</c>. <typeparamref name="T"/> is
+    /// unconstrained, so <c>Result&lt;string?&gt;.Ok(null)</c> is a successful
+    /// result carrying null, and a non-null promise would not hold.
+    /// </para>
+    /// </remarks>
+    public bool TryGetValue(
+        [MaybeNullWhen(false)] out T value,
+        [NotNullWhen(false)] out PlaybackError? error
+    )
+    {
+        value = _value;
+        error = Error;
+        return IsSuccess;
+    }
+
+    /// <summary>
+    /// Deconstructs the result into its outcome, its value and its error:
+    /// <c>var (ok, items, error) = await player.ReplaceAsync(sources);</c>
+    /// </summary>
+    /// <param name="isSuccess">Receives <see cref="IsSuccess"/>.</param>
+    /// <param name="value">Receives the success value, or <see langword="default"/> on failure.</param>
+    /// <param name="error">Receives <see cref="Error"/>: null on success, non-null on failure.</param>
+    /// <remarks>
+    /// Deconstruction is ergonomics only; it carries no nullable flow between
+    /// the three outputs. Use <see cref="TryGetValue"/> where that matters.
+    /// </remarks>
+    public void Deconstruct(out bool isSuccess, out T? value, out PlaybackError? error)
+    {
+        isSuccess = IsSuccess;
+        value = _value;
+        error = Error;
+    }
 }

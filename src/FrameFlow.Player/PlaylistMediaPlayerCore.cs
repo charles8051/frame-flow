@@ -194,7 +194,7 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
     {
         ArgumentNullException.ThrowIfNull(item);
         if (RefusalWhileUnusable("jump") is { } refused)
-            return Task.FromResult(refused);
+            return Task.FromResult(Result.Fail(refused));
 
         return Task.FromResult(
             _coordinator.RequestJump(item) switch
@@ -241,7 +241,7 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
             );
 
         if (RefusalWhileUnusable("replace the playlist") is { } refused)
-            return Task.FromResult(Result<IReadOnlyList<PlaylistItem>>.Fail(refused.Error!));
+            return Task.FromResult(Result<IReadOnlyList<PlaylistItem>>.Fail(refused));
 
         return Task.FromResult(
             Result<IReadOnlyList<PlaylistItem>>.Ok(_coordinator.Replace(list))
@@ -250,15 +250,19 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
 
     // A jump or replace needs a player that can still play. In Error the player accepts no
     // further playback, and once disposed there is no session to take the jump.
-    private Result? RefusalWhileUnusable(string what)
+    //
+    // Returns the error rather than a refusing Result so that both callers can wrap it in
+    // whichever Result shape they return. A Result? would carry the refusal in a type whose
+    // Error is nullable, and the generic caller had to suppress that with a `!`.
+    private PlaybackError? RefusalWhileUnusable(string what)
     {
         if (Volatile.Read(ref _disposed) != 0)
-            return Result.Fail(
+            return new PlaybackError(
                 ErrorCategory.InvalidOperation,
                 $"Cannot {what}: the player is disposed."
             );
         if (_controller.State == PlaybackState.Error)
-            return Result.Fail(
+            return new PlaybackError(
                 ErrorCategory.InvalidOperation,
                 $"Cannot {what}: the player is in Error."
             );
