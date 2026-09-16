@@ -31,17 +31,12 @@ full list is under [Packages](#packages).
 
 ## Quick start
 
-Start from `FrameFlowPlayer.Open`. One builder, two terminals — pick by what
-you need from playback:
+`FrameFlowPlayer.Open` builds a player. Two terminals:
 
-| Your scenario | Terminal | Returns |
+| You want | Terminal | Returns |
 |---|---|---|
-| App or host playback — seek, pause, repeat, observables | `.BuildPlayerAsync()` | `IMediaPlayer` |
+| Playback you drive — play, pause, seek, repeat, observables | `.BuildPlayerAsync()` | `IMediaPlayer` |
 | Open a file and play it to the end | `.BuildAsync()` | `PlayerSession` |
-
-`PlaybackController.Create(...)` sits below the builder and returns the raw
-`IPlaybackController` state machine. Use it only when that state machine is what
-you are building around.
 
 ### `BuildPlayerAsync` — the full player
 
@@ -62,17 +57,6 @@ if (!played.IsSuccess)
     Console.Error.WriteLine($"{played.Error.Category}: {played.Error.Message}");
 ```
 
-Sink methods reject `null`. When a sink is optional, keep the builder in a local
-and add the sink conditionally:
-
-```csharp
-var builder = FrameFlowPlayer.Open(path).WithVideoSink(videoSink);
-if (audioSink is not null)
-    builder = builder.WithAudioSink(audioSink);
-
-await using var player = await builder.BuildPlayerAsync();
-```
-
 ### `BuildAsync` — play to end of stream
 
 When you only need "open a file and play it to the end", with no seek, pause,
@@ -87,9 +71,33 @@ await player.PlayToCompletionAsync(ct);
 ```
 
 `WithRepeatMode`, `WithClock`, `WithHardwareFrames` and `WithAudioActivation`
-mean nothing to a `PlayerSession`. Calling any of them narrows the chain to
-`IMediaPlayerBuilder`, where `BuildPlayerAsync` is the only terminal on offer,
-so the mismatch is a compile error rather than an ignored setting.
+mean nothing to a `PlayerSession`, so setting one and then asking for a session
+is a compile error rather than a dropped setting.
+
+### Playlists
+
+Every player is a queue, so sources can be added while it plays:
+
+```csharp
+await using var player = await MediaPlaylistPlayer.CreateAsync(
+    [first, second],
+    videoSink,
+    audioSink,
+    initialRepeatMode: RepeatMode.All);
+
+await player.PlayAsync();
+await player.AddAsync(third);      // joins the loop
+await player.EnqueueAsync(once);   // plays once, then leaves
+await player.SkipToNextAsync();
+```
+
+`MediaPlayer.CreateAsync(source, ...)` returns the same `IMediaPlaylistPlayer`
+over a queue of one. The sinks stay warm across every item, so nothing is
+rebuilt at a boundary.
+
+`PlaybackController.Create(...)` sits below both and returns the raw
+`IPlaybackController` state machine. Use it only when that state machine is what
+you are building around.
 
 ### Generic Host and DI
 
@@ -113,10 +121,9 @@ await using var player = await FrameFlowPlayer.Open(path)
 
 ### Errors
 
-Transport commands on `IPlaybackController` and `IMediaPlayer` return `Result`
-rather than throwing. A command the state machine refuses — a seek on a
-non-seekable source, a play on a disposed player — is an expected outcome, and
-`Result.Error` carries an `ErrorCategory` alongside the message:
+Transport commands return `Result` rather than throwing. A command the state
+machine refuses — a seek on a non-seekable source, a play on a disposed player —
+is an expected outcome, and `Result.Error` carries an `ErrorCategory`:
 
 ```csharp
 var seeked = await player.SeekAsync(TimeSpan.FromSeconds(30));
@@ -124,18 +131,15 @@ if (!seeked.IsSuccess && seeked.Error.Category == ErrorCategory.InvalidOperation
     DisableTheSeekBar();
 ```
 
-`IsSuccess` carries `[MemberNotNullWhen(false, nameof(Error))]`, so a failure
-branch reads `Error` without a null check.
-
-Exceptions still mean what exceptions mean. `BuildPlayerAsync` and `BuildAsync`
-throw if they cannot build a player, argument validation throws, and anything a
-sink or the decode stack raises comes through. Failures that arise mid-playback
-rather than in answer to a command surface on `IMediaPlayer.ErrorOccurred`.
+Construction is the exception to that: a null sink, a bad argument or a source
+that cannot be opened or decoded throws. A failure that arises mid-playback rather than in
+answer to a command surfaces on `IMediaPlayer.ErrorOccurred`.
 
 See [ADR-0069](docs/adr/ADR-0069-one-error-model-across-the-playback-stack.md).
 
 ## What works
 
+- playlists: one player, one warm presenter, items added and reordered as it plays
 - software decode and a hardware-decode path
 - a zero-copy Windows presenter that hands GPU frames straight to a D3D
   composition-interop surface
@@ -163,13 +167,10 @@ and live camera and multicast sources.
 `FrameFlow.Native.Runtime` carries the FFmpeg binaries. The libraries do not
 reference it — add it yourself, or supply the natives another way.
 
-Any package here works on its own. The FFmpeg resolver installs itself on the
-first native call, so `FrameFlow.Decoding` opens a file without a bootstrap call
-and without a dependency on the player layer (ADR-0070). Bootstrap explicitly —
-`AddHostedBootstrap()`, or `new FrameFlowBootstrapper(options).Initialize()` —
-when you need to choose which binaries load, or need the hardware-decode
-capabilities the result reports. Do it before the first decode call: libraries
-load once per process.
+Any package here works on its own: the FFmpeg resolver installs itself on the
+first native call (ADR-0070). Bootstrap explicitly — `AddHostedBootstrap()`, or
+`new FrameFlowBootstrapper(options).Initialize()` — to choose which binaries
+load or to read the hardware-decode capabilities, before the first decode call.
 
 `FrameFlow.MotionClip` is a camera-tracked motion-clip capture tool. It is not
 on nuget.org; take the self-contained binary from
@@ -191,16 +192,7 @@ copies into every project's output. Then:
 dotnet build ./FrameFlow.slnx --nologo
 ```
 
-The whole solution restores from nuget.org alone. Six projects take a
-`PackageReference` on `FrameFlow.Native.Runtime` for self-contained publish —
-`FrameFlow.MotionClip` and the `AvaloniaPlayer`, `Camera.Inference.Dml`,
-`DualPlayer`, `Multicast.Dml` and `ZeroCopyInterop` examples. That package is
-mapped to nuget.org by exact id in `nuget.config`; the `FrameFlow.*` prefix is
-deliberately not mapped there, so a new FrameFlow `PackageReference` needs its
-id added.
-
-`scripts/fetch-cuda.cs` (CUDA execution provider) and
-`scripts/generate-test-corpus.cs` (integration-test media) are documented in
+The other scripts — CUDA provider, test corpus — are documented in
 [scripts/README.md](scripts/README.md).
 
 ## Tests
@@ -219,18 +211,13 @@ dotnet test ./FrameFlow.slnx --nologo
 `scripts/run-tests.sh` is faster — it fans one `dotnet test` process out per
 project, and needs a prior `dotnet build`.
 
-A handful of tests open a real SDL window and are skipped unless
-`FRAMEFLOW_VISUAL_TESTS=1`. Nothing sets it, including CI, so presenter and
-windowing regressions are not caught by normal validation. Run them
-deliberately, on a machine with a display:
+A few tests open a real SDL window and are skipped unless
+`FRAMEFLOW_VISUAL_TESTS=1`. Nothing sets it, CI included, so presenter and
+windowing regressions need a deliberate run on a machine with a display:
 
 ```bash
 FRAMEFLOW_VISUAL_TESTS=1 dotnet test ./tests/FrameFlow.Integration.Tests --nologo
 ```
-
-`tests/frameflow.runsettings` pins the gate to `0` and injects it into the test host,
-so passing `-settings tests/frameflow.runsettings` overrides an ambient
-`FRAMEFLOW_VISUAL_TESTS=1`. Use one or the other.
 
 ## Documentation
 
