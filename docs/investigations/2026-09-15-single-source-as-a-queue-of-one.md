@@ -70,10 +70,31 @@ the spike.
 6. **`MediaPlayer.CreateAsync` returns a player that also implements `IMediaPlaylistPlayer`.** The
    declared return type is unchanged, and no public signature changed.
 
-## What the spike does not answer
+## The hardware run
 
-- **The hardware run.** The deferral asks for hardware decode and the GPU presenter before and
-  after, on one machine, with no new presenter stall and no drop in frames presented. Not run here.
+Ten minutes before and ten minutes after, on one machine, through the zero-copy example's soak
+mode: two players in one process, each on its own composition-interop presenter, both looping a
+1080p H.264 clip under `RepeatMode.One` with D3D11VA decode. Samples every 60 seconds.
+
+| Run | Pane | Frames presented | Loops | Stalls | Errors | Dropped | fps range |
+|---|---|---|---|---|---|---|---|
+| before | left | 18,187 | 202 | 0 | 0 | 4 | 30.16 – 30.34 |
+| before | right | 18,187 | 202 | 0 | 0 | 5 | 30.14 – 30.34 |
+| after | left | 18,183 | 202 | 0 | 0 | 6 | 30.10 – 30.35 |
+| after | right | 18,185 | 202 | 0 | 0 | 4 | 30.10 – 30.35 |
+
+The two builds present the same number of frames to within four in eighteen thousand, at the same
+rate, with the same 202 loops per pane. No pane fell below 30.09 fps in any one-minute window, which
+is above the soak's floor of 90 percent of the clip's rate. No `LoopStalled` and no error on either
+build. Every dropped frame was counted in the first window and none after, on both.
+
+The loop counts match, which is worth its own line: before the change they came from the
+controller's own loop, and after it from the session's report of a queue of one.
+
+The record asks for an hour. This is ten minutes each, enough to show no new stall and no drop in
+frames presented; the hour belongs with the proposal.
+
+## What the spike does not answer
 - **Row 7 of the looping record**, a single source whose loop ends while paused, needs an
   end-of-stream held until after the pause. `PlaylistSessionProtocolTests` pins it in the core.
 - **The public break accounting** and the `PublicAPI` baselines belong to the proposal. This spike
