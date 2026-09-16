@@ -358,6 +358,57 @@ public partial class MainWindow : Window
                 // AddRef one GpuVideoFrame to every presenter (zero-copy). CPU
                 // mode leaves this false and gets readback CpuVideoFrames as before.
                 .WithHardwareFrames(_useGpu)
+                // The fan-out that used to be the chain's own terminal. A configurator returns
+                // its chain open now, so the body lives here and the pacer wraps it: the panes
+                // refresh on the master clock rather than at decode rate.
+                .WithVideoSink(
+                    new DelegatingVideoSink(
+                        async (frame, ct) =>
+                        {
+                            using (frame)
+                            {
+                                if (_useGpu)
+                                {
+                                    var sinks = _gpuSinks;
+                                    if (sinks is null)
+                                        return;
+
+                                    if (frame is GpuVideoFrame gpu)
+                                    {
+                                        // One decode, N presenters, each owning its own ref on
+                                        // the same frame.
+                                        var tasks = new Task[sinks.Length];
+                                        for (var i = 0; i < sinks.Length; i++)
+                                            tasks[i] = sinks[i].PresentAsync(gpu.AddRef(), ct).AsTask();
+                                        await Task.WhenAll(tasks).ConfigureAwait(false);
+                                    }
+                                    else if (!_warnedNonGpuFrame)
+                                    {
+                                        _warnedNonGpuFrame = true;
+                                        _logger?.LogWarning(
+                                            "GPU mode: decoder yielded {Type} (not a D3D11VA GpuVideoFrame) — "
+                                                + "hardware decode did not engage, so there's nothing to fan out "
+                                                + "zero-copy. Run on a box with D3D11VA, or drop --gpu for the "
+                                                + "software CPU panes.",
+                                            frame.GetType().Name
+                                        );
+                                    }
+
+                                    return;
+                                }
+
+                                // CPU panes each get an independently-disposable clone, so they
+                                // can dispose on their own cadence.
+                                await Task.WhenAll(
+                                        pane1.PresentAsync(frame.CloneCpu(), ct).AsTask(),
+                                        pane2.PresentAsync(frame.CloneCpu(), ct).AsTask(),
+                                        pane3.PresentAsync(frame.CloneCpu(), ct).AsTask()
+                                    )
+                                    .ConfigureAwait(false);
+                            }
+                        }
+                    )
+                )
                 .ConfigureVideo(chain =>
                 {
                     if (_useGpu)
@@ -381,42 +432,7 @@ public partial class MainWindow : Window
                             )
                         );
 
-                        counted.To(
-                            new SinkNode<VideoFrameRef>(
-                                "gpu-broadcast-fanout",
-                                async (item, ct) =>
-                                {
-                                    var sinks = _gpuSinks;
-                                    if (sinks is null)
-                                        return;
-
-                                    if (item.Frame is GpuVideoFrame gpu)
-                                    {
-                                        // One decode → N presenters, each owning its
-                                        // own ref on the SAME frame.
-                                        var tasks = new Task[sinks.Length];
-                                        for (var i = 0; i < sinks.Length; i++)
-                                            tasks[i] = sinks[i]
-                                                .PresentAsync(gpu.AddRef(), ct)
-                                                .AsTask();
-                                        await Task.WhenAll(tasks).ConfigureAwait(false);
-                                    }
-                                    else if (!_warnedNonGpuFrame)
-                                    {
-                                        _warnedNonGpuFrame = true;
-                                        _logger?.LogWarning(
-                                            "GPU mode: decoder yielded {Type} (not a D3D11VA GpuVideoFrame) — "
-                                                + "hardware decode did not engage, so there's nothing to fan out "
-                                                + "zero-copy. Run on a box with D3D11VA, or drop --gpu for the "
-                                                + "software CPU panes.",
-                                            item.Frame.GetType().Name
-                                        );
-                                    }
-                                }
-                            )
-                        );
-
-                        return chain;
+                        return counted; // the builder terminates it at the fan-out sink
                     }
 
                     // chain: source. Add convert → clone-and-fan-out
@@ -443,37 +459,7 @@ public partial class MainWindow : Window
                         )
                     );
 
-                    // Terminal fan-out: a sink-node that clones the
-                    // incoming frame N times and dispatches each clone
-                    // to one pane's IVideoSink. Returns nothing
-                    // (substrate-pure terminal).
-                    afterCount.To(
-                        new SinkNode<VideoFrameRef>(
-                            "broadcast-fanout",
-                            async (item, ct) =>
-                            {
-                                // pane1 is an IVideoSink (post-Crossbar
-                                // ADR-0014 Phase 4: invoke PresentAsync
-                                // directly);
-                                // pane2/pane3 are custom Avalonia
-                                // controls with public PresentAsync
-                                // methods of the same shape.
-                                // Each pane gets an independently-
-                                // disposable CloneCpu so they can dispose
-                                // on their own cadence.
-                                var clone1 = item.Frame.CloneCpu();
-                                var clone2 = item.Frame.CloneCpu();
-                                var clone3 = item.Frame.CloneCpu();
-                                await Task.WhenAll(
-                                    pane1.PresentAsync(clone1, ct).AsTask(),
-                                    pane2.PresentAsync(clone2, ct).AsTask(),
-                                    pane3.PresentAsync(clone3, ct).AsTask()
-                                ).ConfigureAwait(false);
-                            }
-                        )
-                    );
-
-                    return chain; // returned chain ignored — configurator terminated
+                    return afterCount; // the builder terminates it at the fan-out sink
                 })
                 .BuildPlayerAsync(_windowCts.Token);
             StartupClock.Mark("PlayFileAsync: BuildPlayerAsync returned");

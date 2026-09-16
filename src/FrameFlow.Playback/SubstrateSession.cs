@@ -446,8 +446,11 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             // stream types: decode a stream only when a sink or a configurator will
             // consume it; otherwise discard it at the demuxer so its packets never
             // enter the pump, and skip building its decoder.
-            var videoHasConsumer = _videoSink is not null || _videoConfigurator is not null;
-            var audioHasConsumer = _audioSink is not null || _audioConfigurator is not null;
+            // A configurator no longer counts on its own: it transforms a stream on its way to
+            // a sink, and the builder rejects one registered without a sink, so the sink is the
+            // whole question.
+            var videoHasConsumer = _videoSink is not null;
+            var audioHasConsumer = _audioSink is not null;
 
             if (videoHasConsumer)
             {
@@ -1406,12 +1409,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     {
         var hasVideo = _videoDecoder is not null && _videoSink is not null;
         var hasAudio = _audioDecoder is not null && _audioSink is not null;
-        var hasVideoConfiguratorOnly =
-            _videoDecoder is not null && _videoSink is null && _videoConfigurator is not null;
-        var hasAudioConfiguratorOnly =
-            _audioDecoder is not null && _audioSink is null && _audioConfigurator is not null;
 
-        if (!hasVideo && !hasAudio && !hasVideoConfiguratorOnly && !hasAudioConfiguratorOnly)
+        if (!hasVideo && !hasAudio)
         {
             // No stream to pump — caller fires end-of-stream directly.
             return null;
@@ -1447,67 +1446,35 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // characteristic is unchanged.
         var graph = new FrameFlow.Graph.Graph();
 
-        if (_videoDecoder is not null && (hasVideo || hasVideoConfiguratorOnly))
+        if (hasVideo)
         {
-            var src = _videoDecoder.AsSourceNode("video-source");
-            var gate = _videoGate.AsOperator("video-gate");
-
-            if (hasVideo)
-            {
-                // Single-sink path: source → gate → (configurator) →
-                // select-by-clock pacer wrapping the real sink. Pacing happens
-                // in the decorator at delivery time, NOT in the graph, so the
-                // graph holds no decode lease across a clock wait. Edges stay at
-                // the substrate default (capacity=1 + Block); the decorator's
-                // ring provides the read-ahead slack that keeps the hwframe pool
-                // filled.
-                var chain = graph.Pipeline(src).Then(gate);
-                if (_videoConfigurator is not null)
-                    chain = _videoConfigurator(chain);
-                chain.To((_videoPacer ?? (IVideoSink)_videoSink!).AsSinkNode("video-sink"));
-            }
-            else
-            {
-                // Configurator-only path (no single sink to decorate): keep the
-                // in-graph PaceUntil, upstream of the gate (so a frame forwarded
-                // on the wait-cap is held by the closed gate, not leaked), then
-                // hand the paced + gated chain to the configurator, which wires
-                // its own sink(s). The substrate's node model can't express a
-                // buffering clock-pump operator, so this path retains the prior
-                // pacing shape; it was never the confirmed held-lease problem.
-                var pace = PaceUntil.Create<VideoFrameRef>(
-                    "video-pace",
-                    _clockSource,
-                    f => f.Frame.Pts,
-                    _loggerFactory.CreateLogger("FrameFlow.Playback.PaceUntil.Video"),
-                    maxWait: PaceWaitCap
-                );
-                var chain = graph.Pipeline(src).Then(pace).Then(gate);
-                _videoConfigurator!(chain);
-            }
+            // One shape: source → gate → (configurator) → select-by-clock pacer wrapping the
+            // registered sink. Pacing happens in the decorator at delivery time, not in the
+            // graph, so the graph holds no decode lease across a clock wait. Edges stay at the
+            // substrate default (capacity 1, blocking); the decorator's ring provides the
+            // read-ahead slack that keeps the hwframe pool filled.
+            //
+            // There is no second shape any more. A configurator that wired its own terminal used
+            // to run here behind an in-graph PaceUntil, which is the carve-out ADR-0057 took and
+            // the chain contract removes: a consumer that needs extra sinks wires them on Branch
+            // edges and returns its trunk open.
+            var chain = graph.Pipeline(_videoDecoder!.AsSourceNode("video-source"))
+                .Then(_videoGate.AsOperator("video-gate"));
+            if (_videoConfigurator is not null)
+                chain = _videoConfigurator(chain);
+            chain.To((_videoPacer ?? (IVideoSink)_videoSink!).AsSinkNode("video-sink"));
         }
 
-        if (_audioDecoder is not null && (hasAudio || hasAudioConfiguratorOnly))
+        if (hasAudio)
         {
-            var src = _audioDecoder.AsSourceNode("audio-source");
-            var gate = _audioGate.AsOperator("audio-gate");
-
-            // Audio doesn't need PaceUntil — the audio sink consumes
-            // at realtime by virtue of feeding the device. The gate
-            // still runs upstream of the configurator for symmetry +
-            // so pause halts taps in configurator-only chains.
-            var chain = graph.Pipeline(src).Then(gate);
-
-            if (hasAudio)
-            {
-                if (_audioConfigurator is not null)
-                    chain = _audioConfigurator(chain);
-                chain.To(_audioSink!.AsSinkNode("audio-sink"));
-            }
-            else
-            {
-                _audioConfigurator!(chain);
-            }
+            // Audio needs no pacer: the sink consumes at realtime by feeding the device. The
+            // gate still runs upstream of the configurator, so a pause halts the taps a
+            // configurator wires as well as the sink.
+            var chain = graph.Pipeline(_audioDecoder!.AsSourceNode("audio-source"))
+                .Then(_audioGate.AsOperator("audio-gate"));
+            if (_audioConfigurator is not null)
+                chain = _audioConfigurator(chain);
+            chain.To(_audioSink!.AsSinkNode("audio-sink"));
         }
 
         return graph;

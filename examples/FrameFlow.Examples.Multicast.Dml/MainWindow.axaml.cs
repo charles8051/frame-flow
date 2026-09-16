@@ -268,6 +268,25 @@ public partial class MainWindow : Window
                 .WithAudioSink(_audioSink)
                 .WithRepeatMode(LoopButton.IsChecked == true ? RepeatMode.One : RepeatMode.Off)
                 .WithLogger(_loggerFactory)
+                // The fan-out that used to be the chain's own terminal. A configurator returns
+                // its chain open now, so the body lives here and the pacer wraps it: the panes
+                // refresh on the master clock rather than at decode rate.
+                .WithVideoSink(
+                    new DelegatingVideoSink(async (frame, ct) =>
+                    {
+                        // Each pane gets an independently-disposable clone, so they can dispose
+                        // on their own cadence.
+                        using (frame)
+                        {
+                            await Task.WhenAll(
+                                    pane1.PresentAsync(frame.CloneCpu(), ct).AsTask(),
+                                    pane2.PresentAsync(frame.CloneCpu(), ct).AsTask(),
+                                    pane3.PresentAsync(frame.CloneCpu(), ct).AsTask()
+                                )
+                                .ConfigureAwait(false);
+                        }
+                    })
+                )
                 .ConfigureVideo(chain =>
                 {
                     // chain: source. Add convert → clone-and-fan-out
@@ -294,37 +313,7 @@ public partial class MainWindow : Window
                         )
                     );
 
-                    // Terminal fan-out: a sink-node that clones the
-                    // incoming frame N times and dispatches each clone
-                    // to one pane's IVideoSink. Returns nothing
-                    // (substrate-pure terminal).
-                    afterCount.To(
-                        new SinkNode<VideoFrameRef>(
-                            "broadcast-fanout",
-                            async (item, ct) =>
-                            {
-                                // pane1 is an IVideoSink (post-Crossbar
-                                // ADR-0014 Phase 4: invoke PresentAsync
-                                // directly);
-                                // pane2/pane3 are custom Avalonia
-                                // controls with public PresentAsync
-                                // methods of the same shape.
-                                // Each pane gets an independently-
-                                // disposable CloneCpu so they can dispose
-                                // on their own cadence.
-                                var clone1 = item.Frame.CloneCpu();
-                                var clone2 = item.Frame.CloneCpu();
-                                var clone3 = item.Frame.CloneCpu();
-                                await Task.WhenAll(
-                                    pane1.PresentAsync(clone1, ct).AsTask(),
-                                    pane2.PresentAsync(clone2, ct).AsTask(),
-                                    pane3.PresentAsync(clone3, ct).AsTask()
-                                ).ConfigureAwait(false);
-                            }
-                        )
-                    );
-
-                    return chain; // returned chain ignored — configurator terminated
+                    return afterCount; // the builder terminates it at the fan-out sink
                 })
                 .BuildPlayerAsync(_windowCts.Token);
             StartupClock.Mark("PlayFileAsync: BuildPlayerAsync returned");

@@ -140,8 +140,40 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
         return this;
     }
 
-    public async Task<IMediaPlayer> BuildPlayerAsync(CancellationToken cancellationToken = default) =>
-        await MediaPlayer.CreateCoreAsync(
+    /// <summary>
+    /// Refuses a configurator with no sink to terminate at.
+    /// </summary>
+    /// <remarks>
+    /// A configurator transforms a stream on its way to a sink and returns the chain open; the
+    /// builder wires the sink. Without one there is nothing to wire, and the configurator would
+    /// run against a graph that presents nothing. A consumer that needs extra sinks wires them
+    /// on <c>Branch</c> edges inside the configurator and returns its trunk open.
+    /// </remarks>
+    private void RequireSinkForEachConfigurator()
+    {
+        if (_videoConfigurator is not null && _videoSink is null)
+        {
+            throw new InvalidOperationException(
+                "ConfigureVideo was called without WithVideoSink. The configurator returns its "
+                    + "chain open and the builder terminates it at the video sink, so there has "
+                    + "to be one. Wire any extra sinks on Branch edges inside the configurator."
+            );
+        }
+
+        if (_audioConfigurator is not null && _audioSink is null)
+        {
+            throw new InvalidOperationException(
+                "ConfigureAudio was called without WithAudioSink. The configurator returns its "
+                    + "chain open and the builder terminates it at the audio sink, so there has "
+                    + "to be one. Wire any extra sinks on Branch edges inside the configurator."
+            );
+        }
+    }
+
+    public async Task<IMediaPlayer> BuildPlayerAsync(CancellationToken cancellationToken = default)
+    {
+        RequireSinkForEachConfigurator();
+        return await MediaPlayer.CreateCoreAsync(
             source: _source,
             videoSink: _videoSink,
             audioSink: _audioSink,
@@ -155,6 +187,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
             clock: _clock,
             cancellationToken: cancellationToken
         );
+    }
 
     // IMediaPlayerBuilder repeats the shared options with a narrower
     // return type so a chain keeps flowing after the narrowing step.
@@ -202,6 +235,8 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
 
     public async Task<PlayerSession> BuildAsync(CancellationToken cancellationToken = default)
     {
+        RequireSinkForEachConfigurator();
+
         // Bootstrap the FFmpeg native runtime — same eager call the
         // existing examples make manually. Idempotent across calls; a
         // shared bootstrapper would also work but constructing a fresh

@@ -13,7 +13,45 @@ errors, which announce themselves. A few are not, and those are called out.
 
 ## Unreleased
 
-### 1. `ITimeSource` is gone; `PlaybackClock` takes a `TimeProvider`
+### 1. A configurator without a sink is refused, and it used to run
+
+**This one is not a compile error.** A consumer that called `ConfigureVideo` or
+`ConfigureAudio` without registering a sink wired its own terminal inside the
+configurator and returned an untouched chain as a placeholder. That mode is gone: the
+configurator returns its chain open, and the builder terminates it at the registered
+sink. Building a player without one now throws, naming the call that needs a partner.
+
+```csharp
+// Before: the configurator terminated, and the returned chain was ignored.
+.ConfigureVideo(chain =>
+{
+    chain.Then(convert).To(myFanOutSink);
+    return chain;
+})
+
+// After: register the sink, return the chain open.
+.WithVideoSink(myFanOutSink)
+.ConfigureVideo(chain => chain.Then(convert))
+```
+
+A consumer that needs more than one sink wires the extras on `Branch` edges inside the
+configurator and returns its trunk open. `FrameFlow.Examples.Multicast` and
+`FrameFlow.Examples.Multicast.Dml` show the shape: one delegate sink registered with
+`WithVideoSink`, fanning out to three panes.
+
+**Why.** The two modes decided different things about pacing. A configurator that
+terminated itself ran behind an in-graph `PaceUntil`, which holds a decode-texture lease
+across the clock wait; a single-sink graph runs upstream of `ClockSelectVideoSink`, which
+does not. Keeping both meant the same lambda had different behaviour depending on whether
+a sink happened to be registered. The full reasoning is in
+`docs/adr/graph-chain-forks-joins-and-termination.md`.
+
+**If your overlay drew from the configurator**, it is now upstream of the pacer and runs
+ahead of the display. Key it off `IFramePresentedSource.FramePresented` on your sink,
+which reports the frame that reached the screen. `FrameFlow.Examples.LiveCaptioning` does
+this for its caption and detection overlays.
+
+### 2. `ITimeSource` is gone; `PlaybackClock` takes a `TimeProvider`
 
 `ITimeSource` was a one-member interface over `DateTimeOffset.UtcNow`, written
 before `System.TimeProvider` existed. Every project here targets `net10.0`, where
@@ -49,7 +87,7 @@ carries media time — a position on the presentation timeline that seeks, pause
 and is mastered by the audio device — which is a different axis from wall time
 and one `TimeProvider` cannot express.
 
-### 2. `IMediaPlayer.Diagnostics` is gone
+### 3. `IMediaPlayer.Diagnostics` is gone
 
 The `IObservable<PlaybackDiagnosticsSnapshot>` on `IMediaPlayer` never emitted.
 Both player implementations returned a subscription that did nothing, so any
@@ -84,7 +122,7 @@ and they keep their observables: `StateChanged`, `ErrorOccurred`, `LoopStalled`.
 If you **implement** `IMediaPlayer`, delete your `Diagnostics` property. Leaving
 it compiles, but nothing reads it.
 
-### 3. `null` hardware decode capabilities now probe, as documented
+### 4. `null` hardware decode capabilities now probe, as documented
 
 **Not a compile error.** Nothing you write changes; what runs does.
 
@@ -122,7 +160,7 @@ var controller = PlaybackController.Create(videoSink: sink, hardwareDecodeMode: 
 `DecoderFactories.CreateVideo` now accepts `null` capabilities with the same
 meaning. That widens the parameter and breaks no existing call.
 
-### 4. The playlist player reports failed items, and gives up on a run of them
+### 5. The playlist player reports failed items, and gives up on a run of them
 
 **Not a compile error.** Nothing you write changes; what runs does.
 
@@ -165,7 +203,7 @@ player.ErrorOccurred.Subscribe(error =>
 
 The state is `Error` by the time the give-up error is raised.
 
-### 5. A fault in lateness recovery no longer stops playback
+### 6. A fault in lateness recovery no longer stops playback
 
 **Not a compile error.** Nothing you write changes; what runs does.
 
@@ -181,7 +219,7 @@ A controller subscriber that treats every error as terminal should check `State`
 as in entry 4. Players built by `MediaPlayer` and `MediaPlaylistPlayer` do not
 enable lateness recovery and are not affected.
 
-### 6. A playlist skip follows the player's state
+### 7. A playlist skip follows the player's state
 
 **Not a compile error.** Nothing you write changes; what runs does.
 
@@ -218,7 +256,7 @@ end-of-stream that reaches `Paused` now moves to `Ended` unless the repeat mode
 is `One`. It used to be dropped. On a single-source player an end-of-stream can
 reach `Paused` when it races a pause.
 
-### 7. A playlist at `Ended` keeps its last item, and Play from there no longer faults
+### 8. A playlist at `Ended` keeps its last item, and Play from there no longer faults
 
 **Not a compile error.** Nothing you write changes; what runs does.
 
@@ -242,7 +280,7 @@ unloaded, or it is disposed. That is its demuxer, decoders and graph, an active
 audio sink, and a hardware decode device when one is in use. A single-source
 player already holds these at `Ended`.
 
-### 8. The playlist player keeps its playlist, and enqueued items play once
+### 9. The playlist player keeps its playlist, and enqueued items play once
 
 **Mostly not a compile error.** The behaviour changes below compile unchanged. Two
 return types and six new interface members are compile-visible, to the code
