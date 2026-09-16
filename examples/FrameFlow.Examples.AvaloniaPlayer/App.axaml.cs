@@ -21,14 +21,22 @@ public class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            // One optional argument: a media file, or a folder to play through.
+            // Exactly one optional argument: a media file, or a folder to play
+            // through. Anything else opens an empty window. Scanning the whole
+            // argument list for a path that happens to exist is what made an
+            // earlier version play its own --log-file; a stale invocation should
+            // open nothing rather than pick a file out of a flag's value.
+            //
             // Diagnostic switches (presenter selection, hardware-decode A/B, audio
             // off, self-terminate) belong to tools/FrameFlow.TestBench (ADR-0068).
-            var args = desktop.Args ?? [];
-            desktop.MainWindow = new MainWindow
-            {
-                StartupPath = args.FirstOrDefault(a => File.Exists(a) || Directory.Exists(a)),
-            };
+            var startupPath =
+                desktop.Args is [var only]
+                && !only.StartsWith("--", StringComparison.Ordinal)
+                && (File.Exists(only) || Directory.Exists(only))
+                    ? only
+                    : null;
+
+            desktop.MainWindow = new MainWindow { StartupPath = startupPath };
         }
 
         base.OnFrameworkInitializationCompleted();
