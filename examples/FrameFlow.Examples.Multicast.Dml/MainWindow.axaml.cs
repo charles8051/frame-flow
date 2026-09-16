@@ -27,14 +27,10 @@ namespace FrameFlow.Examples.Multicast.Dml;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Configurator owns termination (ADR-0045).</b> Crossbar's
-/// <c>Broadcast</c> is a terminal-shaped operator: it distributes
-/// upstream packets to per-branch channels and yields nothing
-/// downstream. The player's pump drives whatever the configurator
-/// returns via <c>RunAsync</c>, so the multicast configurator just
-/// composes <c>.Broadcast(...)</c> and the pump runs it. No
-/// <c>WithVideoSink</c> is needed — the consumer's pipeline says
-/// where frames go.
+/// <b>One sink, fanned out inside it.</b> The configurator returns its chain open and the
+/// builder terminates it at the registered sink, so the fan-out that used to be the chain's
+/// own terminal is registered with <c>WithVideoSink</c> instead. A consumer wanting several
+/// graph-level sinks wires the extras on <c>Branch</c> edges and returns its trunk open.
 /// </para>
 /// <para>
 /// <b>Pacing.</b> The player paces video against the master clock
@@ -244,17 +240,10 @@ public partial class MainWindow : Window
             // to three sinks, each running at its own rate via the
             // bounded edge channels (LowLatency=DropIncoming overflow).
             //
-            // This is the configurator-terminated path: no main video
-            // sink is set on the builder, so SubstrateSession skips the
-            // default pace+gate+sink chain and lets the configurator
-            // wire everything itself.
-            //
-            // Pacing: the convert→clone→storage chain doesn't pace
-            // (the substrate session's PaceUntil isn't appended in the
-            // configurator-terminated path). For the visual demo this
-            // is OK — fans-out at decode rate so all three panes
-            // refresh together; if you want clock-synced playback
-            // insert PaceUntil.Create before the StorageNode.
+            // The fan-out is the builder's video sink, so the session wraps it in the
+            // clock-select pacer like any other: the panes refresh on the master clock rather
+            // than at decode rate, which is what the older configurator-terminated shape could
+            // not do without inserting a pacing operator by hand.
             StartupClock.Mark("PlayFileAsync: constructing OpenAlAudioSink");
             _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
             _pane1Sink = Pane1Preview.EnsureSink();
@@ -268,6 +257,25 @@ public partial class MainWindow : Window
                 .WithAudioSink(_audioSink)
                 .WithRepeatMode(LoopButton.IsChecked == true ? RepeatMode.One : RepeatMode.Off)
                 .WithLogger(_loggerFactory)
+                // The fan-out that used to be the chain's own terminal. A configurator returns
+                // its chain open now, so the body lives here and the pacer wraps it: the panes
+                // refresh on the master clock rather than at decode rate.
+                .WithVideoSink(
+                    new DelegatingVideoSink(async (frame, ct) =>
+                    {
+                        // Each pane gets an independently-disposable clone, so they can dispose
+                        // on their own cadence.
+                        using (frame)
+                        {
+                            await Task.WhenAll(
+                                    pane1.PresentAsync(frame.CloneCpu(), ct).AsTask(),
+                                    pane2.PresentAsync(frame.CloneCpu(), ct).AsTask(),
+                                    pane3.PresentAsync(frame.CloneCpu(), ct).AsTask()
+                                )
+                                .ConfigureAwait(false);
+                        }
+                    })
+                )
                 .ConfigureVideo(chain =>
                 {
                     // chain: source. Add convert → clone-and-fan-out
@@ -294,37 +302,7 @@ public partial class MainWindow : Window
                         )
                     );
 
-                    // Terminal fan-out: a sink-node that clones the
-                    // incoming frame N times and dispatches each clone
-                    // to one pane's IVideoSink. Returns nothing
-                    // (substrate-pure terminal).
-                    afterCount.To(
-                        new SinkNode<VideoFrameRef>(
-                            "broadcast-fanout",
-                            async (item, ct) =>
-                            {
-                                // pane1 is an IVideoSink (post-Crossbar
-                                // ADR-0014 Phase 4: invoke PresentAsync
-                                // directly);
-                                // pane2/pane3 are custom Avalonia
-                                // controls with public PresentAsync
-                                // methods of the same shape.
-                                // Each pane gets an independently-
-                                // disposable CloneCpu so they can dispose
-                                // on their own cadence.
-                                var clone1 = item.Frame.CloneCpu();
-                                var clone2 = item.Frame.CloneCpu();
-                                var clone3 = item.Frame.CloneCpu();
-                                await Task.WhenAll(
-                                    pane1.PresentAsync(clone1, ct).AsTask(),
-                                    pane2.PresentAsync(clone2, ct).AsTask(),
-                                    pane3.PresentAsync(clone3, ct).AsTask()
-                                ).ConfigureAwait(false);
-                            }
-                        )
-                    );
-
-                    return chain; // returned chain ignored — configurator terminated
+                    return afterCount; // the builder terminates it at the fan-out sink
                 })
                 .BuildPlayerAsync(_windowCts.Token);
             StartupClock.Mark("PlayFileAsync: BuildPlayerAsync returned");

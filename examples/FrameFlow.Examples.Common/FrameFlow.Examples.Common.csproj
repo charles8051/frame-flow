@@ -15,4 +15,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- For DelegatingVideoSink: the sink contract every example already terminates at. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Media\FrameFlow.Media.csproj" />
+  </ItemGroup>
 </Project>

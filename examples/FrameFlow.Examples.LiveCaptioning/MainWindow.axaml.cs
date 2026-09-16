@@ -107,20 +107,28 @@ public partial class MainWindow : Window
     // through a sync join keyed on frame PTS.
     private static readonly TimeSpan DetectionWindow = TimeSpan.FromSeconds(2);
 
-    // View-sink presentation state. If the previous
-    // AvaloniaVideoSink.PresentAsync is still running (UI-thread bursts
-    // after seek, large-frame upload contention, etc.), drop the new
-    // frame rather than await it. Without this, the SinkNode body blocks while the
-    // present completes; the bounded video-source edge (cap=1)
-    // fills; the video decoder's packet queue (cap=64) fills; the
-    // shared demux pump blocks on SendPacketAsync(video); the
-    // audio decoder runs dry; audio crawls or cuts out. Symptom
-    // in pre-fix logs: post-seek, audio advanced ~1s of media in
-    // ~5s wallclock with underruns=0 (intermittent feed, not a
-    // clean stop). See docs/DEFERRED_WORK.md for the longer-term split-
-    // demux-pump fix.
-    private int _presentBusy;
-    private long _droppedPresentBusyCount;
+    // Detections the join has paired with a frame, keyed by that frame's PTS and read when the
+    // sink reports having presented it. The graph runs ahead of the display by whatever the
+    // pacer buffers, so a set posted when the join fires would be drawn over a picture that has
+    // not been shown. Entries are removed as they are used, and anything older than the frame
+    // just presented is dropped with them.
+    private readonly ConcurrentDictionary<TimeSpan, DetectionSet?> _detections = new();
+    private DetectionSet? _lastPostedDetections;
+
+    // The sink we subscribed to and the delegate we gave it, so teardown unsubscribes exactly
+    // what it added: the delegate closes over the generation of the open that created it.
+    private IFramePresentedSource? _presentedSource;
+    private EventHandler<FramePresentedInfo>? _presentedHandler;
+
+    // Which open a presented-frame callback belongs to. Unsubscribing does not stop a callback
+    // already running, and a UI post it queued outlives the teardown that follows, so without
+    // this a frame from the previous file could paint its boxes over the next one. Bumped before
+    // teardown touches anything else; every posted update checks it is still current.
+    private int _openGeneration;
+
+    // The caption state the presented-frame handler reads. Both are rebuilt per open.
+    private ConcurrentQueue<Caption>? _captionQueue;
+
 
     public string? StartupFilePath { get; set; }
     public string? StartupLogFilePath { get; set; }
@@ -342,6 +350,7 @@ public partial class MainWindow : Window
             maxStackedLines: 1
         );
         _captionTimeline = captionTimeline;
+        _captionQueue = captionQueue;
 
         // Caption graph: source pulls AddRef'd PCM buffers off the
         // channel; the chain runs the captioning operators; the
@@ -411,15 +420,34 @@ public partial class MainWindow : Window
         // CPU mode: the stock Avalonia view-sink (WriteableBitmap upload). GPU mode: the
         // composition-interop presenter's sink, fed an AddRef'd GpuVideoFrame per picture.
         IVideoSink viewSink = _useGpu ? _gpuSink! : VideoView.EnsureSink();
+
+        // Overlays follow the frame that reached the screen, not the frame the graph is holding.
+        // Both sinks report it; a sink that did not would leave the overlays static, which is
+        // why this is checked rather than assumed.
+        _detections.Clear();
+        _lastPostedDetections = null;
+        if (viewSink is IFramePresentedSource presented)
+        {
+            // The generation is captured here, not read when a callback runs. A callback from
+            // the previous open can be delayed past this point, and reading the counter then
+            // would hand it this open's generation and let its stale boxes through the guard.
+            var generation = Volatile.Read(ref _openGeneration);
+            EventHandler<FramePresentedInfo> handler = (_, e) => OnFramePresented(e, generation);
+
+            _presentedSource = presented;
+            _presentedHandler = handler;
+            presented.FramePresented += handler;
+        }
+        else
+        {
+            _logger.LogWarning(
+                "The video sink does not report presented frames, so captions and detection "
+                    + "boxes will not update."
+            );
+        }
         var yoloDetector = _yoloDetector; // capture for the closure
         if (yoloDetector is null)
             DetectionOverlay.IsVisible = false;
-
-        // Reset the present busy flag. It must start at 0 (idle) so the first
-        // frame of a fresh playback actually presents — a stuck _presentBusy=1
-        // from a prior session would silently drop every frame.
-        Interlocked.Exchange(ref _droppedPresentBusyCount, 0);
-        Interlocked.Exchange(ref _presentBusy, 0);
 
         try
         {
@@ -432,9 +460,9 @@ public partial class MainWindow : Window
             // AddRef'd ref into the bridge; the original passes through
             // unchanged to OpenAL.
             //
-            // ConfigureVideo: configurator-terminated. No video sink is set
-            // because the configurator wires its own topology — the detection
-            // branch, the join, and the terminal sink that presents.
+            // ConfigureVideo: the chain forks to the detection branch and rejoins, and returns
+            // its trunk open. The builder terminates it at the view's sink, so frames arrive
+            // through the clock-select pacer and the overlays key off what was presented.
             _player = await FrameFlowPlayer
                 .Open(path)
                 .WithAudioSink(_audioSink)
@@ -443,57 +471,39 @@ public partial class MainWindow : Window
                 // AddRef one GpuVideoFrame and present it zero-copy.
                 .WithHardwareFrames(_useGpu)
                 .ConfigureAudio(chain => chain.Then(CreateWhisperTapOperator(pcmBridge)))
+                .WithVideoSink(viewSink)
                 .ConfigureVideo(chain =>
                 {
-                    // GPU fork keeps pictures on the GPU (no ConvertPixelFormat) so the
-                    // display can present one AddRef'd GpuVideoFrame zero-copy. CPU fork
-                    // converts once, feeding both the view sink and YOLO preprocessing.
+                    // GPU fork keeps pictures on the GPU (no ConvertPixelFormat) so the sink can
+                    // present one GpuVideoFrame zero-copy. CPU fork converts once, feeding both
+                    // the sink and YOLO's preprocessing.
                     var head = _useGpu
                         ? chain
                         : chain.Then(
-                            VideoOperators.ConvertPixelFormat(
-                                "caption-convert",
-                                PixelFormat.Bgra32
-                            )
+                            VideoOperators.ConvertPixelFormat("caption-convert", PixelFormat.Bgra32)
                         );
 
-                    var terminal = _useGpu
-                        ? CreateGpuTerminalSink(viewSink, captionQueue, captionTimeline)
-                        : CreateCpuTerminalSink(viewSink, captionQueue, captionTimeline);
-
                     if (yoloDetector is null)
-                    {
-                        head.To(terminal);
-                        return chain;
-                    }
+                        return head;
 
-                    // ── Detection branch and rejoin ──
+                    // The detection branch is a LatestWins(1) cloner edge: its drop-oldest IS the
+                    // skip-while-busy behaviour, so a frame arriving while inference is still
+                    // running is dropped by the edge rather than by a flag in a sink body. The
+                    // join then pairs each frame with the newest detection at or before its PTS.
                     //
-                    // YOLO is a sibling branch on a LatestWins(1) edge. That edge's
-                    // drop-oldest IS the skip-while-busy behaviour the hand-rolled
-                    // _inferenceBusy flag used to provide: frames arriving while a
-                    // detection is still running are dropped and disposed by the
-                    // channel, not by an Interlocked dance in the sink body.
-                    //
-                    // The join then pairs each displayed frame with the newest
-                    // detection at or before its PTS, so the overlay tracks the
-                    // picture rather than being posted from whenever inference
-                    // happened to finish.
-                    var graph = head.Graph;
-                    var detect = CreateDetectOperator(yoloDetector);
-                    var join = CreateDetectionJoin();
+                    // head is the trunk, so it keeps the incoming ref and the branch clones.
+                    var detections = head
+                        .Branch(
+                            EdgeOptions.LatestWins(1).WithCloner<VideoFrameRef>(CloneForInference)
+                        )
+                        .Then(CreateDetectOperator(yoloDetector));
 
-                    // Primary first: it carries no cloner, so it inherits the incoming
-                    // ref and the sibling branch is the one that clones (ADR-0054).
-                    graph.Connect(head.Output, join.Primary);
-                    graph.Connect(
-                        head.Output,
-                        detect.Input,
-                        EdgeOptions.LatestWins(1).WithCloner<VideoFrameRef>(CloneForInference)
+                    return head.Join(
+                        detections,
+                        CreateDetectionJoin(),
+                        EdgeOptions.Default,
+                        EdgeOptions.Buffered(4)
                     );
-                    graph.Connect(detect.Output, join.Secondary, EdgeOptions.Buffered(4));
-                    graph.Pipeline(join.Output).To(terminal);
-                    return chain;
                 })
                 .BuildPlayerAsync(_windowCts.Token);
         }
@@ -647,28 +657,18 @@ public partial class MainWindow : Window
     private SyncJoinNode<VideoFrameRef, RefBox<DetectionSet>, VideoFrameRef>
         CreateDetectionJoin()
     {
-        // Owned by the join's pump, which is single-threaded, so no interlock.
-        DetectionSet? lastPosted = null;
-
         return new(
             "detection-overlay",
             (frame, detected, _) =>
             {
-                var set = detected?.Value;
-                if (!ReferenceEquals(set, lastPosted))
-                {
-                    lastPosted = set;
-                    var detections = set?.Detections ?? Array.Empty<Detection>();
-                    var width = set?.Width ?? frame.Frame.Width;
-                    var height = set?.Height ?? frame.Frame.Height;
-                    Dispatcher.UIThread.Post(
-                        () => DetectionOverlay.Update(detections, width, height),
-                        DispatcherPriority.Background
-                    );
-                }
+                // Recorded against the frame's PTS rather than posted from here. The graph runs
+                // ahead of the display by whatever the pacer buffers, so posting at this point
+                // would draw the boxes over a picture that has not been shown yet. The sink's
+                // FramePresented tells us when it has.
+                _detections[frame.Frame.Pts] = detected?.Value;
 
-                // Pass-through: the substrate forwards this same ref downstream
-                // rather than disposing and re-wrapping.
+                // Pass-through: the substrate forwards this same ref downstream rather than
+                // disposing and re-wrapping.
                 return ValueTask.FromResult<VideoFrameRef?>(frame);
             },
             new SyncJoinKeys<VideoFrameRef, RefBox<DetectionSet>>(
@@ -682,93 +682,72 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// CPU-mode terminal sink: caption timeline upkeep plus a skip-while-busy
-    /// present. Detection overlay updates happen upstream in the join.
+    /// Draws the overlays for the frame the sink has just put on screen: the captions active at
+    /// its PTS, and the detections the join paired with it.
     /// </summary>
-    private SinkNode<VideoFrameRef> CreateCpuTerminalSink(
-        IVideoSink viewSink,
-        ConcurrentQueue<Caption> captionQueue,
-        CaptionTimeline captionTimeline
-    ) =>
-        new(
-            "caption+present",
-            (item, ct) =>
-            {
-                var pts = item.Frame.Pts;
-                PublishCaptions(captionQueue, captionTimeline, pts);
+    /// <remarks>
+    /// Raised on whichever thread finished the present, so everything here marshals to the UI
+    /// thread and does as little as possible on the way.
+    /// </remarks>
+    private void OnFramePresented(FramePresentedInfo e, int generation)
+    {
+        var pts = e.PresentationTime;
 
-                // Fire-and-forget, skip-while-busy. Awaiting the present here
-                // would let UI-thread bursts back-pressure the shared demux pump
-                // and starve audio — see the _presentBusy field comment.
-                //
-                // Detach rather than CloneCpu: this sink is now the sole holder
-                // of the converter's one-shot frame, so ownership transfers to
-                // PresentAsync with no copy — 8.3 MB per frame at 1080p. The
-                // clone was there for the old in-sink fan-out, which the
-                // detection branch replaced.
-                if (Interlocked.CompareExchange(ref _presentBusy, 1, 0) == 0)
-                {
-                    IVideoFrame? presented = null;
-                    try
-                    {
-                        presented = item.Detach()!;
-                        var toPresent = presented;
-                        _ = Task.Run(() => RunPresentAsync(viewSink, toPresent, ct), ct);
-                    }
-                    catch
-                    {
-                        // The frame is detached from the wrapper, so the
-                        // substrate will not dispose it for us.
-                        presented?.Dispose();
-                        Interlocked.Exchange(ref _presentBusy, 0);
-                        Interlocked.Increment(ref _droppedPresentBusyCount);
-                    }
-                }
-                else
-                {
-                    Interlocked.Increment(ref _droppedPresentBusyCount);
-                }
+        // A callback from a previous open can still be running here. Everything below is either
+        // scoped to this open's state or discarded by the generation it was subscribed with.
+        if (Volatile.Read(ref _openGeneration) != generation)
+            return;
 
-                return ValueTask.CompletedTask;
-            }
-        );
+        var timeline = _captionTimeline;
+        var queue = _captionQueue;
+        if (timeline is not null && queue is not null)
+            PublishCaptions(queue, timeline, pts, generation);
+
+        if (_yoloDetector is null)
+            return;
+
+        if (!_detections.TryRemove(pts, out var set))
+            return;
+
+        // Everything the display has already passed is dead weight: the sink presents in order,
+        // so an entry older than this frame will never be asked for.
+        foreach (var older in _detections.Keys.Where(k => k < pts).ToList())
+            _detections.TryRemove(older, out _);
+
+        if (ReferenceEquals(set, _lastPostedDetections))
+            return;
+
+        _lastPostedDetections = set;
+        var detections = set?.Detections ?? Array.Empty<Detection>();
+        var width = set?.Width ?? 0;
+        var height = set?.Height ?? 0;
+        if (width == 0 || height == 0)
+        {
+            PostIfCurrent(
+                generation,
+                () => DetectionOverlay.Update(Array.Empty<Detection>(), 1, 1)
+            );
+            return;
+        }
+
+        PostIfCurrent(generation, () => DetectionOverlay.Update(detections, width, height));
+    }
 
     /// <summary>
-    /// GPU-mode terminal sink: caption timeline upkeep plus a zero-copy present
-    /// of the decoder's own <see cref="GpuVideoFrame"/>.
+    /// Queues a UI update that runs only while the open it belongs to is still the current one.
     /// </summary>
-    private SinkNode<VideoFrameRef> CreateGpuTerminalSink(
-        IVideoSink viewSink,
-        ConcurrentQueue<Caption> captionQueue,
-        CaptionTimeline captionTimeline
-    ) =>
-        new(
-            "caption+present-gpu",
-            async (item, ct) =>
+    private void PostIfCurrent(int generation, Action update)
+    {
+        Dispatcher.UIThread.Post(
+            () =>
             {
-                var pts = item.Frame.Pts;
-                PublishCaptions(captionQueue, captionTimeline, pts);
-
-                if (item.Frame is not GpuVideoFrame)
-                {
-                    if (!_warnedNonGpuFrame)
-                    {
-                        _warnedNonGpuFrame = true;
-                        _logger?.LogWarning(
-                            "GPU mode: decoder yielded {Type} (not a D3D11VA "
-                                + "GpuVideoFrame) — hardware decode didn't engage. Run on a "
-                                + "box with D3D11VA, or drop --gpu for the CPU display.",
-                            item.Frame.GetType().Name
-                        );
-                    }
+                if (Volatile.Read(ref _openGeneration) != generation)
                     return;
-                }
-
-                // Zero-copy. PresentAsync is non-blocking (latest-wins), so
-                // awaiting it never back-pressures the shared demux pump.
-                await viewSink.PresentAsync(item.Frame.AddRef(), ct).ConfigureAwait(false);
-            }
+                update();
+            },
+            DispatcherPriority.Background
         );
+    }
 
     /// <summary>
     /// Drains newly-arrived captions into the timeline stamped with the current
@@ -777,14 +756,15 @@ public partial class MainWindow : Window
     private void PublishCaptions(
         ConcurrentQueue<Caption> captionQueue,
         CaptionTimeline captionTimeline,
-        TimeSpan pts
+        TimeSpan pts,
+        int generation
     )
     {
         while (captionQueue.TryDequeue(out var caption))
             captionTimeline.Add(caption, pts);
 
         var active = new ActiveCaptions(captionTimeline.GetActive(pts));
-        Dispatcher.UIThread.Post(() => UpdateCaptionsUi(active), DispatcherPriority.Background);
+        PostIfCurrent(generation, () => UpdateCaptionsUi(active));
     }
 
     /// <summary>
@@ -818,41 +798,6 @@ public partial class MainWindow : Window
         );
     }
 
-
-    /// <summary>
-    /// Fire-and-forget present worker for the view-sink branch: hands
-    /// the cloned frame to <paramref name="sink"/> via
-    /// <see cref="IVideoSink.PresentAsync"/>, lets the sink dispose
-    /// it per the sink-owns-input contract, and clears
-    /// <see cref="_presentBusy"/> when done so the next frame can
-    /// fire. Errors are logged at warning and don't crash the
-    /// SinkNode body.
-    /// </summary>
-    private async Task RunPresentAsync(
-        IVideoSink sink,
-        IVideoFrame frame,
-        CancellationToken ct
-    )
-    {
-        try
-        {
-            await sink.PresentAsync(frame, ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // Expected on teardown / seek. Sink is contracted to
-            // dispose the frame even on cancel, so no double-dispose
-            // here.
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogWarning(ex, "View present faulted on a frame.");
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _presentBusy, 0);
-        }
-    }
 
     /// <summary>
     /// Presenter-side UI hook invoked by the terminal sink for each
@@ -905,6 +850,20 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task TeardownPlayerAsync()
     {
+        // First, so a callback already running is stale by the time it posts, and so is anything
+        // it posted a moment ago.
+        Interlocked.Increment(ref _openGeneration);
+
+        if (_presentedSource is not null && _presentedHandler is not null)
+        {
+            _presentedSource.FramePresented -= _presentedHandler;
+            _presentedSource = null;
+            _presentedHandler = null;
+        }
+
+        _detections.Clear();
+        _lastPostedDetections = null;
+
         // Detach chrome from the doomed player first so its sub-
         // controls don't poke a half-disposed player.
         PlayerChrome.MediaPlayer = null;
