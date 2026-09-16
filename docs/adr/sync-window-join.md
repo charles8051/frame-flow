@@ -209,10 +209,10 @@ without inverting the layering, so a consumer that needs registration wraps
 left open below, on its own merits rather than on a forcing case this migration
 does not actually present.
 
-**Since #217**, a node also carries an `OnReset` callback the graph invokes before each
-run, in `FrameFlow.Graph` and with no layering to invert. A consumer holding a join
-across runs can clear it from there instead of writing an adapter. The pump still clears
-the window itself, so this node needs no callback of its own.
+**Since #217**, `Graph.BeforeEachRun` registers an action the graph runs before each run,
+in `FrameFlow.Graph` and with no layering to invert. A consumer holding a join across
+runs can call `ResetWindow()` from there instead of writing an adapter. The pump clears
+the window itself at the top of every run, so nothing has to.
 
 ### 7. Wiring
 

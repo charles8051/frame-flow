@@ -47,6 +47,46 @@ public sealed class Graph
     // see SubstrateSession.RewindToStartAsync.
     private readonly List<Action> _resets = new();
 
+    // Caller-registered actions, run at the top of every RunAsync before the edge resets. This is
+    // where state that outlives a run is dropped: a graph is re-runnable, and a loop rewinds its
+    // item and runs the same graph again, so an operator's closure survives the loop while the
+    // timestamps it sees go back to zero (#217).
+    private readonly List<Action> _beforeRun = new();
+
+    // Set while a run is in flight. A second run would reset state and rewire ports under the
+    // first one's pumps.
+    private int _running;
+
+    /// <summary>
+    /// Registers an action to run before each run of this graph, including the first, ahead of
+    /// the edge resets and the wire-ups.
+    /// </summary>
+    /// <param name="beforeRun">
+    /// What to drop. A body that remembers anything across items — the last timestamp it saw, a
+    /// window of frames, a running total — clears it here, as does a caller holding such state
+    /// outside the graph entirely.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// A graph is re-runnable, and a loop rewinds its item and runs the same graph again rather
+    /// than building a new one, so nothing else tells an operator that the run it is about to see
+    /// starts over. A seek and an item change build a new graph, where the question does not
+    /// arise; a loop does not.
+    /// </para>
+    /// <para>
+    /// It runs on the thread that starts the graph, before any pump, so it needs no lock against
+    /// the bodies. It must not throw: an action that throws fails the run before it starts. A
+    /// chain reaches its graph through <see cref="GraphChain{T}.Graph"/>, which is how a
+    /// configurator registers one.
+    /// </para>
+    /// </remarks>
+    public Graph BeforeEachRun(Action beforeRun)
+    {
+        ArgumentNullException.ThrowIfNull(beforeRun);
+        _beforeRun.Add(beforeRun);
+        return this;
+    }
+
     /// <summary>Adds a node to the graph (idempotent).</summary>
     public T Add<T>(T node) where T : INode
     {
@@ -132,17 +172,35 @@ public sealed class Graph
     /// </summary>
     public async Task RunAsync(CancellationToken ct = default)
     {
-        // Drop the state a node keeps between runs, reset any edge state left over from a
-        // previous run, then (re)wire fresh channels. Resets run before wire-ups so a fan-out
-        // output port's writers are cleared once and rebuilt, never accumulated across runs. On
-        // the first run they act on empty ports and fresh nodes (no-op). This is what makes a
-        // graph instance re-runnable for the loop's in-place rewind, and the node reset is what
-        // tells an operator that the run it is about to see starts over.
-        foreach (var node in _nodes)
+        // One run at a time. A second would drop the state the first is using and rewire the
+        // ports under its pumps.
+        if (Interlocked.Exchange(ref _running, 1) == 1)
         {
-            if (node is IResettableNode resettable)
-                resettable.ResetForRun();
+            throw new InvalidOperationException(
+                "This graph is already running. Await the run in flight before starting another."
+            );
         }
+
+        try
+        {
+            await RunOnceAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref _running, 0);
+        }
+    }
+
+    private async Task RunOnceAsync(CancellationToken ct)
+    {
+        // Drop what the caller keeps between runs, reset any edge state left over from a previous
+        // run, then (re)wire fresh channels. Resets run before wire-ups so a fan-out output port's
+        // writers are cleared once and rebuilt, never accumulated across runs. On the first run
+        // they act on empty ports (no-op). This is what makes a graph instance re-runnable for the
+        // loop's in-place rewind, and the registered actions are what tell an operator that the
+        // run it is about to see starts over.
+        foreach (var beforeRun in _beforeRun)
+            beforeRun();
 
         foreach (var reset in _resets)
             reset();

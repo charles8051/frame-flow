@@ -71,6 +71,7 @@ FrameFlow.Graph.FrameMemoryDomain.Cpu = 0 -> FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Graph.FrameMemoryDomain.Gpu = 1 -> FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Graph.Graph
 FrameFlow.Graph.Graph.Add<T>(T node) -> T
+FrameFlow.Graph.Graph.BeforeEachRun(System.Action! beforeRun) -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.Graph.Connect<T>(FrameFlow.Graph.OutputPort<T!>! from, FrameFlow.Graph.InputPort<T!>! to, FrameFlow.Graph.EdgeConfig<T!> config) -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.Graph.Connect<T>(FrameFlow.Graph.OutputPort<T!>! from, FrameFlow.Graph.InputPort<T!>! to, FrameFlow.Graph.EdgeOptions? options = null) -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.Graph.Graph() -> void
@@ -130,8 +131,6 @@ FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Id.get -> string!
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Input.get -> FrameFlow.Graph.InputPort<TIn!>!
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.MultiOperatorNode(string! id, FrameFlow.Graph.MultiOperator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate) -> void
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
-FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.OnReset.get -> System.Action?
-FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.OnReset.init -> void
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
 FrameFlow.Graph.Operator<TIn, TOut>
 FrameFlow.Graph.OperatorNode<TIn, TOut>
@@ -139,8 +138,6 @@ FrameFlow.Graph.OperatorNode<TIn, TOut>.Body.get -> FrameFlow.Graph.Operator<TIn
 FrameFlow.Graph.OperatorNode<TIn, TOut>.Id.get -> string!
 FrameFlow.Graph.OperatorNode<TIn, TOut>.Input.get -> FrameFlow.Graph.InputPort<TIn!>!
 FrameFlow.Graph.OperatorNode<TIn, TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
-FrameFlow.Graph.OperatorNode<TIn, TOut>.OnReset.get -> System.Action?
-FrameFlow.Graph.OperatorNode<TIn, TOut>.OnReset.init -> void
 FrameFlow.Graph.OperatorNode<TIn, TOut>.OperatorNode(string! id, FrameFlow.Graph.Operator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate) -> void
 FrameFlow.Graph.OperatorNode<TIn, TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
 FrameFlow.Graph.OutputPort<T>
@@ -164,16 +161,12 @@ FrameFlow.Graph.SinkNode<TIn>.Body.get -> FrameFlow.Graph.Consumer<TIn!>!
 FrameFlow.Graph.SinkNode<TIn>.Id.get -> string!
 FrameFlow.Graph.SinkNode<TIn>.Input.get -> FrameFlow.Graph.InputPort<TIn!>!
 FrameFlow.Graph.SinkNode<TIn>.OnError.get -> FrameFlow.Graph.FailureResponse
-FrameFlow.Graph.SinkNode<TIn>.OnReset.get -> System.Action?
-FrameFlow.Graph.SinkNode<TIn>.OnReset.init -> void
 FrameFlow.Graph.SinkNode<TIn>.SinkNode(string! id, FrameFlow.Graph.Consumer<TIn!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate) -> void
 FrameFlow.Graph.SourceNode<TOut>
 FrameFlow.Graph.SourceNode<TOut>.Body.get -> FrameFlow.Graph.Producer<TOut!>!
 FrameFlow.Graph.SourceNode<TOut>.Cleanup.get -> System.Func<System.Threading.Tasks.ValueTask>?
 FrameFlow.Graph.SourceNode<TOut>.Id.get -> string!
 FrameFlow.Graph.SourceNode<TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
-FrameFlow.Graph.SourceNode<TOut>.OnReset.get -> System.Action?
-FrameFlow.Graph.SourceNode<TOut>.OnReset.init -> void
 FrameFlow.Graph.SourceNode<TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
 FrameFlow.Graph.SourceNode<TOut>.SourceNode(string! id, FrameFlow.Graph.Producer<TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, System.Func<System.Threading.Tasks.ValueTask>? cleanup = null) -> void
 FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>

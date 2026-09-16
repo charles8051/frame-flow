@@ -181,8 +181,9 @@ public sealed class SingleSourceAsAQueueOfOneTests : IClassFixture<FfmpegBootstr
 
     /// <summary>
     /// A video operator that watches the timestamps it is handed, and counts a step backwards that
-    /// no reset preceded. A loop hands it a timestamp before the one it saw last, so without the
-    /// reset the count rises on the first frame of the second pass.
+    /// nothing announced. It registers its reset on the graph the chain belongs to. A loop hands it
+    /// a timestamp before the one it saw last, so without the reset the count rises on the first
+    /// frame of the second pass.
     /// </summary>
     private sealed class TimestampWatcher
     {
@@ -201,12 +202,20 @@ public sealed class SingleSourceAsAQueueOfOneTests : IClassFixture<FfmpegBootstr
         public GraphChain<VideoFrameRef> Configure(GraphChain<VideoFrameRef> chain)
         {
             Interlocked.Increment(ref _chains);
+            chain.Graph.BeforeEachRun(() =>
+            {
+                Interlocked.Increment(ref _resets);
+                _last = TimeSpan.MinValue;
+                _reset = true;
+            });
+
             return chain.Then(
                 new OperatorNode<VideoFrameRef, VideoFrameRef>(
                     "watch-timestamps",
                     (frame, _) =>
                     {
-                        // The pump is single-threaded, and a reset runs before it starts.
+                        // The pump is single-threaded, and the registered action runs before it
+                        // starts.
                         if (frame.Frame.Pts < _last && !_reset)
                             Interlocked.Increment(ref _backwardSteps);
                         _reset = false;
@@ -214,14 +223,6 @@ public sealed class SingleSourceAsAQueueOfOneTests : IClassFixture<FfmpegBootstr
                         return ValueTask.FromResult<VideoFrameRef?>(frame);
                     }
                 )
-                {
-                    OnReset = () =>
-                    {
-                        Interlocked.Increment(ref _resets);
-                        _last = TimeSpan.MinValue;
-                        _reset = true;
-                    },
-                }
             );
         }
     }

@@ -36,21 +36,6 @@ internal interface IPumpableNode : INode
     Task RunPumpAsync(CancellationTokenSource graphCts);
 }
 
-/// <summary>
-/// A node that has state to drop before each run of its graph. The runner calls
-/// <see cref="ResetForRun"/> on every such node before it starts any pump, including on the
-/// first run.
-/// </summary>
-/// <remarks>
-/// A graph is re-runnable: a loop rewinds its item and runs the same graph again
-/// (<c>GraphPolicy.Reuse</c>), so a node that carries state from one run into the next sees
-/// timestamps go back with nothing to tell it why. This is that telling.
-/// </remarks>
-internal interface IResettableNode : INode
-{
-    void ResetForRun();
-}
-
 // ─────────────────────────────────────────────────────────────────
 // Source: 0 input, 1 output
 // ─────────────────────────────────────────────────────────────────
@@ -59,7 +44,7 @@ internal interface IResettableNode : INode
 /// A source node: produces items via a <see cref="Producer{TOut}"/>
 /// function until it returns null (end of stream).
 /// </summary>
-public sealed class SourceNode<TOut> : IPumpableNode, IResettableNode
+public sealed class SourceNode<TOut> : IPumpableNode
     where TOut : class, IRefCounted
 {
     public string Id { get; }
@@ -77,24 +62,6 @@ public sealed class SourceNode<TOut> : IPumpableNode, IResettableNode
     /// without this, adapter state leaks on cancellation.
     /// </summary>
     public Func<ValueTask>? Cleanup { get; }
-
-    /// <summary>
-    /// Optional callback the graph invokes before each run, including the first, for state this
-    /// node keeps between items rather than inside one.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// A graph is re-runnable, and a loop rewinds its item and runs the same graph again rather
-    /// than building a new one, so a node's closure survives the loop while its timestamps go
-    /// back to zero. Anything remembered across items — the last timestamp seen, a window of
-    /// frames, a running total, an enumerator's position — is cleared here.
-    /// </para>
-    /// <para>
-    /// It runs on the thread that starts the graph, before any pump, so it needs no lock against
-    /// the body. It must not throw: a reset that throws fails the run before it starts.
-    /// </para>
-    /// </remarks>
-    public Action? OnReset { get; init; }
 
     public SourceNode(
         string id,
@@ -114,8 +81,6 @@ public sealed class SourceNode<TOut> : IPumpableNode, IResettableNode
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpSourceAsync(this, graphCts);
-
-    void IResettableNode.ResetForRun() => OnReset?.Invoke();
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -127,7 +92,7 @@ public sealed class SourceNode<TOut> : IPumpableNode, IResettableNode
 /// outputs. The operator function may return null to drop the input
 /// without producing an output.
 /// </summary>
-public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IResettableNode
+public sealed class OperatorNode<TIn, TOut> : IPumpableNode
     where TIn : class, IRefCounted
     where TOut : class, IRefCounted
 {
@@ -136,24 +101,6 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IResettableNode
     public Operator<TIn, TOut> Body { get; }
     public InputPort<TIn> Input { get; }
     public OutputPort<TOut> Output { get; }
-
-    /// <summary>
-    /// Optional callback the graph invokes before each run, including the first, for state this
-    /// node keeps between items rather than inside one.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// A graph is re-runnable, and a loop rewinds its item and runs the same graph again rather
-    /// than building a new one, so a node's closure survives the loop while its timestamps go
-    /// back to zero. Anything remembered across items — the last timestamp seen, a window of
-    /// frames, a running total, an enumerator's position — is cleared here.
-    /// </para>
-    /// <para>
-    /// It runs on the thread that starts the graph, before any pump, so it needs no lock against
-    /// the body. It must not throw: a reset that throws fails the run before it starts.
-    /// </para>
-    /// </remarks>
-    public Action? OnReset { get; init; }
 
     public OperatorNode(
         string id,
@@ -172,8 +119,6 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IResettableNode
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpOperatorAsync(this, graphCts);
-
-    void IResettableNode.ResetForRun() => OnReset?.Invoke();
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -186,7 +131,7 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IResettableNode
 /// historic Channel-bridge boilerplate consumers had to write for
 /// 1→N expansion.
 /// </summary>
-public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IResettableNode
+public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode
     where TIn : class, IRefCounted
     where TOut : class, IRefCounted
 {
@@ -195,24 +140,6 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IResettableNod
     public MultiOperator<TIn, TOut> Body { get; }
     public InputPort<TIn> Input { get; }
     public OutputPort<TOut> Output { get; }
-
-    /// <summary>
-    /// Optional callback the graph invokes before each run, including the first, for state this
-    /// node keeps between items rather than inside one.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// A graph is re-runnable, and a loop rewinds its item and runs the same graph again rather
-    /// than building a new one, so a node's closure survives the loop while its timestamps go
-    /// back to zero. Anything remembered across items — the last timestamp seen, a window of
-    /// frames, a running total, an enumerator's position — is cleared here.
-    /// </para>
-    /// <para>
-    /// It runs on the thread that starts the graph, before any pump, so it needs no lock against
-    /// the body. It must not throw: a reset that throws fails the run before it starts.
-    /// </para>
-    /// </remarks>
-    public Action? OnReset { get; init; }
 
     public MultiOperatorNode(
         string id,
@@ -231,8 +158,6 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IResettableNod
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpMultiOperatorAsync(this, graphCts);
-
-    void IResettableNode.ResetForRun() => OnReset?.Invoke();
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -240,31 +165,13 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IResettableNod
 // ─────────────────────────────────────────────────────────────────
 
 /// <summary>A sink node: receives items, produces side effects, no output.</summary>
-public sealed class SinkNode<TIn> : IPumpableNode, IResettableNode
+public sealed class SinkNode<TIn> : IPumpableNode
     where TIn : class, IRefCounted
 {
     public string Id { get; }
     public FailureResponse OnError { get; }
     public Consumer<TIn> Body { get; }
     public InputPort<TIn> Input { get; }
-
-    /// <summary>
-    /// Optional callback the graph invokes before each run, including the first, for state this
-    /// node keeps between items rather than inside one.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// A graph is re-runnable, and a loop rewinds its item and runs the same graph again rather
-    /// than building a new one, so a node's closure survives the loop while its timestamps go
-    /// back to zero. Anything remembered across items — the last timestamp seen, a window of
-    /// frames, a running total, an enumerator's position — is cleared here.
-    /// </para>
-    /// <para>
-    /// It runs on the thread that starts the graph, before any pump, so it needs no lock against
-    /// the body. It must not throw: a reset that throws fails the run before it starts.
-    /// </para>
-    /// </remarks>
-    public Action? OnReset { get; init; }
 
     public SinkNode(
         string id,
@@ -282,6 +189,4 @@ public sealed class SinkNode<TIn> : IPumpableNode, IResettableNode
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpSinkAsync(this, graphCts);
-
-    void IResettableNode.ResetForRun() => OnReset?.Invoke();
 }
