@@ -279,6 +279,13 @@ FrameFlow.Media.FrameFlowVideoOptions
 FrameFlow.Media.FrameFlowVideoOptions.FrameFlowVideoOptions() -> void
 FrameFlow.Media.FrameFlowVideoOptions.HardwareDecode.get -> FrameFlow.Media.HardwareDecodeOptions!
 FrameFlow.Media.FrameFlowVideoOptions.HardwareDecode.set -> void
+FrameFlow.Media.FramePresentedInfo
+FrameFlow.Media.FramePresentedInfo.FramePresentedInfo() -> void
+FrameFlow.Media.FramePresentedInfo.FramePresentedInfo(System.TimeSpan PresentationTime, System.DateTime PresentedAtUtc) -> void
+FrameFlow.Media.FramePresentedInfo.PresentationTime.get -> System.TimeSpan
+FrameFlow.Media.FramePresentedInfo.PresentationTime.init -> void
+FrameFlow.Media.FramePresentedInfo.PresentedAtUtc.get -> System.DateTime
+FrameFlow.Media.FramePresentedInfo.PresentedAtUtc.init -> void
 FrameFlow.Media.HardwareDecodeBackend
 FrameFlow.Media.HardwareDecodeBackend.AvDeviceTypeName.get -> string!
 FrameFlow.Media.HardwareDecodeBackend.AvDeviceTypeName.init -> void
@@ -346,6 +353,8 @@ FrameFlow.Media.IFramePool
 FrameFlow.Media.IFramePool.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Media.IFramePool.RentAsync(int width, int height, FrameFlow.Media.PixelFormat format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask<FrameFlow.Media.IVideoFrame!>
 FrameFlow.Media.IFramePool.Return(FrameFlow.Media.IVideoFrame! frame) -> void
+FrameFlow.Media.IFramePresentedSource
+FrameFlow.Media.IFramePresentedSource.FramePresented -> System.EventHandler<FrameFlow.Media.FramePresentedInfo>?
 FrameFlow.Media.IMediaSource
 FrameFlow.Media.IMediaSource.DisplayName.get -> string!
 FrameFlow.Media.IMediaSource.FilePath.get -> string?

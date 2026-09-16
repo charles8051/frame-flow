@@ -1039,6 +1039,12 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         // GetDiagnostics reads via Volatile from any thread.
         Volatile.Write(ref _lastPresentedPtsTicks, pts.Ticks);
         Volatile.Write(ref _lastPresentedAtUtcTicks, DateTime.UtcNow.Ticks);
+
+        // Same moment, consumer-facing: an overlay keyed off this draws over the picture it
+        // describes rather than over whatever the graph is holding, which is ahead of the
+        // screen by the pacer's buffering.
+        _sink?.RaiseFramePresented(pts);
+
         LogProgress(isGpu);
     }
 

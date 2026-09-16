@@ -5,11 +5,12 @@ FrameFlow.Avalonia.AvaloniaVideoSink.AvaloniaVideoSink(FrameFlow.Media.IFramePoo
 FrameFlow.Avalonia.AvaloniaVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
 FrameFlow.Avalonia.AvaloniaVideoSink.DroppedFrameCount.get -> int
 FrameFlow.Avalonia.AvaloniaVideoSink.FramePool.get -> FrameFlow.Media.IFramePool!
+FrameFlow.Avalonia.AvaloniaVideoSink.FramePresented -> System.EventHandler<FrameFlow.Media.FramePresentedInfo>?
 FrameFlow.Avalonia.AvaloniaVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
 FrameFlow.Avalonia.AvaloniaVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Avalonia.AvaloniaVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
-FrameFlow.Avalonia.AvaloniaVideoSink.RenderedFrameCount.get -> int
 FrameFlow.Avalonia.AvaloniaVideoSink.RenderPendingFrame() -> FrameFlow.Media.IVideoFrame?
+FrameFlow.Avalonia.AvaloniaVideoSink.RenderedFrameCount.get -> int
 FrameFlow.Avalonia.FileOpenRequestedEventArgs
 FrameFlow.Avalonia.FileOpenRequestedEventArgs.FileOpenRequestedEventArgs(string! filePath) -> void
 FrameFlow.Avalonia.FileOpenRequestedEventArgs.FilePath.get -> string!

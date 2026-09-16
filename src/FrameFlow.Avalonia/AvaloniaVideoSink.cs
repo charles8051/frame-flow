@@ -33,7 +33,7 @@ namespace FrameFlow.Avalonia;
 /// the old frame is disposed (dropped).
 /// </para>
 /// </remarks>
-public sealed partial class AvaloniaVideoSink : IVideoSink
+public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSource
 {
     private static readonly VideoSinkMeters Meters = new(
         "FrameFlow.Avalonia.Sink",
@@ -97,7 +97,49 @@ public sealed partial class AvaloniaVideoSink : IVideoSink
     /// copied into the back buffer and then overwritten before the UI thread swapped it is a
     /// drop only.
     /// </remarks>
-    internal void RecordPresented(TimeSpan pts) => _telemetry.RecordPresented(pts);
+    internal void RecordPresented(TimeSpan pts)
+    {
+        _telemetry.RecordPresented(pts);
+        RaiseFramePresented(pts);
+    }
+
+    /// <inheritdoc />
+    public event EventHandler<FramePresentedInfo>? FramePresented;
+
+    /// <summary>
+    /// Raises <see cref="FramePresented"/> for a frame that has reached the screen. Called
+    /// from both present paths: the view's buffer swap, and the pull path for a host driving
+    /// <see cref="RenderPendingFrame"/> itself.
+    /// </summary>
+    /// <remarks>
+    /// A throwing handler is swallowed for the same reason the copy is: a consumer that
+    /// cannot process one present is not a reason to stop the presenter. The exception is
+    /// logged once per occurrence, like the copy path's.
+    /// </remarks>
+    private void RaiseFramePresented(TimeSpan pts)
+    {
+        var handler = FramePresented;
+        if (handler is null)
+            return;
+
+        var info = new FramePresentedInfo(pts, DateTime.UtcNow);
+
+        // Invoked one subscriber at a time rather than as a chain: a single delegate
+        // invocation abandons every handler after the one that threw, so one broken consumer
+        // would silently stop an unrelated overlay updating. The invocation-list array is a
+        // small per-present allocation on a path that already does an 8 MB copy.
+        foreach (var subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                ((EventHandler<FramePresentedInfo>)subscriber)(this, info);
+            }
+            catch (Exception ex)
+            {
+                LogFramePresentedHandlerFailed(_logger, ex);
+            }
+        }
+    }
 
     /// <summary>
     /// Records that a taken frame never drew — either overwritten in the back buffer before
@@ -221,7 +263,11 @@ public sealed partial class AvaloniaVideoSink : IVideoSink
         // The PTS/wallclock stamp is this sink's render-tick diagnostics hook (ADR-0034);
         // SDL and the compositor presenter do not stamp here, so it stays a per-sink
         // callback rather than slot behavior. Runs only when a frame is actually taken.
-        var frame = _slot.Take(taken => _telemetry.RecordPresented(taken.Pts));
+        var frame = _slot.Take(taken =>
+        {
+            _telemetry.RecordPresented(taken.Pts);
+            RaiseFramePresented(taken.Pts);
+        });
 
         return frame;
     }
@@ -247,6 +293,12 @@ public sealed partial class AvaloniaVideoSink : IVideoSink
         Message = "Video surface threw while consuming a presented frame; the frame is lost but delivery continues."
     )]
     private static partial void LogFrameArrivedFailed(ILogger logger, Exception ex);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "A FramePresented handler threw; the present stands and delivery continues."
+    )]
+    private static partial void LogFramePresentedHandlerFailed(ILogger logger, Exception ex);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "AvaloniaVideoSink created.")]
     private static partial void LogSinkCreated(ILogger logger);
