@@ -133,8 +133,8 @@ public sealed class PlayerErrorModelTests
         Assert.Equal(RepeatMode.Off, coordinator.RepeatMode);
     }
 
-    private static MediaPlayerCore NewPlayer(IPlaybackController controller) =>
-        new(controller, audioSink: null, ownedProvider: null, NullLogger.Instance);
+    private static PlaylistMediaPlayerCore NewPlayer(IPlaybackController controller) =>
+        NewPlaylistPlayer(controller, new PlaylistCoordinator([new MediaSource("a")], RepeatMode.Off));
 
     private static PlaylistMediaPlayerCore NewPlaylistPlayer(
         IPlaybackController controller,

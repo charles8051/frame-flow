@@ -16,11 +16,10 @@ public enum RepeatMode
 
     /// <summary>
     /// Loop the whole playlist: at the end of the last item, wrap to the first
-    /// and continue. For a single-source player (no playlist) this behaves like
-    /// <see cref="Off"/> — there is nothing to wrap to, so playback ends at the
-    /// end of the media. Only a playlist-capable player
-    /// (<c>FrameFlow.Player.IMediaPlaylistPlayer</c>) gives <see cref="All"/> a
-    /// distinct meaning.
+    /// and continue. Every player holds a playlist, and one built over a single
+    /// source holds that source alone, so <see cref="All"/> wraps to it and
+    /// loops. It differs from <see cref="One"/> only for a player holding more
+    /// than one item, which is the distinct behaviour ADR-0027 §3 asked for.
     /// </summary>
     All,
 }

@@ -154,10 +154,6 @@ internal sealed class PlaylistSession : IPlaybackSession
     // reported the end-of-stream, and nothing replaces it while this session is Ended.
     public bool CanSeekFromEnded => Volatile.Read(ref _published) is not null;
 
-    // The coordinator runs the repeat mode. This session reports end-of-stream only when the
-    // queue has ended.
-    public bool LoopsInternally => true;
-
     // Read by the controller's loop-stall watchdog on every position tick. While a loop is under way
     // the answer is true whatever the queue now says, so removing the item mid-repeat does not hide a
     // rewind that hangs. Otherwise the queue decides (decision 6 of looping-on-both-players.md).

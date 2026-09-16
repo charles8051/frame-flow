@@ -349,6 +349,73 @@ new LoopStallSample(now, position, duration, ExpectsRepeat: true, Playing: true,
 A host subscribed to `LoopStalled` can now see a stall from a playlist of one under
 `RepeatMode.All`, where it saw none before.
 
+### 12. `MediaPlayer.CreateAsync` returns `Task<IMediaPlaylistPlayer>`
+
+Every player is a queue now, and a single source is a queue of one
+(`docs/adr/one-player-type.md`), so the single-source factory returns the same player
+the playlist factory does. `IMediaPlaylistPlayer` derives from `IMediaPlayer`, so the
+awaited value still satisfies the smaller surface:
+
+```csharp
+// Both still compile.
+var player = await MediaPlayer.CreateAsync(source);
+IMediaPlayer small = await MediaPlayer.CreateAsync(source);
+```
+
+`Task<T>` is invariant, so naming the task does not:
+
+```csharp
+// Before
+Task<IMediaPlayer> pending = MediaPlayer.CreateAsync(source);
+
+// After
+Task<IMediaPlaylistPlayer> pending = MediaPlayer.CreateAsync(source);
+```
+
+Passing the call where a `Task<IMediaPlayer>` or a `Func<…, Task<IMediaPlayer>>` is
+expected needs the same edit. Every caller rebuilds: the return type is part of the
+signature, so a compiled caller does not bind to the new method.
+
+`IMediaPlayerBuilder.BuildPlayerAsync` still returns `Task<IMediaPlayer>`.
+
+### 13. `RepeatMode.All` loops a single source
+
+A player over one source used to play one pass and reach `Ended` under `All`, which
+the enum documented as "behaves like `Off`". It now loops, because `All` wraps a queue
+and that queue holds one item. `Off` is the mode that ends at the end of the media.
+
+A host that set `All` on a single-source player to mean "play once" sets `Off`.
+
+### 14. A mid-stream fault ends the player instead of failing it
+
+A fault raised while a single source played used to put the player in `Error`, which
+is terminal. The failure is now reported on `ErrorOccurred` with the item's exception,
+and under `RepeatMode.Off` the player reaches `Ended`, where `PlayAsync` starts it
+again. Under `One` and `All` the source is rebuilt and reported on every pass, and
+nine failures in a row without progress still end in `Error`.
+
+A host that watched `State` alone for failure sees `Ended` where it used to see
+`Error`. Subscribe to `ErrorOccurred`, which fires in both cases:
+
+```csharp
+player.ErrorOccurred.Subscribe(new ErrorObserver(error => Alert(error)));
+```
+
+### 15. A loop no longer drives the seek state machine
+
+The loop is the session's in-place rewind, taken as one of its inputs, so
+`SeekStateChanged` stays `NotSeeking` across a loop and `IsActivelyPresenting` stays
+`true`. A host that watched the seek transitions to detect a loop takes
+`IMediaPlayer.LoopRestarted`, which also carries the loop's count. A host that gated
+UI on `SeekingState` during a loop sees fewer transitions, and none of them false.
+
+### 16. The video chain is built once per load, not once per loop
+
+The loop keeps the graph, so a configurator passed to `configureVideo` runs once per
+load rather than once per pass. An operator that carries state across frames now sees
+the timeline go back to zero instead of being rebuilt. One that cannot handle that
+must reset itself; the reset a graph could hand it is #217.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

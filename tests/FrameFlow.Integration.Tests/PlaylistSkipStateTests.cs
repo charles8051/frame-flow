@@ -50,13 +50,15 @@ public sealed class PlaylistSkipStateTests : IClassFixture<FfmpegBootstrapFixtur
         Assert.Equal([first, second], run.Transitions.Select(t => t.Source));
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task SkipWhilePausedOnTheLastItem_EndsThePlaylist()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SkipWhilePausedOnTheLastItem_EndsThePlaylist(bool asSingleSource)
     {
         // Under Off a skip on the last item ends the playlist, and it must do so while paused
         // too. The end-of-stream it reports used to be dropped, because Paused had no
         // transition for it, and the player stayed Paused with nothing loaded.
-        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off);
+        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, asSingleSource: asSingleSource);
         await PlayThenPauseAsync(run);
 
         var ended = run.Settled(PlaybackState.Ended);
@@ -66,15 +68,17 @@ public sealed class PlaylistSkipStateTests : IClassFixture<FfmpegBootstrapFixtur
         Assert.Equal(PlaybackState.Ended, run.Controller.State);
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task SkipWhileEnded_IsDropped_AndPlayPlaysTheEnqueuedItem()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SkipWhileEnded_IsDropped_AndPlayPlaysTheEnqueuedItem(bool asSingleSource)
     {
         // At Ended the queue has already ended, so a skip has nothing to end. It used to start
         // the next queued item while the state said Ended, which also took the item Play would
         // have started, so Play then found an empty queue.
         var first = ClipSource();
         var enqueued = ClipSource();
-        await using var run = PlaylistRun.Create([first], RepeatMode.Off);
+        await using var run = PlaylistRun.Create([first], RepeatMode.Off, asSingleSource: asSingleSource);
         var ended = run.Settled(PlaybackState.Ended);
         await run.PlayAsync();
         await ended.WaitAsync(Bound);
@@ -110,8 +114,10 @@ public sealed class PlaylistSkipStateTests : IClassFixture<FfmpegBootstrapFixtur
         Assert.Equal([first, second], run.Transitions.Select(t => t.Source));
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task PlayQueuedBehindASkipThatEnds_LeavesTheSessionEnded()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PlayQueuedBehindASkipThatEnds_LeavesTheSessionEnded(bool asSingleSource)
     {
         // Paused on the last item: skip, then play at once. The play is dispatched before the
         // end-of-stream the skip raises, so the controller goes Playing and then Ended. The
@@ -121,7 +127,7 @@ public sealed class PlaylistSkipStateTests : IClassFixture<FfmpegBootstrapFixtur
         var first = ClipSource();
         var enqueued = ClipSource();
         using var clock = new HoldableClock();
-        await using var run = PlaylistRun.Create([first], RepeatMode.Off, clock: clock);
+        await using var run = PlaylistRun.Create([first], RepeatMode.Off, clock: clock, asSingleSource: asSingleSource);
         await PlayThenPauseAsync(run);
 
         // Hold the skip's advance inside its gate, where it pauses the clock while pausing the
@@ -147,14 +153,16 @@ public sealed class PlaylistSkipStateTests : IClassFixture<FfmpegBootstrapFixtur
         Assert.Equal(PlaybackState.Playing, run.Controller.State);
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task SkipBeforeTheFirstPlay_UnderRepeatOne_PlaysTheItem()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SkipBeforeTheFirstPlay_UnderRepeatOne_PlaysTheItem(bool asSingleSource)
     {
         // Under One the skip replays the same item. It is taken by the first play, when the
         // item has never played, so it must start the item rather than rewind it in place:
         // a rewind of an item that never started leaves its clocks stopped, and frames trickle
         // out at the pacer's wait cap.
-        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.One);
+        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.One, asSingleSource: asSingleSource);
         await run.LoadAsync();
 
         run.Coordinator.RequestSkip();

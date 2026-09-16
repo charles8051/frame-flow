@@ -16,7 +16,7 @@ namespace FrameFlow.Playback;
 /// the only addition is the coordinator, which carries the playlist queue and
 /// loop policy and is shared with the player surface.
 /// </summary>
-internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory
+internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposable
 {
     private readonly PlaylistCoordinator _coordinator;
     private readonly IPlaylistItemRuntimeFactory _itemFactory;
@@ -36,6 +36,8 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory
     /// <param name="loadsSource">
     /// Whether each session makes the source the controller loads the queue's only item. A
     /// controller that plays one source at a time sets it; a playlist player seeds the queue itself.
+    /// It also says who owns <paramref name="coordinator"/>: a coordinator built for the controller
+    /// is disposed with this factory, and one a player handed in is the player's.
     /// </param>
     public PlaylistSessionFactory(
         PlaylistCoordinator coordinator,
@@ -87,4 +89,14 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory
     }
 
     public void RepeatModeChanged(RepeatMode mode) => _coordinator.RepeatMode = mode;
+
+    /// <summary>
+    /// Disposes the coordinator this factory was built with, when it was built for the controller.
+    /// A playlist player's coordinator outlives its controller and is disposed by the player.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_loadsSource)
+            _coordinator.Dispose();
+    }
 }

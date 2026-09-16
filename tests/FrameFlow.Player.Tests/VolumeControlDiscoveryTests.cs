@@ -121,8 +121,13 @@ public sealed class VolumeControlDiscoveryTests
         Assert.Equal(1.0f, player.Volume);
     }
 
-    private static MediaPlayerCore NewPlayer(IAudioSink? audioSink) =>
-        new(new StubController(), audioSink, ownedProvider: null, NullLogger.Instance);
+    private static PlaylistMediaPlayerCore NewPlayer(IAudioSink? audioSink) =>
+        new(
+            new StubController(),
+            new PlaylistCoordinator([new MediaSource("a")], RepeatMode.Off),
+            audioSink,
+            NullLogger.Instance
+        );
 
     // ── Doubles ──────────────────────────────────────────────────────────────
 

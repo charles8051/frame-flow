@@ -37,11 +37,13 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         _ = fixture;
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task FaultOnTheLastItem_IsReported_AndThePlaylistEnds()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FaultOnTheLastItem_IsReported_AndThePlaylistEnds(bool asSingleSource)
     {
         var faults = new FaultInjector(breaks: _ => true);
-        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, faults.Configure);
+        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, faults.Configure, asSingleSource: asSingleSource);
 
         await run.PlayAsync();
         await run.Settled(PlaybackState.Ended).WaitAsync(Bound);
@@ -51,8 +53,10 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.True(InjectedFault.Caused(error), $"Unexpected error: {error}");
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task SeekFromEnded_AfterTheLastItemFaulted_IsRefused_AndPlayStartsThePlaylistAgain()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SeekFromEnded_AfterTheLastItemFaulted_IsRefused_AndPlayStartsThePlaylistAgain(bool asSingleSource)
     {
         // A faulted item is not kept at the end of the queue, so Ended holds nothing to seek.
         // The seek used to succeed, and the play after it reported Playing with nothing current
@@ -60,7 +64,7 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         // faults again, is reported again, and the playlist ends again.
         var faults = new FaultInjector(breaks: _ => true);
         var item = ClipSource();
-        await using var run = PlaylistRun.Create([item], RepeatMode.Off, faults.Configure);
+        await using var run = PlaylistRun.Create([item], RepeatMode.Off, faults.Configure, asSingleSource: asSingleSource);
         await run.PlayAsync();
         await run.Settled(PlaybackState.Ended).WaitAsync(Bound);
 
@@ -98,14 +102,22 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
     }
 
     [RequiresFfmpegAndCorpusTheory]
-    [InlineData(RepeatMode.All)]
-    [InlineData(RepeatMode.One)]
+    [InlineData(RepeatMode.All, false)]
+    [InlineData(RepeatMode.One, false)]
+    [InlineData(RepeatMode.All, true)]
+    [InlineData(RepeatMode.One, true)]
     public async Task ItemThatFaultsOnEveryPass_IsReportedEachTime_ThenPutsThePlayerInError(
-        RepeatMode repeat
+        RepeatMode repeat,
+        bool asSingleSource
     )
     {
         var faults = new FaultInjector(breaks: _ => true);
-        await using var run = PlaylistRun.Create([ClipSource()], repeat, faults.Configure);
+        await using var run = PlaylistRun.Create(
+            [ClipSource()],
+            repeat,
+            faults.Configure,
+            asSingleSource: asSingleSource
+        );
 
         await run.PlayAsync();
         // Wait for the give-up error, not the state: the controller projects Error before it

@@ -153,10 +153,9 @@ internal sealed class PlaylistRun : IAsyncDisposable
     /// <param name="configureVideo">The video-chain configurator applied to every item.</param>
     /// <param name="clock">The controller's clock. A fresh <see cref="PlaybackClock"/> by default.</param>
     /// <param name="asSingleSource">
-    /// Builds the run through <see cref="PlaybackController.Create"/>, which plays one source at a
-    /// time as a queue of one, instead of <see cref="PlaybackController.CreatePlaylist"/>. Only for
-    /// one item. <c>FRAMEFLOW_SPIKE_SINGLE_SOURCE=1</c> turns it on for every one-item run, which is
-    /// how the playlist suites are run against the queue of one.
+    /// Builds the run through <see cref="PlaybackController.Create"/>, the single-source entry
+    /// point, instead of <see cref="PlaybackController.CreatePlaylist"/>. Both play a queue; the
+    /// first seeds it from the source it loads. Only for one item.
     /// </param>
     public static PlaylistRun Create(
         IMediaSource[] items,
@@ -167,12 +166,11 @@ internal sealed class PlaylistRun : IAsyncDisposable
     )
     {
         var sink = new PresentCountingVideoSink();
-        asSingleSource =
-            asSingleSource
-            || Environment.GetEnvironmentVariable("FRAMEFLOW_SPIKE_SINGLE_SOURCE") == "1";
 
-        if (items.Length == 1 && asSingleSource)
+        if (asSingleSource)
         {
+            Assert.Single(items);
+
             var single = PlaybackController.Create(
                 videoSink: sink,
                 audioSink: null,

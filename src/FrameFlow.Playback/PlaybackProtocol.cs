@@ -18,7 +18,7 @@ namespace FrameFlow.Playback;
 /// <i>did</i> (when they were Stateless <c>OnEntry</c>/<c>OnExit</c>/<c>InternalTransition</c>
 /// handlers, before this core became the executor): create/initialize/dispose the session,
 /// warm the decoder, play or pause it, start/stop the position ticker, freeze the clock at
-/// end-of-stream, run the loop rewind, and the auto-chain "fire the next loading trigger."
+/// end-of-stream, and the auto-chain "fire the next loading trigger."
 /// The shell's interpreter (<see cref="PlaybackControllerCore"/>'s <c>RunPlaybackAsync</c>)
 /// performs each. Keeping the session ABI and timing out of the core (mirroring ADR-0055's
 /// decode protocol) is what lets the whole transition table be asserted from a scripted
@@ -85,13 +85,6 @@ internal enum PlaybackActionKind
     RaiseError,
 
     /// <summary>
-    /// The RepeatMode.One loop boundary: increment the loop counter, raise
-    /// <c>LoopRestarted</c>, and run the loop rewind through the seek state machine
-    /// (the internal transition that never leaves <c>Playing</c>).
-    /// </summary>
-    RunLoopRewind,
-
-    /// <summary>
     /// Auto-chain: re-enter <see cref="PlaybackProtocol.Advance"/> with the carried
     /// follow-up trigger. Models the loading substates' self-firing transitions without
     /// a re-entrant <c>FireAsync</c> in an entry handler.
@@ -135,7 +128,7 @@ internal readonly record struct PlaybackAction(PlaybackActionKind Kind, Playback
 /// <see cref="NextState"/> equals the source state and <see cref="Actions"/> is empty.
 /// </param>
 /// <param name="NextState">The state the machine moves to (equals the source when not handled).</param>
-/// <param name="Actions">The ordered effects (source <c>OnExit</c> then destination <c>OnEntry</c>, plus any internal-transition or auto-chain actions).</param>
+/// <param name="Actions">The ordered effects (source <c>OnExit</c> then destination <c>OnEntry</c>, plus any auto-chain actions).</param>
 internal readonly record struct PlaybackDecision(
     bool Handled,
     InternalPlaybackState NextState,
@@ -148,38 +141,24 @@ internal readonly record struct PlaybackDecision(
     public static PlaybackDecision To(InternalPlaybackState next, params PlaybackAction[] actions) =>
         new(Handled: true, NextState: next, Actions: actions.Length == 0 ? NoActions : actions);
 
-    /// <summary>
-    /// A handled <i>internal</i> transition: the state does not change, but the
-    /// <paramref name="actions"/> still run (the RepeatMode.One loop rewind).
-    /// </summary>
-    public static PlaybackDecision Internal(
-        InternalPlaybackState current,
-        params PlaybackAction[] actions
-    ) => new(Handled: true, NextState: current, Actions: actions.Length == 0 ? NoActions : actions);
-
     /// <summary>The trigger is not permitted from <paramref name="current"/>; the shell drops or fails it.</summary>
     public static PlaybackDecision NotHandled(InternalPlaybackState current) =>
         new(Handled: false, NextState: current, Actions: NoActions);
 }
 
 /// <summary>
-/// The guard inputs the playback transition table reads that are <b>not</b> part of the
-/// <c>(state, trigger)</c> pair — the orthogonal repeat region's mode, and whether a
-/// live session/source exists. Passed as an immutable value so
+/// The guard input the playback transition table reads that is <b>not</b> part of the
+/// <c>(state, trigger)</c> pair: whether a live session/source exists. The repeat mode is
+/// not one — the session runs it. Passed as an immutable value so
 /// <see cref="PlaybackProtocol.Advance"/> stays a total function of its arguments with
 /// no hidden reads.
 /// </summary>
-/// <param name="RepeatOne">
-/// Whether the repeat sub-machine is in <see cref="RepeatMode.One"/>. Selects the
-/// loop-vs-end branch on <see cref="PlaybackTrigger.LastFrameRendered"/> from
-/// <see cref="InternalPlaybackState.Playing"/>.
-/// </param>
 /// <param name="HasSession">
 /// Whether a session (and loaded source) currently exists. Gates the replay-from-Ended
 /// path — a <see cref="PlaybackTrigger.Play"/> from <see cref="InternalPlaybackState.Ended"/>
 /// with no session is an invalid operation, not a replay.
 /// </param>
-internal readonly record struct PlaybackInputs(bool RepeatOne, bool HasSession = true);
+internal readonly record struct PlaybackInputs(bool HasSession = true);
 
 /// <summary>
 /// The primary playback state machine expressed as a pure Mealy core:
@@ -194,17 +173,17 @@ internal readonly record struct PlaybackInputs(bool RepeatOne, bool HasSession =
 /// <b>What stays in the shell.</b> Per ADR-0023 the channel-dispatch shell is unchanged —
 /// this purifies only <i>what</i> it dispatches. The core owns no IO, no <c>await</c>, no
 /// clock, no <c>Task</c>, and no mutable state across calls; every effect (create/dispose
-/// the session, warm/play/pause it, start/stop the ticker, freeze the clock, run the loop
-/// rewind, raise observables) is named as a <see cref="PlaybackAction"/> the shell performs.
+/// the session, warm/play/pause it, start/stop the ticker, freeze the clock, raise
+/// observables) is named as a <see cref="PlaybackAction"/> the shell performs.
 /// </para>
 /// <para>
 /// <b>The load-bearing branches the review names (§2.1)</b> are each one cell here:
 /// </para>
 /// <list type="bullet">
 /// <item><description>
-/// <b>loop-vs-end:</b> <c>Playing × LastFrameRendered</c> splits on
-/// <see cref="PlaybackInputs.RepeatOne"/> — an internal <see cref="PlaybackActionKind.RunLoopRewind"/>
-/// that never leaves <c>Playing</c>, or a transition to <c>Ended</c>.
+/// <b>end-of-stream:</b> <c>Playing × LastFrameRendered</c> and <c>Paused × LastFrameRendered</c>
+/// both go to <c>Ended</c>. The session runs the repeat mode, so an end-of-stream it reports
+/// means it has finished.
 /// </description></item>
 /// <item><description>
 /// <b>error routing:</b> <c>FatalError</c> from any non-terminal state routes to
@@ -308,12 +287,11 @@ internal static class PlaybackProtocol
             InternalPlaybackState.Paused => trigger switch
             {
                 PlaybackTrigger.Play => ToPlayingFromPlay(),
-                // End-of-stream while paused: a playlist skip on its last item (#182), or an
-                // end-of-stream posted just before the pause was dispatched. The stream is
-                // over, so end; the ticker already stopped on the way into Paused. Under
-                // RepeatMode.One there is no loop to run from Paused, so the trigger is
-                // dropped as it always was.
-                PlaybackTrigger.LastFrameRendered when !inputs.RepeatOne => PlaybackDecision.To(
+                // End-of-stream while paused: a skip on the last item (#182), or an end-of-stream
+                // posted just before the pause was dispatched. The session runs the repeat mode
+                // itself, so an end-of-stream it reports means it has finished whatever the mode.
+                // End; the ticker already stopped on the way into Paused.
+                PlaybackTrigger.LastFrameRendered => PlaybackDecision.To(
                     InternalPlaybackState.Ended,
                     PlaybackAction.Of(PlaybackActionKind.FreezeClock)
                 ),
@@ -323,19 +301,15 @@ internal static class PlaybackProtocol
 
             InternalPlaybackState.Playing => trigger switch
             {
-                // loop-vs-end: the marquee branch. RepeatMode.One loops internally
-                // (never leaves Playing); otherwise this is end-of-stream.
-                PlaybackTrigger.LastFrameRendered => inputs.RepeatOne
-                    ? PlaybackDecision.Internal(
-                        InternalPlaybackState.Playing,
-                        PlaybackAction.Of(PlaybackActionKind.RunLoopRewind)
-                    )
-                    // Playing OnExit stops the ticker; Ended OnEntry freezes the clock.
-                    : PlaybackDecision.To(
-                        InternalPlaybackState.Ended,
-                        PlaybackAction.Of(PlaybackActionKind.StopTicker),
-                        PlaybackAction.Of(PlaybackActionKind.FreezeClock)
-                    ),
+                // End-of-stream: the session has finished. A loop never reaches here — the
+                // session rewinds its item in place and reports the loop instead (the
+                // one-player-type record, decision 5).
+                // Playing OnExit stops the ticker; Ended OnEntry freezes the clock.
+                PlaybackTrigger.LastFrameRendered => PlaybackDecision.To(
+                    InternalPlaybackState.Ended,
+                    PlaybackAction.Of(PlaybackActionKind.StopTicker),
+                    PlaybackAction.Of(PlaybackActionKind.FreezeClock)
+                ),
                 // Pause: Playing OnExit stops the ticker; Paused OnEntry(Pause) pauses the session.
                 PlaybackTrigger.Pause => PlaybackDecision.To(
                     InternalPlaybackState.Paused,

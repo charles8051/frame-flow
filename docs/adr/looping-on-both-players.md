@@ -4,8 +4,10 @@
 
 Proposed (2026-09-14). Draft pending number assignment. Revised the same day after an independent
 review, and on 2026-09-15 onto the playlist session protocol; *Revision history* says what changed.
-**The playlist half is implemented** (decisions 5 and 6 on a playlist); *As implemented* says how.
-Nothing for a single source is.
+**Implemented.** The playlist half landed first (decisions 5 and 6 on a playlist); *As implemented*
+says how. A single source then became a queue of one, which is
+[One player type](one-player-type.md), so decisions 1, 3, 4, 5 and 6 reach it through the same
+session. Decision 8, the controller's fallback, is superseded by that record and its code is gone.
 
 This record supersedes [ADR-0021](ADR-0021-looped-playback-strategy.md). It decides:
 - what each `RepeatMode` means on a single-source player and on a playlist player;
@@ -353,6 +355,10 @@ This amends #197's note that the watchdog still reads the controller's own mode.
 ADR-0021's status becomes *Superseded* when this record is accepted.
 
 ### 8. If a single source does not run as a queue of one
+
+**Superseded by [One player type](one-player-type.md).** A single source does run as a queue of one,
+so the controller's loop path is deleted rather than extended. This decision is kept for the record
+of what the alternative was.
 
 If the record that runs a single source as a queue of one is rejected, the controller keeps
 single-source looping, and these changes apply to it instead. The first two drafts made them the plan.

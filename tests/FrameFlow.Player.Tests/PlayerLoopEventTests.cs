@@ -5,25 +5,24 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FrameFlow.Player.Tests;
 
 /// <summary>
-/// <see cref="IMediaPlayer.LoopRestarted"/> is the controller's event on both players: decision 5 of
-/// <c>docs/adr/looping-on-both-players.md</c>, validation row 14.
+/// <see cref="IMediaPlayer.LoopRestarted"/> is the controller's event, handed out unprojected:
+/// decision 5 of <c>docs/adr/looping-on-both-players.md</c>, validation row 14. There is one player
+/// type now, so there is one player to check.
 /// </summary>
 public sealed class PlayerLoopEventTests
 {
     [Fact]
-    public void LoopRestarted_IsTheControllersEvent_OnBothPlayers()
+    public void LoopRestarted_IsTheControllersEvent()
     {
         var controller = new PlaylistPlayerQueueTests.StubController();
 
-        IMediaPlayer single = new MediaPlayerCore(controller, audioSink: null, ownedProvider: null, NullLogger.Instance);
-        IMediaPlayer playlist = new PlaylistMediaPlayerCore(
+        IMediaPlayer player = new PlaylistMediaPlayerCore(
             controller,
             new PlaylistCoordinator([new MediaSource("a")], RepeatMode.All),
             audioSink: null,
             NullLogger.Instance
         );
 
-        Assert.Same(controller.LoopRestarted, single.LoopRestarted);
-        Assert.Same(controller.LoopRestarted, playlist.LoopRestarted);
+        Assert.Same(controller.LoopRestarted, player.LoopRestarted);
     }
 }

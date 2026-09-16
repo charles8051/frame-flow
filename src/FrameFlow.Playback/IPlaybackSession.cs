@@ -57,17 +57,15 @@ internal interface IPlaybackSession : IAsyncDisposable
     bool CanSeekFromEnded => true;
 
     /// <summary>
-    /// Whether this session runs the repeat mode itself, so an end-of-stream it reports always
-    /// means it has finished. The controller then ends on that end-of-stream whatever its own
-    /// repeat mode, and never runs its loop rewind on this session. A single source does not.
+    /// Whether this session expects its current item to repeat at its end. The controller reads it
+    /// on every position tick, for the loop-stall watchdog. An item runtime, which is driven by a
+    /// session rather than by the controller, answers <see langword="false"/>.
     /// </summary>
-    bool LoopsInternally => false;
-
-    /// <summary>
-    /// Whether a session that loops internally expects its current item to repeat at its end. The
-    /// controller reads it on every position tick, for the loop-stall watchdog, and computes the
-    /// answer itself for a session that does not loop internally.
-    /// </summary>
+    /// <remarks>
+    /// Every session the controller drives runs the repeat mode itself, so an end-of-stream it
+    /// reports means it has finished and the controller ends on it (the one-player-type record,
+    /// decision 5).
+    /// </remarks>
     bool ExpectsRepeat => false;
 
     // ── Lifecycle methods (called by PlaybackController entry actions) ──

@@ -368,7 +368,10 @@ internal sealed class PlaylistCoordinator
     internal T Update<T>(Func<PlaylistQueue, (PlaylistQueue Queue, T Result)> operation) =>
         Apply(operation);
 
-    /// <summary>Disposes the transition subject. Called by the owning player wrapper.</summary>
+    /// <summary>
+    /// Disposes the transition subject. Called by whoever owns this coordinator: the player
+    /// wrapper for a playlist, and the session factory for a controller's own queue of one.
+    /// </summary>
     internal void Dispose() => _transitioned.Dispose();
 
     // ── Private ─────────────────────────────────────────────────────────────
