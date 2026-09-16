@@ -132,7 +132,7 @@ if (!seeked.IsSuccess && seeked.Error.Category == ErrorCategory.InvalidOperation
 ```
 
 Construction is the exception to that: a null sink, a bad argument or a source
-that cannot be opened throws. A failure that arises mid-playback rather than in
+that cannot be opened or decoded throws. A failure that arises mid-playback rather than in
 answer to a command surfaces on `IMediaPlayer.ErrorOccurred`.
 
 See [ADR-0069](docs/adr/ADR-0069-one-error-model-across-the-playback-stack.md).
