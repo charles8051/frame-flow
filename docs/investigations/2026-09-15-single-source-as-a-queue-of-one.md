@@ -87,7 +87,12 @@ mode: two players in one process, each on its own composition-interop presenter,
 The two builds present the same number of frames to within four in eighteen thousand, at the same
 rate, with the same 202 loops per pane. No pane fell below 30.09 fps in any one-minute window, which
 is above the soak's floor of 90 percent of the clip's rate. No `LoopStalled` and no error on either
-build. Every dropped frame was counted in the first window and none after, on both.
+build.
+
+The dropped column is not zero, and is not a difference between the builds. It counts frames the
+sink superseded, four to six per pane over ten minutes, and every one of them was counted in the
+first one-minute window: the count is the same in every later sample, on both builds. That is the
+start-up window, before the pacer settles.
 
 The loop counts match, which is worth its own line: before the change they came from the
 controller's own loop, and after it from the session's report of a queue of one.

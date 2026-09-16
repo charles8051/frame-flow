@@ -203,6 +203,84 @@ public sealed class PlaylistCoordinatorTests
         Assert.True(coord.ItemFailed(TimeSpan.Zero, TimeSpan.Zero));
     }
 
+    // ── The load a controller of one source makes (the one-player-type record) ──────────────
+
+    [Fact]
+    public void LoadSource_MakesTheSourceTheOnlyItem()
+    {
+        var coord = new PlaylistCoordinator(RepeatMode.One);
+        var source = S("a");
+
+        coord.LoadSource(source);
+
+        var only = Assert.Single(coord.Queue.Playlist);
+        Assert.Same(source, only.Source);
+        Assert.Equal(RepeatMode.One, coord.RepeatMode);
+    }
+
+    [Fact]
+    public void LoadSource_AfterAnEnqueue_DropsIt()
+    {
+        // A load is a new queue. Only a replay keeps what the player holds.
+        var coord = new PlaylistCoordinator(RepeatMode.Off);
+        coord.LoadSource(S("a"));
+        coord.Enqueue(S("b"));
+
+        coord.LoadSource(S("a"));
+
+        Assert.Empty(coord.Queue.Queued);
+        Assert.Single(coord.Queue.Playlist);
+    }
+
+    [Fact]
+    public void LoadSource_AfterAReservation_KeepsTheQueue_AndTheMarkIsSpentOnce()
+    {
+        var coord = new PlaylistCoordinator(RepeatMode.Off);
+        coord.LoadSource(S("a"));
+        var enqueued = coord.Enqueue(S("b"));
+        Assert.True(coord.ReserveStart());
+
+        coord.LoadSource(S("a"));
+
+        // The load left the queue alone: the reservation stands, and so does the enqueued item.
+        Assert.NotNull(coord.Queue.ReservedStart);
+        Assert.Same(enqueued, Assert.Single(coord.Queue.Queued));
+
+        // The next load is an ordinary one: the mark was spent.
+        coord.LoadSource(S("a"));
+        Assert.Null(coord.Queue.ReservedStart);
+        Assert.Empty(coord.Queue.Queued);
+    }
+
+    [Fact]
+    public void LoadSource_AfterAReservationAndAReplace_KeepsTheReplacement()
+    {
+        // A replace between the replay's reservation and its load clears the reservation and makes
+        // its first item the pending jump. The load must keep that: rebuilding the queue would
+        // play the source the replay reloaded and discard what the caller asked for.
+        var coord = new PlaylistCoordinator(RepeatMode.Off);
+        coord.LoadSource(S("a"));
+        Assert.True(coord.ReserveStart());
+
+        var replaced = coord.Replace([S("b"), S("c")]);
+        coord.LoadSource(S("a"));
+
+        Assert.Equal(replaced, coord.Queue.Playlist);
+        Assert.Same(replaced[0], coord.Queue.PendingJump);
+    }
+
+    [Fact]
+    public void ReserveStart_OnAnEmptyPlayer_LeavesTheNextLoadOrdinary()
+    {
+        var coord = new PlaylistCoordinator(RepeatMode.Off);
+
+        Assert.False(coord.ReserveStart());
+
+        var source = S("a");
+        coord.LoadSource(source);
+        Assert.Same(source, Assert.Single(coord.Queue.Playlist).Source);
+    }
+
     private sealed class Collector : IObserver<PlaylistTransition>
     {
         private readonly Action<PlaylistTransition> _onNext;

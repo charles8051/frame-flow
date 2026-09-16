@@ -244,6 +244,12 @@ public partial class MainWindow : Window
                     played.Error.Message
                 );
                 StatusText.Text = $"Refused — {played.Error.Message}";
+                // A player that refused to start still holds a session and a presenter. A soak
+                // that retries would stack them up, so this one goes now.
+                _players.Remove(player);
+                _surfaces.Remove(surface);
+                await player.DisposeAsync();
+                await DisposeSurfaceAsync(surface);
                 return null;
             }
 

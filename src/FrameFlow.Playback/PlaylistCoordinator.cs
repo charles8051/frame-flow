@@ -36,6 +36,8 @@ internal sealed class PlaylistCoordinator
 
     private PlaylistQueue _queue;
 
+    private bool _replayPending;
+
     private Action? _skipHandler;
     private Action? _jumpHandler;
     private object? _sessionToken;
@@ -239,20 +241,23 @@ internal sealed class PlaylistCoordinator
 
     /// <summary>
     /// Makes <paramref name="source"/> the only item, in a new queue with the same repeat mode. A
-    /// replay from <c>Ended</c> keeps the queue instead, so the item it reserved is what plays.
+    /// replay from <c>Ended</c> keeps the queue instead, whatever it now holds.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A reserved item is the replay's marker: <see cref="ReserveStart"/> is called on the old
-    /// session, by the controller's replay and by nothing else, and the new session's first take
-    /// consumes it. The replay reserves and loads inside one dispatched command, so no other load
-    /// runs in between. Every other load replaces the queue, so an ordinary reload plays the source
-    /// it was given and nothing that was enqueued before it.
+    /// The replay is marked on the coordinator, not on the queue: <see cref="ReserveStart"/> sets
+    /// the mark and the next load consumes it, under the same lock. A queue edit between the two
+    /// therefore cannot hide the replay, and the edit stands: a replacement made while the player
+    /// was ended is what the replay then starts with, because the queue already holds it.
     /// </para>
     /// <para>
-    /// A new queue has started nothing, so a first item that cannot be opened fails the load, as it
-    /// does on a controller's first load. A replay whose load fails leaves the reservation behind,
-    /// and the controller is then in <c>Error</c>, which takes no further load.
+    /// Every other load replaces the queue, so an ordinary reload plays the source it was given and
+    /// nothing that was enqueued before it. A new queue has started nothing, so a first item that
+    /// cannot be opened fails the load, as it does on a controller's first load.
+    /// </para>
+    /// <para>
+    /// A replay whose load fails leaves the mark set, and the controller is then in <c>Error</c>,
+    /// which takes no further load.
     /// </para>
     /// <para>Called before the new session attaches, so no handler is poked.</para>
     /// </remarks>
@@ -261,8 +266,12 @@ internal sealed class PlaylistCoordinator
         ArgumentNullException.ThrowIfNull(source);
         lock (_gate)
         {
-            if (_queue.ReservedStart is not null)
+            if (_replayPending)
+            {
+                _replayPending = false;
                 return;
+            }
+
             _queue = PlaylistQueue.Create([new PlaylistItem(source)], _queue.Repeat);
         }
     }
@@ -317,10 +326,22 @@ internal sealed class PlaylistCoordinator
     }
 
     /// <summary>
-    /// Takes the item a replay from Ended will start with, before the controller unloads.
-    /// Returns <see langword="false"/> when the player holds nothing to take.
+    /// Takes the item a replay from Ended will start with, before the controller unloads, and marks
+    /// the replay so the load that follows keeps this queue. Returns <see langword="false"/> when
+    /// the player holds nothing to take, which leaves the mark alone.
     /// </summary>
-    internal bool ReserveStart() => Apply(q => q.ReserveStart());
+    internal bool ReserveStart()
+    {
+        lock (_gate)
+        {
+            var (queue, reserved) = _queue.ReserveStart();
+            if (!reserved)
+                return false;
+            _queue = queue;
+            _replayPending = true;
+            return true;
+        }
+    }
 
     /// <summary>
     /// Takes the item a new session starts with. Returns <see langword="null"/> when the player
