@@ -141,9 +141,10 @@ public GraphChain<TOut> Join<TSecondary, TOut>(
 Both edge options are required, for the reason in decision 2. `ToPrimary` and `ToSecondary` stay:
 they wire a join whose other side is built elsewhere.
 
-Fork-then-rejoin is the "one producer feeds both sides" shape `SyncJoin.cs:183-189` warns about. The
-warning is not lifted by this record. A dropping branch edge, which is what LiveCaptioning uses, is
-safe; a blocking branch edge under a tight `MaxLead` is the case the warning describes.
+Fork-then-rejoin is the "one producer feeds both sides" shape `SyncJoin.cs:183-189` warns about. A
+dropping branch edge, which is what LiveCaptioning uses, is safe; an all-blocking branch path under a
+`MaxLead` is the cycle the warning describes, and decision 5 rejects it at wiring time rather than
+leaving it to the caller to read the remark.
 
 ### 4. There is one configurator contract: it returns an open chain, and the builder terminates it
 
@@ -188,10 +189,23 @@ appending two closures. `RunAsync` derives the per-edge reset and wire-up from t
 the order it has today: the `_beforeRun` hooks #239 added, then the resets, then the wire-ups
 (`Graph.cs:202-208`).
 
-A pure `Validate(edges)` runs first and reports declared-inheritor conflicts, an inheritor carrying
-a cloner, and a join input that was never wired. The workspace's functional-core rule is the reason:
-the topology is a value, so the rules over it are a total function of that value, testable without
-running a graph.
+A pure `Validate(edges)` runs first and reports a port with more than one marked edge, a marked edge
+carrying a cloner, and a join input that was never wired. The workspace's functional-core rule is the
+reason: the topology is a value, so the rules over it are a total function of that value, testable
+without running a graph.
+
+`Validate` also rejects the deadlock shape `SyncJoin.cs:183-189` warns about, which decision 2 makes
+easier to build. The cycle needs four things at once: a port that feeds a join's primary, a path from
+that same port to the same join's secondary, every edge on that path blocking, and a `MaxLead` on the
+join. The join then stops reading the secondary, the full secondary edge blocks the branch, the
+blocked branch stalls the fork's `Task.WhenAll` (`NodePumps.cs:586-592`), and the primary that would
+release the lead never arrives. All four are properties of the edge list and the join node, so the
+check is a traversal over a value. A dropping edge anywhere on the branch path breaks the cycle,
+which is why LiveCaptioning's `LatestWins(1)` shape is safe, and so does leaving `MaxLead` unset.
+
+The check is conservative in one direction: it rejects a blocking fork-rejoin under a `MaxLead` that
+a large enough lead would have survived. That is the trade, and the message says which of the two
+escapes to take.
 
 ## Consequences
 
@@ -199,10 +213,13 @@ running a graph.
   `WithInherit` are new members, and `EdgeConfig<T>` gains an init-only member rather than a
   positional one. Removing the configurator-terminated mode is the break: a configurator registered
   without a sink used to run and now fails the build.
-- **The break is not a compile error.** The three examples that terminate inside the configurator and
-  return a placeholder chain keep compiling. They present twice, once through their own terminal and
-  once through the builder's, until they move that terminal into an `IVideoSink`. That is the class
-  `docs/BREAKING-CHANGES.md` calls out at the top, and it needs an entry naming the three call sites.
+- **The break is not a compile error.** Three call sites terminate inside the configurator and return
+  a placeholder chain: LiveCaptioning (`MainWindow.axaml.cs:467`, `:496`), Multicast (`:419`, `:476`)
+  and Multicast.Dml (`:327`). They keep compiling and present twice, once through their own terminal
+  and once through the builder's, until each moves its terminal into an `IVideoSink` and registers it
+  with `WithVideoSink`. A sinkless configurator, which is what those three are today, fails the build
+  instead of running. That is the class `docs/BREAKING-CHANGES.md` calls out at the top; the entry
+  lands with the implementing change, naming these three.
 - **The lookahead epic gets its attachment point.** A configured chain is upstream of the pacer on
   every path, so a deeper ring is a property of the sink decorator rather than of which shape the
   consumer happened to build. #227 can drop the convergence question from its deferred list.
