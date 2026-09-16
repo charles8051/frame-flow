@@ -15,7 +15,7 @@ entry points assemble the controller through one private method (#44).
 | Piece | Change |
 |---|---|
 | `PlaybackController` | `Create` and `CreatePlaylist` build a session factory and call one `Assemble`. `Create`'s factory is a `PlaylistSessionFactory` over an empty coordinator, with `loadsSource` set. |
-| `PlaylistCoordinator` | A constructor for an empty queue, and `LoadSource`, which makes the source the only item. It keeps the queue when that queue already plays the source, so a replay from `Ended` keeps what was enqueued meanwhile. |
+| `PlaylistCoordinator` | A constructor for an empty queue, and `LoadSource`, which makes the source the only item. It keeps the queue only when a replay from `Ended` has reserved an item on it, so what was enqueued at `Ended` still plays and every other load replaces the queue. |
 | `PlaylistSession` | `InitializeAsync` calls `LoadSource` when the factory set `loadsSource`. |
 | `IPlaybackSessionFactory` | `RepeatModeChanged`, called with the controller's mode at construction and on every change. The playlist factory passes it to the coordinator, so the queue runs the mode the controller reports. |
 | `PlaylistSessionFactory` | Takes `latenessRecovery`, which only the single-source factory used to take. |
@@ -67,8 +67,9 @@ the spike.
 5. **A stale end-of-stream cannot end the player after a seek.** The session drops an end-of-stream
    whose run number is out of date (decision 2 of the end-of-queue record), which is what #195 asks
    of the controller. A deterministic test for it still needs the tooling #143 asks for.
-6. **`MediaPlayer.CreateAsync` returns a player that also implements `IMediaPlaylistPlayer`.** The
-   declared return type is unchanged, and no public signature changed.
+6. **`MediaPlayer.CreateAsync` returns a player that also implements `IMediaPlaylistPlayer`.** Its
+   declared return type is still `Task<IMediaPlayer>`, so the spike changes no public signature. The
+   record proposes changing that type, and accounts for the break there.
 
 ## The hardware run
 
@@ -98,6 +99,6 @@ frames presented; the hour belongs with the proposal.
 - **Row 7 of the looping record**, a single source whose loop ends while paused, needs an
   end-of-stream held until after the pause. `PlaylistSessionProtocolTests` pins it in the core.
 - **The public break accounting** and the `PublicAPI` baselines belong to the proposal. This spike
-  changes no public signature, but it changes what three of them do.
+  changes no public signature, but it changes what three of them do, and the proposal changes one.
 - **The controller's coordinator has no owner.** `Create` builds one and nothing disposes it; its
   transition subject is never completed. Nothing reads that stream on a single-source controller.
