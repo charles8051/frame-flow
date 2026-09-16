@@ -18,6 +18,8 @@ internal sealed class PlaylistRun : IAsyncDisposable
     private readonly List<(PlaybackState State, TaskCompletionSource Signal)> _stateWaiters = [];
     private readonly List<(IMediaSource Source, TaskCompletionSource Signal)> _sourceWaiters = [];
     private readonly List<(int Count, TaskCompletionSource Signal)> _countWaiters = [];
+    private readonly List<int> _loops = [];
+    private readonly List<(int Count, TaskCompletionSource Signal)> _loopWaiters = [];
     private readonly TaskCompletionSource _gaveUp = new(
         TaskCreationOptions.RunContinuationsAsynchronously
     );
@@ -60,6 +62,20 @@ internal sealed class PlaylistRun : IAsyncDisposable
                         foreach (var (count, signal) in _countWaiters)
                         {
                             if (_transitions.Count >= count)
+                                signal.TrySetResult();
+                        }
+                    }
+                })
+            ),
+            controller.LoopRestarted.Subscribe(
+                new ActionObserver<LoopRestarted>(loop =>
+                {
+                    lock (_gate)
+                    {
+                        _loops.Add(loop.LoopCount);
+                        foreach (var (count, signal) in _loopWaiters)
+                        {
+                            if (_loops.Count >= count)
                                 signal.TrySetResult();
                         }
                     }
@@ -108,15 +124,66 @@ internal sealed class PlaylistRun : IAsyncDisposable
         }
     }
 
+    /// <summary>The loop count each <see cref="IPlaybackController.LoopRestarted"/> carried.</summary>
+    public IReadOnlyList<int> Loops
+    {
+        get
+        {
+            lock (_gate)
+                return _loops.ToArray();
+        }
+    }
+
+    /// <summary>Completes once at least <paramref name="count"/> loops have been reported.</summary>
+    public Task WhenLoops(int count)
+    {
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+        {
+            if (_loops.Count >= count)
+                signal.TrySetResult();
+            else
+                _loopWaiters.Add((count, signal));
+        }
+        return signal.Task;
+    }
+
+    /// <param name="items">The playlist, or the one source of a single-source run.</param>
+    /// <param name="repeat">The repeat mode both the controller and the queue start with.</param>
+    /// <param name="configureVideo">The video-chain configurator applied to every item.</param>
+    /// <param name="clock">The controller's clock. A fresh <see cref="PlaybackClock"/> by default.</param>
+    /// <param name="asSingleSource">
+    /// Builds the run through <see cref="PlaybackController.Create"/>, the single-source entry
+    /// point, instead of <see cref="PlaybackController.CreatePlaylist"/>. Both play a queue; the
+    /// first seeds it from the source it loads. Only for one item.
+    /// </param>
     public static PlaylistRun Create(
         IMediaSource[] items,
         RepeatMode repeat,
         Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? configureVideo = null,
-        IPlaybackClock? clock = null
+        IPlaybackClock? clock = null,
+        bool asSingleSource = false
     )
     {
-        var coordinator = new PlaylistCoordinator(items, repeat);
         var sink = new PresentCountingVideoSink();
+
+        if (asSingleSource)
+        {
+            Assert.Single(items);
+
+            var single = PlaybackController.Create(
+                videoSink: sink,
+                audioSink: null,
+                hardwareDecodeMode: HardwareDecodeMode.Disabled,
+                initialRepeatMode: repeat,
+                clock: clock,
+                configureVideo: configureVideo
+            );
+            var factory = (PlaylistSessionFactory)((PlaybackControllerCore)single).SessionFactory;
+            return new PlaylistRun(single, factory.Coordinator, sink, items[0]);
+        }
+
+        var coordinator = new PlaylistCoordinator(items, repeat);
         var controller = PlaybackController.CreatePlaylist(
             coordinator,
             videoSink: sink,

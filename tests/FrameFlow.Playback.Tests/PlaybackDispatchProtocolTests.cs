@@ -250,38 +250,35 @@ public sealed class PlaybackDispatchProtocolTests
         Assert.Equal(PlaybackState.Ended, controller.State);
     }
 
-    [Fact]
-    public async Task LastFrameRendered_RepeatOne_LoopsWithoutLeavingPlaying()
+    [Theory]
+    [InlineData(RepeatMode.Off)]
+    [InlineData(RepeatMode.One)]
+    [InlineData(RepeatMode.All)]
+    public async Task LastFrameRendered_EndsPlayback_WhateverTheRepeatMode(RepeatMode repeat)
     {
-        var (controller, session) = NewController(RepeatMode.One);
+        // The session runs the repeat mode and rewinds its own item, so an end-of-stream it
+        // reports means it has finished. The controller ends and runs no rewind of its own
+        // (the one-player-type record, decision 5).
+        var (controller, session) = NewController(repeat);
         await using var _ = controller;
 
         await controller.LoadAsync(new FakeSource());
         await controller.PlayAsync();
 
-        var loopTcs = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously
-        );
-        using var sub = controller.LoopRestarted.Subscribe(
-            new Relay<LoopRestarted>(_ => loopTcs.TrySetResult())
+        var endedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sub = controller.PlaybackStateChanged.Subscribe(
+            new Relay<StateTransition<PlaybackState>>(t =>
+            {
+                if (t.Current == PlaybackState.Ended)
+                    endedTcs.TrySetResult();
+            })
         );
 
-        // End-of-stream under RepeatMode.One is the internal loop transition: it must
-        // raise LoopRestarted, route a rewind through the session, and NEVER leave Playing.
         session.RaiseEndOfStream();
 
-        await loopTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(PlaybackState.Playing, controller.State);
-
-        // The rewind runs on a background seek task (StartSeekRunner), so LoopRestarted
-        // can fire fractionally before SeekAsync lands — wait for the session to see it.
-        await CompletesWithin(session.FirstSeek.Task, TimeSpan.FromSeconds(5));
-        Assert.True(
-            Volatile.Read(ref session.SeekCalls) >= 1,
-            "Loop boundary did not route a rewind to the session."
-        );
-        // Still Playing after the rewind completed (the internal transition never exits Playing).
-        Assert.Equal(PlaybackState.Playing, controller.State);
+        await CompletesWithin(endedTcs.Task, TimeSpan.FromSeconds(5));
+        Assert.Equal(PlaybackState.Ended, controller.State);
+        Assert.Equal(0, Volatile.Read(ref session.SeekCalls));
     }
 
     [Fact]
@@ -369,14 +366,13 @@ public sealed class PlaybackDispatchProtocolTests
     }
 
     [Fact]
-    public async Task LoopRestarted_FromASessionThatLoopsInternally_IsPublished_WithItsCount()
+    public async Task LoopRestarted_FromTheSession_IsPublished_WithItsCount()
     {
-        // The looping record's decision 5: a playlist counts its own loops and reports each one.
+        // The looping record's decision 5: the session counts its own loops and reports each one.
         // The controller publishes the session's count with the loaded duration, in order, and
         // runs no loop of its own.
         var (controller, session) = NewController(RepeatMode.All);
         await using var _ = controller;
-        session.LoopsInternally = true;
 
         await controller.LoadAsync(new FakeSource());
         await controller.PlayAsync();
@@ -401,7 +397,6 @@ public sealed class PlaybackDispatchProtocolTests
     {
         var (controller, session) = NewController(RepeatMode.All);
         await using var _ = controller;
-        session.LoopsInternally = true;
 
         await controller.LoadAsync(new FakeSource());
         var unloaded = session.Callbacks;
@@ -703,18 +698,13 @@ public sealed class PlaybackDispatchProtocolTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task EndOfStream_UnderRepeatOne_FromASessionThatLoopsInternally_EndsPlayback(
-        bool paused
-    )
+    public async Task EndOfStream_UnderRepeatOne_EndsPlayback_PlayingOrPaused(bool paused)
     {
-        // A playlist loops its own items and reports end-of-stream only when its queue has ended.
-        // The playlist player sets the controller's repeat mode before the playlist's, so an
-        // end-of-stream from a queue that ended under Off can reach a controller already under
-        // One (#170). The controller used to run its loop rewind on the ended playlist and stay
-        // Playing, or drop the trigger while Paused.
+        // The controller used to run its loop rewind on an end-of-stream under One and stay
+        // Playing, or drop the trigger while Paused. Its session reports one only once it has
+        // finished, whatever the mode, so both end.
         var (controller, session) = NewController(RepeatMode.One);
         await using var _ = controller;
-        session.LoopsInternally = true;
         await controller.LoadAsync(new FakeSource());
         await controller.PlayAsync();
         if (paused)
@@ -964,49 +954,6 @@ public sealed class PlaybackDispatchProtocolTests
         );
     }
 
-    [Fact]
-    public async Task RepeatOneLoop_DoesNotEmitPlayingProjection_AcrossLoopBoundary()
-    {
-        // The loop boundary is an INTERNAL transition (RunLoopRewind, never leaves Playing).
-        // Stateless never fired OnTransitioned for an internal transition, so the interpreter
-        // must NOT emit a Playing→Playing public projection on a loop boundary — only the
-        // initial Loading→…→Playing transitions, plus LoopRestarted.
-        var (controller, session) = NewController(RepeatMode.One);
-        await using var _ = controller;
-
-        var publicStates = new ConcurrentQueue<PlaybackState>();
-        using var stateSub = controller.PlaybackStateChanged.Subscribe(
-            new Relay<StateTransition<PlaybackState>>(t => publicStates.Enqueue(t.Current))
-        );
-
-        await controller.LoadAsync(new FakeSource());
-        await controller.PlayAsync();
-
-        var loopTcs = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously
-        );
-        using var loopSub = controller.LoopRestarted.Subscribe(
-            new Relay<LoopRestarted>(_ => loopTcs.TrySetResult())
-        );
-
-        var playingProjectionsBeforeLoop = publicStates.Count(s => s == PlaybackState.Playing);
-        Assert.Equal(1, playingProjectionsBeforeLoop);
-
-        session.RaiseEndOfStream();
-        await loopTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-        // Let any erroneous extra projection surface, then assert none did. Commands and
-        // internal triggers share one serial dispatch channel, and projections are raised
-        // synchronously while a command is dispatched. So a command posted now completes only
-        // after the end-of-stream trigger ahead of it has finished, projections included.
-        // Re-selecting the current repeat mode is a dispatched no-op, which makes it a barrier
-        // with no side effects; it replaces a 50 ms sleep that only made that likely.
-        var barrier = await controller.SetRepeatModeAsync(RepeatMode.One);
-        Assert.True(barrier.IsSuccess);
-        Assert.Equal(PlaybackState.Playing, controller.State);
-        Assert.Equal(1, publicStates.Count(s => s == PlaybackState.Playing));
-    }
-
     // Waits for a signal without throwing when it does not come, so the assertion that follows
     // reports what went wrong instead of a bare TimeoutException. The bound is a safety net: the
     // signal arrives in microseconds when the behaviour is right (ADR-0072).
@@ -1104,8 +1051,6 @@ public sealed class PlaybackDispatchProtocolTests
         public bool TryBeginReplay() => ReplayAvailable;
 
         public bool CanSeekFromEnded { get; set; } = true;
-
-        public bool LoopsInternally { get; set; }
 
         public ValueTask InitializeAsync(
             IMediaSource source,

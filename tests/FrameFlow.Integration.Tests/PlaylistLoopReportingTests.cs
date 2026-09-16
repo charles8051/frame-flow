@@ -33,7 +33,6 @@ public sealed class PlaylistLoopReportingTests : IClassFixture<FfmpegBootstrapFi
 {
     private const string ShortClip = "test-subsecond.mp4";
     private const string LongClip = "test-video-h264-yuv420p.mp4";
-    private const int FaultFrame = 21;
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
 
     public PlaylistLoopReportingTests(FfmpegBootstrapFixture fixture)
@@ -45,12 +44,11 @@ public sealed class PlaylistLoopReportingTests : IClassFixture<FfmpegBootstrapFi
     public async Task APlaylistOfOneUnderAll_ReportsEachLoop_AndItsWrap()
     {
         await using var run = PlaylistRun.Create([Source(ShortClip)], RepeatMode.All);
-        var loops = new LoopRecorder(run.Controller);
 
         await run.PlayAsync();
-        await loops.WhenCount(2).WaitAsync(Bound);
+        await run.WhenLoops(2).WaitAsync(Bound);
 
-        Assert.Equal([1, 2], loops.Counts.Take(2));
+        Assert.Equal([1, 2], run.Loops.Take(2));
         Assert.All(run.Transitions.Skip(1), t => Assert.True(t.Wrapped));
         Assert.Empty(run.Errors);
     }
@@ -59,12 +57,11 @@ public sealed class PlaylistLoopReportingTests : IClassFixture<FfmpegBootstrapFi
     public async Task APlaylistOfOneUnderOne_ReportsEachLoop()
     {
         await using var run = PlaylistRun.Create([Source(ShortClip)], RepeatMode.One);
-        var loops = new LoopRecorder(run.Controller);
 
         await run.PlayAsync();
-        await loops.WhenCount(2).WaitAsync(Bound);
+        await run.WhenLoops(2).WaitAsync(Bound);
 
-        Assert.Equal([1, 2], loops.Counts.Take(2));
+        Assert.Equal([1, 2], run.Loops.Take(2));
         Assert.All(run.Transitions.Skip(1), t => Assert.False(t.Wrapped));
         Assert.Empty(run.Errors);
     }
@@ -83,17 +80,16 @@ public sealed class PlaylistLoopReportingTests : IClassFixture<FfmpegBootstrapFi
     public async Task ASkip_ReportsNoLoop_AndTheNextLoopCountsFromOne()
     {
         await using var run = PlaylistRun.Create([Source(LongClip)], RepeatMode.All);
-        var loops = new LoopRecorder(run.Controller);
 
         await run.PlayAsync();
-        await loops.WhenCount(1).WaitAsync(Bound);
+        await run.WhenLoops(1).WaitAsync(Bound);
 
         // Right after a loop, a whole pass is left before the next end, so the skip is handled first.
         var transitionsAtSkip = run.Transitions.Count;
         run.Coordinator.RequestSkip();
-        await loops.WhenCount(2).WaitAsync(Bound);
+        await run.WhenLoops(2).WaitAsync(Bound);
 
-        Assert.Equal([1, 1], loops.Counts.Take(2));
+        Assert.Equal([1, 1], run.Loops.Take(2));
         Assert.True(
             run.Transitions.Count >= transitionsAtSkip + 2,
             $"Expected the skip's transition before the second loop; transitions: {run.Transitions.Count}."
@@ -108,15 +104,14 @@ public sealed class PlaylistLoopReportingTests : IClassFixture<FfmpegBootstrapFi
         // rebuild after a failure, and then plays to its end, which is its first loop.
         var faults = new FaultInjector(breaks: chain => chain == 0);
         await using var run = PlaylistRun.Create([Source(LongClip)], RepeatMode.All, faults.Configure);
-        var loops = new LoopRecorder(run.Controller);
 
         await run.PlayAsync();
-        await loops.WhenCount(1).WaitAsync(Bound);
+        await run.WhenLoops(1).WaitAsync(Bound);
 
         // The load's transition, the fault's rebuild and the loop.
         Assert.True(run.Transitions.Count >= 3, $"Transitions: {run.Transitions.Count}.");
-        Assert.Equal(1, loops.Counts[0]);
-        Assert.Contains(run.Errors, InjectedFault);
+        Assert.Equal(1, run.Loops[0]);
+        Assert.Contains(run.Errors, InjectedFault.Caused);
     }
 
     [RequiresFfmpegAndCorpusFact]
@@ -125,56 +120,31 @@ public sealed class PlaylistLoopReportingTests : IClassFixture<FfmpegBootstrapFi
         var first = Source(LongClip);
         var second = Source(LongClip);
         await using var run = PlaylistRun.Create([first, second], RepeatMode.One);
-        var loops = new LoopRecorder(run.Controller);
 
         await run.PlayAsync();
-        await loops.WhenCount(2).WaitAsync(Bound);
+        await run.WhenLoops(2).WaitAsync(Bound);
 
         // A whole pass is left before the first item's next end, so the jump is taken first.
         var secondIsCurrent = run.Transitioned(second);
         Assert.Equal(JumpRequest.Pending, run.Coordinator.RequestJump(run.Coordinator.Snapshot().Playlist[1]));
         await secondIsCurrent.WaitAsync(Bound);
-        await loops.WhenCount(3).WaitAsync(Bound);
+        await run.WhenLoops(3).WaitAsync(Bound);
 
-        Assert.Equal([1, 2, 1], loops.Counts.Take(3));
+        Assert.Equal([1, 2, 1], run.Loops.Take(3));
         Assert.Empty(run.Errors);
     }
 
     private static async Task AssertHandOffsReportNoLoopAsync(IMediaSource[] items)
     {
         await using var run = PlaylistRun.Create(items, RepeatMode.All);
-        var loops = new LoopRecorder(run.Controller);
 
         await run.PlayAsync();
         // The load's transition, two hand-offs, and one more so both hand-offs' actions are done.
         await run.WhenTransitions(4).WaitAsync(Bound);
         Assert.True((await run.Controller.SetRepeatModeAsync(RepeatMode.All)).IsSuccess);
 
-        Assert.Empty(loops.Counts);
+        Assert.Empty(run.Loops);
         Assert.Empty(run.Errors);
-    }
-
-    /// <summary>Whether the error's exception chain holds the injected fault.</summary>
-    private static bool InjectedFault(PlaybackError error)
-    {
-        var pending = new Stack<Exception>();
-        if (error.Inner is { } inner)
-            pending.Push(inner);
-        while (pending.TryPop(out var ex))
-        {
-            if (ex.Message.StartsWith("Injected fault", StringComparison.Ordinal))
-                return true;
-            if (ex is AggregateException aggregate)
-            {
-                foreach (var child in aggregate.InnerExceptions)
-                    pending.Push(child);
-            }
-            else if (ex.InnerException is { } next)
-            {
-                pending.Push(next);
-            }
-        }
-        return false;
     }
 
     private static IMediaSource Source(string clip)
@@ -182,78 +152,5 @@ public sealed class PlaylistLoopReportingTests : IClassFixture<FfmpegBootstrapFi
         var path = IntegrationTestEnvironment.GetCorpusFile(clip);
         Assert.NotNull(path);
         return MediaSource.FromFile(path!);
-    }
-
-    /// <summary>Records the controller's loop reports, and signals when a count of them arrives.</summary>
-    private sealed class LoopRecorder
-    {
-        private readonly Lock _gate = new();
-        private readonly List<int> _counts = [];
-        private readonly List<(int Count, TaskCompletionSource Signal)> _waiters = [];
-
-        public LoopRecorder(IPlaybackController controller) =>
-            controller.LoopRestarted.Subscribe(new ActionObserver<LoopRestarted>(Record));
-
-        public IReadOnlyList<int> Counts
-        {
-            get
-            {
-                lock (_gate)
-                    return _counts.ToArray();
-            }
-        }
-
-        public Task WhenCount(int count)
-        {
-            var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            lock (_gate)
-            {
-                if (_counts.Count >= count)
-                    signal.TrySetResult();
-                else
-                    _waiters.Add((count, signal));
-            }
-            return signal.Task;
-        }
-
-        private void Record(LoopRestarted loop)
-        {
-            lock (_gate)
-            {
-                _counts.Add(loop.LoopCount);
-                foreach (var (count, signal) in _waiters)
-                {
-                    if (_counts.Count >= count)
-                        signal.TrySetResult();
-                }
-            }
-        }
-    }
-
-    /// <summary>
-    /// Supplies the playlist's video configurator. Chains are numbered in the order they are built,
-    /// and the chains <c>breaks</c> selects throw on their 21st frame.
-    /// </summary>
-    private sealed class FaultInjector(Func<int, bool> breaks)
-    {
-        private int _chains;
-
-        public GraphChain<VideoFrameRef> Configure(GraphChain<VideoFrameRef> chain)
-        {
-            var index = Interlocked.Increment(ref _chains) - 1;
-            if (!breaks(index))
-                return chain;
-
-            var frames = 0;
-            return chain.Then(
-                new OperatorNode<VideoFrameRef, VideoFrameRef>(
-                    "inject-fault",
-                    (frame, _) =>
-                        ++frames == FaultFrame
-                            ? throw new InvalidOperationException($"Injected fault in chain {index}.")
-                            : ValueTask.FromResult<VideoFrameRef?>(frame)
-                )
-            );
-        }
     }
 }

@@ -36,6 +36,8 @@ internal sealed class PlaylistCoordinator
 
     private PlaylistQueue _queue;
 
+    private bool _replayPending;
+
     private Action? _skipHandler;
     private Action? _jumpHandler;
     private object? _sessionToken;
@@ -60,6 +62,12 @@ internal sealed class PlaylistCoordinator
             );
         _queue = PlaylistQueue.Create(items, repeat);
     }
+
+    /// <summary>
+    /// An empty coordinator for a controller that plays one source at a time. Each load makes the
+    /// loaded source the only item (<see cref="LoadSource"/>).
+    /// </summary>
+    internal PlaylistCoordinator(RepeatMode repeat) => _queue = PlaylistQueue.Create([], repeat);
 
     /// <summary>The queue as it is now.</summary>
     internal PlaylistQueue Queue
@@ -231,6 +239,43 @@ internal sealed class PlaylistCoordinator
     internal bool ItemFailed(TimeSpan playedFor, TimeSpan itemLength) =>
         Apply(q => q.ItemFailed(playedFor, itemLength));
 
+    /// <summary>
+    /// Makes <paramref name="source"/> the only item, in a new queue with the same repeat mode. A
+    /// replay from <c>Ended</c> keeps the queue instead, whatever it now holds.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The replay is marked on the coordinator, not on the queue: <see cref="ReserveStart"/> sets
+    /// the mark and the next load consumes it, under the same lock. A queue edit between the two
+    /// therefore cannot hide the replay, and the edit stands: a replacement made while the player
+    /// was ended is what the replay then starts with, because the queue already holds it.
+    /// </para>
+    /// <para>
+    /// Every other load replaces the queue, so an ordinary reload plays the source it was given and
+    /// nothing that was enqueued before it. A new queue has started nothing, so a first item that
+    /// cannot be opened fails the load, as it does on a controller's first load.
+    /// </para>
+    /// <para>
+    /// A replay whose load fails leaves the mark set, and the controller is then in <c>Error</c>,
+    /// which takes no further load.
+    /// </para>
+    /// <para>Called before the new session attaches, so no handler is poked.</para>
+    /// </remarks>
+    internal void LoadSource(IMediaSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        lock (_gate)
+        {
+            if (_replayPending)
+            {
+                _replayPending = false;
+                return;
+            }
+
+            _queue = PlaylistQueue.Create([new PlaylistItem(source)], _queue.Repeat);
+        }
+    }
+
     /// <summary>Whether any item has started since the player was created.</summary>
     internal bool AnyStarted => Queue.AnyStarted;
 
@@ -281,10 +326,22 @@ internal sealed class PlaylistCoordinator
     }
 
     /// <summary>
-    /// Takes the item a replay from Ended will start with, before the controller unloads.
-    /// Returns <see langword="false"/> when the player holds nothing to take.
+    /// Takes the item a replay from Ended will start with, before the controller unloads, and marks
+    /// the replay so the load that follows keeps this queue. Returns <see langword="false"/> when
+    /// the player holds nothing to take, which leaves the mark alone.
     /// </summary>
-    internal bool ReserveStart() => Apply(q => q.ReserveStart());
+    internal bool ReserveStart()
+    {
+        lock (_gate)
+        {
+            var (queue, reserved) = _queue.ReserveStart();
+            if (!reserved)
+                return false;
+            _queue = queue;
+            _replayPending = true;
+            return true;
+        }
+    }
 
     /// <summary>
     /// Takes the item a new session starts with. Returns <see langword="null"/> when the player
@@ -332,7 +389,10 @@ internal sealed class PlaylistCoordinator
     internal T Update<T>(Func<PlaylistQueue, (PlaylistQueue Queue, T Result)> operation) =>
         Apply(operation);
 
-    /// <summary>Disposes the transition subject. Called by the owning player wrapper.</summary>
+    /// <summary>
+    /// Disposes the transition subject. Called by whoever owns this coordinator: the player
+    /// wrapper for a playlist, and the session factory for a controller's own queue of one.
+    /// </summary>
     internal void Dispose() => _transitioned.Dispose();
 
     // ── Private ─────────────────────────────────────────────────────────────

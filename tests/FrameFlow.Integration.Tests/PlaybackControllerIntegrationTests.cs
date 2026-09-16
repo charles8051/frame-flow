@@ -491,17 +491,14 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
     }
 
     [RequiresFfmpegAndCorpusFact]
-    public async Task RepeatOne_LoopRoutesThroughSeekStateMachine()
+    public async Task RepeatOne_LoopRewindsInPlace_WithoutTheSeekStateMachine()
     {
-        // The cheap rewind must NOT bypass the seek state machine: per ADR-0028 §2
-        // the RepeatMode.One loop routes through it so SeekStateChanged observers
-        // fire and IsActivelyPresenting reports false during the loop. Confirm the
-        // loop drives at least one NotSeeking -> SeekPending/SeekInProgress ->
-        // NotSeeking cycle, exactly as a user seek would, even though the underlying
-        // session operation is now RewindToStartAsync rather than SeekAsync.
+        // A single source is a queue of one, so its loop is the session's in-place rewind, taken
+        // as one of the session's inputs. It no longer travels through the controller's seek state
+        // machine, which is what ADR-0028 §2 routed the controller's own loop through: the machine
+        // stays NotSeeking, and the player keeps presenting across the boundary.
         var path = IntegrationTestEnvironment.GetCorpusFile("test-subsecond.mp4");
         Assert.NotNull(path);
-
 
         var sink = new CountingVideoSink(_ => { });
 
@@ -522,47 +519,27 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
         );
 
         var loops = 0;
+        var twoLoops = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var loopSub = controller.LoopRestarted.Subscribe(
-            new InlineObserver<LoopRestarted>(_ => Interlocked.Increment(ref loops))
+            new InlineObserver<LoopRestarted>(_ =>
+            {
+                if (Interlocked.Increment(ref loops) >= 2)
+                    twoLoops.TrySetResult();
+            })
         );
 
         Assert.True((await controller.LoadAsync(MediaSource.FromFile(path!))).IsSuccess);
         Assert.True((await controller.PlayAsync()).IsSuccess);
+        await twoLoops.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
-        // Wait for at least two boundaries so a full cycle is guaranteed to have
-        // completed (the Nth loop's SeekCompleted fires before the N+1th begins).
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(8);
-        while (Volatile.Read(ref loops) < 2 && DateTimeOffset.UtcNow < deadline)
-            await Task.Delay(25);
-
-        Assert.True(Volatile.Read(ref loops) >= 2, "Expected at least two loop boundaries.");
-
-        // Pause to quiesce further loops before inspecting the captured states (the
-        // loop is continuous, so the live SeekState races; the completed history does
-        // not).
-        await controller.PauseAsync();
-
+        Assert.True(controller.IsActivelyPresenting);
         List<SeekState> states;
         lock (seekStates)
             states = [.. seekStates];
+        Assert.Empty(states);
 
-        // The loop drove the seek state machine through a complete cycle: at least one
-        // SeekInProgress, and a later return to NotSeeking — exactly the transitions a
-        // user seek produces, even though the underlying session op is now the rewind.
-        // (Asserting a completed cycle rather than the final state, which the continuous
-        // loop keeps re-entering.)
-        var firstInProgress = states.IndexOf(SeekState.SeekInProgress);
-        Assert.True(firstInProgress >= 0, "Loop never drove the seek state machine to SeekInProgress.");
-        var returnedAfter = states
-            .Skip(firstInProgress + 1)
-            .Any(s => s == SeekState.NotSeeking);
-        Assert.True(
-            returnedAfter,
-            "Seek state machine entered SeekInProgress during the loop but never returned to "
-                + "NotSeeking — the loop-seek cycle did not complete."
-        );
+        await controller.PauseAsync();
     }
-
 
     private sealed class CountingVideoSink : IVideoSink
     {

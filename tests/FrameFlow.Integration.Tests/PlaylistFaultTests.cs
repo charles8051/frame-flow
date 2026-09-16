@@ -26,7 +26,6 @@ namespace FrameFlow.Integration.Tests;
 public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
 {
     private const string Clip = "test-video-h264-yuv420p.mp4";
-    private const int FaultFrame = 21;
 
     // PlaylistSession gives up on the failure after this many in a row.
     private const int FailuresBeforeGivingUp = 9;
@@ -38,11 +37,13 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         _ = fixture;
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task FaultOnTheLastItem_IsReported_AndThePlaylistEnds()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FaultOnTheLastItem_IsReported_AndThePlaylistEnds(bool asSingleSource)
     {
         var faults = new FaultInjector(breaks: _ => true);
-        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, faults.Configure);
+        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, faults.Configure, asSingleSource: asSingleSource);
 
         await run.PlayAsync();
         await run.Settled(PlaybackState.Ended).WaitAsync(Bound);
@@ -52,8 +53,10 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.True(InjectedFault.Caused(error), $"Unexpected error: {error}");
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task SeekFromEnded_AfterTheLastItemFaulted_IsRefused_AndPlayStartsThePlaylistAgain()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SeekFromEnded_AfterTheLastItemFaulted_IsRefused_AndPlayStartsThePlaylistAgain(bool asSingleSource)
     {
         // A faulted item is not kept at the end of the queue, so Ended holds nothing to seek.
         // The seek used to succeed, and the play after it reported Playing with nothing current
@@ -61,7 +64,7 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         // faults again, is reported again, and the playlist ends again.
         var faults = new FaultInjector(breaks: _ => true);
         var item = ClipSource();
-        await using var run = PlaylistRun.Create([item], RepeatMode.Off, faults.Configure);
+        await using var run = PlaylistRun.Create([item], RepeatMode.Off, faults.Configure, asSingleSource: asSingleSource);
         await run.PlayAsync();
         await run.Settled(PlaybackState.Ended).WaitAsync(Bound);
 
@@ -99,14 +102,22 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
     }
 
     [RequiresFfmpegAndCorpusTheory]
-    [InlineData(RepeatMode.All)]
-    [InlineData(RepeatMode.One)]
+    [InlineData(RepeatMode.All, false)]
+    [InlineData(RepeatMode.One, false)]
+    [InlineData(RepeatMode.All, true)]
+    [InlineData(RepeatMode.One, true)]
     public async Task ItemThatFaultsOnEveryPass_IsReportedEachTime_ThenPutsThePlayerInError(
-        RepeatMode repeat
+        RepeatMode repeat,
+        bool asSingleSource
     )
     {
         var faults = new FaultInjector(breaks: _ => true);
-        await using var run = PlaylistRun.Create([ClipSource()], repeat, faults.Configure);
+        await using var run = PlaylistRun.Create(
+            [ClipSource()],
+            repeat,
+            faults.Configure,
+            asSingleSource: asSingleSource
+        );
 
         await run.PlayAsync();
         // Wait for the give-up error, not the state: the controller projects Error before it
@@ -170,58 +181,5 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         var path = IntegrationTestEnvironment.GetCorpusFile(Clip);
         Assert.NotNull(path);
         return MediaSource.FromFile(path!);
-    }
-
-    /// <summary>
-    /// Supplies the playlist's video configurator. Chains are numbered in the order they are
-    /// built, and the chains <c>breaks</c> selects throw on their 21st frame.
-    /// </summary>
-    private sealed class FaultInjector(Func<int, bool> breaks)
-    {
-        private int _chains;
-
-        public GraphChain<VideoFrameRef> Configure(GraphChain<VideoFrameRef> chain)
-        {
-            var index = Interlocked.Increment(ref _chains) - 1;
-            if (!breaks(index))
-                return chain;
-
-            var frames = 0;
-            return chain.Then(
-                new OperatorNode<VideoFrameRef, VideoFrameRef>(
-                    "inject-fault",
-                    (frame, _) =>
-                        ++frames == FaultFrame
-                            ? throw new InjectedFault(index)
-                            : ValueTask.FromResult<VideoFrameRef?>(frame)
-                )
-            );
-        }
-    }
-
-    private sealed class InjectedFault(int chain) : Exception($"Injected fault in chain {chain}.")
-    {
-        /// <summary>Whether the error's exception chain contains an injected fault.</summary>
-        public static bool Caused(PlaybackError error)
-        {
-            var pending = new Stack<Exception>();
-            if (error.Inner is { } inner)
-                pending.Push(inner);
-            while (pending.TryPop(out var ex))
-            {
-                if (ex is InjectedFault)
-                    return true;
-                if (ex is AggregateException aggregate)
-                {
-                    foreach (var child in aggregate.InnerExceptions)
-                        pending.Push(child);
-                }
-                else if (ex.InnerException is { } next)
-                {
-                    pending.Push(next);
-                }
-            }
-            return false;
-        }
     }
 }

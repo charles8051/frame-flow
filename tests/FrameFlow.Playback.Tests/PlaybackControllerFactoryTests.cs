@@ -91,6 +91,40 @@ public sealed class PlaybackControllerFactoryTests
         Assert.Equal(RepeatMode.Off, controller.RepeatMode);
     }
 
+    [Fact]
+    public async Task SetRepeatMode_ReachesTheQueueTheControllerPlays()
+    {
+        // The controller plays a queue of one, and the queue runs the repeat mode. It is told at
+        // construction and on every change (the one-player-type record, decision 1).
+        var controller = PlaybackController.Create(initialRepeatMode: RepeatMode.One);
+        await using var _ = controller;
+        var coordinator = Coordinator(controller);
+
+        Assert.Equal(RepeatMode.One, coordinator.RepeatMode);
+
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.All)).IsSuccess);
+        Assert.Equal(RepeatMode.All, coordinator.RepeatMode);
+    }
+
+    [Fact]
+    public async Task Dispose_DisposesTheCoordinatorTheControllerBuilt()
+    {
+        // Nothing else owns it, so nothing else can dispose it (decision 7). A playlist player's
+        // coordinator outlives its controller and is disposed by the player instead.
+        var controller = PlaybackController.Create();
+        var coordinator = Coordinator(controller);
+
+        await controller.DisposeAsync();
+
+        // A disposed transition subject accepts no more subscribers.
+        Assert.Throws<ObjectDisposedException>(
+            () => coordinator.SourceTransitioned.Subscribe(new RelayObserver<PlaylistTransition>())
+        );
+    }
+
+    private static PlaylistCoordinator Coordinator(IPlaybackController controller) =>
+        ((PlaylistSessionFactory)((PlaybackControllerCore)controller).SessionFactory).Coordinator;
+
     private sealed class RelayObserver<T> : IObserver<T>
     {
         public void OnCompleted() { }

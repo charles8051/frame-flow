@@ -26,12 +26,14 @@ public sealed class PlaylistEndOfQueueTests : IClassFixture<FfmpegBootstrapFixtu
         _ = fixture;
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task SeekThenPlayFromEnded_PlaysTheLastItemAgain()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SeekThenPlayFromEnded_PlaysTheLastItemAgain(bool asSingleSource)
     {
         // The last item used to be disposed before the end-of-stream was reported, so the seek
         // and the play found nothing, and the player said Playing while nothing decoded.
-        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off);
+        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, asSingleSource: asSingleSource);
         await PlayToEndAsync(run);
 
         await SeekThenPlayToEndAsync(run);
@@ -51,20 +53,24 @@ public sealed class PlaylistEndOfQueueTests : IClassFixture<FfmpegBootstrapFixtu
         Assert.Equal([first, second], run.Transitions.Select(t => t.Source));
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task DiagnosticsAtEnded_DescribeTheLastItem()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DiagnosticsAtEnded_DescribeTheLastItem(bool asSingleSource)
     {
-        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off);
+        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, asSingleSource: asSingleSource);
         await PlayToEndAsync(run);
 
         var decoded = run.Controller.GetDiagnostics().Pipeline.Stream.VideoDecoder.FramesDecoded;
         Assert.True(decoded > 0, $"Decoded frames at Ended: {decoded}");
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task SeekThenPlayAfterSkippingTheLastItem_PlaysIt()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SeekThenPlayAfterSkippingTheLastItem_PlaysIt(bool asSingleSource)
     {
-        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off);
+        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, asSingleSource: asSingleSource);
         await run.PlayAsync();
         await run.Sink.WhenPresented(10).WaitAsync(Bound);
 
@@ -75,14 +81,16 @@ public sealed class PlaylistEndOfQueueTests : IClassFixture<FfmpegBootstrapFixtu
         await SeekThenPlayToEndAsync(run);
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task SkipOnTheLastItem_StopsPresentation()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SkipOnTheLastItem_StopsPresentation(bool asSingleSource)
     {
         // The skipped item is kept at Ended, so it must also be paused. Kept without a pause it
         // went on presenting after Ended. Nothing signals that frames have stopped, so this
         // observes the sink for a fixed time. It cannot fail on a correct build, whatever the
         // machine's speed; a slow machine only makes it less likely to catch the fault.
-        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off);
+        await using var run = PlaylistRun.Create([ClipSource()], RepeatMode.Off, asSingleSource: asSingleSource);
         await run.PlayAsync();
         await run.Sink.WhenPresented(10).WaitAsync(Bound);
 
@@ -98,13 +106,15 @@ public sealed class PlaylistEndOfQueueTests : IClassFixture<FfmpegBootstrapFixtu
         Assert.Equal(PlaybackState.Ended, run.Controller.State);
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task PlayFromEndedWithNothingQueued_StartsThePlaylistAgain()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PlayFromEndedWithNothingQueued_StartsThePlaylistAgain(bool asSingleSource)
     {
         // The playlist keeps its items (#171), so Play from Ended with nothing queued starts it
         // again from its first item. Before #170 this faulted into Error; #170 refused it.
         var first = ClipSource();
-        await using var run = PlaylistRun.Create([first], RepeatMode.Off);
+        await using var run = PlaylistRun.Create([first], RepeatMode.Off, asSingleSource: asSingleSource);
         await PlayToEndAsync(run);
 
         var firstAgain = run.Transitioned(first);
@@ -118,12 +128,14 @@ public sealed class PlaylistEndOfQueueTests : IClassFixture<FfmpegBootstrapFixtu
         Assert.False(run.Transitions[^1].Wrapped);
     }
 
-    [RequiresFfmpegAndCorpusFact]
-    public async Task PlayFromEndedWithAnItemQueued_PlaysIt()
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PlayFromEndedWithAnItemQueued_PlaysIt(bool asSingleSource)
     {
         var first = ClipSource();
         var enqueued = ClipSource();
-        await using var run = PlaylistRun.Create([first], RepeatMode.Off);
+        await using var run = PlaylistRun.Create([first], RepeatMode.Off, asSingleSource: asSingleSource);
         await PlayToEndAsync(run);
 
         var enqueuedIsCurrent = run.Transitioned(enqueued);

@@ -64,6 +64,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
     private readonly Task _dispatchLoop;
 
+    /// <summary>The factory this controller creates its sessions with.</summary>
+    internal IPlaybackSessionFactory SessionFactory => _sessionFactory;
+
     // ── Observable subjects ────────────────────────────────────────────
     private readonly PlaybackSubject<StateTransition<PlaybackState>> _playbackStateSubject = new();
     private readonly PlaybackSubject<StateTransition<SeekState>> _seekStateSubject = new();
@@ -186,6 +189,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         var initialRepeatMode = playbackOptions?.Value?.InitialRepeatMode ?? RepeatMode.Off;
         _seeking = new StateMachine<SeekState, SeekTrigger>(SeekState.NotSeeking);
         _repeat = new StateMachine<RepeatMode, RepeatTrigger>(initialRepeatMode);
+        _sessionFactory.RepeatModeChanged(initialRepeatMode);
 
         ConfigureSeekingMachine();
         ConfigureRepeatMachine();
@@ -213,9 +217,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             NowTicks: Stopwatch.GetTimestamp(),
             PositionTicks: position.Ticks,
             DurationTicks: _loadedDuration.Ticks,
-            ExpectsRepeat: Volatile.Read(ref _sessionBinding).Session is { LoopsInternally: true } looping
-                ? looping.ExpectsRepeat
-                : _repeat.State == RepeatMode.One,
+            ExpectsRepeat: Volatile.Read(ref _sessionBinding).Session?.ExpectsRepeat ?? false,
             Playing: IsActivelyPresenting,
             LoopCount: Volatile.Read(ref _loopCount)
         );
@@ -538,23 +540,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// command channel via <see cref="SeekOutcomeCommand"/>.
     /// </summary>
     /// <param name="session">The loaded session the seek runs against.</param>
-    /// <param name="position">
-    /// Target position in media time. <see cref="TimeSpan.Zero"/> for a loop
-    /// rewind, where it is used for the diagnostics and log line only.
-    /// </param>
-    /// <param name="loopRewind">
-    /// When <see langword="true"/>, the session operation is the cheap
-    /// <see cref="IPlaybackSession.RewindToStartAsync"/> (the <c>RepeatMode.One</c> loop
-    /// boundary) instead of <see cref="IPlaybackSession.SeekAsync"/>(<paramref name="position"/>).
-    /// Everything else — operation id, the active-seek cancellation registration, and the
-    /// <see cref="SeekOutcomeCommand"/> completion plumbing — is identical, so the loop still
-    /// flows through the seek state machine: <c>SeekStateChanged</c> observers fire,
-    /// <see cref="IsActivelyPresenting"/> reports false during the rewind, and a concurrent
-    /// user seek cancels the loop rewind via the same cancellation infrastructure. The loop
-    /// rewind is always to <see cref="TimeSpan.Zero"/>, so callers pass that as
-    /// <paramref name="position"/> for the diagnostics/log line.
-    /// </param>
-    private void StartSeekRunner(IPlaybackSession session, TimeSpan position, bool loopRewind = false)
+    /// <param name="position">Target position in media time.</param>
+    private void StartSeekRunner(IPlaybackSession session, TimeSpan position)
     {
         var operationId = ++_nextSeekOperationId;
         var seekCancellation = new CancellationTokenSource();
@@ -563,7 +550,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         _activeSeekOperationId = operationId;
         _activeSeekCancellation = seekCancellation;
         _activeSeekTask = Task.Run(() =>
-            RunSeekAsync(session, position, operationId, seekCancellation, loopRewind)
+            RunSeekAsync(session, position, operationId, seekCancellation)
         );
 
         CancelSeek(previousSeekCancellation);
@@ -574,25 +561,12 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         IPlaybackSession session,
         TimeSpan position,
         long operationId,
-        CancellationTokenSource seekCancellation,
-        bool loopRewind = false
+        CancellationTokenSource seekCancellation
     )
     {
         try
         {
-            // REVERTED 2026-06-12: route the RepeatMode.One loop
-            // boundary through the full SeekAsync(0) — which rebuilds a fresh decode graph (and a
-            // fresh borrowed FFmpeg device) each loop — instead of SubstrateSession's cheap
-            // RewindToStartAsync override (perf 1c72925), which reused the retained graph + device
-            // across loops. That warm-across-loops decode device is the suspected accumulator behind
-            // the loop-boundary present-stall (the UI-thread VideoProcessorBlt wedge); a full seek
-            // hands out a clean device each loop. Trades per-loop rebuild CPU for that freshness.
-            // Un-revert (restore the override call) once off-thread-Blt recovery makes a wedge
-            // recoverable regardless of trigger.
-            if (loopRewind)
-                await session.SeekAsync(TimeSpan.Zero, seekCancellation.Token).ConfigureAwait(false);
-            else
-                await session.SeekAsync(position, seekCancellation.Token).ConfigureAwait(false);
+            await session.SeekAsync(position, seekCancellation.Token).ConfigureAwait(false);
             await PostSeekOutcomeAsync(new SeekOutcomeCommand(operationId)).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (seekCancellation.IsCancellationRequested)
@@ -770,17 +744,10 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// not by the <c>CanFire</c> gate.
     /// </summary>
     /// <remarks>
-    /// A session that loops internally, such as a playlist, reports end-of-stream only once it
-    /// has finished, so the protocol sees <see cref="PlaybackInputs.RepeatOne"/> as false for it.
-    /// The playlist player sets this controller's repeat mode before the playlist's own, so the
-    /// two can disagree for a moment. Taking the controller's then would loop a playlist that
-    /// had just ended its queue (#170).
+    /// The repeat mode is not among them: the session runs it, and reports end-of-stream only
+    /// once it has finished (the one-player-type record, decision 5).
     /// </remarks>
-    private PlaybackInputs CurrentPlaybackInputs() =>
-        new(
-            RepeatOne: _repeat.State == RepeatMode.One && _session is not { LoopsInternally: true },
-            HasSession: true
-        );
+    private static PlaybackInputs CurrentPlaybackInputs() => new(HasSession: true);
 
     /// <summary>
     /// The pure-core authority for "is <paramref name="trigger"/> permitted from the
@@ -853,10 +820,10 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             // destination-entry log at the exit→entry boundary: after the source's
             // OnExit actions, before the destination's OnEntry actions, with _state
             // already flipped — the exact ordering Stateless's HandleTransitioningTrigger
-            // used (ExitAsync → State = dest → OnTransitioned → EnterStateAsync). An
-            // internal transition (RunLoopRewind, destination == source) never crosses
-            // the boundary, so it raises no projection — matching Stateless, which does
-            // not fire OnTransitioned for an internal transition.
+            // used (ExitAsync → State = dest → OnTransitioned → EnterStateAsync). A
+            // decision whose destination is its source never crosses the boundary, so it
+            // raises no projection — matching Stateless, which does not fire
+            // OnTransitioned for an internal transition.
             void EmitTransitionBoundary()
             {
                 if (projectionEmitted)
@@ -1052,36 +1019,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 if (error is not null)
                     _errorSubject.OnNext(error);
                 break;
-
-            case PlaybackActionKind.RunLoopRewind:
-                await RunLoopRewindAsync().ConfigureAwait(false);
-                break;
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// The <c>RepeatMode.One</c> loop boundary: the internal transition that never leaves
-    /// <see cref="InternalPlaybackState.Playing"/>. Increments the loop counter, raises
-    /// <c>LoopRestarted</c>, and routes a rewind through the seek state machine so
-    /// <c>SeekStateChanged</c> observers fire, <see cref="IsActivelyPresenting"/> reports
-    /// false during the loop, and a concurrent user seek can cancel it via the same
-    /// cancellation infrastructure (ADR-0028 §2).
-    /// </summary>
-    private async Task RunLoopRewindAsync()
-    {
-        // Interlocked so the loop-stall watchdog, reading _loopCount from the
-        // position-ticker thread, sees this increment.
-        var loopCount = Interlocked.Increment(ref _loopCount);
-        LogLoopRestarted(loopCount, "RepeatOne");
-        _loopRestartedSubject.OnNext(new LoopRestarted(loopCount, Duration));
-        if (_session is not null)
-        {
-            await _seeking.FireAsync(SeekTrigger.SeekRequested);
-            await _seeking.FireAsync(SeekTrigger.FlushStarted);
-            StartSeekRunner(_session, TimeSpan.Zero, loopRewind: true);
-        }
     }
 
     /// <summary>
@@ -1360,6 +1300,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 t.Destination.ToString(),
                 t.Trigger.ToString()
             );
+            _sessionFactory.RepeatModeChanged(t.Destination);
             _repeatModeSubject.OnNext(new StateTransition<RepeatMode>(t.Source, t.Destination));
             return Task.CompletedTask;
         });
@@ -1713,6 +1654,10 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         _loopStalledSubject.Dispose();
         _errorSubject.Dispose();
         _positionTickSubject.Dispose();
+
+        // A factory that owns what it built — a coordinator this controller's own queue lives in —
+        // is disposed here. One built from a player's coordinator disposes nothing.
+        (_sessionFactory as IDisposable)?.Dispose();
 
         LogDisposed();
     }

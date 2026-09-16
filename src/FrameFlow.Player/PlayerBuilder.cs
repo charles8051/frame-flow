@@ -140,8 +140,8 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
         return this;
     }
 
-    public Task<IMediaPlayer> BuildPlayerAsync(CancellationToken cancellationToken = default) =>
-        MediaPlayer.CreateCoreAsync(
+    public async Task<IMediaPlayer> BuildPlayerAsync(CancellationToken cancellationToken = default) =>
+        await MediaPlayer.CreateCoreAsync(
             source: _source,
             videoSink: _videoSink,
             audioSink: _audioSink,

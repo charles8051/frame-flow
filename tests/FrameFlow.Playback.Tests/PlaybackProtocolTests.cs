@@ -20,9 +20,8 @@ namespace FrameFlow.Playback.Tests;
 /// </summary>
 public class PlaybackProtocolTests
 {
-    private static readonly PlaybackInputs Default = new(RepeatOne: false, HasSession: true);
-    private static readonly PlaybackInputs RepeatOne = new(RepeatOne: true, HasSession: true);
-    private static readonly PlaybackInputs NoSession = new(RepeatOne: false, HasSession: false);
+    private static readonly PlaybackInputs Default = new(HasSession: true);
+    private static readonly PlaybackInputs NoSession = new(HasSession: false);
 
     private static PlaybackDecision Advance(
         InternalPlaybackState state,
@@ -225,21 +224,6 @@ public class PlaybackProtocolTests
         AssertActions(d, PlaybackActionKind.FreezeClock);
     }
 
-    [Fact]
-    public void Paused_LastFrameRendered_UnderRepeatOne_IsNotHandled()
-    {
-        // A loop is a rewind from Playing. Paused has no loop to run, and ending would stop a
-        // loop the caller asked for, so the trigger is dropped as before.
-        var d = Advance(
-            InternalPlaybackState.Paused,
-            PlaybackTrigger.LastFrameRendered,
-            RepeatOne
-        );
-
-        Assert.False(d.Handled);
-        Assert.Equal(InternalPlaybackState.Paused, d.NextState);
-    }
-
     // ─────────────────────────────────────────────────────────────────────
     // Playing — the marquee loop-vs-end branch
     // ─────────────────────────────────────────────────────────────────────
@@ -255,21 +239,16 @@ public class PlaybackProtocolTests
     }
 
     [Fact]
-    public void Playing_LastFrameRendered_RepeatOne_InternalLoop_StaysPlaying_RunsRewind()
+    public void Playing_LastFrameRendered_EntersEnded_WhateverTheRepeatMode()
     {
-        var d = Advance(
-            InternalPlaybackState.Playing,
-            PlaybackTrigger.LastFrameRendered,
-            RepeatOne
-        );
+        // The session runs the repeat mode, so an end-of-stream it reports means it has
+        // finished. The table has no repeat input to read, and no loop cell (the
+        // one-player-type record, decision 5).
+        var d = Advance(InternalPlaybackState.Playing, PlaybackTrigger.LastFrameRendered);
 
         Assert.True(d.Handled);
-        // Internal transition: the state does not change.
-        Assert.Equal(InternalPlaybackState.Playing, d.NextState);
-        AssertActions(d, PlaybackActionKind.RunLoopRewind);
-        // Critically, the loop must NOT stop the ticker or freeze the clock.
-        Assert.DoesNotContain(d.Actions, a => a.Kind == PlaybackActionKind.StopTicker);
-        Assert.DoesNotContain(d.Actions, a => a.Kind == PlaybackActionKind.FreezeClock);
+        Assert.Equal(InternalPlaybackState.Ended, d.NextState);
+        AssertActions(d, PlaybackActionKind.StopTicker, PlaybackActionKind.FreezeClock);
     }
 
     [Fact]
@@ -575,10 +554,8 @@ public class PlaybackProtocolTests
 
     private static readonly PlaybackInputs[] AllInputs =
     [
-        new(RepeatOne: false, HasSession: true),
-        new(RepeatOne: true, HasSession: true),
-        new(RepeatOne: false, HasSession: false),
-        new(RepeatOne: true, HasSession: false),
+        new(HasSession: true),
+        new(HasSession: false),
     ];
 
     private static bool Always(PlaybackInputs inputs) => true;
@@ -608,7 +585,7 @@ public class PlaybackProtocolTests
         [(InternalPlaybackState.InitialBuffering, PlaybackTrigger.FatalError)] = Always,
 
         [(InternalPlaybackState.Paused, PlaybackTrigger.Play)] = Always,
-        [(InternalPlaybackState.Paused, PlaybackTrigger.LastFrameRendered)] = i => !i.RepeatOne,
+        [(InternalPlaybackState.Paused, PlaybackTrigger.LastFrameRendered)] = Always,
         [(InternalPlaybackState.Paused, PlaybackTrigger.Unload)] = Always,
         [(InternalPlaybackState.Paused, PlaybackTrigger.FatalError)] = Always,
 
@@ -755,18 +732,19 @@ public class PlaybackProtocolTests
     }
 
     [Fact]
-    public void Transcript_RepeatOneLoop_NeverLeavesPlaying_AcrossManyBoundaries()
+    public void Transcript_EndOfStreamWhilePaused_EndsWithoutStoppingTheTickerAgain()
     {
-        // A RepeatMode.One clip taking many loop boundaries stays in Playing the whole
-        // time and runs exactly one rewind per boundary — the attract/kiosk scenario.
-        var state = InternalPlaybackState.Playing;
-        for (var i = 0; i < 25; i++)
-        {
-            var (next, effects) = Drive(state, PlaybackTrigger.LastFrameRendered, RepeatOne);
-            Assert.Equal(InternalPlaybackState.Playing, next);
-            Assert.Equal(new[] { PlaybackActionKind.RunLoopRewind }, effects.ToArray());
-            state = next;
-        }
+        // The ticker stopped on the way into Paused, so ending from there only freezes the
+        // clock. A looping player never reaches this cell: its session rewinds instead of
+        // reporting the end.
+        var (final, effects) = Drive(
+            InternalPlaybackState.Paused,
+            PlaybackTrigger.LastFrameRendered,
+            Default
+        );
+
+        Assert.Equal(InternalPlaybackState.Ended, final);
+        Assert.Equal(new[] { PlaybackActionKind.FreezeClock }, effects.ToArray());
     }
 
     [Fact]
@@ -801,8 +779,8 @@ public class PlaybackProtocolTests
     {
         // Determinism: identical (state, trigger, inputs) yields an equal decision every
         // time, with no carried state between calls.
-        var a = Advance(InternalPlaybackState.Playing, PlaybackTrigger.LastFrameRendered, RepeatOne);
-        var b = Advance(InternalPlaybackState.Playing, PlaybackTrigger.LastFrameRendered, RepeatOne);
+        var a = Advance(InternalPlaybackState.Playing, PlaybackTrigger.LastFrameRendered, Default);
+        var b = Advance(InternalPlaybackState.Playing, PlaybackTrigger.LastFrameRendered, Default);
 
         Assert.Equal(a.Handled, b.Handled);
         Assert.Equal(a.NextState, b.NextState);

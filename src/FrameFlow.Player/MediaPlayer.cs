@@ -12,11 +12,9 @@ using FrameFlow.Graph;
 namespace FrameFlow.Player;
 
 /// <summary>
-/// Factory for an <see cref="IMediaPlayer"/> backed by
-/// <see cref="PlaybackController"/>. The returned instance is the internal
-/// <c>MediaPlayerCore</c> wrapper, which projects the controller's full
-/// state machine down to the smaller surface <c>FrameFlowPlayerView</c> and
-/// other UI callers consume.
+/// Factory for a player over one source. The source is a queue of one, so the player it returns
+/// is the same one <see cref="MediaPlaylistPlayer"/> builds, and carries the playlist surface as
+/// well as <see cref="IMediaPlayer"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -26,6 +24,11 @@ namespace FrameFlow.Player;
 /// simpler <see cref="IMediaPlayer"/> projection instead. This factory
 /// builds sinks into a controller and wraps it in that projection, which
 /// is the shape most consumers want.
+/// </para>
+/// <para>
+/// <b>One source is a queue of one</b> (the one-player-type record). A caller who only plays one
+/// file can name <see cref="IMediaPlayer"/> and ignore the queue; one who later wants a second
+/// source can enqueue it on the player they already have.
 /// </para>
 /// <para>
 /// <b>Prefer the fluent builder.</b>
@@ -83,7 +86,7 @@ public static class MediaPlayer
     /// factory that fails has no player to hand back (ADR-0069). The
     /// player's own transport commands do return <see cref="Result"/>.
     /// </exception>
-    public static Task<IMediaPlayer> CreateAsync(
+    public static Task<IMediaPlaylistPlayer> CreateAsync(
         IMediaSource source,
         IVideoSink? videoSink = null,
         IAudioSink? audioSink = null,
@@ -123,7 +126,7 @@ public static class MediaPlayer
     /// and existing compiled callers at load. The fluent builder's
     /// <see cref="IMediaPlayerBuilder.WithClock"/> reaches this instead.
     /// </remarks>
-    internal static async Task<IMediaPlayer> CreateCoreAsync(
+    internal static async Task<IMediaPlaylistPlayer> CreateCoreAsync(
         IMediaSource source,
         IVideoSink? videoSink,
         IAudioSink? audioSink,
@@ -139,79 +142,23 @@ public static class MediaPlayer
     )
     {
         ArgumentNullException.ThrowIfNull(source);
-        loggerFactory ??= NullLoggerFactory.Instance;
 
-        // Bootstrap the FFmpeg native runtime. Repeated calls across
-        // CreateAsync invocations are cheap: FFmpeg is loaded once per
-        // process, and the hardware decode probe runs once per process
-        // too (HardwareDecodeProbe.GetOrRun, #37), even though each call
-        // builds its own FrameFlowBootstrapper. We do it
-        // here so consumers don't have to remember to call it
-        // separately; the old `FrameFlowPlayer.BuildAsync` path also
-        // ran the bootstrap via its DI registration. Skip the HW
-        // probe when the caller explicitly disabled HW decoding —
-        // matches the fluent builder's behaviour.
-        var nativeOptions = new FrameFlowNativeOptions
-        {
-            SkipHardwareProbe = hardwareDecodeMode == HardwareDecodeMode.Disabled,
-        };
-        var bootstrap = new FrameFlowBootstrapper(nativeOptions, loggerFactory).Initialize();
-        if (!bootstrap.IsSuccess)
-        {
-            throw new InvalidOperationException(
-                $"FFmpeg bootstrap failed: {bootstrap.Message}"
-            );
-        }
-
-#pragma warning disable CA2000 // controller ownership transfers to the MediaPlayer instance returned below; disposed via Dispose
-        var controller = PlaybackController.Create(
-            videoSink: videoSink,
-            audioSink: audioSink,
-            hardwareDecodeMode: hardwareDecodeMode,
-            hardwareDecodeCapabilities: bootstrap.Capabilities,
-            yieldHardwareFrames: yieldHardwareFrames,
-            initialRepeatMode: initialRepeatMode,
-            clock: clock,
-            loggerFactory: loggerFactory,
-            configureVideo: configureVideo,
-            configureAudio: configureAudio
-        );
-#pragma warning restore CA2000
-
-        try
-        {
-            // Activate audio sink before LoadAsync so it's ready when
-            // the first PlayAsync starts feeding samples. The old
-            // PlayerBuilder did the same via DI activation hooks.
-            if (activateAudioSink && audioSink is not null)
-            {
-                await audioSink.ActivateAsync(cancellationToken).ConfigureAwait(false);
-            }
-
-            var load = await controller.LoadAsync(source, cancellationToken).ConfigureAwait(false);
-            if (!load.IsSuccess)
-            {
-                throw new InvalidOperationException(
-                    $"LoadAsync failed: {load.Error.Category} — {load.Error.Message}",
-                    load.Error.Inner
-                );
-            }
-
-            // Construct the internal MediaPlayer wrapper via the
-            // InternalsVisibleTo grant in FrameFlow.Player. No owned
-            // service provider — the substrate doesn't use a DI
-            // container.
-            var logger = loggerFactory.CreateLogger<MediaPlayerCore>();
-            return new MediaPlayerCore(controller, audioSink, ownedProvider: null, logger);
-        }
-        catch
-        {
-            try
-            {
-                await controller.DisposeAsync().ConfigureAwait(false);
-            }
-            catch { /* swallow during failure cleanup */ }
-            throw;
-        }
+        // A single source is a queue of one, built on the playlist player's path.
+        return await MediaPlaylistPlayer
+            .CreateCoreAsync(
+                [source],
+                videoSink,
+                audioSink,
+                hardwareDecodeMode,
+                yieldHardwareFrames,
+                initialRepeatMode,
+                loggerFactory,
+                activateAudioSink,
+                configureVideo,
+                configureAudio,
+                clock,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
     }
 }

@@ -2,10 +2,10 @@
 
 ## Status
 
-Proposed (2026-09-15). Draft pending number assignment. **Nothing here is implemented.** The spike
-it rests on is [#224](https://github.com/charles8051/frame-flow/pull/224), a draft, and
-[docs/investigations/2026-09-15-single-source-as-a-queue-of-one.md](../investigations/2026-09-15-single-source-as-a-queue-of-one.md)
-is its report.
+Proposed (2026-09-15). Draft pending number assignment. **Implemented**; *As implemented* says how.
+It grew out of the spike in
+[docs/investigations/2026-09-15-single-source-as-a-queue-of-one.md](../investigations/2026-09-15-single-source-as-a-queue-of-one.md),
+which is also where the hardware run is recorded.
 
 This record decides that a single source runs as a queue of one on the playlist session, that one
 implementation serves both player factories, and what that changes for a caller who plays one file.
@@ -224,6 +224,33 @@ player on `ErrorOccurred`.
 - **The hour-long loop soak.** Ten minutes each is what has run.
 - **`SourceTransitioned` on a controller-level player.** The coordinator raises it, and a caller
   holding only `IPlaybackController` cannot read it.
+
+## As implemented
+
+- **The queue of one.** `PlaybackController.Create` builds a `PlaylistSessionFactory` over a
+  coordinator of its own, with `loadsSource` set, and both entry points assemble the controller
+  through one `Assemble` (#44). `PlaylistSession.InitializeAsync` calls
+  `PlaylistCoordinator.LoadSource`, which makes the loaded source the queue's only item unless a
+  replay from `Ended` has reserved an item on it.
+- **The repeat mode.** `IPlaybackSessionFactory.RepeatModeChanged` carries the controller's mode to
+  the coordinator, at construction and on every change.
+- **The player.** `MediaPlayer.CreateAsync` and `MediaPlaylistPlayer.CreateAsync` share
+  `MediaPlaylistPlayer.CreateCoreAsync`, and the single-source factory passes a queue of one.
+  `MediaPlayerCore` is gone; `ProjectionObservable` moved to its own file.
+- **The controller's loop.** `RunLoopRewind`, `RunLoopRewindAsync`, the seek runner's loop mode,
+  `PlaybackInputs.RepeatOne`, `PlaybackDecision.Internal` and `IPlaybackSession.LoopsInternally` are
+  deleted. `Playing × LastFrameRendered` and `Paused × LastFrameRendered` both go to `Ended`. The
+  watchdog reads the session's `ExpectsRepeat` with no mode of its own.
+- **Ownership.** `PlaylistSessionFactory` is `IDisposable` and disposes the coordinator it was built
+  for; the controller disposes its factory. A player's coordinator is still the player's.
+- **The docs.** `RepeatMode.All`'s summary, and entries 12 to 16 in `docs/BREAKING-CHANGES.md`.
+- **The tests.** `SingleSourceAsAQueueOfOneTests` (six, over real playback),
+  `OnePlayerTypeTests`, `PlaybackControllerFactoryTests.SetRepeatMode_ReachesTheQueueTheControllerPlays`
+  and `.Dispose_DisposesTheCoordinatorTheControllerBuilt`,
+  `PlaybackProtocolTests.Playing_LastFrameRendered_EntersEnded_WhateverTheRepeatMode`,
+  `PlaybackDispatchProtocolTests.LastFrameRendered_EndsPlayback_WhateverTheRepeatMode`, and the
+  one-item cases of `PlaylistEndOfQueueTests`, `PlaylistSkipStateTests` and `PlaylistFaultTests` as
+  theories over both construction paths.
 
 ## Validation
 
