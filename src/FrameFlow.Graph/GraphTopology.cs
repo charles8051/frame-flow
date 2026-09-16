@@ -3,6 +3,15 @@
 
 namespace FrameFlow.Graph;
 
+/// <summary>
+/// One wired edge, reduced to the facts the rules are about: the ports it joins, and whether it
+/// was declared the trunk of a fork.
+/// </summary>
+/// <param name="From">The output port the edge leaves.</param>
+/// <param name="To">The input port the edge enters.</param>
+/// <param name="Inherit">Whether the edge takes the incoming ref rather than a clone or an AddRef.</param>
+internal readonly record struct EdgeSpec(IPort From, IPort To, bool Inherit);
+
 /// <summary>An input port that knows whether an edge has been wired into it.</summary>
 internal interface IWireableInput : IPort
 {
@@ -35,6 +44,13 @@ internal interface IRequiresEveryInput
 /// capacity-1 channel, and the run hangs instead of faulting. Measured by disabling this check,
 /// which makes the test for an unwired secondary stop terminating rather than fail.
 /// </para>
+/// <para>
+/// The fork rule is about ownership: two edges leaving one port both claiming the incoming ref
+/// is a double release. It is not reachable through
+/// <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeConfig{T})"/>, which never marks
+/// an edge, and is reachable by wiring a chain's trunk twice after
+/// <see cref="GraphChain{T}.Branch"/>.
+/// </para>
 /// </remarks>
 internal static class GraphTopology
 {
@@ -42,11 +58,26 @@ internal static class GraphTopology
     /// Returns one message per broken rule, in node order, or an empty list when the wiring is
     /// sound.
     /// </summary>
-    internal static IReadOnlyList<string> Validate(IReadOnlyList<INode> nodes)
+    internal static IReadOnlyList<string> Validate(
+        IReadOnlyList<INode> nodes,
+        IReadOnlyList<EdgeSpec> edges
+    )
     {
         ArgumentNullException.ThrowIfNull(nodes);
+        ArgumentNullException.ThrowIfNull(edges);
 
         var errors = new List<string>();
+
+        foreach (var group in edges.Where(e => e.Inherit).GroupBy(e => e.From))
+        {
+            if (group.Count() > 1)
+            {
+                errors.Add(
+                    $"Output port '{Name(group.Key)}' has {group.Count()} trunk edges. A forked "
+                        + "port has one trunk, and the rest are branches that clone or AddRef."
+                );
+            }
+        }
 
         foreach (var node in nodes)
         {
@@ -58,9 +89,9 @@ internal static class GraphTopology
                 if (!port.IsWired)
                 {
                     errors.Add(
-                        $"Input port '{port.Owner.Id}/{port.Name}' was never connected. Every "
-                            + $"input of '{node.Id}' has to carry an edge, or the run hangs "
-                            + "waiting for an item that cannot arrive."
+                        $"Input port '{Name(port)}' was never connected. Every input of "
+                            + $"'{node.Id}' has to carry an edge, or the run hangs waiting for "
+                            + "an item that cannot arrive."
                     );
                 }
             }
@@ -68,4 +99,6 @@ internal static class GraphTopology
 
         return errors;
     }
+
+    private static string Name(IPort port) => $"{port.Owner.Id}/{port.Name}";
 }

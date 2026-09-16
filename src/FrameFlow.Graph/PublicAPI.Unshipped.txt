@@ -77,8 +77,11 @@ FrameFlow.Graph.Graph.Connect<T>(FrameFlow.Graph.OutputPort<T!>! from, FrameFlow
 FrameFlow.Graph.Graph.Graph() -> void
 FrameFlow.Graph.Graph.RunAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
 FrameFlow.Graph.GraphChain<T>
+FrameFlow.Graph.GraphChain<T>.Branch(FrameFlow.Graph.EdgeConfig<T!> config) -> FrameFlow.Graph.GraphChain<T!>
+FrameFlow.Graph.GraphChain<T>.Branch(FrameFlow.Graph.EdgeOptions! options) -> FrameFlow.Graph.GraphChain<T!>
 FrameFlow.Graph.GraphChain<T>.Graph.get -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.GraphChain<T>.GraphChain() -> void
+FrameFlow.Graph.GraphChain<T>.Join<TSecondary, TOut>(FrameFlow.Graph.GraphChain<TSecondary!> secondary, FrameFlow.Graph.SyncJoinNode<T!, TSecondary!, TOut!>! join, FrameFlow.Graph.EdgeOptions! primaryOptions, FrameFlow.Graph.EdgeOptions! secondaryOptions) -> FrameFlow.Graph.GraphChain<TOut!>
 FrameFlow.Graph.GraphChain<T>.Output.get -> FrameFlow.Graph.OutputPort<T!>!
 FrameFlow.Graph.GraphChain<T>.Then<TOut>(FrameFlow.Graph.MultiOperatorNode<T!, TOut!>! next, FrameFlow.Graph.EdgeOptions? options = null) -> FrameFlow.Graph.GraphChain<TOut!>
 FrameFlow.Graph.GraphChain<T>.Then<TOut>(FrameFlow.Graph.OperatorNode<T!, TOut!>! next, FrameFlow.Graph.EdgeOptions? options = null) -> FrameFlow.Graph.GraphChain<TOut!>
