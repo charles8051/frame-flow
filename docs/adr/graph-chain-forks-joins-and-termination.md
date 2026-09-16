@@ -213,10 +213,10 @@ escapes to take.
 
 ## Consequences
 
-- **Additive on the graph surface, a behaviour break on the player surface.** `Branch`, `Join` and
-  `WithInherit` are new members, and `EdgeConfig<T>` gains an init-only member rather than a
-  positional one. Removing the configurator-terminated mode is the break: a configurator registered
-  without a sink used to run and now fails the build.
+- **Additive on the graph surface, a behaviour break on the player surface.** `Branch` and `Join`
+  are new members. The inherit marker is internal to `OutputEdge<T>` per decision 1, so
+  `EdgeConfig<T>` and `Connect` are unchanged. Removing the configurator-terminated mode is the
+  break: a configurator registered without a sink used to run and now fails the build.
 - **The break is not a compile error.** Three call sites terminate inside the configurator and return
   a placeholder chain: LiveCaptioning (`MainWindow.axaml.cs:467`, `:496`), Multicast (`:419`, `:476`)
   and Multicast.Dml (`:327`). They keep compiling and present twice, once through their own terminal
