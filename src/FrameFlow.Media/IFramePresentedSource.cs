@@ -30,14 +30,24 @@ public readonly record struct FramePresentedInfo(TimeSpan PresentationTime, Date
 /// </para>
 /// <para>
 /// <b>Optional.</b> Sinks implement this only when they know the moment a frame reaches the
-/// screen. <c>AvaloniaVideoSink</c> raises it at the buffer swap and the composition-interop
-/// sink at the compositor hand-off; a headless or recording sink need not implement it at
-/// all. Consumers test for it: <c>if (sink is IFramePresentedSource presented)</c>.
+/// screen. <c>AvaloniaVideoSink</c> raises it at the buffer swap, and the composition-interop
+/// sink once the compositor hand-off has completed; a headless or recording sink need not
+/// implement it at all. Consumers test for it: <c>if (sink is IFramePresentedSource presented)</c>.
 /// </para>
 /// <para>
-/// <b>Threading.</b> The event is raised on whichever thread performed the present, which is
-/// the UI thread for both Avalonia presenters. It runs inside the present path, so a handler
-/// that blocks delays the next frame. Marshal anything expensive.
+/// <b>Threading. Do not assume the UI thread.</b> Each sink raises this synchronously on
+/// whichever thread finished the present, and that thread differs by path. The Avalonia view's
+/// swap runs on the UI thread, but a host driving <c>AvaloniaVideoSink.RenderPendingFrame</c>
+/// itself gets the event on its own thread, and the composition-interop sink raises from the
+/// continuation of the compositor hand-off, which is a thread-pool thread. A handler that
+/// touches UI state marshals for itself.
+/// </para>
+/// <para>
+/// <b>It runs in the present path, deliberately.</b> A handler that blocks holds up the next
+/// frame. The event exists to put a consumer as close to the present as the presenter itself
+/// is, so queueing delivery would reintroduce exactly the lag it removes. Handlers do the
+/// least possible work: read the PTS, hand it on, return. One handler throwing does not
+/// prevent the others from running, and never fails the present.
 /// </para>
 /// </remarks>
 public interface IFramePresentedSource

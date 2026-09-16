@@ -1023,11 +1023,17 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         presentTask.ContinueWith(
             static (_, state) =>
             {
-                var self = (CompositionInteropVideoView)state!;
+                var (self, framePts) = ((CompositionInteropVideoView, TimeSpan))state!;
                 Interlocked.Increment(ref self._framesCommitted);
                 Volatile.Write(ref self._lastCommittedAtUtcTicks, DateTime.UtcNow.Ticks);
+
+                // FramePresented rides the commit, not the enqueue, so it means the same
+                // thing the committed counter does: this frame reached the screen. A
+                // faulted or cancelled hand-off never runs this continuation, so a consumer
+                // is never told about a frame that device loss ate.
+                self._sink?.RaiseFramePresented(framePts);
             },
-            this,
+            (this, pts),
             CancellationToken.None,
             TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default
@@ -1039,12 +1045,6 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         // GetDiagnostics reads via Volatile from any thread.
         Volatile.Write(ref _lastPresentedPtsTicks, pts.Ticks);
         Volatile.Write(ref _lastPresentedAtUtcTicks, DateTime.UtcNow.Ticks);
-
-        // Same moment, consumer-facing: an overlay keyed off this draws over the picture it
-        // describes rather than over whatever the graph is holding, which is ahead of the
-        // screen by the pacer's buffering.
-        _sink?.RaiseFramePresented(pts);
-
         LogProgress(isGpu);
     }
 
