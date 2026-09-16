@@ -1,10 +1,8 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
-using Avalonia.Threading;
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Avalonia;
-using FrameFlow.Avalonia.Windows;
 using FrameFlow.Media;
 using FrameFlow.Playback;
 using FrameFlow.Player;
@@ -13,29 +11,26 @@ using Microsoft.Extensions.Logging;
 namespace FrameFlow.Examples.AvaloniaPlayer;
 
 /// <summary>
-/// FrameFlow Avalonia player — the canonical minimum-effort
-/// example post-FrameFlowPlayerView refactor.
+/// FrameFlow Avalonia player.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The window now hosts a single
-/// <see cref="FrameFlow.Avalonia.FrameFlowPlayerView"/> control which
-/// supplies video surface, transport bar, seek bar, volume control,
-/// status badge, stream summary, position label, file picker,
-/// drag-drop, and keyboard shortcuts. The example's responsibilities
-/// shrink to:
+/// <see cref="FrameFlow.Avalonia.FrameFlowPlayerView"/> supplies the video
+/// surface, transport bar, seek bar, volume control, status badge, stream
+/// summary, position label, file picker, drag-drop and keyboard shortcuts.
+/// The window is left with two jobs: build a player when a file or folder is
+/// opened, and keep the playlist sidebar in step with playback.
 /// </para>
-/// <list type="bullet">
-///   <item>Logger factory wiring (TextBox + optional file sink).</item>
-///   <item>Handling <c>FileOpenRequested</c> by building an
-///         <see cref="IMediaPlayer"/> and assigning it to the view.</item>
-///   <item>CLI arg propagation (startup file, loop flag, log file).</item>
-/// </list>
 /// <para>
 /// A single file is built with
-/// <c>FrameFlowPlayer.Open(...).BuildPlayerAsync()</c>. A folder is
-/// built with <see cref="MediaPlaylistPlayer.CreateAsync"/>, which has
-/// no builder form.
+/// <c>FrameFlowPlayer.Open(...).BuildPlayerAsync()</c>. A folder is built with
+/// <see cref="MediaPlaylistPlayer.CreateAsync"/>, which plays every file over
+/// one warm presenter and has no builder form.
+/// </para>
+/// <para>
+/// Presenter selection, hardware-decode A/B, running without audio and
+/// self-terminating runs are diagnostics, and live in
+/// <c>tools/FrameFlow.TestBench</c> (ADR-0068).
 /// </para>
 /// </remarks>
 public partial class MainWindow : Window
@@ -44,15 +39,13 @@ public partial class MainWindow : Window
     private ILogger<MainWindow>? _logger;
     private IMediaPlayer? _player;
 
-    // Folder-playlist mode: the same instance as _player, kept typed for the
-    // playlist-specific surface (transition stream, enqueue, skip). Null in
-    // single-file mode.
+    // Folder mode: the same instance as _player, kept typed for the
+    // playlist-specific surface (transition stream, jump). Null for a single file.
     private IMediaPlaylistPlayer? _playlistPlayer;
     private IDisposable? _transitionSub;
     private IReadOnlyList<PlaylistEntry> _playlistEntries = [];
 
     private OpenAlAudioSink? _audioSink;
-    private bool _useGpu;
     private bool _isClosing;
 
     /// <summary>One file in the open folder: its display name + the source to play.</summary>
@@ -66,26 +59,8 @@ public partial class MainWindow : Window
         ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wav", ".wma",
     };
 
-    public string? StartupFilePath { get; set; }
-
-    /// <summary>Folder to auto-open on startup and play through (gapless playlist). Takes precedence over <see cref="StartupFilePath"/>.</summary>
-    public string? StartupFolderPath { get; set; }
-    public bool StartupLoop { get; set; }
-    public string? StartupLogFilePath { get; set; }
-    public string? StartupHwMode { get; set; }
-
-    /// <summary>Video presenter: <c>cpu</c> (default — full player chrome) or <c>gpu</c>
-    /// (the Windows zero-copy composition-interop presenter; video-only for now).</summary>
-    public string? StartupPresenter { get; set; }
-
-    /// <summary>When set (<c>--no-audio</c>), no audio sink is attached and the
-    /// player paces video off the <see cref="WallClockSource"/> fallback — the
-    /// headless-signage repro path.</summary>
-    public bool StartupNoAudio { get; set; }
-
-    /// <summary>When &gt; 0 (<c>--exit-after N</c>), auto-closes the window after
-    /// N seconds so the example can run unattended.</summary>
-    public int StartupExitAfterSeconds { get; set; }
+    /// <summary>A media file or a folder to open on startup, from the command line.</summary>
+    public string? StartupPath { get; set; }
 
     public MainWindow()
     {
@@ -93,7 +68,6 @@ public partial class MainWindow : Window
         PlayerView.FileOpenRequested += async (_, e) => await OpenFileAsync(e.FilePath);
         OpenFolderButton.Click += async (_, _) => await OpenFolderAsync();
         OpenFileButton.Click += async (_, _) => await OpenFilePickerAsync();
-        // Double-click a file in the list to jump to it (no presenter rebuild).
         PlaylistBox.DoubleTapped += async (_, _) => await JumpToSelectedAsync();
         Closing += OnWindowClosing;
     }
@@ -102,170 +76,96 @@ public partial class MainWindow : Window
     {
         base.OnLoaded(e);
 
-        _loggerFactory = LoggerFactory.Create(b =>
-        {
-            b.SetMinimumLevel(LogLevel.Debug)
-                .AddProvider(new TextBoxLoggerProvider(LogOutput, LogLevel.Information));
-            if (!string.IsNullOrEmpty(StartupLogFilePath))
-                b.AddProvider(new FileLoggerProvider(ExampleLogPaths.Resolve(StartupLogFilePath), LogLevel.Debug));
-        });
+        _loggerFactory = CreateLoggerFactory();
         _logger = _loggerFactory.CreateLogger<MainWindow>();
-        _logger.LogInformation("FrameFlow Player ready.");
 
-        // --exit-after N: schedule an unattended clean shutdown so an agent can
-        // launch, let the failing path surface, and read the flushed log.
-        if (StartupExitAfterSeconds > 0)
-        {
-            _logger.LogInformation(
-                "Auto-exit scheduled in {Seconds}s (--exit-after).",
-                StartupExitAfterSeconds
-            );
-            _ = Task.Delay(TimeSpan.FromSeconds(StartupExitAfterSeconds))
-                .ContinueWith(
-                    _ => global::Avalonia.Threading.Dispatcher.UIThread.Post(Close),
-                    TaskScheduler.Default
-                );
-        }
-
-        // Presenter selection. --presenter gpu injects the Windows zero-copy surface INTO
-        // the player via the IVideoSurface seam — so it keeps the full transport chrome.
-        var wantGpu = string.Equals(StartupPresenter?.Trim(), "gpu", StringComparison.OrdinalIgnoreCase);
-        _useGpu = wantGpu && OperatingSystem.IsWindows();
-        if (wantGpu && !_useGpu)
-            _logger.LogWarning("--presenter gpu requested but not on Windows; using the CPU surface.");
-
-        if (_useGpu)
-        {
-            PlayerView.VideoSurface = new CompositionInteropVideoView();
-            _logger.LogInformation("Presenter: GPU zero-copy surface (with full player chrome).");
-        }
-        else
-        {
-            _logger.LogInformation("Presenter: CPU (FrameFlowVideoView).");
-        }
-
-        // Wire the logger + materialize the hosted surface's sink (works for either surface;
-        // for the GPU surface this also brings up the compositor interop now that it's attached).
+        // Materialize the hosted surface's sink now that it is in the tree.
         PlayerView.AttachSink(_loggerFactory);
-        PlayerView.LoopByDefault = StartupLoop;
 
-        // A folder takes precedence (gapless playlist over one warm presenter);
-        // otherwise fall back to the single startup file.
-        if (!string.IsNullOrEmpty(StartupFolderPath) && Directory.Exists(StartupFolderPath))
-            await PlayFolderAsync(StartupFolderPath);
-        else if (!string.IsNullOrEmpty(StartupFilePath) && File.Exists(StartupFilePath))
-            await OpenFileAsync(StartupFilePath);
+        if (Directory.Exists(StartupPath))
+            await PlayFolderAsync(StartupPath);
+        else if (File.Exists(StartupPath))
+            await OpenFileAsync(StartupPath);
     }
 
+    /// <summary>
+    /// The example's log sink. A WinExe has no console, so the log goes to
+    /// <c>&lt;repo&gt;/logs/</c>. There is no flag for it: tools/FrameFlow.TestBench
+    /// is where a run is driven and watched.
+    /// </summary>
+    /// <remarks>
+    /// Best-effort. <see cref="FileLoggerProvider"/> opens its file in the constructor
+    /// with <see cref="FileShare.Read"/>, so a second instance of this example, or a
+    /// copy installed somewhere unwritable, throws here. That must not take the window
+    /// down with it — failures are reported through <see cref="ShowError"/>, which
+    /// writes to the sidebar and does not depend on logging.
+    /// </remarks>
+    private ILoggerFactory CreateLoggerFactory()
+    {
+        try
+        {
+            var path = ExampleLogPaths.Resolve("avalonia-player.log");
+            return LoggerFactory.Create(b =>
+                b.SetMinimumLevel(LogLevel.Debug).AddProvider(new FileLoggerProvider(path))
+            );
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Logging to file is off ({ex.Message}). Playback still works.";
+            return LoggerFactory.Create(_ => { });
+        }
+    }
+
+    /// <summary>Builds a player for one file and hands it to the view.</summary>
     private async Task OpenFileAsync(string path)
     {
-        if (_loggerFactory is null || _logger is null)
+        if (_loggerFactory is null)
             return;
 
         await TeardownPlayerAsync();
 
-        // Single-file mode: clear any folder playlist shown in the sidebar.
         PlaylistBox.ItemsSource = null;
         _playlistEntries = [];
-        PlaylistStatus.Text = $"Single file: {Path.GetFileName(path)}";
+        StatusText.Text = Path.GetFileName(path);
 
         try
         {
-            // ── The heart of the example: construct sinks directly (no
-            //     DI), wire them through the fluent player builder, and hand
-            //     the resulting IMediaPlayer to the view.
-
-            // The hosted surface's sink — CPU AvaloniaVideoSink or the GPU presenter's sink.
+            // The heart of the example: construct the sinks, wire them through
+            // the builder, hand the player to the view.
             var videoSink = PlayerView.AttachSink(_loggerFactory);
+            _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
 
-            var builder = FrameFlowPlayer
+            _player = await FrameFlowPlayer
                 .Open(path)
                 .WithVideoSink(videoSink)
-                .WithHardwareDecode(ResolveHwMode())
+                .WithAudioSink(_audioSink)
                 .WithHardwareFrames(PlayerView.VideoSurface.PrefersHardwareFrames)
-                .WithRepeatMode(StartupLoop ? RepeatMode.One : RepeatMode.Off)
-                .WithLogger(_loggerFactory);
+                .WithLogger(_loggerFactory)
+                .BuildPlayerAsync();
 
-            // --no-audio: attach NO audio sink, so the player falls back to the
-            // WallClockSource pacer (ADR-0003) — the exact shape a signage
-            // deployment uses (no audio sink + GPU presenter). With an audio sink,
-            // the audio device backpressures the pipeline to realtime; without
-            // one, this reproduces whatever the wallclock-paced path does.
-            if (StartupNoAudio)
-            {
-                _audioSink = null;
-                _logger.LogInformation(
-                    "Audio DISABLED (--no-audio): no audio sink -> WallClockSource pacing (signage repro)."
-                );
-            }
-            else
-            {
-                _audioSink = new OpenAlAudioSink(
-                    _loggerFactory.CreateLogger<OpenAlAudioSink>()
-                );
-                builder = builder.WithAudioSink(_audioSink);
-            }
-
-            _player = await builder.BuildPlayerAsync();
-
-            // Chrome binds to the player for both surfaces now (the seam keeps the UI).
             PlayerView.MediaPlayer = _player;
-
             Title = $"FrameFlow Player — {Path.GetFileName(path)}";
 
             // ADR-0069: a refused command comes back as a Result. The catch
             // below still covers what genuinely throws.
             var played = await _player.PlayAsync();
             if (!played.IsSuccess)
-            {
-                _logger.LogError(
+                ShowError(
                     played.Error.Inner,
-                    "Playback refused for {File}: {Category}: {Message}",
-                    Path.GetFileName(path),
-                    played.Error.Category,
-                    played.Error.Message
+                    $"{Path.GetFileName(path)}: {played.Error.Category}: {played.Error.Message}"
                 );
-                Title = "FrameFlow Player — error";
-            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to open {File}", Path.GetFileName(path));
-            Title = "FrameFlow Player — error";
+            ShowError(ex, $"Could not open {Path.GetFileName(path)}: {ex.Message}");
         }
     }
 
-    // ── Folder playlist: open a folder and play through all its media files ──
-    //     over ONE warm presenter (the same video + audio sink for every file),
-    //     swapping only the decode source at each boundary. This is the
-    //     gapless-playlist feature in action — no per-item present-pipeline
-    //     rebuild, unlike opening each file as its own player.
-
-    private async Task OpenFolderAsync()
-    {
-        if (_loggerFactory is null || _logger is null)
-            return;
-
-        var top = TopLevel.GetTopLevel(this);
-        if (top is null)
-            return;
-
-        var folders = await top.StorageProvider.OpenFolderPickerAsync(
-            new FolderPickerOpenOptions { Title = "Open a media folder", AllowMultiple = false }
-        );
-        if (folders.Count == 0)
-            return;
-
-        var folderPath = folders[0].TryGetLocalPath();
-        if (string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath))
-        {
-            _logger.LogWarning("Selected folder has no usable local path.");
-            return;
-        }
-
-        await PlayFolderAsync(folderPath);
-    }
-
+    /// <summary>
+    /// Builds a playlist player over every media file in a folder. One video sink and
+    /// one audio sink serve the whole folder, so the presenter stays warm across each
+    /// boundary and only the decode source is swapped.
+    /// </summary>
     private async Task PlayFolderAsync(string folderPath)
     {
         if (_loggerFactory is null || _logger is null)
@@ -282,7 +182,7 @@ public partial class MainWindow : Window
         if (files.Count == 0)
         {
             _logger.LogWarning("No media files found in {Folder}.", folderPath);
-            PlaylistStatus.Text = $"No media files in {Path.GetFileName(folderPath)}.";
+            StatusText.Text = $"No media files in {Path.GetFileName(folderPath)}.";
             PlaylistBox.ItemsSource = null;
             _playlistEntries = [];
             return;
@@ -292,22 +192,18 @@ public partial class MainWindow : Window
             .Select(f => new PlaylistEntry(Path.GetFileName(f), MediaSource.FromFile(f)))
             .ToList();
         PlaylistBox.ItemsSource = _playlistEntries;
-        PlaylistStatus.Text =
+        StatusText.Text =
             $"{_playlistEntries.Count} file(s) · {Path.GetFileName(folderPath)} · looping";
 
         try
         {
-            _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
-
-            // ONE sink for the whole folder — the warm presenter the playlist
-            // feeds sequential decoders into.
             var videoSink = PlayerView.AttachSink(_loggerFactory);
+            _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
 
             var playlist = await MediaPlaylistPlayer.CreateAsync(
                 sources: _playlistEntries.Select(e => e.Source),
                 videoSink: videoSink,
                 audioSink: _audioSink,
-                hardwareDecodeMode: ResolveHwMode(),
                 yieldHardwareFrames: PlayerView.VideoSurface.PrefersHardwareFrames,
                 initialRepeatMode: RepeatMode.All,
                 loggerFactory: _loggerFactory
@@ -326,30 +222,39 @@ public partial class MainWindow : Window
             Title =
                 $"FrameFlow Player — {Path.GetFileName(folderPath)} ({_playlistEntries.Count} files)";
 
-            _logger.LogInformation(
-                "Playing folder {Folder}: {Count} files over one warm presenter (looping).",
-                folderPath,
-                _playlistEntries.Count
-            );
-
             var played = await playlist.PlayAsync();
             if (!played.IsSuccess)
-            {
-                _logger.LogError(
+                ShowError(
                     played.Error.Inner,
-                    "Folder playback refused for {Folder}: {Category}: {Message}",
-                    folderPath,
-                    played.Error.Category,
-                    played.Error.Message
+                    $"{Path.GetFileName(folderPath)}: {played.Error.Category}: {played.Error.Message}"
                 );
-                Title = "FrameFlow Player — error";
-            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to start folder playback for {Folder}", folderPath);
-            Title = "FrameFlow Player — error";
+            ShowError(ex, $"Could not play {Path.GetFileName(folderPath)}: {ex.Message}");
         }
+    }
+
+    private async Task OpenFolderAsync()
+    {
+        var top = TopLevel.GetTopLevel(this);
+        if (top is null)
+            return;
+
+        var folders = await top.StorageProvider.OpenFolderPickerAsync(
+            new FolderPickerOpenOptions { Title = "Open a media folder", AllowMultiple = false }
+        );
+        if (folders.Count == 0)
+            return;
+
+        var folderPath = folders[0].TryGetLocalPath();
+        if (string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath))
+        {
+            _logger?.LogWarning("Selected folder has no usable local path.");
+            return;
+        }
+
+        await PlayFolderAsync(folderPath);
     }
 
     private async Task OpenFilePickerAsync()
@@ -374,12 +279,6 @@ public partial class MainWindow : Window
     {
         UpdateSelection(transition.Source);
         Title = $"FrameFlow Player — {transition.Source.DisplayName}";
-        _logger?.LogInformation(
-            "Now playing [{Index}] {Name}{Wrapped}",
-            transition.Index,
-            transition.Source.DisplayName,
-            transition.Wrapped ? " (looped to start)" : string.Empty
-        );
     }
 
     private void UpdateSelection(IMediaSource? source)
@@ -423,31 +322,20 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Maps the <c>--hw-mode</c> CLI string to the decoder policy (unset/unknown = Auto).</summary>
-    private HardwareDecodeMode ResolveHwMode()
+    /// <summary>Puts a failure where the user can see it, and in the log.</summary>
+    private void ShowError(Exception? ex, string message)
     {
-        var hwMode = StartupHwMode?.Trim().ToLowerInvariant() switch
-        {
-            "disabled" => HardwareDecodeMode.Disabled,
-            "software" => HardwareDecodeMode.Disabled,
-            "required" => HardwareDecodeMode.Required,
-            _ => HardwareDecodeMode.Auto,
-        };
-        _logger?.LogInformation(
-            "Hardware decode mode (from --hw-mode '{Raw}'): {Mode}",
-            StartupHwMode ?? "(unset)",
-            hwMode
-        );
-        return hwMode;
+        _logger?.LogError(ex, "{Message}", message);
+        StatusText.Text = message;
+        Title = "FrameFlow Player — error";
     }
 
     private async Task TeardownPlayerAsync()
     {
-        // Unbind from the view so the sub-controls dispose their
-        // observable subscriptions before the player itself dies.
+        // Unbind from the view so the sub-controls dispose their observable
+        // subscriptions before the player itself dies.
         PlayerView.MediaPlayer = null;
 
-        // Stop following playlist transitions before the player goes away.
         _transitionSub?.Dispose();
         _transitionSub = null;
         _playlistPlayer = null;
@@ -465,10 +353,8 @@ public partial class MainWindow : Window
             _player = null;
         }
 
-        // the audio sink is now caller-owned (the
-        // old DI-based path had the container handle disposal). The
-        // controller already deactivated the sink during its dispose;
-        // here we release the native OpenAL device handle.
+        // The audio sink is caller-owned. The controller already deactivated it
+        // during its dispose; this releases the native OpenAL device handle.
         if (_audioSink is not null)
         {
             try
@@ -492,7 +378,6 @@ public partial class MainWindow : Window
         Closing -= OnWindowClosing;
 
         await TeardownPlayerAsync();
-        // The hosted GPU surface (if any) cleans up on detach when the window closes.
         _loggerFactory?.Dispose();
         Close();
     }

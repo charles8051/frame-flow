@@ -3,12 +3,9 @@ using Avalonia;
 namespace FrameFlow.Examples.AvaloniaPlayer;
 
 /// <summary>
-/// Application entry point. Configures FrameFlow services and launches the Avalonia app.
+/// Application entry point. Standard Avalonia bootstrap; the FrameFlow wiring
+/// is in <see cref="App"/> and <see cref="MainWindow"/>.
 /// </summary>
-/// <remarks>
-/// Full Avalonia UI integration requires a MainWindow with a video surface control.
-/// The App class configures FrameFlow with the Avalonia presenter and OpenAL audio.
-/// </remarks>
 internal static class Program
 {
     [STAThread]
