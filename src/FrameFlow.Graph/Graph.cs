@@ -38,6 +38,11 @@ public sealed class Graph
     private readonly List<INode> _nodes = new();
     private readonly List<Action> _wireUps = new();
 
+    // What each wire-up wires, as a value. The closures above say how an edge is built; this
+    // says what the graph's shape is, which is what the rules in GraphTopology are about. Kept
+    // in Connect order, so a validation message names edges in the order the caller wired them.
+    private readonly List<EdgeSpec> _edges = new();
+
     // Per-edge reset actions, run at the top of every RunAsync BEFORE the
     // wire-ups. They clear the prior run's edge state (output-port writers +
     // input-port reader) so a graph instance is re-runnable: without this, a
@@ -147,6 +152,7 @@ public sealed class Graph
 
         var opts = config.Options ?? EdgeOptions.Default;
         var cloner = config.Cloner;
+        _edges.Add(new EdgeSpec(from, to, Inherit: false, HasCloner: cloner is not null));
         // Reset clears the prior run's edge state so RunAsync can be called again.
         // For a fan-out output port (multiple edges share one `from`), each edge
         // registers a Clear(); they all run before any wire-up Add(), so clearing
@@ -199,6 +205,18 @@ public sealed class Graph
         // they act on empty ports (no-op). This is what makes a graph instance re-runnable for the
         // loop's in-place rewind, and the registered actions are what tell an operator that the
         // run it is about to see starts over.
+        // The topology is checked before anything is reset or wired, so a malformed graph fails
+        // the run it was started for rather than hanging in a pump that waits for an item no
+        // edge can deliver.
+        var errors = GraphTopology.Validate(_edges, _nodes);
+        if (errors.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "This graph is not wired correctly:" + Environment.NewLine + "  "
+                    + string.Join(Environment.NewLine + "  ", errors)
+            );
+        }
+
         foreach (var beforeRun in _beforeRun)
             beforeRun();
 

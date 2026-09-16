@@ -132,7 +132,7 @@ public delegate ValueTask<TOut?> SyncJoinOperator<in TPrimary, in TSecondary, TO
 /// they age out of the window.
 /// </para>
 /// </remarks>
-public sealed class SyncJoinNode<TPrimary, TSecondary, TOut> : IPumpableNode
+public sealed class SyncJoinNode<TPrimary, TSecondary, TOut> : IPumpableNode, IRequiresEveryInput
     where TPrimary : class, IRefCounted
     where TSecondary : class, IRefCounted
     where TOut : class, IRefCounted
@@ -199,6 +199,10 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut> : IPumpableNode
 
     public InputPort<TPrimary> Primary { get; }
     public InputPort<TSecondary> Secondary { get; }
+
+    // A join reads both sides before it emits, so a graph that wired only one of them runs and
+    // produces nothing. GraphTopology refuses that before the run starts.
+    IEnumerable<IPort> IRequiresEveryInput.RequiredInputs => [Primary, Secondary];
     public OutputPort<TOut> Output { get; }
 
     /// <summary>Secondaries currently held by the window. Diagnostics and tests.</summary>
