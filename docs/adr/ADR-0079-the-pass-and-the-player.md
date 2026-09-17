@@ -228,10 +228,29 @@ Breaking changes 25, 26 and 27.
 
 ## What this does not decide
 
-- **Whether a pass yields hardware frames.** `WithHardwareFrames` is a player-only option today and
-  `PlayerSession` has no equivalent. A GPU inference sink is exactly the consumer that wants
-  GPU-resident frames, so the answer is probably yes, but it is a change to the pass's runtime
-  rather than a rename and it needs its own pass over `SubstrateSession`'s yield path. Deferred.
+- **Whether a pass yields hardware frames.** Deferred, and the trigger is named below.
+
+  > **Amended 2026-09-17.** The reason first written here was wrong, and wrong in the direction
+  > that makes work look bigger than it is. It said the change "needs its own pass over
+  > `SubstrateSession`'s yield path". A pass never touches `SubstrateSession`.
+  > `VideoDecoder.YieldHardwareFrames` is a settable property, `PassBuilder.BuildAsync` already
+  > constructs that decoder, and the change is one builder option and one assignment.
+  >
+  > What makes it premature is that nothing on the pass path could consume the result. Every
+  > `GpuVideoFrame` consumer in the tree is a presenter — `CompositionInteropVideoSink`,
+  > `CompositionInteropVideoView`, `D3D11Nv12SharedConverter` — and a presenter is what the player
+  > is for. Set the flag on a pass today and the frame reaches an operator that reads
+  > `IVideoFrame` on the CPU, which is `Yolov8Preprocessor` and everything downstream of it.
+  >
+  > The seam exists at both ends and not in the middle. `CudaInferenceSession` documents a
+  > device-resident escape hatch that binds a `CUdeviceptr` with no PCIe staging, and names
+  > FFmpeg's NVDEC output as the kind of thing that supplies one. Nothing walks through it, and a
+  > `GpuVideoFrame` is D3D11 or VAAPI shaped rather than a bare device pointer, so the bridge is
+  > real work and it is not this option.
+  >
+  > **The trigger: the first operator that consumes a `GpuVideoFrame`.** The option goes in that
+  > change, where it can be tested end to end. Added before it, it is a flag whose only reachable
+  > use is the entry point it does not belong to.
 - **Whether `MediaPlayer` survives.** After #269 it is a strict subset of the builder. Deleting it
   is a separate change with its own migration, and it is orthogonal to this split.
 - **Whether a pass later gets a queue.** If batch-over-a-warm-graph turns out to be wanted, it
