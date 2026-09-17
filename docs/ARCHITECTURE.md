@@ -281,17 +281,20 @@ Use fluent composition for:
 Consider a factory or builder such as:
 
 ```csharp
-await using var player = await FrameFlowPass.Create(path)
+await using var player = await FrameFlowPlayer.Create()
+    .WithMedia(path)
     .WithAudioSink(audioSink)
     .WithAvaloniaVideoView(view)
-    .BuildAsync(ct);
+    .BuildPlayerAsync(ct);
 ```
 
 This is a good fit because it configures object graphs and lifetimes before
-processing begins. As built, this is `FrameFlowPass.Create(...)` in
-`FrameFlow.Player`, returning an `IPlayerBuilder`. `BuildAsync` returns a
-play-to-end `MediaPass`; `BuildPlayerAsync` on the same chain returns the
-`IMediaPlayer` with seek, pause, and repeat.
+processing begins. As built, this is `FrameFlowPlayer.Create()` in
+`FrameFlow.Player`, returning an `IPlayerBuilder` whose terminal
+`BuildPlayerAsync` gives the `IMediaPlaylistPlayer` with seek, pause, repeat and
+the queue. `FrameFlowPass.Create(path)` is the sibling entry: its `BuildAsync`
+returns a `MediaPass`, one traversal of the source at decode speed, with no
+clock and no transport (ADR-0079).
 
 ### Processing pipeline surface
 

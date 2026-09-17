@@ -4,52 +4,52 @@
 namespace FrameFlow.Player;
 
 /// <summary>
-/// Entry point for the fluent player builder. Standard pattern:
+/// Entry point for the fluent player builder: paced playback, for a viewer.
 /// <code>
 /// await using var player = await FrameFlowPlayer
 ///     .Create()
 ///     .WithMedia(path)
 ///     .WithVideoSink(view)
 ///     .WithAudioSink(audio)
-///     .BuildAsync();
-/// await player.RunToCompletionAsync(ct);
+///     .BuildPlayerAsync();
+/// await player.PlayAsync();
 /// </code>
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Two terminals.</b> <see cref="IPlayerBuilder.BuildAsync"/> produces a
-/// <see cref="MediaPass"/>, which covers "open a source and play it to
-/// end of stream" and nothing more.
-/// <see cref="IPlayerBuilder.BuildPlayerAsync"/> produces an
-/// <see cref="IMediaPlaylistPlayer"/> — pause, resume, seek, repeat, position
-/// and diagnostics, plus the queue. Everything before the terminal is the same
-/// chain:
+/// <b>One terminal.</b> <see cref="IPlayerBuilder.BuildPlayerAsync"/> produces an
+/// <see cref="IMediaPlaylistPlayer"/> — pause, resume, seek, repeat, position and diagnostics,
+/// plus the queue. Every option on the chain means something to it, so there is nothing to refuse
+/// and no narrowing.
+/// </para>
+/// <para>
+/// <b>The other entry point.</b> <see cref="FrameFlowPass"/> runs one source through once at
+/// decode speed, waiting on no presentation time. That is what an inference or analysis run
+/// wants. A player honours a clock and shows each frame at its presentation time, which is what a
+/// viewer wants. The choice is the entry, not the terminal — ADR-0079.
+/// </para>
+/// <para>
+/// <b>Media is an option.</b> Every player is a queue and a queue can be empty, so <c>Create</c>
+/// names nothing. A chain with no <c>WithMedia</c> builds a player with its sinks warm and
+/// nothing loaded, and the first <see cref="IMediaPlayer.PlayAsync"/> starts whatever
+/// <see cref="IMediaPlaylistPlayer.AddAsync"/> has put in the queue by then:
 /// <code>
 /// await using var player = await FrameFlowPlayer
 ///     .Create()
-///     .WithMedia([first, second])
 ///     .WithVideoSink(view)
-///     .WithRepeatMode(RepeatMode.All)
 ///     .BuildPlayerAsync();
+///
+/// await player.AddAsync(source);   // arrives later
 /// await player.PlayAsync();
 /// </code>
-/// </para>
-/// <para>
-/// <b>Media is an option, not the entry.</b> Every player is a queue, and a queue can be empty,
-/// so <c>Create</c> names nothing. A chain with no <c>WithMedia</c> builds a player with its
-/// sinks warm and nothing loaded, and the first <see cref="IMediaPlayer.PlayAsync"/> starts
-/// whatever <see cref="IMediaPlaylistPlayer.AddAsync"/> has put in the queue by then. The same
-/// chain cannot build a <see cref="MediaPass"/>, which plays one source: that throws, because
-/// <c>WithMedia</c> comes after the entry and the types cannot rule it out.
 /// </para>
 /// <para>
 /// Nothing is opened here or by <c>WithMedia</c>. Both record what the player will start with;
 /// the demuxer runs in the terminal.
 /// </para>
 /// <para>
-/// Prefer this builder. <see cref="MediaPlayer"/>'s <c>CreateAsync</c> is the
-/// positional form of the second terminal. It runs the same wiring and cannot
-/// inject a clock.
+/// Prefer this builder. <see cref="MediaPlayer"/>'s <c>CreateAsync</c> is the positional form of
+/// the terminal. It runs the same wiring and cannot inject a clock.
 /// </para>
 /// </remarks>
 public static class FrameFlowPlayer
