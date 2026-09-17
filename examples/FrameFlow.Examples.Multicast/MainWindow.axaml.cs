@@ -339,7 +339,7 @@ public partial class MainWindow : Window
 
             StartupClock.Mark("PlayFileAsync: BuildPlayerAsync starting");
             _player = await FrameFlowPlayer
-                .Open(filePath)
+                .Create(filePath)
                 .WithAudioSink(_audioSink)
                 .WithRepeatMode(LoopButton.IsChecked == true ? RepeatMode.One : RepeatMode.Off)
                 .WithLogger(_loggerFactory)

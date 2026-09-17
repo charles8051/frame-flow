@@ -44,7 +44,9 @@ internal sealed class PlaylistCoordinator
 
     /// <summary>
     /// Seeds the coordinator with the initial playlist (the first element is the item that
-    /// loads first) and the starting repeat mode.
+    /// loads first) and the starting repeat mode. The playlist may be empty: the player then
+    /// starts with nothing loaded, and the first <c>PlayAsync</c> starts whatever has been added
+    /// by then.
     /// </summary>
     public PlaylistCoordinator(IEnumerable<IMediaSource> initial, RepeatMode repeat)
     {
@@ -55,11 +57,6 @@ internal sealed class PlaylistCoordinator
             ArgumentNullException.ThrowIfNull(s);
             items.Add(new PlaylistItem(s));
         }
-        if (items.Count == 0)
-            throw new ArgumentException(
-                "A playlist requires at least one source.",
-                nameof(initial)
-            );
         _queue = PlaylistQueue.Create(items, repeat);
     }
 
@@ -326,20 +323,25 @@ internal sealed class PlaylistCoordinator
     }
 
     /// <summary>
-    /// Takes the item a replay from Ended will start with, before the controller unloads, and marks
-    /// the replay so the load that follows keeps this queue. Returns <see langword="false"/> when
-    /// the player holds nothing to take, which leaves the mark alone.
+    /// Takes the item the next session will start with and marks the load that follows so it keeps
+    /// this queue. Returns <see langword="null"/> when the player holds nothing to take, which
+    /// leaves the mark alone.
     /// </summary>
-    internal bool ReserveStart()
+    /// <remarks>
+    /// Two callers reserve: a replay from <c>Ended</c>, before the controller unloads the session
+    /// it is replaying, and the first <c>PlayAsync</c> on a player built with an empty queue.
+    /// Both need the load that follows to play the queue rather than replace it.
+    /// </remarks>
+    internal PlaylistItem? ReserveStart()
     {
         lock (_gate)
         {
             var (queue, reserved) = _queue.ReserveStart();
             if (!reserved)
-                return false;
+                return null;
             _queue = queue;
             _replayPending = true;
-            return true;
+            return queue.ReservedStart;
         }
     }
 

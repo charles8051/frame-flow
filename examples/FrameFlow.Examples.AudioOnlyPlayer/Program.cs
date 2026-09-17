@@ -71,7 +71,7 @@ internal static class Program
         try
         {
             await using var player = await FrameFlowPlayer
-                .Open(inputPath)
+                .Create(inputPath)
                 .WithAudioSink(sink)
                 .WithLogger(loggerFactory)
                 .BuildAsync();

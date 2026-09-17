@@ -26,10 +26,11 @@ namespace FrameFlow.Player;
 /// <b>One source is a queue of one</b> (ADR-0077). A caller who plays one file can name
 /// <see cref="IMediaPlayer"/> and ignore the queue; one who later wants a second source enqueues it
 /// on the player they already hold. The sinks are attached once and stay warm across every item, so
-/// nothing is rebuilt at a boundary.
+/// nothing is rebuilt at a boundary. A caller with no source yet passes none, and the player is
+/// built with an empty queue.
 /// </para>
 /// <para>
-/// <b>Prefer the fluent builder.</b> <c>FrameFlowPlayer.Open(path)…BuildPlayerAsync()</c> runs the
+/// <b>Prefer the fluent builder.</b> <c>FrameFlowPlayer.Create(path)…BuildPlayerAsync()</c> runs the
 /// same wiring and returns the same player. This factory remains for existing callers. New code
 /// should use the builder.
 /// </para>
@@ -124,9 +125,11 @@ public static class MediaPlayer
     /// supplied sinks are attached once and reused for every item.
     /// </summary>
     /// <param name="sources">
-    /// The initial queue, in order. Must hold at least one source. More can be added later with
+    /// The initial queue, in order. More can be added later with
     /// <see cref="IMediaPlaylistPlayer.AddAsync"/>, or played once with
-    /// <see cref="IMediaPlaylistPlayer.EnqueueAsync"/>.
+    /// <see cref="IMediaPlaylistPlayer.EnqueueAsync"/>. An empty set builds the player with its
+    /// sinks warm and nothing loaded; the first <see cref="IMediaPlayer.PlayAsync"/> starts
+    /// whatever the queue holds by then, and is refused while it is still empty.
     /// </param>
     /// <param name="videoSink">Optional video sink, kept warm across all items.</param>
     /// <param name="audioSink">
@@ -151,7 +154,6 @@ public static class MediaPlayer
     /// <param name="configureVideo">Optional per-item video-chain configurator.</param>
     /// <param name="configureAudio">Optional per-item audio-chain configurator.</param>
     /// <param name="cancellationToken">Cancels the initial load.</param>
-    /// <exception cref="ArgumentException"><paramref name="sources"/> is empty.</exception>
     /// <exception cref="InvalidOperationException">
     /// The FFmpeg bootstrap failed, or the first source could not be loaded.
     /// </exception>
@@ -171,12 +173,8 @@ public static class MediaPlayer
     {
         ArgumentNullException.ThrowIfNull(sources);
 
-        var initial = sources.ToList();
-        if (initial.Count == 0)
-            throw new ArgumentException("A player requires at least one source.", nameof(sources));
-
         return await CreateCoreAsync(
-                initial,
+                sources.ToList(),
                 videoSink,
                 audioSink,
                 hardwareDecodeMode,
@@ -253,15 +251,20 @@ public static class MediaPlayer
                 await audioSink.ActivateAsync(cancellationToken).ConfigureAwait(false);
 
             // Loading the first item drives the controller through to Paused; the
-            // session pops it from the coordinator, so the two stay in lockstep.
-            var load = await controller
-                .LoadAsync(initial[0], cancellationToken)
-                .ConfigureAwait(false);
-            if (!load.IsSuccess)
-                throw new InvalidOperationException(
-                    $"LoadAsync failed: {load.Error.Category} — {load.Error.Message}",
-                    load.Error.Inner
-                );
+            // session pops it from the coordinator, so the two stay in lockstep. An empty
+            // queue has nothing to load, and the player stays Idle until the first PlayAsync
+            // starts whatever has been added by then.
+            if (initial.Count > 0)
+            {
+                var load = await controller
+                    .LoadAsync(initial[0], cancellationToken)
+                    .ConfigureAwait(false);
+                if (!load.IsSuccess)
+                    throw new InvalidOperationException(
+                        $"LoadAsync failed: {load.Error.Category} — {load.Error.Message}",
+                        load.Error.Inner
+                    );
+            }
 
             var logger = loggerFactory.CreateLogger<PlaylistMediaPlayerCore>();
             return new PlaylistMediaPlayerCore(controller, coordinator, audioSink, logger);

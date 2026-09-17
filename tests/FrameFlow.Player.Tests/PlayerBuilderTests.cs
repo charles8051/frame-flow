@@ -19,41 +19,41 @@ public sealed class PlayerBuilderTests
         // ArgumentNullException for null and ArgumentException for empty.
         // We accept either since both are valid signals from the API
         // surface.
-        Assert.ThrowsAny<ArgumentException>(() => FrameFlowPlayer.Open((string)null!));
+        Assert.ThrowsAny<ArgumentException>(() => FrameFlowPlayer.Create((string)null!));
     }
 
     [Fact]
     public void Open_EmptyPath_Throws()
     {
-        Assert.ThrowsAny<ArgumentException>(() => FrameFlowPlayer.Open(""));
+        Assert.ThrowsAny<ArgumentException>(() => FrameFlowPlayer.Create(""));
     }
 
     [Fact]
     public void Open_NullSource_Throws()
     {
         Assert.Throws<ArgumentNullException>(() =>
-            FrameFlowPlayer.Open((IMediaSource)null!)
+            FrameFlowPlayer.Create((IMediaSource)null!)
         );
     }
 
     [Fact]
     public void WithVideoSink_Null_Throws()
     {
-        var builder = FrameFlowPlayer.Open("any.mp4");
+        var builder = FrameFlowPlayer.Create("any.mp4");
         Assert.Throws<ArgumentNullException>(() => builder.WithVideoSink(null!));
     }
 
     [Fact]
     public void WithAudioSink_Null_Throws()
     {
-        var builder = FrameFlowPlayer.Open("any.mp4");
+        var builder = FrameFlowPlayer.Create("any.mp4");
         Assert.Throws<ArgumentNullException>(() => builder.WithAudioSink(null!));
     }
 
     [Fact]
     public void ConfigureVideo_Null_Throws()
     {
-        var builder = FrameFlowPlayer.Open("any.mp4");
+        var builder = FrameFlowPlayer.Create("any.mp4");
         Assert.Throws<ArgumentNullException>(() =>
             builder.ConfigureVideo(
                 (Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>)null!
@@ -64,7 +64,7 @@ public sealed class PlayerBuilderTests
     [Fact]
     public void ConfigureAudio_Null_Throws()
     {
-        var builder = FrameFlowPlayer.Open("any.mp4");
+        var builder = FrameFlowPlayer.Create("any.mp4");
         Assert.Throws<ArgumentNullException>(() =>
             builder.ConfigureAudio(
                 (Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>)null!
@@ -78,7 +78,7 @@ public sealed class PlayerBuilderTests
         // Null is deliberately not a throw: a conditional logging step
         // has to stay inside the chain rather than forcing the caller
         // out to a local. See issue #99.
-        var builder = FrameFlowPlayer.Open("any.mp4");
+        var builder = FrameFlowPlayer.Create("any.mp4");
         var same = builder.WithLogger(null).WithHardwareDecode(HardwareDecodeMode.Disabled);
         Assert.Same(builder, same);
     }
@@ -86,14 +86,14 @@ public sealed class PlayerBuilderTests
     [Fact]
     public void WithClock_Null_Throws()
     {
-        var builder = FrameFlowPlayer.Open("any.mp4");
+        var builder = FrameFlowPlayer.Create("any.mp4");
         Assert.Throws<ArgumentNullException>(() => builder.WithClock(null!));
     }
 
     [Fact]
     public void PlayerOnlyOption_NarrowsToMediaPlayerBuilder()
     {
-        var builder = FrameFlowPlayer.Open("any.mp4");
+        var builder = FrameFlowPlayer.Create("any.mp4");
         var sink = new NullVideoSink();
 
         // Each player-only setter narrows the chain, and the narrowed
@@ -114,7 +114,7 @@ public sealed class PlayerBuilderTests
     [Fact]
     public void Builder_FluentChain_ReturnsSelf()
     {
-        var builder = FrameFlowPlayer.Open("any.mp4");
+        var builder = FrameFlowPlayer.Create("any.mp4");
         var sink = new NullVideoSink();
         var same = builder.WithVideoSink(sink).WithHardwareDecode(HardwareDecodeMode.Disabled);
         Assert.Same(builder, same);

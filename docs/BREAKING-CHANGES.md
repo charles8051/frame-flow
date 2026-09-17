@@ -502,7 +502,7 @@ await MediaPlayer.CreateAsync([first, second], videoSink, audioSink,
 
 ### 19. `BuildPlayerAsync` returns `Task<IMediaPlaylistPlayer>`
 
-The builder can now open a queue: `FrameFlowPlayer.Open(IEnumerable<IMediaSource>)`
+The builder can now open a queue: `FrameFlowPlayer.Create(IEnumerable<IMediaSource>)`
 starts the same chain over an ordered set of sources. It begins narrowed to
 `IMediaPlayerBuilder`, because a `PlayerSession` plays one source and `BuildAsync` has
 no meaning over a queue.
@@ -513,10 +513,10 @@ the task does not:
 
 ```csharp
 // Still compiles — the awaited value is assignable
-IMediaPlayer player = await FrameFlowPlayer.Open(path).BuildPlayerAsync();
+IMediaPlayer player = await FrameFlowPlayer.Create(path).BuildPlayerAsync();
 
 // Stops compiling — name the new type, or await first
-Task<IMediaPlayer> pending = FrameFlowPlayer.Open(path).BuildPlayerAsync();
+Task<IMediaPlayer> pending = FrameFlowPlayer.Create(path).BuildPlayerAsync();
 ```
 
 A type outside FrameFlow that implements `IPlayerBuilder` or `IMediaPlayerBuilder`
@@ -540,6 +540,48 @@ clock runs on for the command hop between the hold completing and the transition
 it, and that overshoot used to be hidden inside the frame `Ended` arrived early by. A host
 that read `Position` at `Ended` and expected the raw clock now reads `Duration` exactly.
 Everywhere but `Ended` it is unchanged.
+### 21. `FrameFlowPlayer.Open` is now `FrameFlowPlayer.Create`
+
+`Open` opened nothing. It recorded the source and returned the builder; the demuxer runs
+in `BuildAsync` / `BuildPlayerAsync`. The name promised I/O that happens somewhere else,
+and it could not be stretched over entry 22's no-source overload.
+
+```csharp
+// Before
+await FrameFlowPlayer.Open(path).WithVideoSink(sink).BuildPlayerAsync();
+
+// After
+await FrameFlowPlayer.Create(path).WithVideoSink(sink).BuildPlayerAsync();
+```
+
+Nothing else changes. Same overloads, same arguments, same builders.
+
+### 22. A player can be built with nothing to play
+
+`FrameFlowPlayer.Create()` takes no source, and `MediaPlayer.CreateAsync` accepts an empty
+set of them. The player is built with its sinks attached and warm and nothing loaded,
+sitting at `PlaybackState.Idle`. The first `PlayAsync` starts whatever `AddAsync` or
+`EnqueueAsync` have put in the queue by then.
+
+```csharp
+await using var player = await FrameFlowPlayer.Create()
+    .WithVideoSink(sink)
+    .BuildPlayerAsync();
+
+await player.AddAsync(source);   // arrives later
+await player.PlayAsync();        // loads and starts it
+```
+
+`PlayAsync` on a player whose queue is still empty is refused with
+`ErrorCategory.InvalidOperation` and leaves it at `Idle`, which is what `Play` from `Idle`
+has always done.
+
+`MediaPlayer.CreateAsync(sources)` used to throw `ArgumentException` on an empty set, and
+`PlaylistCoordinator`'s public constructor did the same. Neither does now. A caller who
+was relying on the throw to catch an empty list checks it before the call.
+
+This is for a host that builds its presenter once at startup and receives content
+afterwards. Building with a placeholder and replacing it cost a load and a teardown.
 
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 

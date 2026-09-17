@@ -23,7 +23,7 @@ namespace FrameFlow.Examples.AvaloniaPlayer;
 /// </para>
 /// <para>
 /// A single file and a folder are both built with
-/// <c>FrameFlowPlayer.Open(...).BuildPlayerAsync()</c>; the folder passes every
+/// <c>FrameFlowPlayer.Create(...).BuildPlayerAsync()</c>; the folder passes every
 /// source at once and plays them over one warm presenter.
 /// </para>
 /// <para>
@@ -135,7 +135,7 @@ public partial class MainWindow : Window
             _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
 
             _player = await FrameFlowPlayer
-                .Open(path)
+                .Create(path)
                 .WithVideoSink(videoSink)
                 .WithAudioSink(_audioSink)
                 .WithHardwareFrames(PlayerView.VideoSurface.PrefersHardwareFrames)
@@ -200,7 +200,7 @@ public partial class MainWindow : Window
             _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
 
             var playlist = await FrameFlowPlayer
-                .Open(_playlistEntries.Select(e => e.Source))
+                .Create(_playlistEntries.Select(e => e.Source))
                 .WithVideoSink(videoSink)
                 .WithAudioSink(_audioSink)
                 .WithHardwareFrames(PlayerView.VideoSurface.PrefersHardwareFrames)

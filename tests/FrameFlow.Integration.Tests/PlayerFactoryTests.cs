@@ -53,14 +53,13 @@ public sealed class PlayerFactoryTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.NotNull(only.Source);
     }
 
-    [Fact]
-    public async Task AnEmptyQueue_IsRefused()
+    [RequiresFfmpegAndCorpusFact]
+    public async Task AnEmptyQueue_BuildsAPlayerThatHasNothingLoaded()
     {
-        var error = await Assert.ThrowsAsync<ArgumentException>(
-            () => MediaPlayer.CreateAsync(Array.Empty<IMediaSource>())
-        );
+        await using var player = await MediaPlayer.CreateAsync(Array.Empty<IMediaSource>());
 
-        Assert.Equal("sources", error.ParamName);
+        Assert.Empty(player.GetPlaylist().Playlist);
+        Assert.Equal(PlaybackState.Idle, player.State);
     }
 
     private static IMediaSource SourceOf(string clip)

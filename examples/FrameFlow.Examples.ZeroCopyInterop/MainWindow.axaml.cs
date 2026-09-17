@@ -211,7 +211,7 @@ public partial class MainWindow : Window
         try
         {
             var player = await FrameFlowPlayer
-                .Open(path)
+                .Create(path)
                 .WithVideoSink(videoSink)
                 .WithHardwareDecode(hwMode)
                 .WithHardwareFrames(surface.PrefersHardwareFrames)

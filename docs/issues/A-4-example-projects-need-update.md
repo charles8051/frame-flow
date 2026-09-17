@@ -31,7 +31,7 @@ The examples were not patched — they were rewritten against the surface that
 exists now. `examples/` holds 11 runnable apps plus the shared
 `FrameFlow.Examples.Common` library, split across the three construction
 surfaces documented in `README.md` (`MediaPlayer.CreateAsync`,
-`FrameFlowPlayer.Open(...)`, `PlaybackController.Create`).
+`FrameFlowPlayer.Create(...)`, `PlaybackController.Create`).
 `FrameFlow.Examples.HostedServicePlayer` is the reference for the DI path and
 uses `AddFrameFlow()` / `AddFrameFlowOpenAlAudio()` / `AddHostedBootstrap()`.
 

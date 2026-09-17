@@ -31,7 +31,7 @@ full list is under [Packages](#packages).
 
 ## Quick start
 
-`FrameFlowPlayer.Open` builds a player. Two terminals:
+`FrameFlowPlayer.Create` builds a player. Two terminals:
 
 | You want | Terminal | Returns |
 |---|---|---|
@@ -45,7 +45,7 @@ using FrameFlow.Audio.OpenAL;
 using FrameFlow.Media;
 using FrameFlow.Player;
 
-await using var player = await FrameFlowPlayer.Open(path)
+await using var player = await FrameFlowPlayer.Create(path)
     .WithOpenAlAudio()          // also implements IClockSource, so it becomes the master clock
     .WithAvaloniaVideoView(view)
     .WithHardwareDecode(HardwareDecodeMode.Auto)
@@ -63,7 +63,7 @@ When you only need "open a file and play it to the end", with no seek, pause,
 or repeat:
 
 ```csharp
-await using var player = await FrameFlowPlayer.Open(path)
+await using var player = await FrameFlowPlayer.Create(path)
     .WithAudioSink(audioSink)   // .WithAvaloniaVideoView(view) / .WithOpenAlAudio() also available
     .BuildAsync();
 
@@ -79,7 +79,7 @@ is a compile error rather than a dropped setting.
 Every player is a queue, so sources can be added while it plays:
 
 ```csharp
-await using var player = await FrameFlowPlayer.Open([first, second])
+await using var player = await FrameFlowPlayer.Create([first, second])
     .WithVideoSink(videoSink)
     .WithAudioSink(audioSink)
     .WithRepeatMode(RepeatMode.All)
@@ -91,9 +91,23 @@ await player.EnqueueAsync(once);   // plays once, then leaves
 await player.SkipToNextAsync();
 ```
 
-`Open(path)` builds the same player over a queue of one, so the transport above
-is there whether you opened one file or twenty. The sinks stay warm across every
-item, so nothing is rebuilt at a boundary.
+`Create(path)` builds the same player over a queue of one, so the transport above
+is there whether you started with one file or twenty. The sinks stay warm across
+every item, so nothing is rebuilt at a boundary.
+
+`Create()` names no source at all. The player is built with its sinks warm and
+nothing loaded, and the first `PlayAsync` starts whatever the queue holds by
+then — for a host that builds its presenter at startup and receives content
+afterwards.
+
+```csharp
+await using var player = await FrameFlowPlayer.Create()
+    .WithVideoSink(videoSink)
+    .BuildPlayerAsync();
+
+await player.AddAsync(source);
+await player.PlayAsync();
+```
 
 `MediaPlayer.CreateAsync(...)` is the positional form of `BuildPlayerAsync`, for
 callers who would rather not chain. `PlaybackController.Create(...)` sits below
@@ -115,7 +129,7 @@ builder.Services
     .AddHostedBootstrap();       // FFmpeg bootstrap runs at host startup
 
 // …then, inside an IHostedService, resolve IAudioSink and build the session:
-await using var player = await FrameFlowPlayer.Open(path)
+await using var player = await FrameFlowPlayer.Create(path)
     .WithAudioSink(resolvedAudioSink)
     .BuildAsync(ct);
 ```

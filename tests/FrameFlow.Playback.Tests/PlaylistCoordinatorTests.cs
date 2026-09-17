@@ -21,11 +21,15 @@ public sealed class PlaylistCoordinatorTests
         new("test", TimeSpan.FromSeconds(seconds), [], []);
 
     [Fact]
-    public void EmptyInitialQueue_Throws()
+    public void AnEmptyInitialQueue_HoldsNothingAndStartsNothing()
     {
-        Assert.Throws<ArgumentException>(
-            () => new PlaylistCoordinator(Array.Empty<IMediaSource>(), RepeatMode.Off)
-        );
+        // A player can be built before it has anything to play. The queue is empty until
+        // something is added, and there is nothing to reserve for a first start.
+        var coord = new PlaylistCoordinator(Array.Empty<IMediaSource>(), RepeatMode.Off);
+
+        Assert.Empty(coord.Queue.Playlist);
+        Assert.Null(coord.CurrentSource);
+        Assert.Null(coord.ReserveStart());
     }
 
     [Fact]
@@ -238,7 +242,7 @@ public sealed class PlaylistCoordinatorTests
         var coord = new PlaylistCoordinator(RepeatMode.Off);
         coord.LoadSource(S("a"));
         var enqueued = coord.Enqueue(S("b"));
-        Assert.True(coord.ReserveStart());
+        Assert.NotNull(coord.ReserveStart());
 
         coord.LoadSource(S("a"));
 
@@ -260,7 +264,7 @@ public sealed class PlaylistCoordinatorTests
         // play the source the replay reloaded and discard what the caller asked for.
         var coord = new PlaylistCoordinator(RepeatMode.Off);
         coord.LoadSource(S("a"));
-        Assert.True(coord.ReserveStart());
+        Assert.NotNull(coord.ReserveStart());
 
         var replaced = coord.Replace([S("b"), S("c")]);
         coord.LoadSource(S("a"));
@@ -274,7 +278,7 @@ public sealed class PlaylistCoordinatorTests
     {
         var coord = new PlaylistCoordinator(RepeatMode.Off);
 
-        Assert.False(coord.ReserveStart());
+        Assert.Null(coord.ReserveStart());
 
         var source = S("a");
         coord.LoadSource(source);

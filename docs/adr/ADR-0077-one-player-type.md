@@ -74,6 +74,15 @@ A caller who plays one file gets the queue's behaviour: the item is kept at `End
 sought and its counters read, a fault is reported rather than terminal, and a loop is the session's
 in-place rewind.
 
+> **Amended 2026-09-17.** The queue may be empty. A player built with no sources has its sinks
+> attached and warm and nothing loaded, and sits at `Idle`. `Play` at `Idle` asks the session
+> factory for the item its queue would start with, reserving it so the load that follows plays the
+> queue rather than replacing it — the mark a replay from `Ended` already sets. With nothing
+> queued the factory answers null and `Play` is refused, as it was before. This is for a host that
+> builds its presenter once at startup and receives content afterwards; the alternative was a
+> placeholder source and a load and teardown to be rid of it.
+> [Breaking change 22](../BREAKING-CHANGES.md).
+
 ### 2. One implementation, two interfaces for now
 
 `MediaPlayer.CreateAsync` and `MediaPlaylistPlayer.CreateAsync` build the same player. The

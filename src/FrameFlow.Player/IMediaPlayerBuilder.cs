@@ -17,7 +17,7 @@ namespace FrameFlow.Player;
 /// <see cref="IPlayerBuilder.WithClock"/>,
 /// <see cref="IPlayerBuilder.WithHardwareFrames"/>,
 /// <see cref="IPlayerBuilder.WithAudioActivation"/>), and from
-/// <see cref="FrameFlowPlayer.Open(IEnumerable{IMediaSource})"/>, which
+/// <see cref="FrameFlowPlayer.Create(IEnumerable{IMediaSource})"/>, which
 /// starts here because a <see cref="PlayerSession"/> plays one source.
 /// </summary>
 /// <remarks>
@@ -35,7 +35,7 @@ namespace FrameFlow.Player;
 /// logging — is repeated here so a chain keeps flowing after the
 /// narrowing step, in either order:
 /// <code>
-/// await using var player = await FrameFlowPlayer.Open(path)
+/// await using var player = await FrameFlowPlayer.Create(path)
 ///     .WithRepeatMode(RepeatMode.All)
 ///     .WithAudioSink(audio)
 ///     .BuildPlayerAsync(ct);
