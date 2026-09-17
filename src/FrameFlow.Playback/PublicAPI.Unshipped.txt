@@ -163,10 +163,6 @@ FrameFlow.Playback.PlaybackClock.Seek(System.TimeSpan position) -> void
 FrameFlow.Playback.PlaybackClock.Start(System.TimeSpan startPosition) -> void
 FrameFlow.Playback.PlaybackClock.Stop() -> void
 FrameFlow.Playback.PlaybackController
-FrameFlow.Playback.PlaybackGraph
-FrameFlow.Playback.PlaybackGraph.DisposeAsync() -> System.Threading.Tasks.ValueTask
-FrameFlow.Playback.PlaybackGraph.PlayToCompletionAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
-FrameFlow.Playback.PlaybackGraph.PlaybackGraph(FrameFlow.Decoding.IVideoDecoder? videoDecoder = null, FrameFlow.Decoding.IAudioDecoder? audioDecoder = null, FrameFlow.Media.IVideoSink? videoSink = null, FrameFlow.Media.IAudioSink? audioSink = null) -> void
 FrameFlow.Playback.PlaybackObservableExtensions
 FrameFlow.Playback.PlaylistTransition
 FrameFlow.Playback.PlaylistTransition.Index.get -> int

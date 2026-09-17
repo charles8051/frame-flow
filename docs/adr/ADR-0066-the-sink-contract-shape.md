@@ -103,6 +103,13 @@ because what it does with each differs:
   parameter, not an interface. This was the one concrete consumer #93 pointed
   at, and #94 closed it without needing a base type.
 
+
+> **Amended 2026-09-17.** `PlaybackGraph` has since been deleted. It was a
+> Phase-3 migration proof that nothing outside its own tests ever constructed,
+> and `SubstrateSession` drew the same per-medium split beside it. The first
+> bullet's evidence now reads on `SubstrateSession.cs:1461-1477` and
+> `PlayerSession`. The conclusion is unchanged: three sites, each per-medium.
+
 Contravariance on `in T` would be sound. It would also be unused.
 
 #### Correction: the reparent is nearly free
