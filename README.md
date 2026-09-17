@@ -35,7 +35,7 @@ full list is under [Packages](#packages).
 
 | You want | Terminal | Returns |
 |---|---|---|
-| Playback you drive — play, pause, seek, repeat, observables | `.BuildPlayerAsync()` | `IMediaPlayer` |
+| Playback you drive — play, pause, seek, repeat, observables | `.BuildPlayerAsync()` | `IMediaPlaylistPlayer` |
 | Open a file and play it to the end | `.BuildAsync()` | `PlayerSession` |
 
 ### `BuildPlayerAsync` — the full player
@@ -79,11 +79,11 @@ is a compile error rather than a dropped setting.
 Every player is a queue, so sources can be added while it plays:
 
 ```csharp
-await using var player = await MediaPlayer.CreateAsync(
-    [first, second],
-    videoSink,
-    audioSink,
-    initialRepeatMode: RepeatMode.All);
+await using var player = await FrameFlowPlayer.Open([first, second])
+    .WithVideoSink(videoSink)
+    .WithAudioSink(audioSink)
+    .WithRepeatMode(RepeatMode.All)
+    .BuildPlayerAsync();
 
 await player.PlayAsync();
 await player.AddAsync(third);      // joins the loop
@@ -91,13 +91,14 @@ await player.EnqueueAsync(once);   // plays once, then leaves
 await player.SkipToNextAsync();
 ```
 
-`MediaPlayer.CreateAsync(source, ...)` takes one source instead, as a queue of
-one, and returns the same player. The sinks stay warm across every item, so
-nothing is rebuilt at a boundary.
+`Open(path)` builds the same player over a queue of one, so the transport above
+is there whether you opened one file or twenty. The sinks stay warm across every
+item, so nothing is rebuilt at a boundary.
 
-`PlaybackController.Create(...)` sits below both and returns the raw
-`IPlaybackController` state machine. Use it only when that state machine is what
-you are building around.
+`MediaPlayer.CreateAsync(...)` is the positional form of `BuildPlayerAsync`, for
+callers who would rather not chain. `PlaybackController.Create(...)` sits below
+both and returns the raw `IPlaybackController` state machine. Use it only when
+that state machine is what you are building around.
 
 ### Generic Host and DI
 

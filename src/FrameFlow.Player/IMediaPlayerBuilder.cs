@@ -10,13 +10,15 @@ using FrameFlow.Graph;
 namespace FrameFlow.Player;
 
 /// <summary>
-/// Fluent builder for an <see cref="IMediaPlayer"/> — the full
+/// Fluent builder for an <see cref="IMediaPlaylistPlayer"/> — the full
 /// pause/resume/seek/repeat state machine. Reached from
 /// <see cref="IPlayerBuilder"/> by calling any player-only option
 /// (<see cref="IPlayerBuilder.WithRepeatMode"/>,
 /// <see cref="IPlayerBuilder.WithClock"/>,
 /// <see cref="IPlayerBuilder.WithHardwareFrames"/>,
-/// <see cref="IPlayerBuilder.WithAudioActivation"/>).
+/// <see cref="IPlayerBuilder.WithAudioActivation"/>), and from
+/// <see cref="FrameFlowPlayer.Open(IEnumerable{IMediaSource})"/>, which
+/// starts here because a <see cref="PlayerSession"/> plays one source.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -114,10 +116,10 @@ public interface IMediaPlayerBuilder
     IMediaPlayerBuilder WithAudioActivation(bool activateAudioSink = true);
 
     /// <summary>
-    /// Bootstraps the FFmpeg native runtime, loads the media source
-    /// into a <see cref="PlaybackController"/>, and returns a ready
-    /// <see cref="IMediaPlayer"/>. Playback is not started — the
-    /// caller invokes <see cref="IMediaPlayer.PlayAsync"/> explicitly.
+    /// Bootstraps the FFmpeg native runtime, loads the first item into a
+    /// <see cref="PlaybackController"/>, and returns a ready player.
+    /// Playback is not started — the caller invokes
+    /// <see cref="IMediaPlayer.PlayAsync"/> explicitly.
     /// </summary>
-    Task<IMediaPlayer> BuildPlayerAsync(CancellationToken cancellationToken = default);
+    Task<IMediaPlaylistPlayer> BuildPlayerAsync(CancellationToken cancellationToken = default);
 }
