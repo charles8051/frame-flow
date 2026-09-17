@@ -58,7 +58,8 @@ public sealed class MixedQueueTests : IClassFixture<FfmpegBootstrapFixture>
         var audioSink = new HarnessAudioSink();
 
         await using var player = await FrameFlowPlayer
-            .Create([audio, still, video])
+            .Create()
+            .WithMedia([audio, still, video])
             .WithVideoSink(videoSink)
             .WithAudioSink(audioSink)
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
@@ -171,7 +172,8 @@ public sealed class MixedQueueTests : IClassFixture<FfmpegBootstrapFixture>
 
         await using var pump = new FakeDevicePump(device);
         await using var player = await FrameFlowPlayer
-            .Create([File(AudioOnly)])
+            .Create()
+            .WithMedia([File(AudioOnly)])
             .WithVideoSink(videoSink)
             .WithAudioSink(audioSink)
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
