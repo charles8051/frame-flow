@@ -1,6 +1,9 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using FFmpeg.AutoGen.Abstractions;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
@@ -94,14 +97,49 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
         string url = ResolveUrl(source);
 
         _logger.LogInformation(
-            "Opening media source {DisplayName} (url={Url})",
+            "Opening media source {DisplayName} (url={Url}, format={InputFormat})",
             source.DisplayName,
-            url
+            url,
+            source.InputFormat ?? "probe"
         );
+
+        // Forcing the demuxer rather than probing for one. A wrong name here is the caller's
+        // typo, and failing on it beats quietly probing instead: the options below are often
+        // specific to the demuxer this names, and would then all come back unrecognised.
+        nint inputFormat = ResolveInputFormat(source);
 
         // avformat_open_input returns a context on success or fails and leaves ctx at Zero.
         nint ctx = nint.Zero;
-        int openResult = FFAvFormat.avformat_open_input(ref ctx, url, nint.Zero, nint.Zero);
+        nint options = BuildDemuxerOptions(source);
+        int openResult;
+        try
+        {
+            openResult = FFAvFormat.avformat_open_input(ref ctx, url, inputFormat, ref options);
+
+            if (openResult >= 0 && ctx != nint.Zero)
+            {
+                // What comes back is what the demuxer did not consume. Reported rather than
+                // dropped: an option that named nothing did not do what the caller asked, and
+                // the open otherwise succeeds and hides it.
+                var unrecognised = ReadKeys(options);
+                if (unrecognised.Count > 0)
+                {
+                    FFAvFormat.avformat_close_input(ref ctx);
+                    throw new InvalidOperationException(
+                        $"The demuxer opening media source {source.DisplayName} did not "
+                            + $"recognise these options: {string.Join(", ", unrecognised)}. "
+                            + "Demuxer options belong to the demuxer that opens the source, "
+                            + "so set IMediaSource.InputFormat to choose it explicitly."
+                    );
+                }
+            }
+        }
+        finally
+        {
+            // The dictionary is ours on every path, including the failure ones, and holds
+            // whatever avformat_open_input left in it.
+            FFAvUtil.av_dict_free(ref options);
+        }
 
         if (openResult < 0 || ctx == nint.Zero)
         {
@@ -198,6 +236,109 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Looks up the demuxer named by <see cref="IMediaSource.InputFormat"/>, or
+    /// <see cref="nint.Zero"/> to let <c>avformat_open_input</c> probe for one. The returned
+    /// pointer is libavformat's own static storage and is not owned.
+    /// </summary>
+    private static nint ResolveInputFormat(IMediaSource source)
+    {
+        if (string.IsNullOrEmpty(source.InputFormat))
+            return nint.Zero;
+
+        nint format = FFAvFormat.av_find_input_format(source.InputFormat);
+        if (format == nint.Zero)
+        {
+            throw new ArgumentException(
+                $"No demuxer is named {source.InputFormat} "
+                    + $"(media source {source.DisplayName}).",
+                nameof(source)
+            );
+        }
+
+        return format;
+    }
+
+    /// <summary>
+    /// Builds the <c>AVDictionary*</c> carrying the source's demuxer options, or
+    /// <see cref="nint.Zero"/> when it has none. The caller owns the result and frees it on
+    /// every path.
+    /// </summary>
+    private static nint BuildDemuxerOptions(IMediaSource source)
+    {
+        var requested = source.DemuxerOptions;
+        if (requested is null || requested.Count == 0)
+            return nint.Zero;
+
+        nint options = nint.Zero;
+        try
+        {
+            foreach (var (key, value) in requested)
+            {
+                if (string.IsNullOrEmpty(key))
+                {
+                    throw new ArgumentException(
+                        $"Media source {source.DisplayName} has a demuxer option with an "
+                            + "empty key.",
+                        nameof(source)
+                    );
+                }
+
+                int rc = FFAvUtil.av_dict_set(ref options, key, value ?? string.Empty, 0);
+                if (rc < 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Could not set demuxer option {key} for media source "
+                            + $"{source.DisplayName} (error code {rc})."
+                    );
+                }
+            }
+        }
+        catch
+        {
+            FFAvUtil.av_dict_free(ref options);
+            throw;
+        }
+
+        return options;
+    }
+
+    /// <summary>
+    /// Copies every key out of the dictionary. Reads only, and copies the strings into
+    /// managed memory, so the entries stay FFmpeg's to free.
+    /// </summary>
+    private static List<string> ReadKeys(nint dictionary)
+    {
+        var keys = new List<string>();
+        if (dictionary == nint.Zero)
+            return keys;
+
+        nint entry = nint.Zero;
+        while (true)
+        {
+            entry = FFAvUtil.av_dict_get(
+                dictionary,
+                string.Empty,
+                entry,
+                FFAvUtil.AvDictIgnoreSuffix
+            );
+            if (entry == nint.Zero)
+                break;
+
+            string? key;
+            unsafe
+            {
+                ref AVDictionaryEntry e = ref Unsafe.AsRef<AVDictionaryEntry>((void*)entry);
+                key = Marshal.PtrToStringUTF8((nint)e.key);
+            }
+
+            if (!string.IsNullOrEmpty(key))
+                keys.Add(key);
+        }
+
+        return keys;
+    }
 
     /// <summary>
     /// Resolves the URL string to pass to <c>avformat_open_input</c>.

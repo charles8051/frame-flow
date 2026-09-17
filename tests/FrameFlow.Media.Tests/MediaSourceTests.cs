@@ -138,7 +138,13 @@ public sealed class MediaSourceTests
     public void RecordConstructor_StoresAllProperties()
     {
         var uri = new Uri("https://example.com/test.mp4");
-        var source = new MediaSource("My Video", uri, "/files/test.mp4", false);
+        var source = new MediaSource
+        {
+            DisplayName = "My Video",
+            Uri = uri,
+            FilePath = "/files/test.mp4",
+            IsSeekable = false,
+        };
 
         Assert.Equal("My Video", source.DisplayName);
         Assert.Equal(uri, source.Uri);
@@ -149,21 +155,21 @@ public sealed class MediaSourceTests
     [Fact]
     public void RecordConstructor_DefaultIsSeekable_IsTrue()
     {
-        var source = new MediaSource("Test");
+        var source = new MediaSource { DisplayName = "Test" };
         Assert.True(source.IsSeekable);
     }
 
     [Fact]
     public void RecordConstructor_DefaultUri_IsNull()
     {
-        var source = new MediaSource("Test");
+        var source = new MediaSource { DisplayName = "Test" };
         Assert.Null(source.Uri);
     }
 
     [Fact]
     public void RecordConstructor_DefaultFilePath_IsNull()
     {
-        var source = new MediaSource("Test");
+        var source = new MediaSource { DisplayName = "Test" };
         Assert.Null(source.FilePath);
     }
 }

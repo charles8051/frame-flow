@@ -134,7 +134,7 @@ public sealed class PlayerErrorModelTests
     }
 
     private static PlaylistMediaPlayerCore NewPlayer(IPlaybackController controller) =>
-        NewPlaylistPlayer(controller, new PlaylistCoordinator([new MediaSource("a")], RepeatMode.Off));
+        NewPlaylistPlayer(controller, new PlaylistCoordinator([new MediaSource { DisplayName = "a" }], RepeatMode.Off));
 
     private static PlaylistMediaPlayerCore NewPlaylistPlayer(
         IPlaybackController controller,

@@ -583,6 +583,40 @@ was relying on the throw to catch an empty list checks it before the call.
 This is for a host that builds its presenter once at startup and receives content
 afterwards. Building with a placeholder and replacing it cost a load and a teardown.
 
+### 23. `MediaSource` is built with an object initializer
+
+`MediaSource` was a positional record, so `new MediaSource("clip.mp4")` and
+`new MediaSource(name, uri, path, false)` both compiled. It now declares `DisplayName` as a
+`required` init property and the rest as ordinary init properties:
+
+```csharp
+// Before
+var source = new MediaSource("clip.mp4");
+var full = new MediaSource("My Video", uri, "/files/test.mp4", false);
+
+// After
+var source = new MediaSource { DisplayName = "clip.mp4" };
+var full = new MediaSource
+{
+    DisplayName = "My Video",
+    Uri = uri,
+    FilePath = "/files/test.mp4",
+    IsSeekable = false,
+};
+```
+
+`MediaSource.FromFile` and `MediaSource.FromUri` are unchanged and remain the way most
+callers build one. The generated `Deconstruct` goes with the positional form, so
+`var (name, uri, path, seekable) = source;` no longer compiles.
+
+**Why.** The record grew two more optional members, `DemuxerOptions` and `InputFormat`. Three
+of the four it already had were optional with defaults, and a fifth and sixth in the
+positional tail make an argument list nobody can read at the call site. Naming them is also
+what keeps the next member from being a breaking change again.
+
+A type implementing `IMediaSource` directly is unaffected: both new members are default
+interface members returning `null`, which is "open this the way it has always been opened".
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

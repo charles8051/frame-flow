@@ -31,6 +31,7 @@ public sealed class CorpusValidationTests
             "test-av-h264-aac.mp4",
             "test-av-h264-aac.mkv",
             // Category 5: Edge cases
+            "test-still.png",
             "test-subsecond.mp4",
             "test-audio-only.mp4",
             "test-video-only.mp4",

@@ -152,6 +152,18 @@
     "description": "H.264 High444, YUV444P, 320x240, 24fps, video-only"
   },
   {
+    "filename": "test-still.png",
+    "category": "edge-case",
+    "container": "png",
+    "videoCodec": "png",
+    "pixelFormat": "rgb24",
+    "width": 320,
+    "height": 240,
+    "frameRate": 25,
+    "durationSeconds": 0,
+    "description": "Single still image — one frame, and no duration when probed. Exercises the demuxer options and input-format hint on IMediaSource."
+  },
+  {
     "filename": "test-subsecond.mp4",
     "category": "edge-case",
     "container": "mp4",

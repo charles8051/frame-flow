@@ -106,7 +106,7 @@ public sealed class PlaylistPlayerQueueTests
         );
     }
 
-    private static IMediaSource Source(string name) => new MediaSource(name);
+    private static IMediaSource Source(string name) => new MediaSource { DisplayName = name };
 
     internal sealed class StubController : IPlaybackController
     {

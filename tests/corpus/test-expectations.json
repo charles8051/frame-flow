@@ -150,6 +150,17 @@
     "hasAudio": true
   },
   {
+    "filename": "test-still.png",
+    "durationSeconds": 0,
+    "durationToleranceMs": 500,
+    "width": 320,
+    "height": 240,
+    "fps": 25,
+    "expectedVideoFrames": 1,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
     "filename": "test-audio-only.mp4",
     "durationSeconds": 3,
     "durationToleranceMs": 350,

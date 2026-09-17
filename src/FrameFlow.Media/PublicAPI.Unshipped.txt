@@ -356,8 +356,10 @@ FrameFlow.Media.IFramePool.Return(FrameFlow.Media.IVideoFrame! frame) -> void
 FrameFlow.Media.IFramePresentedSource
 FrameFlow.Media.IFramePresentedSource.FramePresented -> System.EventHandler<FrameFlow.Media.FramePresentedInfo>?
 FrameFlow.Media.IMediaSource
+FrameFlow.Media.IMediaSource.DemuxerOptions.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
 FrameFlow.Media.IMediaSource.DisplayName.get -> string!
 FrameFlow.Media.IMediaSource.FilePath.get -> string?
+FrameFlow.Media.IMediaSource.InputFormat.get -> string?
 FrameFlow.Media.IMediaSource.IsSeekable.get -> bool
 FrameFlow.Media.IMediaSource.Uri.get -> System.Uri?
 FrameFlow.Media.IVideoFrame
@@ -411,13 +413,16 @@ FrameFlow.Media.MediaInfo.MediaInfo(string! ContainerName, System.TimeSpan Durat
 FrameFlow.Media.MediaInfo.VideoStreams.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Media.VideoStreamInfo!>!
 FrameFlow.Media.MediaInfo.VideoStreams.init -> void
 FrameFlow.Media.MediaSource
+FrameFlow.Media.MediaSource.DemuxerOptions.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
+FrameFlow.Media.MediaSource.DemuxerOptions.init -> void
 FrameFlow.Media.MediaSource.DisplayName.get -> string!
 FrameFlow.Media.MediaSource.DisplayName.init -> void
 FrameFlow.Media.MediaSource.FilePath.get -> string?
 FrameFlow.Media.MediaSource.FilePath.init -> void
+FrameFlow.Media.MediaSource.InputFormat.get -> string?
+FrameFlow.Media.MediaSource.InputFormat.init -> void
 FrameFlow.Media.MediaSource.IsSeekable.get -> bool
 FrameFlow.Media.MediaSource.IsSeekable.init -> void
-FrameFlow.Media.MediaSource.MediaSource(string! DisplayName, System.Uri? Uri = null, string? FilePath = null, bool IsSeekable = true) -> void
 FrameFlow.Media.MediaSource.Uri.get -> System.Uri?
 FrameFlow.Media.MediaSource.Uri.init -> void
 FrameFlow.Media.NullVideoSink
