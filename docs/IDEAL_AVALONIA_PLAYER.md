@@ -114,7 +114,7 @@ public partial class MainWindow : Window
 
         // ── This is the heart of the example. ─────────────────────────
         // Declarative pipeline description. Each call returns a new
-        // builder; nothing actually runs until BuildAsync() resolves.
+        // builder; nothing actually runs until the terminal resolves.
         _player = await FrameFlowPlayer
             .Create()
             .WithMedia(path)
@@ -123,7 +123,7 @@ public partial class MainWindow : Window
                 .ToSink(VideoCanvas))                // [gap] AvaloniaVideoSink as IFrameSink
             .WithAudio(audio => audio
                 .ToSink(OpenAlSink.Default))         // [gap] OpenAlSink.Default static
-            .BuildAsync();
+            .BuildPlayerAsync();
 
         // ── Reactive UI bindings — one observable per concern. ────────
         _player.State.Subscribe(s => StatusBadge.Text = s.ToString());
@@ -283,7 +283,7 @@ The biggest gap. Needs:
 - `IPlayerBuilder` with `.WithVideo(Func<...>)`, `.WithAudio(Func<...>)`,
   `.WithVideoSink(IVideoSink)`, `.WithAudioSink(IAudioSink)`,
   `.WithOptions(FrameFlowOptions)`.
-- `IPlayerBuilder.BuildAsync()` → `IMediaPlayer`.
+- `IPlayerBuilder.BuildPlayerAsync()` → `IMediaPlayer`.
 - `IMediaPlayer`: `PlayAsync`, `PauseAsync`, `SeekAsync`,
   `SetRepeatMode`, `State`, `Position`, `Duration`, `GetDiagnostics`,
   `LoopRestarted`, `ErrorOccurred`, `DisposeAsync`.
