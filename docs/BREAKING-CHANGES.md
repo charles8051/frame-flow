@@ -643,6 +643,12 @@ and returned `IMediaPlayerBuilder`, so `BuildAsync` was unreachable without a so
 `InvalidOperationException` naming `WithMedia`. `BuildPlayerAsync` with no media is
 unchanged and still valid — that is the player with an empty queue.
 
+**If you implement `IPlayerBuilder` or `IMediaPlayerBuilder`**, add the three `WithMedia`
+overloads. They are ordinary interface members, not defaulted ones: a default that threw
+would turn a compile error into a run-time one, and the narrowing on these interfaces exists
+precisely to keep that kind of mismatch at compile time. Entry 19 already changes both
+terminals' return type, so an implementer is recompiling against this release either way.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`
