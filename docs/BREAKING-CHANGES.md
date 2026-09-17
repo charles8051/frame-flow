@@ -475,6 +475,14 @@ await MediaPlayer.CreateAsync([first, second], videoSink, audioSink);
 Nothing else about the call changes. The parameters, their order and their meaning are
 the same, and the player you get back is the same type it was.
 
+One call shape stops compiling. `MediaPlayer.CreateAsync(null)` matched one method and
+now matches two, so it is ambiguous (CS0121). Cast the literal, or delete the call: it
+threw `ArgumentNullException` the moment it ran.
+
+```csharp
+await MediaPlayer.CreateAsync((IMediaSource)null!);
+```
+
 ### 18. A queue built without a repeat mode plays once
 
 **This one is not a compile error.** `MediaPlaylistPlayer.CreateAsync` defaulted
