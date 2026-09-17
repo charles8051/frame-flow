@@ -22,7 +22,7 @@ public sealed class PlayerSessionIntegrationTests
         var sink = new CountingVideoSink(_ => { });
 
         await using var session = await FrameFlowPlayer
-            .Open(path!)
+            .Create(path!)
             .WithVideoSink(sink)
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
             .BuildAsync();
@@ -40,7 +40,7 @@ public sealed class PlayerSessionIntegrationTests
         var sink = new CountingVideoSink(() => Interlocked.Increment(ref presented));
 
         await using var session = await FrameFlowPlayer
-            .Open(path!)
+            .Create(path!)
             .WithVideoSink(sink)
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
             .BuildAsync();
@@ -67,7 +67,7 @@ public sealed class PlayerSessionIntegrationTests
         var sink = new CountingAudioSink(() => Interlocked.Increment(ref buffers));
 
         await using var session = await FrameFlowPlayer
-            .Open(path!)
+            .Create(path!)
             .WithAudioSink(sink)
             .BuildAsync();
 
@@ -93,7 +93,7 @@ public sealed class PlayerSessionIntegrationTests
         var audioSink = new CountingAudioSink(() => Interlocked.Increment(ref audioCount));
 
         await using var session = await FrameFlowPlayer
-            .Open(path!)
+            .Create(path!)
             .WithVideoSink(videoSink)
             .WithAudioSink(audioSink)
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
@@ -125,7 +125,7 @@ public sealed class PlayerSessionIntegrationTests
         );
 
         await using var session = await FrameFlowPlayer
-            .Open(path!)
+            .Create(path!)
             .ConfigureVideo(chain => chain.Then(VideoOperators.Resize("resize", 160, 120)))
             .WithVideoSink(sink)
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
@@ -148,7 +148,7 @@ public sealed class PlayerSessionIntegrationTests
         var sink = new CountingVideoSink(_ => { });
 
         await using var session = await FrameFlowPlayer
-            .Open(path!)
+            .Create(path!)
             .WithVideoSink(sink)
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
             .BuildAsync();
@@ -167,7 +167,7 @@ public sealed class PlayerSessionIntegrationTests
         var path = TestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
         Assert.NotNull(path);
 
-        await using var session = await FrameFlowPlayer.Open(path!).BuildAsync();
+        await using var session = await FrameFlowPlayer.Create(path!).BuildAsync();
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             session.PlayToCompletionAsync(CancellationToken.None)
@@ -194,7 +194,7 @@ public sealed class PlayerSessionIntegrationTests
         var presented = 0;
         var sink = new CountingVideoSink(() => Interlocked.Increment(ref presented));
 
-        await using var session = await ((PlayerBuilder)FrameFlowPlayer.Open(path!))
+        await using var session = await ((PlayerBuilder)FrameFlowPlayer.Create(path!))
             .WithDecoderOptions(audio: new AudioDecoderOptions { PacketQueueCapacity = 1 })
             .WithVideoSink(sink)
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
@@ -218,7 +218,7 @@ public sealed class PlayerSessionIntegrationTests
         var buffers = 0;
         var sink = new CountingAudioSink(() => Interlocked.Increment(ref buffers));
 
-        await using var session = await ((PlayerBuilder)FrameFlowPlayer.Open(path!))
+        await using var session = await ((PlayerBuilder)FrameFlowPlayer.Create(path!))
             .WithDecoderOptions(video: new VideoDecoderOptions { PacketQueueCapacity = 1 })
             .WithAudioSink(sink)
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
@@ -251,7 +251,7 @@ public sealed class PlayerSessionIntegrationTests
         var path = TestEnvironment.GetCorpusFile("test-audio-aac.m4a");
         Assert.NotNull(path);
 
-        await using var session = await ((PlayerBuilder)FrameFlowPlayer.Open(path!))
+        await using var session = await ((PlayerBuilder)FrameFlowPlayer.Create(path!))
             .WithDecoderOptions(audio: new AudioDecoderOptions { PacketQueueCapacity = 1 })
             .WithAudioSink(new BlockingAudioSink())
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
@@ -326,7 +326,7 @@ public sealed class PlayerSessionIntegrationTests
         var sink = new CountingVideoSink(() => Interlocked.Increment(ref presented));
 
         await using var player = await FrameFlowPlayer
-            .Open(path!)
+            .Create(path!)
             .WithVideoSink(sink)
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
             .BuildPlayerAsync();
@@ -357,7 +357,7 @@ public sealed class PlayerSessionIntegrationTests
         // options still chain afterwards, and BuildPlayerAsync is the
         // only terminal the narrowed interface offers.
         await using var player = await FrameFlowPlayer
-            .Open(path!)
+            .Create(path!)
             .WithRepeatMode(RepeatMode.All)
             .WithClock(clock)
             .WithAudioActivation(false)

@@ -104,7 +104,7 @@ static int SdlMain(string[] args)
         // hand from key + drag-drop events, and inspects controller.State
         // each tick to detect terminal states. IMediaPlayer intentionally
         // hides exactly those transitions, so app/host code should prefer
-        // FrameFlowPlayer.Open(...).BuildPlayerAsync(); reach for
+        // FrameFlowPlayer.Create(...).BuildPlayerAsync(); reach for
         // PlaybackController.Create only when the state machine itself is
         // the thing you're building around, as here.
         //

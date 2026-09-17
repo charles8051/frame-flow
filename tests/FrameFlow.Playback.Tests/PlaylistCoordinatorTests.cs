@@ -21,11 +21,15 @@ public sealed class PlaylistCoordinatorTests
         new("test", TimeSpan.FromSeconds(seconds), [], []);
 
     [Fact]
-    public void EmptyInitialQueue_Throws()
+    public void AnEmptyInitialQueue_HoldsNothingAndStartsNothing()
     {
-        Assert.Throws<ArgumentException>(
-            () => new PlaylistCoordinator(Array.Empty<IMediaSource>(), RepeatMode.Off)
-        );
+        // A player can be built before it has anything to play. The queue is empty until
+        // something is added, and there is nothing to reserve for a first start.
+        var coord = new PlaylistCoordinator(Array.Empty<IMediaSource>(), RepeatMode.Off);
+
+        Assert.Empty(coord.Queue.Playlist);
+        Assert.Null(coord.CurrentSource);
+        Assert.Null(coord.ReserveStart());
     }
 
     [Fact]
@@ -238,7 +242,7 @@ public sealed class PlaylistCoordinatorTests
         var coord = new PlaylistCoordinator(RepeatMode.Off);
         coord.LoadSource(S("a"));
         var enqueued = coord.Enqueue(S("b"));
-        Assert.True(coord.ReserveStart());
+        Assert.NotNull(coord.ReserveStart());
 
         coord.LoadSource(S("a"));
 
@@ -260,7 +264,7 @@ public sealed class PlaylistCoordinatorTests
         // play the source the replay reloaded and discard what the caller asked for.
         var coord = new PlaylistCoordinator(RepeatMode.Off);
         coord.LoadSource(S("a"));
-        Assert.True(coord.ReserveStart());
+        Assert.NotNull(coord.ReserveStart());
 
         var replaced = coord.Replace([S("b"), S("c")]);
         coord.LoadSource(S("a"));
@@ -270,11 +274,30 @@ public sealed class PlaylistCoordinatorTests
     }
 
     [Fact]
+    public void ReleaseStart_GivesBackAReservationWhoseLoadFailed()
+    {
+        // The first PlayAsync on a player built empty reserves the item it is about to load. A
+        // load that fails must give the reservation back: left set, it would make the next load
+        // keep a queue it was meant to replace.
+        var coord = new PlaylistCoordinator([S("a")], RepeatMode.Off);
+        Assert.NotNull(coord.ReserveStart());
+
+        coord.ReleaseStart();
+
+        Assert.Null(coord.Queue.ReservedStart);
+
+        // The mark went with it, so the next load is an ordinary one and replaces the queue.
+        var replacement = S("b");
+        coord.LoadSource(replacement);
+        Assert.Same(replacement, Assert.Single(coord.Queue.Playlist).Source);
+    }
+
+    [Fact]
     public void ReserveStart_OnAnEmptyPlayer_LeavesTheNextLoadOrdinary()
     {
         var coord = new PlaylistCoordinator(RepeatMode.Off);
 
-        Assert.False(coord.ReserveStart());
+        Assert.Null(coord.ReserveStart());
 
         var source = S("a");
         coord.LoadSource(source);

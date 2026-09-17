@@ -50,7 +50,7 @@ extensions, `ObserveOnUiThread`), the common-case player call site
 collapses to:
 
 ```csharp
-_player = await FrameFlowPlayer.Open(path)
+_player = await FrameFlowPlayer.Create(path)
     .WithAvaloniaVideoView(VideoView)
     .WithOpenAlAudio(loggerFactory)
     .BuildAsync();
@@ -115,7 +115,7 @@ A consumer who wants to overlay captions, fork off an inference
 branch, resize before display, or simply observe every frame writes:
 
 ```csharp
-_player = await FrameFlowPlayer.Open(path)
+_player = await FrameFlowPlayer.Create(path)
     .WithAvaloniaVideoView(VideoView)
     .ConfigureVideoPipeline(p => p
         .ConvertPixelFormat(PixelFormat.Bgra32)

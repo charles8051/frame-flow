@@ -913,11 +913,11 @@ end-to-end so the seam is exercised, or delete the unused builder extensions unt
 
 #### 7.2 Converge the three divergent example construction shapes
 **Strong · architecture · in-process**
-**Files:** `examples/FrameFlow.Examples.AudioOnlyPlayer/Program.cs` (`FrameFlowPlayer.Open(…).BuildAsync()`), `examples/FrameFlow.Examples.SdlPlayer/Program.cs` (`PlaybackController.Create(…)`), `examples/FrameFlow.Examples.AvaloniaPlayer/MainWindow.axaml.cs` (`MediaPlayer.CreateAsync(…)`), `examples/FrameFlow.Examples.HostedServicePlayer/Program.cs`
+**Files:** `examples/FrameFlow.Examples.AudioOnlyPlayer/Program.cs` (`FrameFlowPlayer.Create(…).BuildAsync()`), `examples/FrameFlow.Examples.SdlPlayer/Program.cs` (`PlaybackController.Create(…)`), `examples/FrameFlow.Examples.AvaloniaPlayer/MainWindow.axaml.cs` (`MediaPlayer.CreateAsync(…)`), `examples/FrameFlow.Examples.HostedServicePlayer/Program.cs`
 
 **Problem.** Three distinct consumer entry points coexist with no documented "use this one": the
 `MediaPlayer.CreateAsync` façade (6 examples), the lower-level `PlaybackController.Create` (SdlPlayer), and
-the `FrameFlowPlayer.Open(…).BuildAsync()` fluent builder (AudioOnlyPlayer, HostedServicePlayer). A
+the `FrameFlowPlayer.Create(…).BuildAsync()` fluent builder (AudioOnlyPlayer, HostedServicePlayer). A
 navigator must bounce across three examples to learn "how do I start playback," and the project's mandate to
 propagate a better call site to *every* example is unmet.
 
@@ -927,7 +927,7 @@ state machine is the point), align the stragglers, and document the choice in th
 **Before → After.** Three entry points, reader infers which is current from comments → one documented façade
 per scenario; controller used only where intentional.
 
-**Wins:** locality: one obvious starting call site · leverage: a future call-site improvement lands in one shape, not three · deletion test: clarifies whether `FrameFlowPlayer.Open` and `MediaPlayer.CreateAsync` are two seams or one redundant pair
+**Wins:** locality: one obvious starting call site · leverage: a future call-site improvement lands in one shape, not three · deletion test: clarifies whether `FrameFlowPlayer.Create` and `MediaPlayer.CreateAsync` are two seams or one redundant pair
 **ADR:** ADR-0024 — playback controller as public API surface; clarify whether `MediaPlayer`/`FrameFlowPlayer` sit above it as the intended consumer entry.
 
 #### 7.3 Close the audio-master clock content-coverage gap

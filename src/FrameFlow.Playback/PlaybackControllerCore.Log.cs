@@ -103,6 +103,12 @@ internal sealed partial class PlaybackControllerCore
     )]
     private partial void LogReplayRecoveryStarted(string sourceName);
 
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "First play on a player built with nothing loaded — source: {SourceName}"
+    )]
+    private partial void LogFirstPlayFromIdle(string sourceName);
+
     [LoggerMessage(Level = LogLevel.Debug, Message = "Session resumed from pause")]
     private partial void LogSessionResumed();
 

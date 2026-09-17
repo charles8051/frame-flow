@@ -24,7 +24,7 @@ public static class FrameFlowAvaloniaBuilderExtensions
     /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
     /// <example>
     /// <code>
-    /// _player = await FrameFlowPlayer.Open(path)
+    /// _player = await FrameFlowPlayer.Create(path)
     ///     .WithAvaloniaVideoView(VideoView)
     ///     .WithOpenAlAudio()
     ///     .BuildAsync();

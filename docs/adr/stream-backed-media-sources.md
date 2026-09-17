@@ -634,7 +634,7 @@ rather than the prose:
   and playlist replay both bypass. §4 now puts it where both routes reach it.
 
 Corrected factual claims: `avformat_open_input` is called in tests as well as
-production; `FrameFlowPlayer.Open` already calls `MediaSource.FromFile`, so §7's
+production; `FrameFlowPlayer.Create` already calls `MediaSource.FromFile`, so §7's
 decline no longer prescribes something already true; the seek-bar latch is not
 made redundant by §3.
 

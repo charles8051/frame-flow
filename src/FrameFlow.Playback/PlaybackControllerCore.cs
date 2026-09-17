@@ -1154,6 +1154,45 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         return true;
     }
 
+    /// <summary>
+    /// Starts a player that was built with nothing loaded. <c>Play</c> at <c>Idle</c> asks the
+    /// session factory for the item its queue would start with; when there is one, the load runs
+    /// first and the play follows it.
+    /// </summary>
+    /// <remarks>
+    /// The factory reserves the item, so the load plays the queue rather than replacing it — the
+    /// same mark a replay from <c>Ended</c> sets. A factory with no queue answers
+    /// <see langword="null"/>, and <c>Play</c> at <c>Idle</c> is refused as before.
+    /// </remarks>
+    private async Task<bool> TryHandleFirstPlayFromIdleAsync(FireTriggerCommand command)
+    {
+        if (command.Trigger != PlaybackTrigger.Play || _state != InternalPlaybackState.Idle)
+        {
+            return false;
+        }
+
+        if (_sessionFactory.ReserveStart() is not { } start)
+        {
+            return false;
+        }
+
+        LogFirstPlayFromIdle(start.DisplayName);
+
+        var loadResult = await LoadSourceAsync(start).ConfigureAwait(false);
+        if (!loadResult.IsSuccess)
+        {
+            // The reservation was for this load. Give it back rather than leave the queue marked
+            // for a load that will not come.
+            _sessionFactory.ReleaseStart();
+            command.Completion.TrySetResult(loadResult);
+            return true;
+        }
+
+        await RunPlaybackAsync(PlaybackTrigger.Play);
+        command.Completion.TrySetResult(Result.Ok());
+        return true;
+    }
+
     private async Task<bool> TryHandleReplayFromEndedAsync(FireTriggerCommand command)
     {
         if (command.Trigger != PlaybackTrigger.Play || _state != InternalPlaybackState.Ended)
@@ -1463,6 +1502,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
                     case FireTriggerCommand ftc:
                         if (await TryHandleReplayFromEndedAsync(ftc))
+                        {
+                            continue;
+                        }
+
+                        if (await TryHandleFirstPlayFromIdleAsync(ftc))
                         {
                             continue;
                         }

@@ -27,7 +27,7 @@ weakest object.
 | Scenario | Entry point | Returns |
 |---|---|---|
 | App or host playback | `MediaPlayer.CreateAsync(...)` | `IMediaPlayer` |
-| Open a file, play to end | `FrameFlowPlayer.Open(...).BuildAsync()` | `PlayerSession` |
+| Open a file, play to end | `FrameFlowPlayer.Create(...).BuildAsync()` | `PlayerSession` |
 | Drive the state machine | `PlaybackController.Create(...)` | `IPlaybackController` |
 
 `PlayerSession` is single-shot. It has no pause, resume, seek, repeat,
@@ -45,7 +45,7 @@ positional static call.
 One builder. Two terminals.
 
 ```csharp
-await using var player = await FrameFlowPlayer.Open(path)
+await using var player = await FrameFlowPlayer.Create(path)
     .WithAudioSink(audio)
     .WithVideoSink(video)
     .WithRepeatMode(RepeatMode.All)
@@ -126,7 +126,7 @@ unaffected at source and at load — adding members to an interface changes
 no existing call site or method token.
 
 The interface has exactly one implementation, `internal sealed class
-PlayerBuilder`, reachable only through `FrameFlowPlayer.Open`. There is
+PlayerBuilder`, reachable only through `FrameFlowPlayer.Create`. There is
 no registration point, no DI seam and no factory hook through which a
 consumer's own implementation could be returned by this library, so an
 external implementer would be writing a type nothing can consume.

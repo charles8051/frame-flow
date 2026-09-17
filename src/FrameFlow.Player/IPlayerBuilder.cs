@@ -11,9 +11,9 @@ namespace FrameFlow.Player;
 
 /// <summary>
 /// Fluent builder for playback over one source. Returned by
-/// <see cref="FrameFlowPlayer.Open(string)"/>; each method returns
+/// <see cref="FrameFlowPlayer.Create(string)"/>; each method returns
 /// the builder so chains flow naturally until a terminal resolves.
-/// <see cref="FrameFlowPlayer.Open(IEnumerable{IMediaSource})"/> starts
+/// <see cref="FrameFlowPlayer.Create(IEnumerable{IMediaSource})"/> starts
 /// the same chain over a queue, narrowed to
 /// <see cref="IMediaPlayerBuilder"/>.
 /// </summary>
@@ -39,7 +39,7 @@ namespace FrameFlow.Player;
 /// </para>
 /// <para>
 /// A minimum-viable build is
-/// <c>FrameFlowPlayer.Open(path).BuildAsync()</c> — that produces a
+/// <c>FrameFlowPlayer.Create(path).BuildAsync()</c> — that produces a
 /// session that opens the file and probes streams but has no sinks
 /// wired so calling <see cref="PlayerSession.PlayToCompletionAsync"/>
 /// is a no-op for any stream that lacks a sink. For real playback,

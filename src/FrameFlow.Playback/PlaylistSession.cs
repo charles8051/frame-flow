@@ -148,7 +148,7 @@ internal sealed class PlaylistSession : IPlaybackSession
 
     // A replay from Ended loads a new PlaylistSession. The item it starts with is taken here,
     // before the controller unloads this one, so an edit in between cannot leave it nothing.
-    public bool TryBeginReplay() => _coordinator.ReserveStart();
+    public bool TryBeginReplay() => _coordinator.ReserveStart() is not null;
 
     // Read by the controller at Ended. The advance that ended the queue kept the item before it
     // reported the end-of-stream, and nothing replaces it while this session is Ended.

@@ -493,7 +493,7 @@ Still rejected, for ADR-0062's reason (ADR-0062:479-486).
   `Off` (`src/FrameFlow.Media/RepeatMode.cs:17-24`) until a single source runs as a queue of one.
 - **A `next` command on the test bench** (ADR-0068). Its table would need `JumpToAsync` and
   `ReplaceAsync` as well.
-- **The builder's entry point.** `FrameFlowPlayer.Open(path)` builds a single-source player, and the
+- **The builder's entry point.** `FrameFlowPlayer.Create(path)` builds a single-source player, and the
   builder cannot build a playlist player. The planned direction replaces `Open` with a chain that
   adds sources, one call per source, so a chain with one source and a chain with several build the
   same player. That is part of a single player type, not of this record, because a chain with

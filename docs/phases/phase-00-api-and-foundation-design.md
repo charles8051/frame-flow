@@ -2,7 +2,7 @@
 
 ## Status
 
-**Done.** Consumer API shape, lifecycle model, contracts, and skeleton signatures landed. The surface has since evolved past the original skeleton — see `FrameFlow.Player` (`MediaPlayer.CreateAsync`, `FrameFlowPlayer.Open`) and ADR-0024/ADR-0027/ADR-0032 for the shape as built.
+**Done.** Consumer API shape, lifecycle model, contracts, and skeleton signatures landed. The surface has since evolved past the original skeleton — see `FrameFlow.Player` (`MediaPlayer.CreateAsync`, `FrameFlowPlayer.Create`) and ADR-0024/ADR-0027/ADR-0032 for the shape as built.
 
 ## Goal
 

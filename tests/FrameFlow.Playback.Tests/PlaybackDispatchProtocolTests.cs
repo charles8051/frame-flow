@@ -28,6 +28,72 @@ namespace FrameFlow.Playback.Tests;
 /// </summary>
 public sealed class PlaybackDispatchProtocolTests
 {
+    private static (
+        PlaybackControllerCore Controller,
+        FakeSession Session,
+        FakeSessionFactory Factory
+    ) NewControllerWithFactory(FakeSession session)
+    {
+        var factory = new FakeSessionFactory(session);
+        var clock = new PlaybackClock(new FakeTimeProvider());
+        var options = Microsoft.Extensions.Options.Options.Create(new FrameFlowPlaybackOptions());
+        var controller = new PlaybackControllerCore(
+            NullLogger<PlaybackControllerCore>.Instance,
+            factory,
+            clock,
+            options
+        );
+        return (controller, session, factory);
+    }
+
+    [Fact]
+    public async Task PlayAtIdle_LoadsTheItemTheFactoryReserves()
+    {
+        // A player built with an empty queue sits at Idle. Play asks the factory what a session
+        // would start with, loads it, and plays it.
+        var (controller, _, factory) = NewControllerWithFactory(new FakeSession());
+        await using var _d = controller;
+        factory.Reservable = new FakeSource();
+
+        var play = await controller.PlayAsync();
+
+        Assert.True(play.IsSuccess, $"Play failed: {play.Error?.Message}");
+        Assert.Equal(PlaybackState.Playing, controller.State);
+        Assert.Equal(1, factory.Reserved);
+        Assert.Equal(0, factory.Released);
+    }
+
+    [Fact]
+    public async Task PlayAtIdle_GivesTheReservationBack_WhenTheLoadFails()
+    {
+        // The reservation marks the queue for the load that follows. A load that fails must give
+        // it back, or the queue stays marked for a load that never comes.
+        var session = new FakeSession { InitializeThrows = new InvalidOperationException("nope") };
+        var (controller, _, factory) = NewControllerWithFactory(session);
+        await using var _d = controller;
+        factory.Reservable = new FakeSource();
+
+        var play = await controller.PlayAsync();
+
+        Assert.False(play.IsSuccess);
+        Assert.Equal(1, factory.Reserved);
+        Assert.Equal(1, factory.Released);
+    }
+
+    [Fact]
+    public async Task PlayAtIdle_IsRefused_WhenTheFactoryReservesNothing()
+    {
+        var (controller, _, factory) = NewControllerWithFactory(new FakeSession());
+        await using var _d = controller;
+
+        var play = await controller.PlayAsync();
+
+        Assert.False(play.IsSuccess);
+        Assert.Equal(ErrorCategory.InvalidOperation, play.Error.Category);
+        Assert.Equal(PlaybackState.Idle, controller.State);
+        Assert.Equal(0, factory.Released);
+    }
+
     private static (PlaybackControllerCore Controller, FakeSession Session) NewController(
         RepeatMode initialRepeat = RepeatMode.Off
     )
@@ -983,11 +1049,27 @@ public sealed class PlaybackDispatchProtocolTests
     {
         private readonly FakeSession _session = session;
 
+        /// <summary>What a queue-backed factory would start a controller at Idle with.</summary>
+        public IMediaSource? Reservable;
+
+        public int Reserved;
+        public int Released;
+
         public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks)
         {
             _session.Bind(callbacks);
             return _session;
         }
+
+        public IMediaSource? ReserveStart()
+        {
+            if (Reservable is null)
+                return null;
+            Reserved++;
+            return Reservable;
+        }
+
+        public void ReleaseStart() => Released++;
     }
 
     /// <summary>

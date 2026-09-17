@@ -21,4 +21,21 @@ internal interface IPlaybackSessionFactory
     /// passes it to the queue they share. A single-source factory ignores it.
     /// </summary>
     void RepeatModeChanged(RepeatMode mode) { }
+
+    /// <summary>
+    /// The source a session created now would start with, reserved so the load that follows plays
+    /// it rather than replacing what the factory holds. <see langword="null"/> when there is
+    /// nothing to start, which is the answer for a factory that has no queue of its own.
+    /// </summary>
+    /// <remarks>
+    /// Read by the controller when <c>Play</c> arrives at <c>Idle</c>, which is the state a player
+    /// built with an empty queue sits in until something is added to it.
+    /// </remarks>
+    IMediaSource? ReserveStart() => null;
+
+    /// <summary>
+    /// Gives back a reservation whose load failed, so the next load is an ordinary one. A factory
+    /// that reserves nothing has nothing to give back.
+    /// </summary>
+    void ReleaseStart() { }
 }
