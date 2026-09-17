@@ -38,21 +38,7 @@ Environment.ExitCode = SdlMain(args);
 
 static int SdlMain(string[] args)
 {
-    // --log-file <path> enables a file sink alongside the console
-    // provider. Argument-position-agnostic so it can sit before or
-    // after the media path. Matches the Avalonia / Live Captioning
-    // convention.
-    string? logFilePath = null;
-    for (var i = 0; i < args.Length; i++)
-    {
-        if (args[i] == "--log-file" && i + 1 < args.Length)
-        {
-            logFilePath = args[i + 1];
-            break;
-        }
-    }
-
-    using var loggerFactory = CreateLoggerFactory(logFilePath);
+    using var loggerFactory = CreateLoggerFactory();
 
     // ── Bootstrap native libraries ───────────────────────────────────
     if (!TryBootstrapFfmpeg(loggerFactory, out var ffmpegMessage))
@@ -138,7 +124,7 @@ static int SdlMain(string[] args)
 
 // ── Logging ──────────────────────────────────────────────────────────
 
-static ILoggerFactory CreateLoggerFactory(string? logFilePath) =>
+static ILoggerFactory CreateLoggerFactory() =>
     LoggerFactory.Create(builder =>
     {
         builder
@@ -151,11 +137,13 @@ static ILoggerFactory CreateLoggerFactory(string? logFilePath) =>
                 options.IncludeScopes = false;
             });
 
-        // Optional file sink — Debug-level so the post-mortem log is
-        // richer than the Info-filtered console. Console stays where
-        // it was; the file is purely additive.
-        if (!string.IsNullOrEmpty(logFilePath))
-            builder.AddProvider(new FileLoggerProvider(ExampleLogPaths.Resolve(logFilePath), LogLevel.Debug));
+        // File sink, for reading after the window has gone. Additive: the
+        // console provider above is untouched. SetMinimumLevel filters before
+        // any provider sees a record, so both carry Information and up.
+        builder.AddExampleFile(
+            "sdl-player.log",
+            onFailure: ex => Console.Error.WriteLine($"File logging is off: {ex.Message}")
+        );
     });
 
 // ── Native bootstrap ─────────────────────────────────────────────────

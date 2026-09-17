@@ -14,45 +14,23 @@ internal static class Program
 {
     public static async Task<int> Main(string[] args)
     {
-        // First non-flag arg is the input file. Anything starting with
-        // "--" is a flag (so it's safe to put --log-file before or after
-        // the file path on the command line / in launchSettings.json).
-        string? inputPath = null;
-        string? logFilePath = null;
-        for (var i = 0; i < args.Length; i++)
+        // Exactly one argument: the file to play. An option, or a second path, is
+        // an error rather than a guess — taking the first path-shaped argument is
+        // what let a stale `--log-file <name>` invocation play its own log.
+        if (
+            !ExampleArgs.TryReadInputPath(
+                args,
+                "FrameFlow.Examples.AudioOnlyPlayer <audio-or-media-file>",
+                out var inputPath
+            )
+        )
         {
-            if (args[i] == "--log-file" && i + 1 < args.Length)
-            {
-                logFilePath = args[i + 1];
-                i++;
-                continue;
-            }
-            inputPath ??= args[i];
-        }
-
-        if (string.IsNullOrEmpty(inputPath))
-        {
-            Console.Error.WriteLine(
-                "Usage: FrameFlow.Examples.AudioOnlyPlayer <audio-or-media-file> [--log-file <path>]"
-            );
             return 2;
         }
-        if (!File.Exists(inputPath))
-        {
-            Console.Error.WriteLine($"Input file not found: {inputPath}");
-            return 2;
-        }
-
-        // Optional file log — matches the Avalonia / Live Captioning
-        // examples' --log-file convention. Without the flag, no logger
-        // is created and the player chatters silently (matches the
-        // pre-existing AudioOnlyPlayer behaviour).
-        using var loggerFactory = string.IsNullOrEmpty(logFilePath)
-            ? null
-            : LoggerFactory.Create(b =>
-                b.SetMinimumLevel(LogLevel.Debug)
-                    .AddProvider(new FileLoggerProvider(ExampleLogPaths.Resolve(logFilePath), LogLevel.Debug))
-            );
+        using var loggerFactory = ExampleLogging.CreateFactory(
+            "audio-only-player.log",
+            onFailure: ex => Console.Error.WriteLine($"File logging is off: {ex.Message}")
+        );
 
         Console.WriteLine($"Audio playback: {inputPath}");
 

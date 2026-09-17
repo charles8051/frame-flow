@@ -56,14 +56,12 @@ public sealed record PlayerConfig(
 ///   <item><c>--hw &lt;auto|disabled|required&gt;</c> — both panes; <c>--left-hw</c> / <c>--right-hw</c> override one.</item>
 ///   <item><c>--left-clock &lt;wall|audio&gt;</c> / <c>--right-clock &lt;wall|audio&gt;</c>.</item>
 ///   <item><c>--loop</c> / <c>--no-loop</c> — both panes; <c>--left-loop</c> / <c>--right-loop</c> set one on.</item>
-///   <item><c>--log-file &lt;name|path&gt;</c> — a bare filename lands under <c>&lt;repo&gt;/logs/</c>; an absolute path is honoured as-is.</item>
 ///   <item><c>--exit-after &lt;seconds&gt;</c> — auto-close for unattended runs.</item>
 /// </list>
 /// </remarks>
 public sealed record DualPlayerOptions(
     PlayerConfig Left,
     PlayerConfig Right,
-    string? LogFilePath,
     int ExitAfterSeconds
 )
 {
@@ -106,8 +104,6 @@ public sealed record DualPlayerOptions(
         var leftLoop = loopBoth || HasFlag("--left-loop");
         var rightLoop = loopBoth || HasFlag("--right-loop");
 
-        var logFile = GetValue("--log-file");
-
         var exitAfter = 0;
         if (int.TryParse(GetValue("--exit-after"), out var secs) && secs > 0)
             exitAfter = secs;
@@ -115,7 +111,6 @@ public sealed record DualPlayerOptions(
         return new DualPlayerOptions(
             Left: new PlayerConfig("LEFT", leftPath, leftHw, leftClock, leftLoop),
             Right: new PlayerConfig("RIGHT", rightPath, rightHw, rightClock, rightLoop),
-            LogFilePath: logFile,
             ExitAfterSeconds: exitAfter
         );
     }

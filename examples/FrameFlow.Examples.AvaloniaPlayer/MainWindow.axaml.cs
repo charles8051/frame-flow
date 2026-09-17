@@ -75,7 +75,11 @@ public partial class MainWindow : Window
     {
         base.OnLoaded(e);
 
-        _loggerFactory = CreateLoggerFactory();
+        _loggerFactory = ExampleLogging.CreateFactory(
+            "avalonia-player.log",
+            onFailure: ex =>
+                StatusText.Text = $"Logging to file is off ({ex.Message}). Playback still works."
+        );
         _logger = _loggerFactory.CreateLogger<MainWindow>();
 
         // Materialize the hosted surface's sink now that it is in the tree.
@@ -85,34 +89,6 @@ public partial class MainWindow : Window
             await PlayFolderAsync(StartupPath);
         else if (File.Exists(StartupPath))
             await OpenFileAsync(StartupPath);
-    }
-
-    /// <summary>
-    /// The example's log sink. A WinExe has no console, so the log goes to
-    /// <c>&lt;repo&gt;/logs/</c>. There is no flag for it: tools/FrameFlow.TestBench
-    /// is where a run is driven and watched.
-    /// </summary>
-    /// <remarks>
-    /// Best-effort. <see cref="FileLoggerProvider"/> opens its file in the constructor
-    /// with <see cref="FileShare.Read"/>, so a second instance of this example, or a
-    /// copy installed somewhere unwritable, throws here. That must not take the window
-    /// down with it — failures are reported through <see cref="ShowError"/>, which
-    /// writes to the sidebar and does not depend on logging.
-    /// </remarks>
-    private ILoggerFactory CreateLoggerFactory()
-    {
-        try
-        {
-            var path = ExampleLogPaths.Resolve("avalonia-player.log");
-            return LoggerFactory.Create(b =>
-                b.SetMinimumLevel(LogLevel.Debug).AddProvider(new FileLoggerProvider(path))
-            );
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = $"Logging to file is off ({ex.Message}). Playback still works.";
-            return LoggerFactory.Create(_ => { });
-        }
     }
 
     /// <summary>Builds a player for one file and hands it to the view.</summary>

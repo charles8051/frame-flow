@@ -1,8 +1,7 @@
 {
   "profiles": {
     "FrameFlow.Examples.Camera.Multicast": {
-      "commandName": "Project",
-      "commandLineArgs": "--log-file\r\ncamera-multicast.log"
+      "commandName": "Project"
     }
   }
 }

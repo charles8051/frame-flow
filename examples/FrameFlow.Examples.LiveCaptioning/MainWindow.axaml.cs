@@ -131,7 +131,6 @@ public partial class MainWindow : Window
 
 
     public string? StartupFilePath { get; set; }
-    public string? StartupLogFilePath { get; set; }
 
     /// <summary>
     /// When true (and on Windows), route the display branch through the Windows
@@ -184,13 +183,10 @@ public partial class MainWindow : Window
     {
         base.OnLoaded(e);
 
-        _loggerFactory = LoggerFactory.Create(b =>
-        {
-            b.SetMinimumLevel(LogLevel.Debug)
-                .AddProvider(new TextBoxLoggerProvider(LogOutput, LogLevel.Information));
-            if (!string.IsNullOrEmpty(StartupLogFilePath))
-                b.AddProvider(new FileLoggerProvider(ExampleLogPaths.Resolve(StartupLogFilePath), LogLevel.Debug));
-        });
+        _loggerFactory = ExampleLogging.CreateFactory(
+            "livecaptioning.log",
+            onFailure: ex => Title += $"  [no log file: {ex.Message}]"
+        );
         _logger = _loggerFactory.CreateLogger<MainWindow>();
         VideoView.LoggerFactory = _loggerFactory;
 

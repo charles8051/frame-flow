@@ -6,7 +6,7 @@
         Title="FrameFlow — Live Captioning + Detection"
         Width="1100" Height="720"
         Background="#1a1a1a">
-  <Grid RowDefinitions="*,Auto,140">
+  <Grid RowDefinitions="*,Auto">
 
     <!-- Video surface + detection boxes + caption overlay all share the
          same Grid cell. Z-order is XAML document order: video at the
@@ -76,38 +76,5 @@
                                 HasOpenButton="True" />
     </Border>
 
-    <TextBox Grid.Row="2"
-             Name="LogOutput"
-             IsReadOnly="True"
-             AcceptsReturn="True"
-             FontFamily="Consolas,Menlo,monospace"
-             FontSize="11"
-             Background="#0c0c0e"
-             Foreground="#bbb"
-             BorderBrush="#222"
-             TextWrapping="NoWrap"
-             VerticalContentAlignment="Top">
-      <!--
-        The Fluent TextBox theme swaps background/foreground via these
-        TextControl* resources on :pointerover / :focus. Defaults shift
-        to a near-white background which obliterates the log text on a
-        dark window. Pin every state to the same diagnostic palette so
-        the box is readable whether the pointer is over it or not.
-        (Same fix as AvaloniaPlayer — see its MainWindow.axaml.)
-      -->
-      <TextBox.Resources>
-        <SolidColorBrush x:Key="TextControlBackground" Color="#0c0c0e"/>
-        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#0c0c0e"/>
-        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#0c0c0e"/>
-        <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#0c0c0e"/>
-        <SolidColorBrush x:Key="TextControlForeground" Color="#bbb"/>
-        <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="#bbb"/>
-        <SolidColorBrush x:Key="TextControlForegroundFocused" Color="#bbb"/>
-        <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="#666"/>
-        <SolidColorBrush x:Key="TextControlBorderBrush" Color="#222"/>
-        <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#222"/>
-        <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#222"/>
-      </TextBox.Resources>
-    </TextBox>
   </Grid>
 </Window>

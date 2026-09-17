@@ -2,7 +2,7 @@
   "profiles": {
     "FrameFlow.Examples.AudioOnlyPlayer": {
       "commandName": "Project",
-      "commandLineArgs": "tests/corpus/files/test-1080p-h264-aac.mp4\r\n--log-file\r\naudio-only-player.log",
+      "commandLineArgs": "tests/corpus/files/test-1080p-h264-aac.mp4",
       "workingDirectory": "../.."
     }
   }

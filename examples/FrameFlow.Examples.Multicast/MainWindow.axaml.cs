@@ -76,7 +76,6 @@ public partial class MainWindow : Window
     private DateTime _lastStatsAt;
 
     public string? StartupFilePath { get; set; }
-    public string? StartupLogFilePath { get; set; }
 
     /// <summary>
     /// When true, deliberately skip YOLO bootstrap and flip pane 2 to
@@ -124,25 +123,20 @@ public partial class MainWindow : Window
         StartupClock.Mark("MainWindow.OnLoaded entered");
         base.OnLoaded(e);
 
-        // Real logger factory so pipeline errors surface. Off by
-        // default (no provider added), but --log-file <path> writes
-        // a full debug-level trace so multicast-branch failures don't
-        // vanish into the void the old NullLoggerFactory swallowed.
-        // Built in OnLoaded (not the ctor) for parity with the other
-        // Avalonia example windows — controls are guaranteed
-        // materialised by the time we install dependencies on them.
-        _loggerFactory = LoggerFactory.Create(b =>
-        {
-            b.SetMinimumLevel(LogLevel.Debug);
-            if (!string.IsNullOrEmpty(StartupLogFilePath))
-                b.AddProvider(new FileLoggerProvider(ExampleLogPaths.Resolve(StartupLogFilePath), LogLevel.Debug));
-        });
+        // A real logger factory so pipeline errors surface, rather than vanishing
+        // into the void the old NullLoggerFactory swallowed. Built in OnLoaded
+        // (not the ctor) for parity with the other Avalonia example windows —
+        // controls are guaranteed materialised by the time we install
+        // dependencies on them.
+        _loggerFactory = ExampleLogging.CreateFactory(
+            "avalonia-multicast.log",
+            onFailure: ex => Title += $"  [no log file: {ex.Message}]"
+        );
         _logger = _loggerFactory.CreateLogger<MainWindow>();
         StartupClock.AttachLogger(_logger);
         StartupClock.Mark("LoggerFactory ready");
         _logger.LogInformation(
-            "FrameFlow Multicast ready. logFile={LogFile} autoplay={Autoplay}",
-            StartupLogFilePath ?? "(none)",
+            "FrameFlow Multicast ready. autoplay={Autoplay}",
             StartupFilePath ?? "(none)"
         );
 

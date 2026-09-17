@@ -232,7 +232,7 @@ Primary concerns:
 - does the documentation describe what is implemented, not what was planned?
 - when a refactor improves a call site, has it been propagated to every example?
 
-Every example must ship a `Properties/launchSettings.json` that passes `--log-file` a bare filename, which the example resolves to `<repo>/logs/<short-name>.log` via `FrameFlow.Examples.Common.ExampleLogPaths.Resolve`. A bare filename keeps the file free of any one machine's workspace path. A new example without this wiring is a bug, not a polish item.
+Every example logs to `<repo>/logs/<short-name>.log` through `FrameFlow.Examples.Common.ExampleLogging`, which resolves a bare filename so the path carries no machine's workspace location. There is no flag: the eleven hand-rolled `--log-file` parsers were removed once `tools/FrameFlow.TestBench` became the place a run is driven and watched (ADR-0068). A new example without this wiring is a bug, not a polish item.
 
 ## Ownership model
 
