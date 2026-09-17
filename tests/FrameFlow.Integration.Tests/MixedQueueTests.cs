@@ -198,24 +198,44 @@ public sealed class MixedQueueTests : IClassFixture<FfmpegBootstrapFixture>
         await endedTcs.Task.WaitAsync(cts.Token);
         var atEnded = sw.Elapsed;
 
-        // Ended means the last buffer has been handed to the sink, not that the device has
-        // finished playing it, so the clip is still coming out of the speaker here. Waiting
-        // for the device to run dry is what makes the elapsed time comparable to the clip's
-        // length rather than short of it by the sink's queue depth.
+        // The assertion is on how much the DEVICE had played by the time the pipeline said
+        // Ended, not on how long anything took. A producer the sink throttles can only be
+        // ahead of the device by the sink's bounded buffer pool, so when it hands over the
+        // last buffer the device must already have played all but that pool. A producer
+        // nothing throttles hands the clip over before the device has played any of it.
+        //
+        // Measured: 1.880s of 3.000s played at Ended, which is the whole clip less the
+        // ~1.1s the sink runs ahead. Half the duration sits an order of magnitude above
+        // what an unthrottled producer leaves behind, and below what the pool can hide.
+        var playedAtEnded = PlayedDuration(device);
+        Assert.True(
+            playedAtEnded >= expected / 2,
+            $"The device had played {playedAtEnded.TotalSeconds:F3}s of the "
+                + $"{expected.TotalSeconds:F3}s clip when the pipeline reported Ended (at "
+                + $"{atEnded.TotalSeconds:F3}s), so the sink was not holding the producer back."
+        );
+
+        // Nothing was lost on the way: the clip plays out in full rather than the pipeline
+        // having skipped part of it to keep up. Ended fires when the last buffer has been
+        // handed to the sink, so the device is still playing here and has to be let finish.
         Assert.True(await DrainAsync(device), "The device still held unplayed audio.");
         sw.Stop();
 
         Assert.Equal(PlaybackState.Ended, player.State);
-
-        // A floor, for the same reason as above. Unpaced, the whole clip is handed over in
-        // milliseconds, so this separates the two by more than an order of magnitude.
-        var floor = expected - TimeSpan.FromMilliseconds(400);
         Assert.True(
-            sw.Elapsed >= floor,
-            $"Play to a drained device took {sw.Elapsed.TotalSeconds:F3}s (Ended at "
-                + $"{atEnded.TotalSeconds:F3}s) for a {expected.TotalSeconds:F3}s audio-only "
-                + "item, so it was not paced."
+            PlayedDuration(device) >= expected - TimeSpan.FromMilliseconds(400),
+            $"The device played {PlayedDuration(device).TotalSeconds:F3}s of a "
+                + $"{expected.TotalSeconds:F3}s clip."
         );
+    }
+
+    private static TimeSpan PlayedDuration(FakeOpenAlDevice device)
+    {
+        int rate = device.PlayedSampleRate;
+        int channels = device.PlayedChannels;
+        if (rate <= 0 || channels <= 0)
+            return TimeSpan.Zero;
+        return TimeSpan.FromSeconds((double)device.PlayedSamples.Count / channels / rate);
     }
 
     /// <summary>
