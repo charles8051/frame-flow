@@ -2,7 +2,15 @@
 
 ## Status
 
-**Draft, pending number assignment.** `IPlayerBuilder` gains
+**Superseded by [The pass and the player](the-pass-and-the-player.md)** (2026-09-17), which moves
+the unpaced terminal to its own entry point. What that record keeps is the argument below for
+folding `MediaPlayer.CreateAsync`'s options into a fluent chain; what it changes is where the two
+terminals live, and with them the narrowing this record introduced.
+
+This record was never numbered. What follows is its decision as it stood, kept for the reasoning
+rather than as a live proposal.
+
+`IPlayerBuilder` gains
 `BuildPlayerAsync`, returning `IMediaPlayer`, alongside the existing
 `BuildAsync`, returning `PlayerSession`. The four options that only a player can honour —
 repeat mode, injected clock, hardware-frame yield, audio activation —
