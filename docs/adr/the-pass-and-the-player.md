@@ -160,6 +160,12 @@ nothing to open.
 The player keeps `WithMedia`, and keeps accepting none, because a player with an empty queue is a
 thing a host wants (ADR-0077, amended).
 
+**No clock, and a seam that proves it.** A pass takes no clock, publicly or otherwise: that is the
+decision. It carries an internal seam that accepts one anyway, so a test can hand it a clock that
+throws on every read and assert the run completes. `MediaPlayer.CreateCoreAsync` already keeps a
+clock off the public surface this way, for the builder rather than for a test. Without the seam the
+central claim of this record is unassertable — see *Validation*.
+
 **At least one sink.** A pass with no sink has nowhere to put what it decodes, so the terminal
 refuses it and names the call that is missing. This is what `PlayToCompletionAsync` already does
 ("No sinks attached"), moved to the terminal so the refusal arrives before the demuxer opens the
@@ -227,18 +233,27 @@ claimed to work.
 | # | Decision | Test | Fails today with |
 |---|---|---|---|
 | 1 | 3 | `FrameFlowPass.Create(path)` with no sink is refused at the terminal, naming the call that is missing | no such type |
-| 2 | 1, 2 | A pass driven by a `FakeTimeProvider` that is never advanced presents every frame of a clip and completes | a paced path waits on that clock and never completes, so the test fails by timing out; the assertion is on frames and completion, not on elapsed time |
+| 2 | 1, 2, 3 | A pass given, through its internal seam, a clock that throws on every read presents every frame of a clip and completes | a paced implementation reads the clock to schedule the first frame, so the run fails with that exception; the assertions are on frames and completion |
 | 3 | 3 | The pass builder has no `WithMedia` and no plural entry: a queue of two is not expressible | no such type |
-| 4 | 3 | Two passes over the same caller-owned sink both run, and the sink is not disposed between them | `PlayerSession` already holds this; the test moves and keeps its name |
+| 4 | 3 | Two passes over the same caller-owned sink both run, and the sink is not disposed between them | nothing: this is carried-over coverage, not a new gate. `PlayerSessionIntegrationTests` holds it today and the test moves with the rename |
 | 5 | 4 | A player chain sets every player-only option and still reaches `BuildPlayerAsync` on one interface | passes today through `IMediaPlayerBuilder`; the test pins that the fold kept it |
 | 6 | 4 | `IMediaPlayerBuilder` is gone from `PublicAPI.Unshipped.txt` | the analyser is the test |
 
-Row 2 needs care. "Runs at decode speed" is a claim about elapsed time, which ADR-0072 bans from
-the suite, and a test that only counted frames would pass just as well on a paced implementation.
-The check is structural instead: hand the pass a `FakeTimeProvider` and never advance it. An
-implementation that routed through `SubstrateSession` would wait on that clock for the first
-frame's presentation time and never finish, so the row fails by timing out, for the right reason.
-Nothing asserts a duration.
+Rows 1 to 3 and 6 are gates: each has to fail on today's tree for the reason given. Rows 4 and 5
+are not, and say so — they carry existing coverage across the rename and the interface fold, and
+they pass before and after. A record that listed them as gates would be claiming evidence it does
+not have.
+
+Row 2 is the one that needs care, and two drafts of it were wrong. "Runs at decode speed" is a
+claim about elapsed time, which ADR-0072 bans from the suite. A test that counted frames and
+declared victory would pass on a paced implementation that happened to finish. A test that froze a
+clock and waited for a timeout would be an elapsed-time test wearing a disguise, and it would hang
+the suite on a regression.
+
+What is left is to deny the implementation a usable clock and assert it does not miss one. The
+pass is handed a clock that throws on every read, through the seam decision 3 records. An
+implementation routed through `SubstrateSession` reads it to schedule the first frame and fails
+with that exception, immediately and on any machine. Nothing waits, and nothing asserts a duration.
 
 The rate itself belongs in an investigation with a recorded measurement, next to the soak in
 [docs/investigations/2026-09-15-single-source-as-a-queue-of-one.md](../investigations/2026-09-15-single-source-as-a-queue-of-one.md).
