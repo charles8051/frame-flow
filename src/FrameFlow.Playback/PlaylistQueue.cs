@@ -312,6 +312,13 @@ internal sealed record PlaylistQueue
     }
 
     /// <summary>
+    /// Gives back a reservation no session will start with, leaving the item where it was taken
+    /// from. Used when the load that was to consume it failed.
+    /// </summary>
+    public PlaylistQueue ReleaseStart() =>
+        ReservedStart is null ? this : this with { ReservedStart = null };
+
+    /// <summary>
     /// Takes the item a new session starts with: a reserved item if there is one; otherwise the
     /// pending jump's target, the first next item, the playlist item after the cursor or the first
     /// queued item; otherwise the first playlist item again. The item is <see langword="null"/>

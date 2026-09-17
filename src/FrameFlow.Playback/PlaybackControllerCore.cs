@@ -1181,6 +1181,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         var loadResult = await LoadSourceAsync(start).ConfigureAwait(false);
         if (!loadResult.IsSuccess)
         {
+            // The reservation was for this load. Give it back rather than leave the queue marked
+            // for a load that will not come.
+            _sessionFactory.ReleaseStart();
             command.Completion.TrySetResult(loadResult);
             return true;
         }

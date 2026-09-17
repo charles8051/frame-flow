@@ -32,4 +32,10 @@ internal interface IPlaybackSessionFactory
     /// built with an empty queue sits in until something is added to it.
     /// </remarks>
     IMediaSource? ReserveStart() => null;
+
+    /// <summary>
+    /// Gives back a reservation whose load failed, so the next load is an ordinary one. A factory
+    /// that reserves nothing has nothing to give back.
+    /// </summary>
+    void ReleaseStart() { }
 }

@@ -98,6 +98,13 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
     public IMediaSource? ReserveStart() =>
         _loadsSource ? null : _coordinator.ReserveStart()?.Source;
 
+    /// <inheritdoc />
+    public void ReleaseStart()
+    {
+        if (!_loadsSource)
+            _coordinator.ReleaseStart();
+    }
+
     /// <summary>
     /// Disposes the coordinator this factory was built with, when it was built for the controller.
     /// A playlist player's coordinator outlives its controller and is disposed by the player.

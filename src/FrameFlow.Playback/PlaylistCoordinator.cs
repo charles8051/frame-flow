@@ -346,6 +346,19 @@ internal sealed class PlaylistCoordinator
     }
 
     /// <summary>
+    /// Gives back a reservation whose load failed, and clears the mark it set. The next load is
+    /// then an ordinary one.
+    /// </summary>
+    internal void ReleaseStart()
+    {
+        lock (_gate)
+        {
+            _replayPending = false;
+            _queue = _queue.ReleaseStart();
+        }
+    }
+
+    /// <summary>
     /// Takes the item a new session starts with. Returns <see langword="null"/> when the player
     /// holds nothing. <see cref="PlaylistQueue.TakeStart"/> gives the order.
     /// </summary>

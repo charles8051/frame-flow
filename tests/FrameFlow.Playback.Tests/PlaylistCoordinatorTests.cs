@@ -274,6 +274,25 @@ public sealed class PlaylistCoordinatorTests
     }
 
     [Fact]
+    public void ReleaseStart_GivesBackAReservationWhoseLoadFailed()
+    {
+        // The first PlayAsync on a player built empty reserves the item it is about to load. A
+        // load that fails must give the reservation back: left set, it would make the next load
+        // keep a queue it was meant to replace.
+        var coord = new PlaylistCoordinator([S("a")], RepeatMode.Off);
+        Assert.NotNull(coord.ReserveStart());
+
+        coord.ReleaseStart();
+
+        Assert.Null(coord.Queue.ReservedStart);
+
+        // The mark went with it, so the next load is an ordinary one and replaces the queue.
+        var replacement = S("b");
+        coord.LoadSource(replacement);
+        Assert.Same(replacement, Assert.Single(coord.Queue.Playlist).Source);
+    }
+
+    [Fact]
     public void ReserveStart_OnAnEmptyPlayer_LeavesTheNextLoadOrdinary()
     {
         var coord = new PlaylistCoordinator(RepeatMode.Off);
