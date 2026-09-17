@@ -160,11 +160,16 @@ nothing to open.
 The player keeps `WithMedia`, and keeps accepting none, because a player with an empty queue is a
 thing a host wants (ADR-0077, amended).
 
-**No clock, and a seam that proves it.** A pass takes no clock, publicly or otherwise: that is the
-decision. It carries an internal seam that accepts one anyway, so a test can hand it a clock that
-throws on every read and assert the run completes. `MediaPlayer.CreateCoreAsync` already keeps a
-clock off the public surface this way, for the builder rather than for a test. Without the seam the
-central claim of this record is unassertable — see *Validation*.
+**A pass never reads a clock, and a seam proves it.** That is the decision: no presentation time
+is waited on, and nothing in the pass consults one. The builder carries no clock option, because a
+consumer has nothing to supply.
+
+An internal seam accepts a clock all the same, and exists for one caller: a test that hands the
+pass a clock which throws on every read, and asserts the run completes anyway. The seam is how the
+decision is falsifiable, not an exception to it — a pass that used what it was given would fail the
+test that the seam exists to make possible. `MediaPlayer.CreateCoreAsync` already keeps a clock off
+the public surface this way, there for the fluent builder rather than for a test. See
+*Validation*.
 
 **At least one sink.** A pass with no sink has nowhere to put what it decodes, so the terminal
 refuses it and names the call that is missing. This is what `PlayToCompletionAsync` already does
