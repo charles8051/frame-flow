@@ -237,10 +237,12 @@ Breaking changes 25, 26 and 27.
   > constructs that decoder, and the change is one builder option and one assignment.
   >
   > What makes it premature is that nothing on the pass path could consume the result. Every
-  > `GpuVideoFrame` consumer in the tree is a presenter — `CompositionInteropVideoSink`,
-  > `CompositionInteropVideoView`, `D3D11Nv12SharedConverter` — and a presenter is what the player
-  > is for. Set the flag on a pass today and the frame reaches an operator that reads
-  > `IVideoFrame` on the CPU, which is `Yolov8Preprocessor` and everything downstream of it.
+  > `GpuVideoFrame` consumer in the tree is in the presentation path and lives in
+  > `FrameFlow.Avalonia.Windows`: the sink `CompositionInteropVideoSink`, the view
+  > `CompositionInteropVideoView`, and `D3D11Nv12SharedConverter`, which converts for that sink
+  > rather than presenting itself. Presentation is what the player is for. Set the flag on a pass
+  > today and the frame reaches an operator that reads `IVideoFrame` on the CPU, which is
+  > `Yolov8Preprocessor` and everything downstream of it.
   >
   > The seam exists at both ends and not in the middle. `CudaInferenceSession` documents a
   > device-resident escape hatch that binds a `CUdeviceptr` with no PCIe staging, and names
