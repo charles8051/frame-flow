@@ -147,7 +147,7 @@ bootstrap reports, whenever the mode asks for hardware. `Disabled` never probes.
 | `Create(hardwareDecodeMode: Required)`, capabilities omitted | `HardwareDecodeUnavailableException` | hardware where a backend binds |
 | any mode, `HardwareDecodeCapabilities.Empty` | software decode, or the exception under `Required` | unchanged |
 
-`MediaPlayer.CreateAsync` and `MediaPlaylistPlayer.CreateAsync` already passed
+`MediaPlayer.CreateAsync` and the builder's `BuildPlayerAsync` already passed
 their bootstrap's probed capabilities and are not affected.
 
 If you relied on the old behaviour to keep decoding in software, say so
@@ -499,6 +499,28 @@ await MediaPlayer.CreateAsync([first, second], videoSink, audioSink,
 ```
 
 `SetRepeatModeAsync` still changes it at any time.
+
+### 19. `BuildPlayerAsync` returns `Task<IMediaPlaylistPlayer>`
+
+The builder can now open a queue: `FrameFlowPlayer.Open(IEnumerable<IMediaSource>)`
+starts the same chain over an ordered set of sources. It begins narrowed to
+`IMediaPlayerBuilder`, because a `PlayerSession` plays one source and `BuildAsync` has
+no meaning over a queue.
+
+Both `BuildPlayerAsync` terminals widened to match, the same break entry 12 made to
+`MediaPlayer.CreateAsync`. `Task<T>` is invariant, so awaiting still compiles and naming
+the task does not:
+
+```csharp
+// Still compiles — the awaited value is assignable
+IMediaPlayer player = await FrameFlowPlayer.Open(path).BuildPlayerAsync();
+
+// Stops compiling — name the new type, or await first
+Task<IMediaPlayer> pending = FrameFlowPlayer.Open(path).BuildPlayerAsync();
+```
+
+A type outside FrameFlow that implements `IPlayerBuilder` or `IMediaPlayerBuilder`
+changes its terminal's return type to match.
 
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 

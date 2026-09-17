@@ -10,18 +10,22 @@ using FrameFlow.Graph;
 namespace FrameFlow.Player;
 
 /// <summary>
-/// Fluent builder for playback. Returned by
+/// Fluent builder for playback over one source. Returned by
 /// <see cref="FrameFlowPlayer.Open(string)"/>; each method returns
 /// the builder so chains flow naturally until a terminal resolves.
+/// <see cref="FrameFlowPlayer.Open(IEnumerable{IMediaSource})"/> starts
+/// the same chain over a queue, narrowed to
+/// <see cref="IMediaPlayerBuilder"/>.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Two terminals.</b> <see cref="BuildAsync"/> returns a
 /// <see cref="PlayerSession"/> — open a source, play it to end of
 /// stream, done. <see cref="BuildPlayerAsync"/> returns an
-/// <see cref="IMediaPlayer"/>, the full state machine with pause,
-/// resume, seek, repeat, position and diagnostics. Pick by which you
-/// need; everything before the terminal is the same chain.
+/// <see cref="IMediaPlaylistPlayer"/>, the full state machine with
+/// pause, resume, seek, repeat, position and diagnostics, over a queue
+/// holding the opened source. Pick by which you need; everything
+/// before the terminal is the same chain.
 /// </para>
 /// <para>
 /// The player-only options (<see cref="WithRepeatMode"/>,
@@ -153,9 +157,10 @@ public interface IPlayerBuilder
     /// <summary>
     /// Bootstraps the FFmpeg native runtime, loads the media source
     /// into a <see cref="PlaybackController"/>, and returns a ready
-    /// <see cref="IMediaPlayer"/> — the full pause/resume/seek/repeat
-    /// state machine. Playback is not started; the caller invokes
-    /// <see cref="IMediaPlayer.PlayAsync"/> explicitly.
+    /// player — the full pause/resume/seek/repeat state machine, over a
+    /// queue of one. Playback is not started; the caller invokes
+    /// <see cref="IMediaPlayer.PlayAsync"/> explicitly. A caller who
+    /// wants the small surface names <see cref="IMediaPlayer"/>.
     /// </summary>
-    Task<IMediaPlayer> BuildPlayerAsync(CancellationToken cancellationToken = default);
+    Task<IMediaPlaylistPlayer> BuildPlayerAsync(CancellationToken cancellationToken = default);
 }

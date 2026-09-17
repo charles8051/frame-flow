@@ -22,8 +22,9 @@ namespace FrameFlow.Player;
 /// <see cref="PlayerSession"/>, which covers "open a source and play it to
 /// end of stream" and nothing more.
 /// <see cref="IPlayerBuilder.BuildPlayerAsync"/> produces an
-/// <see cref="IMediaPlayer"/> — pause, resume, seek, repeat, position and
-/// diagnostics. Everything before the terminal is the same chain:
+/// <see cref="IMediaPlaylistPlayer"/> — pause, resume, seek, repeat, position
+/// and diagnostics, plus the queue. Everything before the terminal is the same
+/// chain:
 /// <code>
 /// await using var player = await FrameFlowPlayer
 ///     .Open(path)
@@ -35,9 +36,9 @@ namespace FrameFlow.Player;
 /// </code>
 /// </para>
 /// <para>
-/// Prefer this builder. <see cref="MediaPlayer"/>'s <c>CreateAsync</c> is the older
-/// positional form of the second terminal, runs the same wiring, and
-/// cannot inject a clock.
+/// Prefer this builder. <see cref="MediaPlayer"/>'s <c>CreateAsync</c> is the
+/// positional form of the second terminal. It runs the same wiring and cannot
+/// inject a clock.
 /// </para>
 /// </remarks>
 public static class FrameFlowPlayer
@@ -50,7 +51,7 @@ public static class FrameFlowPlayer
     public static IPlayerBuilder Open(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        return new PlayerBuilder(MediaSource.FromFile(path));
+        return new PlayerBuilder([MediaSource.FromFile(path)]);
     }
 
     /// <summary>
@@ -59,6 +60,23 @@ public static class FrameFlowPlayer
     public static IPlayerBuilder Open(IMediaSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        return new PlayerBuilder(source);
+        return new PlayerBuilder([source]);
+    }
+
+    /// <summary>
+    /// Begins a builder chain over an ordered queue. The chain starts narrowed to
+    /// <see cref="IMediaPlayerBuilder"/>: a <see cref="PlayerSession"/> plays one source, so
+    /// <see cref="IPlayerBuilder.BuildAsync"/> is not on offer over a queue.
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="sources"/> is empty.</exception>
+    public static IMediaPlayerBuilder Open(IEnumerable<IMediaSource> sources)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+
+        var initial = sources.ToList();
+        if (initial.Count == 0)
+            throw new ArgumentException("A player requires at least one source.", nameof(sources));
+
+        return new PlayerBuilder(initial);
     }
 }

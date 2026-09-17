@@ -31,7 +31,7 @@ namespace FrameFlow.Player;
 /// </remarks>
 internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
 {
-    private readonly IMediaSource _source;
+    private readonly IReadOnlyList<IMediaSource> _sources;
     private IVideoSink? _videoSink;
     private IAudioSink? _audioSink;
     private Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? _videoConfigurator;
@@ -49,7 +49,14 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
     private bool _yieldHardwareFrames;
     private bool _activateAudioSink = true;
 
-    internal PlayerBuilder(IMediaSource source) => _source = source;
+    internal PlayerBuilder(IReadOnlyList<IMediaSource> sources) => _sources = sources;
+
+    /// <summary>
+    /// The item <see cref="BuildAsync"/> opens. A session plays one source; the queue entry
+    /// returns <see cref="IMediaPlayerBuilder"/>, whose only terminal is
+    /// <see cref="BuildPlayerAsync"/>, so this is always the whole queue there.
+    /// </summary>
+    private IMediaSource Source => _sources[0];
 
     public IPlayerBuilder WithVideoSink(IVideoSink sink)
     {
@@ -170,11 +177,13 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
         }
     }
 
-    public async Task<IMediaPlayer> BuildPlayerAsync(CancellationToken cancellationToken = default)
+    public async Task<IMediaPlaylistPlayer> BuildPlayerAsync(
+        CancellationToken cancellationToken = default
+    )
     {
         RequireSinkForEachConfigurator();
         return await MediaPlayer.CreateCoreAsync(
-            initial: [_source],
+            initial: _sources,
             videoSink: _videoSink,
             audioSink: _audioSink,
             hardwareDecodeMode: _hwMode,
@@ -267,7 +276,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
 
         try
         {
-            demux = await demuxFactory.OpenAsync(_source, cancellationToken).ConfigureAwait(false);
+            demux = await demuxFactory.OpenAsync(Source, cancellationToken).ConfigureAwait(false);
 
             // DecodingPipeline owns the demux pump; it requires the
             // concrete DemuxSession (it reaches FormatContextPtr through
@@ -285,7 +294,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
             )
             {
                 throw new InvalidOperationException(
-                    $"Source '{_source.DisplayName}' has neither a video nor audio stream."
+                    $"Source '{Source.DisplayName}' has neither a video nor audio stream."
                 );
             }
 

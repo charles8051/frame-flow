@@ -22,10 +22,9 @@ namespace FrameFlow.Examples.AvaloniaPlayer;
 /// opened, and keep the playlist sidebar in step with playback.
 /// </para>
 /// <para>
-/// A single file is built with
-/// <c>FrameFlowPlayer.Open(...).BuildPlayerAsync()</c>. A folder is built with
-/// <c>MediaPlayer.CreateAsync</c> over a set of sources, which plays every file
-/// one warm presenter and has no builder form.
+/// A single file and a folder are both built with
+/// <c>FrameFlowPlayer.Open(...).BuildPlayerAsync()</c>; the folder passes every
+/// source at once and plays them over one warm presenter.
 /// </para>
 /// <para>
 /// Presenter selection, hardware-decode A/B, running without audio and
@@ -200,14 +199,14 @@ public partial class MainWindow : Window
             var videoSink = PlayerView.AttachSink(_loggerFactory);
             _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
 
-            var playlist = await MediaPlayer.CreateAsync(
-                sources: _playlistEntries.Select(e => e.Source),
-                videoSink: videoSink,
-                audioSink: _audioSink,
-                yieldHardwareFrames: PlayerView.VideoSurface.PrefersHardwareFrames,
-                initialRepeatMode: RepeatMode.All,
-                loggerFactory: _loggerFactory
-            );
+            var playlist = await FrameFlowPlayer
+                .Open(_playlistEntries.Select(e => e.Source))
+                .WithVideoSink(videoSink)
+                .WithAudioSink(_audioSink)
+                .WithHardwareFrames(PlayerView.VideoSurface.PrefersHardwareFrames)
+                .WithRepeatMode(RepeatMode.All)
+                .WithLogger(_loggerFactory)
+                .BuildPlayerAsync();
 
             _playlistPlayer = playlist;
             _player = playlist;
