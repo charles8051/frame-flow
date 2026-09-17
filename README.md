@@ -31,26 +31,14 @@ full list is under [Packages](#packages).
 
 ## Quick start
 
-Two entry points, and a clock is the difference:
-
-| You want | Entry | Returns |
-|---|---|---|
-| Playback a human watches — paced, with play, pause, seek, repeat, observables and a queue | `FrameFlowPlayer.Create()` | `IMediaPlaylistPlayer` |
-| One traversal of a file at decode speed, for inference or analysis | `FrameFlowPass.Create(path)` | `MediaPass` |
-
-A player honours a clock and shows each frame at its presentation time. A pass
-waits on nothing, so video through it runs as fast as the sink accepts. An audio
-sink paces itself by what its device consumes either way.
-
-### `FrameFlowPlayer` — the full player
-
 ```csharp
 using FrameFlow.Audio.OpenAL;
+using FrameFlow.Avalonia;
 using FrameFlow.Media;
 using FrameFlow.Player;
 
 await using var player = await FrameFlowPlayer.Create()
-    .WithMedia(path)
+    .WithMedia([first, second])
     .WithOpenAlAudio()          // also implements IClockSource, so it becomes the master clock
     .WithAvaloniaVideoView(view)
     .WithHardwareDecode(HardwareDecodeMode.Auto)
@@ -60,64 +48,26 @@ await using var player = await FrameFlowPlayer.Create()
 var played = await player.PlayAsync();
 if (!played.IsSuccess)
     Console.Error.WriteLine($"{played.Error.Category}: {played.Error.Message}");
-```
 
-### `FrameFlowPass` — one traversal, at decode speed
-
-Run every frame of a file through an operator and close it, without waiting real
-time for the file to play:
-
-```csharp
-await using var sink = new HeadlessVideoSink();   // or any sink you already have
-await using var pass = await FrameFlowPass.Create(path)
-    .WithVideoSink(sink)
-    .ConfigureVideo(chain => chain.Then(detect))
-    .BuildAsync();
-
-await pass.RunToCompletionAsync(ct);
-```
-
-The source is named at `Create`, because a pass with none has nothing to do. A
-pass runs once: build another to run the content again. Repeat, a clock, hardware
-frames, audio activation and the queue are the player's, and are not on this
-builder at all.
-
-The sink is yours (ADR-0044) — a pass does not dispose it, so one sink holding a
-loaded inference model serves any number of passes.
-
-### Playlists
-
-Every player is a queue, so sources can be added while it plays:
-
-```csharp
-await using var player = await FrameFlowPlayer.Create().WithMedia([first, second])
-    .WithVideoSink(videoSink)
-    .WithAudioSink(audioSink)
-    .WithRepeatMode(RepeatMode.All)
-    .BuildPlayerAsync();
-
-await player.PlayAsync();
 await player.AddAsync(third);      // joins the loop
 await player.EnqueueAsync(once);   // plays once, then leaves
 await player.SkipToNextAsync();
+
+await player.SeekAsync(TimeSpan.FromSeconds(30));
+await player.PauseAsync();
 ```
 
-`WithMedia(path)` builds the same player over a queue of one, so the transport
-above is there whether you started with one file or twenty. The sinks stay warm
-across every item, so nothing is rebuilt at a boundary.
+Every player is a queue, so the transport above is there whether you named one
+file or twenty. `WithMedia(path)` builds the same player over a queue of one, and
+leaving `WithMedia` out builds it with the sinks warm and nothing loaded — the
+first `PlayAsync` then starts whatever `AddAsync` has put in the queue by then.
+The sinks are attached once and stay warm across every item, so nothing is
+rebuilt at a boundary.
 
-Leave `WithMedia` out and the player is built with its sinks warm and nothing
-loaded; the first `PlayAsync` starts whatever the queue holds by then — for a
-host that builds its presenter at startup and receives content afterwards.
-
-```csharp
-await using var player = await FrameFlowPlayer.Create()
-    .WithVideoSink(videoSink)
-    .BuildPlayerAsync();
-
-await player.AddAsync(source);
-await player.PlayAsync();
-```
+`FrameFlowPass.Create(path)` is the other entry point. It runs one source through
+once at decode speed, waiting on no presentation time, which is what an inference
+or analysis run wants and not what a viewer wants. It has no transport and no
+queue. See [ADR-0079](docs/adr/ADR-0079-the-pass-and-the-player.md).
 
 `MediaPlayer.CreateAsync(...)` is the positional form of `BuildPlayerAsync`, for
 callers who would rather not chain. `PlaybackController.Create(...)` sits below
