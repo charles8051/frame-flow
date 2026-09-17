@@ -326,7 +326,26 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         _state == InternalPlaybackState.Playing && _seeking.State == SeekState.NotSeeking;
 
     /// <inheritdoc />
-    public TimeSpan Position => _clock.Position;
+    public TimeSpan Position
+    {
+        get
+        {
+            var position = _clock.Position;
+            var duration = _loadedDuration;
+
+            // Ended now fires when the last frame has finished being on screen, and the clock
+            // is paused a command hop after that. Reporting the few milliseconds it ran in
+            // between puts Position past the end of the media, which a progress bar cannot
+            // draw and a caller cannot use. Before the last frame carried a display interval
+            // the hop was hidden inside the margin Ended arrived early by, so this reads the
+            // same as it always did anywhere but the end (#249).
+            return _state == InternalPlaybackState.Ended
+                && duration > TimeSpan.Zero
+                && position > duration
+                ? duration
+                : position;
+        }
+    }
 
     /// <inheritdoc />
     public TimeSpan Duration => _loadedDuration;

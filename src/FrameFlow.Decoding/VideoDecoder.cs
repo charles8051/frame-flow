@@ -928,7 +928,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             height: accessor.Height,
             softwareFormat: PixelFormat.Nv12,
             pts: pts,
-            duration: TimeSpan.Zero,
+            duration: accessor.ComputeDuration(_timeBaseNum, _timeBaseDen),
             backend: HardwareBackend ?? HardwareDecodeBackendKind.Other
         );
 
@@ -964,14 +964,16 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 return null;
             }
 
-            // Copy PTS from the GPU frame so the CPU copy carries the same
-            // timestamp — av_hwframe_transfer_data does not propagate it.
+            // Copy the timing fields from the GPU frame so the CPU copy carries the
+            // same timestamp and display interval — av_hwframe_transfer_data
+            // propagates neither.
             unsafe
             {
                 ref AVFrame src = ref Unsafe.AsRef<AVFrame>((void*)framePtr);
                 ref AVFrame dst = ref Unsafe.AsRef<AVFrame>((void*)swPtr);
                 dst.pts = src.pts;
                 dst.time_base = src.time_base;
+                dst.duration = src.duration;
             }
 
             try
@@ -997,6 +999,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         int srcHeight = accessor.Height;
         int srcFormat = accessor.Format;
         long pts = accessor.Pts;
+        TimeSpan duration = accessor.ComputeDuration(_timeBaseNum, _timeBaseDen);
 
         if (srcWidth <= 0 || srcHeight <= 0)
             return null;
@@ -1088,7 +1091,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             height: dstHeight,
             stride: dstStride,
             format: PixelFormat.Bgra32,
-            presentationTime: presentationTime
+            presentationTime: presentationTime,
+            duration: duration
         );
     }
 

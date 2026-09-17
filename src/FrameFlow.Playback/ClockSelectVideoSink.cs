@@ -316,6 +316,38 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     private CancellationTokenSource CreateCapSource(bool paused) =>
         paused ? new CancellationTokenSource() : new CancellationTokenSource(_maxWait, _timeProvider);
 
+    // Cap source for the end-of-content hold, which is a wait of a KNOWN length: the last
+    // frame's remaining display interval. _maxWait alone is the wrong bound for it. It is a
+    // stall guard sized for one frame at video cadence, and a frame whose interval is longer
+    // than it — a still paced by the image demuxer, a sparse slideshow stream — would be cut
+    // off mid-display and Ended early, which is the same defect the hold exists to fix. So the
+    // content's own remaining interval sets the wait and _maxWait stays on as the slack over
+    // it. A stopped master still caps out, just _maxWait after the frame was due to end rather
+    // than _maxWait after the hold began.
+    private CancellationTokenSource CreateHoldCapSource(bool paused, TimeSpan remaining)
+    {
+        var cap = HoldCapFor(remaining, _maxWait);
+        Volatile.Write(ref _lastHoldCapTicks, cap.Ticks);
+        return paused ? new CancellationTokenSource() : new CancellationTokenSource(cap, _timeProvider);
+    }
+
+    /// <summary>
+    /// The end-of-content hold's cap: the last frame's remaining display interval plus
+    /// <c>maxWait</c> as slack. A remaining interval at or below zero means the frame is
+    /// already due to end, which leaves the bare slack and the pre-existing behaviour.
+    /// </summary>
+    internal static TimeSpan HoldCapFor(TimeSpan remaining, TimeSpan maxWait) =>
+        (remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero) + maxWait;
+
+    private long _lastHoldCapTicks;
+
+    /// <summary>
+    /// The cap most recently armed for an end-of-content hold. Sibling of
+    /// <see cref="ParkGeneration"/>: read it after the hold's park and the value is the one
+    /// the loop actually armed, rather than a guess at what it should have armed.
+    /// </summary>
+    internal TimeSpan LastHoldCap => TimeSpan.FromTicks(Volatile.Read(ref _lastHoldCapTicks));
+
     private readonly object _gate = new();
     private readonly ClockSelectBuffer _buffer;
 
@@ -997,12 +1029,23 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                     // input complete, not already drained, last frame still mid-display.
                     bool holdForFrameEnd;
                     TimeSpan holdTarget;
+                    TimeSpan holdRemaining = TimeSpan.Zero;
                     lock (_gate)
                     {
-                        holdForFrameEnd = _inputComplete
-                            && !_drained.Task.IsCompleted
-                            && _clock.Latest < _lastFrameEndPts;
+                        // The clock is read only once the first two are true, as it was before
+                        // the remaining interval was needed here. _gate is held across this
+                        // call, and an IClockSource is free to do what it likes inside Latest —
+                        // a seek reseating the run is the case the tests model — so reading it
+                        // on every idle turn of the loop rather than on the turns that end a
+                        // run is a re-entrancy the short-circuit was avoiding.
+                        holdForFrameEnd = _inputComplete && !_drained.Task.IsCompleted;
                         holdTarget = _lastFrameEndPts;
+                        if (holdForFrameEnd)
+                        {
+                            var latest = _clock.Latest;
+                            holdForFrameEnd = latest < _lastFrameEndPts;
+                            holdRemaining = _lastFrameEndPts - latest;
+                        }
                     }
                     if (holdForFrameEnd)
                     {
@@ -1015,7 +1058,9 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                         // video tail) caps out instead of hanging, and a concurrent
                         // Flush/seek breaks the hold rather than stranding the next frame.
                         // Uncapped while paused: pausing over the last frame's display must
-                        // not end the clip (#127).
+                        // not end the clip (#127). While running, the cap is the frame's own
+                        // remaining interval plus _maxWait, so a long display interval is
+                        // waited out rather than truncated (#249).
                         CancellationToken holdRecheckToken;
                         bool holdPaused;
                         lock (_gate)
@@ -1026,7 +1071,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                         bool holdRechecked = false;
                         // The cap is its own source so it can be armed through _timeProvider;
                         // CancelAfter on a linked source always uses the platform timer queue.
-                        using var holdCap = CreateCapSource(holdPaused);
+                        using var holdCap = CreateHoldCapSource(holdPaused, holdRemaining);
                         using (
                             var holdCts = CancellationTokenSource.CreateLinkedTokenSource(
                                 ct,
