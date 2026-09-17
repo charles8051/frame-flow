@@ -236,6 +236,17 @@ Gen(
 );
 
 Gen(
+    "test-still.png",
+    "-f lavfi -i testsrc2=size=320x240:rate=1 -frames:v 1",
+    "-c:v png",
+    // A still has no timeline of its own. Probed, it opens as png_pipe and reports no
+    // duration; opened as image2 with a framerate it reports one frame of 1/framerate.
+    // Both are what the demuxer options on IMediaSource are for, so the expectation here
+    // is deliberately the probed shape: one frame, no duration.
+    new(Width: 320, Height: 240, Fps: 25, DurationSec: 0, VideoFrames: 1)
+);
+
+Gen(
     "test-audio-only.mp4",
     "-f lavfi -i sine=frequency=440:sample_rate=44100:duration=3",
     "-c:a aac -b:a 128k -ac 2",
@@ -889,12 +900,20 @@ record MediaSpec(
     int? Fps = null,
     double DurationSec = 0,
     int? AudioSampleRate = null,
-    int? AudioChannels = null
+    int? AudioChannels = null,
+    int? VideoFrames = null
 )
 {
     public bool HasVideo => Width is not null;
     public bool HasAudio => AudioSampleRate is not null;
-    public int? ExpectedVideoFrames => HasVideo ? (int)(Fps!.Value * DurationSec) : null;
+
+    /// <summary>
+    /// Frame count, derived from rate x duration unless <c>VideoFrames</c> states it. A
+    /// still image is the case that needs stating: it has one frame and no duration, so the
+    /// product is zero and the derivation is wrong rather than merely unknown.
+    /// </summary>
+    public int? ExpectedVideoFrames =>
+        VideoFrames ?? (HasVideo ? (int)(Fps!.Value * DurationSec) : null);
 
     /// <summary>
     /// Lossy audio codecs (AAC, MP3, Opus) add encoder delay/padding of up to ~300ms.

@@ -34,6 +34,40 @@ internal static partial class FFAvFormat
     );
 
     /// <summary>
+    /// Overload taking the options dictionary by reference, for a caller that has demuxer
+    /// options to pass. On return <paramref name="options"/> holds the entries the demuxer
+    /// did not recognise; it is still the caller's to free either way, including on failure.
+    /// </summary>
+    /// <remarks>
+    /// Same entry point as the four-<c>nint</c> form above, which stays for the callers that
+    /// pass no options: <c>nint.Zero</c> binds to that one, a <c>ref</c> argument to this.
+    /// </remarks>
+    [LibraryImport("avformat", EntryPoint = "avformat_open_input")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial int avformat_open_input(
+        ref nint ctx,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string url,
+        nint fmt,
+        ref nint options
+    );
+
+    /// <summary>
+    /// Looks up a demuxer by its short name (<c>image2</c>, <c>mp4</c>, ...). Returns the
+    /// <c>const AVInputFormat*</c> to hand to <c>avformat_open_input</c> as its format
+    /// argument, forcing that demuxer instead of probing, or <see cref="nint.Zero"/> when
+    /// no demuxer has that name.
+    /// </summary>
+    /// <remarks>
+    /// The returned pointer is static storage inside libavformat. It is not owned and must
+    /// not be freed.
+    /// </remarks>
+    [LibraryImport("avformat")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial nint av_find_input_format(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string short_name
+    );
+
+    /// <summary>
     /// Reads packets of a media file to get stream information. Should be called
     /// after <see cref="avformat_open_input"/> and before any packet reading.
     /// </summary>

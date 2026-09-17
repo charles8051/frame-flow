@@ -18,7 +18,7 @@ public sealed class PlayerLoopEventTests
 
         IMediaPlayer player = new PlaylistMediaPlayerCore(
             controller,
-            new PlaylistCoordinator([new MediaSource("a")], RepeatMode.All),
+            new PlaylistCoordinator([new MediaSource { DisplayName = "a" }], RepeatMode.All),
             audioSink: null,
             NullLogger.Instance
         );

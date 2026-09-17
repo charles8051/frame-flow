@@ -124,7 +124,7 @@ public sealed class VolumeControlDiscoveryTests
     private static PlaylistMediaPlayerCore NewPlayer(IAudioSink? audioSink) =>
         new(
             new StubController(),
-            new PlaylistCoordinator([new MediaSource("a")], RepeatMode.Off),
+            new PlaylistCoordinator([new MediaSource { DisplayName = "a" }], RepeatMode.Off),
             audioSink,
             NullLogger.Instance
         );

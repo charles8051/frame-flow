@@ -102,6 +102,8 @@ These files should be included in the corpus to test robustness and error handli
 - **No audio stream** — video-only file
 - **No video stream** — audio-only file in a video container
 - **Very short file** — sub-second duration
+- **Single still image** — one frame and no duration when probed; a timeline only when
+  opened through the image demuxer with a framerate
 - **Very long duration metadata** — file claiming hours of content with little actual data
 
 ### Timing edge cases
@@ -181,7 +183,7 @@ option 2 without the downloads: the corpus is generated locally, not fetched.
   `PATH` or in `runtimes/{rid}/native/` — run `scripts/fetch-ffmpeg.cs` first.
 - **Output:** `tests/corpus/files/`, gitignored. Nothing media-shaped is
   committed, so Git LFS was never needed.
-- **`tests/corpus/manifest.json`:** checked in. A flat JSON array of 25 entries
+- **`tests/corpus/manifest.json`:** checked in. A flat JSON array of 26 entries
   describing what the generator should produce — `filename`, `category`
   (`basic-video`, `basic-audio`, `combined-av`, `pixel-format`, `edge-case`,
   `decode-pressure`, `benchmark`),

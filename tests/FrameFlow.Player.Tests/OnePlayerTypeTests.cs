@@ -18,7 +18,7 @@ public sealed class OnePlayerTypeTests
     [Fact]
     public void ThePlayerOverOneSource_CarriesThePlaylistSurface()
     {
-        var source = new MediaSource("a");
+        var source = new MediaSource { DisplayName = "a" };
         var player = NewPlayer(source);
 
         Assert.IsAssignableFrom<IMediaPlayer>(player);
@@ -32,9 +32,9 @@ public sealed class OnePlayerTypeTests
     {
         // A caller who started with one file adds another to the player they already hold, which
         // is what one player type buys them.
-        var player = NewPlayer(new MediaSource("a"));
+        var player = NewPlayer(new MediaSource { DisplayName = "a" });
 
-        var added = await player.AddAsync(new MediaSource("b"));
+        var added = await player.AddAsync(new MediaSource { DisplayName = "b" });
 
         Assert.Equal(2, player.GetPlaylist().Playlist.Count);
         Assert.Same(added, player.GetPlaylist().Playlist[1]);
