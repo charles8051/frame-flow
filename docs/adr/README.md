@@ -207,7 +207,20 @@ land.
   measured against a running policy before the default changes. Its rejected alternative F
   records the packet-pacing design this replaced, and the measurement that ruled it
   out.
-- [One builder, two terminals](one-builder-two-terminals.md) — the fluent surface
+- [The pass and the player: a clock decides the entry](the-pass-and-the-player.md) —
+  the builder's two terminals read as a difference of transport surface, and the difference is
+  pacing: `PlayerSession` holds no clock and never touches `ClockSelectVideoSink` or `PaceUntil`,
+  so video through `BuildAsync` runs as fast as the sink accepts. Both in-repo users are audio-only,
+  where the device supplies the timing, which is why the gap has not shown. Proposes a second entry
+  point so the choice is made in the first call rather than the last: `FrameFlowPass.Create(path)`
+  builds a `MediaPass` run with `RunToCompletionAsync`, and the pass takes one source at its entry
+  and has no queue, because the sink is what is worth reusing across files and the caller already
+  owns it. That lets the player's builder drop the narrowing whose only job was keeping player-only
+  options off a chain that could still end in a session, folding `IMediaPlayerBuilder` into
+  `IPlayerBuilder`, and it closes the run-time hole breaking change 24 opened. Supersedes
+  [One builder, two terminals](one-builder-two-terminals.md). Defers whether a pass yields hardware
+  frames, and whether `MediaPlayer` survives. Nothing is implemented.
+- [One builder, two terminals](one-builder-two-terminals.md) — **superseded** by the record above. The fluent surface
   returned the weaker object: `BuildAsync` yields a single-shot `PlayerSession`, while
   the eleven-parameter `MediaPlayer.CreateAsync` holds the whole state machine. Adds
   `BuildPlayerAsync` as a second terminal on the same chain, and narrows the chain to
@@ -340,19 +353,6 @@ summaries below were written while they were drafts; the records themselves are 
   three examples that terminate inside their configurator.
   **Implemented** in #242, #243, #244 and #245; its amendment records three departures,
   two motivations the code does not support, and a corrected cycle search.
-- [The pass and the player: a clock decides the entry](ADR-0079-the-pass-and-the-player.md) —
-  the builder's two terminals read as a difference of transport surface, and the difference is
-  pacing: `PlayerSession` holds no clock and never touches `ClockSelectVideoSink` or `PaceUntil`,
-  so video through `BuildAsync` runs as fast as the sink accepts. Both in-repo users are audio-only,
-  where the device supplies the timing, which is why the gap has not shown. Proposes a second entry
-  point so the choice is made in the first call rather than the last: `FrameFlowPass.Create(path)`
-  builds a `MediaPass` run with `RunToCompletionAsync`, and the pass takes one source at its entry
-  and has no queue, because the sink is what is worth reusing across files and the caller already
-  owns it. That lets the player's builder drop the narrowing whose only job was keeping player-only
-  options off a chain that could still end in a session, folding `IMediaPlayerBuilder` into
-  `IPlayerBuilder`, and it closes the run-time hole breaking change 24 opened. Supersedes
-  [One builder, two terminals](one-builder-two-terminals.md). Defers whether a pass yields hardware
-  frames, and whether `MediaPlayer` survives. Nothing is implemented.
 
 
 (Most recently, tests stopped depending on elapsed time as

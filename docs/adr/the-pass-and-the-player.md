@@ -1,8 +1,10 @@
-# ADR-0079: The pass and the player: a clock decides the entry
+# The pass and the player: a clock decides the entry
 
 ## Status
 
-**Proposed (2026-09-17). Nothing is implemented.**
+**Draft, pending number assignment. Proposed 2026-09-17; nothing is implemented.**
+Numbers are assigned at merge of the implementation, so this record carries a slug filename until
+then, as [One builder, two terminals](one-builder-two-terminals.md) did.
 
 This record decides that the unpaced runtime gets its own entry point rather than a second
 terminal on the player's builder, what it is called, that it takes one source and no queue, and
@@ -158,6 +160,13 @@ nothing to open.
 The player keeps `WithMedia`, and keeps accepting none, because a player with an empty queue is a
 thing a host wants (ADR-0077, amended).
 
+**At least one sink.** A pass with no sink has nowhere to put what it decodes, so the terminal
+refuses it and names the call that is missing. This is what `PlayToCompletionAsync` already does
+("No sinks attached"), moved to the terminal so the refusal arrives before the demuxer opens the
+file rather than after. It stays a run-time check: video-only and audio-only sources each need a
+different one of the two sinks, and which streams a file carries is not known until it is opened.
+The narrowing that makes the player's options a compile-time matter cannot reach this.
+
 ### 4. The player's builder loses its narrowing
 
 `IPlayerBuilder` and `IMediaPlayerBuilder` declare the same thirteen options twice over. The second
@@ -217,17 +226,21 @@ claimed to work.
 
 | # | Decision | Test | Fails today with |
 |---|---|---|---|
-| 1 | 1, 3 | `FrameFlowPass.Create(path)` with no sink and a terminal call is refused, naming the sink | no such type |
-| 2 | 2 | A pass over a clip of known length presents every frame and completes without waiting for the clip's duration | the assertion is on frames, not elapsed time, per ADR-0072; the timing claim is recorded in the investigation instead |
+| 1 | 3 | `FrameFlowPass.Create(path)` with no sink is refused at the terminal, naming the call that is missing | no such type |
+| 2 | 1, 2 | A pass driven by a `FakeTimeProvider` that is never advanced presents every frame of a clip and completes | a paced path waits on that clock and never completes, so the test fails by timing out; the assertion is on frames and completion, not on elapsed time |
 | 3 | 3 | The pass builder has no `WithMedia` and no plural entry: a queue of two is not expressible | no such type |
 | 4 | 3 | Two passes over the same caller-owned sink both run, and the sink is not disposed between them | `PlayerSession` already holds this; the test moves and keeps its name |
 | 5 | 4 | A player chain sets every player-only option and still reaches `BuildPlayerAsync` on one interface | passes today through `IMediaPlayerBuilder`; the test pins that the fold kept it |
 | 6 | 4 | `IMediaPlayerBuilder` is gone from `PublicAPI.Unshipped.txt` | the analyser is the test |
 
-Row 2 needs care. The claim "runs at decode speed" is a claim about elapsed time, which ADR-0072
-bans from the suite. The suite asserts what is checkable without a clock: every frame reaches the
-sink, and the run completes. The rate belongs in an investigation with a recorded measurement, next
-to the soak in
+Row 2 needs care. "Runs at decode speed" is a claim about elapsed time, which ADR-0072 bans from
+the suite, and a test that only counted frames would pass just as well on a paced implementation.
+The check is structural instead: hand the pass a `FakeTimeProvider` and never advance it. An
+implementation that routed through `SubstrateSession` would wait on that clock for the first
+frame's presentation time and never finish, so the row fails by timing out, for the right reason.
+Nothing asserts a duration.
+
+The rate itself belongs in an investigation with a recorded measurement, next to the soak in
 [docs/investigations/2026-09-15-single-source-as-a-queue-of-one.md](../investigations/2026-09-15-single-source-as-a-queue-of-one.md).
 
 ## Alternatives
