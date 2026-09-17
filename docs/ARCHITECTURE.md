@@ -289,12 +289,17 @@ await using var player = await FrameFlowPlayer.Create()
 ```
 
 This is a good fit because it configures object graphs and lifetimes before
-processing begins. As built, this is `FrameFlowPlayer.Create()` in
-`FrameFlow.Player`, returning an `IPlayerBuilder` whose terminal
-`BuildPlayerAsync` gives the `IMediaPlaylistPlayer` with seek, pause, repeat and
-the queue. `FrameFlowPass.Create(path)` is the sibling entry: its `BuildAsync`
-returns a `MediaPass`, one traversal of the source at decode speed, with no
-clock and no transport (ADR-0079).
+processing begins.
+
+There are two entry points in `FrameFlow.Player`, and each has one builder with
+one terminal. A clock is the difference between them (ADR-0079).
+
+| Entry | Builder | Terminal | Returns |
+|---|---|---|---|
+| `FrameFlowPlayer.Create()` | `IPlayerBuilder` | `BuildPlayerAsync` | `IMediaPlaylistPlayer` — paced, with seek, pause, repeat and the queue |
+| `FrameFlowPass.Create(path)` | `IPassBuilder` | `BuildAsync` | `MediaPass` — one traversal at decode speed, no clock, no transport |
+
+Neither terminal is reachable from the other's chain.
 
 ### Processing pipeline surface
 
