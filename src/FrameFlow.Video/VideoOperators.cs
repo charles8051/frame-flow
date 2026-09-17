@@ -11,8 +11,10 @@ namespace FrameFlow.Video;
 /// primitive-set substrate. Each operator is now a factory that
 /// builds an <see cref="OperatorNode{TIn, TOut}"/> wrapping the
 /// underlying <see cref="IVideoConverter"/> primitive; consumers
-/// connect the node's input/output ports via
-/// <see cref="FrameFlow.Graph.Graph.Connect{T}(FrameFlow.Graph.OutputPort{T}, FrameFlow.Graph.InputPort{T}, FrameFlow.Graph.EdgeOptions)"/>.
+/// chain the nodes into a graph with
+/// <see cref="GraphChainExtensions.Pipeline{T}(FrameFlow.Graph.Graph, SourceNode{T})"/>.
+/// <see cref="FrameFlow.Graph.Graph.Connect{T}(FrameFlow.Graph.OutputPort{T}, FrameFlow.Graph.InputPort{T}, FrameFlow.Graph.EdgeOptions)"/>
+/// remains available for an input the chain cannot reach.
 /// </summary>
 /// <remarks>
 /// <para>
