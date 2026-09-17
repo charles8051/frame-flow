@@ -35,7 +35,7 @@ namespace FrameFlow.Player;
 /// </code>
 /// </para>
 /// <para>
-/// Prefer this builder. <see cref="MediaPlayer.CreateAsync"/> is the older
+/// Prefer this builder. <see cref="MediaPlayer"/>'s <c>CreateAsync</c> is the older
 /// positional form of the second terminal, runs the same wiring, and
 /// cannot inject a clock.
 /// </para>

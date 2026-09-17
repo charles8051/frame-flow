@@ -94,6 +94,13 @@ is deferred to the next release that breaks implementers for other reasons.
 
 A caller who wants the small surface keeps naming `IMediaPlayer`; the returned object satisfies it.
 
+> **Amended 2026-09-16.** The two factories are now one. `MediaPlaylistPlayer` is gone, and
+> `MediaPlayer.CreateAsync` has a second overload taking `IEnumerable<IMediaSource>`. One name with
+> two defaults for the same omitted argument would have been the wart, so both overloads default
+> `initialRepeatMode` to `RepeatMode.Off`; the queue factory defaulted to `RepeatMode.All`.
+> [Breaking changes 17 and 18](../BREAKING-CHANGES.md). The interfaces are unchanged, so the rest of
+> this decision stands.
+
 ### 3. `RepeatMode.All` loops a single source
 
 A queue of one repeats its one item, so `All` and `One` behave alike there. The enum's summary for
@@ -235,9 +242,10 @@ player on `ErrorOccurred`.
   replay from `Ended` has reserved an item on it.
 - **The repeat mode.** `IPlaybackSessionFactory.RepeatModeChanged` carries the controller's mode to
   the coordinator, at construction and on every change.
-- **The player.** `MediaPlayer.CreateAsync` and `MediaPlaylistPlayer.CreateAsync` share
-  `MediaPlaylistPlayer.CreateCoreAsync`, and the single-source factory passes a queue of one.
-  `MediaPlayerCore` is gone; `ProjectionObservable` moved to its own file.
+- **The player.** Both `MediaPlayer.CreateAsync` overloads share `MediaPlayer.CreateCoreAsync`, and
+  the single-source one passes a queue of one. `MediaPlayerCore` is gone; `ProjectionObservable`
+  moved to its own file. The overloads were `MediaPlayer.CreateAsync` and
+  `MediaPlaylistPlayer.CreateAsync` when this record was accepted; see the amendment to decision 2.
 - **The controller's loop.** `RunLoopRewind`, `RunLoopRewindAsync`, the seek runner's loop mode,
   `PlaybackInputs.RepeatOne`, `PlaybackDecision.Internal` and `IPlaybackSession.LoopsInternally` are
   deleted. `Playing × LastFrameRendered` and `Paused × LastFrameRendered` both go to `Ended`. The

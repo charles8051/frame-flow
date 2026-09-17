@@ -9,7 +9,7 @@ namespace FrameFlow.Player.Tests;
 /// of one. Decisions 1 and 2 of <c>docs/adr/ADR-0077-one-player-type.md</c>, validation row 1.
 /// </summary>
 /// <remarks>
-/// <see cref="MediaPlayer.CreateAsync"/> needs FFmpeg and a real source, so the wiring is checked
+/// <see cref="MediaPlayer"/> needs FFmpeg and a real source, so the wiring is checked
 /// here over the same core it builds, with a stub controller and a coordinator of one item.
 /// <c>SingleSourceAsAQueueOfOneTests</c> drives the factory itself over real playback.
 /// </remarks>

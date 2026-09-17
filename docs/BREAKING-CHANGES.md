@@ -458,6 +458,40 @@ load rather than once per pass. An operator that carries state across frames now
 the timeline go back to zero instead of being rebuilt. One that cannot handle that
 must reset itself; the reset a graph could hand it is #217.
 
+### 17. `MediaPlaylistPlayer` is gone; `MediaPlayer.CreateAsync` takes a queue
+
+Every player is a queue (ADR-0077), so there is one factory. `MediaPlayer.CreateAsync`
+gained an overload taking `IEnumerable<IMediaSource>`, and the `MediaPlaylistPlayer`
+class is removed. Entry 12 already made both return `Task<IMediaPlaylistPlayer>`.
+
+```csharp
+// Before
+await MediaPlaylistPlayer.CreateAsync([first, second], videoSink, audioSink);
+
+// After
+await MediaPlayer.CreateAsync([first, second], videoSink, audioSink);
+```
+
+Nothing else about the call changes. The parameters, their order and their meaning are
+the same, and the player you get back is the same type it was.
+
+### 18. A queue built without a repeat mode plays once
+
+**This one is not a compile error.** `MediaPlaylistPlayer.CreateAsync` defaulted
+`initialRepeatMode` to `RepeatMode.All`, and the single-source factory defaulted it to
+`RepeatMode.Off`. Folding the two into one method (entry 17) left one name with two
+answers to the same omitted argument. Both overloads now default to `RepeatMode.Off`.
+
+A caller who omitted `initialRepeatMode` on a playlist looped forever and now ends after
+the last item. Say what you want:
+
+```csharp
+await MediaPlayer.CreateAsync([first, second], videoSink, audioSink,
+    initialRepeatMode: RepeatMode.All);
+```
+
+`SetRepeatModeAsync` still changes it at any time.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

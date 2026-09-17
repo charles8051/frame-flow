@@ -163,7 +163,7 @@ public static class PlaybackController
     /// </summary>
     /// <remarks>
     /// Internal because it takes the internal <see cref="PlaylistCoordinator"/>;
-    /// the public entry point is <c>FrameFlow.Player.MediaPlaylistPlayer.CreateAsync</c>,
+    /// the public entry point is <c>FrameFlow.Player.MediaPlayer.CreateAsync</c>,
     /// which constructs the coordinator and projects the controller to the
     /// playlist player surface.
     /// </remarks>
