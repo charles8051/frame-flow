@@ -25,7 +25,7 @@ public static class FrameFlowOpenAlBuilderExtensions
     /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
     /// <example>
     /// <code>
-    /// _player = await FrameFlowPlayer.Create().WithMedia(path)
+    /// _player = await FrameFlowPass.Create(path)
     ///     .WithAvaloniaVideoView(VideoView)
     ///     .WithOpenAlAudio(loggerFactory)
     ///     .BuildAsync();
@@ -37,8 +37,8 @@ public static class FrameFlowOpenAlBuilderExtensions
     )
     {
         ArgumentNullException.ThrowIfNull(builder);
-        // Ownership transfers to the player builder, which holds the sink for
-        // the player's lifetime. CA2000 can't see the ownership handoff.
+        // Ownership transfers to the builder, which holds the sink for the built
+        // object's lifetime. CA2000 can't see the ownership handoff.
 #pragma warning disable CA2000
         var sink = new OpenAlAudioSink(loggerFactory?.CreateLogger<OpenAlAudioSink>());
 #pragma warning restore CA2000
@@ -47,24 +47,23 @@ public static class FrameFlowOpenAlBuilderExtensions
 
     /// <summary>
     /// Constructs an <see cref="OpenAlAudioSink"/> and attaches it to a
-    /// narrowed <see cref="IMediaPlayerBuilder"/> chain — the overload
-    /// for chains headed for
-    /// <see cref="IMediaPlayerBuilder.BuildPlayerAsync"/>.
+    /// <see cref="IPassBuilder"/> chain, which builds a <see cref="FrameFlow.Player.MediaPass"/>
+    /// rather than a player.
     /// </summary>
-    /// <param name="builder">The player builder being configured.</param>
+    /// <param name="builder">The pass builder being configured.</param>
     /// <param name="loggerFactory">
     /// Optional logger factory used to create a logger for the sink. When
     /// <see langword="null"/>, the sink runs without logging.
     /// </param>
     /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
-    public static IMediaPlayerBuilder WithOpenAlAudio(
-        this IMediaPlayerBuilder builder,
+    public static IPassBuilder WithOpenAlAudio(
+        this IPassBuilder builder,
         ILoggerFactory? loggerFactory = null
     )
     {
         ArgumentNullException.ThrowIfNull(builder);
-        // Ownership transfers to the player builder, which holds the sink for
-        // the player's lifetime. CA2000 can't see the ownership handoff.
+        // Ownership transfers to the builder, which holds the sink for the built
+        // object's lifetime. CA2000 can't see the ownership handoff.
 #pragma warning disable CA2000
         var sink = new OpenAlAudioSink(loggerFactory?.CreateLogger<OpenAlAudioSink>());
 #pragma warning restore CA2000

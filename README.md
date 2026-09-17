@@ -31,23 +31,14 @@ full list is under [Packages](#packages).
 
 ## Quick start
 
-`FrameFlowPlayer.Create()` starts a builder chain. Name the media with `WithMedia`,
-or leave it out and add sources to the built player. Two terminals:
-
-| You want | Terminal | Returns |
-|---|---|---|
-| Playback you drive — play, pause, seek, repeat, observables | `.BuildPlayerAsync()` | `IMediaPlaylistPlayer` |
-| Open a file and play it to the end | `.BuildAsync()` | `PlayerSession` |
-
-### `BuildPlayerAsync` — the full player
-
 ```csharp
 using FrameFlow.Audio.OpenAL;
+using FrameFlow.Avalonia;
 using FrameFlow.Media;
 using FrameFlow.Player;
 
 await using var player = await FrameFlowPlayer.Create()
-    .WithMedia(path)
+    .WithMedia([first, second])
     .WithOpenAlAudio()          // also implements IClockSource, so it becomes the master clock
     .WithAvaloniaVideoView(view)
     .WithHardwareDecode(HardwareDecodeMode.Auto)
@@ -57,60 +48,26 @@ await using var player = await FrameFlowPlayer.Create()
 var played = await player.PlayAsync();
 if (!played.IsSuccess)
     Console.Error.WriteLine($"{played.Error.Category}: {played.Error.Message}");
-```
 
-### `BuildAsync` — play to end of stream
-
-When you only need "open a file and play it to the end", with no seek, pause,
-or repeat:
-
-```csharp
-await using var player = await FrameFlowPlayer.Create()
-    .WithMedia(path)
-    .WithAudioSink(audioSink)   // .WithAvaloniaVideoView(view) / .WithOpenAlAudio() also available
-    .BuildAsync();
-
-await player.PlayToCompletionAsync(ct);
-```
-
-`WithRepeatMode`, `WithClock`, `WithHardwareFrames` and `WithAudioActivation`
-mean nothing to a `PlayerSession`, so setting one and then asking for a session
-is a compile error rather than a dropped setting.
-
-### Playlists
-
-Every player is a queue, so sources can be added while it plays:
-
-```csharp
-await using var player = await FrameFlowPlayer.Create()
-    .WithMedia([first, second])
-    .WithVideoSink(videoSink)
-    .WithAudioSink(audioSink)
-    .WithRepeatMode(RepeatMode.All)
-    .BuildPlayerAsync();
-
-await player.PlayAsync();
 await player.AddAsync(third);      // joins the loop
 await player.EnqueueAsync(once);   // plays once, then leaves
 await player.SkipToNextAsync();
+
+await player.SeekAsync(TimeSpan.FromSeconds(30));
+await player.PauseAsync();
 ```
 
-`WithMedia(path)` builds the same player over a queue of one, so the transport
-above is there whether you started with one file or twenty. The sinks stay warm
-across every item, so nothing is rebuilt at a boundary.
+Every player is a queue, so the transport above is there whether you named one
+file or twenty. `WithMedia(path)` builds the same player over a queue of one, and
+leaving `WithMedia` out builds it with the sinks warm and nothing loaded — the
+first `PlayAsync` then starts whatever `AddAsync` has put in the queue by then.
+The sinks are attached once and stay warm across every item, so nothing is
+rebuilt at a boundary.
 
-Leave `WithMedia` out and the player is built with its sinks warm and nothing
-loaded; the first `PlayAsync` starts whatever the queue holds by then — for a
-host that builds its presenter at startup and receives content afterwards.
-
-```csharp
-await using var player = await FrameFlowPlayer.Create()
-    .WithVideoSink(videoSink)
-    .BuildPlayerAsync();
-
-await player.AddAsync(source);
-await player.PlayAsync();
-```
+`FrameFlowPass.Create(path)` is the other entry point. It runs one source through
+once at decode speed, waiting on no presentation time, which is what an inference
+or analysis run wants and not what a viewer wants. It has no transport and no
+queue. See [ADR-0079](docs/adr/ADR-0079-the-pass-and-the-player.md).
 
 `MediaPlayer.CreateAsync(...)` is the positional form of `BuildPlayerAsync`, for
 callers who would rather not chain. `PlaybackController.Create(...)` sits below
@@ -122,8 +79,8 @@ that state machine is what you are building around.
 `services.AddFrameFlow()` registers the engine's *environment* pieces: the
 OpenAL backend, the FFmpeg bootstrap as a hosted service, the Avalonia video
 sink, and options. The playback session itself stays an explicitly created
-runtime object — resolve the registered sinks and hand them to the builder
-rather than resolving a player singleton:
+runtime object — resolve the registered sinks and hand them to a builder rather
+than resolving a player singleton:
 
 ```csharp
 builder.Services
@@ -131,9 +88,8 @@ builder.Services
     .AddFrameFlowOpenAlAudio()   // registers IAudioSink (container-owned)
     .AddHostedBootstrap();       // FFmpeg bootstrap runs at host startup
 
-// …then, inside an IHostedService, resolve IAudioSink and build the session:
-await using var player = await FrameFlowPlayer.Create()
-    .WithMedia(path)
+// …then, inside an IHostedService, resolve IAudioSink and build:
+await using var pass = await FrameFlowPass.Create(path)
     .WithAudioSink(resolvedAudioSink)
     .BuildAsync(ct);
 ```

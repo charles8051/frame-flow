@@ -92,7 +92,7 @@ public interface IAudioSink : IAsyncDisposable
     /// <remarks>
     /// <para>
     /// <b>The playback surface owns this call â€” callers must not pre-activate.</b>
-    /// <c>SubstrateSession</c>, <c>PlayerSession</c>, and
+    /// <c>SubstrateSession</c>, <c>MediaPass</c>, and
     /// <c>MediaPlayer.CreateAsync</c> each activate the sink they were given
     /// before any buffer reaches <see cref="PresentAsync"/>. A sink handed to
     /// one of them should arrive dormant.

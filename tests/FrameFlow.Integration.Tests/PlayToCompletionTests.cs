@@ -44,22 +44,22 @@ public sealed class PlayToCompletionTests : IClassFixture<FfmpegBootstrapFixture
     [RequiresFfmpegAndCorpusFact]
     public async Task H264Aac_Mp4_PlayToCompletion()
     {
-        await AssertCorpusPlayToCompletionAsync("test-av-h264-aac.mp4");
+        await AssertCorpusRunToCompletionAsync("test-av-h264-aac.mp4");
     }
 
     [RequiresFfmpegAndCorpusFact]
     public async Task VideoOnly_H264_PlayToCompletion()
     {
-        await AssertCorpusPlayToCompletionAsync("test-video-h264-yuv420p.mp4");
+        await AssertCorpusRunToCompletionAsync("test-video-h264-yuv420p.mp4");
     }
 
     [RequiresFfmpegAndCorpusFact]
     public async Task AudioOnly_Aac_PlayToCompletion()
     {
-        await AssertCorpusPlayToCompletionAsync("test-audio-aac.m4a");
+        await AssertCorpusRunToCompletionAsync("test-audio-aac.m4a");
     }
 
-    private async Task AssertCorpusPlayToCompletionAsync(string filename)
+    private async Task AssertCorpusRunToCompletionAsync(string filename)
     {
         var filePath = IntegrationTestEnvironment.GetCorpusFile(filename);
         Assert.True(filePath is not null, $"Corpus file {filename} not found.");

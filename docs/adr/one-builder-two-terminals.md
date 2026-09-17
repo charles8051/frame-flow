@@ -2,7 +2,7 @@
 
 ## Status
 
-**Superseded by [The pass and the player](the-pass-and-the-player.md)** (2026-09-17), which moves
+**Superseded by [ADR-0079](ADR-0079-the-pass-and-the-player.md)** (2026-09-17), which moves
 the unpaced terminal to its own entry point. What that record keeps is the argument below for
 folding `MediaPlayer.CreateAsync`'s options into a fluent chain; what it changes is where the two
 terminals live, and with them the narrowing this record introduced.
@@ -12,7 +12,7 @@ rather than as a live proposal.
 
 `IPlayerBuilder` gains
 `BuildPlayerAsync`, returning `IMediaPlayer`, alongside the existing
-`BuildAsync`, returning `PlayerSession`. The four options that only a player can honour —
+`BuildAsync`, returning `MediaPass`. The four options that only a player can honour —
 repeat mode, injected clock, hardware-frame yield, audio activation —
 return a narrower `IMediaPlayerBuilder` whose only terminal is
 `BuildPlayerAsync`.
@@ -35,10 +35,10 @@ weakest object.
 | Scenario | Entry point | Returns |
 |---|---|---|
 | App or host playback | `MediaPlayer.CreateAsync(...)` | `IMediaPlayer` |
-| Open a file, play to end | `FrameFlowPlayer.Create().WithMedia(...).BuildAsync()` | `PlayerSession` |
+| Open a file, play to end | `FrameFlowPass.Create(...).BuildAsync()` | `MediaPass` |
 | Drive the state machine | `PlaybackController.Create(...)` | `IPlaybackController` |
 
-`PlayerSession` is single-shot. It has no pause, resume, seek, repeat,
+`MediaPass` is single-shot. It has no pause, resume, seek, repeat,
 `Position`, `StateChanged` or diagnostics. `MediaPlayer.CreateAsync` has
 all of it and is eleven positional parameters with no builder at all. Its
 own doc comment steered readers away from itself, and the README needed a
@@ -60,14 +60,14 @@ await using var player = await FrameFlowPlayer.Create().WithMedia(path)
     .BuildPlayerAsync(ct);          // IMediaPlayer
 ```
 
-`BuildAsync` still returns `PlayerSession` for the play-to-EOS case.
+`BuildAsync` still returns `MediaPass` for the play-to-EOS case.
 Everything before the terminal is the same chain.
 
 ### The narrowing, and why it is not a runtime check
 
 Repeat mode, an injected clock, hardware-frame yield and audio activation
 are properties of the `IMediaPlayer` pipeline. They mean nothing to a
-`PlayerSession`, which opens a source and runs it to end of stream.
+`MediaPass`, which opens a source and runs it to end of stream.
 
 Three ways to handle an option that one terminal cannot honour:
 

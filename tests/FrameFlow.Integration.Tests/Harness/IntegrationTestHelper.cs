@@ -117,7 +117,7 @@ internal static class IntegrationTestHelper
     /// Maximum time to wait for playback completion. Defaults to 30 seconds.
     /// </param>
     /// <returns>The result of the Load and Play operations.</returns>
-    internal static async Task<(Result LoadResult, Result PlayResult)> PlayToCompletionAsync(
+    internal static async Task<(Result LoadResult, Result PlayResult)> RunToCompletionAsync(
         IPlaybackController controller,
         IMediaSource source,
         TimeSpan? timeout = null

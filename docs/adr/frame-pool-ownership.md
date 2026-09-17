@@ -32,7 +32,7 @@
 
 `ClockSelectVideoSink` buffers frames at decode rate and selects the one due on the master
 clock. Its ring is `DefaultCapacity = 3`, and `SubstrateSession` never passes a capacity, so
-3 is what every paced playback gets. `PlayerSession` has no pacer at all (#125). The
+3 is what every paced playback gets. `MediaPass` has no pacer at all (#125). The
 constructor already takes `capacity`, so the buffer is not the missing piece. What is missing
 is a frame the buffer can hold without taking something the decoder needs.
 

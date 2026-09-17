@@ -281,17 +281,25 @@ Use fluent composition for:
 Consider a factory or builder such as:
 
 ```csharp
-await using var player = await FrameFlowPlayer.Create().WithMedia(path)
+await using var player = await FrameFlowPlayer.Create()
+    .WithMedia(path)
     .WithAudioSink(audioSink)
     .WithAvaloniaVideoView(view)
-    .BuildAsync(ct);
+    .BuildPlayerAsync(ct);
 ```
 
 This is a good fit because it configures object graphs and lifetimes before
-processing begins. As built, this is `FrameFlowPlayer.Create().WithMedia(...)` in
-`FrameFlow.Player`, returning an `IPlayerBuilder`. `BuildAsync` returns a
-play-to-end `PlayerSession`; `BuildPlayerAsync` on the same chain returns the
-`IMediaPlayer` with seek, pause, and repeat.
+processing begins.
+
+There are two entry points in `FrameFlow.Player`, and each has one builder with
+one terminal. A clock is the difference between them (ADR-0079).
+
+| Entry | Builder | Terminal | Returns |
+|---|---|---|---|
+| `FrameFlowPlayer.Create()` | `IPlayerBuilder` | `BuildPlayerAsync` | `IMediaPlaylistPlayer` — paced, with seek, pause, repeat and the queue |
+| `FrameFlowPass.Create(path)` | `IPassBuilder` | `BuildAsync` | `MediaPass` — one traversal at decode speed, no clock, no transport |
+
+Neither terminal is reachable from the other's chain.
 
 ### Processing pipeline surface
 
@@ -875,7 +883,7 @@ deliberately ahead of any new control — that:
 - defined lifecycle and error contracts
 - created a stable skeleton before native implementation expanded
 
-That skeleton is in place (see `FrameFlow.Player`'s `FrameFlowPlayer.Create().WithMedia(...)`
+That skeleton is in place (see `FrameFlow.Player`'s `FrameFlowPass.Create(...)`
 builder and the `services.AddFrameFlow…()` registrations), and the rest of the
 architecture has been built on top of it. New work should extend that surface
 rather than reopen the foundation.

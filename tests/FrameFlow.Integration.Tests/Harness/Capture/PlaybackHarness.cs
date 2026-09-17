@@ -53,7 +53,7 @@ internal static class PlaybackHarness
         {
             var path = ResolveCorpusPath(corpusFilename);
 
-            var (loadResult, playResult) = await IntegrationTestHelper.PlayToCompletionAsync(
+            var (loadResult, playResult) = await IntegrationTestHelper.RunToCompletionAsync(
                 controller,
                 MediaSource.FromFile(path),
                 timeout
@@ -106,7 +106,7 @@ internal static class PlaybackHarness
         {
             var path = ResolveCorpusPath(corpusFilename);
 
-            var (loadResult, playResult) = await IntegrationTestHelper.PlayToCompletionAsync(
+            var (loadResult, playResult) = await IntegrationTestHelper.RunToCompletionAsync(
                 controller,
                 MediaSource.FromFile(path),
                 timeout
@@ -177,7 +177,7 @@ internal static class OpenAlPlaybackHarness
         {
             var path = PlaybackHarness.ResolveCorpusPath(corpusFilename);
 
-            var (loadResult, playResult) = await IntegrationTestHelper.PlayToCompletionAsync(
+            var (loadResult, playResult) = await IntegrationTestHelper.RunToCompletionAsync(
                 controller,
                 MediaSource.FromFile(path),
                 timeout

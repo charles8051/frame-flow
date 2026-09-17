@@ -198,7 +198,7 @@ public static class MediaPlayer
     /// Internal so the clock stays off the positional surface. <c>CreateAsync</c> is a published
     /// signature; a twelfth optional parameter on it would break existing positional calls at
     /// source and existing compiled callers at load. The fluent builder's
-    /// <see cref="IMediaPlayerBuilder.WithClock"/> reaches this instead.
+    /// <see cref="IPlayerBuilder.WithClock"/> reaches this instead.
     /// </remarks>
     internal static async Task<PlaylistMediaPlayerCore> CreateCoreAsync(
         IReadOnlyList<IMediaSource> initial,

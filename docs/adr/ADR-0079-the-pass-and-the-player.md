@@ -1,10 +1,9 @@
-# The pass and the player: a clock decides the entry
+# ADR-0079: The pass and the player: a clock decides the entry
 
 ## Status
 
-**Draft, pending number assignment. Proposed 2026-09-17; nothing is implemented.**
-Numbers are assigned at merge of the implementation, so this record carries a slug filename until
-then, as [One builder, two terminals](one-builder-two-terminals.md) did.
+Accepted (2026-09-17). Proposed the same day; numbered and accepted once the implementation
+landed. **Implemented**; *As implemented* says how.
 
 This record decides that the unpaced runtime gets its own entry point rather than a second
 terminal on the player's builder, what it is called, that it takes one source and no queue, and
@@ -200,6 +199,32 @@ the same. The story is one a reader can hold.
 
 Recorded here because this record's map of the construction surface would be wrong without it. The
 deletion landed in #271 while this record was being written, and its reasoning is there.
+
+## As implemented
+
+- **The pass.** `FrameFlowPass.Create(path)` and `Create(IMediaSource)` return `IPassBuilder`,
+  whose options are the two sinks, the two configurators, hardware-decode policy and the logger,
+  and whose one terminal is `BuildAsync`. `PassBuilder` holds the demux and decoder construction
+  that `PlayerBuilder` used to, and `PlayerSession` is `MediaPass` with `RunToCompletionAsync`.
+- **The sink rule.** `PassBuilder.RequireASink` refuses at the terminal, before the bootstrap and
+  the open. `MediaPass.RunToCompletionAsync` keeps the same check, now unreachable through the
+  public path because only `PassBuilder` constructs a pass; it stays as a guard on the internal
+  constructor.
+- **The clock seam.** `PassBuilder.WithClock` is internal and `MediaPass.Clock` holds what it is
+  given. Nothing reads it. `MediaPassIntegrationTests.APass_NeverReadsTheClockItIsGiven` hands a
+  pass a clock that throws on every member and asserts the run presents frames and completes. With
+  `Clock?.Start(TimeSpan.Zero)` added to the run, it fails with "A pass read the clock (Start)".
+- **The fold.** `IMediaPlayerBuilder` is deleted and every `IPlayerBuilder` option returns
+  `IPlayerBuilder`. `WithOpenAlAudio` and `WithAvaloniaVideoView` keep two overloads, the second
+  now on `IPassBuilder`.
+- **`PlaybackGraph`.** Removed in #271, before this landed.
+
+The one departure: the record did not say what a pass does with a sink it was never given a chance
+to own. `WithOpenAlAudio` and `WithAvaloniaVideoView` construct one and hand it through the
+caller-owned path, so nothing disposes it. That predates this change on the player path and is
+#275, which needs an ADR-0044 amendment before it is a change.
+
+Breaking changes 25, 26 and 27.
 
 ## What this does not decide
 

@@ -504,7 +504,7 @@ await MediaPlayer.CreateAsync([first, second], videoSink, audioSink,
 
 The builder can now open a queue: `FrameFlowPlayer.Create().WithMedia(IEnumerable<IMediaSource>)`
 starts the same chain over an ordered set of sources. It begins narrowed to
-`IMediaPlayerBuilder`, because a `PlayerSession` plays one source and `BuildAsync` has
+`IMediaPlayerBuilder`, because a `MediaPass` plays one source and `BuildAsync` has
 no meaning over a queue.
 
 Both `BuildPlayerAsync` terminals widened to match, the same break entry 12 made to
@@ -634,7 +634,7 @@ await FrameFlowPlayer.Create().WithMedia([first, second]).WithVideoSink(sink).Bu
 
 `WithMedia` takes a path, an `IMediaSource`, or an `IEnumerable<IMediaSource>`. The plural
 one narrows the chain to `IMediaPlayerBuilder`, which is where `Create(IEnumerable<…>)`
-put it before: a `PlayerSession` plays one source, so `BuildAsync` is not on offer over a
+put it before: a `MediaPass` plays one source, so `BuildAsync` is not on offer over a
 queue.
 
 **One check moved from compile time to run time.** `Create()` used to be the no-media entry
@@ -648,6 +648,83 @@ overloads. They are ordinary interface members, not defaulted ones: a default th
 would turn a compile error into a run-time one, and the narrowing on these interfaces exists
 precisely to keep that kind of mismatch at compile time. Entry 19 already changes both
 terminals' return type, so an implementer is recompiling against this release either way.
+
+### 25. `BuildAsync` moves to its own entry point: `FrameFlowPass`
+
+`PlayerSession` held no clock. `ClockSelectVideoSink` and `PaceUntil`, the types that hold a
+frame until its presentation time, are constructed only on the controller path, so video
+through `BuildAsync` was presented as fast as the sink accepted it. Both in-repo users were
+audio-only, where the device's backpressure supplies the timing, which is why the gap never
+showed. The two terminals read as a difference of transport surface and the difference was
+pacing.
+
+The unpaced runtime now has its own entry, so the choice is the first call rather than the
+last. `docs/adr/ADR-0079-the-pass-and-the-player.md` is the record.
+
+```csharp
+// Before
+await using var session = await FrameFlowPlayer.Create()
+    .WithMedia(path)
+    .WithVideoSink(sink)
+    .BuildAsync();
+await session.PlayToCompletionAsync(ct);
+
+// After
+await using var pass = await FrameFlowPass.Create(path)
+    .WithVideoSink(sink)
+    .BuildAsync();
+await pass.RunToCompletionAsync(ct);
+```
+
+| Before | After |
+|---|---|
+| `FrameFlowPlayer.Create().WithMedia(path)….BuildAsync()` | `FrameFlowPass.Create(path)….BuildAsync()` |
+| `PlayerSession` | `MediaPass` |
+| `PlayerSession.PlayToCompletionAsync(ct)` | `MediaPass.RunToCompletionAsync(ct)` |
+| `IPlayerBuilder.BuildAsync` | gone; the player builds a player |
+
+The source is named at `Create` rather than with `WithMedia`, because a pass with none has
+nothing to do. There is no queue: the thing worth reusing across files is the sink, and under
+ADR-0044 the caller owns it, so one sink holding a loaded model serves any number of passes.
+
+**A pass with no sink is now refused.** It used to build, and throw from
+`PlayToCompletionAsync` once the file was open and the decoders were built. `BuildAsync`
+answers first, before any of that. `HeadlessVideoSink` is the terminal for a run that presents
+nothing.
+
+`WithRepeatMode`, `WithClock`, `WithHardwareFrames` and `WithAudioActivation` are not on
+`IPassBuilder`. They were already unreachable from a chain headed for `BuildAsync`.
+
+### 26. `IMediaPlayerBuilder` is gone; `IPlayerBuilder` has one terminal
+
+The narrowing existed to keep the player-only options off a chain that could still end in
+`BuildAsync`. Entry 25 moved that terminal to its own entry, so no such chain exists, and the
+two near-identical interfaces fold into one.
+
+```csharp
+// Before — the player-only options returned the narrower interface
+IMediaPlayerBuilder narrowed = FrameFlowPlayer.Create().WithMedia(path).WithRepeatMode(RepeatMode.All);
+
+// After
+IPlayerBuilder builder = FrameFlowPlayer.Create().WithMedia(path).WithRepeatMode(RepeatMode.All);
+```
+
+Every chained call site is unchanged: the options return the builder, as they always did, and
+`var` never named the difference. What breaks is code that wrote `IMediaPlayerBuilder` down —
+a local, a field, a parameter — and any type outside FrameFlow that implemented it. Entries 19
+and 24 already broke implementers of these interfaces in this release.
+
+`WithOpenAlAudio` and `WithAvaloniaVideoView` keep two overloads: one on `IPlayerBuilder`, and
+one that was on `IMediaPlayerBuilder` and is now on `IPassBuilder`.
+
+### 27. `PlaybackGraph` is gone
+
+Removed in #271. It wired caller-supplied decoders to sinks and ran to EOS, which is
+`MediaPass`'s job with the demux session and the decoders handled for you. Its own summary
+called it a Phase-3 proof that the full-controller port could build on, and that port landed in
+ADR-0077. It had no users outside its own tests.
+
+Use `FrameFlowPass.Create(path)` and let the builder open the file.
 
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
@@ -831,7 +908,7 @@ almost all of them.
   `true` while the item repeats. It used to read `false` until the repeat
   completed, as it still does for a hand-off to a different item.
 - **The fluent builder gained a second terminal.** `BuildPlayerAsync()` returns
-  `IMediaPlayer`; `BuildAsync()` still returns `PlayerSession`. Additive.
+  `IMediaPlayer`; `BuildAsync()` still returns `MediaPass`. Additive.
   `WithRepeatMode`, `WithClock`, `WithHardwareFrames` and `WithAudioActivation`
   narrow the chain to `IMediaPlayerBuilder`, whose only terminal is
   `BuildPlayerAsync`, so setting one and then calling `BuildAsync` is a compile

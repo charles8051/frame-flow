@@ -60,6 +60,6 @@ FrameFlow.Audio.OpenAL.UploadDecision.NeedBuffer = 2 -> FrameFlow.Audio.OpenAL.U
 FrameFlow.Audio.OpenAL.UploadDecision.Nothing = 0 -> FrameFlow.Audio.OpenAL.UploadDecision
 FrameFlow.Audio.OpenAL.UploadDecision.Upload = 1 -> FrameFlow.Audio.OpenAL.UploadDecision
 static FrameFlow.Audio.OpenAL.BufferQueueState.Create(int coalesceTargetSamples, int preBufferCount) -> FrameFlow.Audio.OpenAL.BufferQueueState
-static FrameFlow.Audio.OpenAL.FrameFlowOpenAlBuilderExtensions.WithOpenAlAudio(this FrameFlow.Player.IMediaPlayerBuilder! builder, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Player.IMediaPlayerBuilder!
+static FrameFlow.Audio.OpenAL.FrameFlowOpenAlBuilderExtensions.WithOpenAlAudio(this FrameFlow.Player.IPassBuilder! builder, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Player.IPassBuilder!
 static FrameFlow.Audio.OpenAL.FrameFlowOpenAlBuilderExtensions.WithOpenAlAudio(this FrameFlow.Player.IPlayerBuilder! builder, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Player.IPlayerBuilder!
 static FrameFlow.Audio.OpenAL.FrameFlowOpenAlServiceCollectionExtensions.AddFrameFlowOpenAlAudio(this FrameFlow.Media.IFrameFlowBuilder! builder) -> FrameFlow.Media.IFrameFlowBuilder!

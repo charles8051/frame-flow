@@ -83,7 +83,7 @@ FrameFlow.Avalonia.IVideoSurface.PrefersHardwareFrames.get -> bool
 override FrameFlow.Avalonia.FrameFlowVideoView.Render(Avalonia.Media.DrawingContext! context) -> void
 static FrameFlow.Avalonia.AvaloniaObservableExtensions.ObserveOnUiThread<T>(this System.IObservable<T>! source) -> System.IObservable<T>!
 static FrameFlow.Avalonia.AvaloniaVideoSink.CreateHeadless(FrameFlow.Media.IFramePool! framePool, Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.AvaloniaVideoSink!>? logger = null) -> FrameFlow.Avalonia.AvaloniaVideoSink!
-static FrameFlow.Avalonia.FrameFlowAvaloniaBuilderExtensions.WithAvaloniaVideoView(this FrameFlow.Player.IMediaPlayerBuilder! builder, FrameFlow.Avalonia.FrameFlowVideoView! view) -> FrameFlow.Player.IMediaPlayerBuilder!
+static FrameFlow.Avalonia.FrameFlowAvaloniaBuilderExtensions.WithAvaloniaVideoView(this FrameFlow.Player.IPassBuilder! builder, FrameFlow.Avalonia.FrameFlowVideoView! view) -> FrameFlow.Player.IPassBuilder!
 static FrameFlow.Avalonia.FrameFlowAvaloniaBuilderExtensions.WithAvaloniaVideoView(this FrameFlow.Player.IPlayerBuilder! builder, FrameFlow.Avalonia.FrameFlowVideoView! view) -> FrameFlow.Player.IPlayerBuilder!
 static FrameFlow.Avalonia.FrameFlowAvaloniaServiceCollectionExtensions.AddFrameFlowAvaloniaVideoSink(this FrameFlow.Media.IFrameFlowBuilder! builder) -> FrameFlow.Media.IFrameFlowBuilder!
 static FrameFlow.Avalonia.FrameFlowAvaloniaServiceCollectionExtensions.AddFrameFlowAvaloniaVideoSink(this FrameFlow.Media.IFrameFlowBuilder! builder, FrameFlow.Avalonia.FrameFlowVideoView! view, Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.AvaloniaVideoSink!>? logger = null) -> FrameFlow.Media.IFrameFlowBuilder!

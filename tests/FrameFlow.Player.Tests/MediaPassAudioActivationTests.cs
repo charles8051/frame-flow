@@ -4,60 +4,58 @@ using FrameFlow.Media;
 namespace FrameFlow.Player.Tests;
 
 /// <summary>
-/// Covers the audio-sink activation contract on the <see cref="PlayerSession"/>
+/// Covers the audio-sink activation contract on the <see cref="MediaPass"/>
 /// path (issue #60).
 /// </summary>
 /// <remarks>
 /// An <see cref="IAudioSink"/> is inert until activated — buffers presented to a
 /// dormant sink are accepted and dropped. <c>SubstrateSession</c> and
 /// <c>MediaPlayer.CreateAsync</c> both activate the sink they are given;
-/// <see cref="PlayerSession"/> did not, which left the sink silent unless the
+/// <see cref="MediaPass"/> did not, which left the sink silent unless the
 /// caller activated it out of band. That made the <c>WithOpenAlAudio()</c>
 /// builder shortcut unusable, since it constructs the sink internally and never
 /// hands it back for the caller to activate.
 /// </remarks>
-public sealed class PlayerSessionAudioActivationTests
+public sealed class MediaPassAudioActivationTests
 {
     [RequiresFfmpegAndCorpusFact]
-    public async Task PlayToCompletionAsync_ActivatesTheAudioSink()
+    public async Task RunToCompletionAsync_ActivatesTheAudioSink()
     {
         var path = TestEnvironment.GetCorpusFile("test-audio-aac.m4a");
         Assert.NotNull(path);
 
         var sink = new RecordingAudioSink();
 
-        await using var session = await FrameFlowPlayer
-            .Create()
-            .WithMedia(path!)
+        await using var session = await FrameFlowPass
+            .Create(path!)
             .WithAudioSink(sink)
             .BuildAsync();
 
         Assert.Equal(0, sink.ActivateCount); // not activated by BuildAsync alone
 
-        await session.PlayToCompletionAsync();
+        await session.RunToCompletionAsync();
 
         Assert.True(
             sink.ActivateCount >= 1,
-            "PlayerSession must activate the audio sink before pumping PCM into it."
+            "MediaPass must activate the audio sink before pumping PCM into it."
         );
         Assert.True(sink.PresentCount > 0, "Expected decoded audio to reach the sink.");
     }
 
     [RequiresFfmpegAndCorpusFact]
-    public async Task PlayToCompletionAsync_ActivatesExactlyOnce()
+    public async Task RunToCompletionAsync_ActivatesExactlyOnce()
     {
         var path = TestEnvironment.GetCorpusFile("test-audio-aac.m4a");
         Assert.NotNull(path);
 
         var sink = new RecordingAudioSink();
 
-        await using var session = await FrameFlowPlayer
-            .Create()
-            .WithMedia(path!)
+        await using var session = await FrameFlowPass
+            .Create(path!)
             .WithAudioSink(sink)
             .BuildAsync();
 
-        await session.PlayToCompletionAsync();
+        await session.RunToCompletionAsync();
 
         // Exactly once, not "at least once". Re-activation is a reset — it
         // rebases the sample counter — so on a sink that also implements
@@ -69,7 +67,7 @@ public sealed class PlayerSessionAudioActivationTests
     }
 
     [RequiresFfmpegAndCorpusFact]
-    public async Task PlayToCompletionAsync_SinkReusedAcrossSessions_DoesNotFault()
+    public async Task RunToCompletionAsync_SinkReusedAcrossSessions_DoesNotFault()
     {
         var path = TestEnvironment.GetCorpusFile("test-audio-aac.m4a");
         Assert.NotNull(path);
@@ -78,13 +76,12 @@ public sealed class PlayerSessionAudioActivationTests
 
         for (var i = 0; i < 2; i++)
         {
-            await using var session = await FrameFlowPlayer
-                .Create()
-                .WithMedia(path!)
+            await using var session = await FrameFlowPass
+                .Create(path!)
                 .WithAudioSink(sink)
                 .BuildAsync();
 
-            await session.PlayToCompletionAsync();
+            await session.RunToCompletionAsync();
         }
 
         // A sink outliving one session (the HostedServicePlayer shape, where

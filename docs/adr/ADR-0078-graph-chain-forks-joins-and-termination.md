@@ -74,7 +74,7 @@ the two places that depend on it.
 
 | Entry point | Shape | The return value |
 |---|---|---|
-| `PlayerSession.BuildAsync` | `source → configurator → sink` | Terminated by the builder. No-sink builds throw (`PlayerSession.cs:125-131`) |
+| `MediaPass.BuildAsync` | `source → configurator → sink` | Terminated by the builder. No-sink builds throw (`MediaPass.cs:125-131`) |
 | `SubstrateSession`, single sink | `source → gate → configurator → pacer` | Terminated by the builder (`SubstrateSession.cs:1464-1467`) |
 | `SubstrateSession`, configurator only | `source → PaceUntil → gate → configurator` | Ignored; the configurator must terminate (`SubstrateSession.cs:1485-1486`, `:1509`) |
 
@@ -279,7 +279,7 @@ second arm, and the ordering claim in the frame-pool record assumes this contrac
 - Whether any consumer legitimately has no builder-owned sink. A detect-only pipeline would register
   its detection terminal as the video sink, which reads oddly for something that presents nothing.
   A discard sink would answer it; none of the three examples needs one.
-- What `PlayerSession` does with a configured chain. It terminates at the sink and has no pacer, so
+- What `MediaPass` does with a configured chain. It terminates at the sink and has no pacer, so
   one contract holds there, but the missing pacer is the part of #125 this record does not answer.
 - #91 is adjacent and not answered here: `SyncJoinNode.AdvanceAndMatch` `AddRef`s the retained
   secondary (`SyncJoin.cs:281`), which throws for one-shot frame types. `Join` neither introduces

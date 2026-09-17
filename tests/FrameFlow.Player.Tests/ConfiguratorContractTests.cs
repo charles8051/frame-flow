@@ -58,9 +58,8 @@ public sealed class ConfiguratorContractTests
         // BuildAsync is the other terminal, and it took the same configurator.
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () =>
-                FrameFlowPlayer
-                    .Create()
-                    .WithMedia("does-not-need-to-exist.mp4")
+                FrameFlowPass
+                    .Create("does-not-need-to-exist.mp4")
                     .ConfigureVideo(chain => chain)
                     .BuildAsync(CancellationToken.None)
         );

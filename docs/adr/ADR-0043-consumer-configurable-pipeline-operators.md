@@ -53,7 +53,7 @@ collapses to:
 _player = await FrameFlowPlayer.Create().WithMedia(path)
     .WithAvaloniaVideoView(VideoView)
     .WithOpenAlAudio(loggerFactory)
-    .BuildAsync();
+    .BuildPlayerAsync();
 ```
 
 What this surface does **not** give consumers is any way to hook the
@@ -122,7 +122,7 @@ _player = await FrameFlowPlayer.Create().WithMedia(path)
         .OverlayCaptions(captionStream))
     .ConfigureAudioPipeline(p => p
         .Tee(recordingSink, buf => buf.AddRef()))
-    .BuildAsync();
+    .BuildPlayerAsync();
 ```
 
 ### Semantics
@@ -162,7 +162,7 @@ The configurators are optional dependencies registered as DI
 singletons by the `PlayerBuilder`:
 
 ```csharp
-// PlayerBuilder.BuildAsync (sketch)
+// PlayerBuilder terminal (sketch)
 if (_videoConfigurator is not null)
     services.AddSingleton(_videoConfigurator);
 if (_audioConfigurator is not null)

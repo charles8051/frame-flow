@@ -3,6 +3,7 @@
 
 using FrameFlow.Media;
 using FrameFlow.Decoding;
+using FrameFlow.Playback;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using FrameFlow.Graph;
@@ -10,30 +11,34 @@ using FrameFlow.Graph;
 namespace FrameFlow.Player;
 
 /// <summary>
-/// A built playback session on the substrate. Owns the open
-/// demux session, the decoders, and the demux pump pipeline;
-/// constructs and runs a fresh graph each call to
-/// <see cref="PlayToCompletionAsync"/>.
+/// One traversal of a source. Owns the open demux session, the decoders and the demux pump
+/// pipeline, and builds and runs a graph when <see cref="RunToCompletionAsync"/> is called.
+/// Built by <see cref="FrameFlowPass"/>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Single-shot.</b> <see cref="PlayToCompletionAsync"/> can be
-/// called exactly once per session — the underlying demux + decoders
-/// are stateful and reach EOS after one full run. Demos that want to
-/// loop or restart re-open via the builder. The full
-/// pause/resume/seek/repeat surface stays on
-/// <see cref="FrameFlow.Playback.IPlaybackController"/> until its
-/// port to the substrate lands.
+/// <b>No clock.</b> A pass waits on no presentation time. The graph it builds is the decoder
+/// source, the configured operators and the sink, with none of the pacing the controller path
+/// puts in between, so frames reach the sink as fast as the sink accepts them. An audio sink
+/// paces itself by what its device consumes; a video sink does not, and a pass over video runs at
+/// decode speed. That is the point of the type, and
+/// <c>docs/adr/ADR-0079-the-pass-and-the-player.md</c> is the record.
 /// </para>
 /// <para>
-/// <b>Sink ownership.</b> Sinks are passed in from the caller; the
-/// session does not dispose them. This matches the convention of
-/// <see cref="FrameFlow.Player.PlayerBuilder.WithVideoSink"/> and with
-/// ADR-0044: a sink is owned by whoever constructed it, and the player
-/// layer is a user rather than an owner. Examples dispose their own sinks.
+/// <b>Single-shot.</b> <see cref="RunToCompletionAsync"/> can be called exactly once: the demux
+/// session and the decoders are stateful and reach EOS after one full run. Build another pass to
+/// run the content again. Pause, resume, seek and repeat are the player's, not a pass's — see
+/// <see cref="FrameFlowPlayer"/>.
+/// </para>
+/// <para>
+/// <b>Sink ownership.</b> Sinks are passed in from the caller; the pass does not dispose them.
+/// This matches the convention of <see cref="IPassBuilder.WithVideoSink"/> and ADR-0044: a sink is
+/// owned by whoever constructed it, and the player layer is a user rather than an owner. A sink
+/// that is expensive to build, such as one holding a loaded inference model, is therefore built
+/// once and handed to any number of passes.
 /// </para>
 /// </remarks>
-public sealed class PlayerSession : IAsyncDisposable
+public sealed class MediaPass : IAsyncDisposable
 {
     private readonly IDemuxSession _demux;
     private readonly DecodingPipeline _pipeline;
@@ -48,7 +53,19 @@ public sealed class PlayerSession : IAsyncDisposable
     private int _started;
     private bool _disposed;
 
-    internal PlayerSession(
+    /// <summary>
+    /// The clock a pass is given and never reads.
+    /// </summary>
+    /// <remarks>
+    /// A pass waits on no presentation time, which is a claim that needs a way to fail. Nothing
+    /// public supplies this, because a consumer has nothing to supply. A test hands a pass a clock
+    /// that throws on every read and asserts the run completes anyway; an implementation that grew
+    /// a pacer would take the clock from here and fail that test with the throw. Carrying it is
+    /// what makes the decision falsifiable rather than asserted.
+    /// </remarks>
+    internal IPlaybackClock? Clock { get; }
+
+    internal MediaPass(
         IDemuxSession demux,
         DecodingPipeline pipeline,
         VideoDecoder? videoDecoder,
@@ -57,9 +74,11 @@ public sealed class PlayerSession : IAsyncDisposable
         IAudioSink? audioSink,
         Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? videoConfigurator,
         Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? audioConfigurator,
-        ILogger? logger = null
+        ILogger? logger = null,
+        IPlaybackClock? clock = null
     )
     {
+        Clock = clock;
         _demux = demux ?? throw new ArgumentNullException(nameof(demux));
         _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
         _videoDecoder = videoDecoder;
@@ -82,7 +101,7 @@ public sealed class PlayerSession : IAsyncDisposable
 
     /// <summary>
     /// Completes when the demux pump is suspended on a full decoder queue.
-    /// Internal: tests race it against <see cref="PlayToCompletionAsync"/>.
+    /// Internal: tests race it against <see cref="RunToCompletionAsync"/>.
     /// </summary>
     internal Task WaitUntilPumpParkedAsync() => _pipeline.WaitUntilParkedAsync();
 
@@ -106,14 +125,14 @@ public sealed class PlayerSession : IAsyncDisposable
     /// CTS; the exception propagates after both have unwound.
     /// </para>
     /// </remarks>
-    public async Task PlayToCompletionAsync(CancellationToken ct = default)
+    public async Task RunToCompletionAsync(CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         if (Interlocked.Exchange(ref _started, 1) != 0)
         {
             throw new InvalidOperationException(
-                "PlayerSession.PlayToCompletionAsync is single-use. "
+                "MediaPass.RunToCompletionAsync is single-use. "
                     + "Open a new session for another playback."
             );
         }
@@ -162,7 +181,7 @@ public sealed class PlayerSession : IAsyncDisposable
         //
         // This mirrors what SubstrateSession does on the controller path
         // (SubstrateSession.PlayAsync) and what MediaPlayer.CreateAsync does
-        // on the player path. PlayerSession was the one surface that left it
+        // on the player path. MediaPass was the one surface that left it
         // to the caller, which is why the WithOpenAlAudio builder shortcut —
         // which constructs the sink internally and never hands it back —
         // could not be used to play anything (issue #60).

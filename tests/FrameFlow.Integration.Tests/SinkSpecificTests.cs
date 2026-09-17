@@ -58,7 +58,7 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
             await using (controller)
             {
                 var source = MediaSource.FromFile(filePath!);
-                var (loadResult, playResult) = await IntegrationTestHelper.PlayToCompletionAsync(
+                var (loadResult, playResult) = await IntegrationTestHelper.RunToCompletionAsync(
                     controller,
                     source,
                     TimeSpan.FromSeconds(30)
@@ -116,7 +116,7 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
             await using (controller)
             {
                 var source = MediaSource.FromFile(filePath!);
-                var (loadResult, playResult) = await IntegrationTestHelper.PlayToCompletionAsync(
+                var (loadResult, playResult) = await IntegrationTestHelper.RunToCompletionAsync(
                     controller,
                     source,
                     TimeSpan.FromSeconds(30)
@@ -161,7 +161,7 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
             await using (controller)
             {
                 var source = MediaSource.FromFile(filePath!);
-                var (loadResult, playResult) = await IntegrationTestHelper.PlayToCompletionAsync(
+                var (loadResult, playResult) = await IntegrationTestHelper.RunToCompletionAsync(
                     controller,
                     source,
                     TimeSpan.FromSeconds(30)
@@ -225,7 +225,7 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
             await using (controller)
             {
                 var source = MediaSource.FromFile(filePath!);
-                var (loadResult, playResult) = await IntegrationTestHelper.PlayToCompletionAsync(
+                var (loadResult, playResult) = await IntegrationTestHelper.RunToCompletionAsync(
                     controller,
                     source,
                     TimeSpan.FromSeconds(30)

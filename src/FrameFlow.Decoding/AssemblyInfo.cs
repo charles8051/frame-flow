@@ -11,7 +11,7 @@ using System.Runtime.CompilerServices;
 // lock cross-assembly EOF-vs-fault semantics without real FFmpeg runtime setup.
 [assembly: InternalsVisibleTo("FrameFlow.Playback.Tests")]
 
-// PlayerSession forwards DecodingPipeline's park signal so player tests can
+// MediaPass forwards DecodingPipeline's park signal so player tests can
 // barrier on the pump being blocked on a full decoder queue.
 [assembly: InternalsVisibleTo("FrameFlow.Player")]
 
