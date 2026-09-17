@@ -503,7 +503,7 @@ if that is too long.
 - **A stall at a hand-off to a different item.** The watchdog covers expected loops only.
 - **A stall on an audio-mastered clock.** The evaluator targets the wall-clock case, where the
   position overruns the duration. An audio-mastered clock stops at the duration instead.
-- **Repeat on `BuildAsync`.** The play-to-the-end `PlayerSession` has no repeat mode. Once a chain
+- **Repeat on `BuildAsync`.** The play-to-the-end `MediaPass` has no repeat mode. Once a chain
   sets one, the builder no longer offers `BuildAsync`.
 
 ## Implementation touches

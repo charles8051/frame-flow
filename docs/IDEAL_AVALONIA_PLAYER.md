@@ -55,7 +55,7 @@ The ideal player has three layers, each Crossbar-shaped:
 │  Knows about file paths, controls, user gestures.               │
 ├─────────────────────────────────────────────────────────────────┤
 │  Layer 2 — Player builder                                       │
-│  FrameFlowPlayer.Create().WithMedia(path).WithVideo(...).WithAudio(...).Build().  │
+│  FrameFlowPass.Create(path).WithVideo(...).WithAudio(...).Build().  │
 │  Declarative description of the data flow. Compiles to an       │
 │  IMediaPlayer that owns the underlying state + pipelines.       │
 ├─────────────────────────────────────────────────────────────────┤
@@ -115,9 +115,8 @@ public partial class MainWindow : Window
         // ── This is the heart of the example. ─────────────────────────
         // Declarative pipeline description. Each call returns a new
         // builder; nothing actually runs until BuildAsync() resolves.
-        _player = await FrameFlowPlayer
-            .Create()
-            .WithMedia(path)
+        _player = await FrameFlowPass
+            .Create(path)
             .WithVideo(video => video
                 .ConvertPixelFormat(PixelFormat.Bgra32)
                 .ToSink(VideoCanvas))                // [gap] AvaloniaVideoSink as IFrameSink
@@ -177,7 +176,7 @@ That's it. ~50 lines.
 
 1. **One line per concern.** Video pipeline, audio pipeline, state
    observable, position observable — each is one line.
-2. **No DI ceremony for a simple app.** `FrameFlowPlayer.Create().WithMedia(path)` is
+2. **No DI ceremony for a simple app.** `FrameFlowPass.Create(path)` is
    the entry point; the builder pulls FFmpeg bootstrap, decoders,
    sinks lazily.
 3. **Pipelines are composable in place.** The video pipeline is
@@ -279,7 +278,7 @@ is sized and mapped to the roadmap.
 
 The biggest gap. Needs:
 
-- `FrameFlowPlayer.Create().WithMedia(path)` static entry point.
+- `FrameFlowPass.Create(path)` static entry point.
 - `IPlayerBuilder` with `.WithVideo(Func<...>)`, `.WithAudio(Func<...>)`,
   `.WithVideoSink(IVideoSink)`, `.WithAudioSink(IAudioSink)`,
   `.WithOptions(FrameFlowOptions)`.

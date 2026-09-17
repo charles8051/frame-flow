@@ -33,7 +33,7 @@ public sealed class LifecycleHardeningTests : IClassFixture<FfmpegBootstrapFixtu
         await using (controller)
         {
             var source = MediaSource.FromFile(filePath!);
-            var (load, play) = await IntegrationTestHelper.PlayToCompletionAsync(
+            var (load, play) = await IntegrationTestHelper.RunToCompletionAsync(
                 controller,
                 source
             );
@@ -64,7 +64,7 @@ public sealed class LifecycleHardeningTests : IClassFixture<FfmpegBootstrapFixtu
         await using (controller)
         {
             var source = MediaSource.FromFile(filePath!);
-            var (load, play) = await IntegrationTestHelper.PlayToCompletionAsync(
+            var (load, play) = await IntegrationTestHelper.RunToCompletionAsync(
                 controller,
                 source
             );

@@ -24,7 +24,7 @@ public static class FrameFlowAvaloniaBuilderExtensions
     /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
     /// <example>
     /// <code>
-    /// _player = await FrameFlowPlayer.Create().WithMedia(path)
+    /// _player = await FrameFlowPass.Create(path)
     ///     .WithAvaloniaVideoView(VideoView)
     ///     .WithOpenAlAudio()
     ///     .BuildAsync();
@@ -42,16 +42,16 @@ public static class FrameFlowAvaloniaBuilderExtensions
 
     /// <summary>
     /// Wires the supplied <see cref="FrameFlowVideoView"/> to a narrowed
-    /// <see cref="IMediaPlayerBuilder"/> chain — the overload for chains
-    /// headed for <see cref="IMediaPlayerBuilder.BuildPlayerAsync"/>. The
+    /// <see cref="IPassBuilder"/> chain — the overload for chains
+    /// headed for <see cref="IPassBuilder.BuildAsync"/>. The
     /// view's owned sink is materialized eagerly via
     /// <see cref="FrameFlowVideoView.EnsureSink"/>.
     /// </summary>
     /// <param name="builder">The player builder being configured.</param>
     /// <param name="view">The Avalonia control that will render frames.</param>
     /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
-    public static IMediaPlayerBuilder WithAvaloniaVideoView(
-        this IMediaPlayerBuilder builder,
+    public static IPassBuilder WithAvaloniaVideoView(
+        this IPassBuilder builder,
         FrameFlowVideoView view
     )
     {

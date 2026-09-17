@@ -110,7 +110,7 @@ public sealed class VisualSdlTests : IClassFixture<FfmpegBootstrapFixture>
                 try
                 {
                     var source = MediaSource.FromFile(filePath);
-                    var playTask = IntegrationTestHelper.PlayToCompletionAsync(
+                    var playTask = IntegrationTestHelper.RunToCompletionAsync(
                         controller,
                         source,
                         TimeSpan.FromSeconds(30)

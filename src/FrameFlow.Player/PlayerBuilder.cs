@@ -12,24 +12,15 @@ using FrameFlow.Graph;
 namespace FrameFlow.Player;
 
 /// <summary>
-/// Concrete <see cref="IPlayerBuilder"/>. Mutable fluent state +
-/// a <see cref="BuildAsync"/> that bootstraps FFmpeg, opens the
-/// demux session, constructs decoders, and hands ownership to a
-/// <see cref="PlayerSession"/>.
+/// Concrete <see cref="IPlayerBuilder"/>: mutable fluent state, and one terminal that hands it
+/// all to <see cref="MediaPlayer.CreateCoreAsync"/>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// <b>Why no DI container.</b> This builder constructs the demux
-/// session and decoders directly rather than standing up a
-/// <c>ServiceProvider</c> to resolve them. It can, because a
-/// <see cref="PlayerSession"/> does not depend on
-/// <see cref="FrameFlow.Playback.IPlaybackController"/> or on
-/// anything else registered through
-/// <see cref="FrameFlow.Media.IFrameFlowBuilder"/>. Skipping the DI layer
-/// removes a per-build allocation tree.
-/// </para>
+/// The unpaced sibling is <see cref="PassBuilder"/>, which builds a <see cref="MediaPass"/> and
+/// does the demux and decoder construction itself. The two were one class until
+/// ADR-0079 split them.
 /// </remarks>
-internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
+internal sealed class PlayerBuilder : IPlayerBuilder
 {
     private IReadOnlyList<IMediaSource> _sources = [];
     private IVideoSink? _videoSink;
@@ -38,31 +29,11 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
     private Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? _audioConfigurator;
     private HardwareDecodeMode _hwMode = HardwareDecodeMode.Auto;
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
-    private VideoDecoderOptions? _videoDecoderOptions;
-    private AudioDecoderOptions? _audioDecoderOptions;
 
-    // Player-only state. Ignored by BuildAsync, which cannot be
-    // reached once any of these has been set — the setters return
-    // IMediaPlayerBuilder, whose only terminal is BuildPlayerAsync.
     private RepeatMode _repeatMode = RepeatMode.Off;
     private IPlaybackClock? _clock;
     private bool _yieldHardwareFrames;
     private bool _activateAudioSink = true;
-
-    /// <summary>
-    /// The item <see cref="BuildAsync"/> opens. A session plays one source, and the chain that
-    /// names more than one narrows to <see cref="IMediaPlayerBuilder"/>, whose only terminal is
-    /// <see cref="BuildPlayerAsync"/>. Throws when the chain named no media at all, which the
-    /// types cannot rule out.
-    /// </summary>
-    private IMediaSource Source =>
-        _sources.Count > 0
-            ? _sources[0]
-            : throw new InvalidOperationException(
-                "No media. Call WithMedia before BuildAsync — a session plays one source, and "
-                    + "there is nothing to open. BuildPlayerAsync builds a player with an empty "
-                    + "queue instead."
-            );
 
     public IPlayerBuilder WithMedia(string path)
     {
@@ -78,7 +49,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
         return this;
     }
 
-    public IMediaPlayerBuilder WithMedia(IEnumerable<IMediaSource> sources)
+    public IPlayerBuilder WithMedia(IEnumerable<IMediaSource> sources)
     {
         ArgumentNullException.ThrowIfNull(sources);
         _sources = [.. sources];
@@ -135,40 +106,26 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
         return this;
     }
 
-    /// <summary>
-    /// Decoder options for <see cref="BuildAsync"/>. Internal: tests shrink the
-    /// packet queues so a full queue shows up after a few packets.
-    /// </summary>
-    internal PlayerBuilder WithDecoderOptions(
-        VideoDecoderOptions? video = null,
-        AudioDecoderOptions? audio = null
-    )
-    {
-        _videoDecoderOptions = video;
-        _audioDecoderOptions = audio;
-        return this;
-    }
-
-    public IMediaPlayerBuilder WithRepeatMode(RepeatMode mode)
+    public IPlayerBuilder WithRepeatMode(RepeatMode mode)
     {
         _repeatMode = mode;
         return this;
     }
 
-    public IMediaPlayerBuilder WithClock(IPlaybackClock clock)
+    public IPlayerBuilder WithClock(IPlaybackClock clock)
     {
         ArgumentNullException.ThrowIfNull(clock);
         _clock = clock;
         return this;
     }
 
-    public IMediaPlayerBuilder WithHardwareFrames(bool yieldHardwareFrames = true)
+    public IPlayerBuilder WithHardwareFrames(bool yieldHardwareFrames = true)
     {
         _yieldHardwareFrames = yieldHardwareFrames;
         return this;
     }
 
-    public IMediaPlayerBuilder WithAudioActivation(bool activateAudioSink = true)
+    public IPlayerBuilder WithAudioActivation(bool activateAudioSink = true)
     {
         _activateAudioSink = activateAudioSink;
         return this;
@@ -223,229 +180,5 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
             clock: _clock,
             cancellationToken: cancellationToken
         );
-    }
-
-    // IMediaPlayerBuilder repeats the shared options with a narrower
-    // return type so a chain keeps flowing after the narrowing step.
-    // Same mutable state underneath; explicit implementation because
-    // the signatures differ from IPlayerBuilder's only by return type.
-    IMediaPlayerBuilder IMediaPlayerBuilder.WithMedia(string path)
-    {
-        WithMedia(path);
-        return this;
-    }
-
-    IMediaPlayerBuilder IMediaPlayerBuilder.WithMedia(IMediaSource source)
-    {
-        WithMedia(source);
-        return this;
-    }
-
-    IMediaPlayerBuilder IMediaPlayerBuilder.WithMedia(IEnumerable<IMediaSource> sources) =>
-        WithMedia(sources);
-
-    IMediaPlayerBuilder IMediaPlayerBuilder.WithVideoSink(IVideoSink sink)
-    {
-        WithVideoSink(sink);
-        return this;
-    }
-
-    IMediaPlayerBuilder IMediaPlayerBuilder.WithAudioSink(IAudioSink sink)
-    {
-        WithAudioSink(sink);
-        return this;
-    }
-
-    IMediaPlayerBuilder IMediaPlayerBuilder.ConfigureVideo(
-        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>> configure
-    )
-    {
-        ConfigureVideo(configure);
-        return this;
-    }
-
-    IMediaPlayerBuilder IMediaPlayerBuilder.ConfigureAudio(
-        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>> configure
-    )
-    {
-        ConfigureAudio(configure);
-        return this;
-    }
-
-    IMediaPlayerBuilder IMediaPlayerBuilder.WithHardwareDecode(HardwareDecodeMode mode)
-    {
-        WithHardwareDecode(mode);
-        return this;
-    }
-
-    IMediaPlayerBuilder IMediaPlayerBuilder.WithLogger(ILoggerFactory? loggerFactory)
-    {
-        WithLogger(loggerFactory);
-        return this;
-    }
-
-    public async Task<PlayerSession> BuildAsync(CancellationToken cancellationToken = default)
-    {
-        RequireSinkForEachConfigurator();
-
-        // Bootstrap the FFmpeg native runtime — same eager call the
-        // existing examples make manually. Idempotent across calls; a
-        // shared bootstrapper would also work but constructing a fresh
-        // one keeps the builder dependency-free.
-        //
-        // Skip the HW probe when the caller has explicitly disabled HW
-        // decoding — the probe's "no device available" diagnostics are
-        // wasted work in that case, and on some test hosts the
-        // device-init dance is fragile.
-        var nativeOptions = new FrameFlowNativeOptions
-        {
-            SkipHardwareProbe = _hwMode == HardwareDecodeMode.Disabled,
-        };
-        var bootstrapper = new FrameFlowBootstrapper(nativeOptions, _loggerFactory);
-        var bootstrapResult = bootstrapper.Initialize();
-        if (!bootstrapResult.IsSuccess)
-        {
-            throw new InvalidOperationException(
-                $"FFmpeg bootstrap failed: {bootstrapResult.Message}"
-            );
-        }
-
-        var demuxFactory = new DemuxSessionFactory(_loggerFactory);
-
-        IDemuxSession? demux = null;
-        VideoDecoder? videoDecoder = null;
-        AudioDecoder? audioDecoder = null;
-
-        try
-        {
-            demux = await demuxFactory.OpenAsync(Source, cancellationToken).ConfigureAwait(false);
-
-            // DecodingPipeline owns the demux pump; it requires the
-            // concrete DemuxSession (it reaches FormatContextPtr through
-            // it). The demux factory always returns DemuxSession today.
-            var concreteDemux =
-                demux as DemuxSession
-                ?? throw new InvalidOperationException(
-                    $"DemuxSessionFactory returned unexpected type {demux.GetType().Name}; "
-                        + $"DecodingPipeline requires {nameof(DemuxSession)}."
-                );
-
-            if (
-                demux.MediaInfo.VideoStreams.Count == 0
-                && demux.MediaInfo.AudioStreams.Count == 0
-            )
-            {
-                throw new InvalidOperationException(
-                    $"Source '{Source.DisplayName}' has neither a video nor audio stream."
-                );
-            }
-
-            // ADR-0059: decode a stream only when a sink will drain it. The
-            // demux pump feeds every decoder's bounded packet queue and waits
-            // while any of them is full, and PlayToCompletionAsync builds a
-            // graph branch only for a stream that has a sink. A decoder with
-            // no sink fills its queue, stops the pump, and freezes the stream
-            // that is playing. A configurator alone is not a consumer here:
-            // PlayToCompletionAsync applies it only on a branch with a sink.
-            //
-            // A stream with no sink is discarded at the demuxer so its packets
-            // are never read, and gets no decoder, so the few packets the probe
-            // buffered before the discard have no queue to fill.
-            //
-            // DecoderFactories return interfaces, but the concrete types
-            // are always VideoDecoder / AudioDecoder — DecodingPipeline
-            // constructor requires the concrete types because it reaches
-            // into their packet-queue surface that isn't on the public
-            // interfaces.
-            if (_videoSink is not null)
-            {
-                videoDecoder =
-                    DecoderFactories.CreateVideo(
-                        new HardwareDecodeOptions { Mode = _hwMode },
-                        bootstrapResult.Capabilities,
-                        _loggerFactory,
-                        _videoDecoderOptions
-                    )(demux) as VideoDecoder;
-            }
-            else
-            {
-                foreach (var stream in demux.MediaInfo.VideoStreams)
-                    concreteDemux.DiscardStream(stream.StreamIndex);
-            }
-
-            // CreateAudio threads the logger factory so AudioDecoder
-            // diagnostics aren't silently swallowed by NullLogger.Instance
-            // (the asymmetry that hid the post-seek freeze bug fixed in d03e4b0).
-            if (_audioSink is not null)
-            {
-                audioDecoder =
-                    DecoderFactories.CreateAudio(_loggerFactory, _audioDecoderOptions)(demux)
-                    as AudioDecoder;
-            }
-            else
-            {
-                foreach (var stream in demux.MediaInfo.AudioStreams)
-                    concreteDemux.DiscardStream(stream.StreamIndex);
-            }
-
-            var pipeline = new DecodingPipeline(
-                concreteDemux,
-                videoDecoder,
-                audioDecoder,
-                _loggerFactory.CreateLogger<DecodingPipeline>()
-            );
-
-            // Hand ownership to PlayerSession; suppress outer dispose.
-            var session = new PlayerSession(
-                demux,
-                pipeline,
-                videoDecoder,
-                audioDecoder,
-                _videoSink,
-                _audioSink,
-                _videoConfigurator,
-                _audioConfigurator,
-                _loggerFactory.CreateLogger<PlayerSession>()
-            );
-            demux = null;
-            videoDecoder = null;
-            audioDecoder = null;
-            return session;
-        }
-        catch
-        {
-            // Dispose anything we managed to construct before failing.
-            if (videoDecoder is not null)
-            {
-                try
-                {
-                    await videoDecoder.DisposeAsync().ConfigureAwait(false);
-                }
-                catch
-                { /* swallow during cleanup */
-                }
-            }
-            if (audioDecoder is not null)
-            {
-                try
-                {
-                    await audioDecoder.DisposeAsync().ConfigureAwait(false);
-                }
-                catch
-                { /* swallow during cleanup */
-                }
-            }
-            if (demux is not null)
-            {
-                try
-                {
-                    await demux.DisposeAsync().ConfigureAwait(false);
-                }
-                catch
-                { /* swallow during cleanup */
-                }
-            }
-            throw;
-        }
     }
 }

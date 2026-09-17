@@ -87,14 +87,14 @@ public sealed class NominalRunHealthTests : IClassFixture<FfmpegBootstrapFixture
         var (controller, audioSink, videoSink) = IntegrationTestHelper.CreateController();
         await using (controller)
         {
-            // PlayToCompletionAsync watches state, not errors. A recoverable PlaybackError
+            // RunToCompletionAsync watches state, not errors. A recoverable PlaybackError
             // leaves the run Ended, so without this a transient fault passes the gate silently.
             var errors = new List<PlaybackError>();
             using var errSub = controller.ErrorOccurred.Subscribe(
                 new ActionObserver<PlaybackError>(errors.Add)
             );
 
-            var (load, play) = await IntegrationTestHelper.PlayToCompletionAsync(
+            var (load, play) = await IntegrationTestHelper.RunToCompletionAsync(
                 controller,
                 MediaSource.FromFile(filePath!)
             );

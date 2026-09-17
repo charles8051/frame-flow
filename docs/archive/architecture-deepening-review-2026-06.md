@@ -913,11 +913,11 @@ end-to-end so the seam is exercised, or delete the unused builder extensions unt
 
 #### 7.2 Converge the three divergent example construction shapes
 **Strong · architecture · in-process**
-**Files:** `examples/FrameFlow.Examples.AudioOnlyPlayer/Program.cs` (`FrameFlowPlayer.Create().WithMedia(…).BuildAsync()`), `examples/FrameFlow.Examples.SdlPlayer/Program.cs` (`PlaybackController.Create(…)`), `examples/FrameFlow.Examples.AvaloniaPlayer/MainWindow.axaml.cs` (`MediaPlayer.CreateAsync(…)`), `examples/FrameFlow.Examples.HostedServicePlayer/Program.cs`
+**Files:** `examples/FrameFlow.Examples.AudioOnlyPlayer/Program.cs` (`FrameFlowPass.Create(…).BuildAsync()`), `examples/FrameFlow.Examples.SdlPlayer/Program.cs` (`PlaybackController.Create(…)`), `examples/FrameFlow.Examples.AvaloniaPlayer/MainWindow.axaml.cs` (`MediaPlayer.CreateAsync(…)`), `examples/FrameFlow.Examples.HostedServicePlayer/Program.cs`
 
 **Problem.** Three distinct consumer entry points coexist with no documented "use this one": the
 `MediaPlayer.CreateAsync` façade (6 examples), the lower-level `PlaybackController.Create` (SdlPlayer), and
-the `FrameFlowPlayer.Create().WithMedia(…).BuildAsync()` fluent builder (AudioOnlyPlayer, HostedServicePlayer). A
+the `FrameFlowPass.Create(…).BuildAsync()` fluent builder (AudioOnlyPlayer, HostedServicePlayer). A
 navigator must bounce across three examples to learn "how do I start playback," and the project's mandate to
 propagate a better call site to *every* example is unmet.
 

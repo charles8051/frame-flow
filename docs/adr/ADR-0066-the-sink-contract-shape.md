@@ -96,7 +96,7 @@ with both interfaces reparented onto it. Rejected, because nothing consumes it.
 Every site that touches both sinks handles them separately, by concrete type,
 because what it does with each differs:
 
-- `SubstrateSession.cs:1461-1477` and `PlayerSession.cs:138-151` build a
+- `SubstrateSession.cs:1461-1477` and `MediaPass.cs:138-151` build a
   different chain per medium: different decoder, different node type,
   different wrapper.
 - `SubstrateSession.cs:240-241` rolls up two different snapshot types.

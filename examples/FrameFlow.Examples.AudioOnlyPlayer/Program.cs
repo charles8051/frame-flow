@@ -35,22 +35,21 @@ internal static class Program
         Console.WriteLine($"Audio playback: {inputPath}");
 
         // OpenAlAudioSink is the production audio sink — implements
-        // IAudioSink + IClockSource. PlayerSession only consumes
+        // IAudioSink + IClockSource. MediaPass only consumes
         // the IAudioSink data plane; clock-source wiring would be
         // needed when video joins the pipeline for sync. Audio-only
         // playback doesn't need the clock fed back anywhere.
         await using var sink = new OpenAlAudioSink();
 
-        // No ActivateAsync here: PlayerSession activates the sink it was
+        // No ActivateAsync here: MediaPass activates the sink it was
         // given, the same way SubstrateSession and BuildPlayerAsync do.
         // Pre-activating would rebase the sink's sample counter twice —
         // see the contract on IAudioSink.ActivateAsync.
 
         try
         {
-            await using var player = await FrameFlowPlayer
-                .Create()
-                .WithMedia(inputPath)
+            await using var player = await FrameFlowPass
+                .Create(inputPath)
                 .WithAudioSink(sink)
                 .WithLogger(loggerFactory)
                 .BuildAsync();
@@ -79,7 +78,7 @@ internal static class Program
 
             try
             {
-                await player.PlayToCompletionAsync(ctrlC.Token);
+                await player.RunToCompletionAsync(ctrlC.Token);
             }
             catch (OperationCanceledException) when (ctrlC.IsCancellationRequested)
             {

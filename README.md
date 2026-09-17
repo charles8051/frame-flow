@@ -31,15 +31,18 @@ full list is under [Packages](#packages).
 
 ## Quick start
 
-`FrameFlowPlayer.Create()` starts a builder chain. Name the media with `WithMedia`,
-or leave it out and add sources to the built player. Two terminals:
+Two entry points, and a clock is the difference:
 
-| You want | Terminal | Returns |
+| You want | Entry | Returns |
 |---|---|---|
-| Playback you drive — play, pause, seek, repeat, observables | `.BuildPlayerAsync()` | `IMediaPlaylistPlayer` |
-| Open a file and play it to the end | `.BuildAsync()` | `PlayerSession` |
+| Playback a human watches — paced, with play, pause, seek, repeat, observables and a queue | `FrameFlowPlayer.Create()` | `IMediaPlaylistPlayer` |
+| One traversal of a file at decode speed, for inference or analysis | `FrameFlowPass.Create(path)` | `MediaPass` |
 
-### `BuildPlayerAsync` — the full player
+A player honours a clock and shows each frame at its presentation time. A pass
+waits on nothing, so video through it runs as fast as the sink accepts. An audio
+sink paces itself by what its device consumes either way.
+
+### `FrameFlowPlayer` — the full player
 
 ```csharp
 using FrameFlow.Audio.OpenAL;
@@ -59,31 +62,35 @@ if (!played.IsSuccess)
     Console.Error.WriteLine($"{played.Error.Category}: {played.Error.Message}");
 ```
 
-### `BuildAsync` — play to end of stream
+### `FrameFlowPass` — one traversal, at decode speed
 
-When you only need "open a file and play it to the end", with no seek, pause,
-or repeat:
+Run every frame of a file through an operator and close it, without waiting real
+time for the file to play:
 
 ```csharp
-await using var player = await FrameFlowPlayer.Create()
-    .WithMedia(path)
-    .WithAudioSink(audioSink)   // .WithAvaloniaVideoView(view) / .WithOpenAlAudio() also available
+await using var sink = new HeadlessVideoSink();   // or any sink you already have
+await using var pass = await FrameFlowPass.Create(path)
+    .WithVideoSink(sink)
+    .ConfigureVideo(chain => chain.Then(detect))
     .BuildAsync();
 
-await player.PlayToCompletionAsync(ct);
+await pass.RunToCompletionAsync(ct);
 ```
 
-`WithRepeatMode`, `WithClock`, `WithHardwareFrames` and `WithAudioActivation`
-mean nothing to a `PlayerSession`, so setting one and then asking for a session
-is a compile error rather than a dropped setting.
+The source is named at `Create`, because a pass with none has nothing to do. A
+pass runs once: build another to run the content again. Repeat, a clock, hardware
+frames, audio activation and the queue are the player's, and are not on this
+builder at all.
+
+The sink is yours (ADR-0044) — a pass does not dispose it, so one sink holding a
+loaded inference model serves any number of passes.
 
 ### Playlists
 
 Every player is a queue, so sources can be added while it plays:
 
 ```csharp
-await using var player = await FrameFlowPlayer.Create()
-    .WithMedia([first, second])
+await using var player = await FrameFlowPlayer.Create().WithMedia([first, second])
     .WithVideoSink(videoSink)
     .WithAudioSink(audioSink)
     .WithRepeatMode(RepeatMode.All)
@@ -122,8 +129,8 @@ that state machine is what you are building around.
 `services.AddFrameFlow()` registers the engine's *environment* pieces: the
 OpenAL backend, the FFmpeg bootstrap as a hosted service, the Avalonia video
 sink, and options. The playback session itself stays an explicitly created
-runtime object — resolve the registered sinks and hand them to the builder
-rather than resolving a player singleton:
+runtime object — resolve the registered sinks and hand them to a builder rather
+than resolving a player singleton:
 
 ```csharp
 builder.Services
@@ -131,9 +138,8 @@ builder.Services
     .AddFrameFlowOpenAlAudio()   // registers IAudioSink (container-owned)
     .AddHostedBootstrap();       // FFmpeg bootstrap runs at host startup
 
-// …then, inside an IHostedService, resolve IAudioSink and build the session:
-await using var player = await FrameFlowPlayer.Create()
-    .WithMedia(path)
+// …then, inside an IHostedService, resolve IAudioSink and build:
+await using var pass = await FrameFlowPass.Create(path)
     .WithAudioSink(resolvedAudioSink)
     .BuildAsync(ct);
 ```

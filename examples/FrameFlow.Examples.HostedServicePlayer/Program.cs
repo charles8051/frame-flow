@@ -174,15 +174,14 @@ internal sealed class PlaybackHostedService(
             // ADR-0044 the container owns its disposal — we do NOT dispose
             // it here.
             //
-            // Activation is PlayerSession's, not ours: it activates the sink
+            // Activation is MediaPass's, not ours: it activates the sink
             // it was given. We still own the matching DeactivateAsync below,
             // because this sink is a container singleton that outlives the
             // session and must be quiesced between runs.
             try
             {
-                await using var player = await FrameFlowPlayer
-                    .Create()
-                    .WithMedia(inputPath)
+                await using var player = await FrameFlowPass
+                    .Create(inputPath)
                     .WithAudioSink(audioSink)
                     .WithLogger(loggerFactory)
                     .BuildAsync(ct)
@@ -201,7 +200,7 @@ internal sealed class PlaybackHostedService(
                     player.Info.Duration
                 );
 
-                await player.PlayToCompletionAsync(ct).ConfigureAwait(false);
+                await player.RunToCompletionAsync(ct).ConfigureAwait(false);
                 logger.LogInformation("Playback complete.");
             }
             finally

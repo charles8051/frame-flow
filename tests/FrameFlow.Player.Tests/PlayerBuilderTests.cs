@@ -1,8 +1,5 @@
-using FrameFlow.Audio;
-using FrameFlow.Media;
-using FrameFlow.Video;
 using FrameFlow.Graph;
-using FrameFlow.Native;
+using FrameFlow.Media;
 using FrameFlow.Playback;
 
 namespace FrameFlow.Player.Tests;
@@ -13,23 +10,25 @@ namespace FrameFlow.Player.Tests;
 public sealed class PlayerBuilderTests
 {
     [Fact]
-    public void Open_NullPath_Throws()
+    public void WithMedia_NullPath_Throws()
     {
         // ArgumentException.ThrowIfNullOrWhiteSpace throws
         // ArgumentNullException for null and ArgumentException for empty.
         // We accept either since both are valid signals from the API
         // surface.
-        Assert.ThrowsAny<ArgumentException>(() => FrameFlowPlayer.Create().WithMedia((string)null!));
+        Assert.ThrowsAny<ArgumentException>(() =>
+            FrameFlowPlayer.Create().WithMedia((string)null!)
+        );
     }
 
     [Fact]
-    public void Open_EmptyPath_Throws()
+    public void WithMedia_EmptyPath_Throws()
     {
         Assert.ThrowsAny<ArgumentException>(() => FrameFlowPlayer.Create().WithMedia(""));
     }
 
     [Fact]
-    public void Open_NullSource_Throws()
+    public void WithMedia_NullSource_Throws()
     {
         Assert.Throws<ArgumentNullException>(() =>
             FrameFlowPlayer.Create().WithMedia((IMediaSource)null!)
@@ -91,15 +90,16 @@ public sealed class PlayerBuilderTests
     }
 
     [Fact]
-    public void PlayerOnlyOption_NarrowsToMediaPlayerBuilder()
+    public void EveryOption_KeepsTheOneBuilder()
     {
-        var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");
+        // The narrowing is gone. The player's builder has one terminal and every option means
+        // something to it, so there is nothing to refuse. The unpaced runtime is FrameFlowPass,
+        // a separate entry, so no chain can reach a terminal that would ignore what it was told.
+        var builder = FrameFlowPlayer.Create();
         var sink = new NullVideoSink();
 
-        // Each player-only setter narrows the chain, and the narrowed
-        // interface carries the shared options forward on the same
-        // instance so either ordering chains.
-        IMediaPlayerBuilder narrowed = builder
+        IPlayerBuilder same = builder
+            .WithMedia("any.mp4")
             .WithRepeatMode(RepeatMode.All)
             .WithHardwareFrames()
             .WithAudioActivation(false)
@@ -108,7 +108,7 @@ public sealed class PlayerBuilderTests
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
             .WithLogger(null);
 
-        Assert.Same(builder, narrowed);
+        Assert.Same(builder, same);
     }
 
     [Fact]
@@ -120,7 +120,7 @@ public sealed class PlayerBuilderTests
         Assert.Same(builder, same);
     }
 
-    private sealed class NullVideoSink : IVideoSink
+    internal sealed class NullVideoSink : IVideoSink
     {
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {
@@ -134,18 +134,5 @@ public sealed class PlayerBuilderTests
             ValueTask.CompletedTask;
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-    }
-
-    [Fact]
-    public async Task BuildAsync_WithNoMedia_Throws()
-    {
-        // WithMedia comes after the entry, so the types cannot rule this out. A session plays one
-        // source and there is nothing to open, so the terminal says so rather than opening
-        // whatever happens to be first.
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => FrameFlowPlayer.Create().WithVideoSink(new NullVideoSink()).BuildAsync()
-        );
-
-        Assert.Contains("WithMedia", error.Message);
     }
 }

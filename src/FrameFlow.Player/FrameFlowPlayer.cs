@@ -12,13 +12,13 @@ namespace FrameFlow.Player;
 ///     .WithVideoSink(view)
 ///     .WithAudioSink(audio)
 ///     .BuildAsync();
-/// await player.PlayToCompletionAsync(ct);
+/// await player.RunToCompletionAsync(ct);
 /// </code>
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Two terminals.</b> <see cref="IPlayerBuilder.BuildAsync"/> produces a
-/// <see cref="PlayerSession"/>, which covers "open a source and play it to
+/// <see cref="MediaPass"/>, which covers "open a source and play it to
 /// end of stream" and nothing more.
 /// <see cref="IPlayerBuilder.BuildPlayerAsync"/> produces an
 /// <see cref="IMediaPlaylistPlayer"/> — pause, resume, seek, repeat, position
@@ -39,7 +39,7 @@ namespace FrameFlow.Player;
 /// so <c>Create</c> names nothing. A chain with no <c>WithMedia</c> builds a player with its
 /// sinks warm and nothing loaded, and the first <see cref="IMediaPlayer.PlayAsync"/> starts
 /// whatever <see cref="IMediaPlaylistPlayer.AddAsync"/> has put in the queue by then. The same
-/// chain cannot build a <see cref="PlayerSession"/>, which plays one source: that throws, because
+/// chain cannot build a <see cref="MediaPass"/>, which plays one source: that throws, because
 /// <c>WithMedia</c> comes after the entry and the types cannot rule it out.
 /// </para>
 /// <para>

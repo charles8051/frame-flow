@@ -179,7 +179,7 @@ public sealed class StillImageDwellTests : IClassFixture<FfmpegBootstrapFixture>
         var (controller, audioSink, videoSink) = IntegrationTestHelper.CreateController();
         await using (controller)
         {
-            var (load, play) = await IntegrationTestHelper.PlayToCompletionAsync(
+            var (load, play) = await IntegrationTestHelper.RunToCompletionAsync(
                 controller,
                 MediaSource.FromFile(path!)
             );

@@ -1,17 +1,16 @@
-# The pass and the player: a clock decides the entry
+# ADR-0079: The pass and the player: a clock decides the entry
 
 ## Status
 
-**Draft, pending number assignment. Proposed 2026-09-17; nothing is implemented.**
-Numbers are assigned at merge of the implementation, so this record carries a slug filename until
-then, as [One builder, two terminals](one-builder-two-terminals.md) did.
+Accepted (2026-09-17). Proposed the same day; numbered and accepted once the implementation
+landed. **Implemented**; *As implemented* says how.
 
 This record decides that the unpaced runtime gets its own entry point rather than a second
 terminal on the player's builder, what it is called, that it takes one source and no queue, and
 what that lets the builder surface drop.
 
 It supersedes **[One builder, two terminals](one-builder-two-terminals.md)**, whose decision was
-that one chain ends in either a `PlayerSession` or a player. The reasoning that record gives for
+that one chain ends in either a `MediaPass` or a player. The reasoning that record gives for
 folding `MediaPlayer.CreateAsync`'s options into a fluent chain stands. What changes is where the
 two terminals live.
 
@@ -26,15 +25,15 @@ Issues #99, #125.
 ### The two terminals do not differ on what their names say
 
 `IPlayerBuilder` offers two terminals. `BuildPlayerAsync` returns a player: pause, resume, seek,
-repeat, position, diagnostics, and the queue. `BuildAsync` returns a `PlayerSession`, which the
+repeat, position, diagnostics, and the queue. `BuildAsync` returns a `MediaPass`, which the
 README describes as "open a file and play it to the end".
 
 That reads as a difference of transport surface. It is not the difference that matters.
 
-`PlayerSession.PlayToCompletionAsync` builds `source → configurator → sink` and runs it. It holds
+`MediaPass.RunToCompletionAsync` builds `source → configurator → sink` and runs it. It holds
 no `IPlaybackClock`. `ClockSelectVideoSink` and `PaceUntil`, the two types that hold a frame until
 its presentation time, are constructed only by `SubstrateSession`, on the controller path. A
-`PlayerSession` never touches either.
+`MediaPass` never touches either.
 
 So video through `BuildAsync` is presented as fast as the sink accepts it. A caller who reaches for
 the terminal the README points them at, because they only want to play a file through once, gets a
@@ -45,7 +44,7 @@ Both in-repo users are audio-only. `FrameFlow.Examples.AudioOnlyPlayer` and
 audio device applies backpressure at its own rate. The timing is supplied by the device rather than
 by the pipeline, which is why the gap has not shown up.
 
-### Why `PlayerSession` exists, and why the reason is spent
+### Why `MediaPass` exists, and why the reason is spent
 
 Its own summary says it:
 
@@ -53,10 +52,10 @@ Its own summary says it:
 > substrate lands.
 
 That port landed in ADR-0077. `PlaybackControllerCore` drives `PlaylistSession` over
-`SubstrateSession`, which is the substrate. The reason `PlayerSession` was written is answered.
+`SubstrateSession`, which is the substrate. The reason `MediaPass` was written is answered.
 
 The runtime it provides is not. An unpaced run is worth having on its own terms, and ADR-0032 §
-*Deferred* asked for one: "a raw/unpaced accessor variant". `PlayerSession` supplies that variant
+*Deferred* asked for one: "a raw/unpaced accessor variant". `MediaPass` supplies that variant
 by accident, under a name that suggests the opposite.
 
 ### An analysis pass wants decode speed
@@ -66,13 +65,12 @@ want to wait real time. Today the shape is:
 
 ```csharp
 await using var sink = new HeadlessVideoSink();
-await using var session = await FrameFlowPlayer.Create()
-    .WithMedia(path)
+await using var session = await FrameFlowPass.Create(path)
     .WithVideoSink(sink)
     .ConfigureVideo(chain => chain.Then(detect))
     .BuildAsync();
 
-await session.PlayToCompletionAsync(ct);
+await session.RunToCompletionAsync(ct);
 ```
 
 This is the right runtime and reads as the wrong one. Every word in it — `Player`, `BuildAsync`,
@@ -103,8 +101,7 @@ reach for at the end of a chain.
 
 ```csharp
 // Paced. Honours a clock, and a sink sees a frame at its presentation time.
-await using var player = await FrameFlowPlayer.Create()
-    .WithMedia(path)
+await using var player = await FrameFlowPlayer.Create().WithMedia(path)
     .WithVideoSink(view)
     .BuildPlayerAsync();
 
@@ -117,14 +114,14 @@ await using var pass = await FrameFlowPass.Create(path)
 await pass.RunToCompletionAsync(ct);
 ```
 
-The type confusion the split removes is the smaller half. `PlayerSession` carries only `Info` and
-`PlayToCompletionAsync`, so a caller who wanted a player fails to compile on their next line. What
+The type confusion the split removes is the smaller half. `MediaPass` carries only `Info` and
+`RunToCompletionAsync`, so a caller who wanted a player fails to compile on their next line. What
 the split removes is the silent half: a consumer no longer picks the unpaced runtime by reaching
 for the terminal whose name sounded simpler.
 
 ### 2. `MediaPass`, and `RunToCompletionAsync`
 
-`PlayerSession` is renamed `MediaPass` and `PlayToCompletionAsync` becomes
+`MediaPass` is renamed `MediaPass` and `RunToCompletionAsync` becomes
 `RunToCompletionAsync`. The runtime is unchanged.
 
 A pass is one traversal of the content. The word claims that and claims nothing about rate, which
@@ -172,7 +169,7 @@ the public surface this way, there for the fluent builder rather than for a test
 *Validation*.
 
 **At least one sink.** A pass with no sink has nowhere to put what it decodes, so the terminal
-refuses it and names the call that is missing. This is what `PlayToCompletionAsync` already does
+refuses it and names the call that is missing. This is what `RunToCompletionAsync` already does
 ("No sinks attached"), moved to the terminal so the refusal arrives before the demuxer opens the
 file rather than after. It stays a run-time check: video-only and audio-only sources each need a
 different one of the two sinks, and which streams a file carries is not known until it is opened.
@@ -201,10 +198,34 @@ the same. The story is one a reader can hold.
 Recorded here because this record's map of the construction surface would be wrong without it. The
 deletion landed in #271 while this record was being written, and its reasoning is there.
 
+## As implemented
+
+- **The pass.** `FrameFlowPass.Create(path)` and `Create(IMediaSource)` return `IPassBuilder`,
+  whose options are the two sinks, the two configurators, hardware-decode policy and the logger,
+  and whose one terminal is `BuildAsync`. `PassBuilder` holds the demux and decoder construction
+  that `PlayerBuilder` used to, and `PlayerSession` is `MediaPass` with
+  `RunToCompletionAsync`.
+- **The sink rule.** `PassBuilder.RequireASink` refuses at the terminal, before the bootstrap and
+  the open. `MediaPass.RunToCompletionAsync` keeps the same check, now unreachable through the
+  public path because only `PassBuilder` constructs a pass; it stays as a guard on the internal
+  constructor.
+- **The clock seam.** `PassBuilder.WithClock` is internal and `MediaPass.Clock` holds what it is
+  given. Nothing reads it.
+  `MediaPassIntegrationTests.APass_NeverReadsTheClockItIsGiven` hands a pass a clock that throws
+  on every member and asserts the run presents frames and completes. With
+  `Clock?.Start(TimeSpan.Zero)` added to the run, it fails with
+  "A pass read the clock (Start)".
+- **The fold.** `IMediaPlayerBuilder` is deleted and every `IPlayerBuilder` option returns
+  `IPlayerBuilder`. `WithOpenAlAudio` and `WithAvaloniaVideoView` keep two overloads, the second
+  now on `IPassBuilder`.
+- **`PlaybackGraph`.** Removed in #271, before this landed.
+
+Breaking changes 25, 26 and 27.
+
 ## What this does not decide
 
 - **Whether a pass yields hardware frames.** `WithHardwareFrames` is a player-only option today and
-  `PlayerSession` has no equivalent. A GPU inference sink is exactly the consumer that wants
+  `MediaPass` has no equivalent. A GPU inference sink is exactly the consumer that wants
   GPU-resident frames, so the answer is probably yes, but it is a change to the pass's runtime
   rather than a rename and it needs its own pass over `SubstrateSession`'s yield path. Deferred.
 - **Whether `MediaPlayer` survives.** After #269 it is a strict subset of the builder. Deleting it
@@ -217,9 +238,9 @@ deletion landed in #271 while this record was being written, and its reasoning i
 
 | Before | After |
 |---|---|
-| `FrameFlowPlayer.Create().WithMedia(path)….BuildAsync()` | `FrameFlowPass.Create(path)….BuildAsync()` |
-| `PlayerSession` | `MediaPass` |
-| `PlayerSession.PlayToCompletionAsync(ct)` | `MediaPass.RunToCompletionAsync(ct)` |
+| `FrameFlowPass.Create(path)….BuildAsync()` | `FrameFlowPass.Create(path)….BuildAsync()` |
+| `MediaPass` | `MediaPass` |
+| `MediaPass.RunToCompletionAsync(ct)` | `MediaPass.RunToCompletionAsync(ct)` |
 | `IMediaPlayerBuilder` | `IPlayerBuilder`, which no longer narrows |
 | `PlaybackGraph` | removed in #271 |
 
@@ -240,7 +261,7 @@ claimed to work.
 | 1 | 3 | `FrameFlowPass.Create(path)` with no sink is refused at the terminal, naming the call that is missing | no such type |
 | 2 | 1, 2, 3 | A pass given, through its internal seam, a clock that throws on every read presents every frame of a clip and completes | a paced implementation reads the clock to schedule the first frame, so the run fails with that exception; the assertions are on frames and completion |
 | 3 | 3 | The pass builder has no `WithMedia` and no plural entry: a queue of two is not expressible | no such type |
-| 4 | 3 | Two passes over the same caller-owned sink both run, and the sink is not disposed between them | nothing: this is carried-over coverage, not a new gate. `PlayerSessionIntegrationTests` holds it today and the test moves with the rename |
+| 4 | 3 | Two passes over the same caller-owned sink both run, and the sink is not disposed between them | nothing: this is carried-over coverage, not a new gate. `MediaPassIntegrationTests` holds it today and the test moves with the rename |
 | 5 | 4 | A player chain sets every player-only option and still reaches `BuildPlayerAsync` on one interface | passes today through `IMediaPlayerBuilder`; the test pins that the fold kept it |
 | 6 | 4 | `IMediaPlayerBuilder` is gone from `PublicAPI.Unshipped.txt` | the analyser is the test |
 
@@ -275,7 +296,7 @@ consumer still starts every chain with `FrameFlowPlayer`, which is the word that
 choice is made at the end of the chain either way, which is where a reader has already stopped
 thinking about which runtime they asked for.
 
-### B. Delete `PlayerSession` and give the player an unpaced mode
+### B. Delete `MediaPass` and give the player an unpaced mode
 
 One entry, one type, pacing as an option: `FrameFlowPlayer.Create().Unpaced()…BuildPlayerAsync()`
 returning a player whose clock is a no-op.
@@ -291,5 +312,5 @@ The runtime is correct and only the names mislead, so document the pacing and mo
 
 Rejected. The README row, the terminal name and the return type all say playback, and the
 documentation fix is a sentence a reader has to find before they reach for the terminal that
-sounds right. That three surfaces grew to do this job, `PlayerSession`, `PlaybackGraph` and the raw
+sounds right. That three surfaces grew to do this job, `MediaPass`, `PlaybackGraph` and the raw
 graph, is the evidence that a reader cannot currently tell which one they want.

@@ -281,16 +281,16 @@ Use fluent composition for:
 Consider a factory or builder such as:
 
 ```csharp
-await using var player = await FrameFlowPlayer.Create().WithMedia(path)
+await using var player = await FrameFlowPass.Create(path)
     .WithAudioSink(audioSink)
     .WithAvaloniaVideoView(view)
     .BuildAsync(ct);
 ```
 
 This is a good fit because it configures object graphs and lifetimes before
-processing begins. As built, this is `FrameFlowPlayer.Create().WithMedia(...)` in
+processing begins. As built, this is `FrameFlowPass.Create(...)` in
 `FrameFlow.Player`, returning an `IPlayerBuilder`. `BuildAsync` returns a
-play-to-end `PlayerSession`; `BuildPlayerAsync` on the same chain returns the
+play-to-end `MediaPass`; `BuildPlayerAsync` on the same chain returns the
 `IMediaPlayer` with seek, pause, and repeat.
 
 ### Processing pipeline surface
@@ -875,7 +875,7 @@ deliberately ahead of any new control — that:
 - defined lifecycle and error contracts
 - created a stable skeleton before native implementation expanded
 
-That skeleton is in place (see `FrameFlow.Player`'s `FrameFlowPlayer.Create().WithMedia(...)`
+That skeleton is in place (see `FrameFlow.Player`'s `FrameFlowPass.Create(...)`
 builder and the `services.AddFrameFlow…()` registrations), and the rest of the
 architecture has been built on top of it. New work should extend that surface
 rather than reopen the foundation.

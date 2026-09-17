@@ -67,7 +67,7 @@ public sealed class DecodePressureTests : IClassFixture<FfmpegBootstrapFixture>
                 new ActionObserver<PlaybackError>(errors.Add)
             );
 
-            var (load, play) = await IntegrationTestHelper.PlayToCompletionAsync(
+            var (load, play) = await IntegrationTestHelper.RunToCompletionAsync(
                 controller,
                 MediaSource.FromFile(filePath)
             );
