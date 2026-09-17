@@ -8,17 +8,25 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FrameFlow.Avalonia.Windows.Tests;
 
 /// <summary>
-/// Pins <see cref="IFramePresentedSource"/> on the zero-copy surface, the half of the
-/// contract the CPU sink's tests do not reach.
+/// Pins <see cref="IFramePresentedSource"/> on <see cref="CompositionInteropVideoSink"/>'s
+/// side of the zero-copy path: the sink entry point, not the view that calls it.
 /// </summary>
 /// <remarks>
 /// <para>
 /// The two sinks raise the event from opposite places. <c>AvaloniaVideoSink</c> owns its
-/// swap and raises at it. This sink never sees the screen: it hands the frame to
-/// <c>CompositionInteropVideoView</c>, and the view calls <c>RaiseFramePresented</c> from
-/// the continuation of the compositor hand-off. A live compositor is not available here, so
-/// these drive that entry point directly and cover what it promises: one report per present,
-/// the PTS the caller named, and no subscriber able to take down another.
+/// swap and raises at it, so its tests cover the whole path. This sink never sees the
+/// screen: it hands the frame to <c>CompositionInteropVideoView</c>, and the view calls
+/// <c>RaiseFramePresented</c> from the continuation of the compositor hand-off. These tests
+/// call that entry point directly and cover what it promises: one report per present, the
+/// PTS the caller named, and no subscriber able to take down another.
+/// </para>
+/// <para>
+/// <b>What this does not cover.</b> The view's call site is out of reach here for the same
+/// reason <c>CompositionInteropVideoSinkArrivalTests</c> states: the view needs a live
+/// compositor. So nothing below would fail if the view stopped calling
+/// <c>RaiseFramePresented</c>, called it with the wrong PTS, or called it for a frame the
+/// ring dropped. Closing that needs a fake compositor or a real-GPU integration test; see
+/// issue #255.
 /// </para>
 /// <para>
 /// Nothing here observes wall-clock time. The only assertion about <c>PresentedAtUtc</c> is
