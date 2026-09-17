@@ -30,6 +30,7 @@ namespace FrameFlow.Native.Interop;
 ///   time_base         — offset 152
 ///   sample_rate       — offset 192
 ///   ch_layout         — offset 408 (AVChannelLayout: order=+0, nb_channels=+4)
+///   duration (int64)  — offset 432
 /// </code>
 /// </para>
 /// <para>
@@ -94,6 +95,20 @@ internal readonly unsafe ref struct AvFrameAccessor
         {
             ref AVFrame f = ref Unsafe.AsRef<AVFrame>((void*)_ptr);
             return f.pts;
+        }
+    }
+
+    /// <summary>
+    /// The frame's display duration in the stream's time base, or 0 when the
+    /// decoder could not determine one. FFmpeg carries this over from the packet
+    /// that produced the frame, so it survives reordering.
+    /// </summary>
+    internal long Duration
+    {
+        get
+        {
+            ref AVFrame f = ref Unsafe.AsRef<AVFrame>((void*)_ptr);
+            return f.duration;
         }
     }
 
@@ -243,6 +258,25 @@ internal readonly unsafe ref struct AvFrameAccessor
             return TimeSpan.Zero;
 
         long microseconds = pts * (long)streamTimeBaseNum * FFAvUtil.AvTimeBase / streamTimeBaseDen;
+        return TimeSpan.FromMicroseconds(microseconds);
+    }
+
+    /// <summary>
+    /// Converts the frame's display duration to a <see cref="TimeSpan"/> using the stream
+    /// time base. Returns <see cref="TimeSpan.Zero"/> when the decoder reported no duration
+    /// or the time base denominator is zero, which is what every frame carried before
+    /// this was read at all.
+    /// </summary>
+    /// <param name="streamTimeBaseNum">Numerator of the stream's time base (e.g. 1).</param>
+    /// <param name="streamTimeBaseDen">Denominator of the stream's time base (e.g. 90000).</param>
+    internal TimeSpan ComputeDuration(int streamTimeBaseNum, int streamTimeBaseDen)
+    {
+        long duration = Duration;
+
+        if (duration <= 0 || streamTimeBaseDen == 0)
+            return TimeSpan.Zero;
+
+        long microseconds = duration * (long)streamTimeBaseNum * FFAvUtil.AvTimeBase / streamTimeBaseDen;
         return TimeSpan.FromMicroseconds(microseconds);
     }
 }

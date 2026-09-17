@@ -768,8 +768,11 @@ public sealed class ClockSelectVideoSinkTests
         pacer.Resume();
         await pacer.WaitForParkAfterAsync(resumed);
 
-        time.Advance(TimeSpan.FromMilliseconds(150)); // past the re-armed 120 ms cap.
-        await drain;
+        // Past the re-armed cap, which is the frame's remaining 33 ms plus 120 ms of slack
+        // rather than the bare 120 ms (#249).
+        time.Advance(TimeSpan.FromMilliseconds(200));
+        // Bounded so a cap that never fires fails this test rather than hanging the run.
+        await drain.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -1020,16 +1023,107 @@ public sealed class ClockSelectVideoSinkTests
         }
     }
 
+
+    // ── The end-of-content hold's cap (#249) ──────────────────────
+
+    [Theory]
+    // A frame still mid-display: wait out what is left of it, with maxWait as slack over it.
+    [InlineData(1000, 120, 1120)]
+    [InlineData(33, 120, 153)]
+    // Already due to end, or past it: nothing left to wait for, so the bare slack.
+    [InlineData(0, 120, 120)]
+    [InlineData(-500, 120, 120)]
+    public void HoldCap_IsTheRemainingDisplayIntervalPlusSlack(
+        int remainingMs,
+        int maxWaitMs,
+        int expectedMs
+    )
+    {
+        // maxWait alone is a stall guard sized for one frame at video cadence. Using it as the
+        // hold's bound truncates any frame whose display interval outlasts it — a still paced by
+        // the image demuxer is the case that surfaced this — and fires Ended mid-display, which
+        // is the defect the hold exists to prevent.
+        var cap = ClockSelectVideoSink.HoldCapFor(
+            TimeSpan.FromMilliseconds(remainingMs),
+            TimeSpan.FromMilliseconds(maxWaitMs)
+        );
+
+        Assert.Equal(TimeSpan.FromMilliseconds(expectedMs), cap);
+    }
+
+    [Fact]
+    public async Task HoldCap_ArmedForTheHold_OutlastsALongDisplayInterval()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        var time = new FakeTimeProvider();
+        await using var pacer = new ClockSelectVideoSink(
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120), timeProvider: time);
+
+        pacer.BeginRun();
+        // One frame, due immediately, on screen for a second. A still opened through the image
+        // demuxer at framerate=1/1 decodes to exactly this.
+        await pacer.PresentAsync(
+            new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(1)), default);
+        await sink.WaitForCountAsync(1);
+
+        var parked = pacer.ParkGeneration;
+        pacer.SignalInputComplete();
+        var drain = pacer.WaitForDrainAsync(default);
+
+        // The loop is now parked inside the hold, so the cap it armed is a fact rather than a
+        // guess. Capped at maxWait the frame would be cut off after 120 ms of its second.
+        await pacer.WaitForParkAfterAsync(parked);
+        Assert.False(drain.IsCompleted);
+        Assert.Equal(TimeSpan.FromMilliseconds(1120), pacer.LastHoldCap);
+
+        // The clock reaching the frame's end is what ends the run, not the cap.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await drain.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(new[] { TimeSpan.Zero }, sink.PresentedPts);
+    }
+
+    [Fact]
+    public async Task HoldCap_StillEndsTheRunWhenTheMasterStops()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        var time = new FakeTimeProvider();
+        await using var pacer = new ClockSelectVideoSink(
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120), timeProvider: time);
+
+        pacer.BeginRun();
+        await pacer.PresentAsync(
+            new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(1)), default);
+        await sink.WaitForCountAsync(1);
+
+        var parked = pacer.ParkGeneration;
+        pacer.SignalInputComplete();
+        var drain = pacer.WaitForDrainAsync(default);
+        await pacer.WaitForParkAfterAsync(parked);
+
+        // A master that stopped and is never going to reach the frame's end. The cap is longer
+        // than it was, so it takes longer to give up, but it still gives up: the run ends
+        // rather than wedging EOS forever.
+        time.Advance(TimeSpan.FromMilliseconds(1121));
+
+        await drain.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     /// <summary>A minimal CPU <see cref="IVideoFrame"/> that tracks disposal.</summary>
     private sealed class TrackingFrame : IVideoFrame
     {
         private int _refCount = 1;
-        public TrackingFrame(TimeSpan pts) => Pts = pts;
+        public TrackingFrame(TimeSpan pts, TimeSpan? duration = null)
+        {
+            Pts = pts;
+            Duration = duration ?? TimeSpan.FromMilliseconds(33);
+        }
         public bool IsDisposed => Volatile.Read(ref _refCount) <= 0;
         public int Width => 4;
         public int Height => 4;
         public TimeSpan Pts { get; }
-        public TimeSpan Duration => TimeSpan.FromMilliseconds(33);
+        public TimeSpan Duration { get; }
         public PixelFormat Format => PixelFormat.Bgra32;
         public FrameMemoryDomain MemoryDomain => FrameMemoryDomain.Cpu;
         public IVideoFrame AddRef()

@@ -522,6 +522,25 @@ Task<IMediaPlayer> pending = FrameFlowPlayer.Open(path).BuildPlayerAsync();
 A type outside FrameFlow that implements `IPlayerBuilder` or `IMediaPlayerBuilder`
 changes its terminal's return type to match.
 
+### 20. Ended fires a frame later, at the end of the last frame's display
+
+**This one is not a compile error.** Decoded frames carry no display interval today, so
+the presenter's end-of-content hold could never engage and `Ended` fired the moment the
+last frame was selected rather than when it finished being on screen. Frames now carry
+the interval the demuxer gave them, so `Ended` arrives one frame interval later: about
+40 ms at 25 fps, and as long as the frame's own interval for a source paced to hold a
+picture.
+
+A host that measured how long a clip took to reach `Ended`, or that chained work off it
+with a budget tuned to the old arrival, gets one frame more than it used to. A host that
+advances a playlist on `Ended` shows the final frame for its full duration first.
+
+`IPlaybackController.Position` is clamped to `Duration` while the state is `Ended`. The
+clock runs on for the command hop between the hold completing and the transition freezing
+it, and that overshoot used to be hidden inside the frame `Ended` arrived early by. A host
+that read `Position` at `Ended` and expected the raw clock now reads `Duration` exactly.
+Everywhere but `Ended` it is unchanged.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`
