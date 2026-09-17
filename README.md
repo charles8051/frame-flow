@@ -35,7 +35,7 @@ full list is under [Packages](#packages).
 
 | You want | Terminal | Returns |
 |---|---|---|
-| Playback you drive — play, pause, seek, repeat, observables | `.BuildPlayerAsync()` | `IMediaPlayer` |
+| Playback you drive — play, pause, seek, repeat, observables | `.BuildPlayerAsync()` | `IMediaPlaylistPlayer` |
 | Open a file and play it to the end | `.BuildAsync()` | `PlayerSession` |
 
 ### `BuildPlayerAsync` — the full player
