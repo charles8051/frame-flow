@@ -88,7 +88,6 @@ public partial class MainWindow : Window
 
     public ObservableCollection<DeviceInfo> Cameras { get; } = new();
 
-    public string? StartupLogFilePath { get; set; }
     public bool BreakYolo { get; set; }
 
     /// <summary>
@@ -132,22 +131,14 @@ public partial class MainWindow : Window
         StartupClock.Mark("MainWindow.OnLoaded entered");
         base.OnLoaded(e);
 
-        // Real logger factory so pipeline errors surface. Off by default
-        // (no provider added), but --log-file <path> writes a full
-        // debug-level trace so multicast-branch failures don't vanish.
-        // Mirrors the periphery reference + FrameFlow file Multicast.
-        _loggerFactory = LoggerFactory.Create(b =>
-        {
-            b.SetMinimumLevel(LogLevel.Debug);
-            if (!string.IsNullOrEmpty(StartupLogFilePath))
-                b.AddProvider(new FileLoggerProvider(ExampleLogPaths.Resolve(StartupLogFilePath), LogLevel.Debug));
-        });
+        // A real logger factory so pipeline errors surface: multicast-branch
+        // failures otherwise vanish beyond what reaches the StatusText surface.
+        _loggerFactory = ExampleLogging.CreateFactory("camera-multicast.log");
         _logger = _loggerFactory.CreateLogger<MainWindow>();
         StartupClock.AttachLogger(_logger);
         StartupClock.Mark("LoggerFactory ready");
         _logger.LogInformation(
-            "FrameFlow Camera Multicast ready. logFile={LogFile} breakYolo={BreakYolo}",
-            StartupLogFilePath ?? "(none)",
+            "FrameFlow Camera Multicast ready. breakYolo={BreakYolo}",
             BreakYolo
         );
 

@@ -44,28 +44,13 @@ internal static class Program
 {
     public static async Task<int> Main(string[] args)
     {
-        // First non-flag arg is the input file. --log-file <path>
-        // attaches a FileLoggerProvider via ConfigureLogging below.
-        // Argument-position-agnostic so launchSettings.json can put
-        // the flag in any order.
-        string? inputPath = null;
-        string? logFilePath = null;
-        for (var i = 0; i < args.Length; i++)
-        {
-            if (args[i] == "--log-file" && i + 1 < args.Length)
-            {
-                logFilePath = args[i + 1];
-                i++;
-                continue;
-            }
-            if (!args[i].StartsWith("--", StringComparison.Ordinal))
-                inputPath ??= args[i];
-        }
+        // One argument: the file to play.
+        var inputPath = args.FirstOrDefault(a => !a.StartsWith('-'));
 
         if (string.IsNullOrEmpty(inputPath))
         {
             Console.Error.WriteLine(
-                "Usage: FrameFlow.Examples.HostedServicePlayer <media-file> [--log-file <path>]"
+                "Usage: FrameFlow.Examples.HostedServicePlayer <media-file>"
             );
             return 2;
         }
@@ -89,12 +74,13 @@ internal static class Program
             )
             .ConfigureLogging(b =>
             {
-                // Plug the FileLoggerProvider into the host's logging
-                // pipeline so it lives + dies with the host. The
-                // generic host's default console provider stays;
-                // file is additive.
-                if (!string.IsNullOrEmpty(logFilePath))
-                    b.AddProvider(new FileLoggerProvider(ExampleLogPaths.Resolve(logFilePath), LogLevel.Debug));
+                // Plug the file provider into the host's logging pipeline so it
+                // lives + dies with the host. The generic host's default console
+                // provider stays; file is additive.
+                b.AddExampleFile(
+                    "hosted-service-player.log",
+                    onFailure: ex => Console.Error.WriteLine($"File logging is off: {ex.Message}")
+                );
             })
             .ConfigureServices(services =>
             {

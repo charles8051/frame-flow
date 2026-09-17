@@ -82,17 +82,7 @@ public partial class MainWindow : Window
         // Build the logger factory in the ctor (before the window attaches to
         // the visual tree) so the FrameFlowVideoView's attach-time EnsureSink()
         // picks up our factory rather than the silent NullLoggerFactory.
-        _loggerFactory = LoggerFactory.Create(b =>
-        {
-            b.SetMinimumLevel(LogLevel.Debug)
-                .AddProvider(new TextBoxLoggerProvider(LogOutput, LogLevel.Information));
-
-            // A bare --log-file filename resolves under <repo>/logs/ so the log
-            // lands at a consistent, workspace-agnostic path.
-            var logPath = ExampleLogPaths.Resolve(_options.LogFilePath);
-            if (!string.IsNullOrEmpty(logPath))
-                b.AddProvider(new FileLoggerProvider(logPath, LogLevel.Debug));
-        });
+        _loggerFactory = ExampleLogging.CreateFactory("dual-player.log");
         _logger = _loggerFactory.CreateLogger<MainWindow>();
 
         LeftVideo.LoggerFactory = _loggerFactory;

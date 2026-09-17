@@ -25,9 +25,6 @@ public class App : Application
                 // The module ships no weights (ADR-0051), so this must point
                 // at a BlazeFace ONNX you supply.
                 FaceModelPath = ValueAfter(args, "--face"),
-                // --log-file <path>: opt-in debug file sink (per-frame
-                // inference timing lands here at Debug).
-                StartupLogFilePath = ValueAfter(args, "--log-file"),
                 // --camera <index>: which enumerated camera to auto-select
                 // (default 0). The first camera connects automatically on
                 // startup regardless — no UI click needed.

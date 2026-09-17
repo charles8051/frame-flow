@@ -20,17 +20,10 @@ public class App : Application
                 !a.StartsWith("--", StringComparison.Ordinal) && System.IO.File.Exists(a)
             );
 
-            // --log-file <path> enables an opt-in file sink alongside
-            // the in-window TextBox log. Whisper + YOLO + caption pump
-            // chatter all goes through the framework logger; the file
-            // sink gives a post-mortem view when something's wrong.
-            string? logFilePath = null;
             var exitAfter = 0;
             for (var i = 0; i < args.Length - 1; i++)
             {
-                if (args[i] == "--log-file")
-                    logFilePath = args[i + 1];
-                else if (args[i] == "--exit-after" && int.TryParse(args[i + 1], out var secs))
+                if (args[i] == "--exit-after" && int.TryParse(args[i + 1], out var secs))
                     exitAfter = secs;
             }
 
@@ -42,7 +35,6 @@ public class App : Application
             desktop.MainWindow = new MainWindow
             {
                 StartupFilePath = startupFile,
-                StartupLogFilePath = logFilePath,
                 UseGpu = useGpu,
                 ExitAfterSeconds = exitAfter,
             };

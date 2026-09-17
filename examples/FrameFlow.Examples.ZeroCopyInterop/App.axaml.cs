@@ -32,7 +32,6 @@ public class App : Application
             var startupFile = args.FirstOrDefault(a =>
                 !a.StartsWith("--", StringComparison.Ordinal) && File.Exists(a)
             );
-            var logFilePath = GetArg(args, "--log-file");
             var exitAfter = int.TryParse(GetArg(args, "--exit-after"), out var s) ? s : 0;
             var hwMode = GetArg(args, "--hw-mode");
             var fullscreen = args.Contains("--fullscreen");
@@ -41,12 +40,7 @@ public class App : Application
             // Build the logger here (before the window shows) so the bootstrap
             // result and any window-creation problems are captured even if the
             // GPU window never renders (headless / no-desktop runs).
-            var loggerFactory = LoggerFactory.Create(b =>
-            {
-                b.SetMinimumLevel(LogLevel.Debug);
-                if (!string.IsNullOrEmpty(logFilePath))
-                    b.AddProvider(new FileLoggerProvider(ExampleLogPaths.Resolve(logFilePath), LogLevel.Debug));
-            });
+            var loggerFactory = ExampleLogging.CreateFactory("zero-copy-interop.log");
             loggerFactory
                 .CreateLogger<App>()
                 .LogInformation(

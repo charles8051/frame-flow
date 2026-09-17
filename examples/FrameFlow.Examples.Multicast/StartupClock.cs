@@ -15,7 +15,7 @@ namespace FrameFlow.Examples.Multicast;
 /// phases (before <see cref="LoggerFactory"/> is wired) still produce
 /// observable output. Once <see cref="AttachLogger"/> is called the
 /// same marks also flow through <see cref="ILogger"/> at Information
-/// level so they land in the <c>--log-file</c> trace.
+/// level so they land in the file trace.
 /// </remarks>
 internal static class StartupClock
 {

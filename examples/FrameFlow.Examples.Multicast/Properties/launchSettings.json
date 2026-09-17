@@ -1,8 +1,7 @@
 {
   "profiles": {
     "FrameFlow.Examples.Multicast": {
-      "commandName": "Project",
-      "commandLineArgs": "--log-file\r\navalonia-multicast.log"
+      "commandName": "Project"
     }
   }
 }

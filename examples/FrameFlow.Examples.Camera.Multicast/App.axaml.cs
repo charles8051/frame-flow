@@ -20,19 +20,6 @@ public class App : Application
         {
             var args = desktop.Args ?? Array.Empty<string>();
 
-            // --log-file <path> opt-in file sink. Without it the app
-            // adds no log provider and every pipeline error is silent
-            // beyond what bubbles to the StatusText surface.
-            string? logFilePath = null;
-            for (var i = 0; i < args.Length - 1; i++)
-            {
-                if (args[i] == "--log-file")
-                {
-                    logFilePath = args[i + 1];
-                    break;
-                }
-            }
-
             // --break-yolo skips Yolov8Detector.CreateAsync entirely
             // and flips pane 2 to Unavailable. Lets us verify that a
             // broken pane-2 bootstrap doesn't take down panes 1 and 3.
@@ -80,7 +67,6 @@ public class App : Application
 
             desktop.MainWindow = new MainWindow
             {
-                StartupLogFilePath = logFilePath,
                 BreakYolo = breakYolo,
                 AutoPickFirstCamera = autoPick,
                 AutoPickIndex = autoPickIndex,

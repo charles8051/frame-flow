@@ -60,7 +60,6 @@ public partial class MainWindow : Window
     /// </summary>
     public string? FaceModelPath { get; set; }
 
-    public string? StartupLogFilePath { get; set; }
 
     /// <summary>
     /// Which enumerated camera to auto-select (<c>--camera &lt;idx&gt;</c>,
@@ -83,22 +82,16 @@ public partial class MainWindow : Window
     {
         base.OnLoaded(e);
 
-        _loggerFactory = LoggerFactory.Create(b =>
-        {
-            b.SetMinimumLevel(LogLevel.Debug);
-            if (!string.IsNullOrEmpty(StartupLogFilePath))
-                b.AddProvider(new FileLoggerProvider(ExampleLogPaths.Resolve(StartupLogFilePath), LogLevel.Debug));
-        });
+        _loggerFactory = ExampleLogging.CreateFactory("camera-inference-dml.log");
         _logger = _loggerFactory.CreateLogger<MainWindow>();
         var faceMode = !string.IsNullOrEmpty(FaceModelPath);
         _modelLabel = faceMode
             ? $"blazeface ({Path.GetFileName(FaceModelPath)})"
             : ModelPath is null ? "yolov8n (auto-download)" : Path.GetFileName(ModelPath);
         _logger.LogInformation(
-            "Camera inference ready. mode={Mode} model={Model} logFile={LogFile}",
+            "Camera inference ready. mode={Mode} model={Model}",
             faceMode ? "face" : "object",
-            (faceMode ? FaceModelPath : ModelPath) ?? "(stock yolov8n)",
-            StartupLogFilePath ?? "(none)");
+            (faceMode ? FaceModelPath : ModelPath) ?? "(stock yolov8n)");
 
         // FFmpeg bootstrap for the BGRA32 ConvertPixelFormat (libswscale)
         // stage. This example never goes through the player builder, so
