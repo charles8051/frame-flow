@@ -208,11 +208,35 @@ public sealed class MixedQueueTests : IClassFixture<FfmpegBootstrapFixture>
         // ~1.1s the sink runs ahead. Half the duration sits an order of magnitude above
         // what an unthrottled producer leaves behind, and below what the pool can hide.
         var playedAtEnded = PlayedDuration(device);
+        var queuedAtEnded = !device.AllQueuedAudioPlayed;
+        var backpressureWaits = audioSink.BackpressureCount;
+
         Assert.True(
             playedAtEnded >= expected / 2,
             $"The device had played {playedAtEnded.TotalSeconds:F3}s of the "
                 + $"{expected.TotalSeconds:F3}s clip when the pipeline reported Ended (at "
                 + $"{atEnded.TotalSeconds:F3}s), so the sink was not holding the producer back."
+        );
+
+        // The mechanism, named rather than inferred. PresentAsync counts every time it had to
+        // wait for a buffer to recycle, so a non-zero count is the sink reporting that it held
+        // the producer back, and distinguishes this from a producer that happened to be slow
+        // for some unrelated reason.
+        Assert.True(
+            backpressureWaits > 0,
+            "The sink never waited for a buffer, so whatever paced this was not its backpressure."
+        );
+
+        // Ended is the last buffer being handed over, not the device having played it, so
+        // there is still audio queued here. Without this the assertion above is only a lower
+        // bound, and an implementation that deferred Ended until the device had drained would
+        // satisfy it. The one way this misfires is a machine too slow to keep the device fed,
+        // which would have starved the device rather than paced the producer, and is a result
+        // worth seeing rather than tolerating.
+        Assert.True(
+            queuedAtEnded,
+            $"The device had played all {playedAtEnded.TotalSeconds:F3}s it was given when "
+                + "Ended fired, so Ended is not the handoff it is documented to be."
         );
 
         // Nothing was lost on the way: the clip plays out in full rather than the pipeline
