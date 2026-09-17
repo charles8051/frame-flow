@@ -96,19 +96,20 @@ with both interfaces reparented onto it. Rejected, because nothing consumes it.
 Every site that touches both sinks handles them separately, by concrete type,
 because what it does with each differs:
 
-- `PlaybackGraph.cs:89-100` builds a different chain per medium: different
-  decoder, different node type, different wrapper.
-- `SubstrateSession.cs:191-192` rolls up two different snapshot types.
+- `SubstrateSession.cs:1461-1477` and `PlayerSession.cs:138-151` build a
+  different chain per medium: different decoder, different node type,
+  different wrapper.
+- `SubstrateSession.cs:240-241` rolls up two different snapshot types.
 - `SinkAdapters` already shares its body — see §3 — through a **delegate**
   parameter, not an interface. This was the one concrete consumer #93 pointed
   at, and #94 closed it without needing a base type.
 
-
-> **Amended 2026-09-17.** `PlaybackGraph` has since been deleted. It was a
-> Phase-3 migration proof that nothing outside its own tests ever constructed,
-> and `SubstrateSession` drew the same per-medium split beside it. The first
-> bullet's evidence now reads on `SubstrateSession.cs:1461-1477` and
-> `PlayerSession`. The conclusion is unchanged: three sites, each per-medium.
+> **Amended 2026-09-17.** The first bullet cited `PlaybackGraph.cs:89-100`
+> until that type was deleted. It was a substrate-migration proof that nothing
+> outside its own tests ever constructed, and `SubstrateSession` drew the same
+> per-medium split beside it. Both bullets now cite live code; the second
+> bullet's line numbers had drifted on their own. Three sites, each
+> per-medium, conclusion unchanged.
 
 Contravariance on `in T` would be sound. It would also be unused.
 
