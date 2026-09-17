@@ -27,7 +27,7 @@ weakest object.
 | Scenario | Entry point | Returns |
 |---|---|---|
 | App or host playback | `MediaPlayer.CreateAsync(...)` | `IMediaPlayer` |
-| Open a file, play to end | `FrameFlowPlayer.Create(...).BuildAsync()` | `PlayerSession` |
+| Open a file, play to end | `FrameFlowPlayer.Create().WithMedia(...).BuildAsync()` | `PlayerSession` |
 | Drive the state machine | `PlaybackController.Create(...)` | `IPlaybackController` |
 
 `PlayerSession` is single-shot. It has no pause, resume, seek, repeat,
@@ -45,7 +45,7 @@ positional static call.
 One builder. Two terminals.
 
 ```csharp
-await using var player = await FrameFlowPlayer.Create(path)
+await using var player = await FrameFlowPlayer.Create().WithMedia(path)
     .WithAudioSink(audio)
     .WithVideoSink(video)
     .WithRepeatMode(RepeatMode.All)

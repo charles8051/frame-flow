@@ -32,7 +32,7 @@ public sealed class PlayerBuilderQueueTests : IClassFixture<FfmpegBootstrapFixtu
         var first = SourceOf(Clip);
         var second = SourceOf(Clip);
 
-        await using var player = await FrameFlowPlayer.Create([first, second]).BuildPlayerAsync();
+        await using var player = await FrameFlowPlayer.Create().WithMedia([first, second]).BuildPlayerAsync();
 
         var queue = player.GetPlaylist().Playlist;
         Assert.Equal(2, queue.Count);
@@ -45,7 +45,7 @@ public sealed class PlayerBuilderQueueTests : IClassFixture<FfmpegBootstrapFixtu
     {
         var source = SourceOf(Clip);
 
-        await using var player = await FrameFlowPlayer.Create(source).BuildPlayerAsync();
+        await using var player = await FrameFlowPlayer.Create().WithMedia(source).BuildPlayerAsync();
 
         var only = Assert.Single(player.GetPlaylist().Playlist);
         Assert.Same(source, only.Source);
@@ -55,11 +55,29 @@ public sealed class PlayerBuilderQueueTests : IClassFixture<FfmpegBootstrapFixtu
     public async Task TheQueueEntry_CarriesTheChainsOptions()
     {
         await using var player = await FrameFlowPlayer
-            .Create([SourceOf(Clip), SourceOf(Clip)])
+            .Create()
+            .WithMedia([SourceOf(Clip), SourceOf(Clip)])
             .WithRepeatMode(RepeatMode.All)
             .BuildPlayerAsync();
 
         Assert.Equal(RepeatMode.All, player.GetDiagnostics().RepeatMode);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task WithMedia_Replaces_RatherThanAppending()
+    {
+        // Every other With* on the builder replaces. Appending would let a chain name two sources
+        // and still offer BuildAsync, which a session cannot honour.
+        var second = SourceOf(Clip);
+
+        await using var player = await FrameFlowPlayer
+            .Create()
+            .WithMedia(SourceOf(Clip))
+            .WithMedia(second)
+            .BuildPlayerAsync();
+
+        var only = Assert.Single(player.GetPlaylist().Playlist);
+        Assert.Same(second, only.Source);
     }
 
     [RequiresFfmpegAndCorpusFact]

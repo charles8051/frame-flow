@@ -181,7 +181,8 @@ internal sealed class PlaybackHostedService(
             try
             {
                 await using var player = await FrameFlowPlayer
-                    .Create(inputPath)
+                    .Create()
+                    .WithMedia(inputPath)
                     .WithAudioSink(audioSink)
                     .WithLogger(loggerFactory)
                     .BuildAsync(ct)

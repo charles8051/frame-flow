@@ -460,7 +460,8 @@ public partial class MainWindow : Window
             // its trunk open. The builder terminates it at the view's sink, so frames arrive
             // through the clock-select pacer and the overlays key off what was presented.
             _player = await FrameFlowPlayer
-                .Create(path)
+                .Create()
+                .WithMedia(path)
                 .WithAudioSink(_audioSink)
                 .WithLogger(_loggerFactory)
                 // GPU mode: keep hardware frames on the GPU so the display branch can

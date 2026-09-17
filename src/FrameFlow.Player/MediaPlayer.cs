@@ -30,7 +30,7 @@ namespace FrameFlow.Player;
 /// built with an empty queue.
 /// </para>
 /// <para>
-/// <b>Prefer the fluent builder.</b> <c>FrameFlowPlayer.Create(path)…BuildPlayerAsync()</c> runs the
+/// <b>Prefer the fluent builder.</b> <c>FrameFlowPlayer.Create().WithMedia(path)…BuildPlayerAsync()</c> runs the
 /// same wiring and returns the same player. This factory remains for existing callers. New code
 /// should use the builder.
 /// </para>
