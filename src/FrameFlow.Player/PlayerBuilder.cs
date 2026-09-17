@@ -174,7 +174,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
     {
         RequireSinkForEachConfigurator();
         return await MediaPlayer.CreateCoreAsync(
-            source: _source,
+            initial: [_source],
             videoSink: _videoSink,
             audioSink: _audioSink,
             hardwareDecodeMode: _hwMode,
