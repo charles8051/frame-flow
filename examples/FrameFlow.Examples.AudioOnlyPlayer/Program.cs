@@ -14,22 +14,19 @@ internal static class Program
 {
     public static async Task<int> Main(string[] args)
     {
-        // One argument: the file to play.
-        var inputPath = args.FirstOrDefault(a => !a.StartsWith('-'));
-
-        if (string.IsNullOrEmpty(inputPath))
+        // Exactly one argument: the file to play. An option, or a second path, is
+        // an error rather than a guess — taking the first path-shaped argument is
+        // what let a stale `--log-file <name>` invocation play its own log.
+        if (
+            !ExampleArgs.TryReadInputPath(
+                args,
+                "FrameFlow.Examples.AudioOnlyPlayer <audio-or-media-file>",
+                out var inputPath
+            )
+        )
         {
-            Console.Error.WriteLine(
-                "Usage: FrameFlow.Examples.AudioOnlyPlayer <audio-or-media-file>"
-            );
             return 2;
         }
-        if (!File.Exists(inputPath))
-        {
-            Console.Error.WriteLine($"Input file not found: {inputPath}");
-            return 2;
-        }
-
         using var loggerFactory = ExampleLogging.CreateFactory(
             "audio-only-player.log",
             onFailure: ex => Console.Error.WriteLine($"File logging is off: {ex.Message}")

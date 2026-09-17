@@ -133,7 +133,10 @@ public partial class MainWindow : Window
 
         // A real logger factory so pipeline errors surface: multicast-branch
         // failures otherwise vanish beyond what reaches the StatusText surface.
-        _loggerFactory = ExampleLogging.CreateFactory("camera-multicast.log");
+        _loggerFactory = ExampleLogging.CreateFactory(
+            "camera-multicast.log",
+            onFailure: ex => Title += $"  [no log file: {ex.Message}]"
+        );
         _logger = _loggerFactory.CreateLogger<MainWindow>();
         StartupClock.AttachLogger(_logger);
         StartupClock.Mark("LoggerFactory ready");

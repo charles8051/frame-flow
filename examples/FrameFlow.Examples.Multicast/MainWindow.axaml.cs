@@ -128,7 +128,10 @@ public partial class MainWindow : Window
         // (not the ctor) for parity with the other Avalonia example windows —
         // controls are guaranteed materialised by the time we install
         // dependencies on them.
-        _loggerFactory = ExampleLogging.CreateFactory("avalonia-multicast.log");
+        _loggerFactory = ExampleLogging.CreateFactory(
+            "avalonia-multicast.log",
+            onFailure: ex => Title += $"  [no log file: {ex.Message}]"
+        );
         _logger = _loggerFactory.CreateLogger<MainWindow>();
         StartupClock.AttachLogger(_logger);
         StartupClock.Mark("LoggerFactory ready");

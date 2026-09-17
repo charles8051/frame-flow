@@ -82,7 +82,10 @@ public partial class MainWindow : Window
     {
         base.OnLoaded(e);
 
-        _loggerFactory = ExampleLogging.CreateFactory("camera-inference-dml.log");
+        _loggerFactory = ExampleLogging.CreateFactory(
+            "camera-inference-dml.log",
+            onFailure: ex => Title += $"  [no log file: {ex.Message}]"
+        );
         _logger = _loggerFactory.CreateLogger<MainWindow>();
         var faceMode = !string.IsNullOrEmpty(FaceModelPath);
         _modelLabel = faceMode

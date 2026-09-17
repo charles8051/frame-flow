@@ -40,7 +40,11 @@ public class App : Application
             // Build the logger here (before the window shows) so the bootstrap
             // result and any window-creation problems are captured even if the
             // GPU window never renders (headless / no-desktop runs).
-            var loggerFactory = ExampleLogging.CreateFactory("zero-copy-interop.log");
+            string? logFailure = null;
+            var loggerFactory = ExampleLogging.CreateFactory(
+                "zero-copy-interop.log",
+                onFailure: ex => logFailure = ex.Message
+            );
             loggerFactory
                 .CreateLogger<App>()
                 .LogInformation(
@@ -59,6 +63,8 @@ public class App : Application
                 StartupFullscreen = fullscreen,
                 Soak = soak,
             };
+            if (logFailure is not null)
+                desktop.MainWindow.Title += $"  [no log file: {logFailure}]";
         }
 
         base.OnFrameworkInitializationCompleted();

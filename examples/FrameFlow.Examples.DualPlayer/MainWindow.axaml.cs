@@ -82,7 +82,10 @@ public partial class MainWindow : Window
         // Build the logger factory in the ctor (before the window attaches to
         // the visual tree) so the FrameFlowVideoView's attach-time EnsureSink()
         // picks up our factory rather than the silent NullLoggerFactory.
-        _loggerFactory = ExampleLogging.CreateFactory("dual-player.log");
+        _loggerFactory = ExampleLogging.CreateFactory(
+            "dual-player.log",
+            onFailure: ex => Title += $"  [no log file: {ex.Message}]"
+        );
         _logger = _loggerFactory.CreateLogger<MainWindow>();
 
         LeftVideo.LoggerFactory = _loggerFactory;

@@ -183,7 +183,10 @@ public partial class MainWindow : Window
     {
         base.OnLoaded(e);
 
-        _loggerFactory = ExampleLogging.CreateFactory("livecaptioning.log");
+        _loggerFactory = ExampleLogging.CreateFactory(
+            "livecaptioning.log",
+            onFailure: ex => Title += $"  [no log file: {ex.Message}]"
+        );
         _logger = _loggerFactory.CreateLogger<MainWindow>();
         VideoView.LoggerFactory = _loggerFactory;
 
