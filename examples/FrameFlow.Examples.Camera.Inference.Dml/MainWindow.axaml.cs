@@ -286,36 +286,25 @@ public partial class MainWindow : Window
         // a slow inference never sees stale frames), exposed as a graph source.
         await using var camSource = session.AsPushVideoFrameSource(ct, _loggerFactory);
 
-        // source → convert(BGRA32) → count → single detection-overlay sink.
+        // source → convert(BGRA32) → single detection-overlay sink.
         var graph = new FrameFlow.Graph.Graph();
-        var source = camSource.Source;
-        var convert = VideoOperators.ConvertPixelFormat("camera-convert", PixelFormat.Bgra32);
-        var counter = new OperatorNode<VideoFrameRef, VideoFrameRef>(
-            "count",
-            (item, _) =>
-            {
-                Interlocked.Increment(ref _frameCount);
-                return ValueTask.FromResult<VideoFrameRef?>(item);
-            });
-        var sink = new SinkNode<VideoFrameRef>(
-            "detect-sink",
-            async (item, ct2) =>
-            {
-                // CloneCpu so the pane owns/disposes its frame independently
-                // of the graph's VideoFrameRef. PresentAsync returns
-                // immediately (queue-of-one), so this sink never blocks on
-                // inference — slow models drop frames, they don't stall.
-                var pane = _activePane;
-                if (pane is null)
-                    return;
-                var clone = item.Frame.CloneCpu();
-                await pane.PresentAsync(clone, ct2).ConfigureAwait(false);
-            });
-
         graph
-            .Connect(source.Output, convert.Input)
-            .Connect(convert.Output, counter.Input)
-            .Connect(counter.Output, sink.Input);
+            .Pipeline(camSource.Source)
+            .Then(VideoOperators.ConvertPixelFormat("camera-convert", PixelFormat.Bgra32))
+            .To(new SinkNode<VideoFrameRef>(
+                "detect-sink",
+                async (item, frameCt) =>
+                {
+                    Interlocked.Increment(ref _frameCount);
+
+                    // CloneCpu so the pane owns/disposes its frame independently
+                    // of the graph's VideoFrameRef. PresentAsync returns
+                    // immediately (queue-of-one), so this sink never blocks on
+                    // inference — slow models drop frames, they don't stall.
+                    if (_activePane is not { } pane)
+                        return;
+                    await pane.PresentAsync(item.Frame.CloneCpu(), frameCt).ConfigureAwait(false);
+                }));
 
         Dispatcher.UIThread.Post(() => StatusText.Text = $"Capturing from {_cameraLabel}.");
 

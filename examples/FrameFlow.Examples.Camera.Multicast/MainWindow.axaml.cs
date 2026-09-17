@@ -412,7 +412,7 @@ public partial class MainWindow : Window
         // same shape downstream camera-inference consumers use.
         await using var camSource = session.AsPushVideoFrameSource(ct, _loggerFactory);
 
-        // Substrate graph: source → convert(BGRA32) → count → fanout.
+        // Substrate graph: source → convert(BGRA32) → fanout.
         // No PaceUntil — cameras produce at sensor rate which is already
         // display-rate (≈30 fps typical).
         var graph = new Graph.Graph();
@@ -420,13 +420,6 @@ public partial class MainWindow : Window
         var convert = VideoOperators.ConvertPixelFormat(
             "camera-convert",
             PixelFormat.Bgra32);
-        var counter = new OperatorNode<VideoFrameRef, VideoFrameRef>(
-            "broadcast-count",
-            (item, _) =>
-            {
-                Interlocked.Increment(ref _broadcastFrameCount);
-                return ValueTask.FromResult<VideoFrameRef?>(item);
-            });
 
         // Terminal fan-out: clone the BGRA32 frame three times (each
         // pane disposes its own independently), dispatch to the three
@@ -438,6 +431,8 @@ public partial class MainWindow : Window
             "broadcast-fanout",
             async (item, ct2) =>
             {
+                Interlocked.Increment(ref _broadcastFrameCount);
+
                 var clone1 = item.Frame.CloneCpu();
                 var clone2 = item.Frame.CloneCpu();
                 var clone3 = item.Frame.CloneCpu();
@@ -463,10 +458,7 @@ public partial class MainWindow : Window
                 }
             });
 
-        graph
-            .Connect(source.Output, convert.Input)
-            .Connect(convert.Output, counter.Input)
-            .Connect(counter.Output, fanout.Input);
+        graph.Pipeline(source).Then(convert).To(fanout);
 
         StartupClock.Mark("Graph wired; entering RunAsync");
         Dispatcher.UIThread.Post(() =>
