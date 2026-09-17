@@ -64,27 +64,25 @@ internal static class RecorderPipeline
         SinkNode<ClipSegment> encoderNode = encoderSink.Build();
 
         var graph = new FrameFlow.Graph.Graph();
-        graph.Connect(source.Output, resizeConvert.Input);
-        // Gate branch first (cloner-less) so the substrate's ForwardAsync
-        // hands it the inherited ref directly; only the preview branch
-        // pays the CloneCpu cost.
-        graph.Connect(resizeConvert.Output, gateNode.Input);
+        GraphChain<VideoFrameRef> display = graph.Pipeline(source).Then(resizeConvert);
 
+        // The preview is a declared branch, so the gate stays the trunk and takes
+        // the incoming ref no matter which edge is wired first; only the preview
+        // pays the CloneCpu cost.
         if (preview is not null)
         {
-            SinkNode<VideoFrameRef> previewNode = preview.AsSinkNode("preview-sink");
-            graph.Connect(
-                resizeConvert.Output,
-                previewNode.Input,
-                EdgeOptions
-                    .LatestWins()
-                    .WithCloner<VideoFrameRef>(
-                        input => new VideoFrameRef(input.Frame.CloneCpu())
-                    )
-            );
+            display
+                .Branch(
+                    EdgeOptions
+                        .LatestWins()
+                        .WithCloner<VideoFrameRef>(
+                            input => new VideoFrameRef(input.Frame.CloneCpu())
+                        )
+                )
+                .To(preview.AsSinkNode("preview-sink"));
         }
 
-        graph.Connect(gateNode.Output, encoderNode.Input, EdgeOptions.Buffered(capacity: 1));
+        display.Then(gateNode).To(encoderNode, EdgeOptions.Buffered(capacity: 1));
         return graph;
     }
 }

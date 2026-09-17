@@ -18,9 +18,13 @@ namespace FrameFlow.Graph;
 /// terminates by wiring into a sink and returns void.
 /// </para>
 /// <para>
-/// For multi-output topologies (fan-out to multiple consumers), drop
-/// back to the explicit <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeOptions)"/> API — the chain is
-/// sugar for linear segments only.
+/// A fan-out is <see cref="Branch(EdgeConfig{T})"/>: it declares a second consumer of
+/// the same output with its own edge config, and keeps the chain it was called on as
+/// the trunk. <see cref="Join{TSecondary, TOut}(GraphChain{TSecondary}, SyncJoinNode{T, TSecondary, TOut}, EdgeOptions, EdgeOptions)"/>
+/// pairs two chains back together. What the chain cannot reach is an input wired from
+/// somewhere other than a chain head — for that, take <see cref="Output"/> and
+/// <see cref="Graph"/> and call
+/// <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeOptions)"/> directly.
 /// </para>
 /// </remarks>
 public readonly struct GraphChain<T>

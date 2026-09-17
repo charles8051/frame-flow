@@ -11,8 +11,10 @@ namespace FrameFlow.Video;
 /// primitive-set substrate. Each operator is now a factory that
 /// builds an <see cref="OperatorNode{TIn, TOut}"/> wrapping the
 /// underlying <see cref="IVideoConverter"/> primitive; consumers
-/// connect the node's input/output ports via
-/// <see cref="FrameFlow.Graph.Graph.Connect{T}(FrameFlow.Graph.OutputPort{T}, FrameFlow.Graph.InputPort{T}, FrameFlow.Graph.EdgeOptions)"/>.
+/// chain the nodes into a graph with
+/// <see cref="GraphChainExtensions.Pipeline{T}(FrameFlow.Graph.Graph, SourceNode{T})"/>.
+/// <see cref="FrameFlow.Graph.Graph.Connect{T}(FrameFlow.Graph.OutputPort{T}, FrameFlow.Graph.InputPort{T}, FrameFlow.Graph.EdgeOptions)"/>
+/// remains available for an input the chain cannot reach.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,19 +25,18 @@ namespace FrameFlow.Video;
 ///     .ConvertPixelFormat(PixelFormat.Bgra32)
 ///     .Resize(640, 480);
 /// </code>
-/// The new surface returns nodes; callers wire them via the graph:
+/// The new surface returns nodes, chained into a graph:
 /// <code>
 /// var graph = new Graph.Graph();
-/// var convert = VideoOperators.ConvertPixelFormat("convert", PixelFormat.Bgra32);
-/// var resize = VideoOperators.Resize("resize", 640, 480);
-/// graph.Connect(source.Output, convert.Input);
-/// graph.Connect(convert.Output, resize.Input);
+/// graph.Pipeline(source)
+///     .Then(VideoOperators.ConvertPixelFormat("convert", PixelFormat.Bgra32))
+///     .Then(VideoOperators.Resize("resize", 640, 480))
+///     .To(sink);
 /// </code>
-/// More explicit (each edge is visible) at the cost of more lines.
-/// Fluent sugar over this shape is straightforward to add as a
-/// follow-up (extension methods on <see cref="OutputPort{T}"/> that
-/// take a <see cref="Graph"/> and chain a node) but isn't this
-/// port's scope.
+/// Every edge is still a real port-to-port connection; the chain
+/// names them in order instead of one call per edge. For a fan-out,
+/// declare the second consumer with
+/// <see cref="GraphChain{T}.Branch(EdgeConfig{T})"/>.
 /// </para>
 /// <para>
 /// <b>Frame ownership.</b> Each operator wraps its output frame in
