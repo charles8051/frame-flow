@@ -179,7 +179,8 @@ public partial class MainWindow : Window
         try
         {
             var builder = FrameFlowPlayer
-                .Create(cfg.CorpusPath)
+                .Create()
+                .WithMedia(cfg.CorpusPath)
                 .WithVideoSink(pane.VideoSink)
                 .WithHardwareDecode(cfg.HardwareDecodeMode)
                 .WithRepeatMode(cfg.Loop ? RepeatMode.One : RepeatMode.Off)

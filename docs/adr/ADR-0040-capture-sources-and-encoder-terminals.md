@@ -413,7 +413,7 @@ capture and file decode have different lifecycles (live sources
 don't have `Duration`, don't support seek, drop frames on
 backpressure rather than block), and the interface surface would
 become a lowest-common-denominator. Better to keep them as
-distinct types and offer a `FrameFlowPlayer.Create(...)` style facade (the
+distinct types and offer a `FrameFlowPlayer.Create().WithMedia(...)` style facade (the
 Layer-2 builder from `docs/IDEAL_AVALONIA_PLAYER.md`) that hides
 the choice.
 

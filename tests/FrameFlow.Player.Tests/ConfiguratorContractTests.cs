@@ -26,7 +26,8 @@ public sealed class ConfiguratorContractTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () =>
                 FrameFlowPlayer
-                    .Create("does-not-need-to-exist.mp4")
+                    .Create()
+                    .WithMedia("does-not-need-to-exist.mp4")
                     .ConfigureVideo(chain => chain)
                     .BuildPlayerAsync(CancellationToken.None)
         );
@@ -41,7 +42,8 @@ public sealed class ConfiguratorContractTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () =>
                 FrameFlowPlayer
-                    .Create("does-not-need-to-exist.mp4")
+                    .Create()
+                    .WithMedia("does-not-need-to-exist.mp4")
                     .ConfigureAudio(chain => chain)
                     .BuildPlayerAsync(CancellationToken.None)
         );
@@ -57,7 +59,8 @@ public sealed class ConfiguratorContractTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () =>
                 FrameFlowPlayer
-                    .Create("does-not-need-to-exist.mp4")
+                    .Create()
+                    .WithMedia("does-not-need-to-exist.mp4")
                     .ConfigureVideo(chain => chain)
                     .BuildAsync(CancellationToken.None)
         );
@@ -73,7 +76,8 @@ public sealed class ConfiguratorContractTests
         var ex = await Record.ExceptionAsync(
             () =>
                 FrameFlowPlayer
-                    .Create("does-not-exist-either.mp4")
+                    .Create()
+                    .WithMedia("does-not-exist-either.mp4")
                     .WithVideoSink(new NullVideoSink())
                     .ConfigureVideo(chain => chain)
                     .BuildPlayerAsync(CancellationToken.None)

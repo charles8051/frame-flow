@@ -31,7 +31,7 @@ namespace FrameFlow.Player;
 /// </remarks>
 internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
 {
-    private readonly IReadOnlyList<IMediaSource> _sources;
+    private IReadOnlyList<IMediaSource> _sources = [];
     private IVideoSink? _videoSink;
     private IAudioSink? _audioSink;
     private Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? _videoConfigurator;
@@ -49,14 +49,41 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
     private bool _yieldHardwareFrames;
     private bool _activateAudioSink = true;
 
-    internal PlayerBuilder(IReadOnlyList<IMediaSource> sources) => _sources = sources;
-
     /// <summary>
-    /// The item <see cref="BuildAsync"/> opens. A session plays one source; the queue entry
-    /// returns <see cref="IMediaPlayerBuilder"/>, whose only terminal is
-    /// <see cref="BuildPlayerAsync"/>, so this is always the whole queue there.
+    /// The item <see cref="BuildAsync"/> opens. A session plays one source, and the chain that
+    /// names more than one narrows to <see cref="IMediaPlayerBuilder"/>, whose only terminal is
+    /// <see cref="BuildPlayerAsync"/>. Throws when the chain named no media at all, which the
+    /// types cannot rule out.
     /// </summary>
-    private IMediaSource Source => _sources[0];
+    private IMediaSource Source =>
+        _sources.Count > 0
+            ? _sources[0]
+            : throw new InvalidOperationException(
+                "No media. Call WithMedia before BuildAsync — a session plays one source, and "
+                    + "there is nothing to open. BuildPlayerAsync builds a player with an empty "
+                    + "queue instead."
+            );
+
+    public IPlayerBuilder WithMedia(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        _sources = [MediaSource.FromFile(path)];
+        return this;
+    }
+
+    public IPlayerBuilder WithMedia(IMediaSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        _sources = [source];
+        return this;
+    }
+
+    public IMediaPlayerBuilder WithMedia(IEnumerable<IMediaSource> sources)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+        _sources = [.. sources];
+        return this;
+    }
 
     public IPlayerBuilder WithVideoSink(IVideoSink sink)
     {
@@ -202,6 +229,21 @@ internal sealed class PlayerBuilder : IPlayerBuilder, IMediaPlayerBuilder
     // return type so a chain keeps flowing after the narrowing step.
     // Same mutable state underneath; explicit implementation because
     // the signatures differ from IPlayerBuilder's only by return type.
+    IMediaPlayerBuilder IMediaPlayerBuilder.WithMedia(string path)
+    {
+        WithMedia(path);
+        return this;
+    }
+
+    IMediaPlayerBuilder IMediaPlayerBuilder.WithMedia(IMediaSource source)
+    {
+        WithMedia(source);
+        return this;
+    }
+
+    IMediaPlayerBuilder IMediaPlayerBuilder.WithMedia(IEnumerable<IMediaSource> sources) =>
+        WithMedia(sources);
+
     IMediaPlayerBuilder IMediaPlayerBuilder.WithVideoSink(IVideoSink sink)
     {
         WithVideoSink(sink);

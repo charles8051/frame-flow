@@ -17,8 +17,8 @@ namespace FrameFlow.Player;
 /// <see cref="IPlayerBuilder.WithClock"/>,
 /// <see cref="IPlayerBuilder.WithHardwareFrames"/>,
 /// <see cref="IPlayerBuilder.WithAudioActivation"/>), and from
-/// <see cref="FrameFlowPlayer.Create(IEnumerable{IMediaSource})"/>, which
-/// starts here because a <see cref="PlayerSession"/> plays one source.
+/// <see cref="IPlayerBuilder.WithMedia(IEnumerable{IMediaSource})"/>, which narrows here
+/// because a <see cref="PlayerSession"/> plays one source.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -35,7 +35,7 @@ namespace FrameFlow.Player;
 /// logging — is repeated here so a chain keeps flowing after the
 /// narrowing step, in either order:
 /// <code>
-/// await using var player = await FrameFlowPlayer.Create(path)
+/// await using var player = await FrameFlowPlayer.Create().WithMedia(path)
 ///     .WithRepeatMode(RepeatMode.All)
 ///     .WithAudioSink(audio)
 ///     .BuildPlayerAsync(ct);
@@ -44,6 +44,24 @@ namespace FrameFlow.Player;
 /// </remarks>
 public interface IMediaPlayerBuilder
 {
+    /// <summary>
+    /// Names the media the built player starts with, as the file at <paramref name="path"/>.
+    /// Replaces anything a previous <c>WithMedia</c> named.
+    /// </summary>
+    IMediaPlayerBuilder WithMedia(string path);
+
+    /// <summary>
+    /// Names the media the built player starts with. Replaces anything a previous
+    /// <c>WithMedia</c> named.
+    /// </summary>
+    IMediaPlayerBuilder WithMedia(IMediaSource source);
+
+    /// <summary>
+    /// Names an ordered queue the built player starts with, replacing anything a previous
+    /// <c>WithMedia</c> named. An empty queue builds the player with nothing loaded.
+    /// </summary>
+    IMediaPlayerBuilder WithMedia(IEnumerable<IMediaSource> sources);
+
     /// <summary>
     /// Attaches an <see cref="IVideoSink"/> the player will drive
     /// during playback. Replaces any previously-attached video sink.

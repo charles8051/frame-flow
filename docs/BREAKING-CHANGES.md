@@ -502,7 +502,7 @@ await MediaPlayer.CreateAsync([first, second], videoSink, audioSink,
 
 ### 19. `BuildPlayerAsync` returns `Task<IMediaPlaylistPlayer>`
 
-The builder can now open a queue: `FrameFlowPlayer.Create(IEnumerable<IMediaSource>)`
+The builder can now open a queue: `FrameFlowPlayer.Create().WithMedia(IEnumerable<IMediaSource>)`
 starts the same chain over an ordered set of sources. It begins narrowed to
 `IMediaPlayerBuilder`, because a `PlayerSession` plays one source and `BuildAsync` has
 no meaning over a queue.
@@ -513,10 +513,10 @@ the task does not:
 
 ```csharp
 // Still compiles — the awaited value is assignable
-IMediaPlayer player = await FrameFlowPlayer.Create(path).BuildPlayerAsync();
+IMediaPlayer player = await FrameFlowPlayer.Create().WithMedia(path).BuildPlayerAsync();
 
 // Stops compiling — name the new type, or await first
-Task<IMediaPlayer> pending = FrameFlowPlayer.Create(path).BuildPlayerAsync();
+Task<IMediaPlayer> pending = FrameFlowPlayer.Create().WithMedia(path).BuildPlayerAsync();
 ```
 
 A type outside FrameFlow that implements `IPlayerBuilder` or `IMediaPlayerBuilder`
@@ -551,10 +551,10 @@ and it could not be stretched over entry 22's no-source overload.
 await FrameFlowPlayer.Open(path).WithVideoSink(sink).BuildPlayerAsync();
 
 // After
-await FrameFlowPlayer.Create(path).WithVideoSink(sink).BuildPlayerAsync();
+await FrameFlowPlayer.Create().WithMedia(path).WithVideoSink(sink).BuildPlayerAsync();
 ```
 
-Nothing else changes. Same overloads, same arguments, same builders.
+The builder is otherwise the same. Where the source goes is entry 24.
 
 ### 22. A player can be built with nothing to play
 
@@ -616,6 +616,38 @@ what keeps the next member from being a breaking change again.
 
 A type implementing `IMediaSource` directly is unaffected: both new members are default
 interface members returning `null`, which is "open this the way it has always been opened".
+### 24. `FrameFlowPlayer.Create` names no media; `WithMedia` does
+
+Every player is a queue and a queue can be empty, so the entry no longer takes media. It
+is a chained option like the sinks, and it replaces rather than appends, as every other
+`With*` on the builder does.
+
+```csharp
+// Before
+await FrameFlowPlayer.Create(path).WithVideoSink(sink).BuildPlayerAsync();
+await FrameFlowPlayer.Create([first, second]).WithVideoSink(sink).BuildPlayerAsync();
+
+// After
+await FrameFlowPlayer.Create().WithMedia(path).WithVideoSink(sink).BuildPlayerAsync();
+await FrameFlowPlayer.Create().WithMedia([first, second]).WithVideoSink(sink).BuildPlayerAsync();
+```
+
+`WithMedia` takes a path, an `IMediaSource`, or an `IEnumerable<IMediaSource>`. The plural
+one narrows the chain to `IMediaPlayerBuilder`, which is where `Create(IEnumerable<…>)`
+put it before: a `PlayerSession` plays one source, so `BuildAsync` is not on offer over a
+queue.
+
+**One check moved from compile time to run time.** `Create()` used to be the no-media entry
+and returned `IMediaPlayerBuilder`, so `BuildAsync` was unreachable without a source. Now
+`WithMedia` comes after the entry, and `Create().BuildAsync()` compiles. It throws
+`InvalidOperationException` naming `WithMedia`. `BuildPlayerAsync` with no media is
+unchanged and still valid — that is the player with an empty queue.
+
+**If you implement `IPlayerBuilder` or `IMediaPlayerBuilder`**, add the three `WithMedia`
+overloads. They are ordinary interface members, not defaulted ones: a default that threw
+would turn a compile error into a run-time one, and the narrowing on these interfaces exists
+precisely to keep that kind of mismatch at compile time. Entry 19 already changes both
+terminals' return type, so an implementer is recompiling against this release either way.
 
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 

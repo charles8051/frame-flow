@@ -10,12 +10,11 @@ using FrameFlow.Graph;
 namespace FrameFlow.Player;
 
 /// <summary>
-/// Fluent builder for playback over one source. Returned by
-/// <see cref="FrameFlowPlayer.Create(string)"/>; each method returns
-/// the builder so chains flow naturally until a terminal resolves.
-/// <see cref="FrameFlowPlayer.Create(IEnumerable{IMediaSource})"/> starts
-/// the same chain over a queue, narrowed to
-/// <see cref="IMediaPlayerBuilder"/>.
+/// Fluent builder for playback. Returned by <see cref="FrameFlowPlayer.Create"/>; each
+/// method returns the builder so chains flow naturally until a terminal resolves.
+/// <see cref="WithMedia(IEnumerable{IMediaSource})"/> narrows the chain to
+/// <see cref="IMediaPlayerBuilder"/>, because a queue cannot build a
+/// <see cref="PlayerSession"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -39,7 +38,7 @@ namespace FrameFlow.Player;
 /// </para>
 /// <para>
 /// A minimum-viable build is
-/// <c>FrameFlowPlayer.Create(path).BuildAsync()</c> — that produces a
+/// <c>FrameFlowPlayer.Create().WithMedia(path).BuildAsync()</c> — that produces a
 /// session that opens the file and probes streams but has no sinks
 /// wired so calling <see cref="PlayerSession.PlayToCompletionAsync"/>
 /// is a no-op for any stream that lacks a sink. For real playback,
@@ -57,6 +56,27 @@ namespace FrameFlow.Player;
 /// </remarks>
 public interface IPlayerBuilder
 {
+    /// <summary>
+    /// Names the media the built player or session starts with, as the file at
+    /// <paramref name="path"/>. Replaces anything a previous <c>WithMedia</c> named. The file is
+    /// not opened until a terminal resolves.
+    /// </summary>
+    IPlayerBuilder WithMedia(string path);
+
+    /// <summary>
+    /// Names the media the built player or session starts with. Replaces anything a previous
+    /// <c>WithMedia</c> named.
+    /// </summary>
+    IPlayerBuilder WithMedia(IMediaSource source);
+
+    /// <summary>
+    /// Names an ordered queue the built player starts with, replacing anything a previous
+    /// <c>WithMedia</c> named. Narrows the chain to <see cref="IMediaPlayerBuilder"/>: a
+    /// <see cref="PlayerSession"/> plays one source, so <see cref="BuildAsync"/> is not on offer
+    /// over a queue. The queue may be empty, and the player is then built with nothing loaded.
+    /// </summary>
+    IMediaPlayerBuilder WithMedia(IEnumerable<IMediaSource> sources);
+
     /// <summary>
     /// Attaches an <see cref="IVideoSink"/> the player will drive
     /// during playback. Replaces any previously-attached video sink.
@@ -152,6 +172,10 @@ public interface IPlayerBuilder
     /// the caller invokes
     /// <see cref="PlayerSession.PlayToCompletionAsync"/> explicitly.
     /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The chain named no media. A session plays one source, so there has to be one; the types
+    /// cannot rule this out, because <c>WithMedia</c> comes after the entry.
+    /// </exception>
     Task<PlayerSession> BuildAsync(CancellationToken cancellationToken = default);
 
     /// <summary>

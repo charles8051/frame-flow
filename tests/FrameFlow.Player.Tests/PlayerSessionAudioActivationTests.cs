@@ -27,7 +27,8 @@ public sealed class PlayerSessionAudioActivationTests
         var sink = new RecordingAudioSink();
 
         await using var session = await FrameFlowPlayer
-            .Create(path!)
+            .Create()
+            .WithMedia(path!)
             .WithAudioSink(sink)
             .BuildAsync();
 
@@ -51,7 +52,8 @@ public sealed class PlayerSessionAudioActivationTests
         var sink = new RecordingAudioSink();
 
         await using var session = await FrameFlowPlayer
-            .Create(path!)
+            .Create()
+            .WithMedia(path!)
             .WithAudioSink(sink)
             .BuildAsync();
 
@@ -77,7 +79,8 @@ public sealed class PlayerSessionAudioActivationTests
         for (var i = 0; i < 2; i++)
         {
             await using var session = await FrameFlowPlayer
-                .Create(path!)
+                .Create()
+                .WithMedia(path!)
                 .WithAudioSink(sink)
                 .BuildAsync();
 

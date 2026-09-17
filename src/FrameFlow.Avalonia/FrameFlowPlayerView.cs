@@ -40,7 +40,7 @@ namespace FrameFlow.Avalonia;
 /// <para>
 /// <b>Player ownership.</b> The control NEVER builds an
 /// <see cref="IMediaPlayer"/> itself — that's the consumer's job
-/// via <c>FrameFlowPlayer.Create(path).BuildAsync()</c>. When the user
+/// via <c>FrameFlowPlayer.Create().WithMedia(path).BuildAsync()</c>. When the user
 /// clicks Open (chrome's button) or drops a file (this view's
 /// drag-drop), <see cref="FileOpenRequested"/> fires with the chosen
 /// path; the consumer disposes any prior <see cref="MediaPlayer"/>,
