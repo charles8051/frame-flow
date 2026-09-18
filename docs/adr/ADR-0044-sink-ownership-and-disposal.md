@@ -146,19 +146,19 @@ correct move is to replace.
 > container on the strength of it, or leaving a caller-constructed sink undisposed, is how #275
 > happened. The amendment at the top of this record and the **Decision summary** carry the rule.
 
-**The DI provider is the canonical owner of sink lifecycle.**
-Sinks register as singletons (`AddSingleton<IAudioSink>(...)` or
-`AddSingleton<IVideoSink>(...)`). When the DI container is
-disposed, the sinks are disposed. There is exactly one disposal
-path; there is exactly one owner.
-
-**`PlaybackSession` and `PipelineController` are users, not
-owners.** They invoke `ActivateAsync` / `DeactivateAsync` to
-coordinate sink state across session lifecycle transitions
-(start, pause, terminal teardown), but they do not call
-`DisposeAsync` on sinks. Activate/Deactivate are state operations
-that happen many times in a session's life; Dispose is an
-ownership operation that happens exactly once.
+> **The DI provider is the canonical owner of sink lifecycle.**
+> Sinks register as singletons (`AddSingleton<IAudioSink>(...)` or
+> `AddSingleton<IVideoSink>(...)`). When the DI container is
+> disposed, the sinks are disposed. There is exactly one disposal
+> path; there is exactly one owner.
+>
+> **`PlaybackSession` and `PipelineController` are users, not
+> owners.** They invoke `ActivateAsync` / `DeactivateAsync` to
+> coordinate sink state across session lifecycle transitions
+> (start, pause, terminal teardown), but they do not call
+> `DisposeAsync` on sinks. Activate/Deactivate are state operations
+> that happen many times in a session's life; Dispose is an
+> ownership operation that happens exactly once.
 
 ### Sink contract: idempotent disposal
 
@@ -231,25 +231,25 @@ sink. The teardown sequence becomes:
 > Kept because the reasoning below is still worth reading, and because deleting it would hide
 > that the record said this for four months.
 
-`PlayerBuilder.BuildAsync` registers caller-provided sinks
-directly:
-
-```csharp
-if (_audioSink is not null)
-    services.AddSingleton<IAudioSink>(_audioSink);
-if (_videoSink is not null)
-    services.AddSingleton<IVideoSink>(_videoSink);
-```
-
-Symmetric, no factory wrapping. The provider tracks both for
-disposal; `MediaPlayer.DisposeAsync` (which disposes the
-provider) cleans up both.
-
-`WithAudioSink(IAudioSink)` and `WithVideoSink(IVideoSink)`
-keep their existing surface. The XML doc now states the
-contract explicitly: *"Ownership transfers to the player; the
-player will dispose this sink when the player is disposed. Do
-not reuse the same sink instance across multiple players."*
+> `PlayerBuilder.BuildAsync` registers caller-provided sinks
+> directly:
+>
+> ```csharp
+> if (_audioSink is not null)
+>     services.AddSingleton<IAudioSink>(_audioSink);
+> if (_videoSink is not null)
+>     services.AddSingleton<IVideoSink>(_videoSink);
+> ```
+>
+> Symmetric, no factory wrapping. The provider tracks both for
+> disposal; `MediaPlayer.DisposeAsync` (which disposes the
+> provider) cleans up both.
+>
+> `WithAudioSink(IAudioSink)` and `WithVideoSink(IVideoSink)`
+> keep their existing surface. The XML doc now states the
+> contract explicitly: *"Ownership transfers to the player; the
+> player will dispose this sink when the player is disposed. Do
+> not reuse the same sink instance across multiple players."*
 
 ### Layer 1 ServiceProviderPlaybackSessionFactory
 
