@@ -733,6 +733,9 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     /// </summary>
     public void Clear()
     {
+        SinkBinding? strandedCopy;
+        SinkBinding? strandedPixels;
+
         lock (_lock)
         {
             _front?.Dispose();
@@ -741,21 +744,28 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             _back = null;
             _bitmapWidth = 0;
             _bitmapHeight = 0;
+
+            // Both a copy waiting for its swap and pixels waiting for their buffers are
+            // thrown away here, and each is owed its drop. The copy used to go uncharged:
+            // clearing the flag published nothing and counted nothing, which is the one way
+            // a frame could leave this view counted by nobody.
+            strandedCopy = _backPending ? _backBinding : null;
             _backPending = false;
             _backBinding = null;
 
-            // Nothing is going to draw them now, and the buffers they were waiting for are
-            // gone.
-            if (_stagedPending)
-            {
-                _stagedPending = false;
-                _stagedBinding?.Sink.RecordPreSwapDrop();
-                _stagedBinding = null;
-            }
+            strandedPixels = _stagedPending ? _stagedBinding : null;
+            _stagedPending = false;
+            _stagedBinding = null;
 
             // Released with the bitmaps it existed to feed; at 1080p it is 8 MB.
             _staged = null;
         }
+
+        // Charged outside the lock, as EndBinding does. The sink belongs to another
+        // component, and calling into it while holding this one's lock is how lock orders
+        // get crossed.
+        strandedCopy?.Sink.RecordPreSwapDrop();
+        strandedPixels?.Sink.RecordPreSwapDrop();
 
         Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
     }

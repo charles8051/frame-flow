@@ -191,6 +191,51 @@ public sealed class FrameFlowVideoViewSingleFrameItemTests
         Assert.Equal(0, sink.DroppedFrameCount);
     }
 
+    [AvaloniaFact]
+    public void ClearingWithPixelsWaitingForBuffers_PublishesNothing()
+    {
+        var (view, sink) = NewAttachedView();
+
+        // Staged, with its allocation queued and not yet run.
+        PresentOffUiThread(sink, 64, 48, Pts(1));
+
+        view.Clear();
+        Dispatcher.UIThread.RunJobs(); // the allocation callback runs after the Clear
+
+        // The callback allocates nothing and blits nothing, because Clear emptied the slot
+        // under the same lock the callback takes. Nothing is resurrected, and the pixels are
+        // charged exactly once.
+        Assert.Equal(0, view.RenderedFrameCount);
+
+        var snapshot = sink.GetDiagnostics();
+        Assert.Equal(0, snapshot.FramesPresented);
+        Assert.Equal(1, snapshot.FramesDropped);
+    }
+
+    [AvaloniaFact]
+    public void ClearingWithACopyWaitingForItsSwap_PublishesNothing()
+    {
+        var (view, sink) = NewAttachedView();
+
+        PresentOffUiThread(sink, 32, 16, Pts(1));
+        Dispatcher.UIThread.RunJobs();
+
+        // Copied into the back buffer with its swap queued and not yet run.
+        PresentOffUiThread(sink, 32, 16, Pts(2));
+
+        view.Clear();
+        Dispatcher.UIThread.RunJobs(); // the queued swap runs after the Clear
+
+        // The swap re-reads _backPending under the lock and finds it false, so frame 2 is
+        // not published over a cleared surface. It is charged instead.
+        Assert.Equal(1, view.RenderedFrameCount);
+        Assert.Equal(Pts(1), sink.GetDiagnostics().LastPresentedPresentationTime);
+
+        var snapshot = sink.GetDiagnostics();
+        Assert.Equal(1, snapshot.FramesPresented);
+        Assert.Equal(1, snapshot.FramesDropped);
+    }
+
     // ─── Helpers ────────────────────────────────────────────────────
 
     private static TimeSpan Pts(int n) => TimeSpan.FromMilliseconds(n * 16);
