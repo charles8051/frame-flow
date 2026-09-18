@@ -96,9 +96,14 @@ public sealed class ObjectDetectionPreview : Control, IAsyncDisposable
     // splits Detect() into preprocess / run / postprocess and publishes the
     // first two; nothing read them, so the CPU-side cost of feeding a
     // GPU-decoded frame to a CPU preprocessor was never measured. One entry
-    // per detected frame, appended by the single detection worker and read
-    // once at teardown.
-    private readonly List<StageSample> _stageSamples = [];
+    //
+    // A fixed ring, matching DecodeStageMetrics: a preview left running holds
+    // the last StageReservoir samples rather than every frame since launch, and
+    // the report allocates a bounded copy however long the run was. The count
+    // is the true total, so the report still says how many frames it saw.
+    private const int StageReservoir = 4096;
+    private readonly StageSample[] _stageSamples = new StageSample[StageReservoir];
+    private long _stageSampleCount;
     private readonly object _stageSamplesLock = new();
 
     private readonly record struct StageSample(double PreMs, double RunMs, double PostMs);
@@ -117,14 +122,19 @@ public sealed class ObjectDetectionPreview : Control, IAsyncDisposable
     public string StageReport()
     {
         StageSample[] samples;
+        long total;
         lock (_stageSamplesLock)
-            samples = [.. _stageSamples];
+        {
+            total = _stageSampleCount;
+            samples = _stageSamples[..(int)Math.Min(total, StageReservoir)];
+        }
 
         if (samples.Length == 0)
             return "  (no detections ran)";
 
+        var retained = samples.Length < total ? $" (last {samples.Length} timed)" : string.Empty;
         var report =
-            $"  frames        {samples.Length}\n"
+            $"  frames        {total}{retained}\n"
             + Line("preprocess", [.. samples.Select(s => s.PreMs)])
             + Line("run (EP)", [.. samples.Select(s => s.RunMs)])
             + Line("postprocess", [.. samples.Select(s => s.PostMs)])
@@ -352,13 +362,12 @@ public sealed class ObjectDetectionPreview : Control, IAsyncDisposable
                     var runMs = detector.LastInferenceMs;
                     lock (_stageSamplesLock)
                     {
-                        _stageSamples.Add(
-                            new StageSample(
-                                preMs,
-                                runMs,
-                                Math.Max(0, sw.Elapsed.TotalMilliseconds - preMs - runMs)
-                            )
+                        _stageSamples[(int)(_stageSampleCount % StageReservoir)] = new StageSample(
+                            preMs,
+                            runMs,
+                            Math.Max(0, sw.Elapsed.TotalMilliseconds - preMs - runMs)
                         );
+                        _stageSampleCount++;
                     }
 
                     var payload = new PendingDetection(frame, detections);

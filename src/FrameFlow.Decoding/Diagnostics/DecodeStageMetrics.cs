@@ -22,13 +22,20 @@ namespace FrameFlow.Decoding.Diagnostics;
 /// <b>Off by default.</b> When <see cref="Enabled"/> is <see langword="false"/>
 /// the decode path pays one relaxed bool read per frame and records nothing.
 /// Recording is single-writer — the decode worker calls both <c>Record</c>
-/// methods — so the reservoir needs no lock; <see cref="Snapshot"/> reads it
-/// from another thread and may observe a sample mid-write, which is acceptable
-/// for a diagnostic and never throws.
+/// methods under the codec lock — so the reservoir needs no lock. A sample is
+/// written to its slot before the count that makes it visible, so a
+/// <see cref="Snapshot"/> from another thread never reads a slot the writer has
+/// not filled; the most it can miss is the frame in flight.
 /// </para>
 /// <para>
-/// Companion to <see cref="DecodePoolMetrics"/>, which measures what a
-/// GPU-resident path costs rather than what it saves.
+/// <b>Process-wide, like <see cref="DecodePoolMetrics"/>.</b> Both collectors
+/// are static, so every decoder in the process contributes to one snapshot and
+/// a run cannot attribute a sample to a particular stream. That is the right
+/// shape for the question these answer — what the readback costs on this
+/// machine — and it keeps a diagnostic reachable without threading a collector
+/// through decoder construction. A measurement session calls
+/// <see cref="Reset"/> at its start so a second run in the same process does
+/// not inherit the first one's samples.
 /// </para>
 /// </remarks>
 public static class DecodeStageMetrics
@@ -70,15 +77,27 @@ public static class DecodeStageMetrics
 
     private static void Record(long[] reservoir, ref long counter, long elapsedTicks)
     {
-        long n = Interlocked.Increment(ref counter);
-        reservoir[(int)((n - 1) % ReservoirSize)] = elapsedTicks;
+        // Write the sample, then publish the count. The reverse order lets a
+        // concurrent Snapshot see a slot it believes was written and read the
+        // previous lap's value — or a zero on the first lap, which lands in the
+        // middle of a percentile and is indistinguishable from a real
+        // measurement. Both Record calls come from the decode worker under
+        // VideoDecoder's codec lock, so the read of `counter` here is
+        // single-writer and needs no interlock.
+        long n = counter;
+        reservoir[(int)(n % ReservoirSize)] = elapsedTicks;
+        Volatile.Write(ref counter, n + 1);
     }
 
-    /// <summary>Clears both reservoirs and their counts.</summary>
+    /// <summary>
+    /// Clears both reservoirs and their counts. Call it when a measurement
+    /// session starts: the collector is process-wide, so without it a second
+    /// run in the same process reports the first run's samples too.
+    /// </summary>
     public static void Reset()
     {
-        Interlocked.Exchange(ref _transferCount, 0);
-        Interlocked.Exchange(ref _convertCount, 0);
+        Volatile.Write(ref _transferCount, 0);
+        Volatile.Write(ref _convertCount, 0);
         Array.Clear(TransferTicks);
         Array.Clear(ConvertTicks);
     }
@@ -91,8 +110,8 @@ public static class DecodeStageMetrics
     /// </summary>
     public static DecodeStageSnapshot Snapshot() =>
         new(
-            Summarize(TransferTicks, Interlocked.Read(ref _transferCount)),
-            Summarize(ConvertTicks, Interlocked.Read(ref _convertCount))
+            Summarize(TransferTicks, Volatile.Read(ref _transferCount)),
+            Summarize(ConvertTicks, Volatile.Read(ref _convertCount))
         );
 
     private static DecodeStageSummary Summarize(long[] reservoir, long total)

@@ -46,6 +46,9 @@ public class App : Application
             )
             {
                 exitAfter = seconds;
+                // Reset first: the collector is process-wide, so a session that
+                // only enables it reports whatever a previous decoder left.
+                FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Reset();
                 FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Enabled = true;
             }
 

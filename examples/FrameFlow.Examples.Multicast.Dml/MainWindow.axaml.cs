@@ -519,16 +519,26 @@ public partial class MainWindow : Window
     /// </remarks>
     private void PrintTimingReport()
     {
-        var decode = DecodeStageMetrics.Snapshot();
-        if (decode.HardwareTransfer.Count == 0 && decode.ColorConvert.Count == 0)
+        if (ExitAfterSeconds is null)
             return;
+
+        var decode = DecodeStageMetrics.Snapshot();
+
+        // The decoder section is suppressed on its own, not the whole report.
+        // Software decode, a failed hardware bind, and a future GPU-resident
+        // path all leave these two reservoirs empty while the detector still
+        // has four stages worth saying.
+        var decodeSection =
+            decode.HardwareTransfer.Count == 0 && decode.ColorConvert.Count == 0
+                ? "decoder readback: no samples — the readback never ran\n"
+                : "decoder readback (VideoDecoder, hardware frame to CPU consumer)\n"
+                    + $"  frames        {decode.ColorConvert.Count}\n"
+                    + Stage("hw transfer", decode.HardwareTransfer)
+                    + Stage("nv12 to bgra", decode.ColorConvert);
 
         var report =
             "\n=== per-stage timing ===\n"
-            + "decoder readback (VideoDecoder, hardware frame to CPU consumer)\n"
-            + $"  frames        {decode.ColorConvert.Count}\n"
-            + Stage("hw transfer", decode.HardwareTransfer)
-            + Stage("nv12 to bgra", decode.ColorConvert)
+            + decodeSection
             + "\nyolov8 detect (pane 2)\n"
             + Pane2Preview.StageReport();
 
@@ -552,9 +562,15 @@ public partial class MainWindow : Window
         Closing -= OnWindowClosing;
 
         _statsTimer?.Stop();
-        PrintTimingReport();
         _windowCts.Cancel();
         await TeardownPlayerAsync();
+
+        // After teardown, not before. The decode worker and the detection
+        // worker both keep recording until the player is disposed, so a
+        // snapshot taken first reports a prefix of the run and its counts move
+        // between runs for no reason the numbers explain.
+        PrintTimingReport();
+
         _yoloDetector?.Dispose();
         _yoloDetector = null;
         _loggerFactory?.Dispose();
