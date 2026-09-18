@@ -5,9 +5,8 @@ using FrameFlow.Player;
 namespace FrameFlow.Integration.Tests;
 
 /// <summary>
-/// The builder over a queue. <c>FrameFlowPlayer.Create</c> takes one source or many, and
-/// <c>BuildPlayerAsync</c> hands back the queue surface either way, so the builder can express
-/// everything <c>MediaPlayer.CreateAsync</c> can.
+/// The builder over a queue. <c>WithMedia</c> takes one source, many, or none, and
+/// <c>BuildPlayerAsync</c> hands back the queue surface every way.
 /// </summary>
 /// <remarks>
 /// The terminal bootstraps FFmpeg and loads the first item, which is why these are here
@@ -119,6 +118,21 @@ public sealed class PlayerBuilderQueueTests : IClassFixture<FfmpegBootstrapFixtu
         Assert.False(play.IsSuccess);
         Assert.Equal(ErrorCategory.InvalidOperation, play.Error.Category);
         Assert.Equal(PlaybackState.Idle, player.State);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task OneSourceAndMany_DefaultToTheSameRepeatMode()
+    {
+        // The queue overload of the retired MediaPlayer.CreateAsync used to default to All, so the
+        // same omitted argument meant "play once" over one source and "loop forever" over two.
+        await using var one = await FrameFlowPlayer.Create().WithMedia(SourceOf(Clip)).BuildPlayerAsync();
+        await using var many = await FrameFlowPlayer
+            .Create()
+            .WithMedia([SourceOf(Clip), SourceOf(Clip)])
+            .BuildPlayerAsync();
+
+        Assert.Equal(RepeatMode.Off, one.GetDiagnostics().RepeatMode);
+        Assert.Equal(RepeatMode.Off, many.GetDiagnostics().RepeatMode);
     }
 
     private static IMediaSource SourceOf(string clip)

@@ -37,7 +37,7 @@ namespace FrameFlow.Playback;
 /// <b>What's deferred.</b>
 /// <list type="bullet">
 /// <item>The video / audio pipeline configurators are wired into
-///   <c>MediaPlayer.CreateAsync</c> directly (the
+///   <c>FrameFlowPlayer.Create()</c> directly (the
 ///   substrate-side seam, not the controller-side one). Old
 ///   <c>IPlaybackController</c> doesn't see them; that's fine
 ///   because nothing reads them from the controller surface.</item>
@@ -163,7 +163,7 @@ public static class PlaybackController
     /// </summary>
     /// <remarks>
     /// Internal because it takes the internal <see cref="PlaylistCoordinator"/>;
-    /// the public entry point is <c>FrameFlow.Player.MediaPlayer.CreateAsync</c>,
+    /// the public entry point is <c>FrameFlow.Player.FrameFlowPlayer.Create</c>,
     /// which constructs the coordinator and projects the controller to the
     /// playlist player surface.
     /// </remarks>

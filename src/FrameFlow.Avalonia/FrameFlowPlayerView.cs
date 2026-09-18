@@ -189,7 +189,7 @@ public sealed class FrameFlowPlayerView : UserControl
 
     /// <summary>
     /// Wires the logger and returns the hosted surface's <see cref="IVideoSink"/> to hand to
-    /// <c>MediaPlayer.CreateAsync</c>. Pair with
+    /// <c>FrameFlowPlayer.Create()</c>. Pair with
     /// <see cref="IVideoSurface.PrefersHardwareFrames"/> on <see cref="VideoSurface"/> for the
     /// <c>yieldHardwareFrames</c> flag.
     /// </summary>

@@ -13,7 +13,7 @@ namespace FrameFlow.Player;
 
 /// <summary>
 /// Concrete <see cref="IPlayerBuilder"/>: mutable fluent state, and one terminal that hands it
-/// all to <see cref="MediaPlayer.CreateCoreAsync"/>.
+/// all to <see cref="PlayerFactory.CreateAsync"/>.
 /// </summary>
 /// <remarks>
 /// The unpaced sibling is <see cref="PassBuilder"/>, which builds a <see cref="MediaPass"/> and
@@ -166,7 +166,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
     )
     {
         RequireSinkForEachConfigurator();
-        return await MediaPlayer.CreateCoreAsync(
+        return await PlayerFactory.CreateAsync(
             initial: _sources,
             videoSink: _videoSink,
             audioSink: _audioSink,

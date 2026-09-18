@@ -180,7 +180,7 @@ public sealed class MediaPass : IAsyncDisposable
         // re-entrant, so the duplicate is harmless.
         //
         // This mirrors what SubstrateSession does on the controller path
-        // (SubstrateSession.PlayAsync) and what MediaPlayer.CreateAsync does
+        // (SubstrateSession.PlayAsync) and what the player builder does
         // on the player path. MediaPass was the one surface that left it
         // to the caller, which meant a sink the caller had not activated out of
         // band played silence (issue #60).

@@ -102,7 +102,7 @@ public sealed class ColdStartTests
 
     /// <summary>
     /// Issue #55: the same defect one layer up. <c>PlaybackController.Create</c> never
-    /// bootstraps, unlike <c>MediaPlayer.CreateAsync</c>.
+    /// bootstraps, unlike <c>FrameFlowPlayer.Create()</c>.
     /// </summary>
     [RequiresFfmpegAndCorpusFact]
     public async Task PlaybackController_LoadsFile_WithoutAnyBootstrapCall()

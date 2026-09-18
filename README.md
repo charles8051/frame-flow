@@ -73,10 +73,9 @@ once at decode speed, waiting on no presentation time, which is what an inferenc
 or analysis run wants and not what a viewer wants. It has no transport and no
 queue. See [ADR-0079](docs/adr/ADR-0079-the-pass-and-the-player.md).
 
-`MediaPlayer.CreateAsync(...)` is the positional form of `BuildPlayerAsync`, for
-callers who would rather not chain. `PlaybackController.Create(...)` sits below
-both and returns the raw `IPlaybackController` state machine. Use it only when
-that state machine is what you are building around.
+`PlaybackController.Create(...)` sits below both entry points and returns the raw
+`IPlaybackController` state machine. Use it only when that state machine is what
+you are building around.
 
 ### Generic Host and DI
 

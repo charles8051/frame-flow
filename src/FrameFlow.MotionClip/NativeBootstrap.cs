@@ -10,7 +10,7 @@ namespace FrameFlow.MotionClip;
 /// <summary>
 /// FFmpeg native bootstrap, shared by both run modes. The pipeline uses
 /// libswscale (via <c>ResizeAndConvert</c>) and the FrameFlow.Encoding H.264
-/// encoder, neither of which goes through <c>MediaPlayer.CreateAsync</c>, so
+/// encoder, neither of which goes through <c>FrameFlowPlayer.Create()</c>, so
 /// the native DllImport resolver must be registered explicitly here or the
 /// first frame throws <c>DllNotFoundException</c>.
 /// </summary>

@@ -172,14 +172,15 @@ internal static class Soak
         Report report
     )
     {
-        await using var player = await MediaPlayer.CreateAsync(
-            source: MediaSource.FromFile(path),
-            videoSink: videoSink,
-            audioSink: null,
-            // RepeatMode.One is what makes this a soak rather than a 45-second run.
-            initialRepeatMode: RepeatMode.One,
-            yieldHardwareFrames: true
-        );
+        // RepeatMode.One is what makes this a soak rather than a 45-second run. No audio
+        // sink at all, so video paces off the wall clock.
+        await using var player = await FrameFlowPlayer
+            .Create()
+            .WithMedia(MediaSource.FromFile(path))
+            .WithVideoSink(videoSink)
+            .WithRepeatMode(RepeatMode.One)
+            .WithHardwareFrames()
+            .BuildPlayerAsync();
 
         // 1920x1080, 60 fps, 45.0s — scripts/generate-test-corpus.cs
         report.Check(

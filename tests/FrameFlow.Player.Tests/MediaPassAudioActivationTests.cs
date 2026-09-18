@@ -10,7 +10,7 @@ namespace FrameFlow.Player.Tests;
 /// <remarks>
 /// An <see cref="IAudioSink"/> is inert until activated — buffers presented to a
 /// dormant sink are accepted and dropped. <c>SubstrateSession</c> and
-/// <c>MediaPlayer.CreateAsync</c> both activate the sink they are given;
+/// <c>FrameFlowPlayer.Create()</c> both activate the sink they are given;
 /// <see cref="MediaPass"/> did not, which left the sink silent unless the
 /// caller activated it out of band (issue #60).
 /// </remarks>
