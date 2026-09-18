@@ -28,14 +28,29 @@ public interface IPassBuilder
 {
     /// <summary>
     /// Attaches an <see cref="IVideoSink"/> the pass will drive. Replaces any previously-attached
-    /// video sink. The pass does not dispose it (ADR-0044).
+    /// video sink.
     /// </summary>
+    /// <remarks>
+    /// <b>Ownership (ADR-0044).</b> Whoever constructed the sink owns it: you, if you built it;
+    /// the view, for a sink that came from <c>WithAvaloniaVideoView</c>; the container, for a
+    /// resolved singleton. The pass never disposes it, whoever that is.
+    /// </remarks>
+    /// <remarks>
+    /// One sink serves any number of passes in sequence, so a sink that is expensive to build —
+    /// one holding a loaded inference model — is built once and handed to each of them. Passes
+    /// that run concurrently over one sink are undefined, and keeping them apart is the caller's
+    /// job.
+    /// </remarks>
     IPassBuilder WithVideoSink(IVideoSink sink);
 
     /// <summary>
     /// Attaches an <see cref="IAudioSink"/> the pass will drive. Replaces any previously-attached
-    /// audio sink. The pass does not dispose it (ADR-0044), and activates it before the run.
+    /// audio sink. The pass activates it before the run.
     /// </summary>
+    /// <remarks>
+    /// <b>Ownership (ADR-0044).</b> Whoever constructed the sink owns it; the pass never disposes
+    /// it. One sink serves any number of passes in sequence, but not two at once.
+    /// </remarks>
     IPassBuilder WithAudioSink(IAudioSink sink);
 
     /// <summary>

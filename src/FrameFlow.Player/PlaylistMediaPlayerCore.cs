@@ -10,7 +10,7 @@ namespace FrameFlow.Player;
 
 /// <summary>
 /// Concrete <see cref="IMediaPlaylistPlayer"/> built by
-/// <see cref="MediaPlayer"/>. Wraps an
+/// <see cref="FrameFlowPlayer"/>. Wraps an
 /// <see cref="IPlaybackController"/> (driving one warm <c>PlaylistSession</c>)
 /// and a shared <see cref="PlaylistCoordinator"/>, projecting both to the
 /// playlist player surface.

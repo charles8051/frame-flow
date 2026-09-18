@@ -12,6 +12,34 @@ recorded as the project stance - FrameFlow is pre-1.0 with no external
 consumers, so breaking changes land inline without shims - the change
 lands without migration shims.
 
+> **Amended 2026-09-17 (#168).** Two things below stopped being true, and the record kept
+> teaching them. The *Decision* and *Implementation* sections are left as they were written, as
+> this repository's records are; what they got wrong is corrected here and at each of the two
+> sections, and the **Decision summary** carries the current rule.
+>
+> **1. The DI provider is not the canonical owner. Whoever constructs a sink owns it.** The
+> container owns the sinks it registered, and a caller who constructs one owns that. Both are the
+> same rule with a different owner. The fluent builder stands up no container at all — the DI
+> registration the *Layer 2 PlayerBuilder* section describes was removed with `MediaPlayerCore`
+> (#224) — and `IVideoSink` and `IAudioSink` have said "owned by their DI container or by their
+> immediate caller" since ADR-0044 shipped, which is the rule the code has followed throughout.
+>
+> **2. One sink may serve several players, in sequence.** The *Layer 2* section forbids it:
+> "Do not reuse the same sink instance across multiple players." ADR-0062's gapless playlist is
+> built on doing exactly that, and it is why nothing is rebuilt at an item boundary. The
+> constraint that remains is narrower: a sink serves one player at a time. Reuse after a fault is
+> untested, which is #29.
+>
+> A player, a pass and a session are users. They call `ActivateAsync` and `DeactivateAsync`, and
+> never `DisposeAsync`. That part of the record held.
+>
+> **What the drift cost.** Alternative B below predicted it: a factory "creates sinks the caller
+> never sees and cannot dispose". `WithOpenAlAudio` was later written to do precisely that,
+> constructing a sink inside the player layer and handing it to something that by rule would not
+> dispose it, and no caller could reach it either. It leaked an OpenAL device per player until
+> #275 retired it. The reasoning here was right; the rule was written down in a place nobody read
+> and in terms that had stopped matching the code.
+
 **Date:** 2026-05-13
 **Supersedes:** Implicit ownership conventions established by
 ADR-0005 (native resource ownership) for the sink case; no other
@@ -112,19 +140,25 @@ correct move is to replace.
 
 ### Sink ownership
 
-**The DI provider is the canonical owner of sink lifecycle.**
-Sinks register as singletons (`AddSingleton<IAudioSink>(...)` or
-`AddSingleton<IVideoSink>(...)`). When the DI container is
-disposed, the sinks are disposed. There is exactly one disposal
-path; there is exactly one owner.
+> **Historical. Do not implement from this section.** The rule is now: whoever constructs a sink
+> owns it, the container for what it registered and the caller for what they built. What follows
+> is the 2026-05 text, kept for its reasoning. Registering a caller-constructed sink in a
+> container on the strength of it, or leaving a caller-constructed sink undisposed, is how #275
+> happened. The amendment at the top of this record and the **Decision summary** carry the rule.
 
-**`PlaybackSession` and `PipelineController` are users, not
-owners.** They invoke `ActivateAsync` / `DeactivateAsync` to
-coordinate sink state across session lifecycle transitions
-(start, pause, terminal teardown), but they do not call
-`DisposeAsync` on sinks. Activate/Deactivate are state operations
-that happen many times in a session's life; Dispose is an
-ownership operation that happens exactly once.
+> **The DI provider is the canonical owner of sink lifecycle.**
+> Sinks register as singletons (`AddSingleton<IAudioSink>(...)` or
+> `AddSingleton<IVideoSink>(...)`). When the DI container is
+> disposed, the sinks are disposed. There is exactly one disposal
+> path; there is exactly one owner.
+>
+> **`PlaybackSession` and `PipelineController` are users, not
+> owners.** They invoke `ActivateAsync` / `DeactivateAsync` to
+> coordinate sink state across session lifecycle transitions
+> (start, pause, terminal teardown), but they do not call
+> `DisposeAsync` on sinks. Activate/Deactivate are state operations
+> that happen many times in a session's life; Dispose is an
+> ownership operation that happens exactly once.
 
 ### Sink contract: idempotent disposal
 
@@ -186,25 +220,36 @@ sink. The teardown sequence becomes:
 
 ### Layer 2 PlayerBuilder
 
-`PlayerBuilder.BuildAsync` registers caller-provided sinks
-directly:
+> **Historical, and wrong in every particular. Do not implement from this section.** There is no
+> per-player DI container — it went with `MediaPlayerCore` (#224), and `PlayerBuilder` stands one
+> up nowhere. `PlayerBuilder.BuildAsync` does not exist; the terminal is `BuildPlayerAsync`
+> (ADR-0079). The XML doc quoted below was never written onto any builder interface, and both of
+> its claims are false: the player does not dispose the sink, and reusing one sink across players
+> in sequence is precisely what the playlist player is for (ADR-0062). The code's contract is on
+> `IPlayerBuilder.WithVideoSink` and `WithAudioSink`.
+>
+> Kept because the reasoning below is still worth reading, and because deleting it would hide
+> that the record said this for four months.
 
-```csharp
-if (_audioSink is not null)
-    services.AddSingleton<IAudioSink>(_audioSink);
-if (_videoSink is not null)
-    services.AddSingleton<IVideoSink>(_videoSink);
-```
-
-Symmetric, no factory wrapping. The provider tracks both for
-disposal; `MediaPlayer.DisposeAsync` (which disposes the
-provider) cleans up both.
-
-`WithAudioSink(IAudioSink)` and `WithVideoSink(IVideoSink)`
-keep their existing surface. The XML doc now states the
-contract explicitly: *"Ownership transfers to the player; the
-player will dispose this sink when the player is disposed. Do
-not reuse the same sink instance across multiple players."*
+> `PlayerBuilder.BuildAsync` registers caller-provided sinks
+> directly:
+>
+> ```csharp
+> if (_audioSink is not null)
+>     services.AddSingleton<IAudioSink>(_audioSink);
+> if (_videoSink is not null)
+>     services.AddSingleton<IVideoSink>(_videoSink);
+> ```
+>
+> Symmetric, no factory wrapping. The provider tracks both for
+> disposal; `MediaPlayer.DisposeAsync` (which disposes the
+> provider) cleans up both.
+>
+> `WithAudioSink(IAudioSink)` and `WithVideoSink(IVideoSink)`
+> keep their existing surface. The XML doc now states the
+> contract explicitly: *"Ownership transfers to the player; the
+> player will dispose this sink when the player is disposed. Do
+> not reuse the same sink instance across multiple players."*
 
 ### Layer 1 ServiceProviderPlaybackSessionFactory
 
@@ -374,7 +419,14 @@ change. No mixing with feature work; no migration shims; no
 
 ## Decision summary
 
-Sinks are DI-singleton resources. The DI provider owns
+**Current rule, as amended 2026-09-17.** Whoever constructs a sink owns it: the DI container for
+what it registered, the caller for what they built. A player, a pass and a session are users —
+they call `ActivateAsync` and `DeactivateAsync`, and never `DisposeAsync`. One sink serves one
+player at a time and may serve several in sequence, which is what keeps a playlist's presenter
+warm across items. `IAudioSink` and `IVideoSink` implementations must support idempotent
+`DisposeAsync`.
+
+*As written in 2026-05:* Sinks are DI-singleton resources. The DI provider owns
 disposal. `PlaybackSession` uses sinks via Activate/Deactivate
 but never disposes them. `IAudioSink` and `IVideoSink`
 implementations must support idempotent `DisposeAsync`. The

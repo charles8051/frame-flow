@@ -60,12 +60,34 @@ public interface IPlayerBuilder
     /// Attaches an <see cref="IVideoSink"/> the player will drive during playback. Replaces any
     /// previously-attached video sink.
     /// </summary>
+    /// <remarks>
+    /// <b>Ownership (ADR-0044).</b> Whoever constructed the sink owns it: you, if you built it;
+    /// the view, for a sink that came from <c>WithAvaloniaVideoView</c>; the container, for a
+    /// resolved singleton. The player never disposes it, whoever that is.
+    /// </remarks>
+    /// <remarks>
+    /// One sink serves one player at a time, and may serve several in sequence, which is what
+    /// keeps a presenter warm across a playlist's items. Nothing enforces the "at a time":
+    /// attaching one sink to two players that run concurrently is undefined, and keeping them
+    /// apart is the caller's job.
+    /// </remarks>
     IPlayerBuilder WithVideoSink(IVideoSink sink);
 
     /// <summary>
     /// Attaches an <see cref="IAudioSink"/> the player will drive during playback. Replaces any
     /// previously-attached audio sink.
     /// </summary>
+    /// <remarks>
+    /// <b>Ownership (ADR-0044).</b> Whoever constructed the sink owns it: you, if you built it;
+    /// the view, for a sink that came from <c>WithAvaloniaVideoView</c>; the container, for a
+    /// resolved singleton. The player never disposes it, whoever that is.
+    /// </remarks>
+    /// <remarks>
+    /// One sink serves one player at a time, and may serve several in sequence, which is what
+    /// keeps a presenter warm across a playlist's items. Nothing enforces the "at a time":
+    /// attaching one sink to two players that run concurrently is undefined, and keeping them
+    /// apart is the caller's job.
+    /// </remarks>
     IPlayerBuilder WithAudioSink(IAudioSink sink);
 
     /// <summary>

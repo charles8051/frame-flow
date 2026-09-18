@@ -10,7 +10,7 @@ namespace FrameFlow.Player;
 /// <summary>
 /// The player surface: a small, task-based API over
 /// <see cref="IPlaybackController"/>, which it wraps and projects to a
-/// simpler shape. Built by <see cref="MediaPlayer"/>.
+/// simpler shape. Built by <see cref="FrameFlowPlayer"/>.
 /// <para>
 /// This is an interface rather than a concrete type because the
 /// <c>FrameFlow.Avalonia</c> chrome controls and the
