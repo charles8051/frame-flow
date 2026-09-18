@@ -73,10 +73,18 @@ start=$(date +%s)
 # than inferred from the pipeline.
 # Where a failing assembly's full output is kept. Only summary lines reach stdout,
 # so without this a red run says how many failed and never which - see #284, where
-# that gap is why an intermittent failure went months without a name. Written only
-# on failure; a green run leaves nothing behind.
+# that gap is why an intermittent failure went months without a name. A green run
+# leaves nothing behind.
+#
+# A red run's logs are kept deliberately, so they outlive the run that made them,
+# and an interrupted run is cleaned by the trap. Yesterday's are worth neither:
+# prune them here rather than growing /tmp one failure at a time.
+find "${TMPDIR:-/tmp}" -maxdepth 1 -name "frameflow-tests.*" -type d -mtime +1 \
+  -exec rm -rf {} + 2>/dev/null || true
+
 logdir=$(mktemp -d "${TMPDIR:-/tmp}/frameflow-tests.XXXXXX")
 export logdir
+trap 'rm -rf "$logdir"' INT TERM
 
 results=$(
   printf '%s\n' "${projects[@]}" \
@@ -85,11 +93,18 @@ results=$(
         rc=$?
         line=$(printf "%s\n" "$out" | tail -1)
 
-        # Keep the whole output when anything went wrong: the [FAIL] lines and the
-        # assertion messages sit above the summary and are otherwise discarded.
-        if [ "$rc" -ne 0 ] || printf "%s" "$line" | grep -qE "Failed:[[:space:]]+[1-9]"; then
-          printf "%s
-" "$out" > "$logdir/$(basename "$1" .csproj).log"
+        # Keep the whole output unless the worker was clean. The [FAIL] lines and the
+        # assertion messages sit above the summary and are otherwise discarded. The
+        # condition is not-known-good rather than failed, so an assembly that printed
+        # no summary at all - crashed, aborted, could not start - keeps its output
+        # too, which is the case with the least to go on otherwise.
+        #
+        # Named for the project directory rather than the csproj: two projects can
+        # share a file name, and a collision would silently drop one of the reports.
+        if [ "$rc" -ne 0 ] \
+           || ! printf "%s" "$line" | grep -qE "Failed:[[:space:]]+0([^0-9]|$)"; then
+          slug=$(dirname "$1" | sed "s#^tests/##" | tr "\\/" "__")
+          printf "%s\n" "$out" > "$logdir/$slug.log"
         fi
         if printf "%s" "$line" | grep -qE "Failed:[[:space:]]+[0-9]+"; then
           printf "%s\n" "$line"
