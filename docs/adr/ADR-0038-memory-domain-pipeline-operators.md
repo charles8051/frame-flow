@@ -1,6 +1,7 @@
 # ADR-0038: Memory-Domain Pipeline Operators (Tier 2 of the Crossbar-Shaping Roadmap)
 
-**Status:** Accepted. Phase A landing now; Phase B deferred to a follow-up commit.
+**Status:** Accepted, and partly not in the tree. Read *Amended 2026-09-18* at the foot of
+this record before acting on anything described here as landed.
 **Date:** 2026-05-12
 **Supersedes:** None.
 **Related:** ADR-0030 (frame-contract unification with Crossbar), ADR-0033 (hardware decode selection — explicitly deferred "Zero-copy GPU delivery" to a follow-up ADR; this is it), ADR-0036 (decode/playback decoupling), ADR-0037 (pixel-domain operators, Tier 1), `docs/CROSSBAR_SHAPING_ROADMAP.html` (Tier 2 audit).
@@ -348,3 +349,44 @@ every pane's present on the single UI thread, so the per-pane `VideoProcessorBlt
 This makes **"GPU-aware sinks"** cover the multi-sink case, not just single-surface playback. The
 decoder default still **stays `false`** (CPU sinks unchanged); fan-out is available to any consumer
 that opts into `YieldHardwareFrames` and wires multiple GPU presenters.
+
+---
+
+## Amended 2026-09-18
+
+This record described Phase A as landing and Phase B as a follow-up. Four months on, part of
+Phase A is not in the tree and none of Phase B has started. The decisions below still hold. What
+has changed is what a reader can act on, so the gap is written down rather than left to be
+rediscovered by anyone who trusts the *Decision* section as a description of the code.
+
+**Phase A's `pipeline.ToCpu()` operator is gone.** §4 specifies it, with a signature and unit
+tests. It was written against the `FramePipeline<IVideoFrame>` surface that the graph substrate
+replaced, and it did not survive that port; no node factory took its place. Four doc comments in
+`FrameFlow.Decoding` still direct callers to it, including the `NotSupportedException` message
+`GpuVideoFrame.ToCpu()` throws, and the `InternalsVisibleTo` grant to `FrameFlow.Video` exists for
+it alone. Tracked as #279.
+
+The consequence is sharper than a dangling citation. Every operator in `FrameFlow.Video` routes
+through `SwScaleVideoConverter.Process`, which calls `source.ToCpu()` — so the three pixel
+operators reject a `GpuVideoFrame`, and the escape hatch each of them names does not exist. A graph
+cannot currently mix a GPU-yielding decoder with any CPU-side operator.
+
+**No Phase B bullet has landed.** `MapToGpu`, GPU-aware sinks, the default flip and the per-backend
+sub-interfaces (`ICudaVideoFrame` / `ID3D11VideoFrame`) are all unstarted. The last of those is the
+one that blocks the use this record opens with: `CudaInferenceSession` documents a device-pointer
+binding with no PCIe staging, and `GpuVideoFrame`'s only device accessor is `TryGetD3D11Texture`, so
+an NVDEC-decoded frame has no way to reach it. Both ends exist and nothing joins them.
+
+**What this record did not anticipate.** Phase B names GPU-aware *sinks*, because presentation was
+the motivating consumer. It does not contemplate a GPU-aware *operator*, and the measurement that
+motivates one says the operator matters more than the download. On an RTX 3080 Ti decoding 1080p
+H.264 with D3D11VA, per frame at p50: the `av_hwframe_transfer_data` download costs 3.6 ms, the
+NV12-to-BGRA conversion 2.2 ms, and `Yolov8Preprocessor`'s CPU resize, normalize and transpose
+5.3 ms — against 4.7 ms for the model itself. The largest stage is the preprocessor, not the
+transfer. Two decisions follow that no record in this repository makes: where inference
+preprocessing runs, and what bounds a GPU frame's lifetime on a path with no pacer to drop it
+(ADR-0057 answers that for the player's `ClockSelectVideoSink`; a `MediaPass` has no equivalent).
+Both belong to the GPU-resident inference slice rather than here.
+
+Measurement instrumentation is `DecodeStageMetrics` and the Multicast.Dml example's `--exit-after`
+(#282). ADR-0079 defers the pass-side `WithHardwareFrames` option on a stated trigger (#277).
