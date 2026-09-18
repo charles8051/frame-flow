@@ -98,7 +98,7 @@ internal static partial class HardwareDecodeProbe
     // the one build this process bound its P/Invokes to. ADR-0033 caches capabilities for
     // the process lifetime and puts driver changes mid-process out of scope.
     //
-    // The cache cannot live on the bootstrapper, because MediaPlayer.CreateAsync builds a
+    // The cache cannot live on the bootstrapper, because the player builder builds a
     // new one for every player. The two settings get separate slots because on Linux they
     // walk different backends, and separate locks so a walk for one does not hold up the
     // other.

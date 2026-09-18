@@ -768,6 +768,55 @@ layer.
 `AddFrameFlowOpenAlAudio()` for the generic host is unaffected. The container constructs the sink
 and the container disposes it, which is the same rule with a different owner.
 
+### 29. `MediaPlayer` is gone; the builder is the way in
+
+```csharp
+// Before
+await using var player = await MediaPlayer.CreateAsync(
+    source,
+    videoSink,
+    audioSink,
+    initialRepeatMode: RepeatMode.All);
+
+// After
+await using var player = await FrameFlowPlayer.Create()
+    .WithMedia(source)
+    .WithVideoSink(videoSink)
+    .WithAudioSink(audioSink)
+    .WithRepeatMode(RepeatMode.All)
+    .BuildPlayerAsync();
+```
+
+Every parameter has a chained equivalent, and has since entry 24:
+
+| `CreateAsync` parameter | Builder |
+|---|---|
+| `source` / `sources` | `WithMedia`, which also takes none |
+| `videoSink` / `audioSink` | `WithVideoSink` / `WithAudioSink` |
+| `hardwareDecodeMode` | `WithHardwareDecode` |
+| `yieldHardwareFrames` | `WithHardwareFrames` |
+| `initialRepeatMode` | `WithRepeatMode` |
+| `loggerFactory` | `WithLogger` |
+| `activateAudioSink` | `WithAudioActivation` |
+| `configureVideo` / `configureAudio` | `ConfigureVideo` / `ConfigureAudio` |
+| `cancellationToken` | `BuildPlayerAsync(ct)` |
+
+The builder also has `WithClock`, which the factory could not expose.
+
+**Why.** It built the same object through the same body and had no capability the builder
+lacked, so what it added was a second name for one thing. Its own documentation said "Prefer the
+fluent builder… New code should use the builder", which is debt that never resolves on its own,
+and its doc comments have needed editing in every rename this release — the return type
+(entry 12), `Open` to `Create` (21), `WithMedia` (24), the terminal split (25). A forwarder with
+no behaviour still has prose that drifts.
+
+The construction body it held is now `PlayerFactory.CreateAsync`, internal, reached through
+`BuildPlayerAsync`. Nothing about how a player is built has changed.
+
+`FrameFlowPlayer.Create()` and `FrameFlowPass.Create(path)` are the two entry points.
+`PlaybackController.Create(...)` still sits below both for a caller who wants the raw state
+machine.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

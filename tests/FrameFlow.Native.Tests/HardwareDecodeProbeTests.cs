@@ -92,7 +92,7 @@ public sealed class HardwareDecodeProbeTests
     [RequiresFfmpegFact]
     public void Initialize_SeparateBootstrappers_ShareOneProbe()
     {
-        // #37: MediaPlayer.CreateAsync builds a new bootstrapper for every player, so a
+        // #37: the player builder builds a new bootstrapper for every player, so a
         // probe that belonged to the bootstrapper ran again for every player. The walk
         // depends on the loaded FFmpeg and the host, which do not change within a
         // process, so a second bootstrapper must get the first one's result.

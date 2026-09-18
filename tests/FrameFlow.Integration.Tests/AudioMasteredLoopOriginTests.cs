@@ -14,7 +14,7 @@ namespace FrameFlow.Integration.Tests;
 /// An audio-mastered signage panel surface loops a <i>single</i> clip in-player
 /// with <see cref="RepeatMode.One"/> over a warm <c>OpenAlAudioSink</c> that
 /// masters the pacing clock: the audio mode is not <c>None</c>, and the view
-/// calls <c>MediaPlayer.CreateAsync</c> with <c>RepeatMode.One</c> rather than
+/// calls <c>FrameFlowPlayer.Create()</c> with <c>RepeatMode.One</c> rather than
 /// building a playlist. The <see cref="RepeatMode.One"/> loop
 /// is a seek-to-zero through the seek state machine
 /// (<c>PlaybackControllerCore</c>: <c>LastFrameRendered</c> →

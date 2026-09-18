@@ -25,7 +25,7 @@ public interface IVideoSurface
 
     /// <summary>
     /// Whether this surface consumes GPU-resident frames. Pass this to
-    /// <c>MediaPlayer.CreateAsync(..., yieldHardwareFrames: surface.PrefersHardwareFrames)</c>
+    /// <c>FrameFlowPlayer.Create()...WithHardwareFrames(surface.PrefersHardwareFrames)</c>
     /// so the decoder yields <c>GpuVideoFrame</c>s for a zero-copy surface, or CPU frames
     /// for a software surface.
     /// </summary>
@@ -33,7 +33,7 @@ public interface IVideoSurface
 
     /// <summary>
     /// Wires the logger factory and returns the <see cref="IVideoSink"/> to hand to the
-    /// player's <c>MediaPlayer.CreateAsync</c>. Idempotent: repeated calls return the same sink.
+    /// player's <c>FrameFlowPlayer.Create()</c>. Idempotent: repeated calls return the same sink.
     /// </summary>
     IVideoSink AttachSink(ILoggerFactory loggerFactory);
 }

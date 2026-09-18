@@ -155,15 +155,14 @@ internal static class Repro
 {
     internal static async Task<int> RunAsync(IVideoSink videoSink, string path, Report report)
     {
-    await using var player = await MediaPlayer.CreateAsync(
-        source: MediaSource.FromFile(path),
-        videoSink: videoSink,
-        // require audio off. No sink at all, rather than a muted one: the point is
-        // that video paces off the wall clock, and a silent audio sink would still
-        // be the master.
-        audioSink: null,
-        yieldHardwareFrames: true
-    );
+    // No audio sink at all, rather than a muted one: the point is that video paces off
+    // the wall clock, and a silent audio sink would still be the master.
+    await using var player = await FrameFlowPlayer
+        .Create()
+        .WithMedia(MediaSource.FromFile(path))
+        .WithVideoSink(videoSink)
+        .WithHardwareFrames()
+        .BuildPlayerAsync();
 
     // 1920x1080, 30 fps, 3.0s — scripts/generate-test-corpus.cs
     report.Check(

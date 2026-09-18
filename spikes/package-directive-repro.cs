@@ -81,10 +81,11 @@ Console.WriteLine();
 using var pool = new CpuFramePool(NullLogger<CpuFramePool>.Instance);
 await using var sink = new HeadlessVideoSink(pool);
 
-await using var player = await MediaPlayer.CreateAsync(
-    source: MediaSource.FromFile(input),
-    videoSink: sink
-);
+await using var player = await FrameFlowPlayer
+    .Create()
+    .WithMedia(MediaSource.FromFile(input))
+    .WithVideoSink(sink)
+    .BuildPlayerAsync();
 
 Check(
     "video stream present",
