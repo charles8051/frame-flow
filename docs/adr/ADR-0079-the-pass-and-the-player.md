@@ -226,7 +226,9 @@ disposed it. That predated this change on the player path, and #275 retired the 
 than carving an exception into the ownership rule. `WithAvaloniaVideoView` was never affected: it
 borrows the sink the view owns.
 
-Breaking changes 25, 26 and 27.
+Breaking changes 25, 26 and 27 are this record's. Entry 28, retiring `WithOpenAlAudio`, is not:
+it came out of #275 shortly afterwards and is noted above only because it changes what the two
+bullets before it say.
 
 ## What this does not decide
 
