@@ -103,10 +103,11 @@ results=$(
         # basename collides for two projects of the same name in different folders;
         # a dirname collides for two in one folder, and is empty for a project
         # sitting directly under tests/. Either would silently drop a report, so
-        # the slug is verbose and unambiguous instead.
+        # the separator is percent-encoded instead: a flattening to underscore maps
+        # tests/a/b and tests/a_b to one name, and % cannot occur in a project path.
         if [ "$rc" -ne 0 ] \
            || ! printf "%s" "$line" | grep -qE "Failed:[[:space:]]+0([^0-9]|$)"; then
-          slug=$(printf "%s" "$1" | sed "s#^tests/##; s#[.]csproj\$##" | tr "/" "_")
+          slug=$(printf "%s" "$1" | sed "s#^tests/##; s#[.]csproj\$##" | tr "/" "%")
           printf "%s\n" "$out" > "$logdir/$slug.log"
         fi
         if printf "%s" "$line" | grep -qE "Failed:[[:space:]]+[0-9]+"; then
