@@ -40,6 +40,10 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
 
     private readonly LatenessRecoveryOptions? _latenessRecovery;
 
+    // One per factory, because the factory owns the sink and the sink is what the
+    // announcement is about. Every item it creates shares it (#287).
+    private readonly VideoFormatAnnouncer _formatAnnouncer = new();
+
     public SubstrateSessionFactory(
         IVideoSink? videoSink = null,
         IAudioSink? audioSink = null,
@@ -91,6 +95,7 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         )
         {
             LatenessRecovery = _latenessRecovery,
+            FormatAnnouncer = _formatAnnouncer,
         };
     }
 }

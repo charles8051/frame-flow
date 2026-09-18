@@ -460,6 +460,10 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     // until the first frame of the new run landed.
     private TimeSpan? _presentedEndPts;
 
+    // Shared with every other pacer over the same sink, so an unchanged format is announced
+    // once for the queue rather than once per item (#287).
+    private readonly VideoFormatAnnouncer _formatAnnouncer;
+
     /// <summary>
     /// Wraps <paramref name="inner"/> with select-by-clock delivery against
     /// <paramref name="clock"/>.
@@ -486,10 +490,16 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         ILogger? logger = null,
         int capacity = DefaultCapacity,
         TimeSpan? maxWait = null,
-        TimeProvider? timeProvider = null
+        TimeProvider? timeProvider = null,
+        VideoFormatAnnouncer? formatAnnouncer = null
     )
     {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        // Null means nobody shared one, which is every caller that plays a single item and
+        // every test that does not care. A private one still announces the format correctly;
+        // what it cannot do is stay quiet about an unchanged format across a queue, because
+        // it does not outlive the item.
+        _formatAnnouncer = formatAnnouncer ?? new VideoFormatAnnouncer();
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _logger = logger ?? NullLogger.Instance;
         if (capacity < 1)
@@ -1228,6 +1238,15 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
 
                 try
                 {
+                    // Before the frame, not after: a sink that sizes a surface from the
+                    // announcement has to have done it before it is handed something to draw
+                    // there. Nothing announced the format at all until #287 — the contract on
+                    // IVideoSink.OnFormatChangedAsync was documented and uncalled, so an item
+                    // of a different size from the one before it left the sink drawing at the
+                    // previous item's geometry.
+                    await _formatAnnouncer
+                        .AnnounceForAsync(_inner, present, ct)
+                        .ConfigureAwait(false);
                     await _inner.PresentAsync(present, ct).ConfigureAwait(false);
                     Interlocked.Increment(ref _presented);
                 }

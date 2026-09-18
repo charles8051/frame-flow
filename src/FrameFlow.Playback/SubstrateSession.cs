@@ -157,6 +157,14 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// </summary>
     public LatenessRecoveryOptions? LatenessRecovery { get; init; }
 
+    /// <summary>
+    /// Shared across every item played through the same sink, so an unchanged video format is
+    /// announced once for the queue rather than once per item (#287). Null gives this session
+    /// its own, which announces correctly and cannot deduplicate across a boundary it does not
+    /// span.
+    /// </summary>
+    internal VideoFormatAnnouncer? FormatAnnouncer { get; init; }
+
     private bool _renderersActivated;
 
     // The graph topology built by BuildGraph. A graph instance is re-runnable:
@@ -552,7 +560,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                     _videoSink,
                     _clockSource,
                     _loggerFactory.CreateLogger("FrameFlow.Playback.ClockSelect.Video"),
-                    maxWait: PaceWaitCap
+                    maxWait: PaceWaitCap,
+                    formatAnnouncer: FormatAnnouncer
                 );
                 // Seat the cap on the gate state this pacer is born into — a session
                 // prepared while paused (a playlist advance mid-pause) must not arm the cap
