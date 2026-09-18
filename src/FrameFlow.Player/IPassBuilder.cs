@@ -28,14 +28,23 @@ public interface IPassBuilder
 {
     /// <summary>
     /// Attaches an <see cref="IVideoSink"/> the pass will drive. Replaces any previously-attached
-    /// video sink. The pass does not dispose it (ADR-0044).
+    /// video sink.
     /// </summary>
+    /// <remarks>
+    /// The sink is yours. You constructed it, so you dispose it; the pass never does (ADR-0044).
+    /// One sink serves any number of passes in sequence, so a sink that is expensive to build —
+    /// one holding a loaded inference model — is built once and handed to each of them.
+    /// </remarks>
     IPassBuilder WithVideoSink(IVideoSink sink);
 
     /// <summary>
     /// Attaches an <see cref="IAudioSink"/> the pass will drive. Replaces any previously-attached
-    /// audio sink. The pass does not dispose it (ADR-0044), and activates it before the run.
+    /// audio sink. The pass activates it before the run.
     /// </summary>
+    /// <remarks>
+    /// The sink is yours. You constructed it, so you dispose it; the pass never does (ADR-0044).
+    /// One sink serves any number of passes in sequence.
+    /// </remarks>
     IPassBuilder WithAudioSink(IAudioSink sink);
 
     /// <summary>

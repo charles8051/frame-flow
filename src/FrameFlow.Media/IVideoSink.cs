@@ -56,11 +56,16 @@ namespace FrameFlow.Media;
 /// <b>Disposal contract (ADR-0044).</b> Implementations <b>must</b>
 /// support idempotent <see cref="IAsyncDisposable.DisposeAsync"/>:
 /// calling it more than once is a no-op (no throw, no side effects,
-/// no resource access on the second and subsequent calls). Sinks are
-/// owned by their DI container or by their immediate caller; the
-/// playback session and pipeline controller are <i>users</i> of sinks,
-/// not owners, and never invoke <see cref="IAsyncDisposable.DisposeAsync"/>
-/// on a sink.
+/// no resource access on the second and subsequent calls).
+/// </para>
+/// <para>
+/// <b>Ownership (ADR-0044, as amended).</b> Whoever constructs a sink owns
+/// it: the DI container for what it registered, the caller for what they
+/// built. A player, a pass, a session and the pipeline controller are
+/// <i>users</i> — they call <c>ActivateAsync</c> and <c>DeactivateAsync</c>,
+/// and never <see cref="IAsyncDisposable.DisposeAsync"/>. One sink serves one
+/// player at a time, and may serve several in sequence, which is what keeps a
+/// presenter warm across a playlist's items.
 /// </para>
 /// </remarks>
 public interface IVideoSink : IAsyncDisposable

@@ -60,12 +60,22 @@ public interface IPlayerBuilder
     /// Attaches an <see cref="IVideoSink"/> the player will drive during playback. Replaces any
     /// previously-attached video sink.
     /// </summary>
+    /// <remarks>
+    /// The sink is yours. You constructed it, so you dispose it; the player never does
+    /// (ADR-0044). One sink serves one player at a time and may serve several in sequence, which
+    /// is what keeps a presenter warm across a playlist's items.
+    /// </remarks>
     IPlayerBuilder WithVideoSink(IVideoSink sink);
 
     /// <summary>
     /// Attaches an <see cref="IAudioSink"/> the player will drive during playback. Replaces any
     /// previously-attached audio sink.
     /// </summary>
+    /// <remarks>
+    /// The sink is yours. You constructed it, so you dispose it; the player never does
+    /// (ADR-0044). One sink serves one player at a time and may serve several in sequence, which
+    /// is what keeps a presenter warm across a playlist's items.
+    /// </remarks>
     IPlayerBuilder WithAudioSink(IAudioSink sink);
 
     /// <summary>

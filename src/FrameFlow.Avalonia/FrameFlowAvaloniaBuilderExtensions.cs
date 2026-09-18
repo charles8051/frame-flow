@@ -16,7 +16,7 @@ public static class FrameFlowAvaloniaBuilderExtensions
     /// <see cref="IPlayerBuilder"/>. The view's owned sink is materialized
     /// eagerly via <see cref="FrameFlowVideoView.EnsureSink"/> so playback
     /// can begin presenting frames the moment
-    /// <see cref="IPlayerBuilder.BuildAsync"/> resolves — even if the view
+    /// <see cref="IPlayerBuilder.BuildPlayerAsync"/> resolves — even if the view
     /// has not yet attached to the visual tree.
     /// </summary>
     /// <param name="builder">The player builder being configured.</param>

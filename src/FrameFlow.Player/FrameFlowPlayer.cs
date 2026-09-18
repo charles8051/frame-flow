@@ -47,10 +47,6 @@ namespace FrameFlow.Player;
 /// Nothing is opened here or by <c>WithMedia</c>. Both record what the player will start with;
 /// the demuxer runs in the terminal.
 /// </para>
-/// <para>
-/// Prefer this builder. <see cref="MediaPlayer"/>'s <c>CreateAsync</c> is the positional form of
-/// the terminal. It runs the same wiring and cannot inject a clock.
-/// </para>
 /// </remarks>
 public static class FrameFlowPlayer
 {
