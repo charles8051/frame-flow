@@ -35,20 +35,22 @@ namespace FrameFlow.Playback;
 /// </remarks>
 internal sealed class VideoFormatAnnouncer
 {
-    private readonly object _gate = new();
+    // Serializes announcement-with-presentation for one sink. A sink is a single consumer,
+    // and during a queue boundary two sessions are live at once — the next item is created
+    // and warmed while the current one still plays — so two pacers can reach the same sink.
+    // Without this, pacer B could announce its format and present before pacer A presented
+    // the frame A had already announced, and the sink would be handed a frame that does not
+    // match the last thing it was told.
+    private readonly SemaphoreSlim _serial = new(1, 1);
+
+    // Read and written only under _serial, except by Announced, which is for tests.
     private VideoFormatInfo? _announced;
 
     /// <summary>
-    /// The format most recently announced, or <see langword="null"/> before the first one.
+    /// The format most recently announced and accepted, or <see langword="null"/> before the
+    /// first one.
     /// </summary>
-    internal VideoFormatInfo? Announced
-    {
-        get
-        {
-            lock (_gate)
-                return _announced;
-        }
-    }
+    internal VideoFormatInfo? Announced => Volatile.Read(ref _announced);
 
     /// <summary>
     /// Whether <paramref name="next"/> has to be announced given what was announced last.
@@ -68,39 +70,42 @@ internal sealed class VideoFormatAnnouncer
 
     /// <summary>
     /// Announces <paramref name="frame"/>'s format to <paramref name="sink"/> when it differs
-    /// from the last announced one, and does nothing otherwise. Call immediately before
-    /// presenting the frame, so a sink that sizes a surface here has done it before it is
-    /// asked to draw into it.
+    /// from the last announced one, then presents the frame. The pair is one critical section,
+    /// so the sink cannot be handed a frame whose shape is not the last shape it was told.
     /// </summary>
-    internal ValueTask AnnounceForAsync(
+    /// <remarks>
+    /// The new format becomes the baseline only after the sink's own call returns. A callback
+    /// that throws or is cancelled leaves the previous baseline in place, so the next frame of
+    /// that format announces again rather than being presented to a sink that was never
+    /// successfully told — which is what recording the baseline first would have done.
+    /// </remarks>
+    internal async ValueTask PresentAsync(
         IVideoSink sink,
         IVideoFrame frame,
         CancellationToken cancellationToken
     )
     {
-        var next = FormatOf(frame);
-
-        lock (_gate)
+        await _serial.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            if (!ShouldAnnounce(_announced, next))
-                return ValueTask.CompletedTask;
+            var next = FormatOf(frame);
+            if (ShouldAnnounce(Volatile.Read(ref _announced), next))
+            {
+                await sink.OnFormatChangedAsync(next, cancellationToken).ConfigureAwait(false);
+                Volatile.Write(ref _announced, next);
+            }
 
-            // Recorded before the await rather than after it. The sink's own call may be slow
-            // (a surface rebuild), and a second frame of the same new format arriving while it
-            // runs must not queue a duplicate announcement behind the first.
-            _announced = next;
+            await sink.PresentAsync(frame, cancellationToken).ConfigureAwait(false);
         }
-
-        return sink.OnFormatChangedAsync(next, cancellationToken);
+        finally
+        {
+            _serial.Release();
+        }
     }
 
     /// <summary>
     /// Forgets what was announced, so the next frame announces whatever it is. For a sink that
     /// has been torn down and rebuilt behind this announcer.
     /// </summary>
-    internal void Reset()
-    {
-        lock (_gate)
-            _announced = null;
-    }
+    internal void Reset() => Volatile.Write(ref _announced, null);
 }
