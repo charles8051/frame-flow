@@ -141,6 +141,27 @@ public sealed class CommandParserTests
     public void AnUnknownFlagFails() =>
         Assert.Contains("--frobnicate", Error("load --frobnicate 1 slide.png"));
 
+    [Theory]
+    // A flag is not the previous flag's value. Read as one, a typo becomes a different
+    // source configuration instead of an error.
+    [InlineData("load --format --option framerate=1/10 slide.png")]
+    [InlineData("load --option --format image2 slide.png")]
+    public void AFlagWhereAValueBelongsFails(string line) =>
+        Assert.Contains("needs a value", Error(line));
+
+    [Fact]
+    public void AValueThatLooksLikeAFlagIsWrittenQuoted()
+    {
+        // The escape hatch for the rule above: a quoted token is a value whatever it
+        // contains, which is the same rule that lets a path begin with two dashes.
+        var load = Assert.IsType<BenchCommand.Load>(
+            Parse(@"load --option ""flags=--weird"" clip.mp4")
+        );
+
+        Assert.Equal("--weird", load.Options!["flags"]);
+        Assert.Equal("clip.mp4", load.Path);
+    }
+
     [Fact]
     public void FormatWithoutANameFails() =>
         Assert.Contains("demuxer name", Error("load --format"));

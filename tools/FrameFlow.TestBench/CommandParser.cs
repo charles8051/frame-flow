@@ -252,6 +252,15 @@ internal static class CommandParser
         while (rest.StartsWith("--", StringComparison.Ordinal))
         {
             var (flag, afterFlag) = NextToken(rest);
+
+            // The next flag is not this one's value. Taking it as one turns a typo into a
+            // different source rather than an error: 'load --format --bogus clip.mp4' read
+            // as format '--bogus' opens with a demuxer name nothing has, and a missing
+            // '--option' value would swallow the flag after it. A value that genuinely
+            // starts with two dashes is written quoted, and a quoted token starts with '"'.
+            if (afterFlag.StartsWith("--", StringComparison.Ordinal))
+                return ParseResult.Fail($"load {flag} needs a value");
+
             var (value, afterValue) = NextToken(afterFlag);
 
             switch (flag)
