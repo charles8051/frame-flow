@@ -116,6 +116,81 @@ public sealed class FrameFlowVideoViewSingleFrameItemTests
         Assert.Equal(1, snapshot.FramesDropped);
     }
 
+    [AvaloniaFact]
+    public void DetachingWithBothACopyAndPixelsWaiting_ChargesTwoDrops()
+    {
+        var (view, sink) = NewAttachedView();
+
+        // Buffers exist at the clip's size.
+        PresentOffUiThread(sink, 32, 16, Pts(1));
+        Dispatcher.UIThread.RunJobs();
+
+        // Now two frames are in flight at once, in two different places: frame 2 copied into
+        // the back buffer with its swap not yet pumped, frame 3 staged behind an allocation
+        // that has not run. They are two frames, and a detach strands both.
+        PresentOffUiThread(sink, 32, 16, Pts(2));
+        PresentOffUiThread(sink, 64, 48, Pts(3));
+
+        ((Panel)view.Parent!).Children.Remove(view);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, view.RenderedFrameCount);
+
+        var snapshot = sink.GetDiagnostics();
+        Assert.Equal(2, snapshot.FramesDropped);
+        Assert.Equal(3, snapshot.FramesPresented + snapshot.FramesDropped);
+    }
+
+    [AvaloniaFact]
+    public void AFrameWithNoSize_IsChargedRatherThanStaged()
+    {
+        var (view, sink) = NewAttachedView();
+
+        // No bitmap can be allocated at this size, so it must not be staged behind an
+        // allocation that would fail on the UI thread. It still owes exactly one accounting
+        // entry, which an empty-slot sentinel used to swallow.
+        PresentOffUiThread(sink, 0, 0, Pts(1));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, view.RenderedFrameCount);
+
+        var snapshot = sink.GetDiagnostics();
+        Assert.Equal(0, snapshot.FramesPresented);
+        Assert.Equal(1, snapshot.FramesDropped);
+
+        // And the surface still works: a real frame after it draws.
+        PresentOffUiThread(sink, 64, 48, Pts(2));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, view.RenderedFrameCount);
+        Assert.Equal(Pts(2), sink.GetDiagnostics().LastPresentedPresentationTime);
+    }
+
+    [AvaloniaFact]
+    public void AResizeBehindAQueuedSwap_DrawsBothFrames()
+    {
+        var (view, sink) = NewAttachedView();
+
+        PresentOffUiThread(sink, 32, 16, Pts(1));
+        Dispatcher.UIThread.RunJobs();
+
+        // Frame 2 is copied into the back buffer and queues its swap. Frame 3 is a different
+        // size, so it stages and queues an allocation behind that swap.
+        PresentOffUiThread(sink, 32, 16, Pts(2));
+        PresentOffUiThread(sink, 64, 48, Pts(3));
+        Dispatcher.UIThread.RunJobs();
+
+        // Both drew. AllocateBuffers discards whatever is in the back buffer when it
+        // replaces it, and does so without charging a drop; the reason that is not a hole is
+        // this ordering. Both callbacks are posted at DispatcherPriority.Render, so they run
+        // in the order they were queued and the swap publishes frame 2 before the allocation
+        // can throw its buffer away. If that ever stops holding, this goes red and the
+        // accounting in AllocateBuffers becomes a live question.
+        Assert.Equal(3, view.RenderedFrameCount);
+        Assert.Equal(Pts(3), sink.GetDiagnostics().LastPresentedPresentationTime);
+        Assert.Equal(0, sink.DroppedFrameCount);
+    }
+
     // ─── Helpers ────────────────────────────────────────────────────
 
     private static TimeSpan Pts(int n) => TimeSpan.FromMilliseconds(n * 16);

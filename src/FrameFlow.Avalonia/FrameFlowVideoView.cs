@@ -83,6 +83,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     // Held under _lock and accounted exactly once like every other frame: presented when the
     // blit reaches the swap, dropped when a newer frame supersedes it or a detach strands it.
     private byte[]? _staged;
+    private bool _stagedPending;
     private int _stagedStride;
     private int _stagedWidth;
     private int _stagedHeight;
@@ -310,7 +311,8 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     private void EndBinding()
     {
         SinkBinding? binding;
-        bool strandedFrame;
+        SinkBinding? strandedCopy;
+        SinkBinding? strandedPixels;
 
         lock (_lock)
         {
@@ -321,24 +323,22 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             binding.Detached = true;
             _binding = null;
 
-            strandedFrame = _backPending;
+            // A copy waiting for its swap and pixels waiting for their buffers are two
+            // different frames. Both are stranded by the detach and each is owed its own
+            // drop, so they are counted apart: one flag covering both charged one drop for
+            // two frames.
+            strandedCopy = _backPending ? _backBinding ?? binding : null;
             _backPending = false;
             _backBinding = null;
 
-            // Pixels waiting for buffers are stranded by a detach exactly as a pending copy
-            // is, and are owed the same single accounting.
-            if (_stagedWidth != 0)
-            {
-                _stagedWidth = 0;
-                _stagedHeight = 0;
-                _stagedBinding = null;
-                strandedFrame = true;
-            }
+            strandedPixels = _stagedPending ? _stagedBinding ?? binding : null;
+            _stagedPending = false;
+            _stagedBinding = null;
         }
 
         binding.Sink.FrameArrived = null;
-        if (strandedFrame)
-            binding.Sink.RecordPreSwapDrop();
+        strandedCopy?.Sink.RecordPreSwapDrop();
+        strandedPixels?.Sink.RecordPreSwapDrop();
     }
 
     /// <summary>
@@ -397,6 +397,15 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
 
                 var data = cpu.Value;
 
+                // Nothing can be drawn at a non-positive size and no bitmap can be allocated
+                // for one, so staging it would only fail the allocation on the UI thread.
+                // Charged here so it still lands in exactly one bucket.
+                if (data.Width <= 0 || data.Height <= 0)
+                {
+                    binding.Sink.RecordPreSwapDrop();
+                    return;
+                }
+
                 // Wrong size or nothing allocated yet: the WriteableBitmaps are created on
                 // the UI thread, so the allocation is posted. The frame is kept rather than
                 // let go, because it may be the only one this item will offer (#287); the
@@ -407,9 +416,9 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                     // staged, and the one it replaces is charged the drop it is owed. The
                     // slot is emptied first: if the staging copy below throws, the pixels
                     // just charged must not still be there for a second charge.
-                    if (_stagedWidth != 0)
+                    if (_stagedPending)
                     {
-                        _stagedWidth = 0;
+                        _stagedPending = false;
                         _stagedBinding?.Sink.RecordPreSwapDrop();
                     }
 
@@ -526,6 +535,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             _staged = new byte[needed];
 
         data.PlaneY.Span[..needed].CopyTo(_staged);
+        _stagedPending = true;
         _stagedStride = data.StrideY;
         _stagedWidth = data.Width;
         _stagedHeight = data.Height;
@@ -546,7 +556,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     /// </remarks>
     private bool BlitStagedFrameLocked()
     {
-        if (_stagedWidth == 0 || _staged is null)
+        if (!_stagedPending || _staged is null)
             return false;
 
         var binding = _stagedBinding;
@@ -555,8 +565,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
         var height = _stagedHeight;
         var pts = _stagedPts;
 
-        _stagedWidth = 0;
-        _stagedHeight = 0;
+        _stagedPending = false;
         _stagedBinding = null;
 
         try
@@ -648,27 +657,44 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             return;
         _allocationPosted = true;
 
-        Dispatcher.UIThread.Post(
-            () =>
-            {
-                bool publish;
-                lock (_lock)
+        try
+        {
+            Dispatcher.UIThread.Post(
+                () =>
                 {
-                    _allocationPosted = false;
+                    bool publish;
+                    lock (_lock)
+                    {
+                        _allocationPosted = false;
 
-                    // A detach or a Clear between the request and here empties the slot.
-                    if (_stagedWidth != 0)
-                        AllocateBuffers(_stagedWidth, _stagedHeight);
+                        // A detach or a Clear between the request and here empties the slot.
+                        if (_stagedPending)
+                            AllocateBuffers(_stagedWidth, _stagedHeight);
 
-                    publish = BlitStagedFrameLocked();
-                }
+                        publish = BlitStagedFrameLocked();
+                    }
 
-                // Already on the UI thread, so the swap is a call rather than another post.
-                if (publish)
-                    SwapAndInvalidate();
-            },
-            DispatcherPriority.Render
-        );
+                    // Already on the UI thread, so the swap is a call rather than another
+                    // post.
+                    if (publish)
+                        SwapAndInvalidate();
+                },
+                DispatcherPriority.Render
+            );
+        }
+        catch
+        {
+            // The post never landed, so nothing will clear the claim; leaving it set would
+            // wedge every later allocation request behind a callback that does not exist.
+            //
+            // The staging slot is emptied without charging it. The throw propagates into
+            // CopyArrivedFrame, whose catch charges this frame its one drop; leaving the
+            // pixels staged would let a later detach or Clear charge the same frame again.
+            _allocationPosted = false;
+            _stagedPending = false;
+            _stagedBinding = null;
+            throw;
+        }
     }
 
     /// <summary>
@@ -720,11 +746,10 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
 
             // Nothing is going to draw them now, and the buffers they were waiting for are
             // gone.
-            if (_stagedWidth != 0)
+            if (_stagedPending)
             {
-                _stagedWidth = 0;
+                _stagedPending = false;
                 _stagedBinding?.Sink.RecordPreSwapDrop();
-                _stagedHeight = 0;
                 _stagedBinding = null;
             }
 
