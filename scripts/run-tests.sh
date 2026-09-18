@@ -84,7 +84,7 @@ find "${TMPDIR:-/tmp}" -maxdepth 1 -name "frameflow-tests.*" -type d -mtime +1 \
 
 logdir=$(mktemp -d "${TMPDIR:-/tmp}/frameflow-tests.XXXXXX")
 export logdir
-trap 'rm -rf "$logdir"' INT TERM
+trap 'rm -rf "$logdir"' INT TERM HUP QUIT
 
 results=$(
   printf '%s\n' "${projects[@]}" \
@@ -99,11 +99,14 @@ results=$(
         # no summary at all - crashed, aborted, could not start - keeps its output
         # too, which is the case with the least to go on otherwise.
         #
-        # Named for the project directory rather than the csproj: two projects can
-        # share a file name, and a collision would silently drop one of the reports.
+        # Named for the whole relative path, which is unique by construction. A
+        # basename collides for two projects of the same name in different folders;
+        # a dirname collides for two in one folder, and is empty for a project
+        # sitting directly under tests/. Either would silently drop a report, so
+        # the slug is verbose and unambiguous instead.
         if [ "$rc" -ne 0 ] \
            || ! printf "%s" "$line" | grep -qE "Failed:[[:space:]]+0([^0-9]|$)"; then
-          slug=$(dirname "$1" | sed "s#^tests/##" | tr "\\/" "__")
+          slug=$(printf "%s" "$1" | sed "s#^tests/##; s#[.]csproj\$##" | tr "/" "_")
           printf "%s\n" "$out" > "$logdir/$slug.log"
         fi
         if printf "%s" "$line" | grep -qE "Failed:[[:space:]]+[0-9]+"; then
