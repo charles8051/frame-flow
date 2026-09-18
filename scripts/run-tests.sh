@@ -71,12 +71,26 @@ start=$(date +%s)
 # "Failed: N" field, and the aggregation below would score it as zero failures
 # and exit 0. `tail` masks the exit status, so it is captured explicitly rather
 # than inferred from the pipeline.
+# Where a failing assembly's full output is kept. Only summary lines reach stdout,
+# so without this a red run says how many failed and never which - see #284, where
+# that gap is why an intermittent failure went months without a name. Written only
+# on failure; a green run leaves nothing behind.
+logdir=$(mktemp -d "${TMPDIR:-/tmp}/frameflow-tests.XXXXXX")
+export logdir
+
 results=$(
   printf '%s\n' "${projects[@]}" \
     | xargs -P 8 -I{} bash -c '
         out=$(dotnet test "$1" -f "$2" --no-build --no-restore --nologo --verbosity quiet 2>&1)
         rc=$?
         line=$(printf "%s\n" "$out" | tail -1)
+
+        # Keep the whole output when anything went wrong: the [FAIL] lines and the
+        # assertion messages sit above the summary and are otherwise discarded.
+        if [ "$rc" -ne 0 ] || printf "%s" "$line" | grep -qE "Failed:[[:space:]]+[1-9]"; then
+          printf "%s
+" "$out" > "$logdir/$(basename "$1" .csproj).log"
+        fi
         if printf "%s" "$line" | grep -qE "Failed:[[:space:]]+[0-9]+"; then
           printf "%s\n" "$line"
         else
@@ -126,6 +140,21 @@ anomalies=$(( nosummary + unexplained ))
 
 elapsed=$(( $(date +%s) - start ))
 echo "==> ${passed} passed, ${failed} failed, ${skipped} skipped in ${elapsed}s"
+
+# Name the failures. A count alone cannot be acted on, and a rerun that goes green
+# takes the evidence with it.
+if [ "$failed" -gt 0 ] || [ "$anomalies" -gt 0 ]; then
+  echo
+  for log in "$logdir"/*.log; do
+    [ -e "$log" ] || continue
+    echo "--- $(basename "$log" .log)"
+    grep -E "\[FAIL\]" "$log" | sed "s/^\[xUnit\.net [0-9:.]*\] *//; s/^ */    /" || true
+  done
+  echo
+  echo "    Full output: $logdir"
+else
+  rm -rf "$logdir"
+fi
 
 if [ "$nosummary" -gt 0 ]; then
   echo "    ${nosummary} assembl(y|ies) produced no summary line — crashed, aborted, or"
