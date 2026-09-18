@@ -39,17 +39,36 @@ internal static class CommandFormatter
         var parts = new List<string>();
 
         if (load.Format is { Length: > 0 } format)
-            parts.Add($"--format {format}");
+            parts.Add($"--format {Quote(format)}");
 
         if (load.Options is { Count: > 0 } options)
         {
             foreach (var key in options.Keys.OrderBy(k => k, StringComparer.Ordinal))
-                parts.Add($"--option {key}={options[key]}");
+                parts.Add($"--option {Quote($"{key}={options[key]}")}");
         }
 
-        parts.Add(load.Path);
+        parts.Add(Quote(load.Path));
         return $"load {string.Join(' ', parts)}";
     }
+
+    /// <summary>
+    /// Wraps a value in double quotes when leaving it bare would reparse as something else.
+    /// </summary>
+    /// <remarks>
+    /// Three ways a bare value changes meaning, all of them reachable: a space ends the token,
+    /// so an option value containing one would be read as a value plus a path; a leading
+    /// <c>--</c> is read as a flag, so a file named like one becomes an unknown flag; and a
+    /// <c>#</c> starts a comment outside quotes, so the rest of the line is discarded. The
+    /// parser's own comment stripping and unquoting are both quote-aware, which is what makes
+    /// quoting the answer rather than escaping.
+    /// </remarks>
+    private static string Quote(string value) =>
+        value.Length == 0
+        || value.Contains(' ', StringComparison.Ordinal)
+        || value.Contains('#', StringComparison.Ordinal)
+        || value.StartsWith("--", StringComparison.Ordinal)
+            ? $"\"{value}\""
+            : value;
 
     /// <summary>Renders a duration in the form the parser accepts.</summary>
     internal static string Duration(TimeSpan value) =>

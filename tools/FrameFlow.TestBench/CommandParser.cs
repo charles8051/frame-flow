@@ -294,6 +294,22 @@ internal static class CommandParser
     /// </summary>
     private static (string Token, string Remainder) NextToken(string text)
     {
+        // A quoted token runs to its closing quote rather than to the first space, so an
+        // option value may contain one. Without this the formatter could not render such a
+        // value in a form the parser reads back, and the transcript would replay as a
+        // different command.
+        if (text.StartsWith('"'))
+        {
+            var close = text.IndexOf('"', 1);
+            if (close > 0)
+            {
+                return (
+                    text[1..close],
+                    close + 1 >= text.Length ? string.Empty : text[(close + 1)..].TrimStart()
+                );
+            }
+        }
+
         var space = text.IndexOf(' ', StringComparison.Ordinal);
         return space < 0
             ? (text, string.Empty)

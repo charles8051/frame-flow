@@ -145,6 +145,52 @@ public sealed class CommandParserTests
     public void FormatWithoutANameFails() =>
         Assert.Contains("demuxer name", Error("load --format"));
 
+    // ── load round-trips through the formatter ──────────────────────────
+    //
+    // The transcript is the artifact worth pasting into an issue, so every line the bench
+    // prints has to be a line it would accept back. These are the values where "print the
+    // field verbatim" silently produces a different command.
+
+    [Theory]
+    [InlineData("load clip.mp4")]
+    [InlineData("load --format image2 slide.png")]
+    [InlineData("load --format image2 --option framerate=1/10 slide.png")]
+    [InlineData("load --option headers=X-Key=abc clip.mp4")]
+    // A path with spaces: bare, because the path is the trailing run and needs no quoting.
+    [InlineData(@"load C:\clips\my take 3.mp4")]
+    // A path that would be read as a flag, one that would be cut at a comment, and an option
+    // value with a space in it. Each has to come back quoted or it reparses as something else.
+    [InlineData(@"load ""--input.png""")]
+    [InlineData(@"load ""C:\clips	ake #3.mp4""")]
+    [InlineData(@"load --option ""headers=X-Key: a b"" clip.mp4")]
+    public void LoadSurvivesTheRoundTrip(string line)
+    {
+        var first = Assert.IsType<BenchCommand.Load>(Parse(line));
+        var rendered = CommandFormatter.Describe(first);
+        var second = Assert.IsType<BenchCommand.Load>(Parse(rendered));
+
+        Assert.Equal(first.Path, second.Path);
+        Assert.Equal(first.Format, second.Format);
+        Assert.Equal(first.Options?.Count ?? 0, second.Options?.Count ?? 0);
+
+        if (first.Options is not null)
+        {
+            foreach (var (key, value) in first.Options)
+                Assert.Equal(value, second.Options![key]);
+        }
+    }
+
+    [Fact]
+    public void AQuotedOptionValueKeepsItsSpaces()
+    {
+        var load = Assert.IsType<BenchCommand.Load>(
+            Parse(@"load --option ""headers=X-Key: a b"" clip.mp4")
+        );
+
+        Assert.Equal("X-Key: a b", load.Options!["headers"]);
+        Assert.Equal("clip.mp4", load.Path);
+    }
+
     [Theory]
     [InlineData("off", RepeatMode.Off)]
     [InlineData("one", RepeatMode.One)]

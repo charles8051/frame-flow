@@ -122,7 +122,10 @@ public partial class MainWindow : Window
 
             _player = await FrameFlowPlayer
                 .Create()
-                .WithMedia(path)
+                // SourceFor, not the path overload: a still opened on its own through the
+                // picker or the startup argument needs the same dwell a still in a folder
+                // gets, and returns MediaSource.FromFile untouched for a clip.
+                .WithMedia(SourceFor(path))
                 .WithVideoSink(videoSink)
                 .WithAudioSink(_audioSink)
                 .WithHardwareFrames(PlayerView.VideoSurface.PrefersHardwareFrames)
