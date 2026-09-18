@@ -21,11 +21,11 @@ namespace FrameFlow.Decoding.Diagnostics;
 /// <para>
 /// <b>Off by default.</b> When <see cref="Enabled"/> is <see langword="false"/>
 /// the decode path pays one relaxed bool read per frame and records nothing.
-/// Recording is single-writer — the decode worker calls both <c>Record</c>
-/// methods under the codec lock — so the reservoir needs no lock. A sample is
-/// written to its slot before the count that makes it visible, so a
-/// <see cref="Snapshot"/> from another thread never reads a slot the writer has
-/// not filled; the most it can miss is the frame in flight.
+/// When it is on, every reservoir access takes a lock: each decoder has its own
+/// codec lock, so several decoders can record at once, and a sample has to land
+/// in its slot before the count that makes it visible. A
+/// <see cref="Snapshot"/> therefore never reads a slot no writer filled, and
+/// two decoders never claim one slot.
 /// </para>
 /// <para>
 /// <b>Process-wide, like <see cref="DecodePoolMetrics"/>.</b> Both collectors
@@ -33,9 +33,12 @@ namespace FrameFlow.Decoding.Diagnostics;
 /// a run cannot attribute a sample to a particular stream. That is the right
 /// shape for the question these answer — what the readback costs on this
 /// machine — and it keeps a diagnostic reachable without threading a collector
-/// through decoder construction. A measurement session calls
-/// <see cref="Reset"/> at its start so a second run in the same process does
-/// not inherit the first one's samples.
+/// through decoder construction. Two consequences follow, and neither is a bug
+/// to be reported: a snapshot taken while two streams decode reports both
+/// mixed together, and <see cref="Reset"/> clears the samples of every decoder
+/// in the process, not just the caller's. A measurement session calls
+/// <see cref="Reset"/> at its start so a second run does not inherit the first
+/// one's samples, which means two sessions cannot overlap.
 /// </para>
 /// </remarks>
 public static class DecodeStageMetrics
@@ -44,6 +47,9 @@ public static class DecodeStageMetrics
     private const int ReservoirSize = 4096;
 
     private static bool _enabled;
+
+    /// <summary>Guards both reservoirs and both counts against every writer.</summary>
+    private static readonly object Sync = new();
 
     private static readonly long[] TransferTicks = new long[ReservoirSize];
     private static readonly long[] ConvertTicks = new long[ReservoirSize];
@@ -77,16 +83,19 @@ public static class DecodeStageMetrics
 
     private static void Record(long[] reservoir, ref long counter, long elapsedTicks)
     {
-        // Write the sample, then publish the count. The reverse order lets a
-        // concurrent Snapshot see a slot it believes was written and read the
-        // previous lap's value — or a zero on the first lap, which lands in the
-        // middle of a percentile and is indistinguishable from a real
-        // measurement. Both Record calls come from the decode worker under
-        // VideoDecoder's codec lock, so the read of `counter` here is
-        // single-writer and needs no interlock.
-        long n = counter;
-        reservoir[(int)(n % ReservoirSize)] = elapsedTicks;
-        Volatile.Write(ref counter, n + 1);
+        // Under the lock, so that the slot is filled before the count that
+        // makes it visible and so that two decoders cannot claim the same slot.
+        // Each VideoDecoder holds its own codec lock, so "the decode worker" is
+        // one writer per decoder and several across a process; this collector
+        // is process-wide, so per-decoder exclusion buys it nothing.
+        //
+        // The cost is one uncontended lock on a path that has just run a PCIe
+        // transfer or an sws_scale, and only when the collector is on.
+        lock (Sync)
+        {
+            reservoir[(int)(counter % ReservoirSize)] = elapsedTicks;
+            counter++;
+        }
     }
 
     /// <summary>
@@ -96,10 +105,13 @@ public static class DecodeStageMetrics
     /// </summary>
     public static void Reset()
     {
-        Volatile.Write(ref _transferCount, 0);
-        Volatile.Write(ref _convertCount, 0);
-        Array.Clear(TransferTicks);
-        Array.Clear(ConvertTicks);
+        lock (Sync)
+        {
+            _transferCount = 0;
+            _convertCount = 0;
+            Array.Clear(TransferTicks);
+            Array.Clear(ConvertTicks);
+        }
     }
 
     /// <summary>
@@ -108,11 +120,16 @@ public static class DecodeStageMetrics
     /// decoder never ran the download, which is itself the answer when
     /// hardware decode did not engage.
     /// </summary>
-    public static DecodeStageSnapshot Snapshot() =>
-        new(
-            Summarize(TransferTicks, Volatile.Read(ref _transferCount)),
-            Summarize(ConvertTicks, Volatile.Read(ref _convertCount))
-        );
+    public static DecodeStageSnapshot Snapshot()
+    {
+        lock (Sync)
+        {
+            return new DecodeStageSnapshot(
+                Summarize(TransferTicks, _transferCount),
+                Summarize(ConvertTicks, _convertCount)
+            );
+        }
+    }
 
     private static DecodeStageSummary Summarize(long[] reservoir, long total)
     {
