@@ -65,7 +65,9 @@ namespace FrameFlow.Media;
 /// <i>users</i> — they call <c>ActivateAsync</c> and <c>DeactivateAsync</c>,
 /// and never <see cref="IAsyncDisposable.DisposeAsync"/>. One sink serves one
 /// player at a time, and may serve several in sequence, which is what keeps a
-/// presenter warm across a playlist's items.
+/// presenter warm across a playlist's items. Nothing enforces the "at a time":
+/// driving one sink from two players at once is undefined, and keeping them
+/// apart is the caller's job.
 /// </para>
 /// </remarks>
 public interface IVideoSink : IAsyncDisposable

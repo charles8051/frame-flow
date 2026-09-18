@@ -140,8 +140,11 @@ correct move is to replace.
 
 ### Sink ownership
 
-> Amended: **whoever constructs a sink owns it** — the container for what it registered, the
-> caller for what they built. See the amendment at the top of this record.
+> **Historical. Do not implement from this section.** The rule is now: whoever constructs a sink
+> owns it, the container for what it registered and the caller for what they built. What follows
+> is the 2026-05 text, kept for its reasoning. Registering a caller-constructed sink in a
+> container on the strength of it, or leaving a caller-constructed sink undisposed, is how #275
+> happened. The amendment at the top of this record and the **Decision summary** carry the rule.
 
 **The DI provider is the canonical owner of sink lifecycle.**
 Sinks register as singletons (`AddSingleton<IAudioSink>(...)` or
@@ -217,11 +220,16 @@ sink. The teardown sequence becomes:
 
 ### Layer 2 PlayerBuilder
 
-> Amended: none of this section describes the code. The per-player DI container went with
-> `MediaPlayerCore` (#224); `PlayerBuilder` stands one up nowhere. The quoted XML doc was never
-> written onto either builder interface, and its two claims are both wrong now — the player does
-> not dispose the sink, and reusing one sink across players in sequence is what the playlist
-> player is for (ADR-0062). See the amendment at the top of this record.
+> **Historical, and wrong in every particular. Do not implement from this section.** There is no
+> per-player DI container — it went with `MediaPlayerCore` (#224), and `PlayerBuilder` stands one
+> up nowhere. `PlayerBuilder.BuildAsync` does not exist; the terminal is `BuildPlayerAsync`
+> (ADR-0079). The XML doc quoted below was never written onto any builder interface, and both of
+> its claims are false: the player does not dispose the sink, and reusing one sink across players
+> in sequence is precisely what the playlist player is for (ADR-0062). The code's contract is on
+> `IPlayerBuilder.WithVideoSink` and `WithAudioSink`.
+>
+> Kept because the reasoning below is still worth reading, and because deleting it would hide
+> that the record said this for four months.
 
 `PlayerBuilder.BuildAsync` registers caller-provided sinks
 directly:
