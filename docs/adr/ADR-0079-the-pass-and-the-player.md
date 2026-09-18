@@ -216,15 +216,19 @@ deletion landed in #271 while this record was being written, and its reasoning i
   `Clock?.Start(TimeSpan.Zero)` added to the run, it fails with "A pass read the clock (Start)".
 - **The fold.** `IMediaPlayerBuilder` is deleted and every `IPlayerBuilder` option returns
   `IPlayerBuilder`. `WithOpenAlAudio` and `WithAvaloniaVideoView` keep two overloads, the second
-  now on `IPassBuilder`.
+  now on `IPassBuilder`. `WithOpenAlAudio` was retired shortly afterwards, in the change that
+  closed #275; `WithAvaloniaVideoView` keeps both.
 - **`PlaybackGraph`.** Removed in #271, before this landed.
 
 The one departure: the record did not say what a pass does with a sink it was never given a chance
-to own. `WithOpenAlAudio` and `WithAvaloniaVideoView` construct one and hand it through the
-caller-owned path, so nothing disposes it. That predates this change on the player path and is
-#275, which needs an ADR-0044 amendment before it is a change.
+to own. `WithOpenAlAudio` constructed one and handed it through the caller-owned path, so nothing
+disposed it. That predated this change on the player path, and #275 retired the shortcut rather
+than carving an exception into the ownership rule. `WithAvaloniaVideoView` was never affected: it
+borrows the sink the view owns.
 
-Breaking changes 25, 26 and 27.
+Breaking changes 25, 26 and 27 are this record's. Entry 28, retiring `WithOpenAlAudio`, is not:
+it came out of #275 shortly afterwards and is noted above only because it changes what the two
+bullets before it say.
 
 ## What this does not decide
 

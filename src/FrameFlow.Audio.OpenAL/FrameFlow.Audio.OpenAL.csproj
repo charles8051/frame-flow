@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\FrameFlow.Media\FrameFlow.Media.csproj" />
-    <ProjectReference Include="..\FrameFlow.Player\FrameFlow.Player.csproj" />
   </ItemGroup>
 
   <ItemGroup>
