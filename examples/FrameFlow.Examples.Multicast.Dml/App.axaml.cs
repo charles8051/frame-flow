@@ -33,10 +33,30 @@ public class App : Application
             // broken pane-2 bootstrap doesn't take down panes 1 and 3.
             var breakYolo = args.Contains("--break-yolo", StringComparer.Ordinal);
 
+            // --exit-after <seconds> closes the window on a timer and prints the
+            // per-stage timing report, so a measurement run needs no operator.
+            // It also turns on the decoder's readback timing, which is off by
+            // default so the normal path pays nothing for it.
+            int? exitAfter = null;
+            var exitAfterIndex = Array.IndexOf(args, "--exit-after");
+            if (
+                exitAfterIndex >= 0
+                && exitAfterIndex + 1 < args.Length
+                && int.TryParse(args[exitAfterIndex + 1], out var seconds)
+            )
+            {
+                exitAfter = seconds;
+                // Reset first: the collector is process-wide, so a session that
+                // only enables it reports whatever a previous decoder left.
+                FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Reset();
+                FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Enabled = true;
+            }
+
             desktop.MainWindow = new MainWindow
             {
                 StartupFilePath = startupFile,
                 BreakYolo = breakYolo,
+                ExitAfterSeconds = exitAfter,
             };
             StartupClock.Mark("MainWindow assigned to ApplicationLifetime");
         }
