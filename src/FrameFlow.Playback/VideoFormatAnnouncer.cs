@@ -43,7 +43,11 @@ internal sealed class VideoFormatAnnouncer
     // match the last thing it was told.
     private readonly SemaphoreSlim _serial = new(1, 1);
 
-    // Read and written only under _serial, except by Announced, which is for tests.
+    // Read and written only under _serial. Nothing outside the critical section writes it,
+    // which is why there is no Reset: one existed, nothing called it, and writing the baseline
+    // from outside the semaphore let an announcement already in flight commit its format after
+    // the reset and undo it. A sink rebuilt behind this announcer wants a new announcer.
+    // Announced is a read for tests and takes the volatile read rather than the lock.
     private VideoFormatInfo? _announced;
 
     /// <summary>
@@ -102,10 +106,4 @@ internal sealed class VideoFormatAnnouncer
             _serial.Release();
         }
     }
-
-    /// <summary>
-    /// Forgets what was announced, so the next frame announces whatever it is. For a sink that
-    /// has been torn down and rebuilt behind this announcer.
-    /// </summary>
-    internal void Reset() => Volatile.Write(ref _announced, null);
 }

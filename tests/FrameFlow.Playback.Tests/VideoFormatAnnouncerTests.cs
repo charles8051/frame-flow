@@ -103,19 +103,6 @@ public sealed class VideoFormatAnnouncerTests
     }
 
     [Fact]
-    public async Task ResetMakesTheNextFrameAnnounceAgain()
-    {
-        var sink = new RecordingSink();
-        var announcer = new VideoFormatAnnouncer();
-
-        await announcer.PresentAsync(sink, new StubFrame(1920, 1080, PixelFormat.Bgra32), default);
-        announcer.Reset();
-        await announcer.PresentAsync(sink, new StubFrame(1920, 1080, PixelFormat.Bgra32), default);
-
-        Assert.Equal([Hd, Hd], sink.Announcements);
-    }
-
-    [Fact]
     public async Task AFailedAnnouncementIsRetriedOnTheNextFrame()
     {
         // The baseline moves only after the sink call returns. Recording it first would leave
