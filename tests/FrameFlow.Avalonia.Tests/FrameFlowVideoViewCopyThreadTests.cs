@@ -34,26 +34,30 @@ public sealed class FrameFlowVideoViewCopyThreadTests
     {
         var (view, sink) = NewAttachedView();
 
-        // First frame allocates: the WriteableBitmaps are created on the UI thread, so this
-        // one is discarded and counted, and the allocation is posted.
+        // First frame allocates: the WriteableBitmaps are created on the UI thread, so the
+        // allocation is posted. Its pixels are copied aside rather than discarded, because
+        // they may be the only ones this item will offer (#287), so nothing is counted yet.
         PresentOffUiThread(sink, Pts(1));
         Assert.Equal(0, view.RenderedFrameCount);
-        Assert.Equal(1, sink.DroppedFrameCount);
+        Assert.Equal(0, sink.DroppedFrameCount);
 
-        Dispatcher.UIThread.RunJobs(); // run the posted allocation
+        Dispatcher.UIThread.RunJobs(); // the allocation, then the blit and swap of frame 1
+
+        Assert.Equal(1, view.RenderedFrameCount);
+        Assert.Equal(0, sink.DroppedFrameCount);
 
         // Second frame lands in the back buffer — on the presenting thread, while the UI
         // thread is blocked inside PresentOffUiThread. Nothing is counted presented yet: the
         // swap has not been pumped. The proof the copy already happened is that pumping now
         // publishes it without any further frame arriving.
         PresentOffUiThread(sink, Pts(2));
-        Assert.Equal(0, view.RenderedFrameCount);
+        Assert.Equal(1, view.RenderedFrameCount); // still frame 1
 
         Dispatcher.UIThread.RunJobs(); // the swap only
 
-        Assert.Equal(1, view.RenderedFrameCount);
-        Assert.Equal(1, sink.DroppedFrameCount);
-        Assert.Equal(1, sink.GetDiagnostics().FramesPresented);
+        Assert.Equal(2, view.RenderedFrameCount);
+        Assert.Equal(0, sink.DroppedFrameCount);
+        Assert.Equal(2, sink.GetDiagnostics().FramesPresented);
         Assert.Equal(Pts(2), sink.GetDiagnostics().LastPresentedPresentationTime);
     }
 
@@ -71,12 +75,12 @@ public sealed class FrameFlowVideoViewCopyThreadTests
         PresentOffUiThread(sink, Pts(3));
         PresentOffUiThread(sink, Pts(4));
 
-        Assert.Equal(0, view.RenderedFrameCount);
-        Assert.Equal(3, sink.DroppedFrameCount); // 1 allocation + 2 superseded in the back buffer
+        Assert.Equal(1, view.RenderedFrameCount); // frame 1, blitted with its allocation
+        Assert.Equal(2, sink.DroppedFrameCount); // frames 2 and 3, superseded in the back buffer
 
         Dispatcher.UIThread.RunJobs(); // publishes the survivor, frame 4
 
-        Assert.Equal(1, view.RenderedFrameCount);
+        Assert.Equal(2, view.RenderedFrameCount);
         Assert.Equal(Pts(4), sink.GetDiagnostics().LastPresentedPresentationTime);
 
         // Every frame is accounted for exactly once: presented or dropped, never both.
@@ -98,8 +102,8 @@ public sealed class FrameFlowVideoViewCopyThreadTests
             Dispatcher.UIThread.RunJobs(); // the swap
         }
 
-        Assert.Equal(4, view.RenderedFrameCount);
-        Assert.Equal(1, sink.DroppedFrameCount); // the allocation frame only
+        Assert.Equal(5, view.RenderedFrameCount); // including the allocation frame
+        Assert.Equal(0, sink.DroppedFrameCount);
     }
 
     [AvaloniaFact]
@@ -120,11 +124,11 @@ public sealed class FrameFlowVideoViewCopyThreadTests
     {
         var (view, sink) = NewAttachedView();
 
-        PresentOffUiThread(sink, Pts(1));
+        PresentOffUiThread(sink, Pts(1)); // allocates, and draws with the allocation
         Dispatcher.UIThread.RunJobs();
         PresentOffUiThread(sink, Pts(2));
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal(1, view.RenderedFrameCount);
+        Assert.Equal(2, view.RenderedFrameCount);
 
         // Externally-owned sink, so detach unhooks but does not dispose it.
         ((Panel)view.Parent!).Children.Remove(view);
@@ -132,7 +136,7 @@ public sealed class FrameFlowVideoViewCopyThreadTests
 
         PresentOffUiThread(sink, Pts(3));
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal(1, view.RenderedFrameCount);
+        Assert.Equal(2, view.RenderedFrameCount);
     }
 
     // ─── Attachment lifecycle (review on #135) ──────────────────────
@@ -152,8 +156,8 @@ public sealed class FrameFlowVideoViewCopyThreadTests
 
         // The stranded frame is the first sink's loss. It must not be published as the
         // replacement's, and it must not vanish from the accounting.
-        Assert.Equal(0, first.RenderedFrameCount);
-        Assert.Equal(2, first.DroppedFrameCount); // allocation frame + the stranded one
+        Assert.Equal(1, first.RenderedFrameCount); // frame 1, drawn with its allocation
+        Assert.Equal(1, first.DroppedFrameCount); // the stranded one
         Assert.Equal(2, first.GetDiagnostics().FramesPresented + first.GetDiagnostics().FramesDropped);
 
         Assert.Equal(0, second.RenderedFrameCount);
@@ -174,7 +178,7 @@ public sealed class FrameFlowVideoViewCopyThreadTests
         view.Sink = second;
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal(1, first.RenderedFrameCount);
+        Assert.Equal(2, first.RenderedFrameCount);
         Assert.Equal(0, second.RenderedFrameCount);
     }
 
@@ -197,7 +201,7 @@ public sealed class FrameFlowVideoViewCopyThreadTests
         PresentOffUiThread(second, Pts(3));
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal(1, view.RenderedFrameCount);
+        Assert.Equal(2, view.RenderedFrameCount);
         Assert.Equal(1, second.RenderedFrameCount);
         Assert.Equal(Pts(3), second.GetDiagnostics().LastPresentedPresentationTime);
     }
@@ -214,12 +218,13 @@ public sealed class FrameFlowVideoViewCopyThreadTests
         ((Panel)view.Parent!).Children.Remove(view);
         Dispatcher.UIThread.RunJobs();
 
-        // Two frames in, neither drawn, both accounted. Before the binding carried the
-        // detach, the queued swap ran anyway and the frame was counted by nobody.
-        Assert.Equal(0, view.RenderedFrameCount);
+        // Two frames in, both accounted: the first drew alongside its allocation, the second
+        // was stranded in the back buffer. Before the binding carried the detach, the queued
+        // swap ran anyway and the stranded frame was counted by nobody.
+        Assert.Equal(1, view.RenderedFrameCount);
         var snapshot = sink.GetDiagnostics();
-        Assert.Equal(0, snapshot.FramesPresented);
-        Assert.Equal(2, snapshot.FramesDropped);
+        Assert.Equal(1, snapshot.FramesPresented);
+        Assert.Equal(1, snapshot.FramesDropped);
     }
 
     [AvaloniaFact]
@@ -235,13 +240,13 @@ public sealed class FrameFlowVideoViewCopyThreadTests
         await Task.Run(async () =>
             await sink.PresentAsync(new ThrowingFrame(Pts(2)), CancellationToken.None));
 
-        Assert.Equal(0, view.RenderedFrameCount);
-        Assert.Equal(2, sink.DroppedFrameCount); // allocation frame + the throwing one
+        Assert.Equal(1, view.RenderedFrameCount); // the allocation frame, blitted
+        Assert.Equal(1, sink.DroppedFrameCount); // the throwing one only
 
         // And the surface still works afterwards.
         PresentOffUiThread(sink, Pts(3));
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal(1, view.RenderedFrameCount);
+        Assert.Equal(2, view.RenderedFrameCount);
     }
 
     [AvaloniaFact]
@@ -259,7 +264,7 @@ public sealed class FrameFlowVideoViewCopyThreadTests
         // copy queued its own delegate the dispatcher would hold 20 of them here.
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal(1, view.RenderedFrameCount);
+        Assert.Equal(2, view.RenderedFrameCount); // frame 1 with its allocation, then the survivor
         Assert.Equal(Pts(21), sink.GetDiagnostics().LastPresentedPresentationTime);
 
         var snapshot = sink.GetDiagnostics();
@@ -308,7 +313,13 @@ public sealed class FrameFlowVideoViewCopyThreadTests
         public PixelFormat Format => PixelFormat.Bgra32;
         public FrameMemoryDomain MemoryDomain => FrameMemoryDomain.Cpu;
 
-        public IVideoFrame AddRef() => this;
+        // Matches Media.CpuVideoFrame, which is what the view is handed in a real pipeline:
+        // decoder-produced frames are one-shot, their buffer goes back to the pool when the
+        // present call returns, and AddRef throws. A double that answered `this` let a fix
+        // that retained the frame across a dispatcher post pass here and fail on the bench
+        // (#287), so it answers the way the real frame does.
+        public IVideoFrame AddRef() =>
+            throw new NotSupportedException("One-shot frame: ref counting is not supported.");
 
         public void Dispose() { }
 
@@ -329,7 +340,13 @@ public sealed class FrameFlowVideoViewCopyThreadTests
         public PixelFormat Format => PixelFormat.Bgra32;
         public FrameMemoryDomain MemoryDomain => FrameMemoryDomain.Cpu;
 
-        public IVideoFrame AddRef() => this;
+        // Matches Media.CpuVideoFrame, which is what the view is handed in a real pipeline:
+        // decoder-produced frames are one-shot, their buffer goes back to the pool when the
+        // present call returns, and AddRef throws. A double that answered `this` let a fix
+        // that retained the frame across a dispatcher post pass here and fail on the bench
+        // (#287), so it answers the way the real frame does.
+        public IVideoFrame AddRef() =>
+            throw new NotSupportedException("One-shot frame: ref counting is not supported.");
 
         public void Dispose() { }
 

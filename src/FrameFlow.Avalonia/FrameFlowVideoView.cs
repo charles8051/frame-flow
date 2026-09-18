@@ -66,6 +66,30 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     private int _bitmapWidth;
     private int _bitmapHeight;
 
+    // The pixels of the frame whose dimensions asked for a reallocation, kept so that frame
+    // can be drawn once the buffers exist. They used to be discarded: the WriteableBitmaps are
+    // created on the UI thread, so the producer posted the allocation and let the frame go, on
+    // the reasoning that this costs one frame on the first frame and on each resize. A clip
+    // supplies another 33 ms later and never notices. An item with one frame has nothing to
+    // follow it, so the frame that triggered the resize was the only frame it would ever offer
+    // and the view kept drawing whatever was there before, for as long as that item lasted
+    // (#287).
+    //
+    // Pixels rather than the frame itself, because a decoder-produced frame is one-shot:
+    // Media.CpuVideoFrame.AddRef throws, and its buffer goes back to the pool when the present
+    // call returns. So the copy has to happen now, on the producer thread where every other
+    // copy happens, and the UI thread only blits it into the bitmap it just allocated.
+    //
+    // Held under _lock and accounted exactly once like every other frame: presented when the
+    // blit reaches the swap, dropped when a newer frame supersedes it or a detach strands it.
+    private byte[]? _staged;
+    private bool _stagedPending;
+    private int _stagedStride;
+    private int _stagedWidth;
+    private int _stagedHeight;
+    private TimeSpan _stagedPts;
+    private SinkBinding? _stagedBinding;
+
     private AvaloniaVideoSink? _sink;
 
     // True when the sink (and its pool) was created by the view via EnsureSink
@@ -287,7 +311,8 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     private void EndBinding()
     {
         SinkBinding? binding;
-        bool strandedFrame;
+        SinkBinding? strandedCopy;
+        SinkBinding? strandedPixels;
 
         lock (_lock)
         {
@@ -298,14 +323,22 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             binding.Detached = true;
             _binding = null;
 
-            strandedFrame = _backPending;
+            // A copy waiting for its swap and pixels waiting for their buffers are two
+            // different frames. Both are stranded by the detach and each is owed its own
+            // drop, so they are counted apart: one flag covering both charged one drop for
+            // two frames.
+            strandedCopy = _backPending ? _backBinding ?? binding : null;
             _backPending = false;
             _backBinding = null;
+
+            strandedPixels = _stagedPending ? _stagedBinding ?? binding : null;
+            _stagedPending = false;
+            _stagedBinding = null;
         }
 
         binding.Sink.FrameArrived = null;
-        if (strandedFrame)
-            binding.Sink.RecordPreSwapDrop();
+        strandedCopy?.Sink.RecordPreSwapDrop();
+        strandedPixels?.Sink.RecordPreSwapDrop();
     }
 
     /// <summary>
@@ -364,13 +397,33 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
 
                 var data = cpu.Value;
 
+                // Nothing can be drawn at a non-positive size and no bitmap can be allocated
+                // for one, so staging it would only fail the allocation on the UI thread.
+                // Charged here so it still lands in exactly one bucket.
+                if (data.Width <= 0 || data.Height <= 0)
+                {
+                    binding.Sink.RecordPreSwapDrop();
+                    return;
+                }
+
                 // Wrong size or nothing allocated yet: the WriteableBitmaps are created on
-                // the UI thread, so post the allocation and let this frame go. Costs one
-                // frame on the first frame and on each resize, not per frame.
+                // the UI thread, so the allocation is posted. The frame is kept rather than
+                // let go, because it may be the only one this item will offer (#287); the
+                // posted callback draws it once the buffers exist.
                 if (_back is null || _bitmapWidth != data.Width || _bitmapHeight != data.Height)
                 {
-                    RequestBuffers(data.Width, data.Height);
-                    binding.Sink.RecordPreSwapDrop();
+                    // Latest wins, as everywhere else here: a newer frame replaces the one
+                    // staged, and the one it replaces is charged the drop it is owed. The
+                    // slot is emptied first: if the staging copy below throws, the pixels
+                    // just charged must not still be there for a second charge.
+                    if (_stagedPending)
+                    {
+                        _stagedPending = false;
+                        _stagedBinding?.Sink.RecordPreSwapDrop();
+                    }
+
+                    StagePixelsLocked(data, frame.Pts, binding);
+                    RequestBuffersForStagedFrame();
                     return;
                 }
 
@@ -465,6 +518,87 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     }
 
     /// <summary>
+    /// Copies a frame's pixels aside while its buffer is still valid, for the blit that
+    /// happens once the bitmap it needs has been allocated. Under <see cref="_lock"/>, on the
+    /// producer thread.
+    /// </summary>
+    /// <remarks>
+    /// The copy is here rather than in the posted callback because a decoder-produced frame is
+    /// one-shot: its buffer returns to the pool when the present call ends, and
+    /// <see cref="IVideoFrame.AddRef"/> throws on it, so there is nothing to hold on to. The
+    /// array is reused across resizes and only grows.
+    /// </remarks>
+    private void StagePixelsLocked(CpuFrameData data, TimeSpan pts, SinkBinding binding)
+    {
+        var needed = data.StrideY * data.Height;
+        if (_staged is null || _staged.Length < needed)
+            _staged = new byte[needed];
+
+        data.PlaneY.Span[..needed].CopyTo(_staged);
+        _stagedPending = true;
+        _stagedStride = data.StrideY;
+        _stagedWidth = data.Width;
+        _stagedHeight = data.Height;
+        _stagedPts = pts;
+        _stagedBinding = binding;
+    }
+
+    /// <summary>
+    /// Blits the staged pixels into the back buffer, if any are staged and the buffer that
+    /// landed is the size they asked for. Returns whether there is now something to swap.
+    /// Under <see cref="_lock"/>, on the UI thread, immediately after the allocation.
+    /// </summary>
+    /// <remarks>
+    /// This is the one pixel copy the UI thread does, and it happens once per size change
+    /// rather than per frame — no more than the cost the mismatch branch already accepted
+    /// when it discarded the frame. Every other copy stays on the producer thread, which is
+    /// what ADR-0016 moved it there for.
+    /// </remarks>
+    private bool BlitStagedFrameLocked()
+    {
+        if (!_stagedPending || _staged is null)
+            return false;
+
+        var binding = _stagedBinding;
+        var stride = _stagedStride;
+        var width = _stagedWidth;
+        var height = _stagedHeight;
+        var pts = _stagedPts;
+
+        _stagedPending = false;
+        _stagedBinding = null;
+
+        try
+        {
+            // A detach between the request and this callback, or an allocation for a newer
+            // size that superseded these pixels: either way they are owed their drop rather
+            // than drawn at the wrong geometry.
+            if (_back is null || binding is null || binding.Detached
+                || _bitmapWidth != width || _bitmapHeight != height)
+            {
+                binding?.Sink.RecordPreSwapDrop();
+                return false;
+            }
+
+            using (var fb = _back.Lock())
+                CopyPixels(_staged.AsSpan(0, stride * height), stride, fb);
+
+            _backPts = pts;
+            _backBinding = binding;
+            _backPending = true;
+            return true;
+        }
+        catch
+        {
+            // Same rule as the producer-side copy: a throw partway through leaves _back
+            // unpublishable, and these pixels land in exactly one bucket either way.
+            _backPending = false;
+            binding?.Sink.RecordPreSwapDrop();
+            throw;
+        }
+    }
+
+    /// <summary>
     /// Publishes the back buffer and asks for a redraw. UI thread only; the swap is the
     /// ADR-0016 hand-off point, and the only pixel-buffer work the UI thread does.
     /// </summary>
@@ -505,26 +639,62 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     }
 
     /// <summary>
-    /// Posts a back/front buffer allocation to the UI thread. Must be called under
-    /// <see cref="_lock"/>.
+    /// Posts an allocation of the buffer pair the staged pixels need, and the blit of those
+    /// pixels into it. Must be called under <see cref="_lock"/>, with pixels already staged.
     /// </summary>
-    private void RequestBuffers(int width, int height)
+    /// <remarks>
+    /// At most one allocation is in flight, so a producer running ahead of a stalled UI
+    /// thread does not queue a round-trip per frame. The size is read from the staging slot
+    /// when the callback runs rather than captured when it is posted. A frame at a third size
+    /// arriving before the callback supersedes the staged pixels and finds this claim already
+    /// taken, so a captured size would allocate for a frame that no longer exists, mismatch
+    /// the pixels that are actually waiting, and drop them. Nothing re-requests after that,
+    /// and for an item with a single frame nothing else is coming (#287).
+    /// </remarks>
+    private void RequestBuffersForStagedFrame()
     {
         if (_allocationPosted)
             return;
         _allocationPosted = true;
 
-        Dispatcher.UIThread.Post(
-            () =>
-            {
-                lock (_lock)
+        try
+        {
+            Dispatcher.UIThread.Post(
+                () =>
                 {
-                    _allocationPosted = false;
-                    AllocateBuffers(width, height);
-                }
-            },
-            DispatcherPriority.Render
-        );
+                    bool publish;
+                    lock (_lock)
+                    {
+                        _allocationPosted = false;
+
+                        // A detach or a Clear between the request and here empties the slot.
+                        if (_stagedPending)
+                            AllocateBuffers(_stagedWidth, _stagedHeight);
+
+                        publish = BlitStagedFrameLocked();
+                    }
+
+                    // Already on the UI thread, so the swap is a call rather than another
+                    // post.
+                    if (publish)
+                        SwapAndInvalidate();
+                },
+                DispatcherPriority.Render
+            );
+        }
+        catch
+        {
+            // The post never landed, so nothing will clear the claim; leaving it set would
+            // wedge every later allocation request behind a callback that does not exist.
+            //
+            // The staging slot is emptied without charging it. The throw propagates into
+            // CopyArrivedFrame, whose catch charges this frame its one drop; leaving the
+            // pixels staged would let a later detach or Clear charge the same frame again.
+            _allocationPosted = false;
+            _stagedPending = false;
+            _stagedBinding = null;
+            throw;
+        }
     }
 
     /// <summary>
@@ -563,6 +733,9 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     /// </summary>
     public void Clear()
     {
+        SinkBinding? strandedCopy;
+        SinkBinding? strandedPixels;
+
         lock (_lock)
         {
             _front?.Dispose();
@@ -571,17 +744,36 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             _back = null;
             _bitmapWidth = 0;
             _bitmapHeight = 0;
+
+            // Both a copy waiting for its swap and pixels waiting for their buffers are
+            // thrown away here, and each is owed its drop. The copy used to go uncharged:
+            // clearing the flag published nothing and counted nothing, which is the one way
+            // a frame could leave this view counted by nobody.
+            strandedCopy = _backPending ? _backBinding : null;
             _backPending = false;
             _backBinding = null;
+
+            strandedPixels = _stagedPending ? _stagedBinding : null;
+            _stagedPending = false;
+            _stagedBinding = null;
+
+            // Released with the bitmaps it existed to feed; at 1080p it is 8 MB.
+            _staged = null;
         }
+
+        // Charged outside the lock, as EndBinding does. The sink belongs to another
+        // component, and calling into it while holding this one's lock is how lock orders
+        // get crossed.
+        strandedCopy?.Sink.RecordPreSwapDrop();
+        strandedPixels?.Sink.RecordPreSwapDrop();
 
         Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
     }
 
     /// <summary>
     /// Allocates both buffers at the given size. UI thread only (posted from
-    /// <see cref="RequestBuffers"/>), and must be called under <see cref="_lock"/> — the
-    /// producer may be mid-copy into the buffer being replaced.
+    /// <see cref="RequestBuffersForStagedFrame"/>), and must be called under
+    /// <see cref="_lock"/> — the producer may be mid-copy into the buffer being replaced.
     /// </summary>
     private void AllocateBuffers(int width, int height)
     {
@@ -590,7 +782,21 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
 
         _back?.Dispose();
         _front?.Dispose();
+
+        // The buffer being replaced can hold a copy that never reached a swap, and throwing
+        // it away silently would lose it from the accounting. On the ordinary path there is
+        // nothing here: the copy posts its swap before the next size change posts this
+        // allocation, both at DispatcherPriority.Render, so the swap has already published it
+        // (AResizeBehindAQueuedSwap_DrawsBothFrames pins that, and would go red if this
+        // charged a drop on the ordinary path). What this covers is the path where the swap
+        // post itself threw and its retry threw too: the claim is released, no swap is
+        // queued, and the frame sits pending until an allocation replaces the buffer under
+        // it.
+        if (_backPending)
+            _backBinding?.Sink.RecordPreSwapDrop();
+
         _backPending = false;
+        _backBinding = null;
 
         _back = new WriteableBitmap(
             new PixelSize(width, height),
