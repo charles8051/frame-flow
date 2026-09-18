@@ -300,12 +300,29 @@ internal static class CommandParser
         // different command.
         if (text.StartsWith('"'))
         {
-            var close = text.IndexOf('"', 1);
-            if (close > 0)
+            var token = new System.Text.StringBuilder();
+            for (var i = 1; i < text.Length; i++)
             {
+                if (text[i] != '"')
+                {
+                    token.Append(text[i]);
+                    continue;
+                }
+
+                // A doubled quote is one literal quote, not the end of the token. Without
+                // this a value containing a quote and a space could not be written at all,
+                // and '"' is a legal filename character everywhere but Windows.
+                if (i + 1 < text.Length && text[i + 1] == '"')
+                {
+                    token.Append('"');
+                    i++;
+                    continue;
+                }
+
+                var after = i + 1;
                 return (
-                    text[1..close],
-                    close + 1 >= text.Length ? string.Empty : text[(close + 1)..].TrimStart()
+                    token.ToString(),
+                    after >= text.Length ? string.Empty : text[after..].TrimStart()
                 );
             }
         }
@@ -317,5 +334,7 @@ internal static class CommandParser
     }
 
     private static string Unquote(string text) =>
-        text.Length >= 2 && text[0] == '"' && text[^1] == '"' ? text[1..^1] : text;
+        text.Length >= 2 && text[0] == '"' && text[^1] == '"'
+            ? text[1..^1].Replace("\"\"", "\"", StringComparison.Ordinal)
+            : text;
 }

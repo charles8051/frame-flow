@@ -60,14 +60,22 @@ internal static class CommandFormatter
     /// <c>--</c> is read as a flag, so a file named like one becomes an unknown flag; and a
     /// <c>#</c> starts a comment outside quotes, so the rest of the line is discarded. The
     /// parser's own comment stripping and unquoting are both quote-aware, which is what makes
-    /// quoting the answer rather than escaping.
+    /// quoting the answer rather than a general escape.
+    /// <para>
+    /// A quote inside the value is doubled, and a value containing one is always quoted even
+    /// when nothing else would require it. Otherwise the wrapping quotes would be ambiguous
+    /// with the value's own, and the parser would stop the token early. <c>"</c> is a legal
+    /// filename character everywhere but Windows, and the bench's headless mode exists to run
+    /// where that is true.
+    /// </para>
     /// </remarks>
     private static string Quote(string value) =>
         value.Length == 0
         || value.Contains(' ', StringComparison.Ordinal)
         || value.Contains('#', StringComparison.Ordinal)
+        || value.Contains('"', StringComparison.Ordinal)
         || value.StartsWith("--", StringComparison.Ordinal)
-            ? $"\"{value}\""
+            ? $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\""
             : value;
 
     /// <summary>Renders a duration in the form the parser accepts.</summary>

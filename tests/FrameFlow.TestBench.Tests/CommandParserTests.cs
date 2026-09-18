@@ -163,6 +163,10 @@ public sealed class CommandParserTests
     [InlineData(@"load ""--input.png""")]
     [InlineData(@"load ""C:\clips	ake #3.mp4""")]
     [InlineData(@"load --option ""headers=X-Key: a b"" clip.mp4")]
+    // A quote inside the value, doubled. Legal in a filename everywhere but Windows, and
+    // the headless presenter exists to run where that is true.
+    [InlineData(@"load ""a""""b c.mp4""")]
+    [InlineData(@"load --option ""headers=X-Key: """""" a"" clip.mp4")]
     public void LoadSurvivesTheRoundTrip(string line)
     {
         var first = Assert.IsType<BenchCommand.Load>(Parse(line));
@@ -178,6 +182,35 @@ public sealed class CommandParserTests
             foreach (var (key, value) in first.Options)
                 Assert.Equal(value, second.Options![key]);
         }
+    }
+
+    [Fact]
+    public void ADoubledQuoteIsOneLiteralQuote()
+    {
+        var load = Assert.IsType<BenchCommand.Load>(Parse(@"load ""a""""b c.mp4"""));
+
+        Assert.Equal(@"a""b c.mp4", load.Path);
+    }
+
+    [Fact]
+    public void AnOptionValueWithAQuoteSurvivesTheRoundTrip()
+    {
+        // An option value is read by NextToken, which stops at a closing quote, so the
+        // wrapping quotes are ambiguous with the value's own unless they are doubled. A
+        // path is not exposed to this: it is the trailing run of the line and Unquote
+        // strips the outer pair only, so an interior quote reaches the caller either way.
+        var options = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["headers"] = @"X-Key: a""b",
+        };
+
+        var rendered = CommandFormatter.Describe(
+            new BenchCommand.Load("clip.mp4", Options: options)
+        );
+        var reparsed = Assert.IsType<BenchCommand.Load>(Parse(rendered));
+
+        Assert.Equal(@"X-Key: a""b", reparsed.Options!["headers"]);
+        Assert.Equal("clip.mp4", reparsed.Path);
     }
 
     [Fact]
