@@ -212,3 +212,20 @@ static FrameFlow.Decoding.VideoDecoder.Open(nint formatContextPtr, int streamInd
 static FrameFlow.Decoding.VideoDecoder.Open(nint formatContextPtr, int streamIndex, FrameFlow.Media.HardwareDecodeOptions? options, FrameFlow.Media.HardwareDecodeCapabilities? capabilities, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory, FrameFlow.Decoding.VideoDecoderOptions? videoOptions = null) -> FrameFlow.Decoding.VideoDecoder!
 static readonly FrameFlow.Decoding.ReadAheadCapacity.DefaultVideoReadAhead -> System.TimeSpan
 static readonly FrameFlow.Decoding.ShedRateAccounting.DefaultReportEvery -> System.TimeSpan
+FrameFlow.Decoding.Diagnostics.DecodeStageMetrics
+FrameFlow.Decoding.Diagnostics.DecodeStageSnapshot
+FrameFlow.Decoding.Diagnostics.DecodeStageSnapshot.ColorConvert.get -> FrameFlow.Decoding.Diagnostics.DecodeStageSummary!
+FrameFlow.Decoding.Diagnostics.DecodeStageSnapshot.DecodeStageSnapshot(FrameFlow.Decoding.Diagnostics.DecodeStageSummary! hardwareTransfer, FrameFlow.Decoding.Diagnostics.DecodeStageSummary! colorConvert) -> void
+FrameFlow.Decoding.Diagnostics.DecodeStageSnapshot.HardwareTransfer.get -> FrameFlow.Decoding.Diagnostics.DecodeStageSummary!
+FrameFlow.Decoding.Diagnostics.DecodeStageSummary
+FrameFlow.Decoding.Diagnostics.DecodeStageSummary.Count.get -> long
+FrameFlow.Decoding.Diagnostics.DecodeStageSummary.DecodeStageSummary(long count, double p50Ms, double p95Ms, double maxMs) -> void
+FrameFlow.Decoding.Diagnostics.DecodeStageSummary.MaxMs.get -> double
+FrameFlow.Decoding.Diagnostics.DecodeStageSummary.P50Ms.get -> double
+FrameFlow.Decoding.Diagnostics.DecodeStageSummary.P95Ms.get -> double
+static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Enabled.get -> bool
+static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Enabled.set -> void
+static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.RecordColorConvert(long elapsedTicks) -> void
+static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.RecordHardwareTransfer(long elapsedTicks) -> void
+static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Reset() -> void
+static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Snapshot() -> FrameFlow.Decoding.Diagnostics.DecodeStageSnapshot!

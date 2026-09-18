@@ -956,7 +956,11 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             // av_hwframe_transfer_data with dst->format = AV_PIX_FMT_NONE
             // (the default after av_frame_alloc) selects an appropriate CPU
             // format for the source — typically NV12 for CUDA / VAAPI / D3D11.
+            bool timed = DecodeStageMetrics.Enabled;
+            long startedAt = timed ? Stopwatch.GetTimestamp() : 0;
             int rc = FFAvUtil.av_hwframe_transfer_data(swPtr, framePtr, 0);
+            if (timed)
+                DecodeStageMetrics.RecordHardwareTransfer(Stopwatch.GetTimestamp() - startedAt);
             if (rc < 0)
             {
                 Interlocked.Increment(ref _decodeErrors);
@@ -978,7 +982,15 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
             try
             {
-                return BuildManagedFrameFromCpu(swPtr);
+                long convertStartedAt = timed ? Stopwatch.GetTimestamp() : 0;
+                var converted = BuildManagedFrameFromCpu(swPtr);
+                if (timed)
+                {
+                    DecodeStageMetrics.RecordColorConvert(
+                        Stopwatch.GetTimestamp() - convertStartedAt
+                    );
+                }
+                return converted;
             }
             finally
             {

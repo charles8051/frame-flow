@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using FrameFlow.Decoding.Diagnostics;
 using FrameFlow.Graph;
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Avalonia;
@@ -72,6 +73,14 @@ public partial class MainWindow : Window
     /// 3 stay healthy when pane 2's detector fails to initialise.
     /// </summary>
     public bool BreakYolo { get; set; }
+
+    /// <summary>
+    /// When set by <c>--exit-after &lt;seconds&gt;</c>, the window closes itself
+    /// after that long and prints the per-stage timing report. Playback is
+    /// muted for the run: an unattended measurement should not play out of
+    /// the operator's speakers.
+    /// </summary>
+    public int? ExitAfterSeconds { get; set; }
 
     public MainWindow()
     {
@@ -310,6 +319,16 @@ public partial class MainWindow : Window
             // decoded stream).
             PlayerChrome.MediaPlayer = _player;
 
+            if (ExitAfterSeconds is { } seconds)
+            {
+                _player.Muted = true;
+                DispatcherTimer.RunOnce(
+                    () => Close(),
+                    TimeSpan.FromSeconds(seconds),
+                    DispatcherPriority.Background
+                );
+            }
+
             StartupClock.Mark("PlayFileAsync: PlayAsync starting");
             var played = await _player.PlayAsync(_windowCts.Token);
             StartupClock.Mark("PlayFileAsync: PlayAsync returned");
@@ -487,6 +506,41 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Writes what the run cost, per stage, to stdout.
+    /// </summary>
+    /// <remarks>
+    /// The two halves answer different questions. The decoder stages are what
+    /// a hardware-decoded frame pays to reach a CPU consumer at all — the
+    /// PCIe download and the NV12 to BGRA conversion. The detector stages are
+    /// what the CPU then spends turning that frame into a tensor the EP
+    /// uploads straight back to the device. Both are the cost a GPU-resident
+    /// inference path would remove; the run stage is the cost it would not.
+    /// </remarks>
+    private void PrintTimingReport()
+    {
+        var decode = DecodeStageMetrics.Snapshot();
+        if (decode.HardwareTransfer.Count == 0 && decode.ColorConvert.Count == 0)
+            return;
+
+        var report =
+            "\n=== per-stage timing ===\n"
+            + "decoder readback (VideoDecoder, hardware frame to CPU consumer)\n"
+            + $"  frames        {decode.ColorConvert.Count}\n"
+            + Stage("hw transfer", decode.HardwareTransfer)
+            + Stage("nv12 to bgra", decode.ColorConvert)
+            + "\nyolov8 detect (pane 2)\n"
+            + Pane2Preview.StageReport();
+
+        Console.WriteLine(report);
+        _logger?.LogInformation("Per-stage timing:{Report}", report);
+
+        static string Stage(string name, DecodeStageSummary s) =>
+            s.Count == 0
+                ? $"  {name,-13} (never ran — hardware decode did not engage)\n"
+                : $"  {name,-13} p50 {s.P50Ms,7:F2} ms   p95 {s.P95Ms,7:F2} ms   max {s.MaxMs,7:F2} ms\n";
+    }
+
     private bool _isClosing;
 
     private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
@@ -498,6 +552,7 @@ public partial class MainWindow : Window
         Closing -= OnWindowClosing;
 
         _statsTimer?.Stop();
+        PrintTimingReport();
         _windowCts.Cancel();
         await TeardownPlayerAsync();
         _yoloDetector?.Dispose();

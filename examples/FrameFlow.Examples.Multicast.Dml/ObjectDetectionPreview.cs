@@ -92,12 +92,56 @@ public sealed class ObjectDetectionPreview : Control, IAsyncDisposable
     private double _tInferMs;
     private double _tTotalMs;
 
+    // Per-stage samples for the end-of-run report. Yolov8Detector already
+    // splits Detect() into preprocess / run / postprocess and publishes the
+    // first two; nothing read them, so the CPU-side cost of feeding a
+    // GPU-decoded frame to a CPU preprocessor was never measured. One entry
+    // per detected frame, appended by the single detection worker and read
+    // once at teardown.
+    private readonly List<StageSample> _stageSamples = [];
+    private readonly object _stageSamplesLock = new();
+
+    private readonly record struct StageSample(double PreMs, double RunMs, double PostMs);
+
     public long DroppedWhileBusyCount => Interlocked.Read(ref _droppedWhileBusyCount);
     public long RenderedFrameCount => Interlocked.Read(ref _renderedFrameCount);
     public string StatusText => Volatile.Read(ref _statusText);
 
     public string TimingBreakdown =>
         $"total {Volatile.Read(ref _tTotalMs):F1}  infer {Volatile.Read(ref _tInferMs):F1}";
+
+    /// <summary>
+    /// Percentiles over every <c>Detect()</c> call this run, split into the
+    /// three stages. Empty when the detector never ran.
+    /// </summary>
+    public string StageReport()
+    {
+        StageSample[] samples;
+        lock (_stageSamplesLock)
+            samples = [.. _stageSamples];
+
+        if (samples.Length == 0)
+            return "  (no detections ran)";
+
+        var report =
+            $"  frames        {samples.Length}\n"
+            + Line("preprocess", [.. samples.Select(s => s.PreMs)])
+            + Line("run (EP)", [.. samples.Select(s => s.RunMs)])
+            + Line("postprocess", [.. samples.Select(s => s.PostMs)])
+            + Line(
+                "Detect total",
+                [.. samples.Select(s => s.PreMs + s.RunMs + s.PostMs)]
+            );
+        return report;
+
+        static string Line(string name, double[] values)
+        {
+            Array.Sort(values);
+            double p50 = values[values.Length / 2];
+            double p95 = values[(int)(values.Length * 0.95)];
+            return $"  {name,-13} p50 {p50,7:F2} ms   p95 {p95,7:F2} ms   max {values[^1],7:F2} ms\n";
+        }
+    }
 
     public ObjectDetectionPreview()
     {
@@ -300,6 +344,22 @@ public sealed class ObjectDetectionPreview : Control, IAsyncDisposable
                     var detections = detector.Detect(frame);
                     sw.Stop();
                     Volatile.Write(ref _tInferMs, sw.Elapsed.TotalMilliseconds);
+
+                    // Detect() = preprocess (CPU resize/normalize/transpose)
+                    // + run (EP device) + postprocess (CPU decode + NMS). The
+                    // detector times the first two; the third is the remainder.
+                    var preMs = detector.LastPreprocessMs;
+                    var runMs = detector.LastInferenceMs;
+                    lock (_stageSamplesLock)
+                    {
+                        _stageSamples.Add(
+                            new StageSample(
+                                preMs,
+                                runMs,
+                                Math.Max(0, sw.Elapsed.TotalMilliseconds - preMs - runMs)
+                            )
+                        );
+                    }
 
                     var payload = new PendingDetection(frame, detections);
                     var stale = Interlocked.Exchange(ref _pending, payload);
