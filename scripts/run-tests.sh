@@ -71,12 +71,45 @@ start=$(date +%s)
 # "Failed: N" field, and the aggregation below would score it as zero failures
 # and exit 0. `tail` masks the exit status, so it is captured explicitly rather
 # than inferred from the pipeline.
+# Where a failing assembly's full output is kept. Only summary lines reach stdout,
+# so without this a red run says how many failed and never which - see #284, where
+# that gap is why an intermittent failure went months without a name. A green run
+# leaves nothing behind.
+#
+# A red run's logs are kept deliberately, so they outlive the run that made them,
+# and an interrupted run is cleaned by the trap. Yesterday's are worth neither:
+# prune them here rather than growing /tmp one failure at a time.
+find "${TMPDIR:-/tmp}" -maxdepth 1 -name "frameflow-tests.*" -type d -mtime +1 \
+  -exec rm -rf {} + 2>/dev/null || true
+
+logdir=$(mktemp -d "${TMPDIR:-/tmp}/frameflow-tests.XXXXXX")
+export logdir
+trap 'rm -rf "$logdir"' INT TERM HUP QUIT
+
 results=$(
   printf '%s\n' "${projects[@]}" \
     | xargs -P 8 -I{} bash -c '
         out=$(dotnet test "$1" -f "$2" --no-build --no-restore --nologo --verbosity quiet 2>&1)
         rc=$?
         line=$(printf "%s\n" "$out" | tail -1)
+
+        # Keep the whole output unless the worker was clean. The [FAIL] lines and the
+        # assertion messages sit above the summary and are otherwise discarded. The
+        # condition is not-known-good rather than failed, so an assembly that printed
+        # no summary at all - crashed, aborted, could not start - keeps its output
+        # too, which is the case with the least to go on otherwise.
+        #
+        # Named for the whole relative path, which is unique by construction. A
+        # basename collides for two projects of the same name in different folders;
+        # a dirname collides for two in one folder, and is empty for a project
+        # sitting directly under tests/. Either would silently drop a report, so
+        # the separator is percent-encoded instead: a flattening to underscore maps
+        # tests/a/b and tests/a_b to one name, and % cannot occur in a project path.
+        if [ "$rc" -ne 0 ] \
+           || ! printf "%s" "$line" | grep -qE "Failed:[[:space:]]+0([^0-9]|$)"; then
+          slug=$(printf "%s" "$1" | sed "s#^tests/##; s#[.]csproj\$##" | tr "/" "%")
+          printf "%s\n" "$out" > "$logdir/$slug.log"
+        fi
         if printf "%s" "$line" | grep -qE "Failed:[[:space:]]+[0-9]+"; then
           printf "%s\n" "$line"
         else
@@ -126,6 +159,21 @@ anomalies=$(( nosummary + unexplained ))
 
 elapsed=$(( $(date +%s) - start ))
 echo "==> ${passed} passed, ${failed} failed, ${skipped} skipped in ${elapsed}s"
+
+# Name the failures. A count alone cannot be acted on, and a rerun that goes green
+# takes the evidence with it.
+if [ "$failed" -gt 0 ] || [ "$anomalies" -gt 0 ]; then
+  echo
+  for log in "$logdir"/*.log; do
+    [ -e "$log" ] || continue
+    echo "--- $(basename "$log" .log)"
+    grep -E "\[FAIL\]" "$log" | sed "s/^\[xUnit\.net [0-9:.]*\] *//; s/^ */    /" || true
+  done
+  echo
+  echo "    Full output: $logdir"
+else
+  rm -rf "$logdir"
+fi
 
 if [ "$nosummary" -gt 0 ]; then
   echo "    ${nosummary} assembl(y|ies) produced no summary line — crashed, aborted, or"
