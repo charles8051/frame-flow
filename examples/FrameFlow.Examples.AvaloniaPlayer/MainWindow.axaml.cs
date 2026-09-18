@@ -56,17 +56,7 @@ public partial class MainWindow : Window
         ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".ts", ".m2ts",
         ".flv", ".wmv", ".mpg", ".mpeg", ".3gp", ".ogv",
         ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wav", ".wma",
-        ".png", ".jpg", ".jpeg", ".bmp", ".webp",
     };
-
-    /// <summary>Extensions the folder scan treats as a still rather than a clip.</summary>
-    private static readonly HashSet<string> StillExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".png", ".jpg", ".jpeg", ".bmp", ".webp",
-    };
-
-    /// <summary>How long a still stays on screen before the queue moves on.</summary>
-    private static readonly TimeSpan StillDwell = TimeSpan.FromSeconds(5);
 
     /// <summary>A media file or a folder to open on startup, from the command line.</summary>
     public string? StartupPath { get; set; }
@@ -122,10 +112,7 @@ public partial class MainWindow : Window
 
             _player = await FrameFlowPlayer
                 .Create()
-                // SourceFor, not the path overload: a still opened on its own through the
-                // picker or the startup argument needs the same dwell a still in a folder
-                // gets, and returns MediaSource.FromFile untouched for a clip.
-                .WithMedia(SourceFor(path))
+                .WithMedia(path)
                 .WithVideoSink(videoSink)
                 .WithAudioSink(_audioSink)
                 .WithHardwareFrames(PlayerView.VideoSurface.PrefersHardwareFrames)
@@ -148,36 +135,6 @@ public partial class MainWindow : Window
         {
             ShowError(ex, $"Could not open {Path.GetFileName(path)}: {ex.Message}");
         }
-    }
-
-    /// <summary>
-    /// Builds the source for one file in a folder. A clip opens the ordinary way; a still
-    /// gets the demuxer options that turn it into a clip of <see cref="StillDwell"/>.
-    /// </summary>
-    /// <remarks>
-    /// A still image decodes to one frame with no duration, so opened the ordinary way it
-    /// ends as soon as that frame is presented and a folder of pictures flashes past. The
-    /// image demuxer will pace it, and <c>framerate</c> is how long the one frame lasts, but
-    /// only when the demuxer is named: a single image probes to a <c>*_pipe</c> demuxer,
-    /// which reports no duration whatever options it is handed.
-    /// </remarks>
-    private static IMediaSource SourceFor(string path)
-    {
-        var source = MediaSource.FromFile(path);
-
-        if (!StillExtensions.Contains(Path.GetExtension(path)))
-            return source;
-
-        return source with
-        {
-            InputFormat = "image2",
-            DemuxerOptions = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                // One frame lasting the whole dwell, as a rational so a dwell over a second
-                // does not become a sub-1 framerate FFmpeg rounds to zero.
-                ["framerate"] = $"1/{StillDwell.TotalSeconds:0}",
-            },
-        };
     }
 
     /// <summary>
@@ -208,7 +165,7 @@ public partial class MainWindow : Window
         }
 
         _playlistEntries = files
-            .Select(f => new PlaylistEntry(Path.GetFileName(f), SourceFor(f)))
+            .Select(f => new PlaylistEntry(Path.GetFileName(f), MediaSource.FromFile(f)))
             .ToList();
         PlaylistBox.ItemsSource = _playlistEntries;
         StatusText.Text =
