@@ -772,7 +772,21 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
 
         _back?.Dispose();
         _front?.Dispose();
+
+        // The buffer being replaced can hold a copy that never reached a swap, and throwing
+        // it away silently would lose it from the accounting. On the ordinary path there is
+        // nothing here: the copy posts its swap before the next size change posts this
+        // allocation, both at DispatcherPriority.Render, so the swap has already published it
+        // (AResizeBehindAQueuedSwap_DrawsBothFrames pins that, and would go red if this
+        // charged a drop on the ordinary path). What this covers is the path where the swap
+        // post itself threw and its retry threw too: the claim is released, no swap is
+        // queued, and the frame sits pending until an allocation replaces the buffer under
+        // it.
+        if (_backPending)
+            _backBinding?.Sink.RecordPreSwapDrop();
+
         _backPending = false;
+        _backBinding = null;
 
         _back = new WriteableBitmap(
             new PixelSize(width, height),
