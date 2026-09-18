@@ -204,6 +204,26 @@ keep climbing" — holds for the first and third and is false for the second. Th
 bench's `load` is the first. A future `next` command would be the third, and
 would need its own note here.
 
+**Amended 2026-09-17: `load` also names the source, not only the path.** It takes
+`--format <name>` and repeated `--option <key>=<value>`, which set
+`IMediaSource.InputFormat` and `IMediaSource.DemuxerOptions`. Neither changes
+which of the three implementations above `load` is, so the table stands; what
+changes is that the bench can now open a source the probe reads differently from
+the operator.
+
+The case that forced it is a still image. `MediaSource.FromFile` leaves both
+members null, a single `.png` then probes to a `*_pipe` demuxer, and that demuxer
+reports no duration whatever options it is handed — so the item ended as soon as
+its one frame was presented and no paced still could be put through a presenter
+at all. Named as `image2` with a `framerate` the same file is an ordinary clip of
+`1/framerate` seconds. Observed on the `gpu` presenter: one packet, one frame
+decoded, `committed 1`, and `Ended 00:03.000/00:03.000` three seconds later.
+
+Flags precede the path because the path is the trailing run of the line and may
+contain spaces — the same reason the verb split takes everything after the first
+word. A path beginning with two dashes needs quoting, which the parser's existing
+unquoting already covers.
+
 ### Decision 4: `--headless` runs with no window
 
 `NullVideoSink` already ships in `src/FrameFlow.Media/NullVideoSink.cs`, so the

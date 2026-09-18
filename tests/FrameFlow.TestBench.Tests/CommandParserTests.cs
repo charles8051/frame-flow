@@ -60,6 +60,191 @@ public sealed class CommandParserTests
     [Fact]
     public void LoadWithoutAPathFails() => Assert.Contains("needs a path", Error("load"));
 
+    // ── load's source options (#278) ────────────────────────────────────
+    //
+    // MediaSource.FromFile leaves InputFormat and DemuxerOptions unset, so before these the
+    // bench could only open a source the way the probe read it. A still image probes to a
+    // *_pipe demuxer and reports no duration, which is not the same source an operator asking
+    // for image2 at a framerate means.
+
+    [Fact]
+    public void LoadTakesADemuxerName()
+    {
+        var load = Assert.IsType<BenchCommand.Load>(Parse("load --format image2 slide.png"));
+
+        Assert.Equal("image2", load.Format);
+        Assert.Equal("slide.png", load.Path);
+    }
+
+    [Fact]
+    public void LoadTakesDemuxerOptions()
+    {
+        var load = Assert.IsType<BenchCommand.Load>(
+            Parse("load --format image2 --option framerate=1/10 --option loop=1 slide.png")
+        );
+
+        Assert.Equal("image2", load.Format);
+        Assert.Equal("slide.png", load.Path);
+        Assert.NotNull(load.Options);
+        Assert.Equal("1/10", load.Options!["framerate"]);
+        Assert.Equal("1", load.Options["loop"]);
+    }
+
+    [Fact]
+    public void AnOptionValueKeepsItsOwnEqualsSigns()
+    {
+        // A value is everything after the first '=': FFmpeg option values contain them
+        // (headers, key lists), and splitting on every one would truncate those.
+        var load = Assert.IsType<BenchCommand.Load>(
+            Parse("load --option headers=X-Key=abc clip.mp4")
+        );
+
+        Assert.Equal("X-Key=abc", load.Options!["headers"]);
+    }
+
+    [Fact]
+    public void FlagsComeBeforeThePathSoAPathWithSpacesStillWorks()
+    {
+        var load = Assert.IsType<BenchCommand.Load>(
+            Parse(@"load --format image2 C:\pictures\slide with spaces.png")
+        );
+
+        Assert.Equal("image2", load.Format);
+        Assert.Equal(@"C:\pictures\slide with spaces.png", load.Path);
+    }
+
+    [Fact]
+    public void APathAfterNoFlagsIsUnchanged()
+    {
+        // The ordinary case keeps its old shape exactly, including a path that is the whole
+        // remainder of the line.
+        var load = Assert.IsType<BenchCommand.Load>(Parse(@"load C:\clips\my take 3.mp4"));
+
+        Assert.Null(load.Format);
+        Assert.Null(load.Options);
+        Assert.Equal(@"C:\clips\my take 3.mp4", load.Path);
+    }
+
+    [Fact]
+    public void LoadWithFlagsAndNoPathFails() =>
+        Assert.Contains("needs a path", Error("load --format image2"));
+
+    [Fact]
+    public void AnOptionWithoutAValueFails() =>
+        Assert.Contains("key=value", Error("load --option framerate slide.png"));
+
+    [Fact]
+    public void AnOptionWithAnEmptyKeyFails() =>
+        Assert.Contains("key=value", Error("load --option =1/10 slide.png"));
+
+    [Fact]
+    public void AnUnknownFlagFails() =>
+        Assert.Contains("--frobnicate", Error("load --frobnicate 1 slide.png"));
+
+    [Theory]
+    // A flag is not the previous flag's value. Read as one, a typo becomes a different
+    // source configuration instead of an error.
+    [InlineData("load --format --option framerate=1/10 slide.png")]
+    [InlineData("load --option --format image2 slide.png")]
+    public void AFlagWhereAValueBelongsFails(string line) =>
+        Assert.Contains("needs a value", Error(line));
+
+    [Fact]
+    public void AValueThatLooksLikeAFlagIsWrittenQuoted()
+    {
+        // The escape hatch for the rule above: a quoted token is a value whatever it
+        // contains, which is the same rule that lets a path begin with two dashes.
+        var load = Assert.IsType<BenchCommand.Load>(
+            Parse(@"load --option ""flags=--weird"" clip.mp4")
+        );
+
+        Assert.Equal("--weird", load.Options!["flags"]);
+        Assert.Equal("clip.mp4", load.Path);
+    }
+
+    [Fact]
+    public void FormatWithoutANameFails() =>
+        Assert.Contains("demuxer name", Error("load --format"));
+
+    // ── load round-trips through the formatter ──────────────────────────
+    //
+    // The transcript is the artifact worth pasting into an issue, so every line the bench
+    // prints has to be a line it would accept back. These are the values where "print the
+    // field verbatim" silently produces a different command.
+
+    [Theory]
+    [InlineData("load clip.mp4")]
+    [InlineData("load --format image2 slide.png")]
+    [InlineData("load --format image2 --option framerate=1/10 slide.png")]
+    [InlineData("load --option headers=X-Key=abc clip.mp4")]
+    // A path with spaces: bare, because the path is the trailing run and needs no quoting.
+    [InlineData(@"load C:\clips\my take 3.mp4")]
+    // A path that would be read as a flag, one that would be cut at a comment, and an option
+    // value with a space in it. Each has to come back quoted or it reparses as something else.
+    [InlineData(@"load ""--input.png""")]
+    [InlineData(@"load ""C:\clips	ake #3.mp4""")]
+    [InlineData(@"load --option ""headers=X-Key: a b"" clip.mp4")]
+    // A quote inside the value, doubled. Legal in a filename everywhere but Windows, and
+    // the headless presenter exists to run where that is true.
+    [InlineData(@"load ""a""""b c.mp4""")]
+    [InlineData(@"load --option ""headers=X-Key: """""" a"" clip.mp4")]
+    public void LoadSurvivesTheRoundTrip(string line)
+    {
+        var first = Assert.IsType<BenchCommand.Load>(Parse(line));
+        var rendered = CommandFormatter.Describe(first);
+        var second = Assert.IsType<BenchCommand.Load>(Parse(rendered));
+
+        Assert.Equal(first.Path, second.Path);
+        Assert.Equal(first.Format, second.Format);
+        Assert.Equal(first.Options?.Count ?? 0, second.Options?.Count ?? 0);
+
+        if (first.Options is not null)
+        {
+            foreach (var (key, value) in first.Options)
+                Assert.Equal(value, second.Options![key]);
+        }
+    }
+
+    [Fact]
+    public void ADoubledQuoteIsOneLiteralQuote()
+    {
+        var load = Assert.IsType<BenchCommand.Load>(Parse(@"load ""a""""b c.mp4"""));
+
+        Assert.Equal(@"a""b c.mp4", load.Path);
+    }
+
+    [Fact]
+    public void AnOptionValueWithAQuoteSurvivesTheRoundTrip()
+    {
+        // An option value is read by NextToken, which stops at a closing quote, so the
+        // wrapping quotes are ambiguous with the value's own unless they are doubled. A
+        // path is not exposed to this: it is the trailing run of the line and Unquote
+        // strips the outer pair only, so an interior quote reaches the caller either way.
+        var options = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["headers"] = @"X-Key: a""b",
+        };
+
+        var rendered = CommandFormatter.Describe(
+            new BenchCommand.Load("clip.mp4", Options: options)
+        );
+        var reparsed = Assert.IsType<BenchCommand.Load>(Parse(rendered));
+
+        Assert.Equal(@"X-Key: a""b", reparsed.Options!["headers"]);
+        Assert.Equal("clip.mp4", reparsed.Path);
+    }
+
+    [Fact]
+    public void AQuotedOptionValueKeepsItsSpaces()
+    {
+        var load = Assert.IsType<BenchCommand.Load>(
+            Parse(@"load --option ""headers=X-Key: a b"" clip.mp4")
+        );
+
+        Assert.Equal("X-Key: a b", load.Options!["headers"]);
+        Assert.Equal("clip.mp4", load.Path);
+    }
+
     [Theory]
     [InlineData("off", RepeatMode.Off)]
     [InlineData("one", RepeatMode.One)]

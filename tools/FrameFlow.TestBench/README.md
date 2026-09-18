@@ -27,7 +27,7 @@ seconds to reach is not thrown away to ask the next one.
 
 | | |
 |---|---|
-| `load <path>` | build a session on this source |
+| `load [--format <name>] [--option <k>=<v>]... <path>` | build a session on this source. `--format` forces the demuxer instead of probing for one; `--option` repeats, and passes FFmpeg demuxer options straight through. Flags come before the path, because a path is the rest of the line and may contain spaces |
 | `unload` | tear the session down |
 | `play`, `pause` | |
 | `seek <duration>` | |
@@ -38,6 +38,20 @@ seconds to reach is not thrown away to ask the next one.
 | `diag [--all]` | counters, and what moved since the last `diag` |
 | `wait <duration>` | a sleep |
 | `quit` | |
+
+A still image is the case the two `load` flags exist for. Probed, a single `.png` opens as a
+`*_pipe` demuxer, reports no duration, and ends as soon as its one frame is presented; named
+as `image2` with a `framerate`, the same file is a clip of `1/framerate` seconds:
+
+```
+load --format image2 --option framerate=1/3 tests/corpus/files/test-still.png
+play
+wait 1s
+status      # Playing 00:01.007/00:03.000 — one frame, three seconds
+diag        # decoded=1 presented=1
+wait 3s
+status      # Ended 00:03.000/00:03.000
+```
 
 Durations are a number and a unit: `250ms`, `1.5s`, `2m`, `1h`. The unit is required — a
 bare number would have to mean seconds or milliseconds by convention, and a script that
