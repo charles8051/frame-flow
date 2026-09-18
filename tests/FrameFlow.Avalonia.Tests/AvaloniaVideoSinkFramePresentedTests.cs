@@ -35,13 +35,15 @@ public sealed class AvaloniaVideoSinkFramePresentedTests
         var presented = new List<TimeSpan>();
         sink.FramePresented += (_, e) => presented.Add(e.PresentationTime);
 
-        PresentOffUiThread(sink, Pts(1)); // allocates the buffers, never draws
+        // Allocates the buffers, and is drawn by the same posted callback (#287), so it is
+        // reported like any other frame that reached the swap.
+        PresentOffUiThread(sink, Pts(1));
         Dispatcher.UIThread.RunJobs();
 
         PresentOffUiThread(sink, Pts(2));
         Dispatcher.UIThread.RunJobs(); // the swap
 
-        Assert.Equal([Pts(2)], presented);
+        Assert.Equal([Pts(1), Pts(2)], presented);
     }
 
     [AvaloniaFact]
@@ -68,10 +70,10 @@ public sealed class AvaloniaVideoSinkFramePresentedTests
     {
         var (_, sink) = NewAttachedView();
         var presented = new List<TimeSpan>();
-
-        PresentOffUiThread(sink, Pts(1)); // allocates
-        Dispatcher.UIThread.RunJobs();
         sink.FramePresented += (_, e) => presented.Add(e.PresentationTime);
+
+        PresentOffUiThread(sink, Pts(1)); // allocates, and draws with the allocation (#287)
+        Dispatcher.UIThread.RunJobs();
 
         // Three copies with the UI thread never pumped: only the last survives to the swap.
         PresentOffUiThread(sink, Pts(2));
@@ -79,7 +81,7 @@ public sealed class AvaloniaVideoSinkFramePresentedTests
         PresentOffUiThread(sink, Pts(4));
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal([Pts(4)], presented);
+        Assert.Equal([Pts(1), Pts(4)], presented);
         Assert.Equal(presented.Count, sink.RenderedFrameCount);
     }
 
@@ -88,18 +90,15 @@ public sealed class AvaloniaVideoSinkFramePresentedTests
     {
         var (_, sink) = NewAttachedView();
         var presented = new List<TimeSpan>();
-
-        PresentOffUiThread(sink, Pts(1)); // allocates
-        Dispatcher.UIThread.RunJobs();
         sink.FramePresented += (_, e) => presented.Add(e.PresentationTime);
 
-        for (int i = 2; i <= 6; i++)
+        for (int i = 1; i <= 6; i++)
         {
-            PresentOffUiThread(sink, Pts(i));
+            PresentOffUiThread(sink, Pts(i)); // i == 1 allocates, and draws with it (#287)
             Dispatcher.UIThread.RunJobs();
         }
 
-        Assert.Equal([Pts(2), Pts(3), Pts(4), Pts(5), Pts(6)], presented);
+        Assert.Equal([Pts(1), Pts(2), Pts(3), Pts(4), Pts(5), Pts(6)], presented);
         Assert.Equal(presented.Count, sink.RenderedFrameCount);
     }
 
@@ -108,19 +107,19 @@ public sealed class AvaloniaVideoSinkFramePresentedTests
     {
         var (view, sink) = NewAttachedView();
         var presented = new List<TimeSpan>();
-
-        PresentOffUiThread(sink, Pts(1)); // allocates
-        Dispatcher.UIThread.RunJobs();
         sink.FramePresented += (_, e) => presented.Add(e.PresentationTime);
+
+        PresentOffUiThread(sink, Pts(1)); // allocates, and draws with the allocation (#287)
+        Dispatcher.UIThread.RunJobs();
 
         PresentOffUiThread(sink, Pts(2)); // copied, swap still queued
         ((Panel)view.Parent!).Children.Remove(view);
         Dispatcher.UIThread.RunJobs();
 
-        // The frame never drew, so it is a drop. Reporting it would tell an overlay to draw
-        // over a picture nobody saw.
-        Assert.Empty(presented);
-        Assert.Equal(0, sink.RenderedFrameCount);
+        // Pts(2) never drew, so it is a drop and goes unreported. Reporting it would tell an
+        // overlay to draw over a picture nobody saw. Pts(1) is there because it did draw.
+        Assert.Equal([Pts(1)], presented);
+        Assert.Equal(presented.Count, sink.RenderedFrameCount);
     }
 
     [AvaloniaFact]
@@ -139,13 +138,14 @@ public sealed class AvaloniaVideoSinkFramePresentedTests
         Dispatcher.UIThread.RunJobs();
 
         // The swap counted the frame, and the surface still works afterwards. A consumer that
-        // cannot process one present is not a reason to stop drawing.
-        Assert.Equal(1, view.RenderedFrameCount);
+        // cannot process one present is not a reason to stop drawing. Two, because the
+        // allocation frame drew as well (#287).
+        Assert.Equal(2, view.RenderedFrameCount);
         Assert.Equal(Pts(2), sink.GetDiagnostics().LastPresentedPresentationTime);
 
         PresentOffUiThread(sink, Pts(3));
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal(2, view.RenderedFrameCount);
+        Assert.Equal(3, view.RenderedFrameCount);
 
         // The handler that threw does not starve the one behind it: the second subscriber saw
         // both presents. A chain invocation would have abandoned it at the first throw.
@@ -205,7 +205,13 @@ public sealed class AvaloniaVideoSinkFramePresentedTests
         public PixelFormat Format => PixelFormat.Bgra32;
         public FrameMemoryDomain MemoryDomain => FrameMemoryDomain.Cpu;
 
-        public IVideoFrame AddRef() => this;
+        // Matches Media.CpuVideoFrame, which is what the view is handed in a real pipeline:
+        // decoder-produced frames are one-shot, their buffer goes back to the pool when the
+        // present call returns, and AddRef throws. A double that answered `this` let a fix
+        // that retained the frame across a dispatcher post pass here and fail on the bench
+        // (#287), so it answers the way the real frame does.
+        public IVideoFrame AddRef() =>
+            throw new NotSupportedException("One-shot frame: ref counting is not supported.");
 
         public void Dispose() { }
 
