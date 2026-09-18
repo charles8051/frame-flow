@@ -37,9 +37,13 @@ using FrameFlow.Avalonia;
 using FrameFlow.Media;
 using FrameFlow.Player;
 
+// The sink is yours: you construct it, you dispose it, and it can serve
+// several players in sequence (ADR-0044).
+await using var audio = new OpenAlAudioSink(loggerFactory.CreateLogger<OpenAlAudioSink>());
+
 await using var player = await FrameFlowPlayer.Create()
     .WithMedia([first, second])
-    .WithOpenAlAudio()          // also implements IClockSource, so it becomes the master clock
+    .WithAudioSink(audio)       // also implements IClockSource, so it becomes the master clock
     .WithAvaloniaVideoView(view)
     .WithHardwareDecode(HardwareDecodeMode.Auto)
     .WithRepeatMode(RepeatMode.All)

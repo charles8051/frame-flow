@@ -12,9 +12,7 @@ namespace FrameFlow.Player.Tests;
 /// dormant sink are accepted and dropped. <c>SubstrateSession</c> and
 /// <c>MediaPlayer.CreateAsync</c> both activate the sink they are given;
 /// <see cref="MediaPass"/> did not, which left the sink silent unless the
-/// caller activated it out of band. That made the <c>WithOpenAlAudio()</c>
-/// builder shortcut unusable, since it constructs the sink internally and never
-/// hands it back for the caller to activate.
+/// caller activated it out of band (issue #60).
 /// </remarks>
 public sealed class MediaPassAudioActivationTests
 {

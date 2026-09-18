@@ -714,8 +714,9 @@ Every chained call site is unchanged: the options return the builder, as they al
 a local, a field, a parameter — and any type outside FrameFlow that implemented it. Entries 19
 and 24 already broke implementers of these interfaces in this release.
 
-`WithOpenAlAudio` and `WithAvaloniaVideoView` keep two overloads: one on `IPlayerBuilder`, and
-one that was on `IMediaPlayerBuilder` and is now on `IPassBuilder`.
+`WithAvaloniaVideoView` keeps two overloads: one on `IPlayerBuilder`, and one that was on
+`IMediaPlayerBuilder` and is now on `IPassBuilder`. `WithOpenAlAudio` had the same pair and entry
+28 retires it.
 
 ### 27. `PlaybackGraph` is gone
 
@@ -725,6 +726,47 @@ called it a Phase-3 proof that the full-controller port could build on, and that
 ADR-0077. It had no users outside its own tests.
 
 Use `FrameFlowPass.Create(path)` and let the builder open the file.
+
+### 28. `WithOpenAlAudio` is gone; construct the sink yourself
+
+```csharp
+// Before
+await using var player = await FrameFlowPlayer.Create()
+    .WithMedia(path)
+    .WithOpenAlAudio(loggerFactory)
+    .BuildPlayerAsync();
+
+// After
+await using var audio = new OpenAlAudioSink(loggerFactory?.CreateLogger<OpenAlAudioSink>());
+await using var player = await FrameFlowPlayer.Create()
+    .WithMedia(path)
+    .WithAudioSink(audio)
+    .BuildPlayerAsync();
+```
+
+`FrameFlowOpenAlBuilderExtensions` is removed, with both overloads.
+
+**Why.** A sink belongs to whoever constructed it. A player and a pass use the sink they are
+given and never dispose it, so one sink can serve several players in sequence, which is how the
+playlist player keeps a presenter warm across items (ADR-0062). `WithOpenAlAudio` was the one
+thing in the library that constructed a sink *inside* that layer and handed it to something
+that, by the rule, would not dispose it — and it never handed the sink back, so the caller could
+not dispose it either. Every player built that way left an OpenAL device and context open (#275).
+
+Keeping it meant carving an exception into the ownership rule: a builder that disposes what an
+extension gave it but not what a caller gave it, distinguished by an API the extension would
+need and nothing else would. The shortcut saved one line and had no callers in this repository —
+no example, no test — so it goes instead.
+
+`WithAvaloniaVideoView` stays, with both its overloads. It never had the defect: it calls
+`view.EnsureSink()` and the view owns the sink, so the extension borrows rather than constructs.
+
+`FrameFlow.Audio.OpenAL` no longer references `FrameFlow.Player`. The extension was the only
+thing in it that did, so consuming the audio backend no longer pulls in the player composition
+layer.
+
+`AddFrameFlowOpenAlAudio()` for the generic host is unaffected. The container constructs the sink
+and the container disposes it, which is the same rule with a different owner.
 
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 

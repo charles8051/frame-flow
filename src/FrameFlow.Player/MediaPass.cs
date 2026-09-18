@@ -182,9 +182,8 @@ public sealed class MediaPass : IAsyncDisposable
         // This mirrors what SubstrateSession does on the controller path
         // (SubstrateSession.PlayAsync) and what MediaPlayer.CreateAsync does
         // on the player path. MediaPass was the one surface that left it
-        // to the caller, which is why the WithOpenAlAudio builder shortcut —
-        // which constructs the sink internally and never hands it back —
-        // could not be used to play anything (issue #60).
+        // to the caller, which meant a sink the caller had not activated out of
+        // band played silence (issue #60).
         if (hasAudio)
             await _audioSink!.ActivateAsync(ct).ConfigureAwait(false);
 
