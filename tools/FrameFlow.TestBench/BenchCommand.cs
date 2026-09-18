@@ -13,11 +13,28 @@ internal abstract record BenchCommand
 {
     /// <summary>Build a session on <paramref name="Path"/>, replacing any current one.</summary>
     /// <remarks>
+    /// <para>
     /// <see cref="FrameFlow.Playback.IPlaybackController.LoadAsync"/>, which resets the
     /// session while the sink counters keep climbing — the first row of Decision 3's
     /// <c>load</c> semantics table, and the one Decision 5's delta interpretation assumes.
+    /// </para>
+    /// <para>
+    /// <paramref name="Format"/> and <paramref name="Options"/> are the two members
+    /// <c>MediaSource.FromFile</c> leaves unset. Without them the bench could not open a
+    /// source the probe reads differently from the operator: a still image probes to a
+    /// <c>*_pipe</c> demuxer, reports no duration, and ends as soon as its one frame is
+    /// presented, so no paced still could be put through a real presenter.
+    /// </para>
     /// </remarks>
-    internal sealed record Load(string Path) : BenchCommand;
+    /// <param name="Format">
+    /// The demuxer to force, or <see langword="null"/> to let FFmpeg probe.
+    /// </param>
+    /// <param name="Options">Demuxer options, empty when none were given.</param>
+    internal sealed record Load(
+        string Path,
+        string? Format = null,
+        IReadOnlyDictionary<string, string>? Options = null
+    ) : BenchCommand;
 
     internal sealed record Unload : BenchCommand;
 

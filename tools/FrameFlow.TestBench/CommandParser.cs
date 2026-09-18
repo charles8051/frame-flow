@@ -52,9 +52,7 @@ internal static class CommandParser
 
         return verb switch
         {
-            "load" => rest.Length == 0
-                ? ParseResult.Fail("load needs a path")
-                : ParseResult.Ok(new BenchCommand.Load(Unquote(rest))),
+            "load" => ParseLoad(rest),
 
             "unload" => NoArguments(verb, rest, new BenchCommand.Unload()),
             "play" => NoArguments(verb, rest, new BenchCommand.Play()),
@@ -235,6 +233,71 @@ internal static class CommandParser
                 return line[..i];
         }
         return line;
+    }
+
+    /// <summary>
+    /// Parses <c>load [--format &lt;name&gt;] [--option &lt;key&gt;=&lt;value&gt;]... &lt;path&gt;</c>.
+    /// </summary>
+    /// <remarks>
+    /// The flags come before the path because the path is the trailing run of the line and
+    /// may contain spaces — the reason the verb split above takes everything after the first
+    /// word. Anything from the first non-flag token on is the path, so a path that begins
+    /// with two dashes needs quoting, which <see cref="Unquote"/> already handles.
+    /// </remarks>
+    private static ParseResult ParseLoad(string rest)
+    {
+        string? format = null;
+        Dictionary<string, string>? options = null;
+
+        while (rest.StartsWith("--", StringComparison.Ordinal))
+        {
+            var (flag, afterFlag) = NextToken(rest);
+            var (value, afterValue) = NextToken(afterFlag);
+
+            switch (flag)
+            {
+                case "--format":
+                    if (value.Length == 0)
+                        return ParseResult.Fail("load --format needs a demuxer name");
+                    format = value;
+                    break;
+
+                case "--option":
+                    var split = value.IndexOf('=', StringComparison.Ordinal);
+                    if (split <= 0 || split == value.Length - 1)
+                    {
+                        return ParseResult.Fail(
+                            $"load --option needs key=value, got '{value}'"
+                        );
+                    }
+
+                    options ??= new Dictionary<string, string>(StringComparer.Ordinal);
+                    options[value[..split]] = value[(split + 1)..];
+                    break;
+
+                default:
+                    return ParseResult.Fail($"load does not take '{flag}'");
+            }
+
+            rest = afterValue;
+        }
+
+        if (rest.Length == 0)
+            return ParseResult.Fail("load needs a path");
+
+        return ParseResult.Ok(new BenchCommand.Load(Unquote(rest), format, options));
+    }
+
+    /// <summary>
+    /// Splits the leading whitespace-delimited token off <paramref name="text"/> and returns
+    /// it with the trimmed remainder. An empty token means there was nothing left.
+    /// </summary>
+    private static (string Token, string Remainder) NextToken(string text)
+    {
+        var space = text.IndexOf(' ', StringComparison.Ordinal);
+        return space < 0
+            ? (text, string.Empty)
+            : (text[..space], text[(space + 1)..].TrimStart());
     }
 
     private static string Unquote(string text) =>

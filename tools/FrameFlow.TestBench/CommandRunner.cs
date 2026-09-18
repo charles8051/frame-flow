@@ -49,7 +49,7 @@ internal sealed class CommandRunner(
         switch (command)
         {
             case BenchCommand.Load load:
-                return Report(await _controller.LoadAsync(MediaSource.FromFile(load.Path), ct));
+                return Report(await _controller.LoadAsync(SourceFor(load), ct));
 
             case BenchCommand.Unload:
                 return Report(await _controller.UnloadAsync(ct));
@@ -144,6 +144,24 @@ internal sealed class CommandRunner(
             _out.WriteLine(DiagnosticsRenderer.Interval(previous, snapshot));
 
         _lastDiag = snapshot;
+    }
+
+    /// <summary>
+    /// Builds the source <c>load</c> names. <c>MediaSource.FromFile</c> for the ordinary
+    /// case, and the two optional members on top when the command carried them.
+    /// </summary>
+    private static IMediaSource SourceFor(BenchCommand.Load load)
+    {
+        var source = MediaSource.FromFile(load.Path);
+
+        if (load.Format is null && (load.Options is null || load.Options.Count == 0))
+            return source;
+
+        return source with
+        {
+            InputFormat = load.Format,
+            DemuxerOptions = load.Options is { Count: > 0 } options ? options : null,
+        };
     }
 
     private bool Report(Result result)

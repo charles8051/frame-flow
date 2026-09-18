@@ -60,6 +60,91 @@ public sealed class CommandParserTests
     [Fact]
     public void LoadWithoutAPathFails() => Assert.Contains("needs a path", Error("load"));
 
+    // ── load's source options (#278) ────────────────────────────────────
+    //
+    // MediaSource.FromFile leaves InputFormat and DemuxerOptions unset, so before these the
+    // bench could only open a source the way the probe read it. A still image probes to a
+    // *_pipe demuxer and reports no duration, which is not the same source an operator asking
+    // for image2 at a framerate means.
+
+    [Fact]
+    public void LoadTakesADemuxerName()
+    {
+        var load = Assert.IsType<BenchCommand.Load>(Parse("load --format image2 slide.png"));
+
+        Assert.Equal("image2", load.Format);
+        Assert.Equal("slide.png", load.Path);
+    }
+
+    [Fact]
+    public void LoadTakesDemuxerOptions()
+    {
+        var load = Assert.IsType<BenchCommand.Load>(
+            Parse("load --format image2 --option framerate=1/10 --option loop=1 slide.png")
+        );
+
+        Assert.Equal("image2", load.Format);
+        Assert.Equal("slide.png", load.Path);
+        Assert.NotNull(load.Options);
+        Assert.Equal("1/10", load.Options!["framerate"]);
+        Assert.Equal("1", load.Options["loop"]);
+    }
+
+    [Fact]
+    public void AnOptionValueKeepsItsOwnEqualsSigns()
+    {
+        // A value is everything after the first '=': FFmpeg option values contain them
+        // (headers, key lists), and splitting on every one would truncate those.
+        var load = Assert.IsType<BenchCommand.Load>(
+            Parse("load --option headers=X-Key=abc clip.mp4")
+        );
+
+        Assert.Equal("X-Key=abc", load.Options!["headers"]);
+    }
+
+    [Fact]
+    public void FlagsComeBeforeThePathSoAPathWithSpacesStillWorks()
+    {
+        var load = Assert.IsType<BenchCommand.Load>(
+            Parse(@"load --format image2 C:\pictures\slide with spaces.png")
+        );
+
+        Assert.Equal("image2", load.Format);
+        Assert.Equal(@"C:\pictures\slide with spaces.png", load.Path);
+    }
+
+    [Fact]
+    public void APathAfterNoFlagsIsUnchanged()
+    {
+        // The ordinary case keeps its old shape exactly, including a path that is the whole
+        // remainder of the line.
+        var load = Assert.IsType<BenchCommand.Load>(Parse(@"load C:\clips\my take 3.mp4"));
+
+        Assert.Null(load.Format);
+        Assert.Null(load.Options);
+        Assert.Equal(@"C:\clips\my take 3.mp4", load.Path);
+    }
+
+    [Fact]
+    public void LoadWithFlagsAndNoPathFails() =>
+        Assert.Contains("needs a path", Error("load --format image2"));
+
+    [Fact]
+    public void AnOptionWithoutAValueFails() =>
+        Assert.Contains("key=value", Error("load --option framerate slide.png"));
+
+    [Fact]
+    public void AnOptionWithAnEmptyKeyFails() =>
+        Assert.Contains("key=value", Error("load --option =1/10 slide.png"));
+
+    [Fact]
+    public void AnUnknownFlagFails() =>
+        Assert.Contains("--frobnicate", Error("load --frobnicate 1 slide.png"));
+
+    [Fact]
+    public void FormatWithoutANameFails() =>
+        Assert.Contains("demuxer name", Error("load --format"));
+
     [Theory]
     [InlineData("off", RepeatMode.Off)]
     [InlineData("one", RepeatMode.One)]
