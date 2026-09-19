@@ -9,7 +9,14 @@ namespace FrameFlow.Playback;
 /// One sample of loop-liveness state, taken by the loop-stall watchdog in
 /// <see cref="PlaybackControllerCore"/> on each position tick.
 /// </summary>
-/// <param name="NowTicks"><see cref="Stopwatch.GetTimestamp"/> when sampled (monotonic).</param>
+/// <param name="NowTicks">
+/// A monotonic timestamp taken when the sample was. It must come from the same clock whose
+/// <c>TimestampFrequency</c> was given to <see cref="LoopStallEvaluator.Create"/>: the timeout is
+/// converted to ticks with that frequency, so a sample timed by a different one is wrong by the
+/// ratio between them, and the evaluator either never reaches the timeout or reaches it at once.
+/// <see cref="TimeProvider.GetTimestamp"/> and <see cref="TimeProvider.TimestampFrequency"/> are
+/// the matched pair.
+/// </param>
 /// <param name="PositionTicks">Current playback position, in <see cref="TimeSpan.Ticks"/>.</param>
 /// <param name="DurationTicks">Loaded item duration, in <see cref="TimeSpan.Ticks"/> (0 if unknown).</param>
 /// <param name="ExpectsRepeat">
