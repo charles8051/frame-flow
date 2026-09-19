@@ -119,6 +119,13 @@ public partial class MainWindow : Window
     /// A fraction rather than a decimal because FFmpeg reads the option as a rational, and
     /// the invariant culture because a comma decimal separator would not parse.
     /// </para>
+    /// <para>
+    /// <c>pattern_type=none</c> because image2 otherwise reads the path as a printf sequence
+    /// pattern, so a file actually named <c>photo%03d.png</c> fails to open with "could find
+    /// no file with path ... and index in the range 0-4" even though it is right there. The
+    /// path here always names one existing file, so the pattern handling has nothing to
+    /// offer and one filename in it to break.
+    /// </para>
     /// </remarks>
     private static IMediaSource SourceFor(string path)
     {
@@ -132,6 +139,7 @@ public partial class MainWindow : Window
             DemuxerOptions = new Dictionary<string, string>
             {
                 ["framerate"] = FormattableString.Invariant($"1/{StillDwell.TotalSeconds:0.###}"),
+                ["pattern_type"] = "none",
             },
         };
     }
