@@ -153,12 +153,6 @@ public sealed class LoopStallFoldTests
         // implementation that reported on every tick would add ten here.
         await Advance(controller, time, PositionTickerWorker.TickInterval * 10);
 
-        // One further tick, to close the window between the tenth tick reaching this test's
-        // observer and the fold's own observer running for it. A subject calls its observers in no
-        // promised order, so the tenth tick's fold is only known to have finished once an eleventh
-        // has been delivered.
-        await AdvanceOneTickAsync(controller, time);
-
         Assert.Equal(1, Volatile.Read(ref reports));
     }
 
@@ -200,15 +194,25 @@ public sealed class LoopStallFoldTests
         FakeTimeProvider time
     )
     {
-        var ticked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var sub = controller.PositionTick.Subscribe(
-            new Relay<TimeSpan>(_ => ticked.TrySetResult())
-        );
+        // The fold's own completion, not a PositionTick subscription. A subject calls its
+        // observers in no promised order, so a tick subscriber can resume this method while the
+        // fold is still on that notification — and advancing then drops the next sample, because
+        // the worker is inside OnNext rather than awaiting its timer.
+        var folded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnFolded() => folded.TrySetResult();
 
-        time.Advance(PositionTickerWorker.TickInterval);
+        controller.LoopStallFoldCompleted += OnFolded;
+        try
+        {
+            time.Advance(PositionTickerWorker.TickInterval);
 
-        using var cts = new CancellationTokenSource(FailureBound);
-        await ticked.Task.WaitAsync(cts.Token);
+            using var cts = new CancellationTokenSource(FailureBound);
+            await folded.Task.WaitAsync(cts.Token);
+        }
+        finally
+        {
+            controller.LoopStallFoldCompleted -= OnFolded;
+        }
     }
 
     private static async Task PlayAsync(PlaybackControllerCore controller)

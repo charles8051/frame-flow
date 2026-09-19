@@ -279,7 +279,23 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         {
             _loopWasStalled = false;
         }
+
+        LoopStallFoldCompleted?.Invoke();
     }
+
+    /// <summary>
+    /// Raised at the end of each loop-stall fold, on the position-ticker's thread.
+    /// </summary>
+    /// <remarks>
+    /// A test barrier, and deliberately not the <c>PositionTick</c> stream. The subject calls its
+    /// observers in no promised order, so a subscriber to that stream can run before this fold and
+    /// resume a test while the fold is still on the previous notification — and advancing a fake
+    /// clock then is a dropped sample, because <see cref="PeriodicTimer"/> keeps no backlog. This
+    /// fires after the fold has finished with the tick, which is the fact a test advancing one
+    /// interval at a time needs. Follows the same shape as the completion signals the camera
+    /// pipeline exposes for its own shell tests.
+    /// </remarks>
+    internal event Action? LoopStallFoldCompleted;
 
     // ── IPlaybackController — Commands ─────────────────────────────────
 
