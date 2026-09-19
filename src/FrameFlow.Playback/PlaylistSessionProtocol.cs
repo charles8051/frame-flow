@@ -752,7 +752,8 @@ internal static class PlaylistSessionProtocol
                 command,
                 State.Run == PlaylistRunState.Playing,
                 loop,
-                reason
+                reason,
+                State.Item?.Item
             );
 
             if (
@@ -1011,12 +1012,21 @@ internal static class PlaylistSessionProtocol
                 )
             );
 
+            // The advance now leaves THIS item, for THIS reason. Without the re-stamp the
+            // transition keeps whatever ended the advance's first item, so on [a, b, c] where a
+            // ends and b fails to start, c's transition would say a ended normally.
+            var failedAdvance = work.Advance with
+            {
+                Reason = PlaylistTransitionReason.ItemFailed,
+                Previous = work.Item,
+            };
+
             var (queue, giveUp) = Queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
             Queue = queue;
             if (giveUp)
             {
                 GiveUp(work.Failure.Error);
-                EndAdvance(work.Advance);
+                EndAdvance(failedAdvance);
                 return;
             }
 
@@ -1024,7 +1034,7 @@ internal static class PlaylistSessionProtocol
             // it, under every repeat mode.
             var (next, decision) = Queue.DecideNext(PlaylistAdvance.FailedStart);
             Queue = next;
-            OpenNext(work.Advance, decision);
+            OpenNext(failedAdvance, decision);
         }
 
         private void RaiseStart(
@@ -1036,7 +1046,7 @@ internal static class PlaylistSessionProtocol
         {
             // Read before ReportCurrent moves it: the reason describes how THIS item ended, and
             // every other field of the transition describes the item that started.
-            var previous = Queue.Reported;
+            var previous = advance.Previous ?? Queue.Reported;
             var (queue, index) = Queue.ReportCurrent(item, info);
             Queue = queue;
             Emit(

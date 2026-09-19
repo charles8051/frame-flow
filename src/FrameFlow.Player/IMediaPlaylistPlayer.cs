@@ -190,9 +190,12 @@ public interface IMediaPlaylistPlayer : IMediaPlayer
     /// both discards the second sighting by reference equality.
     /// </para>
     /// <para>
-    /// It does not fire for every failure. The first item is treated as a single source's, so a
-    /// failure before anything has played fails the load or enters
-    /// <see cref="PlaybackState.Error"/> instead. Nothing fires while the player is disposing.
+    /// It does not fire for every failure, and does not always mean the player carries on. The
+    /// first item is treated as a single source's, so a failure before anything has played fails
+    /// the load or enters <see cref="PlaybackState.Error"/> instead, raising nothing here. Nothing
+    /// fires while the player is disposing. And the failure that exhausts the consecutive-failure
+    /// guard is raised here and then followed by <see cref="PlaybackState.Error"/>, so a consumer
+    /// that retries or re-queues on this event should watch the state too.
     /// </para>
     /// </remarks>
     IObservable<PlaylistItemFailed> ItemFailed { get; }

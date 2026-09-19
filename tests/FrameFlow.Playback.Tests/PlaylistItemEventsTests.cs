@@ -97,6 +97,29 @@ public sealed class PlaylistItemEventsTests
     }
 
     [Fact]
+    public void ThePlayersFirstItemFailingToOpen_ReportsNoItemFailure()
+    {
+        // The other half of row 1a, on the OPEN path rather than the fault path. The guard is
+        // Queue.AnyStarted, which is TransitionCount >= 0 and only rises in ReportCurrent — so
+        // before any item has reported a start, a failed open fails the load and raises no item
+        // event. This gate exists because the two paths reach the exclusion differently and a
+        // reader cannot tell from one of them that the other is covered.
+        var a = new PlaylistItem(new FakeSource("a"));
+        var queue = PlaylistQueue.Create([a, new PlaylistItem(new FakeSource("b"))], RepeatMode.Off);
+        Assert.False(queue.AnyStarted);
+        var state = PlaylistSessionState.Initial with { Generation = Generation };
+
+        var step = RunToIdle(
+            state,
+            queue,
+            new PlaylistSessionInput.Initialize(Command: 1),
+            fail: x => x is PlaylistSessionAction.OpenItem
+        );
+
+        Assert.Empty(step.Actions.OfType<PlaylistSessionAction.ReportItemFailed>());
+    }
+
+    [Fact]
     public void WhileDisposing_AFailedItemReportsNothing()
     {
         // Row 1c. The step is handed a disposing context and returns its whole action list, so the
@@ -160,6 +183,34 @@ public sealed class PlaylistItemEventsTests
         Assert.Same(items[1], transition.Item);
         Assert.Same(items[0], transition.Previous);
         Assert.Equal(PlaylistTransitionReason.ItemFailed, transition.Reason);
+    }
+
+    [Fact]
+    public void AfterAnItemThatFailedToSTART_TheTransitionNamesThatItemAsPrevious()
+    {
+        // The same misattribution as the row above, on the path that row does not reach. An item
+        // that faults has already reported current, so the queue's last reported start IS the
+        // failed item. An item that fails to START never reports current, so the queue's last
+        // reported start is the item BEFORE it.
+        //
+        // On [a, b, c]: a plays, b fails to start, c starts. The transition must name b as
+        // Previous, not a.
+        var (state, queue, items) = Playing("a", "b", "c", current: 0);
+
+        // Only b's Play fails; c's succeeds, so there IS a transition to inspect.
+        var failsLeft = 1;
+        var step = RunToIdle(
+            state,
+            queue,
+            new PlaylistSessionInput.EndOfStream(Generation, Run),
+            fail: a => a is PlaylistSessionAction.PlayItem && failsLeft-- > 0
+        );
+
+        var transitions = step.Actions.OfType<PlaylistSessionAction.RaiseTransition>().ToArray();
+        var started = Assert.Single(transitions);
+        Assert.Same(items[2], started.Item);
+        Assert.Equal(PlaylistTransitionReason.ItemFailed, started.Reason);
+        Assert.Same(items[1], started.Previous);
     }
 
     [Fact]
