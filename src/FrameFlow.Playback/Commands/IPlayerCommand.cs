@@ -102,7 +102,12 @@ internal sealed record InternalTriggerCommand(PlaybackTrigger Trigger) : IPlayer
 /// The generation of the session that reported it. An error from a session the
 /// controller has since disposed is dropped.
 /// </param>
-internal sealed record RecoverableErrorCommand(PlaybackError Error, int SessionGeneration)
+internal sealed record RecoverableErrorCommand(
+    PlaybackError Error,
+    int SessionGeneration,
+    PlaylistItem? Item = null,
+    PlaylistItemFailure Failure = PlaylistItemFailure.CouldNotStart
+)
     : IPlayerCommand
 {
     public TaskCompletionSource<Result> Completion { get; } =
@@ -119,7 +124,11 @@ internal sealed record RecoverableErrorCommand(PlaybackError Error, int SessionG
 /// The generation of the session that reported it. A loop from a session the controller has since
 /// disposed is dropped.
 /// </param>
-internal sealed record LoopRestartedCommand(int LoopCount, int SessionGeneration) : IPlayerCommand
+internal sealed record LoopRestartedCommand(
+    int LoopCount,
+    int SessionGeneration,
+    PlaylistItem? Item = null
+) : IPlayerCommand
 {
     public TaskCompletionSource<Result> Completion { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);

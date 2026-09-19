@@ -354,8 +354,10 @@ internal sealed class PlaylistSession : IPlaybackSession
             OnBufferUnderrun: _controllerCallbacks.OnBufferUnderrun,
             OnRecoverableError: _controllerCallbacks.OnRecoverableError,
             OnCurrentItemChanged: _controllerCallbacks.OnCurrentItemChanged,
-            // An item runtime does not loop: this session decides and reports every repeat.
-            OnLoopRestarted: static _ => { }
+            // An item runtime does not loop, and does not know the queue it sits in: this session
+            // decides and reports every repeat and every item failure.
+            OnLoopRestarted: static (_, _) => { },
+            OnItemFailed: static (_, _, _) => { }
         );
 
     /// <summary>
@@ -540,7 +542,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                 break;
 
             case PlaylistSessionAction.ReportLoopRestarted loop:
-                _controllerCallbacks.OnLoopRestarted(loop.LoopCount);
+                _controllerCallbacks.OnLoopRestarted(loop.LoopCount, loop.Item);
                 break;
 
             case PlaylistSessionAction.ReportFatal fatal:
@@ -552,7 +554,9 @@ internal sealed class PlaylistSession : IPlaybackSession
                     transition.Item,
                     transition.Info,
                     transition.Index,
-                    transition.Wrapped
+                    transition.Wrapped,
+                    transition.Previous,
+                    transition.Reason
                 );
                 break;
 
@@ -677,27 +681,37 @@ internal sealed class PlaylistSession : IPlaybackSession
     }
 
     /// <summary>
-    /// Logs a failed item and reports it to the controller, which raises it on
-    /// <c>ErrorOccurred</c> and stays in its current state.
+    /// Logs a failed item and reports it to the controller, which raises it on <c>ItemFailed</c>
+    /// and <c>ErrorOccurred</c> and stays in its current state.
     /// </summary>
+    /// <remarks>
+    /// It goes through <see cref="SessionCallbacks.OnItemFailed"/> rather than
+    /// <see cref="SessionCallbacks.OnRecoverableError"/>, which an item runtime also uses for
+    /// errors that have no item — a lateness-recovery fault is one. The controller builds one
+    /// <see cref="PlaybackError"/> for both events from what this passes, so they share it by
+    /// reference.
+    /// </remarks>
     private void ReportItemFailed(PlaylistSessionAction.ReportItemFailed failed)
     {
+        var source = failed.Item.Source.DisplayName;
         string what;
         if (failed.What == PlaylistItemFailure.FaultedDuringPlayback)
         {
-            LogItemFaulted(_logger, failed.Source, failed.Error);
+            LogItemFaulted(_logger, source, failed.Error);
             what = "faulted during playback";
         }
         else
         {
-            LogItemSkipped(_logger, failed.Source, failed.Error);
+            LogItemSkipped(_logger, source, failed.Error);
             what = "could not be started";
         }
 
-        _controllerCallbacks.OnRecoverableError(
+        _controllerCallbacks.OnItemFailed(
+            failed.Item,
+            failed.What,
             new PlaybackError(
                 ErrorCategory.System,
-                $"Playlist item '{failed.Source}' {what}: {failed.Error?.Message}",
+                $"Playlist item '{source}' {what}: {failed.Error?.Message}",
                 failed.Error
             )
         );

@@ -103,15 +103,6 @@ internal readonly record struct PlaylistCommandResult(PlaylistOutcome Kind, Exce
 }
 
 /// <summary>What a failed item did, for its report.</summary>
-internal enum PlaylistItemFailure
-{
-    /// <summary>It could not be opened, warmed or started.</summary>
-    CouldNotStart,
-
-    /// <summary>It faulted while it played.</summary>
-    FaultedDuringPlayback,
-}
-
 /// <summary>A log line the session writes that has no report of its own.</summary>
 internal enum PlaylistSessionLog
 {
@@ -169,8 +160,11 @@ internal abstract record PlaylistSessionAction
     public sealed record ReportCurrentItemChanged(MediaInfo? Info) : PlaylistSessionAction;
 
     /// <summary>Log a failed item and report it to the controller as a recoverable error.</summary>
-    public sealed record ReportItemFailed(string Source, PlaylistItemFailure What, Exception? Error)
-        : PlaylistSessionAction;
+    public sealed record ReportItemFailed(
+        PlaylistItem Item,
+        PlaylistItemFailure What,
+        Exception? Error
+    ) : PlaylistSessionAction;
 
     /// <summary>Tell the controller the queue has ended.</summary>
     public sealed record ReportEndOfStream : PlaylistSessionAction;
@@ -179,14 +173,21 @@ internal abstract record PlaylistSessionAction
     /// Tell the controller the current item repeated after it played to its end, with the count of
     /// consecutive loops. Decision 5 of <c>docs/adr/ADR-0075-looping-on-both-players.md</c>.
     /// </summary>
-    public sealed record ReportLoopRestarted(int LoopCount) : PlaylistSessionAction;
+    public sealed record ReportLoopRestarted(int LoopCount, PlaylistItem Item)
+        : PlaylistSessionAction;
 
     /// <summary>Hand the controller a fatal error.</summary>
     public sealed record ReportFatal(Exception Error) : PlaylistSessionAction;
 
     /// <summary>Raise the coordinator's <c>SourceTransitioned</c> for an item that started.</summary>
-    public sealed record RaiseTransition(PlaylistItem Item, MediaInfo? Info, int Index, bool Wrapped)
-        : PlaylistSessionAction;
+    public sealed record RaiseTransition(
+        PlaylistItem Item,
+        MediaInfo? Info,
+        int Index,
+        bool Wrapped,
+        PlaylistItem? Previous,
+        PlaylistTransitionReason Reason
+    ) : PlaylistSessionAction;
 
     /// <summary>Complete a command.</summary>
     public sealed record CompleteCommand(int Command, PlaylistCommandResult Result)

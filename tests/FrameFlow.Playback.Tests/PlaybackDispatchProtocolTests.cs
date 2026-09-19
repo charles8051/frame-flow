@@ -472,13 +472,98 @@ public sealed class PlaybackDispatchProtocolTests
         var loops = new ConcurrentQueue<LoopRestarted>();
         using var sub = controller.LoopRestarted.Subscribe(new Relay<LoopRestarted>(loops.Enqueue));
 
-        unloaded.OnLoopRestarted(7);
+        unloaded.OnLoopRestarted(7, new PlaylistItem(new FakeSource()));
         Assert.True((await controller.SetRepeatModeAsync(RepeatMode.All)).IsSuccess);
         Assert.Empty(loops);
 
         session.RaiseLoopRestarted(1);
         Assert.True((await controller.SetRepeatModeAsync(RepeatMode.All)).IsSuccess);
         Assert.Equal(1, Assert.Single(loops).LoopCount);
+    }
+
+    [Fact]
+    public async Task AnItemFailure_RaisesBothEvents_ItemFailedFirst_SharingOnePayload()
+    {
+        // The record's rows 4 and 5. One report is fanned out to two subjects on one pass of the
+        // dispatch loop, which is what makes "both once, in order" a property of the path rather
+        // than a rule two producers have to keep. The shared reference is what lets a consumer
+        // subscribed to both discard the second sighting.
+        var (controller, session) = NewController();
+        await using var _ = controller;
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+
+        var seen = new ConcurrentQueue<object>();
+        using var itemSub = controller.ItemFailed.Subscribe(
+            new Relay<PlaylistItemFailed>(f => seen.Enqueue(f))
+        );
+        using var errSub = controller.ErrorOccurred.Subscribe(
+            new Relay<PlaybackError>(e => seen.Enqueue(e))
+        );
+
+        var error = new PlaybackError(ErrorCategory.System, "item 'b' could not be started");
+        session.RaiseItemFailed(error);
+
+        // A no-op command queued behind the notification: it cannot complete until the dispatch
+        // loop has taken the report ahead of it, so this is a signal and not a wait.
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.All)).IsSuccess);
+
+        var observed = seen.ToArray();
+        Assert.Equal(2, observed.Length);
+        var failed = Assert.IsType<PlaylistItemFailed>(observed[0]);
+        Assert.Same(error, observed[1]);
+        Assert.Same(error, failed.Error);
+        Assert.Equal(PlaylistItemFailure.CouldNotStart, failed.Failure);
+    }
+
+    [Fact]
+    public async Task AnErrorWithNoItem_RaisesOnlyErrorOccurred()
+    {
+        // ErrorOccurred also carries the controller's own errors and faults an item runtime
+        // reports that belong to no item — a lateness-recovery fault is one. Those must not
+        // manufacture an ItemFailed, which is why the item travels on its own callback.
+        var (controller, session) = NewController();
+        await using var _ = controller;
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+
+        var items = new ConcurrentQueue<PlaylistItemFailed>();
+        var errors = new ConcurrentQueue<PlaybackError>();
+        using var itemSub = controller.ItemFailed.Subscribe(new Relay<PlaylistItemFailed>(items.Enqueue));
+        using var errSub = controller.ErrorOccurred.Subscribe(new Relay<PlaybackError>(errors.Enqueue));
+
+        session.Callbacks.OnRecoverableError(
+            new PlaybackError(ErrorCategory.System, "Lateness recovery stopped after a fault")
+        );
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.All)).IsSuccess);
+
+        Assert.Single(errors);
+        Assert.Empty(items);
+    }
+
+    [Fact]
+    public async Task ALoop_RaisesBothEvents_ItemLoopedFirst_SharingOnePayload()
+    {
+        // Row 7. The loop pair takes the failure pair's contract verbatim.
+        var (controller, session) = NewController(RepeatMode.All);
+        await using var _ = controller;
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+
+        var seen = new ConcurrentQueue<object>();
+        using var itemSub = controller.ItemLooped.Subscribe(
+            new Relay<PlaylistItemLooped>(l => seen.Enqueue(l))
+        );
+        using var loopSub = controller.LoopRestarted.Subscribe(
+            new Relay<LoopRestarted>(l => seen.Enqueue(l))
+        );
+
+        session.RaiseLoopRestarted(4);
+        Assert.True((await controller.SetRepeatModeAsync(RepeatMode.All)).IsSuccess);
+
+        var observed = seen.ToArray();
+        Assert.Equal(2, observed.Length);
+        var looped = Assert.IsType<PlaylistItemLooped>(observed[0]);
+        var restarted = Assert.IsType<LoopRestarted>(observed[1]);
+        Assert.Same(restarted, looped.Loop);
+        Assert.Equal(4, restarted.LoopCount);
     }
 
     [Fact]
@@ -1116,7 +1201,14 @@ public sealed class PlaybackDispatchProtocolTests
         public void RaiseCurrentItemChanged(MediaInfo info) =>
             _callbacks.OnCurrentItemChanged(info);
 
-        public void RaiseLoopRestarted(int loopCount) => _callbacks.OnLoopRestarted(loopCount);
+        public void RaiseLoopRestarted(int loopCount) =>
+            _callbacks.OnLoopRestarted(loopCount, TestItem);
+
+        public void RaiseItemFailed(PlaybackError error) =>
+            _callbacks.OnItemFailed(TestItem, PlaylistItemFailure.CouldNotStart, error);
+
+        /// <summary>A stand-in item: these tests assert on dispatch, not on which item it was.</summary>
+        private static readonly PlaylistItem TestItem = new(new FakeSource());
 
         /// <summary>The callbacks from the most recent <c>CreateSession</c>.</summary>
         public SessionCallbacks Callbacks => _callbacks;

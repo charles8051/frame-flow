@@ -43,9 +43,19 @@ namespace FrameFlow.Playback;
 /// </param>
 /// <param name="OnLoopRestarted">
 /// Invoked when a session that loops internally, a playlist, has put its current item back at its
-/// start after it played to its end. Carries the count of consecutive loops of that item, which the
-/// controller publishes on <c>LoopRestarted</c>. A session that does not loop internally never
-/// invokes it: the controller runs that session's loop.
+/// start after it played to its end. Carries the count of consecutive loops and the item that
+/// looped, which the controller publishes on <c>LoopRestarted</c> and <c>ItemLooped</c>. A session
+/// that does not loop internally never invokes it: the controller runs that session's loop.
+/// </param>
+/// <param name="OnItemFailed">
+/// Invoked when a playlist item fails and is skipped, carrying the item, how it failed, and the
+/// error. The controller publishes it on <c>ItemFailed</c> and <c>ErrorOccurred</c>, in that order,
+/// sharing the one <see cref="PlaybackError"/> instance, and does not change state.
+/// <para>
+/// This is separate from <see cref="OnRecoverableError"/> because that one is also invoked for
+/// errors with no item — a lateness-recovery fault inside an item runtime is one — so it cannot
+/// carry an item without making it nullable for every caller.
+/// </para>
 /// </param>
 internal readonly record struct SessionCallbacks(
     Action OnEndOfStream,
@@ -54,5 +64,6 @@ internal readonly record struct SessionCallbacks(
     Action OnBufferUnderrun,
     Action<PlaybackError> OnRecoverableError,
     Action<MediaInfo?> OnCurrentItemChanged,
-    Action<int> OnLoopRestarted
+    Action<int, PlaylistItem> OnLoopRestarted,
+    Action<PlaylistItem, PlaylistItemFailure, PlaybackError> OnItemFailed
 );

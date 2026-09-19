@@ -71,7 +71,9 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
                 OnBufferUnderrun: () => Record("ctl.BufferUnderrun"),
                 OnRecoverableError: error => Record($"ctl.RecoverableError({error.Message})"),
                 OnCurrentItemChanged: info => Record($"ctl.ItemChanged({info?.ContainerName})"),
-                OnLoopRestarted: count => Record($"ctl.LoopRestarted({count})")
+                OnLoopRestarted: (count, item) => Record($"ctl.LoopRestarted({count},{item})"),
+                OnItemFailed: (item, failure, error) =>
+                    Record($"ctl.ItemFailed({item},{failure},{error.Message})")
             ),
             new FakeItemFactory(this),
             scheduler: _scheduler

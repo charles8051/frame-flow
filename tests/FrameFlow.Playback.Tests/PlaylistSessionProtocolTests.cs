@@ -578,7 +578,7 @@ public sealed class PlaylistSessionProtocolTests
 
         var (_, _, next) = Step(discarding, q2, new PlaylistSessionInput.Outcome(PlaylistOutcome.Ok));
         var report = Assert.IsType<PlaylistSessionAction.ReportItemFailed>(Assert.Single(next.Actions));
-        Assert.Equal("b", report.Source);
+        Assert.Equal("b", report.Item.Source.DisplayName);
         var openC = Assert.IsType<PlaylistSessionAction.OpenItem>(next.Awaited);
         Assert.Equal("c", openC.Source.DisplayName);
         Assert.Equal(openB.Generation + 1, openC.Generation);
@@ -724,11 +724,13 @@ public sealed class PlaylistSessionProtocolTests
         Assert.Collection(
             actions.Where(a => a is PlaylistSessionAction.ReportItemFailed or PlaylistSessionAction.ReportEndOfStream),
             a =>
-                Assert.Equal(
+                AssertItemFailed(
+                    a,
+                    faults ? "a" : "b",
                     faults
-                        ? new PlaylistSessionAction.ReportItemFailed("a", PlaylistItemFailure.FaultedDuringPlayback, boom)
-                        : new PlaylistSessionAction.ReportItemFailed("b", PlaylistItemFailure.CouldNotStart, boom),
-                    a
+                        ? PlaylistItemFailure.FaultedDuringPlayback
+                        : PlaylistItemFailure.CouldNotStart,
+                    boom
                 ),
             a => Assert.IsType<PlaylistSessionAction.ReportEndOfStream>(a)
         );
@@ -797,7 +799,7 @@ public sealed class PlaylistSessionProtocolTests
         // The controller is handed the fatal error, so the Play itself completes.
         Assert.Collection(
             step.Actions,
-            a => Assert.Equal(new PlaylistSessionAction.ReportItemFailed("a", PlaylistItemFailure.CouldNotStart, boom), a),
+            a => AssertItemFailed(a, "a", PlaylistItemFailure.CouldNotStart, boom),
             a => Assert.Same(boom, Assert.IsType<PlaylistSessionAction.ReportFatal>(a).Error.InnerException),
             a => Assert.Equal(new PlaylistSessionAction.CompleteCommand(Command, PlaylistCommandResult.Ok), a)
         );
@@ -823,9 +825,11 @@ public sealed class PlaylistSessionProtocolTests
         Assert.IsType<PlaylistSessionAction.DisposeItem>(step.Awaited);
 
         (s, q, step) = Step(s, q, new PlaylistSessionInput.Outcome(PlaylistOutcome.Ok));
-        Assert.Equal(
-            new PlaylistSessionAction.ReportItemFailed("b", PlaylistItemFailure.CouldNotStart, boom),
-            Assert.Single(step.Actions)
+        AssertItemFailed(
+            Assert.Single(step.Actions),
+            "b",
+            PlaylistItemFailure.CouldNotStart,
+            boom
         );
         var openC = Assert.IsType<PlaylistSessionAction.OpenItem>(step.Awaited);
         Assert.Equal("c", openC.Source.DisplayName);
@@ -936,13 +940,13 @@ public sealed class PlaylistSessionProtocolTests
         Assert.Collection(
             first.Actions.Where(a => a is PlaylistSessionAction.RaiseTransition or PlaylistSessionAction.ReportLoopRestarted),
             a => Assert.IsType<PlaylistSessionAction.RaiseTransition>(a),
-            a => Assert.Equal(new PlaylistSessionAction.ReportLoopRestarted(1), a)
+            a => AssertLoopRestarted(a, 1)
         );
         Assert.Equal(1, first.State.LoopCount);
 
         var run = first.State.Item!.KnownRun;
         var second = RunToIdle(first.State, first.Queue, new PlaylistSessionInput.EndOfStream(CurrentGeneration, run));
-        Assert.Equal(new PlaylistSessionAction.ReportLoopRestarted(2), Assert.Single(second.Actions.OfType<PlaylistSessionAction.ReportLoopRestarted>()));
+        AssertLoopRestarted(Assert.Single(second.Actions.OfType<PlaylistSessionAction.ReportLoopRestarted>()), 2);
     }
 
     [Fact]
@@ -960,7 +964,7 @@ public sealed class PlaylistSessionProtocolTests
             new[] { typeof(PlaylistSessionAction.RewindItem), typeof(PlaylistSessionAction.DisposeItem), typeof(PlaylistSessionAction.OpenItem), typeof(PlaylistSessionAction.WarmUpItem), typeof(PlaylistSessionAction.PlayItem) },
             fellBack.Awaited.Select(a => a.GetType())
         );
-        Assert.Equal(new PlaylistSessionAction.ReportLoopRestarted(1), Assert.Single(fellBack.Actions.OfType<PlaylistSessionAction.ReportLoopRestarted>()));
+        AssertLoopRestarted(Assert.Single(fellBack.Actions.OfType<PlaylistSessionAction.ReportLoopRestarted>()), 1);
 
         // A loop that ends while paused is rebuilt, and reported when the new item's warm-up succeeds.
         // The Play that follows reports nothing more.
@@ -970,7 +974,7 @@ public sealed class PlaylistSessionProtocolTests
             new[] { typeof(PlaylistSessionAction.DisposeItem), typeof(PlaylistSessionAction.OpenItem), typeof(PlaylistSessionAction.WarmUpItem) },
             rebuilt.Awaited.Select(a => a.GetType())
         );
-        Assert.Equal(new PlaylistSessionAction.ReportLoopRestarted(1), Assert.Single(rebuilt.Actions.OfType<PlaylistSessionAction.ReportLoopRestarted>()));
+        AssertLoopRestarted(Assert.Single(rebuilt.Actions.OfType<PlaylistSessionAction.ReportLoopRestarted>()), 1);
 
         var played = RunToIdle(rebuilt.State, rebuilt.Queue, new PlaylistSessionInput.Play(Command));
         Assert.Contains(played.Awaited, a => a is PlaylistSessionAction.PlayItem);
@@ -1244,5 +1248,31 @@ public sealed class PlaylistSessionProtocolTests
         Assert.True(step.Done, "A step with nothing awaited and nothing decided must be done.");
         Assert.All(step.Actions, a => Assert.IsType<PlaylistSessionAction.Log>(a));
         return Decision.Drop;
+    }
+    /// <summary>
+    /// A failure report names the item that failed, not just its display name. Asserting on the
+    /// fields rather than on record equality is deliberate: <c>PlaylistItem</c> compares by
+    /// reference, so a value comparison would need the exact instance the queue built and would
+    /// say nothing about which item the report picked.
+    /// </summary>
+    private static void AssertItemFailed(
+        PlaylistSessionAction action,
+        string source,
+        PlaylistItemFailure what,
+        Exception? error
+    )
+    {
+        var failed = Assert.IsType<PlaylistSessionAction.ReportItemFailed>(action);
+        Assert.Equal(source, failed.Item.Source.DisplayName);
+        Assert.Equal(what, failed.What);
+        Assert.Same(error, failed.Error);
+    }
+
+    /// <summary>A loop report names the item that looped, and counts consecutive loops of it.</summary>
+    private static void AssertLoopRestarted(PlaylistSessionAction action, int count)
+    {
+        var loop = Assert.IsType<PlaylistSessionAction.ReportLoopRestarted>(action);
+        Assert.Equal(count, loop.LoopCount);
+        Assert.NotNull(loop.Item);
     }
 }

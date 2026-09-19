@@ -108,6 +108,26 @@ public interface IPlaybackController : IAsyncDisposable
     IObservable<LoopRestarted> LoopRestarted { get; }
 
     /// <summary>
+    /// The same loops as <see cref="LoopRestarted"/>, naming the item that looped. Raised first,
+    /// carrying that stream's <see cref="FrameFlow.Media.LoopRestarted"/> instance by reference.
+    /// Silent for a loop no session attributed to an item.
+    /// </summary>
+    IObservable<PlaylistItemLooped> ItemLooped { get; }
+
+    /// <summary>
+    /// Fires when a playlist item failed and was skipped, naming the item and how it failed.
+    /// Raised before <see cref="ErrorOccurred"/> for the same failure, carrying that stream's
+    /// <see cref="PlaybackError"/> instance by reference.
+    /// </summary>
+    /// <remarks>
+    /// It is not every error. <see cref="ErrorOccurred"/> also carries the controller's own errors
+    /// and faults an item runtime reports that belong to no item, and none of those appear here.
+    /// It is also not every item failure: a failure before anything has played is fatal rather than
+    /// recoverable, so the player's first item raises nothing here.
+    /// </remarks>
+    IObservable<PlaylistItemFailed> ItemFailed { get; }
+
+    /// <summary>
     /// Fires when an expected loop appears to have stalled — the current item was expected to
     /// repeat, and the position overran the item duration without a restart, i.e. frame delivery
     /// stopped while the clock kept advancing. A single source expects a repeat under

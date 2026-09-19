@@ -175,4 +175,39 @@ public interface IMediaPlaylistPlayer : IMediaPlayer
     /// the item that started.
     /// </summary>
     IObservable<PlaylistTransition> SourceTransitioned { get; }
+
+    /// <summary>
+    /// Fires when an item failed and was skipped, naming the item and how it failed. Prefer this
+    /// over <see cref="IMediaPlayer.ErrorOccurred"/> for item failures: that stream cannot say
+    /// which item an error belongs to, and reading <see cref="GetPlaylist"/> inside its handler
+    /// does not answer it either, because the queue has already moved past the failed item.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same failure also reaches <see cref="IMediaPlayer.ErrorOccurred"/>, which stays because
+    /// it is the only failure signal a caller holding that surface has. This one is raised first
+    /// and carries the identical <see cref="PlaybackError"/> instance, so a consumer subscribed to
+    /// both discards the second sighting by reference equality.
+    /// </para>
+    /// <para>
+    /// It does not fire for every failure, and does not always mean the player carries on. The
+    /// first item is treated as a single source's, so a failure before anything has played fails
+    /// the load or enters <see cref="PlaybackState.Error"/> instead, raising nothing here. Nothing
+    /// fires while the player is disposing. And the failure that exhausts the consecutive-failure
+    /// guard is raised here and then followed by <see cref="PlaybackState.Error"/>, so a consumer
+    /// that retries or re-queues on this event should watch the state too.
+    /// </para>
+    /// </remarks>
+    IObservable<PlaylistItemFailed> ItemFailed { get; }
+
+    /// <summary>
+    /// Fires when the current item is back at its start after playing to its end, naming the item.
+    /// Prefer this over <see cref="IMediaPlayer.LoopRestarted"/> when the item matters.
+    /// </summary>
+    /// <remarks>
+    /// The same loop also reaches <see cref="IMediaPlayer.LoopRestarted"/>. This one is raised
+    /// first and carries the identical <see cref="FrameFlow.Media.LoopRestarted"/> instance, so the
+    /// same reference-equality discard applies.
+    /// </remarks>
+    IObservable<PlaylistItemLooped> ItemLooped { get; }
 }
