@@ -277,9 +277,12 @@ land.
   while every other field on that record describes the item it entered — so `FailedItem` on a queue
   of `[A, B]` where A fails would have led a consumer to mark B. The transition now carries
   `Previous`, and decision 2 gained the correlation rule the two failure channels needed:
-  `ItemFailed` first, carrying the same `PlaybackError` by reference. The cost is three more members
-  on a surface whose doc comment already runs to four paragraphs, and a duplication reconcilable
-  only by a contract the types do not enforce.
+  `ItemFailed` first, carrying the same `PlaybackError` by reference. A second turn caught that the
+  loop pair had been left without that rule while a *Not settled* entry wrongly claimed a loop
+  raises no second event; each new event now nests the payload its inherited counterpart raises, so
+  the shared reference is the correlation key. The cost is three more members on a surface whose doc
+  comment already runs to four paragraphs, and a duplication the types do not enforce, bounded by
+  the interface fold [ADR-0077](ADR-0077-one-player-type.md) decision 2 already defers.
 
 ## Recently numbered
 

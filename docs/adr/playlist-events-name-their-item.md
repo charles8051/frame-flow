@@ -118,19 +118,36 @@ Reference identity is the correlation key because the two events are one report 
 path, not two reports that have to be matched. An identifier would be a second mechanism for a
 question the object reference already answers.
 
+**The duplication has an end date, and it is already scheduled.** `ErrorOccurred`'s item-failure
+reporting is the compatibility path for a caller that holds only `IMediaPlayer`. It exists because
+`IMediaPlaylistPlayer` is still a separate interface, which ADR-0077 decision 2 keeps "for now" and
+defers folding "to the next release that breaks implementers for other reasons". When that fold
+happens there is one surface, every caller can take `ItemFailed`, and withdrawing item failures
+from `ErrorOccurred` stops being a silent break. That release is the boundary, and the same one
+governs `ItemLooped` and `LoopRestarted` under decision 3. Until then the fan-out is two events on
+one payload, not two mechanisms.
+
 Settles #306.
 
 ### 3. `IMediaPlaylistPlayer.ItemLooped`
 
-`IObservable<PlaylistItemLooped>`, carrying the `PlaylistItem` and the `LoopCount` and
-`ItemDuration` that `LoopRestarted` already carries.
+`IObservable<PlaylistItemLooped>`, carrying the `PlaylistItem` and the `LoopRestarted` instance
+`IMediaPlayer.LoopRestarted` raises, which already holds the `LoopCount` and `ItemDuration`.
 
 This settles #203 without the ordering promise ADR-0075 decision 5 declined to make. That option
 required `LoopRestarted` and `SourceTransitioned` to travel one ordered path, and it still left
 every consumer deriving identity from a snapshot read inside a handler. Carrying the item is
 unconditional and needs no promise about the other event.
 
-`IMediaPlayer.LoopRestarted` is unchanged.
+`IMediaPlayer.LoopRestarted` is unchanged, and **the loop pair takes decision 2's contract
+verbatim**: `ItemLooped` is authoritative for a caller holding `IMediaPlaylistPlayer`, one loop
+raises both once, `ItemLooped` carries the same `LoopRestarted` instance by reference, and
+`ItemLooped` is raised first.
+
+`PlaylistItemLooped` nests `LoopRestarted` rather than copying its two fields, so the reference
+that makes the pair reconcilable is the payload itself. `PlaylistItemFailed` nests `PlaybackError`
+for the same reason. Two events about one occurrence, on one dispatch path, sharing one payload
+object.
 
 ### 4. `PlaylistTransition` says why it fired, and names the item it left
 
@@ -206,11 +223,12 @@ paragraph of contract; this costs a consumer their only failure signal without t
 
 ## Not settled here
 
-- Whether `LoopRestarted` on `IMediaPlayer` should be withdrawn in favour of `ItemLooped`. It is the
-  only loop signal a caller holding the small surface has. The same break as the rejected
-  alternative above, and it should be decided with it if either is revisited.
-- Whether `ItemLooped` and `ErrorOccurred`'s relationship needs the same correlation rule decision 2
-  gives `ItemFailed`. A loop raises no second event, so there is nothing to reconcile today.
+- Whether the compatibility paths are withdrawn at the interface fold, or kept. Decisions 2 and 3
+  name the release as the boundary; they do not decide what happens at it. Withdrawing both
+  duplicates and keeping both are each defensible once there is one surface, and the argument
+  against withdrawing now — a silent break — does not apply there.
+- Whether `PlaylistTransition` should be raised as a nested payload the way the other two are, so
+  all three playlist events share one shape. It predates them and carries its fields directly.
 
 ## Validation
 
@@ -222,10 +240,11 @@ paragraph of contract; this costs a consumer their only failure signal without t
 | 4 | A failure raises `ItemFailed` and `ErrorOccurred` once each, `ItemFailed` first, carrying the same `PlaybackError` by reference | Player |
 | 5 | A consumer subscribed to both channels that discards by reference equality counts one failure | Player |
 | 6 | A single-clip `RepeatMode.All` loop raises `ItemLooped` naming that item | Integration |
-| 7 | A jump recorded during a rewind does not change the item on the `ItemLooped` that precedes it | Protocol |
-| 8 | On a queue of `[A, B]` where A fails, the transition reports the failure reason, `Item` B and `Previous` A | Protocol |
-| 9 | The first item's transition reports the first-item reason and a null `Previous` | Protocol |
-| 10 | `RepeatMode.One` on a queue of three reports the loop reason, with `Wrapped` false, and `Previous` equal to `Item` | Protocol |
+| 7 | A loop raises `ItemLooped` and `LoopRestarted` once each, `ItemLooped` first, carrying the same `LoopRestarted` by reference | Player |
+| 8 | A jump recorded during a rewind does not change the item on the `ItemLooped` that precedes it | Protocol |
+| 9 | On a queue of `[A, B]` where A fails, the transition reports the failure reason, `Item` B and `Previous` A | Protocol |
+| 10 | The first item's transition reports the first-item reason and a null `Previous` | Protocol |
+| 11 | `RepeatMode.One` on a queue of three reports the loop reason, with `Wrapped` false, and `Previous` equal to `Item` | Protocol |
 
 ## Revision history
 
@@ -247,3 +266,18 @@ paragraph of contract; this costs a consumer their only failure signal without t
   - **ADR-0069's status still said nothing was superseded.** Its opening now scopes the
     supersession to what a queue's `ErrorOccurred` can attribute.
   - **Validation** gained the correlation, `Previous` and first-item rows.
+- **Revision after the second turn of automated review of #307 (2026-09-19).** Two findings:
+  - **The loop pair had no correlation contract, and the record said it needed none.** Decision 2
+    gave `ItemFailed` and `ErrorOccurred` identity and order; decision 3 left `ItemLooped` and
+    `LoopRestarted` with neither, and a *Not settled* entry claimed "a loop raises no second event,
+    so there is nothing to reconcile". `LoopRestarted` is that second event, inherited on
+    `IMediaPlaylistPlayer`, so the claim was false and the asymmetry was an oversight rather than a
+    decision. Decision 3 now takes decision 2's contract verbatim, and `PlaylistItemLooped` nests
+    the `LoopRestarted` instance rather than copying its fields, which is what makes the reference
+    the payload. `PlaylistItemFailed` nests `PlaybackError` the same way.
+  - **The duplication had no migration boundary.** The review accepted the contract and repeated
+    that the fan-out is still surface a consumer must understand. Decision 2 now names the boundary
+    that already exists: ADR-0077 decision 2 defers folding `IMediaPlaylistPlayer` into
+    `IMediaPlayer` "to the next release that breaks implementers for other reasons", and at that
+    release withdrawing the duplicates stops being a silent break. What happens at it is left
+    unsettled rather than pre-decided.
