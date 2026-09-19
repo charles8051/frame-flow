@@ -57,16 +57,24 @@ internal interface IPlaybackSession : IAsyncDisposable
     bool CanSeekFromEnded => true;
 
     /// <summary>
-    /// Whether this session expects its current item to repeat at its end. The controller reads it
-    /// on every position tick, for the loop-stall watchdog. An item runtime, which is driven by a
-    /// session rather than by the controller, answers <see langword="false"/>.
+    /// What this session is presenting: whether it expects its current item to repeat, and which
+    /// item has started. The controller reads it on every position tick, for the loop-stall
+    /// watchdog.
     /// </summary>
     /// <remarks>
-    /// Every session the controller drives runs the repeat mode itself, so an end-of-stream it
-    /// reports means it has finished and the controller ends on it (the one-player-type record,
-    /// decision 5).
+    /// <para>
+    /// It is one value rather than two properties because the fold needs a consistent pair: a
+    /// verdict about one item and an attribution naming another is the defect this shape exists to
+    /// make unrepresentable. An implementation answers from one read of its queue.
+    /// </para>
+    /// <para>
+    /// A stall is detected by the controller's own fold rather than reported by the session, so
+    /// this is pulled rather than pushed — which is also why it answers for the session's first
+    /// item, unlike the current-item-changed callback. An item runtime, which is driven by a
+    /// session rather than by the controller, answers <see cref="SessionPresentation.Empty"/>.
+    /// </para>
     /// </remarks>
-    bool ExpectsRepeat => false;
+    SessionPresentation Presentation => SessionPresentation.Empty;
 
     // ── Lifecycle methods (called by PlaybackController entry actions) ──
 

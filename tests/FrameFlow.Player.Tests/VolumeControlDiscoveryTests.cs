@@ -219,6 +219,8 @@ public sealed class VolumeControlDiscoveryTests
             new NeverObservable<PlaylistItemFailed>();
         public IObservable<PlaylistItemLooped> ItemLooped { get; } =
             new NeverObservable<PlaylistItemLooped>();
+        public IObservable<PlaylistItemStalled> ItemStalled { get; } =
+            new NeverObservable<PlaylistItemStalled>();
         public IObservable<LoopStalled> LoopStalled { get; } = new NeverObservable<LoopStalled>();
         public IObservable<PlaybackError> ErrorOccurred { get; } =
             new NeverObservable<PlaybackError>();

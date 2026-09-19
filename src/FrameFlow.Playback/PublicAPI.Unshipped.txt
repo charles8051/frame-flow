@@ -84,6 +84,7 @@ FrameFlow.Playback.IPlaybackController.GetDiagnostics() -> FrameFlow.Playback.Di
 FrameFlow.Playback.IPlaybackController.IsActivelyPresenting.get -> bool
 FrameFlow.Playback.IPlaybackController.ItemFailed.get -> System.IObservable<FrameFlow.Playback.PlaylistItemFailed!>!
 FrameFlow.Playback.IPlaybackController.ItemLooped.get -> System.IObservable<FrameFlow.Playback.PlaylistItemLooped!>!
+FrameFlow.Playback.IPlaybackController.ItemStalled.get -> System.IObservable<FrameFlow.Playback.PlaylistItemStalled!>!
 FrameFlow.Playback.IPlaybackController.LoadAsync(FrameFlow.Media.IMediaSource! source, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
 FrameFlow.Playback.IPlaybackController.LoopRestarted.get -> System.IObservable<FrameFlow.Media.LoopRestarted!>!
 FrameFlow.Playback.IPlaybackController.LoopStalled.get -> System.IObservable<FrameFlow.Media.LoopStalled!>!
@@ -185,6 +186,12 @@ FrameFlow.Playback.PlaylistItemLooped.Item.init -> void
 FrameFlow.Playback.PlaylistItemLooped.Loop.get -> FrameFlow.Media.LoopRestarted!
 FrameFlow.Playback.PlaylistItemLooped.Loop.init -> void
 FrameFlow.Playback.PlaylistItemLooped.PlaylistItemLooped(FrameFlow.Playback.PlaylistItem! Item, FrameFlow.Media.LoopRestarted! Loop) -> void
+FrameFlow.Playback.PlaylistItemStalled
+FrameFlow.Playback.PlaylistItemStalled.Item.get -> FrameFlow.Playback.PlaylistItem!
+FrameFlow.Playback.PlaylistItemStalled.Item.init -> void
+FrameFlow.Playback.PlaylistItemStalled.PlaylistItemStalled(FrameFlow.Playback.PlaylistItem! Item, FrameFlow.Media.LoopStalled! Stall) -> void
+FrameFlow.Playback.PlaylistItemStalled.Stall.get -> FrameFlow.Media.LoopStalled!
+FrameFlow.Playback.PlaylistItemStalled.Stall.init -> void
 FrameFlow.Playback.PlaylistSnapshot
 FrameFlow.Playback.PlaylistSnapshot.Current.get -> FrameFlow.Playback.PlaylistItem?
 FrameFlow.Playback.PlaylistSnapshot.CurrentStarted.get -> bool

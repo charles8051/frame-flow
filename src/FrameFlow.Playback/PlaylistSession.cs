@@ -84,7 +84,7 @@ internal sealed class PlaylistSession : IPlaybackSession
     private IPlaylistItemRuntime? _published;
     private int _publishedRun;
     private int _publishedGeneration;
-    private bool _publishedLoopUnderWay;
+    private SessionPresentation? _publishedPresentation;
 
     // Returned by the coordinator when this session attaches its skip and jump handlers.
     private object? _sessionToken;
@@ -157,7 +157,16 @@ internal sealed class PlaylistSession : IPlaybackSession
     // Read by the controller's loop-stall watchdog on every position tick. While a loop is under way
     // the answer is true whatever the queue now says, so removing the item mid-repeat does not hide a
     // rewind that hangs. Otherwise the queue decides (decision 6 of ADR-0075-looping-on-both-players.md).
-    public bool ExpectsRepeat => Volatile.Read(ref _publishedLoopUnderWay) || _coordinator.Queue.ExpectsRepeat;
+    /// <inheritdoc />
+    /// <remarks>
+    /// One volatile read of a value built by <see cref="Publish"/>. Composing it here instead —
+    /// the loop flag from the session's state, the item from the coordinator's queue — would read
+    /// two sources that are written at different moments: the queue is committed inside
+    /// <c>_coordinator.Update</c> and the state is published after it, so a reader between the two
+    /// could pair a repeat that is still under way for one item with the item that followed it.
+    /// </remarks>
+    public SessionPresentation Presentation =>
+        Volatile.Read(ref _publishedPresentation) ?? SessionPresentation.Empty;
 
     // ── IPlaybackSession lifecycle ──────────────────────────────────────────
 
@@ -491,7 +500,16 @@ internal sealed class PlaylistSession : IPlaybackSession
     {
         Volatile.Write(ref _publishedRun, (int)_state.Run);
         Volatile.Write(ref _publishedGeneration, _state.Generation);
-        Volatile.Write(ref _publishedLoopUnderWay, _state.LoopUnderWay);
+        // Built here, after the queue has been committed by Step, so both halves describe the
+        // state this publish is for. One reference write, so a reader never sees half of it.
+        var queue = _coordinator.Queue;
+        Volatile.Write(
+            ref _publishedPresentation,
+            new SessionPresentation(
+                _state.LoopUnderWay || queue.ExpectsRepeat,
+                queue.Reported
+            )
+        );
         Volatile.Write(ref _published, _state.Item is null ? null : _runtime);
     }
 

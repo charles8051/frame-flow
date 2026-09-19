@@ -17,6 +17,27 @@ public sealed class PlaylistSessionTranscriptTests
     private static readonly InvalidOperationException Boom = new("boom");
 
     [Fact]
+    public async Task CurrentItem_TracksTheStartedItem_AndIsNullBeforeTheFirst()
+    {
+        // The controller pulls CurrentItem on a position tick to name a stalled item, rather than
+        // being pushed it, because a stall is detected by the controller's own fold and not
+        // reported by the session. So it has to answer for the FIRST item too, which the
+        // current-item-changed callback does not fire for.
+        await using var rig = PlaylistSessionRig.Create(RepeatMode.Off, "a", "b");
+
+        Assert.Null(rig.Session.Presentation.CurrentItem);
+
+        await rig.Session.InitializeAsync(rig.PlaylistItem("a").Source);
+        await rig.Session.WarmUpAsync();
+        await rig.Session.PlayAsync();
+        Assert.Same(rig.PlaylistItem("a"), rig.Session.Presentation.CurrentItem);
+
+        rig.Runtime("a#1").RaiseEndOfStream();
+        await rig.SettleAsync();
+        Assert.Same(rig.PlaylistItem("b"), rig.Session.Presentation.CurrentItem);
+    }
+
+    [Fact]
     public async Task LoadPlayHandOffAndEnd()
     {
         await using var rig = PlaylistSessionRig.Create(RepeatMode.Off, "a", "b");
@@ -606,7 +627,7 @@ public sealed class PlaylistSessionTranscriptTests
     public async Task RemovingTheItemDuringAnInPlaceRewind_KeepsARepeatExpected_UntilTheRewindCompletes()
     {
         await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.One, "a");
-        Assert.True(rig.Session.ExpectsRepeat);
+        Assert.True(rig.Session.Presentation.ExpectsRepeat);
         var a = rig.PlaylistItem("a");
 
         var hold = rig.Hold("a", ItemOp.Rewind);
@@ -615,13 +636,13 @@ public sealed class PlaylistSessionTranscriptTests
         Assert.True(rig.Coordinator.Remove(a));
 
         Assert.False(rig.Coordinator.Queue.ExpectsRepeat);
-        Assert.True(rig.Session.ExpectsRepeat);
+        Assert.True(rig.Session.Presentation.ExpectsRepeat);
 
         hold.Release();
         await rig.SettleAsync();
 
         Assert.Equal(["a#1.Rewind", "transition(a)", "ctl.LoopRestarted(1,a)"], rig.TakeLog());
-        Assert.False(rig.Session.ExpectsRepeat);
+        Assert.False(rig.Session.Presentation.ExpectsRepeat);
     }
 
     /// <summary>
