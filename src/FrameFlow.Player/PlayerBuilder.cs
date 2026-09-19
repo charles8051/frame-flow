@@ -32,6 +32,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
 
     private RepeatMode _repeatMode = RepeatMode.Off;
     private IPlaybackClock? _clock;
+    private LatenessRecoveryOptions? _latenessRecovery;
     private bool _yieldHardwareFrames;
     private bool _activateAudioSink = true;
 
@@ -119,6 +120,16 @@ internal sealed class PlayerBuilder : IPlayerBuilder
         return this;
     }
 
+    public IPlayerBuilder WithLatenessRecovery(LatenessRecoveryOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        // Validate here rather than leaving it to the session factory, so an inverted hysteresis
+        // names the call that set it instead of surfacing from BuildPlayerAsync.
+        options.Validate();
+        _latenessRecovery = options;
+        return this;
+    }
+
     public IPlayerBuilder WithHardwareFrames(bool yieldHardwareFrames = true)
     {
         _yieldHardwareFrames = yieldHardwareFrames;
@@ -178,6 +189,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
             configureVideo: _videoConfigurator,
             configureAudio: _audioConfigurator,
             clock: _clock,
+            latenessRecovery: _latenessRecovery,
             cancellationToken: cancellationToken
         );
     }

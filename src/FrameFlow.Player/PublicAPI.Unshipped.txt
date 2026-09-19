@@ -53,6 +53,7 @@ FrameFlow.Player.IPlayerBuilder.WithAudioSink(FrameFlow.Media.IAudioSink! sink) 
 FrameFlow.Player.IPlayerBuilder.WithClock(FrameFlow.Playback.IPlaybackClock! clock) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithHardwareDecode(FrameFlow.Media.HardwareDecodeMode mode) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithHardwareFrames(bool yieldHardwareFrames = true) -> FrameFlow.Player.IPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.WithLatenessRecovery(FrameFlow.Playback.LatenessRecoveryOptions! options) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithLogger(Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithMedia(FrameFlow.Media.IMediaSource! source) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithMedia(System.Collections.Generic.IEnumerable<FrameFlow.Media.IMediaSource!>! sources) -> FrameFlow.Player.IPlayerBuilder!

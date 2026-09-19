@@ -36,6 +36,38 @@ public sealed class PlayerBuilderTests
     }
 
     [Fact]
+    public void WithLatenessRecovery_Null_Throws()
+    {
+        var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");
+        Assert.Throws<ArgumentNullException>(() => builder.WithLatenessRecovery(null!));
+    }
+
+    [Fact]
+    public void WithLatenessRecovery_InvertedHysteresis_ThrowsAtTheCallThatSetIt()
+    {
+        // Validated in the builder rather than at BuildPlayerAsync, so the exception names the
+        // call that wrote the contradiction instead of surfacing from the build.
+        var inverted = new LatenessRecoveryOptions
+        {
+            EscalateAbove = TimeSpan.FromMilliseconds(100),
+            RelaxBelow = TimeSpan.FromMilliseconds(400),
+        };
+
+        var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");
+        var ex = Assert.Throws<ArgumentException>(() => builder.WithLatenessRecovery(inverted));
+
+        Assert.Equal("RelaxBelow", ex.ParamName);
+    }
+
+    [Fact]
+    public void WithLatenessRecovery_Valid_ReturnsSameBuilderForChaining()
+    {
+        var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");
+
+        Assert.Same(builder, builder.WithLatenessRecovery(new LatenessRecoveryOptions()));
+    }
+
+    [Fact]
     public void WithVideoSink_Null_Throws()
     {
         var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");
