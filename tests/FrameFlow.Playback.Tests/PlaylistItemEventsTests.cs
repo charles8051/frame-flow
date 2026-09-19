@@ -275,6 +275,36 @@ public sealed class PlaylistItemEventsTests
         Assert.Equal(PlaylistTransitionReason.FirstItem, transition.Reason);
     }
 
+    // ── What a stall names ──────────────────────────────────────────────────
+
+    [Fact]
+    public void TakenAndStarted_AreDifferentItems_WhichIsWhyAStallReadsTheStartedOne()
+    {
+        // PlaylistSession.CurrentItem reads Queue.Reported, not Queue.Current, and the two diverge
+        // in exactly the window a stall lives in: an advance has TAKEN the next item while the
+        // wedged one is still what started and is still on screen. Reading Current there would name
+        // an item that has not presented a frame.
+        //
+        // This pins the distinction the implementation depends on. It does not gate the property
+        // itself: the rig drives an advance to completion, so the window is not observable through
+        // a session, and a test that cannot observe it cannot gate it.
+        var a = new PlaylistItem(new FakeSource("a"));
+        var b = new PlaylistItem(new FakeSource("b"));
+        var queue = PlaylistQueue.Create([a, b], RepeatMode.Off);
+
+        (queue, _) = queue.TakeStart();
+        Assert.Same(a, queue.Current);
+        Assert.Null(queue.Reported);
+
+        (queue, _) = queue.ReportCurrent(a, Info);
+        Assert.Same(a, queue.Reported);
+
+        queue = queue.ItemEnded();
+        (queue, _) = queue.DecideNext(PlaylistAdvance.EndOfStream);
+        Assert.Same(b, queue.Current);
+        Assert.Same(a, queue.Reported);
+    }
+
     // ── Harness ─────────────────────────────────────────────────────────────
 
     private static (PlaylistSessionState State, PlaylistQueue Queue, PlaylistItem[] Items) Playing(

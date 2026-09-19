@@ -149,6 +149,8 @@ public sealed class PlaylistPlayerQueueTests
             new NeverObservable<PlaylistItemFailed>();
         public IObservable<PlaylistItemLooped> ItemLooped { get; } =
             new NeverObservable<PlaylistItemLooped>();
+        public IObservable<PlaylistItemStalled> ItemStalled { get; } =
+            new NeverObservable<PlaylistItemStalled>();
         public IObservable<LoopStalled> LoopStalled { get; } = new NeverObservable<LoopStalled>();
         public IObservable<TimeSpan> PositionTick { get; } = new NeverObservable<TimeSpan>();
         public IObservable<PlaybackError> ErrorOccurred { get; } =

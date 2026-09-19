@@ -167,6 +167,8 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
 
     public IObservable<PlaylistItemLooped> ItemLooped => _controller.ItemLooped;
 
+    public IObservable<PlaylistItemStalled> ItemStalled => _controller.ItemStalled;
+
     public Task<PlaylistItem> EnqueueAsync(
         IMediaSource source,
         CancellationToken cancellationToken = default

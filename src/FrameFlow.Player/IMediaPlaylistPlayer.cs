@@ -210,4 +210,17 @@ public interface IMediaPlaylistPlayer : IMediaPlayer
     /// same reference-equality discard applies.
     /// </remarks>
     IObservable<PlaylistItemLooped> ItemLooped { get; }
+
+    /// <summary>
+    /// Fires when the current item was expected to repeat and appears to have wedged instead,
+    /// naming the item. Prefer this over <see cref="IMediaPlayer.LoopStalled"/> when the item
+    /// matters.
+    /// </summary>
+    /// <remarks>
+    /// The same stall also reaches <see cref="IMediaPlayer.LoopStalled"/>. This one is raised first
+    /// and carries the identical <see cref="FrameFlow.Media.LoopStalled"/> instance, so the same
+    /// reference-equality discard applies. Neither is a recovery: the player does not rebuild the
+    /// wedged item.
+    /// </remarks>
+    IObservable<PlaylistItemStalled> ItemStalled { get; }
 }

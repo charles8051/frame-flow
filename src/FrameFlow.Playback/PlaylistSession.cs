@@ -159,6 +159,9 @@ internal sealed class PlaylistSession : IPlaybackSession
     // rewind that hangs. Otherwise the queue decides (decision 6 of ADR-0075-looping-on-both-players.md).
     public bool ExpectsRepeat => Volatile.Read(ref _publishedLoopUnderWay) || _coordinator.Queue.ExpectsRepeat;
 
+    /// <inheritdoc />
+    public PlaylistItem? CurrentItem => _coordinator.Queue.Reported;
+
     // ── IPlaybackSession lifecycle ──────────────────────────────────────────
 
     public ValueTask InitializeAsync(

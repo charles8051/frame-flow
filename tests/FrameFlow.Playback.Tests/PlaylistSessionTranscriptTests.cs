@@ -17,6 +17,27 @@ public sealed class PlaylistSessionTranscriptTests
     private static readonly InvalidOperationException Boom = new("boom");
 
     [Fact]
+    public async Task CurrentItem_TracksTheStartedItem_AndIsNullBeforeTheFirst()
+    {
+        // The controller pulls CurrentItem on a position tick to name a stalled item, rather than
+        // being pushed it, because a stall is detected by the controller's own fold and not
+        // reported by the session. So it has to answer for the FIRST item too, which the
+        // current-item-changed callback does not fire for.
+        await using var rig = PlaylistSessionRig.Create(RepeatMode.Off, "a", "b");
+
+        Assert.Null(rig.Session.CurrentItem);
+
+        await rig.Session.InitializeAsync(rig.PlaylistItem("a").Source);
+        await rig.Session.WarmUpAsync();
+        await rig.Session.PlayAsync();
+        Assert.Same(rig.PlaylistItem("a"), rig.Session.CurrentItem);
+
+        rig.Runtime("a#1").RaiseEndOfStream();
+        await rig.SettleAsync();
+        Assert.Same(rig.PlaylistItem("b"), rig.Session.CurrentItem);
+    }
+
+    [Fact]
     public async Task LoadPlayHandOffAndEnd()
     {
         await using var rig = PlaylistSessionRig.Create(RepeatMode.Off, "a", "b");

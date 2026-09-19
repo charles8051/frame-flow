@@ -75,6 +75,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     private readonly PlaybackSubject<PlaylistItemFailed> _itemFailedSubject = new();
     private readonly PlaybackSubject<PlaylistItemLooped> _itemLoopedSubject = new();
     private readonly PlaybackSubject<LoopStalled> _loopStalledSubject = new();
+    private readonly PlaybackSubject<PlaylistItemStalled> _itemStalledSubject = new();
     private readonly PlaybackSubject<PlaybackError> _errorSubject = new();
     private readonly PlaybackSubject<TimeSpan> _positionTickSubject = new();
 
@@ -215,11 +216,15 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         if (_disposed)
             return;
 
+        // Read once: the same session answers both, and a rebind between the two reads would
+        // pair one session's verdict with another's item.
+        var session = Volatile.Read(ref _sessionBinding).Session;
+
         var sample = new LoopStallSample(
             NowTicks: Stopwatch.GetTimestamp(),
             PositionTicks: position.Ticks,
             DurationTicks: _loadedDuration.Ticks,
-            ExpectsRepeat: Volatile.Read(ref _sessionBinding).Session?.ExpectsRepeat ?? false,
+            ExpectsRepeat: session?.ExpectsRepeat ?? false,
             Playing: IsActivelyPresenting,
             LoopCount: Volatile.Read(ref _loopCount)
         );
@@ -243,9 +248,13 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 _loadedDuration.TotalSeconds,
                 overrun.TotalSeconds
             );
-            _loopStalledSubject.OnNext(
-                new LoopStalled(sample.LoopCount, position, _loadedDuration, overrun)
-            );
+            // Constructed once and fanned out, item event first, as a failure and a loop are.
+            // This one is raised on the position ticker's loop rather than the dispatch loop, so
+            // the order is kept here rather than by a command carrying both.
+            var stalled = new LoopStalled(sample.LoopCount, position, _loadedDuration, overrun);
+            if (session?.CurrentItem is { } stalledItem)
+                _itemStalledSubject.OnNext(new PlaylistItemStalled(stalledItem, stalled));
+            _loopStalledSubject.OnNext(stalled);
         }
         else if (!outcome.Stalled)
         {
@@ -426,6 +435,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
     /// <inheritdoc />
     public IObservable<LoopStalled> LoopStalled => _loopStalledSubject;
+
+    /// <inheritdoc />
+    public IObservable<PlaylistItemStalled> ItemStalled => _itemStalledSubject;
 
     /// <inheritdoc />
     public IObservable<PlaybackError> ErrorOccurred => _errorSubject;
@@ -1751,6 +1763,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         _itemFailedSubject.Dispose();
         _itemLoopedSubject.Dispose();
         _loopStalledSubject.Dispose();
+        _itemStalledSubject.Dispose();
         _errorSubject.Dispose();
         _positionTickSubject.Dispose();
 

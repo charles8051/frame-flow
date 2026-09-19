@@ -68,6 +68,18 @@ internal interface IPlaybackSession : IAsyncDisposable
     /// </remarks>
     bool ExpectsRepeat => false;
 
+    /// <summary>
+    /// The item this session is presenting, or <see langword="null"/> when it presents none. The
+    /// controller reads it on a position tick, for the same reason it reads
+    /// <see cref="ExpectsRepeat"/>: a stall is detected by the controller's own fold, not reported
+    /// by the session, so the item has to be pulled rather than pushed.
+    /// </summary>
+    /// <remarks>
+    /// It is the item that has <b>started</b>, which is what a stall is about. An item runtime
+    /// answers <see langword="null"/>: it is driven by a session and has no queue of its own.
+    /// </remarks>
+    PlaylistItem? CurrentItem => null;
+
     // ── Lifecycle methods (called by PlaybackController entry actions) ──
 
     /// <summary>

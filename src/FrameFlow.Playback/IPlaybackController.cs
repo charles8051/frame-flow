@@ -136,6 +136,13 @@ public interface IPlaybackController : IAsyncDisposable
     /// </summary>
     IObservable<LoopStalled> LoopStalled { get; }
 
+    /// <summary>
+    /// The same stalls as <see cref="LoopStalled"/>, naming the item that wedged. Raised first,
+    /// carrying that stream's <see cref="FrameFlow.Media.LoopStalled"/> instance by reference.
+    /// Silent when the session presents no item of its own.
+    /// </summary>
+    IObservable<PlaylistItemStalled> ItemStalled { get; }
+
     /// <summary>Fires when an error occurs during playback.</summary>
     /// <remarks>
     /// An error that stops playback is raised as the controller enters
