@@ -139,6 +139,15 @@ public interface IPlayerBuilder
     IPlayerBuilder WithClock(IPlaybackClock clock);
 
     /// <summary>
+    /// Tunes the lateness-recovery walk, which sheds decode work when presentation falls behind
+    /// the clock. It applies to every item the player plays. When unset the walk stays off.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="options"/> fails <see cref="LatenessRecoveryOptions.Validate"/>.
+    /// </exception>
+    IPlayerBuilder WithLatenessRecovery(LatenessRecoveryOptions options);
+
+    /// <summary>
     /// Requests that hardware-decoded frames reach the video sink still on the GPU rather than
     /// being downloaded to system memory. Defaults to <see langword="false"/>; set it when the
     /// sink reports <c>PrefersHardwareFrames</c>.

@@ -210,6 +210,10 @@ public static class PlaybackController
     /// <param name="configureAudio">
     /// Optional audio-chain configurator, applied to every item's chain.
     /// </param>
+    /// <param name="latenessRecovery">
+    /// Tuning for the lateness-recovery walk, applied to every item's chain.
+    /// <see langword="null"/> leaves the walk off, which is the default.
+    /// </param>
     internal static IPlaybackController CreatePlaylist(
         PlaylistCoordinator coordinator,
         IVideoSink? videoSink = null,
@@ -221,7 +225,8 @@ public static class PlaybackController
         IPlaybackClock? clock = null,
         ILoggerFactory? loggerFactory = null,
         Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? configureVideo = null,
-        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? configureAudio = null
+        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? configureAudio = null,
+        LatenessRecoveryOptions? latenessRecovery = null
     )
     {
         ArgumentNullException.ThrowIfNull(coordinator);
@@ -236,7 +241,8 @@ public static class PlaybackController
                 loggerFactory,
                 configureVideo,
                 configureAudio,
-                yieldHardwareFrames
+                yieldHardwareFrames,
+                latenessRecovery
             ),
             initialRepeatMode,
             clock,

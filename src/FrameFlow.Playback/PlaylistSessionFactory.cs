@@ -74,6 +74,14 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
     /// <summary>The queue every session this factory creates plays.</summary>
     internal PlaylistCoordinator Coordinator => _coordinator;
 
+    /// <summary>
+    /// The lateness-recovery tuning the item factory carries, for the tests that check a caller's
+    /// options reached it rather than being dropped on the way (#319). Null for an item factory
+    /// that is not a <see cref="SubstrateSessionFactory"/>, which no production path builds.
+    /// </summary>
+    internal LatenessRecoveryOptions? LatenessRecovery =>
+        (_itemFactory as SubstrateSessionFactory)?.LatenessRecovery;
+
     public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks)
     {
         ArgumentNullException.ThrowIfNull(clock);

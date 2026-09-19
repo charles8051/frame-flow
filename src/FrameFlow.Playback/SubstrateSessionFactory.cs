@@ -44,6 +44,12 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
     // announcement is about. Every item it creates shares it (#287).
     private readonly VideoFormatAnnouncer _formatAnnouncer = new();
 
+    /// <summary>
+    /// The lateness-recovery tuning every session this factory creates carries, for the tests
+    /// that check a caller's options reached here rather than being dropped on the way (#319).
+    /// </summary>
+    internal LatenessRecoveryOptions? LatenessRecovery => _latenessRecovery;
+
     public SubstrateSessionFactory(
         IVideoSink? videoSink = null,
         IAudioSink? audioSink = null,

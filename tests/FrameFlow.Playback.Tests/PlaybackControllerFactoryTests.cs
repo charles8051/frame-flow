@@ -122,6 +122,58 @@ public sealed class PlaybackControllerFactoryTests
         );
     }
 
+    [Fact]
+    public async Task CreatePlaylist_LatenessRecovery_ReachesTheItemFactory()
+    {
+        // CreatePlaylist took no lateness-recovery parameter until #319, so a caller's options
+        // were dropped between the controller and the sessions that would have used them.
+        var options = new LatenessRecoveryOptions
+        {
+            Enabled = true,
+            EscalateAbove = TimeSpan.FromMilliseconds(400),
+            RelaxBelow = TimeSpan.FromMilliseconds(120),
+        };
+
+        await using var controller = PlaybackController.CreatePlaylist(
+            new PlaylistCoordinator(RepeatMode.Off),
+            latenessRecovery: options
+        );
+
+        Assert.Same(options, SessionFactory(controller).LatenessRecovery);
+    }
+
+    [Fact]
+    public async Task CreatePlaylist_NoLatenessRecovery_LeavesTheWalkOff()
+    {
+        await using var controller = PlaybackController.CreatePlaylist(
+            new PlaylistCoordinator(RepeatMode.Off)
+        );
+
+        Assert.Null(SessionFactory(controller).LatenessRecovery);
+    }
+
+    [Fact]
+    public void CreatePlaylist_InvertedHysteresis_ThrowsNamingTheParameter()
+    {
+        var inverted = new LatenessRecoveryOptions
+        {
+            EscalateAbove = TimeSpan.FromMilliseconds(100),
+            RelaxBelow = TimeSpan.FromMilliseconds(400),
+        };
+
+        var ex = Assert.Throws<ArgumentException>(() =>
+            PlaybackController.CreatePlaylist(
+                new PlaylistCoordinator(RepeatMode.Off),
+                latenessRecovery: inverted
+            )
+        );
+
+        Assert.Equal("RelaxBelow", ex.ParamName);
+    }
+
+    private static PlaylistSessionFactory SessionFactory(IPlaybackController controller) =>
+        (PlaylistSessionFactory)((PlaybackControllerCore)controller).SessionFactory;
+
     private static PlaylistCoordinator Coordinator(IPlaybackController controller) =>
         ((PlaylistSessionFactory)((PlaybackControllerCore)controller).SessionFactory).Coordinator;
 
