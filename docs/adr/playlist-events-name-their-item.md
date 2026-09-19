@@ -22,7 +22,7 @@ Line numbers cite commit 7be7098.
 
 Related: [ADR-0062](ADR-0062-gapless-playlist-warm-presenter.md),
 [ADR-0074](ADR-0074-playlist-queue-model.md),
-[ADR-0076](ADR-0076-playlist-session-protocol.md). Issues #173, #203, #303, #306.
+[ADR-0076](ADR-0076-playlist-session-protocol.md). Issues #173, #203, #303, #306, #308.
 
 ## Context
 
@@ -41,6 +41,8 @@ The same happened to `LoopRestarted`, which ADR-0075 decision 5 added to `IMedia
 strength of both players raising it.
 
 ### What a subscriber can and cannot tell today
+
+This is the surface before this record. Decision 4 changes the third row.
 
 | Event | Carries | Names the item |
 |---|---|---|
@@ -165,9 +167,11 @@ here, because "raises both once" is a promise with four exceptions:
   what makes the fan-out safe: the drop is upstream of both.
 
 `ErrorOccurred`'s item-failure reporting is the compatibility path for a caller that holds only
-`IMediaPlayer`, and it ends at a release already scheduled. ADR-0077 decision 2 keeps
-`IMediaPlaylistPlayer` separate "for now" and defers the fold "to the next release that breaks
-implementers for other reasons". At that release there is one surface, every caller can take
+`IMediaPlayer`. It ends at a boundary that is **contingent, not scheduled**: ADR-0077 decision 2
+keeps `IMediaPlaylistPlayer` separate "for now" and defers the fold "to the next release that
+breaks implementers for other reasons". No such release is planned, so an implementer should read
+this as a duplication with no end date attached to it, ending whenever that break next happens. At
+that point there is one surface, every caller can take
 `ItemFailed`, and withdrawing item failures from `ErrorOccurred` stops being a silent break. The
 same boundary governs `ItemLooped` and `LoopRestarted` under decision 3.
 
@@ -289,9 +293,10 @@ paragraph of contract; this costs a consumer their only failure signal without t
 ## Not settled here
 
 - Whether the compatibility paths are withdrawn at the interface fold, or kept. Decisions 2 and 3
-  name the release as the boundary; they do not decide what happens at it. Withdrawing both
+  name that break as the boundary; they do not decide what happens at it. Withdrawing both
   duplicates and keeping both are each defensible once there is one surface, and the argument
-  against withdrawing now — a silent break — does not apply there.
+  against withdrawing now — a silent break — does not apply there. Tracked as #308, so the debt
+  outlives this record's prose.
 - Whether `PlaylistTransition` should be raised as a nested payload the way the other two are, so
   all three playlist events share one shape. It predates them and carries its fields directly.
 
