@@ -65,6 +65,7 @@ public sealed class LoopStallFoldTests
 
         // Past the item's end, then past the stall timeout on top of it.
         await Advance(
+            controller,
             time,
             ItemDuration + PlaybackControllerCore.LoopStallTimeout + TimeSpan.FromSeconds(2)
         );
@@ -111,7 +112,7 @@ public sealed class LoopStallFoldTests
         );
 
         await PlayAsync(controller);
-        await Advance(time, threshold + TimeSpan.FromSeconds(2));
+        await Advance(controller, time, threshold + TimeSpan.FromSeconds(2));
 
         using var cts = new CancellationTokenSource(FailureBound);
         await pastTheEnd.Task.WaitAsync(cts.Token);
@@ -139,6 +140,7 @@ public sealed class LoopStallFoldTests
 
         await PlayAsync(controller);
         await Advance(
+            controller,
             time,
             ItemDuration + PlaybackControllerCore.LoopStallTimeout + TimeSpan.FromSeconds(1)
         );
@@ -146,13 +148,16 @@ public sealed class LoopStallFoldTests
         using var cts = new CancellationTokenSource(FailureBound);
         await first.Task.WaitAsync(cts.Token);
 
-        // Ten more intervals of the same stall. The rising edge has already fired, so none report.
-        var settled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var tickSub = controller.PositionTick.Subscribe(
-            new Relay<TimeSpan>(_ => settled.TrySetResult())
-        );
-        await Advance(time, PositionTickerWorker.TickInterval * 10);
-        await settled.Task.WaitAsync(cts.Token);
+        // Ten more intervals of the same stall, each waited for, so all ten are observed facts
+        // rather than one tick that happened to survive. The rising edge has already fired, so an
+        // implementation that reported on every tick would add ten here.
+        await Advance(controller, time, PositionTickerWorker.TickInterval * 10);
+
+        // One further tick, to close the window between the tenth tick reaching this test's
+        // observer and the fold's own observer running for it. A subject calls its observers in no
+        // promised order, so the tenth tick's fold is only known to have finished once an eleventh
+        // has been delivered.
+        await AdvanceOneTickAsync(controller, time);
 
         Assert.Equal(1, Volatile.Read(ref reports));
     }
@@ -160,21 +165,50 @@ public sealed class LoopStallFoldTests
     // ── Harness ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Advances in whole tick intervals. A single jump of the whole span would coalesce into one
-    /// tick, and the fold would never see the intermediate positions it needs to open an overrun
-    /// episode and then time it out.
+    /// Advances one tick interval at a time, waiting after each for the tick it produced.
     /// </summary>
-    private static async Task Advance(FakeTimeProvider time, TimeSpan by)
+    /// <remarks>
+    /// <para>
+    /// The wait is the point. A single jump of the whole span coalesces into one tick, and the fold
+    /// never sees the intermediate positions it needs to open an overrun episode and then time it
+    /// out. Advancing in a burst has the same effect for a different reason: the ticker resumes on
+    /// the thread pool, <see cref="PeriodicTimer"/> keeps no backlog, and every notification raised
+    /// while the worker is between waits is dropped.
+    /// </para>
+    /// <para>
+    /// Yielding instead of waiting is not enough — it schedules the test's own continuation and
+    /// says nothing about the worker's, so how many of the intended samples survive is left to the
+    /// scheduler. Waiting on the tick makes each step an observed fact.
+    /// </para>
+    /// </remarks>
+    private static async Task Advance(
+        PlaybackControllerCore controller,
+        FakeTimeProvider time,
+        TimeSpan by
+    )
     {
         var steps = (int)Math.Ceiling(by / PositionTickerWorker.TickInterval);
         for (var i = 0; i < steps; i++)
-        {
-            time.Advance(PositionTickerWorker.TickInterval);
-            // The ticker's loop resumes on the thread pool. Without yielding, a tight burst of
-            // advances runs entirely between two of its waits, and PeriodicTimer keeps no backlog,
-            // so every tick in the burst is dropped.
-            await Task.Yield();
-        }
+            await AdvanceOneTickAsync(controller, time);
+    }
+
+    /// <summary>
+    /// Advances exactly one interval and returns once the ticker has delivered the tick for it.
+    /// </summary>
+    private static async Task AdvanceOneTickAsync(
+        PlaybackControllerCore controller,
+        FakeTimeProvider time
+    )
+    {
+        var ticked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sub = controller.PositionTick.Subscribe(
+            new Relay<TimeSpan>(_ => ticked.TrySetResult())
+        );
+
+        time.Advance(PositionTickerWorker.TickInterval);
+
+        using var cts = new CancellationTokenSource(FailureBound);
+        await ticked.Task.WaitAsync(cts.Token);
     }
 
     private static async Task PlayAsync(PlaybackControllerCore controller)
