@@ -262,6 +262,19 @@ land.
   named as missing when it rejected reusable blueprints. The costs are the typed `Connect`'s
   compile-time proof and a break across 80 construction sites. `FrameFlow.Graph` has shipped
   nothing, so that break is free until it does.
+- [Every playlist event names the item it is about](playlist-events-name-their-item.md) —
+  `ErrorOccurred` and `LoopRestarted` carry no `PlaylistItem`, so a host that keeps its own model of
+  the queue cannot say which entry an event belongs to, and reading `GetPlaylist()` inside the
+  handler races the advance that raised it. Both events were decided when a single source and a
+  queue were different players; [ADR-0077](ADR-0077-one-player-type.md) made every player a queue
+  without revisiting either payload. Proposes `IMediaPlaylistPlayer.ItemFailed` and `ItemLooped`,
+  carrying the item, plus a reason on `PlaylistTransition` so a consumer counting completed passes
+  stops counting failures as passes. Supersedes [ADR-0075](ADR-0075-looping-on-both-players.md)'s
+  deferral of #203, whose stated condition is now answered, and one respect of
+  [ADR-0069](ADR-0069-one-error-model-across-the-playback-stack.md). Settles #203 and #306 and the
+  API half of #173; #303 is a chrome refresh bug and is excluded, with the reason recorded. The
+  cost is three more members on a surface whose doc comment already runs to four paragraphs, and
+  two ways to learn about a failure.
 
 ## Recently numbered
 

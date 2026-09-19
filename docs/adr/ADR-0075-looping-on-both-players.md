@@ -494,6 +494,15 @@ if that is too long.
   carries no item or transition index, and no order between the two events is promised. Whether it
   should name the item depends on whether every player raises transitions, which the single player
   type's record decides.
+
+  > **Superseded 2026-09-19** by
+  > [Every playlist event names the item it is about](playlist-events-name-their-item.md). The
+  > condition this entry waited on is answered: [ADR-0077](ADR-0077-one-player-type.md) decision 1
+  > makes every player a queue, so every player raises transitions. That record adds
+  > `IMediaPlaylistPlayer.ItemLooped`, carrying the `PlaylistItem` alongside the `LoopCount` and
+  > `ItemDuration` this record's decision 5 defined. `IMediaPlayer.LoopRestarted` is unchanged, and
+  > decision 5's refusal to promise an order between `LoopRestarted` and `SourceTransitioned`
+  > stands: a subscriber that needs the item reads it off the event rather than off a snapshot.
 - **Recovering from a rewind that hangs.** A rewind that never completes is reported by the
   watchdogs, but nothing rebuilds the item or bounds the wait. That is so on a playlist today.
 - **Operator state across a loop.** When a retained graph re-runs from zero, nothing resets an
