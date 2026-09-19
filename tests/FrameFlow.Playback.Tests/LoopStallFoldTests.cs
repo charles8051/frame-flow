@@ -217,24 +217,24 @@ public sealed class LoopStallFoldTests
         FakeTimeProvider time
     )
     {
-        // The fold's own completion, not a PositionTick subscription. A subject calls its
-        // observers in no promised order, so a tick subscriber can resume this method while the
-        // fold is still on that notification — and advancing then drops the next sample, because
-        // the worker is inside OnNext rather than awaiting its timer.
-        var folded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        void OnFolded() => folded.TrySetResult();
+        // The worker's own post-tick signal, not a PositionTick subscription and not a signal
+        // raised from inside the fold. Either of those releases this method while other observers
+        // of the same tick may still be running; this one fires once OnNext has returned, so the
+        // fold and every other observer are finished with the tick.
+        var processed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnProcessed() => processed.TrySetResult();
 
-        controller.LoopStallFoldCompleted += OnFolded;
+        controller.PositionTickProcessed += OnProcessed;
         try
         {
             time.Advance(PositionTickerWorker.TickInterval);
 
             using var cts = new CancellationTokenSource(FailureBound);
-            await folded.Task.WaitAsync(cts.Token);
+            await processed.Task.WaitAsync(cts.Token);
         }
         finally
         {
-            controller.LoopStallFoldCompleted -= OnFolded;
+            controller.PositionTickProcessed -= OnProcessed;
         }
     }
 
