@@ -18,12 +18,19 @@ namespace FrameFlow.Playback;
 /// screen, and a stall is about what is on screen.
 /// </param>
 /// <remarks>
-/// A session whose queue is an immutable value answers both from one read of it, which is what
-/// makes the pair consistent. A session that presents no queue of its own answers
+/// <para>
+/// It is a reference type so that one write publishes the whole pair. A struct field would be
+/// written in parts, and a reader could take the repeat expectation from one instant and the item
+/// from another — which is the mismatch this type exists to prevent.
+/// </para>
+/// <para>
+/// A session builds it once per state change, after its queue has been committed, from that
+/// committed queue and its own state. A session that presents no queue of its own uses
 /// <see cref="Empty"/>.
+/// </para>
 /// </remarks>
-internal readonly record struct SessionPresentation(bool ExpectsRepeat, PlaylistItem? CurrentItem)
+internal sealed record SessionPresentation(bool ExpectsRepeat, PlaylistItem? CurrentItem)
 {
     /// <summary>Nothing is presenting, and no repeat is expected.</summary>
-    public static SessionPresentation Empty => default;
+    public static SessionPresentation Empty { get; } = new(false, null);
 }
