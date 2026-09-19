@@ -101,8 +101,22 @@ for `ErrorOccurred`, and the `PlaylistItemFailure` the session already decided.
 `PlaylistSessionAction.ReportItemFailed` takes the `PlaylistItem` rather than `string Source`, and
 `SessionCallbacks.OnRecoverableError` carries it to the controller. The message text is unchanged.
 
-`ErrorOccurred` reports the same failure, unchanged, for a caller holding only `IMediaPlayer`. A
-consumer subscribing to both sees the failure twice, and the doc comment on each says so.
+**Both channels report the failure, and the contract says how they relate.** `ErrorOccurred` is not
+withdrawn: it is the only failure signal a caller holding `IMediaPlayer` has, and withdrawing it
+would break a single-source caller that gets a mid-stream fault there today. So:
+
+- **`ItemFailed` is authoritative for a caller holding `IMediaPlaylistPlayer`.** Its doc comment
+  says to subscribe to it rather than to `ErrorOccurred` for item failures, and `ErrorOccurred`'s
+  says the same in reverse.
+- **One failure raises both once.** `ItemFailed` carries the same `PlaybackError` instance that
+  `ErrorOccurred` raises, by reference. A consumer that subscribes to both can discard the second
+  sighting by reference equality without an added identifier.
+- **`ItemFailed` is raised first.** Both travel the controller's dispatch loop in that order, so a
+  consumer holding both sees the item before the bare error.
+
+Reference identity is the correlation key because the two events are one report fanned out on one
+path, not two reports that have to be matched. An identifier would be a second mechanism for a
+question the object reference already answers.
 
 Settles #306.
 
@@ -118,16 +132,26 @@ unconditional and needs no promise about the other event.
 
 `IMediaPlayer.LoopRestarted` is unchanged.
 
-### 4. `PlaylistTransition` says why it fired
+### 4. `PlaylistTransition` says why it fired, and names the item it left
 
 A `PlaylistTransitionReason`: the first item, a natural end, a skip, a jump, a failed item, or a
-loop.
+loop. And a `Previous` holding the `PlaylistItem` the transition left, null for the first item.
 
 #173 records that a transition fires for all six and reports them identically, so a consumer
 counting completed passes counts failures as passes. The protocol already decides which of the six
 an advance is. ADR-0075 decision 5 defines which advance is a loop, and
 `AdvanceLockedAsync(faulted: true)` is the failure path. The reason is a value the protocol already
 holds.
+
+**The reason describes the item that was left, so the record has to name it.** `PlaylistTransition`
+carries the item that became current: `Source` is "the source that is now presenting" and `Item` is
+"the item that became current" (`src/FrameFlow.Playback/PlaylistTransition.cs:16,39`). A reason of
+`FailedItem` on a queue of `[A, B]` where A fails describes A, while every other field on that
+record describes B. Without `Previous`, a consumer reading `Item` to attribute the reason marks B
+unplayable. The reason and the item it is about travel on one record or the reason is a trap.
+
+This is why decision 4 and `ItemFailed` are one record rather than two. Adding the reason without
+`Previous` would have created the misattribution that `ItemFailed` exists to prevent.
 
 #173's documentation fix stands on its own and is not blocked by this.
 
@@ -144,9 +168,11 @@ holds.
 
 - Three more members on `IMediaPlaylistPlayer`, whose doc comment already runs to four paragraphs
   of queue precedence.
-- Two ways to learn about a failure. A consumer that subscribes to both double-counts, and only the
-  doc comment says so.
+- Two ways to learn about a failure. Decision 2 makes them reconcilable by reference identity and
+  fixed order, which is a contract a consumer has to know rather than one the types enforce. The
+  alternative was a break, and *Alternatives considered* says why it was not taken.
 - `PlaylistTransitionReason` is a public enum that has to stay right as the protocol grows paths.
+- `PlaylistTransition` grows two fields, on a record that is already five.
 
 ### Neutral
 
@@ -170,13 +196,21 @@ transport command, where an item field would always be null.
 
 The message is a log line, unstable by design, and ambiguous between two items of one source.
 
+### Make `ItemFailed` the only item-failure channel
+
+`ErrorOccurred` would stop reporting item failures, which removes the duplication decision 2 has to
+contract around. It is a silent break: a single-source caller that gets a mid-stream fault on
+`ErrorOccurred` today would get nothing, with no compile error, because ADR-0077 made that caller's
+player a queue and its failure an item failure. Reference identity and a fixed order cost a
+paragraph of contract; this costs a consumer their only failure signal without telling them.
+
 ## Not settled here
 
-- Whether `ErrorOccurred` should stop reporting item failures once `ItemFailed` exists. Removing it
-  is a break for a single-source caller that gets a mid-stream fault there today.
 - Whether `LoopRestarted` on `IMediaPlayer` should be withdrawn in favour of `ItemLooped`. It is the
-  only loop signal a caller holding the small surface has.
-- Whether a transition should carry the item it left, as well as the item it entered.
+  only loop signal a caller holding the small surface has. The same break as the rejected
+  alternative above, and it should be decided with it if either is revisited.
+- Whether `ItemLooped` and `ErrorOccurred`'s relationship needs the same correlation rule decision 2
+  gives `ItemFailed`. A loop raises no second event, so there is nothing to reconcile today.
 
 ## Validation
 
@@ -185,8 +219,31 @@ The message is a log line, unstable by design, and ambiguous between two items o
 | 1 | A queue of three whose middle source does not exist raises one `ItemFailed` naming the middle item | Integration |
 | 2 | The same source added twice, one copy removed, and a failure names the copy that failed | Protocol |
 | 3 | An item that faults mid-playback reports `FaultedDuringPlayback`; one that cannot be opened reports the other | Protocol |
-| 4 | A failure raises `ItemFailed` and `ErrorOccurred` once each | Player |
-| 5 | A single-clip `RepeatMode.All` loop raises `ItemLooped` naming that item | Integration |
-| 6 | A jump recorded during a rewind does not change the item on the `ItemLooped` that precedes it | Protocol |
-| 7 | A transition after a failed item reports the failure reason, not a natural end | Protocol |
-| 8 | `RepeatMode.One` on a queue of three reports the loop reason, with `Wrapped` false | Protocol |
+| 4 | A failure raises `ItemFailed` and `ErrorOccurred` once each, `ItemFailed` first, carrying the same `PlaybackError` by reference | Player |
+| 5 | A consumer subscribed to both channels that discards by reference equality counts one failure | Player |
+| 6 | A single-clip `RepeatMode.All` loop raises `ItemLooped` naming that item | Integration |
+| 7 | A jump recorded during a rewind does not change the item on the `ItemLooped` that precedes it | Protocol |
+| 8 | On a queue of `[A, B]` where A fails, the transition reports the failure reason, `Item` B and `Previous` A | Protocol |
+| 9 | The first item's transition reports the first-item reason and a null `Previous` | Protocol |
+| 10 | `RepeatMode.One` on a queue of three reports the loop reason, with `Wrapped` false, and `Previous` equal to `Item` | Protocol |
+
+## Revision history
+
+- **First draft (2026-09-19).** Decision 4 added a reason to `PlaylistTransition` and left carrying
+  the item a transition left under *Not settled*. Decision 2 noted that a consumer subscribing to
+  both failure channels sees the failure twice, and left the relationship to the doc comments.
+- **Revision after automated review of #307 (2026-09-19).** Four findings, all reproduced:
+  - **The reason described an item the record did not name.** `PlaylistTransition` carries the item
+    that became current. A `FailedItem` reason describes the item that ended, so on a queue of
+    `[A, B]` where A fails, a consumer reading `Item` to attribute the reason marks B. Decision 4
+    now carries `Previous`, and the *Not settled* entry that deferred it is gone. The finding is
+    the same misattribution `ItemFailed` exists to prevent, which is why the two are one record.
+  - **The two failure channels had no correlation contract.** Decision 2 now makes `ItemFailed`
+    authoritative for a playlist caller, carries the same `PlaybackError` instance by reference,
+    and fixes the order. The review's alternative, one authoritative channel, is recorded under
+    *Alternatives considered* and rejected: withdrawing item failures from `ErrorOccurred` is a
+    silent break for a single-source caller, because ADR-0077 turned that caller's fault into an
+    item failure.
+  - **ADR-0069's status still said nothing was superseded.** Its opening now scopes the
+    supersession to what a queue's `ErrorOccurred` can attribute.
+  - **Validation** gained the correlation, `Previous` and first-item rows.

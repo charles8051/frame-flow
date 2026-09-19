@@ -6,8 +6,14 @@ Accepted (2026-09-11).
 
 Resolves the split recorded in issue #102. Extends the `Result` type introduced
 alongside [ADR-0032](ADR-0032-pull-shape-playback-controller.md) up one layer,
-to `IMediaPlayer`. Nothing is superseded — `IPlaybackController` keeps the
-contract it already had, and this decision is about the surface above it.
+to `IMediaPlayer`. It superseded nothing when it was accepted —
+`IPlaybackController` keeps the contract it already had, and this decision is
+about the surface above it.
+
+**Superseded in one respect, 2026-09-19,** by
+[Every playlist event names the item it is about](playlist-events-name-their-item.md): what a
+queue's `ErrorOccurred` can attribute. The `Result` decision and `ErrorOccurred` itself are
+unchanged. The note under *What `IMediaPlaylistPlayer` does* says what moved.
 
 ### What shipped
 
