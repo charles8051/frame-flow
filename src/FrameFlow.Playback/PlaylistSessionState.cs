@@ -204,7 +204,12 @@ internal enum PlaylistItemCommand
 /// reports a loop. Decided once, when the pass takes its item. A pass whose item fails to start is no
 /// longer a loop.
 /// </param>
-internal sealed record PlaylistAdvanceRun(int? Command, bool Playing, bool Loop = false);
+internal sealed record PlaylistAdvanceRun(
+    int? Command,
+    bool Playing,
+    bool Loop = false,
+    PlaylistTransitionReason Reason = PlaylistTransitionReason.EndOfItem
+);
 
 /// <summary>What the shell knows at the moment it calls the core, and the core does not own.</summary>
 /// <param name="Disposing">Whether the session is being disposed.</param>

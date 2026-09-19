@@ -413,7 +413,7 @@ internal static class PlaylistSessionProtocol
 
             Emit(
                 new PlaylistSessionAction.ReportItemFailed(
-                    source,
+                    State.Item!.Item,
                     PlaylistItemFailure.FaultedDuringPlayback,
                     error
                 )
@@ -596,7 +596,9 @@ internal static class PlaylistSessionProtocol
                         work.Item,
                         outcome.Info,
                         index,
-                        Wrapped: false
+                        Wrapped: false,
+                        Previous: null,
+                        Reason: PlaylistTransitionReason.FirstItem
                     )
                 );
             }
@@ -619,7 +621,7 @@ internal static class PlaylistSessionProtocol
 
             Emit(
                 new PlaylistSessionAction.ReportItemFailed(
-                    work.Item.Source.DisplayName,
+                    work.Item,
                     PlaylistItemFailure.CouldNotStart,
                     failure.Error
                 )
@@ -700,7 +702,7 @@ internal static class PlaylistSessionProtocol
         {
             Emit(
                 new PlaylistSessionAction.ReportItemFailed(
-                    State.Item!.Item.Source.DisplayName,
+                    State.Item!.Item,
                     PlaylistItemFailure.CouldNotStart,
                     error
                 )
@@ -742,7 +744,16 @@ internal static class PlaylistSessionProtocol
                 how == ItemEnding.EndOfStream
                 && State.Item is { Played: true } ended
                 && ReferenceEquals(decision.Item, ended.Item);
-            var advance = new PlaylistAdvanceRun(command, State.Run == PlaylistRunState.Playing, loop);
+            // Why the item that is ending ended. A jump wins over how it ended: the queue took the
+            // jump target rather than what the ending would have chosen. RaiseStart substitutes
+            // Loop when the advance is one.
+            var reason = decision.Jumped ? PlaylistTransitionReason.Jumped : ToReason(how);
+            var advance = new PlaylistAdvanceRun(
+                command,
+                State.Run == PlaylistRunState.Playing,
+                loop,
+                reason
+            );
 
             if (
                 advance.Playing
@@ -994,7 +1005,7 @@ internal static class PlaylistSessionProtocol
 
             Emit(
                 new PlaylistSessionAction.ReportItemFailed(
-                    work.Item.Source.DisplayName,
+                    work.Item,
                     PlaylistItemFailure.CouldNotStart,
                     work.Failure.Error
                 )
@@ -1023,9 +1034,21 @@ internal static class PlaylistSessionProtocol
             bool wrapped
         )
         {
+            // Read before ReportCurrent moves it: the reason describes how THIS item ended, and
+            // every other field of the transition describes the item that started.
+            var previous = Queue.Reported;
             var (queue, index) = Queue.ReportCurrent(item, info);
             Queue = queue;
-            Emit(new PlaylistSessionAction.RaiseTransition(item, info, index, wrapped));
+            Emit(
+                new PlaylistSessionAction.RaiseTransition(
+                    item,
+                    info,
+                    index,
+                    wrapped,
+                    previous,
+                    advance.Loop ? PlaylistTransitionReason.Loop : advance.Reason
+                )
+            );
 
             // The item is back at its start, so a loop is reported here: after an in-place rewind, or
             // after the rebuilt item's Play or, while paused, its warm-up. Any other start ends the run
@@ -1033,7 +1056,7 @@ internal static class PlaylistSessionProtocol
             if (advance.Loop)
             {
                 State = State with { LoopCount = State.LoopCount + 1 };
-                Emit(new PlaylistSessionAction.ReportLoopRestarted(State.LoopCount));
+                Emit(new PlaylistSessionAction.ReportLoopRestarted(State.LoopCount, item));
             }
             else
             {
@@ -1118,6 +1141,19 @@ internal static class PlaylistSessionProtocol
                 ItemEnding.Skip => PlaylistAdvance.Skip,
                 ItemEnding.Fault => PlaylistAdvance.Fault,
                 _ => PlaylistAdvance.FailedStart,
+            };
+
+        /// <summary>
+        /// How the ending item ended, as the transition reports it. A fault and a failed start are
+        /// one reason to a consumer: the item did not play, and the item event says which of the two
+        /// it was.
+        /// </summary>
+        private static PlaylistTransitionReason ToReason(ItemEnding how) =>
+            how switch
+            {
+                ItemEnding.EndOfStream => PlaylistTransitionReason.EndOfItem,
+                ItemEnding.Skip => PlaylistTransitionReason.Skipped,
+                _ => PlaylistTransitionReason.ItemFailed,
             };
 
         private void Emit(PlaylistSessionAction action) => _actions.Add(action);

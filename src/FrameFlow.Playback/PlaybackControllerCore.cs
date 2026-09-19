@@ -72,6 +72,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     private readonly PlaybackSubject<StateTransition<SeekState>> _seekStateSubject = new();
     private readonly PlaybackSubject<StateTransition<RepeatMode>> _repeatModeSubject = new();
     private readonly PlaybackSubject<LoopRestarted> _loopRestartedSubject = new();
+    private readonly PlaybackSubject<PlaylistItemFailed> _itemFailedSubject = new();
+    private readonly PlaybackSubject<PlaylistItemLooped> _itemLoopedSubject = new();
     private readonly PlaybackSubject<LoopStalled> _loopStalledSubject = new();
     private readonly PlaybackSubject<PlaybackError> _errorSubject = new();
     private readonly PlaybackSubject<TimeSpan> _positionTickSubject = new();
@@ -417,6 +419,12 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     public IObservable<LoopRestarted> LoopRestarted => _loopRestartedSubject;
 
     /// <inheritdoc />
+    public IObservable<PlaylistItemFailed> ItemFailed => _itemFailedSubject;
+
+    /// <inheritdoc />
+    public IObservable<PlaylistItemLooped> ItemLooped => _itemLoopedSubject;
+
+    /// <inheritdoc />
     public IObservable<LoopStalled> LoopStalled => _loopStalledSubject;
 
     /// <inheritdoc />
@@ -469,12 +477,17 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// notifications. Failures are swallowed and logged, as for
     /// <see cref="PostInternalAsync"/>.
     /// </summary>
-    private void PostRecoverableError(PlaybackError error, int sessionGeneration)
+    private void PostRecoverableError(
+        PlaybackError error,
+        int sessionGeneration,
+        PlaylistItem? item = null,
+        PlaylistItemFailure failure = PlaylistItemFailure.CouldNotStart
+    )
     {
         if (_disposed)
             return;
 
-        var cmd = new RecoverableErrorCommand(error, sessionGeneration);
+        var cmd = new RecoverableErrorCommand(error, sessionGeneration, item, failure);
         if (!_commandChannel.Writer.TryWrite(cmd))
             LogRecoverableErrorDropped(error.Message);
     }
@@ -484,12 +497,16 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// blocking, so it reaches <see cref="LoopRestarted"/> in order with the session's other
     /// notifications. Failures are swallowed and logged, as for <see cref="PostInternalAsync"/>.
     /// </summary>
-    private void PostLoopRestarted(int loopCount, int sessionGeneration)
+    private void PostLoopRestarted(int loopCount, int sessionGeneration, PlaylistItem? item = null)
     {
         if (_disposed)
             return;
 
-        if (!_commandChannel.Writer.TryWrite(new LoopRestartedCommand(loopCount, sessionGeneration)))
+        if (
+            !_commandChannel.Writer.TryWrite(
+                new LoopRestartedCommand(loopCount, sessionGeneration, item)
+            )
+        )
             LogLoopRestartedDropped(loopCount);
     }
 
@@ -730,7 +747,10 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 PostInternalAsync(PlaybackTrigger.BufferUnderrun, sessionGeneration),
             OnRecoverableError: error => PostRecoverableError(error, sessionGeneration),
             OnCurrentItemChanged: info => PostCurrentItemChanged(info, sessionGeneration),
-            OnLoopRestarted: loopCount => PostLoopRestarted(loopCount, sessionGeneration)
+            OnLoopRestarted: (loopCount, item) =>
+                PostLoopRestarted(loopCount, sessionGeneration, item),
+            OnItemFailed: (item, failure, error) =>
+                PostRecoverableError(error, sessionGeneration, item, failure)
         );
 
     // ── Pure-core EXECUTOR (architecture review §2.1, ADR-0055 sibling) ─────────
@@ -1459,6 +1479,14 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                         // dropped here rather than raised against whatever was loaded next.
                         if (rec.SessionGeneration == _sessionBinding.Generation)
                         {
+                            // One report, two events. ItemFailed goes first and carries the same
+                            // PlaybackError instance, so a consumer subscribed to both discards the
+                            // second sighting by reference. An error with no item — the lateness
+                            // fault an item runtime reports — raises only ErrorOccurred.
+                            if (rec.Item is { } failedItem)
+                                _itemFailedSubject.OnNext(
+                                    new PlaylistItemFailed(failedItem, rec.Error, rec.Failure)
+                                );
                             _errorSubject.OnNext(rec.Error);
                         }
                         else
@@ -1484,7 +1512,13 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                         {
                             Interlocked.Increment(ref _loopCount);
                             LogLoopRestarted(loop.LoopCount, "session");
-                            _loopRestartedSubject.OnNext(new LoopRestarted(loop.LoopCount, Duration));
+                            // Constructed once and fanned out, the same way a failure is.
+                            var restarted = new LoopRestarted(loop.LoopCount, Duration);
+                            if (loop.Item is { } loopedItem)
+                                _itemLoopedSubject.OnNext(
+                                    new PlaylistItemLooped(loopedItem, restarted)
+                                );
+                            _loopRestartedSubject.OnNext(restarted);
                         }
                         else
                         {
@@ -1714,6 +1748,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         _seekStateSubject.Dispose();
         _repeatModeSubject.Dispose();
         _loopRestartedSubject.Dispose();
+        _itemFailedSubject.Dispose();
+        _itemLoopedSubject.Dispose();
         _loopStalledSubject.Dispose();
         _errorSubject.Dispose();
         _positionTickSubject.Dispose();

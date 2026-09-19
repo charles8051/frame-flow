@@ -37,4 +37,22 @@ public sealed record PlaylistTransition(
     /// a transition built with the four-argument constructor.
     /// </summary>
     public PlaylistItem? Item { get; init; }
+
+    /// <summary>
+    /// The item this transition left, or <see langword="null"/> when nothing preceded it. Under
+    /// <see cref="PlaylistTransitionReason.Loop"/> it is the same item as <see cref="Item"/>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Reason"/> describes how <i>this</i> item ended, while every other member of the
+    /// record describes the item that started. Attribute a reason to this one, not to
+    /// <see cref="Item"/>: on a queue of <c>[A, B]</c> where A fails, the transition that follows
+    /// names B in <see cref="Item"/> and A here.
+    /// </remarks>
+    public PlaylistItem? Previous { get; init; }
+
+    /// <summary>
+    /// Why the hand-off happened, in terms of how <see cref="Previous"/> ended. Defaults to
+    /// <see cref="PlaylistTransitionReason.FirstItem"/> on a transition built without one.
+    /// </summary>
+    public PlaylistTransitionReason Reason { get; init; }
 }

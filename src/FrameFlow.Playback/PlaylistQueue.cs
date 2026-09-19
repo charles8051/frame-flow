@@ -156,7 +156,12 @@ internal sealed record PlaylistQueue
     }
 
     /// <summary>The item an advance took, and whether taking it wrapped the playlist.</summary>
-    internal readonly record struct NextDecision(NextKind Kind, PlaylistItem? Item, bool Wrapped);
+    internal readonly record struct NextDecision(
+        NextKind Kind,
+        PlaylistItem? Item,
+        bool Wrapped,
+        bool Jumped = false
+    );
 
     // ── Edits ───────────────────────────────────────────────────────────────
 
@@ -343,7 +348,14 @@ internal sealed record PlaylistQueue
     public (PlaylistQueue Queue, NextDecision Decision) DecideNext(PlaylistAdvance reason)
     {
         if (PendingJump is { } jump)
-            return (this with { PendingJump = null }).Take(jump, wrapped: false, byAdvance: true);
+        {
+            var (queue, decision) = (this with { PendingJump = null }).Take(
+                jump,
+                wrapped: false,
+                byAdvance: true
+            );
+            return (queue, decision with { Jumped = true });
+        }
 
         var movesOn = reason is PlaylistAdvance.Skip or PlaylistAdvance.FailedStart || CurrentRemoved;
 

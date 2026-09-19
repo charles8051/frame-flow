@@ -379,8 +379,18 @@ internal sealed class PlaylistCoordinator
     internal void ReportCurrent(PlaylistItem item, MediaInfo? info, bool wrapped)
     {
         ArgumentNullException.ThrowIfNull(item);
+        // Read before the queue moves it: the reason describes the item that ended, while the rest
+        // of the transition describes the one that started.
+        var previous = Queue.Reported;
         var index = Apply(q => q.ReportCurrent(item, info));
-        RaiseTransition(item, info, index, wrapped);
+        RaiseTransition(
+            item,
+            info,
+            index,
+            wrapped,
+            previous,
+            previous is null ? PlaylistTransitionReason.FirstItem : PlaylistTransitionReason.EndOfItem
+        );
     }
 
     /// <summary>
@@ -388,11 +398,23 @@ internal sealed class PlaylistCoordinator
     /// outside <see cref="Update{T}"/>, so a subscriber can call back into the coordinator. Nothing
     /// fires for an item with no metadata.
     /// </summary>
-    internal void RaiseTransition(PlaylistItem item, MediaInfo? info, int index, bool wrapped)
+    internal void RaiseTransition(
+        PlaylistItem item,
+        MediaInfo? info,
+        int index,
+        bool wrapped,
+        PlaylistItem? previous,
+        PlaylistTransitionReason reason
+    )
     {
         if (info is not null)
             _transitioned.OnNext(
-                new PlaylistTransition(item.Source, info, index, wrapped) { Item = item }
+                new PlaylistTransition(item.Source, info, index, wrapped)
+                {
+                    Item = item,
+                    Previous = previous,
+                    Reason = reason,
+                }
             );
     }
 

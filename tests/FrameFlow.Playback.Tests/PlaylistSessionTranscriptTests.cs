@@ -256,7 +256,7 @@ public sealed class PlaylistSessionTranscriptTests
         Assert.Equal(
             [
                 "b#1.Play",
-                "ctl.RecoverableError(Playlist item 'b' could not be started: boom)",
+                "ctl.ItemFailed(b,CouldNotStart,Playlist item 'b' could not be started: boom)",
                 "b#1.Dispose",
                 "clock.Stop",
                 "c#1.Open",
@@ -583,7 +583,7 @@ public sealed class PlaylistSessionTranscriptTests
             [
                 "a#1.Rewind",
                 "transition(a)",
-                "ctl.LoopRestarted(1)",
+                "ctl.LoopRestarted(1,a)",
                 // The skip wraps back to the only item and rewinds it in place, but it is a skip.
                 "a#1.Rewind",
                 "transition(a, wrapped)",
@@ -594,7 +594,7 @@ public sealed class PlaylistSessionTranscriptTests
         rig.Runtime("a#1").RaiseEndOfStream();
         await rig.SettleAsync();
 
-        Assert.Equal(["a#1.Rewind", "transition(a)", "ctl.LoopRestarted(1)"], rig.TakeLog());
+        Assert.Equal(["a#1.Rewind", "transition(a)", "ctl.LoopRestarted(1,a)"], rig.TakeLog());
     }
 
     /// <summary>
@@ -620,7 +620,7 @@ public sealed class PlaylistSessionTranscriptTests
         hold.Release();
         await rig.SettleAsync();
 
-        Assert.Equal(["a#1.Rewind", "transition(a)", "ctl.LoopRestarted(1)"], rig.TakeLog());
+        Assert.Equal(["a#1.Rewind", "transition(a)", "ctl.LoopRestarted(1,a)"], rig.TakeLog());
         Assert.False(rig.Session.ExpectsRepeat);
     }
 
