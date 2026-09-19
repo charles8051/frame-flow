@@ -342,7 +342,7 @@ as well: an implementing assembly compiled against the old interface and not
 rebuilt fails to load with `TypeLoadException`, naming the first member it lacks,
 when the application uses the type. Rebuild it against this version.
 
-### 9. `DotGraphSet` is gone
+### 10. `DotGraphSet` is gone
 
 `FrameFlow.Playback.DotGraphSet` held Graphviz renderings of the playback
 controller's state machines. The only method that returned one was internal to
@@ -350,7 +350,7 @@ controller's state machines. The only method that returned one was internal to
 value. Code that names the type stops compiling. Delete the reference; there is
 no replacement.
 
-### 10. `IMediaPlayer` gained `LoopRestarted`
+### 11. `IMediaPlayer` gained `LoopRestarted`
 
 A loop was visible only on `IPlaybackController`, so a caller of
 `MediaPlayer.CreateAsync`, `MediaPlaylistPlayer.CreateAsync` or the builder had
@@ -372,7 +372,7 @@ This is a binary break as well: an implementing assembly compiled against the ol
 interface and not rebuilt fails to load with `TypeLoadException` when the
 application uses the type. Rebuild it against this version.
 
-### 11. `LoopStallSample.RepeatOne` is renamed `ExpectsRepeat`
+### 12. `LoopStallSample.RepeatOne` is renamed `ExpectsRepeat`
 
 The loop-stall watchdog used to watch only while the mode was `RepeatMode.One`, so
 a playlist of one under `RepeatMode.All`, which loops through the same rewind, was
@@ -391,7 +391,7 @@ new LoopStallSample(now, position, duration, ExpectsRepeat: true, Playing: true,
 A host subscribed to `LoopStalled` can now see a stall from a playlist of one under
 `RepeatMode.All`, where it saw none before.
 
-### 12. `MediaPlayer.CreateAsync` returns `Task<IMediaPlaylistPlayer>`
+### 13. `MediaPlayer.CreateAsync` returns `Task<IMediaPlaylistPlayer>`
 
 Every player is a queue now, and a single source is a queue of one
 (`docs/adr/ADR-0077-one-player-type.md`), so the single-source factory returns the same player
@@ -420,7 +420,7 @@ signature, so a compiled caller does not bind to the new method.
 
 `IMediaPlayerBuilder.BuildPlayerAsync` still returns `Task<IMediaPlayer>`.
 
-### 13. `RepeatMode.All` loops a single source
+### 14. `RepeatMode.All` loops a single source
 
 A player over one source used to play one pass and reach `Ended` under `All`, which
 the enum documented as "behaves like `Off`". It now loops, because `All` wraps a queue
@@ -428,7 +428,7 @@ and that queue holds one item. `Off` is the mode that ends at the end of the med
 
 A host that set `All` on a single-source player to mean "play once" sets `Off`.
 
-### 14. A mid-stream fault ends the player instead of failing it
+### 15. A mid-stream fault ends the player instead of failing it
 
 A fault raised while a single source played used to put the player in `Error`, which
 is terminal. The failure is now reported on `ErrorOccurred` with the item's exception,
@@ -443,7 +443,7 @@ A host that watched `State` alone for failure sees `Ended` where it used to see
 player.ErrorOccurred.Subscribe(new ErrorObserver(error => Alert(error)));
 ```
 
-### 15. A loop no longer drives the seek state machine
+### 16. A loop no longer drives the seek state machine
 
 The loop is the session's in-place rewind, taken as one of its inputs, so
 `SeekStateChanged` stays `NotSeeking` across a loop and `IsActivelyPresenting` stays
@@ -451,18 +451,18 @@ The loop is the session's in-place rewind, taken as one of its inputs, so
 `IMediaPlayer.LoopRestarted`, which also carries the loop's count. A host that gated
 UI on `SeekingState` during a loop sees fewer transitions, and none of them false.
 
-### 16. The video chain is built once per load, not once per loop
+### 17. The video chain is built once per load, not once per loop
 
 The loop keeps the graph, so a configurator passed to `configureVideo` runs once per
 load rather than once per pass. An operator that carries state across frames now sees
 the timeline go back to zero instead of being rebuilt. One that cannot handle that
 must reset itself; the reset a graph could hand it is #217.
 
-### 17. `MediaPlaylistPlayer` is gone; `MediaPlayer.CreateAsync` takes a queue
+### 18. `MediaPlaylistPlayer` is gone; `MediaPlayer.CreateAsync` takes a queue
 
 Every player is a queue (ADR-0077), so there is one factory. `MediaPlayer.CreateAsync`
 gained an overload taking `IEnumerable<IMediaSource>`, and the `MediaPlaylistPlayer`
-class is removed. Entry 12 already made both return `Task<IMediaPlaylistPlayer>`.
+class is removed. Entry 13 already made both return `Task<IMediaPlaylistPlayer>`.
 
 ```csharp
 // Before
@@ -483,11 +483,11 @@ threw `ArgumentNullException` the moment it ran.
 await MediaPlayer.CreateAsync((IMediaSource)null!);
 ```
 
-### 18. A queue built without a repeat mode plays once
+### 19. A queue built without a repeat mode plays once
 
 **This one is not a compile error.** `MediaPlaylistPlayer.CreateAsync` defaulted
 `initialRepeatMode` to `RepeatMode.All`, and the single-source factory defaulted it to
-`RepeatMode.Off`. Folding the two into one method (entry 17) left one name with two
+`RepeatMode.Off`. Folding the two into one method (entry 18) left one name with two
 answers to the same omitted argument. Both overloads now default to `RepeatMode.Off`.
 
 A caller who omitted `initialRepeatMode` on a playlist looped forever and now ends after
@@ -500,14 +500,14 @@ await MediaPlayer.CreateAsync([first, second], videoSink, audioSink,
 
 `SetRepeatModeAsync` still changes it at any time.
 
-### 19. `BuildPlayerAsync` returns `Task<IMediaPlaylistPlayer>`
+### 20. `BuildPlayerAsync` returns `Task<IMediaPlaylistPlayer>`
 
 The builder can now open a queue: `FrameFlowPlayer.Create().WithMedia(IEnumerable<IMediaSource>)`
 starts the same chain over an ordered set of sources. It begins narrowed to
 `IMediaPlayerBuilder`, because a `MediaPass` plays one source and `BuildAsync` has
 no meaning over a queue.
 
-Both `BuildPlayerAsync` terminals widened to match, the same break entry 12 made to
+Both `BuildPlayerAsync` terminals widened to match, the same break entry 13 made to
 `MediaPlayer.CreateAsync`. `Task<T>` is invariant, so awaiting still compiles and naming
 the task does not:
 
@@ -522,7 +522,7 @@ Task<IMediaPlayer> pending = FrameFlowPlayer.Create().WithMedia(path).BuildPlaye
 A type outside FrameFlow that implements `IPlayerBuilder` or `IMediaPlayerBuilder`
 changes its terminal's return type to match.
 
-### 20. Ended fires a frame later, at the end of the last frame's display
+### 21. Ended fires a frame later, at the end of the last frame's display
 
 **This one is not a compile error.** Decoded frames carry no display interval today, so
 the presenter's end-of-content hold could never engage and `Ended` fired the moment the
@@ -540,11 +540,11 @@ clock runs on for the command hop between the hold completing and the transition
 it, and that overshoot used to be hidden inside the frame `Ended` arrived early by. A host
 that read `Position` at `Ended` and expected the raw clock now reads `Duration` exactly.
 Everywhere but `Ended` it is unchanged.
-### 21. `FrameFlowPlayer.Open` is now `FrameFlowPlayer.Create`
+### 22. `FrameFlowPlayer.Open` is now `FrameFlowPlayer.Create`
 
 `Open` opened nothing. It recorded the source and returned the builder; the demuxer runs
 in `BuildAsync` / `BuildPlayerAsync`. The name promised I/O that happens somewhere else,
-and it could not be stretched over entry 22's no-source overload.
+and it could not be stretched over entry 23's no-source overload.
 
 ```csharp
 // Before
@@ -554,9 +554,9 @@ await FrameFlowPlayer.Open(path).WithVideoSink(sink).BuildPlayerAsync();
 await FrameFlowPlayer.Create().WithMedia(path).WithVideoSink(sink).BuildPlayerAsync();
 ```
 
-The builder is otherwise the same. Where the source goes is entry 24.
+The builder is otherwise the same. Where the source goes is entry 25.
 
-### 22. A player can be built with nothing to play
+### 23. A player can be built with nothing to play
 
 `FrameFlowPlayer.Create()` takes no source, and `MediaPlayer.CreateAsync` accepts an empty
 set of them. The player is built with its sinks attached and warm and nothing loaded,
@@ -583,7 +583,7 @@ was relying on the throw to catch an empty list checks it before the call.
 This is for a host that builds its presenter once at startup and receives content
 afterwards. Building with a placeholder and replacing it cost a load and a teardown.
 
-### 23. `MediaSource` is built with an object initializer
+### 24. `MediaSource` is built with an object initializer
 
 `MediaSource` was a positional record, so `new MediaSource("clip.mp4")` and
 `new MediaSource(name, uri, path, false)` both compiled. It now declares `DisplayName` as a
@@ -616,7 +616,7 @@ what keeps the next member from being a breaking change again.
 
 A type implementing `IMediaSource` directly is unaffected: both new members are default
 interface members returning `null`, which is "open this the way it has always been opened".
-### 24. `FrameFlowPlayer.Create` names no media; `WithMedia` does
+### 25. `FrameFlowPlayer.Create` names no media; `WithMedia` does
 
 Every player is a queue and a queue can be empty, so the entry no longer takes media. It
 is a chained option like the sinks, and it replaces rather than appends, as every other
@@ -646,10 +646,10 @@ unchanged and still valid — that is the player with an empty queue.
 **If you implement `IPlayerBuilder` or `IMediaPlayerBuilder`**, add the three `WithMedia`
 overloads. They are ordinary interface members, not defaulted ones: a default that threw
 would turn a compile error into a run-time one, and the narrowing on these interfaces exists
-precisely to keep that kind of mismatch at compile time. Entry 19 already changes both
+precisely to keep that kind of mismatch at compile time. Entry 20 already changes both
 terminals' return type, so an implementer is recompiling against this release either way.
 
-### 25. `BuildAsync` moves to its own entry point: `FrameFlowPass`
+### 26. `BuildAsync` moves to its own entry point: `FrameFlowPass`
 
 `PlayerSession` held no clock. `ClockSelectVideoSink` and `PaceUntil`, the types that hold a
 frame until its presentation time, are constructed only on the controller path, so video
@@ -695,10 +695,10 @@ nothing.
 `WithRepeatMode`, `WithClock`, `WithHardwareFrames` and `WithAudioActivation` are not on
 `IPassBuilder`. They were already unreachable from a chain headed for `BuildAsync`.
 
-### 26. `IMediaPlayerBuilder` is gone; `IPlayerBuilder` has one terminal
+### 27. `IMediaPlayerBuilder` is gone; `IPlayerBuilder` has one terminal
 
 The narrowing existed to keep the player-only options off a chain that could still end in
-`BuildAsync`. Entry 25 moved that terminal to its own entry, so no such chain exists, and the
+`BuildAsync`. Entry 26 moved that terminal to its own entry, so no such chain exists, and the
 two near-identical interfaces fold into one.
 
 ```csharp
@@ -716,9 +716,9 @@ and 24 already broke implementers of these interfaces in this release.
 
 `WithAvaloniaVideoView` keeps two overloads: one on `IPlayerBuilder`, and one that was on
 `IMediaPlayerBuilder` and is now on `IPassBuilder`. `WithOpenAlAudio` had the same pair and entry
-28 retires it.
+29 retires it.
 
-### 27. `PlaybackGraph` is gone
+### 28. `PlaybackGraph` is gone
 
 Removed in #271. It wired caller-supplied decoders to sinks and ran to EOS, which is
 `MediaPass`'s job with the demux session and the decoders handled for you. Its own summary
@@ -727,7 +727,7 @@ ADR-0077. It had no users outside its own tests.
 
 Use `FrameFlowPass.Create(path)` and let the builder open the file.
 
-### 28. `WithOpenAlAudio` is gone; construct the sink yourself
+### 29. `WithOpenAlAudio` is gone; construct the sink yourself
 
 ```csharp
 // Before
@@ -768,7 +768,7 @@ layer.
 `AddFrameFlowOpenAlAudio()` for the generic host is unaffected. The container constructs the sink
 and the container disposes it, which is the same rule with a different owner.
 
-### 29. `MediaPlayer` is gone; the builder is the way in
+### 30. `MediaPlayer` is gone; the builder is the way in
 
 ```csharp
 // Before
@@ -787,7 +787,7 @@ await using var player = await FrameFlowPlayer.Create()
     .BuildPlayerAsync();
 ```
 
-Every parameter has a chained equivalent, and has since entry 24:
+Every parameter has a chained equivalent, and has since entry 25:
 
 | `CreateAsync` parameter | Builder |
 |---|---|
@@ -807,7 +807,7 @@ The builder also has `WithClock`, which the factory could not expose.
 lacked, so what it added was a second name for one thing. Its own documentation said "Prefer the
 fluent builder… New code should use the builder", which is debt that never resolves on its own,
 and its doc comments have needed editing in every rename this release — the return type
-(entry 12), `Open` to `Create` (21), `WithMedia` (24), the terminal split (25). A forwarder with
+(entry 13), `Open` to `Create` (22), `WithMedia` (25), the terminal split (26). A forwarder with
 no behaviour still has prose that drifts.
 
 The construction body it held is now `PlayerFactory.CreateAsync`, internal, reached through
@@ -817,13 +817,13 @@ The construction body it held is now `PlayerFactory.CreateAsync`, internal, reac
 `PlaybackController.Create(...)` still sits below both for a caller who wants the raw state
 machine.
 
-### 30. `IPlayerBuilder` gained `WithLatenessRecovery`
+### 31. `IPlayerBuilder` gained `WithLatenessRecovery`
 
 **Only a caller that implements `IPlayerBuilder` itself is affected.** A chain that consumes the
 builder from `FrameFlowPlayer.Create()` is untouched.
 
 The interface gained a member, so an external implementation stops compiling with CS0535 until it
-adds one. Same shape as entry 10, where `IMediaPlayer` gained `LoopRestarted`.
+adds one. Same shape as entry 11, where `IMediaPlayer` gained `LoopRestarted`.
 
 No default implementation is supplied. A builder that silently ignored `WithLatenessRecovery` would
 report success and configure nothing, which is the failure this member exists to remove: until now
@@ -835,7 +835,7 @@ public IPlayerBuilder WithLatenessRecovery(LatenessRecoveryOptions options) => t
 ```
 
 is enough for an implementation that does not pace, and the compiler names the file to add it to.
-### 31. `LoopStallMetrics` is internal; scrape the meter instead
+### 32. `LoopStallMetrics` is internal; scrape the meter instead
 
 The class and its `RecordLoopStall()` had one caller, inside `FrameFlow.Playback`. Public, it let
 a consumer add to `frameflow.playback.loop_stalls` and make the counter disagree with the stalls
