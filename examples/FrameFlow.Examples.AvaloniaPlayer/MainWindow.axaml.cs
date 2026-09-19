@@ -56,7 +56,21 @@ public partial class MainWindow : Window
         ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".ts", ".m2ts",
         ".flv", ".wmv", ".mpg", ".mpeg", ".3gp", ".ogv",
         ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wav", ".wma",
+        ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff",
     };
+
+    /// <summary>
+    /// Extensions opened as a still rather than probed. Only formats that are unambiguously
+    /// one image: .gif and .webp are left out because they may be animated, and naming
+    /// image2 on an animated one would show the first frame and call it the whole file.
+    /// </summary>
+    private static readonly HashSet<string> StillExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff",
+    };
+
+    /// <summary>How long a still holds the screen before the playlist moves on.</summary>
+    private static readonly TimeSpan StillDwell = TimeSpan.FromSeconds(5);
 
     /// <summary>A media file or a folder to open on startup, from the command line.</summary>
     public string? StartupPath { get; set; }
@@ -91,6 +105,37 @@ public partial class MainWindow : Window
             await OpenFileAsync(StartupPath);
     }
 
+    /// <summary>
+    /// Builds the source for a path, naming the demuxer when the file is a still.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Probed, a single image opens on a <c>*_pipe</c> demuxer, which reports no duration and
+    /// ends as soon as its one frame is presented. Named as <c>image2</c> with a
+    /// <c>framerate</c>, the same file is a clip of <c>1/framerate</c> seconds holding one
+    /// frame, which is what makes a still hold the screen and a playlist move on afterwards.
+    /// </para>
+    /// <para>
+    /// A fraction rather than a decimal because FFmpeg reads the option as a rational, and
+    /// the invariant culture because a comma decimal separator would not parse.
+    /// </para>
+    /// </remarks>
+    private static IMediaSource SourceFor(string path)
+    {
+        var source = MediaSource.FromFile(path);
+        if (!StillExtensions.Contains(Path.GetExtension(path)))
+            return source;
+
+        return source with
+        {
+            InputFormat = "image2",
+            DemuxerOptions = new Dictionary<string, string>
+            {
+                ["framerate"] = FormattableString.Invariant($"1/{StillDwell.TotalSeconds:0.###}"),
+            },
+        };
+    }
+
     /// <summary>Builds a player for one file and hands it to the view.</summary>
     private async Task OpenFileAsync(string path)
     {
@@ -112,7 +157,7 @@ public partial class MainWindow : Window
 
             _player = await FrameFlowPlayer
                 .Create()
-                .WithMedia(path)
+                .WithMedia(SourceFor(path))
                 .WithVideoSink(videoSink)
                 .WithAudioSink(_audioSink)
                 .WithHardwareFrames(PlayerView.VideoSurface.PrefersHardwareFrames)
@@ -165,7 +210,7 @@ public partial class MainWindow : Window
         }
 
         _playlistEntries = files
-            .Select(f => new PlaylistEntry(Path.GetFileName(f), MediaSource.FromFile(f)))
+            .Select(f => new PlaylistEntry(Path.GetFileName(f), SourceFor(f)))
             .ToList();
         PlaylistBox.ItemsSource = _playlistEntries;
         StatusText.Text =
