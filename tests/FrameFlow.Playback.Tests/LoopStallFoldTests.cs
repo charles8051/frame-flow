@@ -156,6 +156,29 @@ public sealed class LoopStallFoldTests
         Assert.Equal(1, Volatile.Read(ref reports));
     }
 
+    [Fact]
+    public async Task ATickThatElapsesBeforeTheWait_IsNotLost()
+    {
+        // The property the whole harness rests on, pinned rather than assumed. The barrier below
+        // releases the test from inside the fold, so the worker may still be returning from its
+        // callback when the next interval is advanced. PeriodicTimer buffers one elapsed tick, so
+        // a single advance landing in that window is delivered by the next wait rather than
+        // dropped — and the harness advances exactly one interval per barrier.
+        //
+        // If a future runtime stopped buffering, this reddens here instead of as an unexplained
+        // timeout in the three tests above.
+        var time = new FakeTimeProvider();
+        using var timer = new PeriodicTimer(PositionTickerWorker.TickInterval, time);
+
+        time.Advance(PositionTickerWorker.TickInterval);
+
+        using var cts = new CancellationTokenSource(FailureBound);
+        Assert.True(
+            await timer.WaitForNextTickAsync().AsTask().WaitAsync(cts.Token),
+            "a tick that elapsed before the wait was lost, so the harness's one-interval steps are unsafe."
+        );
+    }
+
     // ── Harness ─────────────────────────────────────────────────────────────
 
     /// <summary>
