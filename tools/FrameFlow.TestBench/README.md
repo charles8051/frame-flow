@@ -44,7 +44,7 @@ A still image is the case the two `load` flags exist for. Probed, a single `.png
 as `image2` with a `framerate`, the same file is a clip of `1/framerate` seconds:
 
 ```
-load --format image2 --option framerate=1/3 tests/corpus/files/test-still.png
+load --format image2 --option framerate=1/3 --option pattern_type=none tests/corpus/files/test-still.png
 play
 wait 1s
 status      # Playing 00:01.007/00:03.000 — one frame, three seconds
@@ -52,6 +52,10 @@ diag        # decoded=1 presented=1
 wait 3s
 status      # Ended 00:03.000/00:03.000
 ```
+
+`pattern_type=none` is not optional dressing. Without it image2 reads the path as a printf
+sequence pattern, so a file actually named `photo%03d.png` fails with "could find no file
+with path ... and index in the range 0-4" while sitting right there on disk.
 
 Durations are a number and a unit: `250ms`, `1.5s`, `2m`, `1h`. The unit is required — a
 bare number would have to mean seconds or milliseconds by convention, and a script that
