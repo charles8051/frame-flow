@@ -216,15 +216,20 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         if (_disposed)
             return;
 
-        // Read once: the same session answers both, and a rebind between the two reads would
-        // pair one session's verdict with another's item.
+        // Both reads happen HERE, before the fold, and the captured item is what the event names.
+        // Reading the item at the raise site instead would let the session advance in between: the
+        // verdict would be about the item that was repeating while the event named the one that
+        // started after it. Capturing the session once is not enough on its own, because the race
+        // is inside one session's queue, not between two sessions.
         var session = Volatile.Read(ref _sessionBinding).Session;
+        var expectsRepeat = session?.ExpectsRepeat ?? false;
+        var currentItem = session?.CurrentItem;
 
         var sample = new LoopStallSample(
             NowTicks: Stopwatch.GetTimestamp(),
             PositionTicks: position.Ticks,
             DurationTicks: _loadedDuration.Ticks,
-            ExpectsRepeat: session?.ExpectsRepeat ?? false,
+            ExpectsRepeat: expectsRepeat,
             Playing: IsActivelyPresenting,
             LoopCount: Volatile.Read(ref _loopCount)
         );
@@ -252,7 +257,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             // This one is raised on the position ticker's loop rather than the dispatch loop, so
             // the order is kept here rather than by a command carrying both.
             var stalled = new LoopStalled(sample.LoopCount, position, _loadedDuration, overrun);
-            if (session?.CurrentItem is { } stalledItem)
+            if (currentItem is { } stalledItem)
                 _itemStalledSubject.OnNext(new PlaylistItemStalled(stalledItem, stalled));
             _loopStalledSubject.OnNext(stalled);
         }
