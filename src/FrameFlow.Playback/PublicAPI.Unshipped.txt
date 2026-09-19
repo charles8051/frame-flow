@@ -33,7 +33,6 @@ FrameFlow.Playback.Diagnostics.DiagnosticsObservationSeverity
 FrameFlow.Playback.Diagnostics.DiagnosticsObservationSeverity.Error = 2 -> FrameFlow.Playback.Diagnostics.DiagnosticsObservationSeverity
 FrameFlow.Playback.Diagnostics.DiagnosticsObservationSeverity.Info = 0 -> FrameFlow.Playback.Diagnostics.DiagnosticsObservationSeverity
 FrameFlow.Playback.Diagnostics.DiagnosticsObservationSeverity.Warning = 1 -> FrameFlow.Playback.Diagnostics.DiagnosticsObservationSeverity
-FrameFlow.Playback.Diagnostics.LoopStallMetrics
 FrameFlow.Playback.Diagnostics.PipelineDiagnosticsSnapshot
 FrameFlow.Playback.Diagnostics.PipelineDiagnosticsSnapshot.AudioSink.get -> FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot!
 FrameFlow.Playback.Diagnostics.PipelineDiagnosticsSnapshot.AudioSink.init -> void
@@ -240,7 +239,6 @@ override FrameFlow.Playback.PlaylistItem.ToString() -> string!
 static FrameFlow.Playback.Diagnostics.DiagnosticsDelta.Observed(int generation, System.Collections.Generic.IReadOnlyList<FrameFlow.Playback.Diagnostics.DiagnosticsObservation>! observations) -> FrameFlow.Playback.Diagnostics.DiagnosticsDelta!
 static FrameFlow.Playback.Diagnostics.DiagnosticsDelta.Reset(int fromGeneration, int toGeneration) -> FrameFlow.Playback.Diagnostics.DiagnosticsDelta!
 static FrameFlow.Playback.Diagnostics.DiagnosticsInterpreter.Compare(FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot! before, FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot! after) -> FrameFlow.Playback.Diagnostics.DiagnosticsDelta!
-static FrameFlow.Playback.Diagnostics.LoopStallMetrics.RecordLoopStall() -> void
 static FrameFlow.Playback.Diagnostics.PipelineDiagnosticsSnapshot.Empty.get -> FrameFlow.Playback.Diagnostics.PipelineDiagnosticsSnapshot!
 static FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot.Empty.get -> FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot!
 static FrameFlow.Playback.FrameFlowPlaybackServiceCollectionExtensions.AddFrameFlowPlayback(this FrameFlow.Media.IFrameFlowBuilder! builder) -> FrameFlow.Media.IFrameFlowBuilder!

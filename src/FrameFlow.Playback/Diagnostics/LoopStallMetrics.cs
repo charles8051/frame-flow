@@ -19,8 +19,14 @@ namespace FrameFlow.Playback.Diagnostics;
 /// meter; a non-zero, rising <c>frameflow.playback.loop_stalls</c> means a loop
 /// silently died in production.
 /// </para>
+/// <para>
+/// <b>Internal on purpose (#320).</b> What a consumer contracts with is the meter name and the
+/// counter name, which <c>dotnet-counters</c> and any <see cref="MeterListener"/> reach without
+/// this type. The recorder is not part of that: a caller able to add to the counter can only
+/// make it disagree with the stalls the controller actually saw.
+/// </para>
 /// </remarks>
-public static class LoopStallMetrics
+internal static class LoopStallMetrics
 {
     private static readonly Meter Meter = new("FrameFlow.Playback", "1.0.0");
 
