@@ -280,9 +280,14 @@ land.
   `ItemFailed` first, carrying the same `PlaybackError` by reference. A second turn caught that the
   loop pair had been left without that rule while a *Not settled* entry wrongly claimed a loop
   raises no second event; each new event now nests the payload its inherited counterpart raises, so
-  the shared reference is the correlation key. The cost is three more members on a surface whose doc
-  comment already runs to four paragraphs, and a duplication the types do not enforce, bounded by
-  the interface fold [ADR-0077](ADR-0077-one-player-type.md) decision 2 already defers.
+  the shared reference is the correlation key. An independent review then found that
+  `SessionCallbacks.OnRecoverableError` is shared with a caller that has no item, so the item
+  travels on a callback of its own, and that `ItemFailed` never fires for the first item, whose
+  failure the protocol reports as fatal. The record now enumerates that case with give-up, disposal
+  and a superseded session, as ADR-0075 decision 5 does for loops. The cost is two more members on
+  a surface whose remarks already run to five paragraphs, and a duplication the types do not
+  enforce, bounded by the interface fold [ADR-0077](ADR-0077-one-player-type.md) decision 2 already
+  defers.
 
 ## Recently numbered
 

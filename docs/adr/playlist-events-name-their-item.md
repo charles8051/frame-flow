@@ -46,21 +46,31 @@ strength of both players raising it.
 |---|---|---|
 | `IMediaPlayer.ErrorOccurred` | `PlaybackError(Category, Message, Inner)` | No |
 | `IMediaPlayer.LoopRestarted` | `LoopRestarted(LoopCount, ItemDuration)` | No |
-| `IMediaPlaylistPlayer.SourceTransitioned` | `PlaylistTransition(Source, MediaInfo, Index, Wrapped, Item)` | Yes, and does not say why it fired |
+| `IMediaPlaylistPlayer.SourceTransitioned` | `PlaylistTransition(Source, MediaInfo, Index, Wrapped)` plus a nullable `Item` | Yes, and does not say why it fired |
 
 The identity exists at the raise site and is thrown away on the way out.
 `PlaylistSessionAction.ReportItemFailed` carries `string Source`
 (`src/FrameFlow.Playback/PlaylistSessionInput.cs:172`), a display name rather than the item, and
 `PlaylistSession.ReportItemFailed` folds it into the message text
-(`src/FrameFlow.Playback/PlaylistSession.cs:695-702`). `PlaylistItem` compares by reference exactly
+(`src/FrameFlow.Playback/PlaylistSession.cs:697-703`). `PlaylistItem` compares by reference exactly
 so that the same source added twice is two items; a display name cannot separate those two either.
 
-### Reading the current item inside the handler is a race
+### Reading the current item inside the handler does not work
 
-A subscriber that calls `GetPlaylist()` or reads `CurrentSource` from an `ErrorOccurred` handler
-sees whatever the advance has already made current. The report is part of the advance that skips
-the failed item, so the player has moved on. ADR-0075 records the same race for a loop: a jump
-recorded during the rewind is taken as soon as the item has started again.
+The queue has already advanced. `PlaylistSession.Step` runs the whole pure fold inside
+`_coordinator.Update(...)` (`src/FrameFlow.Playback/PlaylistSession.cs:475-486`), which takes the
+coordinator's lock and commits the new queue; the actions that fold emitted are performed
+afterwards (`:451-452`). All four `ReportItemFailed` sites call `Queue.ItemFailed` and
+`Queue.DecideNext` in that same fold. So `GetPlaylist().Current` has moved past the failed item
+before the report is even queued, let alone before a handler runs. That is a certainty, not a race.
+
+`CurrentSource` is the race. It reads `Queue.Reported?.Source`
+(`src/FrameFlow.Playback/PlaylistCoordinator.cs:85`), which moves at `ReportCurrent`, when the next
+item starts. It still names the failed item at raise time and moves at an unpredictable later one,
+so a handler reads whichever side of that it lands on.
+
+Neither is a workaround. ADR-0075 records the same problem for a loop: a jump recorded during the
+rewind is taken as soon as the item has started again.
 
 ### What this costs a host
 
@@ -77,9 +87,12 @@ the other cannot.
 `FrameFlowStreamSummary` subscribes only to `StateChanged`
 (`src/FrameFlow.Avalonia/FrameFlowStreamSummary.cs:71`). A playlist transition keeps the player
 `Playing`, so the summary never re-reads `MediaInfo` and keeps showing the first item's codec and
-size. `IMediaPlayer.MediaInfo` follows the current item (`PlaybackControllerCore.cs:507-552`, via
-`SessionCallbacks.OnCurrentItemChanged`), and `PlaylistTransition` already carries the new
-`MediaInfo`. The payload is right and the chrome ignores it. The fix is a subscription in
+size. `EmitPlaybackTransition` raises only when the collapsed public state changes
+(`PlaybackControllerCore.cs:1062`), and a hand-off does not change it.
+
+The payload is right. `IMediaPlayer.MediaInfo` reads `PlaylistMediaPlayerCore.cs:63-67`, which
+returns the coordinator's `CurrentMediaInfo`, and that follows the current item. `PlaylistTransition`
+already carries the new `MediaInfo` too. The chrome ignores both. The fix is a subscription in
 `FrameFlow.Avalonia`, and it is not this record's.
 
 ## Decision
@@ -98,8 +111,21 @@ a refused transport command, where there is no item to name.
 `IObservable<PlaylistItemFailed>`, carrying the `PlaylistItem`, the `PlaybackError` already built
 for `ErrorOccurred`, and the `PlaylistItemFailure` the session already decided.
 
-`PlaylistSessionAction.ReportItemFailed` takes the `PlaylistItem` rather than `string Source`, and
-`SessionCallbacks.OnRecoverableError` carries it to the controller. The message text is unchanged.
+`PlaylistSessionAction.ReportItemFailed` takes the `PlaylistItem` rather than `string Source`. The
+message text is unchanged.
+
+**The item travels on a new callback, not on `OnRecoverableError`.**
+`SessionCallbacks.OnRecoverableError` is `Action<PlaybackError>`
+(`src/FrameFlow.Playback/SessionCallbacks.cs:55`) and `PlaylistSession` hands the same delegate to
+its item runtimes, so a `SubstrateSession` uses it too: a lateness-recovery fault is reported
+through it with no item in the room (`src/FrameFlow.Playback/SubstrateSession.cs:383-390`).
+Widening it would make the item nullable for every caller and put "is this one an item failure?"
+back on the consumer. `SessionCallbacks` gains `OnItemFailed`, and `OnRecoverableError` is
+unchanged.
+
+That is also why decision 2 scopes its advice to *item* failures rather than to `ErrorOccurred` as
+a whole. `ErrorOccurred` keeps carrying the controller's own errors and the lateness-recovery
+fault, and neither has an item or an `ItemFailed` to pair with.
 
 **Both channels report the failure, and the contract says how they relate.** `ErrorOccurred` is not
 withdrawn: it is the only failure signal a caller holding `IMediaPlayer` has, and withdrawing it
@@ -111,21 +137,39 @@ would break a single-source caller that gets a mid-stream fault there today. So:
 - **One failure raises both once.** `ItemFailed` carries the same `PlaybackError` instance that
   `ErrorOccurred` raises, by reference. A consumer that subscribes to both can discard the second
   sighting by reference equality without an added identifier.
-- **`ItemFailed` is raised first.** Both travel the controller's dispatch loop in that order, so a
-  consumer holding both sees the item before the bare error.
+- **`ItemFailed` is raised first.** One command carries the report — `PostRecoverableError` writes a
+  single `RecoverableErrorCommand` (`PlaybackControllerCore.cs:472-480`) — and the dispatch loop
+  fans it out to both subjects in that order. Two events, one command, so "both once, in order" is
+  a property of the path rather than a rule two producers have to keep.
 
 Reference identity is the correlation key because the two events are one report fanned out on one
-path, not two reports that have to be matched. An identifier would be a second mechanism for a
-question the object reference already answers.
+path, not two reports that have to be matched.
 
-**The duplication has an end date, and it is already scheduled.** `ErrorOccurred`'s item-failure
-reporting is the compatibility path for a caller that holds only `IMediaPlayer`. It exists because
-`IMediaPlaylistPlayer` is still a separate interface, which ADR-0077 decision 2 keeps "for now" and
-defers folding "to the next release that breaks implementers for other reasons". When that fold
-happens there is one surface, every caller can take `ItemFailed`, and withdrawing item failures
-from `ErrorOccurred` stops being a silent break. That release is the boundary, and the same one
-governs `ItemLooped` and `LoopRestarted` under decision 3. Until then the fan-out is two events on
-one payload, not two mechanisms.
+### Where the pair does not hold, and why
+
+ADR-0075 decision 5 enumerates the points at which a loop is and is not reported. The same is owed
+here, because "raises both once" is a promise with four exceptions:
+
+- **The first item.** A failure before anything has played is reported as fatal, not as an item
+  failure: the protocol sets `GaveUp` and emits `ReportFatal` with no `ReportItemFailed`
+  (`PlaylistSessionProtocol.cs:404-411`, and `OnInitializeDiscarded` at `:614-617`). This matches
+  `IMediaPlaylistPlayer`'s existing rule that the first item "is treated as a single source's". So
+  **`ItemFailed` does not fire for it**, and a host learns of it from the load's failure or from
+  `PlaybackState.Error`. This record documents that rather than changing it.
+- **Give-up.** The eighth consecutive failure emits `ReportItemFailed` before `GiveUp`
+  (`:415-427`), so that failure does raise `ItemFailed`, and a fatal follows it.
+- **Disposal.** `OnFailedStartDiscarded` (`:988-992`) and `OnInitializeDiscarded` (`:614`) emit
+  nothing while disposing. Neither event fires.
+- **A superseded session.** The dispatch loop drops a `RecoverableErrorCommand` whose generation
+  the controller has replaced (`PlaybackControllerCore.cs:1460`). Neither event fires, which is
+  what makes the fan-out safe: the drop is upstream of both.
+
+`ErrorOccurred`'s item-failure reporting is the compatibility path for a caller that holds only
+`IMediaPlayer`, and it ends at a release already scheduled. ADR-0077 decision 2 keeps
+`IMediaPlaylistPlayer` separate "for now" and defers the fold "to the next release that breaks
+implementers for other reasons". At that release there is one surface, every caller can take
+`ItemFailed`, and withdrawing item failures from `ErrorOccurred` stops being a silent break. The
+same boundary governs `ItemLooped` and `LoopRestarted` under decision 3.
 
 Settles #306.
 
@@ -146,8 +190,10 @@ raises both once, `ItemLooped` carries the same `LoopRestarted` instance by refe
 
 `PlaylistItemLooped` nests `LoopRestarted` rather than copying its two fields, so the reference
 that makes the pair reconcilable is the payload itself. `PlaylistItemFailed` nests `PlaybackError`
-for the same reason. Two events about one occurrence, on one dispatch path, sharing one payload
-object.
+for the same reason.
+
+Decision 2's exceptions apply here too, with one difference: a loop has no first-item case, because
+an item that has not played cannot have looped.
 
 ### 4. `PlaylistTransition` says why it fired, and names the item it left
 
@@ -165,10 +211,18 @@ carries the item that became current: `Source` is "the source that is now presen
 "the item that became current" (`src/FrameFlow.Playback/PlaylistTransition.cs:16,39`). A reason of
 `FailedItem` on a queue of `[A, B]` where A fails describes A, while every other field on that
 record describes B. Without `Previous`, a consumer reading `Item` to attribute the reason marks B
-unplayable. The reason and the item it is about travel on one record or the reason is a trap.
+unplayable.
 
-This is why decision 4 and `ItemFailed` are one record rather than two. Adding the reason without
-`Previous` would have created the misattribution that `ItemFailed` exists to prevent.
+`Item` is a nullable `init` property rather than a constructor parameter, null "on a transition
+built with the four-argument constructor" (`PlaylistTransition.cs:33-39`). `Previous` is nullable
+for a reason of its own, the first item. A consumer attributing a reason therefore handles two
+nullable fields, and the doc comment on the reason says which one it is about.
+
+**Why this is in the same record.** The coupling above shows that the reason and `Previous` belong
+together; it does not by itself show that either belongs beside `ItemFailed`. What puts them here
+is that all three are one defect: a playlist event a consumer cannot attribute to an item. Splitting
+decision 4 into its own record is defensible, and *Alternatives considered* says why it was not
+taken.
 
 #173's documentation fix stands on its own and is not blocked by this.
 
@@ -183,8 +237,7 @@ This is why decision 4 and `ItemFailed` are one record rather than two. Adding t
 
 ### Bad
 
-- Three more members on `IMediaPlaylistPlayer`, whose doc comment already runs to four paragraphs
-  of queue precedence.
+- Two more members on `IMediaPlaylistPlayer`, whose `<remarks>` already runs to five paragraphs.
 - Two ways to learn about a failure. Decision 2 makes them reconcilable by reference identity and
   fixed order, which is a contract a consumer has to know rather than one the types enforce. The
   alternative was a break, and *Alternatives considered* says why it was not taken.
@@ -200,14 +253,26 @@ This is why decision 4 and `ItemFailed` are one record rather than two. Adding t
 
 ### Promise an order between `LoopRestarted` and `SourceTransitioned`
 
-ADR-0075's second option. It needs both events on one ordered path, and it leaves identity to a
-snapshot read in the handler, which races a jump recorded during the rewind. It also answers only
-the loop half. A failure has no transition to pair with.
+#203's second option: promise that `LoopRestarted` precedes any `SourceTransitioned` leaving the
+item, and that the snapshot read inside the handler is that item.
+
+The promise is the part that cannot be kept cheaply. `PlaylistSession.Step` commits the new queue
+inside `_coordinator.Update(...)` and performs the emitted actions afterwards, so honouring it
+means deferring the queue commit past the action list — a change to the protocol shell's ordering,
+to give a consumer something the payload can carry for free. It also answers only the loop half: a
+failure has no transition to pair with.
+
+### Split decision 4 into its own record
+
+Decision 4 is the only one #203 and #306 do not ask for, and it owns most of the *Bad* consequences.
+It is here because the misattribution it fixes is the same defect as the other two, and because
+`Previous` and the reason have to land together or the reason misleads. Landing the reason
+separately would mean rediscovering that coupling. The cost of keeping it is a wider record.
 
 ### Put the item on `PlaybackError`
 
-`FrameFlow.Media` cannot name `PlaylistItem`. `PlaybackError` is also the payload of a refused
-transport command, where an item field would always be null.
+`PlaybackError` is also the payload of a refused transport command, where an item field would
+always be null.
 
 ### Parse the item out of the message
 
@@ -235,6 +300,9 @@ paragraph of contract; this costs a consumer their only failure signal without t
 | # | What | Where |
 |---|---|---|
 | 1 | A queue of three whose middle source does not exist raises one `ItemFailed` naming the middle item | Integration |
+| 1a | A queue whose *first* source does not exist raises no `ItemFailed`; the load fails as a single source's does | Integration |
+| 1b | A run of failures that reaches the give-up ceiling raises `ItemFailed` for the last one, then the fatal | Protocol |
+| 1c | A failure emitted while disposing, and one from a superseded session, raise neither event | Protocol |
 | 2 | The same source added twice, one copy removed, and a failure names the copy that failed | Protocol |
 | 3 | An item that faults mid-playback reports `FaultedDuringPlayback`; one that cannot be opened reports the other | Protocol |
 | 4 | A failure raises `ItemFailed` and `ErrorOccurred` once each, `ItemFailed` first, carrying the same `PlaybackError` by reference | Player |
@@ -246,38 +314,32 @@ paragraph of contract; this costs a consumer their only failure signal without t
 | 10 | The first item's transition reports the first-item reason and a null `Previous` | Protocol |
 | 11 | `RepeatMode.One` on a queue of three reports the loop reason, with `Wrapped` false, and `Previous` equal to `Item` | Protocol |
 
+
 ## Revision history
 
-- **First draft (2026-09-19).** Decision 4 added a reason to `PlaylistTransition` and left carrying
-  the item a transition left under *Not settled*. Decision 2 noted that a consumer subscribing to
-  both failure channels sees the failure twice, and left the relationship to the doc comments.
-- **Revision after automated review of #307 (2026-09-19).** Four findings, all reproduced:
-  - **The reason described an item the record did not name.** `PlaylistTransition` carries the item
-    that became current. A `FailedItem` reason describes the item that ended, so on a queue of
-    `[A, B]` where A fails, a consumer reading `Item` to attribute the reason marks B. Decision 4
-    now carries `Previous`, and the *Not settled* entry that deferred it is gone. The finding is
-    the same misattribution `ItemFailed` exists to prevent, which is why the two are one record.
-  - **The two failure channels had no correlation contract.** Decision 2 now makes `ItemFailed`
-    authoritative for a playlist caller, carries the same `PlaybackError` instance by reference,
-    and fixes the order. The review's alternative, one authoritative channel, is recorded under
-    *Alternatives considered* and rejected: withdrawing item failures from `ErrorOccurred` is a
-    silent break for a single-source caller, because ADR-0077 turned that caller's fault into an
-    item failure.
-  - **ADR-0069's status still said nothing was superseded.** Its opening now scopes the
-    supersession to what a queue's `ErrorOccurred` can attribute.
-  - **Validation** gained the correlation, `Previous` and first-item rows.
-- **Revision after the second turn of automated review of #307 (2026-09-19).** Two findings:
-  - **The loop pair had no correlation contract, and the record said it needed none.** Decision 2
-    gave `ItemFailed` and `ErrorOccurred` identity and order; decision 3 left `ItemLooped` and
-    `LoopRestarted` with neither, and a *Not settled* entry claimed "a loop raises no second event,
-    so there is nothing to reconcile". `LoopRestarted` is that second event, inherited on
-    `IMediaPlaylistPlayer`, so the claim was false and the asymmetry was an oversight rather than a
-    decision. Decision 3 now takes decision 2's contract verbatim, and `PlaylistItemLooped` nests
-    the `LoopRestarted` instance rather than copying its fields, which is what makes the reference
-    the payload. `PlaylistItemFailed` nests `PlaybackError` the same way.
-  - **The duplication had no migration boundary.** The review accepted the contract and repeated
-    that the fan-out is still surface a consumer must understand. Decision 2 now names the boundary
-    that already exists: ADR-0077 decision 2 defers folding `IMediaPlaylistPlayer` into
-    `IMediaPlayer` "to the next release that breaks implementers for other reasons", and at that
-    release withdrawing the duplicates stops being a silent break. What happens at it is left
-    unsettled rather than pre-decided.
+Each entry says what the record got wrong, not what it now says.
+
+- **First draft (2026-09-19).** Decision 4 added a reason to `PlaylistTransition` and deferred
+  naming the item a transition left. Decision 2 left the two failure channels' relationship to the
+  doc comments.
+- **Automated review of #307, turns 1 to 2.** The reason described the item a transition *left*
+  while every other field named the item it entered, so `FailedItem` on `[A, B]` with A failing
+  would have led a consumer to mark B unplayable. The loop pair was left without the correlation
+  rule the failure pair got, under a *Not settled* entry that wrongly claimed a loop raises no
+  second event. The duplication had no end date. ADR-0069's status still said nothing was
+  superseded.
+- **Independent review, 2026-09-19.** Four mechanism errors the panel did not reach:
+  - **`OnRecoverableError` is shared.** `SubstrateSession` reports a lateness-recovery fault
+    through it with no item, so widening it as decision 2 originally said would have made the item
+    nullable for a caller that never has one. It gains `OnItemFailed` instead.
+  - **The first item's failure is not an item failure.** The protocol reports it as fatal, so
+    `ItemFailed` never fires for it, and validation row 1 used a middle item and would not have
+    caught this. Give-up, disposal and a superseded session were unenumerated too, against
+    ADR-0075 decision 5's precedent.
+  - **The race was understated.** `GetPlaylist()` is not racy, it is already wrong: the fold
+    commits the queue before the report is emitted. `CurrentSource` is the racy one, and it moves
+    later. One sentence had described two different failures.
+  - **Citations.** The message fold is at `:697-703`, `IMediaPlayer.MediaInfo` resolves through
+    `PlaylistMediaPlayerCore` rather than the controller's field, `Item` is a nullable `init`
+    property rather than a positional parameter, the ordering alternative is #203's and not
+    ADR-0075's, and the member count was three where it is two.

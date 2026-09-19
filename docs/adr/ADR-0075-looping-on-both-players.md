@@ -9,6 +9,11 @@ protocol; *Revision history* says what changed.
 says how. A single source then became a queue of one, which is
 [One player type](ADR-0077-one-player-type.md), so decisions 1, 3, 4, 5 and 6 reach it through the same
 session. Decision 8, the controller's fallback, is superseded by that record and its code is gone.
+*Not settled here*'s deferral of #203 is superseded by
+[Every playlist event names the item it is about](playlist-events-name-their-item.md), which
+answers it now that ADR-0077 has met the condition it waited on; the in-body entry says what
+changed. Decision 5 itself stands, including its refusal to promise an order between
+`LoopRestarted` and `SourceTransitioned`.
 
 This record supersedes [ADR-0021](ADR-0021-looped-playback-strategy.md). It decides:
 - what each `RepeatMode` means on a single-source player and on a playlist player;
