@@ -23,8 +23,12 @@ namespace FrameFlow.Playback;
 /// </remarks>
 internal sealed partial class PositionTickerWorker : IStateBoundWorker
 {
+    /// <summary>The sampling cadence. Public so a test can advance a fake clock by exactly one.</summary>
+    internal static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(250);
+
     private readonly IPlaybackClock _clock;
     private readonly PlaybackSubject<TimeSpan> _positionTickSubject;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger? _logger;
 
     /// <summary>
@@ -32,10 +36,15 @@ internal sealed partial class PositionTickerWorker : IStateBoundWorker
     /// </summary>
     /// <param name="clock">The playback clock to sample position from.</param>
     /// <param name="positionTickSubject">The subject to push position updates to.</param>
+    /// <param name="timeProvider">
+    /// Drives the tick cadence. A test advances a fake one to produce ticks on demand; without
+    /// this the loop can only be driven by real elapsed time, which no test here may wait on.
+    /// </param>
     /// <param name="logger">Optional logger for structured diagnostics.</param>
     public PositionTickerWorker(
         IPlaybackClock clock,
         PlaybackSubject<TimeSpan> positionTickSubject,
+        TimeProvider timeProvider,
         ILogger? logger = null
     )
     {
@@ -44,6 +53,7 @@ internal sealed partial class PositionTickerWorker : IStateBoundWorker
 
         _clock = clock;
         _positionTickSubject = positionTickSubject;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger;
     }
 
@@ -54,7 +64,7 @@ internal sealed partial class PositionTickerWorker : IStateBoundWorker
 
         try
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
+            using var timer = new PeriodicTimer(TickInterval, _timeProvider);
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 _positionTickSubject.OnNext(_clock.Position);

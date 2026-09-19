@@ -99,12 +99,19 @@ public readonly struct LoopStallEvaluator
     /// past the item duration for <paramref name="stallTimeout"/> continuously,
     /// with no loop restart in that window.
     /// </summary>
-    public static LoopStallEvaluator Create(TimeSpan stallTimeout) =>
+    /// <param name="stallTimeout">How long an overrun must persist to count as a stall.</param>
+    /// <param name="timestampFrequency">
+    /// Ticks per second of the clock whose timestamps will be fed to <see cref="Observe"/>. It has
+    /// to be that clock's own frequency: a timeout converted with one frequency and compared
+    /// against timestamps from another is wrong by their ratio, which is how a fake clock ends up
+    /// never reaching the timeout or reaching it instantly.
+    /// </param>
+    public static LoopStallEvaluator Create(TimeSpan stallTimeout, long timestampFrequency) =>
         new(
             inOverrun: false,
             overrunSinceTicks: 0,
             loopCountAtOverrun: 0,
-            stallTimeoutTicks: (long)(stallTimeout.TotalSeconds * Stopwatch.Frequency)
+            stallTimeoutTicks: (long)(stallTimeout.TotalSeconds * timestampFrequency)
         );
 
     /// <summary>Folds one <paramref name="sample"/>, returning the next state and the verdict. Mutates nothing.</summary>

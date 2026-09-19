@@ -13,6 +13,13 @@ namespace FrameFlow.Playback.Tests;
 public class LoopStallEvaluatorTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// The frequency the timeout is converted with. It must match whatever <c>Sample</c> builds its
+    /// tick values from, which is <see cref="Stopwatch.Frequency"/> — a timeout converted with one
+    /// frequency and compared against timestamps from another is wrong by their ratio.
+    /// </summary>
+    private static readonly long Frequency = Stopwatch.Frequency;
     private static readonly long DurationTicks = TimeSpan.FromSeconds(10).Ticks;
 
     // Stopwatch-tick clock for the NowTicks field.
@@ -41,7 +48,7 @@ public class LoopStallEvaluatorTests
     [Fact]
     public void WithinDuration_NeverStalls()
     {
-        var ev = LoopStallEvaluator.Create(Timeout);
+        var ev = LoopStallEvaluator.Create(Timeout, Frequency);
         var outcome = ev.Observe(Sample(nowSec: 100, posSec: 5, loopCount: 0));
         Assert.False(outcome.Stalled);
     }
@@ -49,7 +56,7 @@ public class LoopStallEvaluatorTests
     [Fact]
     public void JustPastEnd_BelowTimeout_NotYetStalled()
     {
-        var ev = LoopStallEvaluator.Create(Timeout);
+        var ev = LoopStallEvaluator.Create(Timeout, Frequency);
 
         // Episode opens at t=0 with position just past the 10s duration.
         var o0 = ev.Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 3));
@@ -63,7 +70,7 @@ public class LoopStallEvaluatorTests
     [Fact]
     public void PersistentOverrun_PastTimeout_Stalls()
     {
-        var ev = LoopStallEvaluator.Create(Timeout);
+        var ev = LoopStallEvaluator.Create(Timeout, Frequency);
 
         var o0 = ev.Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 3));
         var o1 = o0.Next.Observe(Sample(nowSec: 1.0, posSec: 11.2, loopCount: 3));
@@ -77,7 +84,7 @@ public class LoopStallEvaluatorTests
     [Fact]
     public void LoopCountAdvances_DuringOverrun_ResetsAndDoesNotStall()
     {
-        var ev = LoopStallEvaluator.Create(Timeout);
+        var ev = LoopStallEvaluator.Create(Timeout, Frequency);
 
         // Episode opens at loop count 3.
         var o0 = ev.Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 3));
@@ -91,7 +98,7 @@ public class LoopStallEvaluatorTests
     [Fact]
     public void HealthyWrap_PositionResets_NeverStalls()
     {
-        var ev = LoopStallEvaluator.Create(Timeout);
+        var ev = LoopStallEvaluator.Create(Timeout, Frequency);
 
         // A healthy loop: position climbs toward the end, then wraps to ~0 each cycle.
         var s = ev;
@@ -109,7 +116,7 @@ public class LoopStallEvaluatorTests
     [Fact]
     public void NoRepeatExpected_NeverStalls()
     {
-        var ev = LoopStallEvaluator.Create(Timeout);
+        var ev = LoopStallEvaluator.Create(Timeout, Frequency);
         var o0 = ev.Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 0, expectsRepeat: false));
         var o1 = o0.Next.Observe(Sample(nowSec: 10, posSec: 20, loopCount: 0, expectsRepeat: false));
         Assert.False(o1.Stalled);
@@ -118,7 +125,7 @@ public class LoopStallEvaluatorTests
     [Fact]
     public void NotPlaying_NeverStalls()
     {
-        var ev = LoopStallEvaluator.Create(Timeout);
+        var ev = LoopStallEvaluator.Create(Timeout, Frequency);
         var o0 = ev.Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 0, playing: false));
         var o1 = o0.Next.Observe(Sample(nowSec: 10, posSec: 20, loopCount: 0, playing: false));
         Assert.False(o1.Stalled);
@@ -127,7 +134,7 @@ public class LoopStallEvaluatorTests
     [Fact]
     public void UnknownDuration_NeverStalls()
     {
-        var ev = LoopStallEvaluator.Create(Timeout);
+        var ev = LoopStallEvaluator.Create(Timeout, Frequency);
         var o0 = ev.Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 0, durationTicks: 0));
         var o1 = o0.Next.Observe(Sample(nowSec: 10, posSec: 9999, loopCount: 0, durationTicks: 0));
         Assert.False(o1.Stalled);
@@ -137,7 +144,7 @@ public class LoopStallEvaluatorTests
     public void AtExactlyTheDuration_IsNotAnOverrun()
     {
         // Only a position past the duration opens an overrun. One resting on the end does not.
-        var o0 = LoopStallEvaluator.Create(Timeout).Observe(Sample(nowSec: 0, posSec: 10, loopCount: 1));
+        var o0 = LoopStallEvaluator.Create(Timeout, Frequency).Observe(Sample(nowSec: 0, posSec: 10, loopCount: 1));
         var o1 = o0.Next.Observe(Sample(nowSec: 5, posSec: 10, loopCount: 1));
 
         Assert.False(o1.Stalled);
@@ -146,7 +153,7 @@ public class LoopStallEvaluatorTests
     [Fact]
     public void AnOverrunOfExactlyTheTimeout_Stalls()
     {
-        var o0 = LoopStallEvaluator.Create(Timeout).Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 1));
+        var o0 = LoopStallEvaluator.Create(Timeout, Frequency).Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 1));
         var o1 = o0.Next.Observe(Sample(nowSec: 2.0, posSec: 12.2, loopCount: 1));
 
         Assert.True(o1.Stalled);
@@ -158,7 +165,7 @@ public class LoopStallEvaluatorTests
     {
         // The overrun opens at t=0, and a seek brings the position back inside the item. The next
         // overrun is timed from when it opens, not from t=0.
-        var o0 = LoopStallEvaluator.Create(Timeout).Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 1));
+        var o0 = LoopStallEvaluator.Create(Timeout, Frequency).Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 1));
         var o1 = o0.Next.Observe(Sample(nowSec: 1.5, posSec: 5.0, loopCount: 1));
         var o2 = o1.Next.Observe(Sample(nowSec: 2.5, posSec: 10.1, loopCount: 1));
 
@@ -172,7 +179,7 @@ public class LoopStallEvaluatorTests
         // The loop counter advances, which resets the evaluator, but the position stays past the
         // end: the restart did not take. A new overrun opens from there and stalls on its own
         // timeout.
-        var o0 = LoopStallEvaluator.Create(Timeout).Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 3));
+        var o0 = LoopStallEvaluator.Create(Timeout, Frequency).Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 3));
         var o1 = o0.Next.Observe(Sample(nowSec: 1, posSec: 10.5, loopCount: 4));
         Assert.False(o1.Stalled);
 
@@ -186,7 +193,7 @@ public class LoopStallEvaluatorTests
     [Fact]
     public void AfterAReset_ANewOverrunGetsTheFullTimeout()
     {
-        var o0 = LoopStallEvaluator.Create(Timeout).Observe(Sample(nowSec: 0, posSec: 5, loopCount: 1));
+        var o0 = LoopStallEvaluator.Create(Timeout, Frequency).Observe(Sample(nowSec: 0, posSec: 5, loopCount: 1));
         var o1 = o0.Next.Observe(Sample(nowSec: 1, posSec: 10.2, loopCount: 1));
         var o2 = o1.Next.Observe(Sample(nowSec: 2.5, posSec: 11.7, loopCount: 1));
         var o3 = o2.Next.Observe(Sample(nowSec: 3.1, posSec: 12.3, loopCount: 1));
@@ -199,7 +206,7 @@ public class LoopStallEvaluatorTests
     [Fact]
     public void RecoveryThenRelapse_CanStallAgain()
     {
-        var ev = LoopStallEvaluator.Create(Timeout);
+        var ev = LoopStallEvaluator.Create(Timeout, Frequency);
 
         // First stall.
         var a = ev.Observe(Sample(nowSec: 0, posSec: 10.2, loopCount: 1));
