@@ -817,6 +817,25 @@ The construction body it held is now `PlayerFactory.CreateAsync`, internal, reac
 `PlaybackController.Create(...)` still sits below both for a caller who wants the raw state
 machine.
 
+### 30. `IPlayerBuilder` gained `WithLatenessRecovery`
+
+**Only a caller that implements `IPlayerBuilder` itself is affected.** A chain that consumes the
+builder from `FrameFlowPlayer.Create()` is untouched.
+
+The interface gained a member, so an external implementation stops compiling with CS0535 until it
+adds one. Same shape as entry 10, where `IMediaPlayer` gained `LoopRestarted`.
+
+No default implementation is supplied. A builder that silently ignored `WithLatenessRecovery` would
+report success and configure nothing, which is the failure this member exists to remove: until now
+`PlaybackController.CreatePlaylist` dropped the options on the floor, so every builder-built player
+ran with the walk off and no way to say otherwise.
+
+```csharp
+public IPlayerBuilder WithLatenessRecovery(LatenessRecoveryOptions options) => this;
+```
+
+is enough for an implementation that does not pace, and the compiler names the file to add it to.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`
