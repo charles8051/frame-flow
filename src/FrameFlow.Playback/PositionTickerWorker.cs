@@ -29,6 +29,7 @@ internal sealed partial class PositionTickerWorker : IStateBoundWorker
     private readonly IPlaybackClock _clock;
     private readonly PlaybackSubject<TimeSpan> _positionTickSubject;
     private readonly TimeProvider _timeProvider;
+    private readonly Action? _onTickProcessed;
     private readonly ILogger? _logger;
 
     /// <summary>
@@ -40,11 +41,18 @@ internal sealed partial class PositionTickerWorker : IStateBoundWorker
     /// Drives the tick cadence. A test advances a fake one to produce ticks on demand; without
     /// this the loop can only be driven by real elapsed time, which no test here may wait on.
     /// </param>
+    /// <param name="onTickProcessed">
+    /// Raised after a tick's observers have all run and before this worker waits for the next one.
+    /// It exists so a test driving a fake clock can advance one interval at a time and know the
+    /// worker is ready for the next: any signal raised from inside the notification instead can
+    /// release a caller while observers are still running.
+    /// </param>
     /// <param name="logger">Optional logger for structured diagnostics.</param>
     public PositionTickerWorker(
         IPlaybackClock clock,
         PlaybackSubject<TimeSpan> positionTickSubject,
         TimeProvider timeProvider,
+        Action? onTickProcessed = null,
         ILogger? logger = null
     )
     {
@@ -54,6 +62,7 @@ internal sealed partial class PositionTickerWorker : IStateBoundWorker
         _clock = clock;
         _positionTickSubject = positionTickSubject;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _onTickProcessed = onTickProcessed;
         _logger = logger;
     }
 
@@ -68,6 +77,10 @@ internal sealed partial class PositionTickerWorker : IStateBoundWorker
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 _positionTickSubject.OnNext(_clock.Position);
+
+                // OnNext has returned, so every observer of this tick — the loop-stall fold
+                // included — has finished with it, and the next statement is the wait.
+                _onTickProcessed?.Invoke();
             }
         }
         catch (OperationCanceledException)

@@ -195,7 +195,14 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         _sessionFactory = sessionFactory ?? throw new ArgumentNullException(nameof(sessionFactory));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _tickerBinding = new WorkerBinding<PositionTickerWorker>(
-            () => new PositionTickerWorker(_clock, _positionTickSubject, _timeProvider, _logger),
+            () =>
+                new PositionTickerWorker(
+                    _clock,
+                    _positionTickSubject,
+                    _timeProvider,
+                    () => PositionTickProcessed?.Invoke(),
+                    _logger
+                ),
             onError: null,
             logger: _logger
         );
@@ -279,7 +286,22 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         {
             _loopWasStalled = false;
         }
+
     }
+
+    /// <summary>
+    /// Raised by the position ticker after a tick's observers have all run and before it waits for
+    /// the next one, on the ticker's thread.
+    /// </summary>
+    /// <remarks>
+    /// A test barrier, and deliberately not the <c>PositionTick</c> stream nor a signal raised from
+    /// inside the fold. A subject calls its observers in no promised order and a signal raised from
+    /// within one of them releases a caller while the others may still be running, so neither says
+    /// what a test driving a fake clock needs to know: that the worker is done with this tick and
+    /// ready for the next interval. This does. Same shape as the completion signals the camera
+    /// pipeline exposes for its own shell tests.
+    /// </remarks>
+    internal event Action? PositionTickProcessed;
 
     // ── IPlaybackController — Commands ─────────────────────────────────
 
