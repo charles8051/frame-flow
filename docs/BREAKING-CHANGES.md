@@ -711,8 +711,8 @@ IPlayerBuilder builder = FrameFlowPlayer.Create().WithMedia(path).WithRepeatMode
 
 Every chained call site is unchanged: the options return the builder, as they always did, and
 `var` never named the difference. What breaks is code that wrote `IMediaPlayerBuilder` down —
-a local, a field, a parameter — and any type outside FrameFlow that implemented it. Entries 19
-and 24 already broke implementers of these interfaces in this release.
+a local, a field, a parameter — and any type outside FrameFlow that implemented it. Entries 20
+and 25 already broke implementers of these interfaces in this release.
 
 `WithAvaloniaVideoView` keeps two overloads: one on `IPlayerBuilder`, and one that was on
 `IMediaPlayerBuilder` and is now on `IPassBuilder`. `WithOpenAlAudio` had the same pair and entry
