@@ -9,7 +9,14 @@ namespace FrameFlow.Playback;
 /// One sample of loop-liveness state, taken by the loop-stall watchdog in
 /// <see cref="PlaybackControllerCore"/> on each position tick.
 /// </summary>
-/// <param name="NowTicks"><see cref="Stopwatch.GetTimestamp"/> when sampled (monotonic).</param>
+/// <param name="NowTicks">
+/// A monotonic timestamp taken when the sample was. It must come from the same clock whose
+/// <c>TimestampFrequency</c> was given to <see cref="LoopStallEvaluator.Create"/>: the timeout is
+/// converted to ticks with that frequency, so a sample timed by a different one is wrong by the
+/// ratio between them, and the evaluator either never reaches the timeout or reaches it at once.
+/// <see cref="TimeProvider.GetTimestamp"/> and <see cref="TimeProvider.TimestampFrequency"/> are
+/// the matched pair.
+/// </param>
 /// <param name="PositionTicks">Current playback position, in <see cref="TimeSpan.Ticks"/>.</param>
 /// <param name="DurationTicks">Loaded item duration, in <see cref="TimeSpan.Ticks"/> (0 if unknown).</param>
 /// <param name="ExpectsRepeat">
@@ -99,12 +106,19 @@ public readonly struct LoopStallEvaluator
     /// past the item duration for <paramref name="stallTimeout"/> continuously,
     /// with no loop restart in that window.
     /// </summary>
-    public static LoopStallEvaluator Create(TimeSpan stallTimeout) =>
+    /// <param name="stallTimeout">How long an overrun must persist to count as a stall.</param>
+    /// <param name="timestampFrequency">
+    /// Ticks per second of the clock whose timestamps will be fed to <see cref="Observe"/>. It has
+    /// to be that clock's own frequency: a timeout converted with one frequency and compared
+    /// against timestamps from another is wrong by their ratio, which is how a fake clock ends up
+    /// never reaching the timeout or reaching it instantly.
+    /// </param>
+    public static LoopStallEvaluator Create(TimeSpan stallTimeout, long timestampFrequency) =>
         new(
             inOverrun: false,
             overrunSinceTicks: 0,
             loopCountAtOverrun: 0,
-            stallTimeoutTicks: (long)(stallTimeout.TotalSeconds * Stopwatch.Frequency)
+            stallTimeoutTicks: (long)(stallTimeout.TotalSeconds * timestampFrequency)
         );
 
     /// <summary>Folds one <paramref name="sample"/>, returning the next state and the verdict. Mutates nothing.</summary>

@@ -88,9 +88,12 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     // into volatile fields so GetDiagnostics can surface it as level-triggered
     // state (ADR-0034), alongside the edge-triggered LoopStalled observable and
     // the LoopStallMetrics counter.
-    private LoopStallEvaluator _loopStallEvaluator = LoopStallEvaluator.Create(
-        TimeSpan.FromSeconds(2)
-    );
+    // Built in the constructor rather than inline, because its timeout has to be converted with
+    // the frequency of the clock whose timestamps it will be fed.
+    private LoopStallEvaluator _loopStallEvaluator;
+
+    /// <summary>How long an overrun must persist before it counts as a stall.</summary>
+    internal static readonly TimeSpan LoopStallTimeout = TimeSpan.FromSeconds(2);
     private bool _loopWasStalled;
     private volatile bool _loopStalledNow;
 
@@ -161,6 +164,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     // loop-stall watchdog reads it as its loop-count gate, so it only rises. A single source's
     // LoopRestarted carries it; a playlist's carries the session's per-item count instead.
     private int _loopCount;
+    private readonly TimeProvider _timeProvider;
     private bool _disposed;
 
     private const string DisposeFailureMessage = "PlaybackController is disposing.";
@@ -174,14 +178,24 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         ILogger<PlaybackControllerCore> logger,
         IPlaybackSessionFactory sessionFactory,
         IPlaybackClock clock,
-        IOptions<FrameFlowPlaybackOptions>? playbackOptions = null
+        IOptions<FrameFlowPlaybackOptions>? playbackOptions = null,
+        TimeProvider? timeProvider = null
     )
     {
+        // Wall time, not media time. IPlaybackClock above carries a position on the presentation
+        // timeline, which seeks and pauses; the loop-stall watchdog needs elapsed real time and the
+        // tick cadence that samples it. Both were read straight off Stopwatch and PeriodicTimer,
+        // which is why no test could drive the stall path (#314).
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _loopStallEvaluator = LoopStallEvaluator.Create(
+            LoopStallTimeout,
+            _timeProvider.TimestampFrequency
+        );
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _sessionFactory = sessionFactory ?? throw new ArgumentNullException(nameof(sessionFactory));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _tickerBinding = new WorkerBinding<PositionTickerWorker>(
-            () => new PositionTickerWorker(_clock, _positionTickSubject, _logger),
+            () => new PositionTickerWorker(_clock, _positionTickSubject, _timeProvider, _logger),
             onError: null,
             logger: _logger
         );
@@ -224,7 +238,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             ?? SessionPresentation.Empty;
 
         var sample = new LoopStallSample(
-            NowTicks: Stopwatch.GetTimestamp(),
+            NowTicks: _timeProvider.GetTimestamp(),
             PositionTicks: position.Ticks,
             DurationTicks: _loadedDuration.Ticks,
             ExpectsRepeat: presentation.ExpectsRepeat,
@@ -243,7 +257,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         if (outcome.Stalled && !_loopWasStalled)
         {
             _loopWasStalled = true;
-            var overrun = TimeSpan.FromSeconds((double)outcome.OverrunTicks / Stopwatch.Frequency);
+            var overrun = TimeSpan.FromSeconds(
+                (double)outcome.OverrunTicks / _timeProvider.TimestampFrequency
+            );
             LoopStallMetrics.RecordLoopStall();
             LogLoopStalled(
                 sample.LoopCount,
@@ -397,7 +413,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
         var loopStalled = _loopStalledNow;
         TimeSpan? loopOverrun = loopStalled
-            ? TimeSpan.FromSeconds((double)Volatile.Read(ref _loopOverrunTicks) / Stopwatch.Frequency)
+            ? TimeSpan.FromSeconds(
+                (double)Volatile.Read(ref _loopOverrunTicks) / _timeProvider.TimestampFrequency
+            )
             : null;
 
         return new PlaybackDiagnosticsSnapshot(

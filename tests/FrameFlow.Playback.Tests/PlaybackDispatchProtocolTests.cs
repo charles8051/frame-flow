@@ -95,12 +95,16 @@ public sealed class PlaybackDispatchProtocolTests
     }
 
     private static (PlaybackControllerCore Controller, FakeSession Session) NewController(
-        RepeatMode initialRepeat = RepeatMode.Off
+        RepeatMode initialRepeat = RepeatMode.Off,
+        FakeTimeProvider? time = null
     )
     {
         var session = new FakeSession();
         var factory = new FakeSessionFactory(session);
-        var clock = new PlaybackClock(new FakeTimeProvider());
+        // One provider drives the clock's position, the ticker's cadence and the stall fold's
+        // timestamps, so advancing it moves all three coherently.
+        var provider = time ?? new FakeTimeProvider();
+        var clock = new PlaybackClock(provider);
         var options = Microsoft.Extensions.Options.Options.Create(
             new FrameFlowPlaybackOptions { InitialRepeatMode = initialRepeat }
         );
@@ -108,7 +112,8 @@ public sealed class PlaybackDispatchProtocolTests
             NullLogger<PlaybackControllerCore>.Instance,
             factory,
             clock,
-            options
+            options,
+            provider
         );
         return (controller, session);
     }
@@ -1176,6 +1181,9 @@ public sealed class PlaybackDispatchProtocolTests
         public bool Disposed;
         public Exception? InitializeThrows;
         public Exception? WarmUpThrows;
+
+        /// <summary>What this session reports it is presenting. Settable for the stall tests.</summary>
+        public SessionPresentation Presentation { get; set; } = SessionPresentation.Empty;
 
         private static readonly MediaInfo Info = new(
             ContainerName: "fake",
