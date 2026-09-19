@@ -216,20 +216,18 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         if (_disposed)
             return;
 
-        // Both reads happen HERE, before the fold, and the captured item is what the event names.
-        // Reading the item at the raise site instead would let the session advance in between: the
-        // verdict would be about the item that was repeating while the event named the one that
-        // started after it. Capturing the session once is not enough on its own, because the race
-        // is inside one session's queue, not between two sessions.
-        var session = Volatile.Read(ref _sessionBinding).Session;
-        var expectsRepeat = session?.ExpectsRepeat ?? false;
-        var currentItem = session?.CurrentItem;
+        // One read, before the fold, of one value. The session answers the repeat expectation and
+        // the item from a single read of its queue, so the verdict below and the item the event
+        // names describe the same instant. Two property reads would let an advance land between
+        // them and attribute a stall to the item that started after the one that wedged.
+        var presentation = Volatile.Read(ref _sessionBinding).Session?.Presentation
+            ?? SessionPresentation.Empty;
 
         var sample = new LoopStallSample(
             NowTicks: Stopwatch.GetTimestamp(),
             PositionTicks: position.Ticks,
             DurationTicks: _loadedDuration.Ticks,
-            ExpectsRepeat: expectsRepeat,
+            ExpectsRepeat: presentation.ExpectsRepeat,
             Playing: IsActivelyPresenting,
             LoopCount: Volatile.Read(ref _loopCount)
         );
@@ -257,7 +255,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             // This one is raised on the position ticker's loop rather than the dispatch loop, so
             // the order is kept here rather than by a command carrying both.
             var stalled = new LoopStalled(sample.LoopCount, position, _loadedDuration, overrun);
-            if (currentItem is { } stalledItem)
+            if (presentation.CurrentItem is { } stalledItem)
                 _itemStalledSubject.OnNext(new PlaylistItemStalled(stalledItem, stalled));
             _loopStalledSubject.OnNext(stalled);
         }
