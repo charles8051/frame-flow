@@ -835,6 +835,24 @@ public IPlayerBuilder WithLatenessRecovery(LatenessRecoveryOptions options) => t
 ```
 
 is enough for an implementation that does not pace, and the compiler names the file to add it to.
+### 31. `LoopStallMetrics` is internal; scrape the meter instead
+
+The class and its `RecordLoopStall()` had one caller, inside `FrameFlow.Playback`. Public, it let
+a consumer add to `frameflow.playback.loop_stalls` and make the counter disagree with the stalls
+the controller actually detected.
+
+Nothing changes for reading the counter, which is what the type was published for. The meter name
+and the counter name are the contract, and both are unchanged:
+
+```
+dotnet-counters monitor --counters FrameFlow.Playback
+```
+
+A `MeterListener` on the `FrameFlow.Playback` meter reaches
+`frameflow.playback.loop_stalls` the same way it did before.
+
+Only a caller that invoked `LoopStallMetrics.RecordLoopStall()` breaks, and nothing should have:
+a stall the controller did not see is not a stall. To count your own, declare your own meter.
 
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
