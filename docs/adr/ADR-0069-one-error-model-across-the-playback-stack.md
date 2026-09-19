@@ -6,8 +6,14 @@ Accepted (2026-09-11).
 
 Resolves the split recorded in issue #102. Extends the `Result` type introduced
 alongside [ADR-0032](ADR-0032-pull-shape-playback-controller.md) up one layer,
-to `IMediaPlayer`. Nothing is superseded — `IPlaybackController` keeps the
-contract it already had, and this decision is about the surface above it.
+to `IMediaPlayer`. It superseded nothing when it was accepted —
+`IPlaybackController` keeps the contract it already had, and this decision is
+about the surface above it.
+
+**Superseded in one respect, 2026-09-19,** by
+[Every playlist event names the item it is about](playlist-events-name-their-item.md): what a
+queue's `ErrorOccurred` can attribute. The `Result` decision and `ErrorOccurred` itself are
+unchanged. The note under *What `IMediaPlaylistPlayer` does* says what moved.
 
 ### What shipped
 
@@ -108,6 +114,18 @@ They write to the coordinator and complete synchronously; they have no refusal
 to report, and a `Result` that is always `Ok` is a value the caller has to
 handle for nothing. `Result` marks the commands that can be refused, and
 uniformity that dilutes that signal costs more than it buys.
+
+> **Superseded in one respect, 2026-09-19**, by
+> [Every playlist event names the item it is about](playlist-events-name-their-item.md).
+> This record decided `ErrorOccurred` when `PlaybackController.Create` and `CreatePlaylist` built
+> different players, so an event with no item on it named the only item there was.
+> [ADR-0077](ADR-0077-one-player-type.md) decision 1 made every player a queue without revisiting
+> the payload, and `PlaybackError` cannot say which item failed (#306). That record adds
+> `IMediaPlaylistPlayer.ItemFailed`, carrying the `PlaylistItem` and the `PlaylistItemFailure` the
+> session already decided. `PlaybackError` does not gain an item: it lives in `FrameFlow.Media`,
+> which cannot name `PlaylistItem`, and it is also the payload of a refused transport command,
+> where there is no item. `ErrorOccurred` itself is unchanged, and keeps reporting the same
+> failure.
 
 ### What the chrome does with a refusal
 

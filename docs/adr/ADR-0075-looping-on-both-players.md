@@ -9,6 +9,11 @@ protocol; *Revision history* says what changed.
 says how. A single source then became a queue of one, which is
 [One player type](ADR-0077-one-player-type.md), so decisions 1, 3, 4, 5 and 6 reach it through the same
 session. Decision 8, the controller's fallback, is superseded by that record and its code is gone.
+*Not settled here*'s deferral of #203 is superseded by
+[Every playlist event names the item it is about](playlist-events-name-their-item.md), which
+answers it now that ADR-0077 has met the condition it waited on; the in-body entry says what
+changed. Decision 5 itself stands, including its refusal to promise an order between
+`LoopRestarted` and `SourceTransitioned`.
 
 This record supersedes [ADR-0021](ADR-0021-looped-playback-strategy.md). It decides:
 - what each `RepeatMode` means on a single-source player and on a playlist player;
@@ -494,6 +499,15 @@ if that is too long.
   carries no item or transition index, and no order between the two events is promised. Whether it
   should name the item depends on whether every player raises transitions, which the single player
   type's record decides.
+
+  > **Superseded 2026-09-19** by
+  > [Every playlist event names the item it is about](playlist-events-name-their-item.md). The
+  > condition this entry waited on is answered: [ADR-0077](ADR-0077-one-player-type.md) decision 1
+  > makes every player a queue, so every player raises transitions. That record adds
+  > `IMediaPlaylistPlayer.ItemLooped`, carrying the `PlaylistItem` alongside the `LoopCount` and
+  > `ItemDuration` this record's decision 5 defined. `IMediaPlayer.LoopRestarted` is unchanged, and
+  > decision 5's refusal to promise an order between `LoopRestarted` and `SourceTransitioned`
+  > stands: a subscriber that needs the item reads it off the event rather than off a snapshot.
 - **Recovering from a rewind that hangs.** A rewind that never completes is reported by the
   watchdogs, but nothing rebuilds the item or bounds the wait. That is so on a playlist today.
 - **Operator state across a loop.** When a retained graph re-runs from zero, nothing resets an
