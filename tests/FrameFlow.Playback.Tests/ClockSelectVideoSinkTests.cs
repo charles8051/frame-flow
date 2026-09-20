@@ -1112,8 +1112,8 @@ public sealed class ClockSelectVideoSinkTests
 
     // The bound is real time and the drain completes on a pool thread, so a timeout here has two
     // explanations: a loop that never ended the run, or a continuation that was queued and never
-    // scheduled. This has only ever fired on a CI runner (#330), never locally, so the message
-    // carries the pool readings that tell the two apart.
+    // scheduled. This has only ever fired on a CI runner (#330), never locally, so the failure
+    // watches the drain for a further grace period and says which of the two it was.
     private static async Task AwaitDrainAsync(Task drain)
     {
         try
@@ -1122,16 +1122,53 @@ public sealed class ClockSelectVideoSinkTests
         }
         catch (TimeoutException)
         {
-            ThreadPool.GetMinThreads(out var minWorker, out _);
-            ThreadPool.GetAvailableThreads(out var availableWorker, out _);
             Assert.Fail(
                 "The run did not drain within the bound. "
-                    + $"[pool: {ThreadPool.ThreadCount} threads, {ThreadPool.PendingWorkItemCount} queued, "
-                    + $"{availableWorker} of {minWorker}+ workers free, {Environment.ProcessorCount} cpus]"
+                    + await LateOrNeverAsync(drain).ConfigureAwait(false)
             );
         }
     }
 
+    /// <summary>
+    /// Says whether a task that missed its bound was late or is not coming, by watching it for a
+    /// further grace period. Arriving during the grace makes it the runner's scheduling; never
+    /// arriving makes it the subject.
+    /// </summary>
+    /// <remarks>
+    /// A pool snapshot cannot answer this. It is process-global, unrelated to this task, and taken
+    /// after the fact, so a continuation that ran just before the sample reads the same as one that
+    /// was never queued. Waiting on the task itself is the only thing that separates them; the pool
+    /// figures ride along as context and nothing more (#330).
+    /// </remarks>
+    private static async Task<string> LateOrNeverAsync(Task task)
+    {
+        // WaitAsync rather than Task.Delay: the delay form is banned in tests (ADR-0072) and this
+        // is the same primitive the bound above already uses.
+        bool arrived;
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            arrived = true;
+        }
+        catch (TimeoutException)
+        {
+            arrived = false;
+        }
+        catch (Exception)
+        {
+            // It finished, faulted or cancelled. Either way it arrived.
+            arrived = true;
+        }
+        ThreadPool.GetMinThreads(out var minWorker, out _);
+        ThreadPool.GetAvailableThreads(out var availableWorker, out _);
+        return (arrived
+                ? "It drained during the grace after the bound, so it was scheduled late rather "
+                    + "than never ended. "
+                : "It had still not drained well after the bound, so the run never ended. ")
+            + $"[context, process-wide: {ThreadPool.ThreadCount} pool threads, "
+            + $"{ThreadPool.PendingWorkItemCount} queued, {availableWorker} of {minWorker}+ workers "
+            + $"free, {Environment.ProcessorCount} cpus]";
+    }
     /// <summary>A minimal CPU <see cref="IVideoFrame"/> that tracks disposal.</summary>
     private sealed class TrackingFrame : IVideoFrame
     {

@@ -586,11 +586,6 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
 
     // The timeout only bounds a failure: a working sink completes as soon as the release
     // runs, and a broken one never does.
-    //
-    // It reports the thread pool alongside the reason because the bound is real time and the
-    // signal arrives on a pool thread. This timing out has so far only been seen on a CI runner
-    // (#330), never reproduced locally, and the two readings separate the two explanations: a
-    // sink that never released, or a continuation that was queued and never scheduled.
     private static async Task AssertCompletesAsync(Task task, string because)
     {
         try
@@ -599,17 +594,49 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
         }
         catch (TimeoutException)
         {
-            Assert.Fail($"{because} {ThreadPoolState()}");
+            Assert.Fail($"{because} {await LateOrNeverAsync(task).ConfigureAwait(false)}");
         }
     }
 
-    /// <summary>Pool readings for a timeout message: see <see cref="AssertCompletesAsync"/>.</summary>
-    internal static string ThreadPoolState()
+    /// <summary>
+    /// Says whether a task that missed its bound was late or is not coming, by watching it for a
+    /// further grace period. A task that arrives during the grace was scheduled late, which is a
+    /// property of the runner rather than of the subject; one that never arrives is the subject.
+    /// </summary>
+    /// <remarks>
+    /// A pool snapshot cannot answer this. It is process-global, unrelated to this task, and taken
+    /// after the fact, so a continuation that ran just before the sample reads the same as one that
+    /// was never queued. This waits on the task itself, which is the only thing that can tell the
+    /// two apart. The pool figures ride along as context and nothing more (#330).
+    /// </remarks>
+    internal static async Task<string> LateOrNeverAsync(Task task)
     {
+        // WaitAsync rather than Task.Delay: the delay form is banned in tests (ADR-0072) and this
+        // is the same primitive the bound above already uses.
+        bool arrived;
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            arrived = true;
+        }
+        catch (TimeoutException)
+        {
+            arrived = false;
+        }
+        catch (Exception)
+        {
+            // It finished, faulted or cancelled. Either way it arrived.
+            arrived = true;
+        }
         ThreadPool.GetMinThreads(out var minWorker, out _);
         ThreadPool.GetAvailableThreads(out var availableWorker, out _);
-        return $"[pool: {ThreadPool.ThreadCount} threads, {ThreadPool.PendingWorkItemCount} queued, "
-            + $"{availableWorker} of {minWorker}+ workers free, {Environment.ProcessorCount} cpus]";
+        return (arrived
+                ? "It completed during the grace after the bound, so it was scheduled late rather "
+                    + "than never signalled. "
+                : "It had still not completed well after the bound, so the subject never signalled. ")
+            + $"[context, process-wide: {ThreadPool.ThreadCount} pool threads, "
+            + $"{ThreadPool.PendingWorkItemCount} queued, {availableWorker} of {minWorker}+ workers "
+            + $"free, {Environment.ProcessorCount} cpus]";
     }
 
     /// <summary>

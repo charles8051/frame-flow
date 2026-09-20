@@ -52,4 +52,42 @@
   <ItemGroup Condition="'$(IsTestProject)' == 'true'">
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="9.*" />
   </ItemGroup>
+
+  <!--
+    A pool that does not have to grow, for the suites whose tests wait on a signal
+    that arrives on a pool thread (#330).
+
+    Such a test is deterministic in the sense that matters: it drives a
+    FakeTimeProvider and waits for the work rather than for a duration, and its
+    bound only catches a failure. What it still depends on is the runtime
+    scheduling the continuation carrying that signal. Above the pool's minimum,
+    threads are injected at a throttled rate rather than on demand, so where the
+    ready threads are already busy a continuation can sit queued for seconds, the
+    bound expires, and the test reports a defect in its subject that is not there.
+
+    The minimum defaults to the processor count, small on a CI runner and large on
+    a workstation, which is why this only shows up in CI: two tests in unrelated
+    assemblies failed on consecutive `test (windows-latest)` runs of one commit
+    while ubuntu passed both, and neither reproduced across three full local suite
+    runs on 24 cores.
+
+    A mitigation, not a proven fix. It removes injection delay as a candidate; it
+    does not show injection delay was the cause. So the two suites also watch the
+    task itself past the bound and report whether it was late or never coming,
+    which is the part that will settle it.
+
+    Opt-in, because the minimum is per process and `dotnet test` on the solution
+    launches a host per assembly. Setting it everywhere would let twenty-odd hosts
+    each grow to this many workers on a four-core runner, which is its own
+    contention and would perturb the scheduling the suite exists to exercise. Only
+    the assemblies that have actually failed this way opt in; widen it on evidence,
+    not in advance.
+
+    In .targets for the same reason as the ban above: the csproj's setting is what
+    the condition reads. Test hosts only, so it cannot mask starvation in shipped
+    code.
+  -->
+  <PropertyGroup Condition="'$(FrameFlowTimeBarrierTests)' == 'true'">
+    <ThreadPoolMinThreads>32</ThreadPoolMinThreads>
+  </PropertyGroup>
 </Project>
