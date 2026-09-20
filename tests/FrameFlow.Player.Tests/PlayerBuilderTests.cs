@@ -36,6 +36,21 @@ public sealed class PlayerBuilderTests
     }
 
     [Fact]
+    public void WithTimeProvider_Null_Throws()
+    {
+        var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");
+        Assert.Throws<ArgumentNullException>(() => builder.WithTimeProvider(null!));
+    }
+
+    [Fact]
+    public void WithTimeProvider_ReturnsSameBuilderForChaining()
+    {
+        var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");
+
+        Assert.Same(builder, builder.WithTimeProvider(TimeProvider.System));
+    }
+
+    [Fact]
     public void WithLatenessRecovery_Null_Throws()
     {
         var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");

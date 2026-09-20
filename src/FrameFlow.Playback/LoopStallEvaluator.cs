@@ -26,7 +26,7 @@ namespace FrameFlow.Playback;
 /// </param>
 /// <param name="Playing">Whether playback is actively presenting (Playing and not seeking).</param>
 /// <param name="LoopCount">The controller's monotonic successful-loop-restart counter.</param>
-public readonly record struct LoopStallSample(
+internal readonly record struct LoopStallSample(
     long NowTicks,
     long PositionTicks,
     long DurationTicks,
@@ -40,7 +40,7 @@ public readonly record struct LoopStallSample(
 /// state, whether the loop is stalled as of this sample, and how long the
 /// position has been past the item duration without a restart (for the log).
 /// </summary>
-public readonly record struct LoopStallOutcome(
+internal readonly record struct LoopStallOutcome(
     LoopStallEvaluator Next,
     bool Stalled,
     long OverrunTicks
@@ -81,7 +81,7 @@ public readonly record struct LoopStallOutcome(
 /// clock, no player, and no real timing.
 /// </para>
 /// </remarks>
-public readonly struct LoopStallEvaluator
+internal readonly struct LoopStallEvaluator
 {
     private readonly bool _inOverrun;
     private readonly long _overrunSinceTicks; // NowTicks when the position first went past duration

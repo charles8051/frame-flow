@@ -154,6 +154,13 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
     // ── Position ticker worker ─────────────────────────────────────────
     private readonly IPlaybackClock _clock;
+
+    /// <summary>
+    /// The clock pacing playback: the one the caller injected, or the one the controller built for
+    /// itself. Exposed for the tests that check a caller's clock is kept and that an injected
+    /// TimeProvider drives the one it builds (#323).
+    /// </summary>
+    internal IPlaybackClock Clock => _clock;
     private readonly WorkerBinding<PositionTickerWorker> _tickerBinding;
 
     // ── Internal bookkeeping ───────────────────────────────────────────

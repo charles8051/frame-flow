@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Time.Testing;
+
 namespace FrameFlow.Playback.Tests;
 
 /// <summary>
@@ -169,6 +171,37 @@ public sealed class PlaybackControllerFactoryTests
         );
 
         Assert.Equal("RelaxBelow", ex.ParamName);
+    }
+
+    [Fact]
+    public async Task Create_TimeProvider_AlsoDrivesTheClockItBuilds()
+    {
+        // #323: a caller on simulated time used to get a deterministic clock only if they built
+        // one themselves, and a wall-clock stall watchdog regardless. One provider now covers both.
+        var fake = new FakeTimeProvider();
+
+        await using var controller = PlaybackController.Create(timeProvider: fake);
+
+        var clock = ((PlaybackControllerCore)controller).Clock;
+        clock.Start(TimeSpan.Zero);
+
+        fake.Advance(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(TimeSpan.FromSeconds(2), ((IReadOnlyPlaybackClock)clock).Position);
+    }
+
+    [Fact]
+    public async Task Create_ExplicitClock_IsNotReplacedByTheTimeProvider()
+    {
+        // The provider only supplies the clock the controller would otherwise build itself.
+        var mine = new PlaybackClock(new FakeTimeProvider());
+
+        await using var controller = PlaybackController.Create(
+            clock: mine,
+            timeProvider: new FakeTimeProvider()
+        );
+
+        Assert.Same(mine, ((PlaybackControllerCore)controller).Clock);
     }
 
     private static PlaylistSessionFactory SessionFactory(IPlaybackController controller) =>

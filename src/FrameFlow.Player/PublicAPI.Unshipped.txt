@@ -59,6 +59,7 @@ FrameFlow.Player.IPlayerBuilder.WithMedia(FrameFlow.Media.IMediaSource! source) 
 FrameFlow.Player.IPlayerBuilder.WithMedia(System.Collections.Generic.IEnumerable<FrameFlow.Media.IMediaSource!>! sources) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithMedia(string! path) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithRepeatMode(FrameFlow.Media.RepeatMode mode) -> FrameFlow.Player.IPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.WithTimeProvider(System.TimeProvider! timeProvider) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithVideoSink(FrameFlow.Media.IVideoSink! sink) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.MediaPass
 FrameFlow.Player.MediaPass.DisposeAsync() -> System.Threading.Tasks.ValueTask

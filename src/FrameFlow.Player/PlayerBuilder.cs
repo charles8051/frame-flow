@@ -33,6 +33,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
     private RepeatMode _repeatMode = RepeatMode.Off;
     private IPlaybackClock? _clock;
     private LatenessRecoveryOptions? _latenessRecovery;
+    private TimeProvider? _timeProvider;
     private bool _yieldHardwareFrames;
     private bool _activateAudioSink = true;
 
@@ -120,6 +121,13 @@ internal sealed class PlayerBuilder : IPlayerBuilder
         return this;
     }
 
+    public IPlayerBuilder WithTimeProvider(TimeProvider timeProvider)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        _timeProvider = timeProvider;
+        return this;
+    }
+
     public IPlayerBuilder WithLatenessRecovery(LatenessRecoveryOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -190,6 +198,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
             configureAudio: _audioConfigurator,
             clock: _clock,
             latenessRecovery: _latenessRecovery,
+            timeProvider: _timeProvider,
             cancellationToken: cancellationToken
         );
     }
