@@ -112,6 +112,14 @@ public static class PlaybackController
     /// hook; runs between the decoder source and the gate+sink
     /// terminal.
     /// </param>
+    /// <param name="timeProvider">
+    /// Wall time for the loop-stall watchdog and the position ticker, and for the
+    /// <see cref="PlaybackClock"/> this builds when <paramref name="clock"/> is
+    /// <see langword="null"/>. Defaults to <see cref="TimeProvider.System"/>. This is elapsed real
+    /// time, not the presentation timeline <paramref name="clock"/> carries: the watchdog's job is
+    /// to notice that the timeline advanced while frames stopped, so it cannot read the clock it
+    /// supervises.
+    /// </param>
     /// <param name="latenessRecovery">
     /// Tuning for the lateness-recovery walk. <see langword="null"/> leaves
     /// the walk off, which is the default.
@@ -127,7 +135,8 @@ public static class PlaybackController
         ILoggerFactory? loggerFactory = null,
         Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? configureVideo = null,
         Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? configureAudio = null,
-        LatenessRecoveryOptions? latenessRecovery = null
+        LatenessRecoveryOptions? latenessRecovery = null,
+        TimeProvider? timeProvider = null
     )
     {
         // One source at a time, as a queue of one on the playlist session. Each load makes the
@@ -149,7 +158,8 @@ public static class PlaybackController
             ),
             initialRepeatMode,
             clock,
-            loggerFactory
+            loggerFactory,
+            timeProvider
         );
     }
 
@@ -210,6 +220,14 @@ public static class PlaybackController
     /// <param name="configureAudio">
     /// Optional audio-chain configurator, applied to every item's chain.
     /// </param>
+    /// <param name="timeProvider">
+    /// Wall time for the loop-stall watchdog and the position ticker, and for the
+    /// <see cref="PlaybackClock"/> this builds when <paramref name="clock"/> is
+    /// <see langword="null"/>. Defaults to <see cref="TimeProvider.System"/>. This is elapsed real
+    /// time, not the presentation timeline <paramref name="clock"/> carries: the watchdog's job is
+    /// to notice that the timeline advanced while frames stopped, so it cannot read the clock it
+    /// supervises.
+    /// </param>
     /// <param name="latenessRecovery">
     /// Tuning for the lateness-recovery walk, applied to every item's chain.
     /// <see langword="null"/> leaves the walk off, which is the default.
@@ -226,7 +244,8 @@ public static class PlaybackController
         ILoggerFactory? loggerFactory = null,
         Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? configureVideo = null,
         Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? configureAudio = null,
-        LatenessRecoveryOptions? latenessRecovery = null
+        LatenessRecoveryOptions? latenessRecovery = null,
+        TimeProvider? timeProvider = null
     )
     {
         ArgumentNullException.ThrowIfNull(coordinator);
@@ -246,7 +265,8 @@ public static class PlaybackController
             ),
             initialRepeatMode,
             clock,
-            loggerFactory
+            loggerFactory,
+            timeProvider
         );
     }
 
@@ -258,12 +278,16 @@ public static class PlaybackController
         IPlaybackSessionFactory sessionFactory,
         RepeatMode initialRepeatMode,
         IPlaybackClock? clock,
-        ILoggerFactory loggerFactory
+        ILoggerFactory loggerFactory,
+        TimeProvider? timeProvider
     ) =>
         new(
             loggerFactory.CreateLogger<PlaybackControllerCore>(),
             sessionFactory,
-            clock ?? new PlaybackClock(),
-            Options.Create(new FrameFlowPlaybackOptions { InitialRepeatMode = initialRepeatMode })
+            // A caller who names a provider and no clock gets both on it, rather than a
+            // deterministic watchdog beside a wall-clock timeline.
+            clock ?? new PlaybackClock(timeProvider ?? TimeProvider.System),
+            Options.Create(new FrameFlowPlaybackOptions { InitialRepeatMode = initialRepeatMode }),
+            timeProvider
         );
 }

@@ -34,6 +34,7 @@ internal static class PlayerFactory
         Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? configureAudio,
         IPlaybackClock? clock,
         LatenessRecoveryOptions? latenessRecovery,
+        TimeProvider? timeProvider,
         CancellationToken cancellationToken
     )
     {
@@ -64,7 +65,8 @@ internal static class PlayerFactory
             loggerFactory: loggerFactory,
             configureVideo: configureVideo,
             configureAudio: configureAudio,
-            latenessRecovery: latenessRecovery
+            latenessRecovery: latenessRecovery,
+            timeProvider: timeProvider
         );
 #pragma warning restore CA2000
 

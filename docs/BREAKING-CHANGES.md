@@ -943,6 +943,37 @@ nothing supported is withdrawn.
 Still public, and deliberately: `PausableGate<T>`, `PaceUntil` and `WallClockSource` are graph
 operators a consumer composing their own chain would use, and their documentation addresses one.
 
+### 36. `IPlayerBuilder` gained `WithTimeProvider`
+
+**Only a caller that implements `IPlayerBuilder` itself is affected**, the same shape as entry 31.
+An external implementation stops compiling with CS0535 until it adds the member; a chain that
+consumes the builder from `FrameFlowPlayer.Create()` is untouched. `PlaybackController.Create`
+gained an optional `timeProvider` parameter, which breaks nothing.
+
+The loop-stall watchdog and the position ticker run on wall time, and until now that was
+`TimeProvider.System` with no way to say otherwise from outside the assembly. `PlaybackClock`
+already took a `TimeProvider`, so a harness on simulated time got a deterministic timeline beside
+a real-time watchdog, and the two disagreed by whatever the fake clock's rate was.
+
+```csharp
+var fake = new FakeTimeProvider();
+
+await using var player = await FrameFlowPlayer.Create()
+    .WithMedia(path)
+    .WithVideoSink(sink)
+    .WithTimeProvider(fake)
+    .BuildPlayerAsync();
+```
+
+`WithClock` is unaffected and still wins: a clock passed there is kept as-is. The provider supplies
+the clock the player would otherwise have built for itself, so naming one covers both. A caller who
+wants their own clock *and* simulated time builds it on the same provider.
+
+These stay two knobs rather than one because they measure different things. An `IPlaybackClock`
+carries a position on the presentation timeline, which seeks and pauses. The watchdog needs elapsed
+real time, because its job is to notice that the timeline advanced while frames stopped — reading
+the clock it supervises would make it measure itself.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

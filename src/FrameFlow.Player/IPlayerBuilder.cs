@@ -139,6 +139,20 @@ public interface IPlayerBuilder
     IPlayerBuilder WithClock(IPlaybackClock clock);
 
     /// <summary>
+    /// Supplies the wall time the loop-stall watchdog and the position ticker run on, and that
+    /// the player's own <see cref="PlaybackClock"/> uses when <see cref="WithClock"/> named none.
+    /// Defaults to <see cref="TimeProvider.System"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is elapsed real time, not the presentation timeline an <see cref="IPlaybackClock"/>
+    /// carries. The watchdog's job is to notice that the timeline advanced while frames stopped,
+    /// so it cannot read the clock it supervises. A harness on simulated time wants both: name a
+    /// provider here, and either let the player build its clock on it or pass a
+    /// <see cref="PlaybackClock"/> built on the same provider.
+    /// </remarks>
+    IPlayerBuilder WithTimeProvider(TimeProvider timeProvider);
+
+    /// <summary>
     /// Tunes the lateness-recovery walk, which sheds decode work when presentation falls behind
     /// the clock. It applies to every item the player plays. When unset the walk stays off.
     /// </summary>
