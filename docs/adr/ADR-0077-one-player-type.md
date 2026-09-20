@@ -110,8 +110,13 @@ A caller who wants the small surface keeps naming `IMediaPlayer`; the returned o
 > [Breaking changes 17 and 18](../BREAKING-CHANGES.md). The interfaces are unchanged, so the rest of
 > this decision stands.
 
-> **Amended 2026-09-20.** The deferral's condition has fired, and the fold is still not being
-> taken. Recorded here because a condition that fires unnoticed is worse than no condition.
+> **Amended 2026-09-20. Proposed, not accepted.** Nothing below is decided until someone with the
+> call takes it; the decision above stands as written until then. The dependent amendment in
+> [playlist-events-name-their-item.md](playlist-events-name-their-item.md) is pending on this one
+> and says so.
+>
+> The deferral's condition has fired, and the recommendation is not to take the fold. Recorded
+> here because a condition that fires unnoticed is worse than no condition.
 >
 > **It fired, on one entry rather than the three I first counted.** "The next release that breaks
 > implementers for other reasons" is the release now pending, and breaking change 11 is what fires
@@ -127,13 +132,13 @@ A caller who wants the small surface keeps naming `IMediaPlayer`; the returned o
 > The playlist-events record still says "No such release is planned", which was true when it was
 > written and is not now.
 >
-> **What changed in the meantime.** Until this release a folded interface could be implemented
-> but not usefully implemented. `PlaylistItem` and `PlaylistSnapshot` had internal constructors, so
-> nothing outside the assembly could produce the values `AddAsync`, `EnqueueAsync`, `SetNextAsync`,
-> `ReplaceAsync` and `GetPlaylist` return; an external type could declare those members and could
-> compile, but every one of them would have had to throw. #318 made both constructors public. So
-> the fold became a real option, and declining it became a choice rather than a description of the
-> only available state.
+> **What #318 changed, which is less than I first claimed.** `PlaylistItem` and `PlaylistSnapshot`
+> had internal constructors until this release, and I argued twice that this had gated the fold. It
+> did not. A decorator wrapping a real player could always forward `AddAsync`, `GetPlaylist` and
+> the rest and return the inner player's values, so a folded interface was always implementable
+> that way. What was blocked was the *standalone* double — one with no real player behind it — and
+> that is the shape the measurement below is about. #318 unblocked it, and that is the whole of the
+> change: it makes the cost of a fold easier to state, not the fold newly possible.
 >
 > **The reason to decline is not the one recorded above.** This decision said folding gives a
 > caller nothing they cannot already reach by taking the larger interface, which is true and is not
@@ -207,8 +212,6 @@ A caller who wants the small surface keeps naming `IMediaPlayer`; the returned o
 > **Decided together or not at all.** If the fold is taken later the rename is wasted work, and if
 > the split is permanent the names are load-bearing. Taking one without the other is the outcome
 > to avoid.
->
-> > **This is a proposal until someone with the call accepts it.** It changes no code.
 
 ### 3. `RepeatMode.All` loops a single source
 
@@ -320,10 +323,11 @@ player it applied to.
 Rejected for this record. It breaks every external implementer of the small interface, and it gives
 a caller nothing they cannot get by naming the larger one. Decision 2 defers it.
 
-> **Amended 2026-09-20.** Reconsidered when decision 2's condition fired, and rejected again for a
-> better reason: `IMediaPlayer` exists to be consumed polymorphically, not implemented, so the fold
-> taxes implementers for a surface consumers already reach. Decision 2's amendment has the
-> measurement and retires the condition.
+> **Amended 2026-09-20. Proposed, not accepted**, with decision 2's amendment. Reconsidered when
+> that decision's condition fired, and the recommendation is to reject it again for a better
+> reason: `IMediaPlayer` exists to be consumed polymorphically, not implemented, so the fold taxes
+> implementers for a surface consumers already reach. Decision 2's amendment has the measurement,
+> retires the condition, and proposes the rename the permanent split then needs.
 
 ### C. Keep the controller's loop for a single source
 
