@@ -206,9 +206,7 @@ FrameFlow.Playback.PlaylistTransition
 FrameFlow.Playback.PlaylistTransition.Index.get -> int
 FrameFlow.Playback.PlaylistTransition.Index.init -> void
 FrameFlow.Playback.PlaylistTransition.Item.get -> FrameFlow.Playback.PlaylistItem!
-FrameFlow.Playback.PlaylistTransition.Item.init -> void
 FrameFlow.Playback.PlaylistTransition.MediaInfo.get -> FrameFlow.Media.MediaInfo!
-FrameFlow.Playback.PlaylistTransition.MediaInfo.init -> void
 FrameFlow.Playback.PlaylistTransition.PlaylistTransition(FrameFlow.Playback.PlaylistItem! Item, FrameFlow.Media.MediaInfo! MediaInfo, int Index, bool Wrapped, FrameFlow.Playback.PlaylistItem? Previous, FrameFlow.Playback.PlaylistTransitionReason Reason) -> void
 FrameFlow.Playback.PlaylistTransition.Previous.get -> FrameFlow.Playback.PlaylistItem?
 FrameFlow.Playback.PlaylistTransition.Previous.init -> void

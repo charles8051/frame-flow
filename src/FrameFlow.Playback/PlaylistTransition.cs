@@ -49,27 +49,23 @@ public sealed record PlaylistTransition(
     PlaylistTransitionReason Reason
 )
 {
-    // Both halves are needed, and they cover different callers. A positional record does not
-    // assign a parameter to a property the type declares itself, so the field initializer is the
-    // constructor's path; the record's copy constructor clones fields directly, so the init
-    // accessor is `with`'s. A non-nullable reference type is only a compile-time claim, and either
-    // caller can be nullable-oblivious.
+    // Item and MediaInfo are one fact, not two: the metadata is what the demuxer reported for that
+    // item's load, and nothing here can re-derive it to check a pairing. So they are settable only
+    // together, through the constructor. Leaving `init` on them would let `with { Item = other }`
+    // move one half of the pair and describe a hand-off that never happened, and a caller who
+    // wants a different item wants a different transition.
+    //
+    // The field initializer is also the only assignment path: a positional record does not assign
+    // a parameter to a property the type declares itself. A non-nullable reference type is a
+    // compile-time claim, so the null check runs here for a nullable-oblivious caller.
     private readonly PlaylistItem _item =
         Item ?? throw new ArgumentNullException(nameof(Item));
     private readonly MediaInfo _mediaInfo =
         MediaInfo ?? throw new ArgumentNullException(nameof(MediaInfo));
 
     /// <inheritdoc cref="PlaylistTransition(PlaylistItem, MediaInfo, int, bool, PlaylistItem, PlaylistTransitionReason)"/>
-    public PlaylistItem Item
-    {
-        get => _item;
-        init => _item = value ?? throw new ArgumentNullException(nameof(Item));
-    }
+    public PlaylistItem Item => _item;
 
     /// <inheritdoc cref="PlaylistTransition(PlaylistItem, MediaInfo, int, bool, PlaylistItem, PlaylistTransitionReason)"/>
-    public MediaInfo MediaInfo
-    {
-        get => _mediaInfo;
-        init => _mediaInfo = value ?? throw new ArgumentNullException(nameof(MediaInfo));
-    }
+    public MediaInfo MediaInfo => _mediaInfo;
 }

@@ -277,38 +277,27 @@ public sealed class PlaylistValueConstructionTests
     }
 
     [Fact]
-    public void Transition_WithNullItem_Throws()
+    public void Transition_WithChangesTheLooseMembersAndNotThePair()
     {
-        // `with` assigns through the init accessor, not the constructor, so the check has to live
-        // in the accessor to cover both.
+        // Item and MediaInfo have no init accessor, so `with { Item = other }` does not compile.
+        // The members that describe the hand-off rather than the item stay open.
+        var item = Item("a");
+        var info = Info();
         var transition = new PlaylistTransition(
-            Item("a"),
-            Info(),
+            item,
+            info,
             Index: 0,
             Wrapped: false,
             Previous: null,
             PlaylistTransitionReason.FirstItem
         );
 
-        Assert.Throws<ArgumentNullException>(() => transition with { Item = null! });
-        Assert.Throws<ArgumentNullException>(() => transition with { MediaInfo = null! });
-    }
+        var later = transition with { Index = 5, Wrapped = true };
 
-    [Fact]
-    public void Transition_WithANewItem_IsAllowed()
-    {
-        // `with` is the record's point. Only null is refused.
-        var transition = new PlaylistTransition(
-            Item("a"),
-            Info(),
-            Index: 0,
-            Wrapped: false,
-            Previous: null,
-            PlaylistTransitionReason.FirstItem
-        );
-        var other = Item("b");
-
-        Assert.Same(other, (transition with { Item = other }).Item);
+        Assert.Equal(5, later.Index);
+        Assert.True(later.Wrapped);
+        Assert.Same(item, later.Item);
+        Assert.Same(info, later.MediaInfo);
     }
 
     [Fact]

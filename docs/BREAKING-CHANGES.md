@@ -882,7 +882,15 @@ public sealed record PlaylistTransition(
     PlaylistItem? Previous, PlaylistTransitionReason Reason);
 ```
 
-`Previous` stays nullable, because nothing precedes the first item. Code that built a transition
+`Previous` stays nullable, because nothing precedes the first item.
+
+`Item` and `MediaInfo` have no `init` accessor, so `with { Item = other }` does not compile. They
+are one fact rather than two — the metadata is what the demuxer reported for that item's load, and
+nothing can re-derive it to check a pairing — so they are set together or not at all. `with` still
+changes `Index`, `Wrapped`, `Previous` and `Reason`; a caller who wants a different item wants a
+different transition.
+
+Code that built a transition
 with the four-argument form and an object initializer passes the six arguments positionally
 instead. A subscriber that null-checked `Item` can drop the check.
 
