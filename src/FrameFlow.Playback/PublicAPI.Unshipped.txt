@@ -119,33 +119,6 @@ FrameFlow.Playback.LatenessRecoveryOptions.RelaxBelow.init -> void
 FrameFlow.Playback.LatenessRecoveryOptions.SettleWindow.get -> System.TimeSpan
 FrameFlow.Playback.LatenessRecoveryOptions.SettleWindow.init -> void
 FrameFlow.Playback.LatenessRecoveryOptions.Validate() -> void
-FrameFlow.Playback.LoopStallEvaluator
-FrameFlow.Playback.LoopStallEvaluator.LoopStallEvaluator() -> void
-FrameFlow.Playback.LoopStallEvaluator.Observe(in FrameFlow.Playback.LoopStallSample sample) -> FrameFlow.Playback.LoopStallOutcome
-FrameFlow.Playback.LoopStallOutcome
-FrameFlow.Playback.LoopStallOutcome.LoopStallOutcome() -> void
-FrameFlow.Playback.LoopStallOutcome.LoopStallOutcome(FrameFlow.Playback.LoopStallEvaluator Next, bool Stalled, long OverrunTicks) -> void
-FrameFlow.Playback.LoopStallOutcome.Next.get -> FrameFlow.Playback.LoopStallEvaluator
-FrameFlow.Playback.LoopStallOutcome.Next.init -> void
-FrameFlow.Playback.LoopStallOutcome.OverrunTicks.get -> long
-FrameFlow.Playback.LoopStallOutcome.OverrunTicks.init -> void
-FrameFlow.Playback.LoopStallOutcome.Stalled.get -> bool
-FrameFlow.Playback.LoopStallOutcome.Stalled.init -> void
-FrameFlow.Playback.LoopStallSample
-FrameFlow.Playback.LoopStallSample.DurationTicks.get -> long
-FrameFlow.Playback.LoopStallSample.DurationTicks.init -> void
-FrameFlow.Playback.LoopStallSample.ExpectsRepeat.get -> bool
-FrameFlow.Playback.LoopStallSample.ExpectsRepeat.init -> void
-FrameFlow.Playback.LoopStallSample.LoopCount.get -> int
-FrameFlow.Playback.LoopStallSample.LoopCount.init -> void
-FrameFlow.Playback.LoopStallSample.LoopStallSample() -> void
-FrameFlow.Playback.LoopStallSample.LoopStallSample(long NowTicks, long PositionTicks, long DurationTicks, bool ExpectsRepeat, bool Playing, int LoopCount) -> void
-FrameFlow.Playback.LoopStallSample.NowTicks.get -> long
-FrameFlow.Playback.LoopStallSample.NowTicks.init -> void
-FrameFlow.Playback.LoopStallSample.Playing.get -> bool
-FrameFlow.Playback.LoopStallSample.Playing.init -> void
-FrameFlow.Playback.LoopStallSample.PositionTicks.get -> long
-FrameFlow.Playback.LoopStallSample.PositionTicks.init -> void
 FrameFlow.Playback.PaceUntil
 FrameFlow.Playback.PausableGate<T>
 FrameFlow.Playback.PausableGate<T>.AsOperator(string! id) -> FrameFlow.Graph.OperatorNode<T!, T!>!
@@ -240,7 +213,6 @@ static FrameFlow.Playback.Diagnostics.DiagnosticsInterpreter.Compare(FrameFlow.P
 static FrameFlow.Playback.Diagnostics.PipelineDiagnosticsSnapshot.Empty.get -> FrameFlow.Playback.Diagnostics.PipelineDiagnosticsSnapshot!
 static FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot.Empty.get -> FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot!
 static FrameFlow.Playback.FrameFlowPlaybackServiceCollectionExtensions.AddFrameFlowPlayback(this FrameFlow.Media.IFrameFlowBuilder! builder) -> FrameFlow.Media.IFrameFlowBuilder!
-static FrameFlow.Playback.LoopStallEvaluator.Create(System.TimeSpan stallTimeout, long timestampFrequency) -> FrameFlow.Playback.LoopStallEvaluator
 static FrameFlow.Playback.PaceUntil.Create<T>(string! id, FrameFlow.Graph.IClockSource! clockSource, System.Func<T!, System.TimeSpan>! ptsSelector, Microsoft.Extensions.Logging.ILogger? logger = null, System.TimeSpan? maxWait = null) -> FrameFlow.Graph.OperatorNode<T!, T!>!
 static FrameFlow.Playback.PlaybackController.Create(FrameFlow.Media.IVideoSink? videoSink = null, FrameFlow.Media.IAudioSink? audioSink = null, FrameFlow.Media.HardwareDecodeMode hardwareDecodeMode = FrameFlow.Media.HardwareDecodeMode.Auto, FrameFlow.Media.HardwareDecodeCapabilities? hardwareDecodeCapabilities = null, bool yieldHardwareFrames = false, FrameFlow.Media.RepeatMode initialRepeatMode = FrameFlow.Media.RepeatMode.Off, FrameFlow.Playback.IPlaybackClock? clock = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>>? configureVideo = null, System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>>? configureAudio = null, FrameFlow.Playback.LatenessRecoveryOptions? latenessRecovery = null) -> FrameFlow.Playback.IPlaybackController!
 static FrameFlow.Playback.PlaybackObservableExtensions.Subscribe<T>(this System.IObservable<T>! source, System.Action<T>! onNext) -> System.IDisposable!

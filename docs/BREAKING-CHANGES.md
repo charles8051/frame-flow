@@ -917,6 +917,32 @@ describe a queue no player could be in. It throws when a collection holds a `nul
 `resumeIndex` falls outside `playlist` (the count itself is in range: it means the pass has
 ended), when `pendingJump` is in none of the three collections, or when `revision` is negative.
 
+### 35. `LoopStallEvaluator`, `LoopStallSample` and `LoopStallOutcome` are internal
+
+The loop-stall watchdog's pure core leaves the public surface, the same move entry 32 made for
+`LoopStallMetrics`. A consumer reached these only by reimplementing the watchdog, which the
+library does not offer: the evaluator is driven by `PlaybackControllerCore`, which is internal,
+and `LoopStallSample.NowTicks` has to come from the same clock whose `TimestampFrequency` was
+handed to `LoopStallEvaluator.Create`, which nothing public exposes.
+
+The documentation said as much and could not say it to anyone: `LoopStallSample`'s summary
+carried a `<see cref="PlaybackControllerCore"/>` pointing at a type no consumer could resolve.
+
+**What a consumer actually watches a stall with is unchanged:**
+
+| Surface | Shape |
+| --- | --- |
+| `IMediaPlayer.LoopStalled` | `IObservable<LoopStalled>`, edge-triggered |
+| `IMediaPlaylistPlayer.ItemStalled` | `IObservable<PlaylistItemStalled>`, naming the item |
+| `PlaybackDiagnosticsSnapshot.LoopStalled` / `.LoopOverrun` | level-triggered state |
+| `frameflow.playback.loop_stalls` | the counter, on the `FrameFlow.Playback` meter |
+
+28 lines leave `PublicAPI.Unshipped.txt`. `PublicAPI.Shipped.txt` is empty for this assembly, so
+nothing supported is withdrawn.
+
+Still public, and deliberately: `PausableGate<T>`, `PaceUntil` and `WallClockSource` are graph
+operators a consumer composing their own chain would use, and their documentation addresses one.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`
