@@ -594,22 +594,23 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
         }
         catch (TimeoutException)
         {
-            Assert.Fail($"{because} {await LateOrNeverAsync(task).ConfigureAwait(false)}");
+            Assert.Fail($"{because} {await AfterGraceAsync(task).ConfigureAwait(false)}");
         }
     }
 
     /// <summary>
-    /// Says whether a task that missed its bound was late or is not coming, by watching it for a
-    /// further grace period. A task that arrives during the grace was scheduled late, which is a
-    /// property of the runner rather than of the subject; one that never arrives is the subject.
+    /// Watches a task that missed its bound for a further grace period and reports whether it
+    /// arrived, as a fact about the task and not a verdict on the cause.
     /// </summary>
     /// <remarks>
-    /// A pool snapshot cannot answer this. It is process-global, unrelated to this task, and taken
-    /// after the fact, so a continuation that ran just before the sample reads the same as one that
-    /// was never queued. This waits on the task itself, which is the only thing that can tell the
-    /// two apart. The pool figures ride along as context and nothing more (#330).
+    /// Arriving during the grace is consistent with a late continuation and with a subject that is
+    /// merely slow; not arriving is consistent with a wedged subject and with starvation that
+    /// outlasted the grace. Neither is proof, and the message does not claim one. It is still
+    /// narrower than a pool snapshot, which is process-global, unrelated to this task, and taken
+    /// after the fact: a continuation that ran just before the sample reads identically to one that
+    /// was never queued. The pool figures ride along as context and nothing more (#330).
     /// </remarks>
-    internal static async Task<string> LateOrNeverAsync(Task task)
+    internal static async Task<string> AfterGraceAsync(Task task)
     {
         // WaitAsync rather than Task.Delay: the delay form is banned in tests (ADR-0072) and this
         // is the same primitive the bound above already uses.
@@ -631,9 +632,10 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
         ThreadPool.GetMinThreads(out var minWorker, out _);
         ThreadPool.GetAvailableThreads(out var availableWorker, out _);
         return (arrived
-                ? "It completed during the grace after the bound, so it was scheduled late rather "
-                    + "than never signalled. "
-                : "It had still not completed well after the bound, so the subject never signalled. ")
+                ? "It completed during the grace after the bound: consistent with a late "
+                    + "continuation, or with a subject that is merely slow. "
+                : "It had still not completed by the end of the grace: consistent with a wedged "
+                    + "subject, or with starvation lasting past the grace. ")
             + $"[context, process-wide: {ThreadPool.ThreadCount} pool threads, "
             + $"{ThreadPool.PendingWorkItemCount} queued, {availableWorker} of {minWorker}+ workers "
             + $"free, {Environment.ProcessorCount} cpus]";

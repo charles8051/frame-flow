@@ -83,11 +83,17 @@
     the assemblies that have actually failed this way opt in; widen it on evidence,
     not in advance.
 
+    The number is the smallest that does the job rather than a comfortable one. What
+    has to clear is the injection throttle, so the minimum only needs to exceed the
+    pool threads these suites have blocked at once, which is a handful. Sixteen is
+    four times a four-core runner's default and leaves far less headroom for the
+    contention the mitigation is trying not to cause.
+
     In .targets for the same reason as the ban above: the csproj's setting is what
     the condition reads. Test hosts only, so it cannot mask starvation in shipped
     code.
   -->
   <PropertyGroup Condition="'$(FrameFlowTimeBarrierTests)' == 'true'">
-    <ThreadPoolMinThreads>32</ThreadPoolMinThreads>
+    <ThreadPoolMinThreads>16</ThreadPoolMinThreads>
   </PropertyGroup>
 </Project>

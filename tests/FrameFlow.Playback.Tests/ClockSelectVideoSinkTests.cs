@@ -1124,23 +1124,24 @@ public sealed class ClockSelectVideoSinkTests
         {
             Assert.Fail(
                 "The run did not drain within the bound. "
-                    + await LateOrNeverAsync(drain).ConfigureAwait(false)
+                    + await AfterGraceAsync(drain).ConfigureAwait(false)
             );
         }
     }
 
     /// <summary>
-    /// Says whether a task that missed its bound was late or is not coming, by watching it for a
-    /// further grace period. Arriving during the grace makes it the runner's scheduling; never
-    /// arriving makes it the subject.
+    /// Watches a task that missed its bound for a further grace period and reports whether it
+    /// arrived, as a fact about the task and not a verdict on the cause.
     /// </summary>
     /// <remarks>
-    /// A pool snapshot cannot answer this. It is process-global, unrelated to this task, and taken
-    /// after the fact, so a continuation that ran just before the sample reads the same as one that
-    /// was never queued. Waiting on the task itself is the only thing that separates them; the pool
-    /// figures ride along as context and nothing more (#330).
+    /// Arriving during the grace is consistent with a late continuation and with a subject that is
+    /// merely slow; not arriving is consistent with a wedged subject and with starvation that
+    /// outlasted the grace. Neither is proof, and the message does not claim one. It is still
+    /// narrower than a pool snapshot, which is process-global, unrelated to this task, and taken
+    /// after the fact: a continuation that ran just before the sample reads identically to one that
+    /// was never queued. The pool figures ride along as context and nothing more (#330).
     /// </remarks>
-    private static async Task<string> LateOrNeverAsync(Task task)
+    private static async Task<string> AfterGraceAsync(Task task)
     {
         // WaitAsync rather than Task.Delay: the delay form is banned in tests (ADR-0072) and this
         // is the same primitive the bound above already uses.
@@ -1162,9 +1163,10 @@ public sealed class ClockSelectVideoSinkTests
         ThreadPool.GetMinThreads(out var minWorker, out _);
         ThreadPool.GetAvailableThreads(out var availableWorker, out _);
         return (arrived
-                ? "It drained during the grace after the bound, so it was scheduled late rather "
-                    + "than never ended. "
-                : "It had still not drained well after the bound, so the run never ended. ")
+                ? "It drained during the grace after the bound: consistent with a late "
+                    + "continuation, or with a run that is merely slow. "
+                : "It had still not drained by the end of the grace: consistent with a run that "
+                    + "never ended, or with starvation lasting past the grace. ")
             + $"[context, process-wide: {ThreadPool.ThreadCount} pool threads, "
             + $"{ThreadPool.PendingWorkItemCount} queued, {availableWorker} of {minWorker}+ workers "
             + $"free, {Environment.ProcessorCount} cpus]";
