@@ -37,7 +37,7 @@ namespace FrameFlow.Decoding;
 /// </para>
 /// <para>
 /// <b>Reading the pixels.</b> Use the
-/// <c>pipeline.ToCpu()</c> operator from <c>FrameFlow.Video</c>, or
+/// <c>VideoOperators.ToCpu(id)</c> node from <c>FrameFlow.Video</c>, or
 /// invoke <see cref="ReadbackToCpuBgra32"/> directly for a one-shot
 /// readback. The <see cref="IVideoFrame.AsCpu"/> path returns
 /// <see langword="null"/> (no in-place CPU view exists for a GPU
@@ -246,8 +246,9 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// <inheritdoc/>
     /// <remarks>
     /// Always returns <see langword="null"/> — a GPU frame has no
-    /// in-place CPU view. Use <see cref="ReadbackToCpuBgra32"/> or
-    /// the <c>pipeline.ToCpu()</c> operator to obtain a CPU copy.
+    /// in-place CPU view. Use <see cref="ReadbackToCpuBgra32"/>, or
+    /// <c>VideoOperators.ToCpu(id)</c> from <c>FrameFlow.Video</c>
+    /// inside a graph, to obtain a CPU copy.
     /// </remarks>
     public CpuFrameData? AsCpu() => null;
 
@@ -263,8 +264,9 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// </exception>
     public CpuFrameData ToCpu() =>
         throw new NotSupportedException(
-            "Use GpuVideoFrame.ReadbackToCpuBgra32() or the FrameFlow.Video pipeline operator "
-                + "pipeline.ToCpu() to obtain a CPU copy with explicit ownership."
+            "Use GpuVideoFrame.ReadbackToCpuBgra32(), or FrameFlow.Video's "
+                + "VideoOperators.ToCpu(id) node inside a graph, to obtain a CPU copy with "
+                + "explicit ownership."
         );
 
     /// <summary>
@@ -279,9 +281,11 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// <remarks>
     /// <para>
     /// Allocates a temporary <c>AVFrame</c> + <c>SwsContext</c> per
-    /// call. For pipeline use, prefer the
-    /// <c>pipeline.ToCpu()</c> operator which caches the sws
-    /// context across frames.
+    /// call, and <c>VideoOperators.ToCpu(id)</c> calls this per frame,
+    /// so it pays the same. Reuse across frames is #279's follow-up;
+    /// next to the PCIe transfer and the full-frame scale it is small.
+    /// Prefer the operator inside a graph because it composes, not
+    /// because it is cheaper.
     /// </para>
     /// </remarks>
     /// <exception cref="ObjectDisposedException">

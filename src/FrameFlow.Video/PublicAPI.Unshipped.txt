@@ -10,3 +10,4 @@ static FrameFlow.Video.VideoConverter.Create(int? targetWidth = null, int? targe
 static FrameFlow.Video.VideoOperators.ConvertPixelFormat(string! id, FrameFlow.Media.PixelFormat target) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.VideoFrameRef!, FrameFlow.Media.VideoFrameRef!>!
 static FrameFlow.Video.VideoOperators.Resize(string! id, int width, int height) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.VideoFrameRef!, FrameFlow.Media.VideoFrameRef!>!
 static FrameFlow.Video.VideoOperators.ResizeAndConvert(string! id, int width, int height, FrameFlow.Media.PixelFormat targetFormat) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.VideoFrameRef!, FrameFlow.Media.VideoFrameRef!>!
+static FrameFlow.Video.VideoOperators.ToCpu(string! id) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.VideoFrameRef!, FrameFlow.Media.VideoFrameRef!>!

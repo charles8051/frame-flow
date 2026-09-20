@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Decoding;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 
@@ -112,6 +113,93 @@ public static class VideoOperators
         );
 #pragma warning restore CA2000
         return BuildConverterNode(id, converter);
+    }
+
+    /// <summary>
+    /// Builds an operator node that brings a hardware-resident frame back to CPU memory, and
+    /// passes a frame that is already there straight through.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the readback every other operator in this class needs and none of them can do.
+    /// <see cref="ConvertPixelFormat"/>, <see cref="Resize"/> and <see cref="ResizeAndConvert"/>
+    /// all route through <c>SwScaleVideoConverter.Process</c>, which calls <c>ToCpu()</c> on the
+    /// incoming frame; on a GPU frame that throws. Put this ahead of them and a decoder yielding
+    /// hardware frames can reach a CPU operator:
+    /// <code>
+    /// graph.Pipeline(source)
+    ///     .Then(VideoOperators.ToCpu("readback"))
+    ///     .Then(VideoOperators.Resize("resize", 640, 480))
+    ///     .To(sink);
+    /// </code>
+    /// </para>
+    /// <para>
+    /// <b>The pass-through is the point of putting it in a chain.</b> A graph does not know
+    /// whether the decoder bound a hwaccel backend, and the answer can differ per run and per
+    /// machine. A chain with this in it is correct either way: on a software decode every frame
+    /// is already <see cref="FrameMemoryDomain.Cpu"/> and is forwarded untouched, at the cost of
+    /// one enum comparison.
+    /// </para>
+    /// <para>
+    /// <b>Cost when it does read back.</b> One <c>av_hwframe_transfer_data</c> across PCIe, then
+    /// one <c>sws_scale</c> to tightly-packed <see cref="PixelFormat.Bgra32"/>. The output format
+    /// is Bgra32 regardless of what the frame was on the GPU, which is what
+    /// <see cref="FrameFlow.Decoding.GpuVideoFrame.ReadbackToCpuBgra32"/> produces; a chain that
+    /// wants something else converts after this, not instead of it.
+    /// </para>
+    /// <para>
+    /// <b>Ownership.</b> A readback allocates a new frame, so the output wrapper owns it and the
+    /// substrate disposes the input's GPU frame as usual. The pass-through has nothing new to own,
+    /// so it moves the frame out of the input wrapper instead of copying or sharing it.
+    /// </para>
+    /// </remarks>
+    /// <param name="id">Node id, unique within the graph.</param>
+    /// <exception cref="NotSupportedException">
+    /// Raised at run time for a <see cref="FrameMemoryDomain.Gpu"/> frame that is not a
+    /// <see cref="FrameFlow.Decoding.GpuVideoFrame"/>. The readback is
+    /// <c>av_hwframe_transfer_data</c> on an <c>AVFrame</c>, so it has nothing to say about a
+    /// GPU frame from some other stack (#232).
+    /// </exception>
+    public static OperatorNode<VideoFrameRef, VideoFrameRef> ToCpu(string id)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+
+        return new OperatorNode<VideoFrameRef, VideoFrameRef>(
+            id,
+            (input, ct) =>
+            {
+                var frame = input.Frame;
+                if (frame.MemoryDomain == FrameMemoryDomain.Cpu)
+                {
+                    // Already here, so hand the same frame on. Detach rather than AddRef: a
+                    // decoder's CpuVideoFrame is one-shot and rejects ref counting outright (#41),
+                    // and the substrate disposes the input wrapper when the operator returns, so
+                    // sharing is not on the table anyway. Detach moves ownership to the wrapper
+                    // going downstream and leaves the input wrapper's dispose a no-op — the same
+                    // move ADR-0044's sink adapters make for the same two reasons.
+                    var detached =
+                        input.Detach()
+                        ?? throw new InvalidOperationException(
+                            $"ToCpu('{id}') received an input wrapper that was already detached "
+                                + "or disposed."
+                        );
+                    return ValueTask.FromResult<VideoFrameRef?>(new VideoFrameRef(detached));
+                }
+
+                if (frame is not GpuVideoFrame gpu)
+                {
+                    throw new NotSupportedException(
+                        $"ToCpu('{id}') received a GPU frame of type {frame.GetType().Name}, which "
+                            + "is not a GpuVideoFrame. The readback is av_hwframe_transfer_data on "
+                            + "an AVFrame and has no path for another GPU stack."
+                    );
+                }
+
+                return ValueTask.FromResult<VideoFrameRef?>(
+                    new VideoFrameRef(gpu.ReadbackToCpuBgra32())
+                );
+            }
+        );
     }
 
     /// <summary>
