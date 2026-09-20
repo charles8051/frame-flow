@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FrameFlow.Media;
 
 namespace FrameFlow.Playback.Tests;
@@ -178,6 +179,43 @@ public sealed class PlaylistValueConstructionTests
         Assert.Equal("revision", ex.ParamName);
     }
 
+    [Fact]
+    public void Snapshot_MutableListPassedIn_DoesNotChangeUnderTheSnapshot()
+    {
+        // IReadOnlyList is a view, not a guarantee. A snapshot whose contents move is not one.
+        var a = Item("a");
+        var backing = new List<PlaylistItem> { a };
+
+        var snapshot = Snapshot(playlist: backing, resumeIndex: 1);
+
+        backing.Clear();
+        backing.Add(Item("swapped"));
+
+        Assert.Equal([a], snapshot.Playlist);
+        Assert.Equal(1, snapshot.ResumeIndex);
+    }
+
+    [Fact]
+    public void Snapshot_MutableListEmptiedAfterwards_CannotInvalidateResumeIndex()
+    {
+        var backing = new List<PlaylistItem> { Item("a"), Item("b") };
+        var snapshot = Snapshot(playlist: backing, resumeIndex: 2);
+
+        backing.Clear();
+
+        Assert.Equal(2, snapshot.Playlist.Count);
+        Assert.True(snapshot.ResumeIndex <= snapshot.Playlist.Count);
+    }
+
+    [Fact]
+    public void Snapshot_ImmutableListPassedIn_IsStoredWithoutCopying()
+    {
+        // The queue's own collections are ImmutableList, so the player's snapshots allocate nothing.
+        var items = ImmutableList.Create(Item("a"));
+
+        Assert.Same(items, Snapshot(playlist: items).Playlist);
+    }
+
     // ── PlaylistTransition ──────────────────────────────────────────────────
 
     [Fact]
@@ -200,6 +238,42 @@ public sealed class PlaylistValueConstructionTests
         Assert.Same(item.Source, transition.Item.Source);
         Assert.Same(previous, transition.Previous);
         Assert.Equal(PlaylistTransitionReason.EndOfItem, transition.Reason);
+    }
+
+    [Fact]
+    public void Transition_NullItem_Throws()
+    {
+        // A non-nullable reference type is a compile-time claim; the constructor still has to hold
+        // the line for a nullable-oblivious caller.
+        var ex = Assert.Throws<ArgumentNullException>(() =>
+            new PlaylistTransition(
+                null!,
+                Info(),
+                Index: 0,
+                Wrapped: false,
+                Previous: null,
+                PlaylistTransitionReason.FirstItem
+            )
+        );
+
+        Assert.Equal("Item", ex.ParamName);
+    }
+
+    [Fact]
+    public void Transition_NullMediaInfo_Throws()
+    {
+        var ex = Assert.Throws<ArgumentNullException>(() =>
+            new PlaylistTransition(
+                Item("a"),
+                null!,
+                Index: 0,
+                Wrapped: false,
+                Previous: null,
+                PlaylistTransitionReason.FirstItem
+            )
+        );
+
+        Assert.Equal("MediaInfo", ex.ParamName);
     }
 
     [Fact]

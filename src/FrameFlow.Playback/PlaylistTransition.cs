@@ -47,4 +47,17 @@ public sealed record PlaylistTransition(
     bool Wrapped,
     PlaylistItem? Previous,
     PlaylistTransitionReason Reason
-);
+)
+{
+    // A non-nullable reference type is a compile-time claim, and the positional constructor still
+    // takes whatever a nullable-oblivious caller hands it. Checked here so "every transition names
+    // its item" holds at run time too, and a subscriber reading Item.Source cannot be the one to
+    // find out otherwise.
+    /// <inheritdoc cref="PlaylistTransition(PlaylistItem, MediaInfo, int, bool, PlaylistItem, PlaylistTransitionReason)"/>
+    public PlaylistItem Item { get; init; } =
+        Item ?? throw new ArgumentNullException(nameof(Item));
+
+    /// <inheritdoc cref="PlaylistTransition(PlaylistItem, MediaInfo, int, bool, PlaylistItem, PlaylistTransitionReason)"/>
+    public MediaInfo MediaInfo { get; init; } =
+        MediaInfo ?? throw new ArgumentNullException(nameof(MediaInfo));
+}

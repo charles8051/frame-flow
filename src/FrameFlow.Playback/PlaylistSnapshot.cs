@@ -1,6 +1,8 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Collections.Immutable;
+
 namespace FrameFlow.Playback;
 
 /// <summary>
@@ -48,6 +50,13 @@ public sealed class PlaylistSnapshot
         ArgumentNullException.ThrowIfNull(playlist);
         ArgumentNullException.ThrowIfNull(next);
         ArgumentNullException.ThrowIfNull(queued);
+
+        // Freeze before validating, so what is checked is what is stored. An IReadOnlyList can be
+        // a List the caller still holds, and a snapshot whose contents move is not a snapshot.
+        playlist = Freeze(playlist);
+        next = Freeze(next);
+        queued = Freeze(queued);
+
         RejectNullItems(playlist, nameof(playlist));
         RejectNullItems(next, nameof(next));
         RejectNullItems(queued, nameof(queued));
@@ -132,6 +141,16 @@ public sealed class PlaylistSnapshot
 
     /// <summary>Rises on every edit to the queue and every hand-off.</summary>
     public long Revision { get; }
+
+    /// <summary>
+    /// Returns <paramref name="items"/> when it cannot change under the snapshot, and a copy
+    /// otherwise. The queue's own collections are <see cref="ImmutableList{T}"/>, so the player's
+    /// snapshots take the first branch and allocate nothing.
+    /// </summary>
+    private static IReadOnlyList<PlaylistItem> Freeze(IReadOnlyList<PlaylistItem> items) =>
+        items is ImmutableList<PlaylistItem> or ImmutableArray<PlaylistItem>
+            ? items
+            : [.. items];
 
     private static void RejectNullItems(IReadOnlyList<PlaylistItem> items, string name)
     {
