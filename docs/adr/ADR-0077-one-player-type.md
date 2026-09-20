@@ -110,6 +110,50 @@ A caller who wants the small surface keeps naming `IMediaPlayer`; the returned o
 > [Breaking changes 17 and 18](../BREAKING-CHANGES.md). The interfaces are unchanged, so the rest of
 > this decision stands.
 
+> **Amended 2026-09-20.** The deferral's condition has fired, and the fold is still not being
+> taken. Recorded here because a condition that fires unnoticed is worse than no condition.
+>
+> **It fired.** "The next release that breaks implementers for other reasons" is the release now
+> pending: breaking changes 3 (`IMediaPlayer.Diagnostics` is gone), 11 (`IMediaPlayer` gained
+> `LoopRestarted`) and 27 (`IMediaPlayerBuilder` is gone) each break an implementer of the small
+> interface, and all three sit unreleased. The playlist-events record still says "No such release
+> is planned", which was true when it was written and is not now.
+>
+> **What changed in the meantime.** Folding was not merely undesirable before, it was not
+> available: `PlaylistItem` and `PlaylistSnapshot` had internal constructors, so nothing outside
+> the assembly could produce the values the playlist members return, and an implementer could not
+> have satisfied a folded interface at all. #318 made both public, which removed that blocker. The
+> fold is a real option now for the first time.
+>
+> **The reason to decline is not the one recorded above.** This decision said folding gives a
+> caller nothing they cannot already reach by taking the larger interface, which is true and is not
+> the load-bearing part. The load-bearing part is what `IMediaPlayer` is *for*: its own summary
+> says it is an interface rather than a concrete type because the `FrameFlow.Avalonia` chrome
+> controls and the `FrameFlow.Audio.OpenAL` extension take it as a polymorphic dependency. It
+> exists to be *consumed* polymorphically, not to be implemented. Folding takes the interface from
+> 17 members to 31.
+>
+> That is measured rather than asserted. The one implementer of `IMediaPlayer` in this tree is
+> `FrameFlowVolumeControlTests.FakePlayer`, whose own summary says "only the volume projection is
+> exercised; the transport and observables are never touched". It writes 18 members — the 17 above
+> plus `DisposeAsync` — and uses three of them: `SupportsVolumeControl`, `Volume`, `Muted`. A fold
+> would take it to 32, still using three. External test doubles and UI adapters are the same shape,
+> which is the population the deferral was protecting.
+>
+> **So the condition is retired rather than satisfied.** Batching a large break behind whatever
+> small break happens to land next is not a reason; it treats "already breaking" as "any further
+> break is free", and the two are not the same size. Removing a member, adding one, and renaming a
+> type are mechanical edits. Adding fourteen members to an interface written for consumers is not.
+> (Fourteen, not the eleven above: `ItemFailed`, `ItemLooped` and `ItemStalled` joined the
+> interface after this was written.)
+>
+> The split stands until there is evidence the two surfaces cost a consumer something, rather than
+> until an unrelated break gives cover. The duplicated channels that wait on the fold — #308, #306,
+> #203 — are decided on their own merits, not by it; the playlist-events record already fixes their
+> ordering and their shared instances, which is what made the duplication safe to carry.
+>
+> **This is a proposal until someone with the call accepts it.** It changes no code.
+
 ### 3. `RepeatMode.All` loops a single source
 
 A queue of one repeats its one item, so `All` and `One` behave alike there. The enum's summary for
@@ -220,6 +264,11 @@ player it applied to.
 Rejected for this record. It breaks every external implementer of the small interface, and it gives
 a caller nothing they cannot get by naming the larger one. Decision 2 defers it.
 
+> **Amended 2026-09-20.** Reconsidered when decision 2's condition fired, and rejected again for a
+> better reason: `IMediaPlayer` exists to be consumed polymorphically, not implemented, so the fold
+> taxes implementers for a surface consumers already reach. Decision 2's amendment has the
+> measurement and retires the condition.
+
 ### C. Keep the controller's loop for a single source
 
 This is the looping record's decision 8. Rejected: it builds a second loop mechanism to keep a
@@ -312,4 +361,7 @@ broken. The edits are:
 
 ## Revision history
 
+- **Fold condition retired (2026-09-20).** Decision 2's "next release that breaks implementers"
+  condition fired and was not taken; the deferral now rests on what the small interface is for
+  rather than on waiting for cover. Alternative B amended to match. Proposal; no code change.
 - **First draft (2026-09-15).** Written from the spike on #224 and its ten-minute hardware run.

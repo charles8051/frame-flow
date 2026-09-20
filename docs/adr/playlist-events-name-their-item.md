@@ -170,7 +170,15 @@ here, because "raises both once" is a promise with four exceptions:
 `IMediaPlayer`. It ends at a boundary that is **contingent, not scheduled**: ADR-0077 decision 2
 keeps `IMediaPlaylistPlayer` separate "for now" and defers the fold "to the next release that
 breaks implementers for other reasons". No such release is planned, so an implementer should read
-this as a duplication with no end date attached to it, ending whenever that break next happens. At
+this as a duplication with no end date attached to it, ending whenever that break next happens.
+
+> **Amended 2026-09-20.** "No such release is planned" is no longer true — the pending release
+> breaks implementers of `IMediaPlayer` three times over — and the fold was reconsidered on that
+> trigger and declined. ADR-0077 decision 2's amendment retires the condition rather than
+> satisfying it: the small interface exists to be consumed polymorphically, so folding taxes
+> implementers for a surface consumers already reach. The duplication described below therefore has
+> no end date attached to it at all, and #308, #306 and #203 are decided on their own merits rather
+> than waiting on a fold. Nothing about the ordering or the shared instances below changes. At
 that point there is one surface, every caller can take
 `ItemFailed`, and withdrawing item failures from `ErrorOccurred` stops being a silent break. The
 same boundary governs `ItemLooped` and `LoopRestarted` under decision 3.
