@@ -119,7 +119,7 @@ public sealed class MixedQueueTests : IClassFixture<FfmpegBootstrapFixture>
         // The still: video and no audio, and a length it has only because the source carries
         // demuxer options (#248).
         var toStill = seen[0].Transition;
-        Assert.Same(still, toStill.Source);
+        Assert.Same(still, toStill.Item.Source);
         Assert.Equal(1, toStill.Index);
         Assert.Equal(Dwell, toStill.MediaInfo.Duration);
         Assert.Single(toStill.MediaInfo.VideoStreams);
@@ -128,7 +128,7 @@ public sealed class MixedQueueTests : IClassFixture<FfmpegBootstrapFixture>
         // The clip after it: both streams, on the same warm presenter, with no teardown
         // between them.
         var toVideo = seen[1].Transition;
-        Assert.Same(video, toVideo.Source);
+        Assert.Same(video, toVideo.Item.Source);
         Assert.Equal(2, toVideo.Index);
         Assert.Single(toVideo.MediaInfo.VideoStreams);
         Assert.Single(toVideo.MediaInfo.AudioStreams);

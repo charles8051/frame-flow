@@ -81,7 +81,7 @@ public sealed class PlaylistCurrentItemTests : IClassFixture<FfmpegBootstrapFixt
         using var passSub = run.Coordinator.SourceTransitioned.Subscribe(
             new ActionObserver<PlaylistTransition>(t =>
             {
-                if (ReferenceEquals(t.Source, longItem) && Interlocked.Increment(ref passes) == 2)
+                if (ReferenceEquals(t.Item.Source, longItem) && Interlocked.Increment(ref passes) == 2)
                     twoMorePasses.TrySetResult();
             })
         );

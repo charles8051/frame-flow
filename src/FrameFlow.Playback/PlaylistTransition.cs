@@ -13,8 +13,11 @@ namespace FrameFlow.Playback;
 /// own model (and optionally enqueue the following item), not rebuild any
 /// presenter.
 /// </summary>
-/// <param name="Source">The source that is now presenting.</param>
-/// <param name="MediaInfo">Metadata for <paramref name="Source"/>.</param>
+/// <param name="Item">
+/// The item that became current. Two items over one source are different items, so this is what
+/// tells them apart; <see cref="PlaylistItem.Source"/> reaches the source it plays.
+/// </param>
+/// <param name="MediaInfo">Metadata for <paramref name="Item"/>'s source.</param>
 /// <param name="Index">
 /// A running count of hand-offs since the playlist started (the first item is
 /// <c>0</c>). It increments on every transition including loop wraps, so it is a
@@ -24,35 +27,24 @@ namespace FrameFlow.Playback;
 /// <see langword="true"/> when this transition wrapped past the end of the queue
 /// back to the start under <see cref="RepeatMode.All"/>.
 /// </param>
+/// <param name="Previous">
+/// The item this transition left, or <see langword="null"/> when nothing preceded it. Under
+/// <see cref="PlaylistTransitionReason.Loop"/> it is the same item as <paramref name="Item"/>.
+/// </param>
+/// <param name="Reason">
+/// Why the hand-off happened, in terms of how <paramref name="Previous"/> ended.
+/// </param>
+/// <remarks>
+/// <see cref="Reason"/> describes how the <i>previous</i> item ended, while every other member
+/// describes the item that started. Attribute a reason to <see cref="Previous"/>, not to
+/// <see cref="Item"/>: on a queue of <c>[A, B]</c> where A fails, the transition that follows
+/// names B in <see cref="Item"/> and A in <see cref="Previous"/>.
+/// </remarks>
 public sealed record PlaylistTransition(
-    IMediaSource Source,
+    PlaylistItem Item,
     MediaInfo MediaInfo,
     int Index,
-    bool Wrapped
-)
-{
-    /// <summary>
-    /// The item that became current. Every transition the player raises sets it, so a
-    /// subscriber can tell two items of one source apart. It is <see langword="null"/> only on
-    /// a transition built with the four-argument constructor.
-    /// </summary>
-    public PlaylistItem? Item { get; init; }
-
-    /// <summary>
-    /// The item this transition left, or <see langword="null"/> when nothing preceded it. Under
-    /// <see cref="PlaylistTransitionReason.Loop"/> it is the same item as <see cref="Item"/>.
-    /// </summary>
-    /// <remarks>
-    /// <see cref="Reason"/> describes how <i>this</i> item ended, while every other member of the
-    /// record describes the item that started. Attribute a reason to this one, not to
-    /// <see cref="Item"/>: on a queue of <c>[A, B]</c> where A fails, the transition that follows
-    /// names B in <see cref="Item"/> and A here.
-    /// </remarks>
-    public PlaylistItem? Previous { get; init; }
-
-    /// <summary>
-    /// Why the hand-off happened, in terms of how <see cref="Previous"/> ended. Defaults to
-    /// <see cref="PlaylistTransitionReason.FirstItem"/> on a transition built without one.
-    /// </summary>
-    public PlaylistTransitionReason Reason { get; init; }
-}
+    bool Wrapped,
+    PlaylistItem? Previous,
+    PlaylistTransitionReason Reason
+);
