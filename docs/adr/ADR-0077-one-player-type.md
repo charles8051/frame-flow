@@ -113,17 +113,27 @@ A caller who wants the small surface keeps naming `IMediaPlayer`; the returned o
 > **Amended 2026-09-20.** The deferral's condition has fired, and the fold is still not being
 > taken. Recorded here because a condition that fires unnoticed is worse than no condition.
 >
-> **It fired.** "The next release that breaks implementers for other reasons" is the release now
-> pending: breaking changes 3 (`IMediaPlayer.Diagnostics` is gone), 11 (`IMediaPlayer` gained
-> `LoopRestarted`) and 27 (`IMediaPlayerBuilder` is gone) each break an implementer of the small
-> interface, and all three sit unreleased. The playlist-events record still says "No such release
-> is planned", which was true when it was written and is not now.
+> **It fired, on one entry rather than the three I first counted.** "The next release that breaks
+> implementers for other reasons" is the release now pending, and breaking change 11 is what fires
+> it: adding `LoopRestarted` to `IMediaPlayer` stops every external implementation compiling with
+> CS0535. One qualifying break is all the condition asks for.
 >
-> **What changed in the meantime.** Folding was not merely undesirable before, it was not
-> available: `PlaylistItem` and `PlaylistSnapshot` had internal constructors, so nothing outside
-> the assembly could produce the values the playlist members return, and an implementer could not
-> have satisfied a folded interface at all. #318 made both public, which removed that blocker. The
-> fold is a real option now for the first time.
+> The other two entries that look like candidates are not. Entry 3 removes
+> `IMediaPlayer.Diagnostics`, and its own migration note says so: "Leaving it compiles, but nothing
+> reads it" — a removal is source-compatible for an implicit implementation, and breaks only an
+> explicit one. Entry 27 removes `IMediaPlayerBuilder`, which is a different interface and says
+> nothing about implementers of this one.
+>
+> The playlist-events record still says "No such release is planned", which was true when it was
+> written and is not now.
+>
+> **What changed in the meantime.** Until this release a folded interface could be implemented
+> but not usefully implemented. `PlaylistItem` and `PlaylistSnapshot` had internal constructors, so
+> nothing outside the assembly could produce the values `AddAsync`, `EnqueueAsync`, `SetNextAsync`,
+> `ReplaceAsync` and `GetPlaylist` return; an external type could declare those members and could
+> compile, but every one of them would have had to throw. #318 made both constructors public. So
+> the fold became a real option, and declining it became a choice rather than a description of the
+> only available state.
 >
 > **The reason to decline is not the one recorded above.** This decision said folding gives a
 > caller nothing they cannot already reach by taking the larger interface, which is true and is not
