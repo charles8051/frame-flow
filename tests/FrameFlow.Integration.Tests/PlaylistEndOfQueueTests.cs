@@ -50,7 +50,7 @@ public sealed class PlaylistEndOfQueueTests : IClassFixture<FfmpegBootstrapFixtu
         await SeekThenPlayToEndAsync(run);
 
         // The seek replays the item that ended the queue. It is not a new hand-off.
-        Assert.Equal([first, second], run.Transitions.Select(t => t.Source));
+        Assert.Equal([first, second], run.Transitions.Select(t => t.Item.Source));
     }
 
     [RequiresFfmpegAndCorpusTheory]

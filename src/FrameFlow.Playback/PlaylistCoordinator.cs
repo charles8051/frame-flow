@@ -409,12 +409,7 @@ internal sealed class PlaylistCoordinator
     {
         if (info is not null)
             _transitioned.OnNext(
-                new PlaylistTransition(item.Source, info, index, wrapped)
-                {
-                    Item = item,
-                    Previous = previous,
-                    Reason = reason,
-                }
+                new PlaylistTransition(item, info, index, wrapped, previous, reason)
             );
     }
 

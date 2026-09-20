@@ -98,7 +98,7 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.Equal(PlaybackState.Ended, run.Controller.State);
         var error = Assert.Single(run.Errors);
         Assert.True(InjectedFault.Caused(error), $"Unexpected error: {error}");
-        Assert.Equal([first, second], run.Transitions.Select(t => t.Source));
+        Assert.Equal([first, second], run.Transitions.Select(t => t.Item.Source));
     }
 
     [RequiresFfmpegAndCorpusTheory]
@@ -152,7 +152,7 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         using var skip = run.Coordinator.SourceTransitioned.Subscribe(
             new ActionObserver<PlaylistTransition>(t =>
             {
-                if (ReferenceEquals(t.Source, skipped))
+                if (ReferenceEquals(t.Item.Source, skipped))
                     run.Coordinator.RequestSkip();
             })
         );

@@ -1,6 +1,8 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Collections.Immutable;
+
 namespace FrameFlow.Playback;
 
 /// <summary>
@@ -20,7 +22,21 @@ namespace FrameFlow.Playback;
 /// </remarks>
 public sealed class PlaylistSnapshot
 {
-    internal PlaylistSnapshot(
+    /// <summary>
+    /// Builds a snapshot, refusing one whose parts contradict each other.
+    /// </summary>
+    /// <remarks>
+    /// Public so a caller can build one for a test double or a decorator over
+    /// <c>IMediaPlaylistPlayer</c> (#318). The player's own snapshots always satisfy these
+    /// checks; they exist so a hand-built one cannot quietly describe a queue no player could
+    /// be in.
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// A collection holds a <see langword="null"/> item, <paramref name="resumeIndex"/> falls
+    /// outside <paramref name="playlist"/>, <paramref name="pendingJump"/> names an item that is
+    /// in none of the three collections, or <paramref name="revision"/> is negative.
+    /// </exception>
+    public PlaylistSnapshot(
         IReadOnlyList<PlaylistItem> playlist,
         IReadOnlyList<PlaylistItem> next,
         IReadOnlyList<PlaylistItem> queued,
@@ -31,6 +47,49 @@ public sealed class PlaylistSnapshot
         long revision
     )
     {
+        ArgumentNullException.ThrowIfNull(playlist);
+        ArgumentNullException.ThrowIfNull(next);
+        ArgumentNullException.ThrowIfNull(queued);
+
+        // Freeze before validating, so what is checked is what is stored. An IReadOnlyList can be
+        // a List the caller still holds, and a snapshot whose contents move is not a snapshot.
+        playlist = Freeze(playlist);
+        next = Freeze(next);
+        queued = Freeze(queued);
+
+        RejectNullItems(playlist, nameof(playlist));
+        RejectNullItems(next, nameof(next));
+        RejectNullItems(queued, nameof(queued));
+
+        // Cursor equals the playlist's count at the end of a pass, so the count itself is in range.
+        if (resumeIndex < 0 || resumeIndex > playlist.Count)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(resumeIndex),
+                resumeIndex,
+                $"ResumeIndex must be between 0 and the playlist's count ({playlist.Count}); it is "
+                    + "where the playlist continues, and the count means the pass has ended."
+            );
+        }
+
+        // The queue only ever latches a jump to an item it holds, and clears the latch when that
+        // item is removed, so a pending jump to something absent is a queue that cannot exist.
+        if (
+            pendingJump is not null
+            && !playlist.Contains(pendingJump)
+            && !next.Contains(pendingJump)
+            && !queued.Contains(pendingJump)
+        )
+        {
+            throw new ArgumentException(
+                "PendingJump names an item that is in none of playlist, next or queued. A jump is "
+                    + "only latched to an item the player holds.",
+                nameof(pendingJump)
+            );
+        }
+
+        ArgumentOutOfRangeException.ThrowIfNegative(revision);
+
         Playlist = playlist;
         Next = next;
         Queued = queued;
@@ -82,4 +141,23 @@ public sealed class PlaylistSnapshot
 
     /// <summary>Rises on every edit to the queue and every hand-off.</summary>
     public long Revision { get; }
+
+    /// <summary>
+    /// Returns <paramref name="items"/> when it cannot change under the snapshot, and a copy
+    /// otherwise. The queue's own collections are <see cref="ImmutableList{T}"/>, so the player's
+    /// snapshots take the first branch and allocate nothing.
+    /// </summary>
+    private static IReadOnlyList<PlaylistItem> Freeze(IReadOnlyList<PlaylistItem> items) =>
+        items is ImmutableList<PlaylistItem> or ImmutableArray<PlaylistItem>
+            ? items
+            : [.. items];
+
+    private static void RejectNullItems(IReadOnlyList<PlaylistItem> items, string name)
+    {
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (items[i] is null)
+                throw new ArgumentException($"{name}[{i}] is null.", name);
+        }
+    }
 }

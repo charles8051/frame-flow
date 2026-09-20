@@ -51,7 +51,7 @@ public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>
         var framesAtJump = run.Sink.Presented;
         Assert.True((await run.Controller.PlayAsync()).IsSuccess);
         await run.Sink.WhenPresented(framesAtJump + 1).WaitAsync(Bound);
-        Assert.Equal([a, c], run.Transitions.Select(t => t.Source));
+        Assert.Equal([a, c], run.Transitions.Select(t => t.Item.Source));
     }
 
     [RequiresFfmpegAndCorpusFact]
@@ -67,7 +67,7 @@ public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.True((await run.Controller.PlayAsync()).IsSuccess);
         await bAgain.WaitAsync(Bound);
 
-        Assert.Equal([a, b, c, b], run.Transitions.Select(t => t.Source));
+        Assert.Equal([a, b, c, b], run.Transitions.Select(t => t.Item.Source));
         Assert.Empty(run.Errors);
     }
 
@@ -89,7 +89,7 @@ public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.True((await run.Controller.PlayAsync()).IsSuccess);
         await bAgain.WaitAsync(Bound);
 
-        Assert.Equal([a, b, c, b], run.Transitions.Select(t => t.Source));
+        Assert.Equal([a, b, c, b], run.Transitions.Select(t => t.Item.Source));
         // The kept item did not play through first.
         Assert.InRange(run.Sink.Presented - framesAtPlay, 0, HalfTheClip - 1);
     }
@@ -116,7 +116,7 @@ public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>
         clock.Release();
         await aAgain.WaitAsync(Bound);
 
-        Assert.Equal([a, b, a], run.Transitions.Select(t => t.Source));
+        Assert.Equal([a, b, a], run.Transitions.Select(t => t.Item.Source));
         Assert.InRange(run.Sink.Presented - framesAtJump, 0, HalfTheClip - 1);
     }
 
@@ -139,7 +139,7 @@ public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.Equal(JumpRequest.Pending, run.Coordinator.RequestJump(ItemOf(run, a)));
         await aAgain.WaitAsync(Bound);
 
-        Assert.Equal([a, b, a], run.Transitions.Select(t => t.Source));
+        Assert.Equal([a, b, a], run.Transitions.Select(t => t.Item.Source));
         Assert.InRange(run.Sink.Presented - framesAtJump, 0, HalfTheClip - 1);
     }
 
@@ -190,7 +190,7 @@ public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>
         var bRepeats = run.Transitioned(b);
         await bRepeats.WaitAsync(Bound);
 
-        Assert.Equal([a, b, b], run.Transitions.Select(t => t.Source));
+        Assert.Equal([a, b, b], run.Transitions.Select(t => t.Item.Source));
         Assert.Equal(PlaybackState.Playing, run.Controller.State);
     }
 
@@ -220,7 +220,7 @@ public sealed class PlaylistQueueTests : IClassFixture<FfmpegBootstrapFixture>
         await bStarts.WaitAsync(Bound);
         await cStarts.WaitAsync(Bound);
 
-        Assert.Equal([a, b, c], run.Transitions.Select(t => t.Source));
+        Assert.Equal([a, b, c], run.Transitions.Select(t => t.Item.Source));
         Assert.DoesNotContain(bItem, run.Coordinator.Snapshot().Playlist);
     }
 

@@ -854,6 +854,69 @@ A `MeterListener` on the `FrameFlow.Playback` meter reaches
 Only a caller that invoked `LoopStallMetrics.RecordLoopStall()` breaks, and nothing should have:
 a stall the controller did not see is not a stall. To count your own, declare your own meter.
 
+### 33. `PlaylistTransition.Source` is gone; `Item` names the source
+
+**This one is a compile error at every use.** `Source` was a constructor parameter that always
+held `Item.Source`, so the record carried the same source twice and a consumer could reach the one
+that does not identify which item is playing.
+
+```csharp
+// Before
+UpdateSelection(transition.Source);
+
+// After
+UpdateSelection(transition.Item.Source);
+```
+
+Prefer `transition.Item` itself where you were matching. A queue can hold the same source twice,
+so matching by source picks the wrong entry; the item is what tells them apart, which is why it
+was added.
+
+`Item` is also no longer nullable. It was `PlaylistItem?` only because the four-argument
+constructor could leave it unset, and the player never did. The constructor now takes all six
+members, so every transition names its item:
+
+```csharp
+public sealed record PlaylistTransition(
+    PlaylistItem Item, MediaInfo MediaInfo, int Index, bool Wrapped,
+    PlaylistItem? Previous, PlaylistTransitionReason Reason);
+```
+
+`Previous` stays nullable, because nothing precedes the first item.
+
+`Item` and `MediaInfo` have no `init` accessor, so `with { Item = other }` does not compile. They
+are one fact rather than two — the metadata is what the demuxer reported for that item's load, and
+nothing can re-derive it to check a pairing — so they are set together or not at all. `with` still
+changes `Index`, `Wrapped`, `Previous` and `Reason`; a caller who wants a different item wants a
+different transition.
+
+Code that built a transition
+with the four-argument form and an object initializer passes the six arguments positionally
+instead. A subscriber that null-checked `Item` can drop the check.
+
+### 34. `PlaylistItem` and `PlaylistSnapshot` can be constructed
+
+Not a break. Both constructors were internal, which made `IMediaPlaylistPlayer` an interface you
+could implement but not satisfy: `AddAsync`, `EnqueueAsync`, `SetNextAsync`, `ReplaceAsync` and
+`GetPlaylist` all return those types, and nothing outside the assembly could produce one. A test
+double for a view model, or a decorator over a real player, was out of reach.
+
+```csharp
+var item = new PlaylistItem(source);
+var snapshot = new PlaylistSnapshot(
+    playlist: [item], next: [], queued: [],
+    current: item, currentStarted: true, resumeIndex: 0, pendingJump: null, revision: 1);
+```
+
+An item built this way belongs to no player. Reference equality is what says so, and
+`JumpToAsync` / `RemoveAsync` refuse it with a failed `Result` exactly as they refuse an item
+another player owns.
+
+`PlaylistSnapshot` validates rather than trusting its arguments, so a hand-built snapshot cannot
+describe a queue no player could be in. It throws when a collection holds a `null`, when
+`resumeIndex` falls outside `playlist` (the count itself is in range: it means the pass has
+ended), when `pendingJump` is in none of the three collections, or when `revision` is negative.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

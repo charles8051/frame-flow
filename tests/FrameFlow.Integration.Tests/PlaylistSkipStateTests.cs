@@ -47,7 +47,7 @@ public sealed class PlaylistSkipStateTests : IClassFixture<FfmpegBootstrapFixtur
         Assert.True((await run.Controller.PlayAsync()).IsSuccess);
         await run.Sink.WhenPresented(framesAtSkip + 1).WaitAsync(Bound);
         Assert.Equal(PlaybackState.Playing, run.Controller.State);
-        Assert.Equal([first, second], run.Transitions.Select(t => t.Source));
+        Assert.Equal([first, second], run.Transitions.Select(t => t.Item.Source));
     }
 
     [RequiresFfmpegAndCorpusTheory]
@@ -111,7 +111,7 @@ public sealed class PlaylistSkipStateTests : IClassFixture<FfmpegBootstrapFixtur
         await run.Sink.WhenPresented(1).WaitAsync(Bound);
 
         Assert.Equal(PlaybackState.Playing, run.Controller.State);
-        Assert.Equal([first, second], run.Transitions.Select(t => t.Source));
+        Assert.Equal([first, second], run.Transitions.Select(t => t.Item.Source));
     }
 
     [RequiresFfmpegAndCorpusTheory]

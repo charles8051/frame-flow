@@ -226,8 +226,8 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
     {
         Record(
             t.Wrapped
-                ? $"transition({t.Source.DisplayName}, wrapped)"
-                : $"transition({t.Source.DisplayName})"
+                ? $"transition({t.Item.Source.DisplayName}, wrapped)"
+                : $"transition({t.Item.Source.DisplayName})"
         );
         Action<PlaylistTransition>[] handlers;
         lock (_gate)

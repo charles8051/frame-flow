@@ -167,6 +167,7 @@ FrameFlow.Playback.PlaybackClock.Stop() -> void
 FrameFlow.Playback.PlaybackController
 FrameFlow.Playback.PlaybackObservableExtensions
 FrameFlow.Playback.PlaylistItem
+FrameFlow.Playback.PlaylistItem.PlaylistItem(FrameFlow.Media.IMediaSource! source) -> void
 FrameFlow.Playback.PlaylistItem.Source.get -> FrameFlow.Media.IMediaSource!
 FrameFlow.Playback.PlaylistItemFailed
 FrameFlow.Playback.PlaylistItemFailed.Error.get -> FrameFlow.Media.PlaybackError!
@@ -197,23 +198,20 @@ FrameFlow.Playback.PlaylistSnapshot.CurrentStarted.get -> bool
 FrameFlow.Playback.PlaylistSnapshot.Next.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Playback.PlaylistItem!>!
 FrameFlow.Playback.PlaylistSnapshot.PendingJump.get -> FrameFlow.Playback.PlaylistItem?
 FrameFlow.Playback.PlaylistSnapshot.Playlist.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Playback.PlaylistItem!>!
+FrameFlow.Playback.PlaylistSnapshot.PlaylistSnapshot(System.Collections.Generic.IReadOnlyList<FrameFlow.Playback.PlaylistItem!>! playlist, System.Collections.Generic.IReadOnlyList<FrameFlow.Playback.PlaylistItem!>! next, System.Collections.Generic.IReadOnlyList<FrameFlow.Playback.PlaylistItem!>! queued, FrameFlow.Playback.PlaylistItem? current, bool currentStarted, int resumeIndex, FrameFlow.Playback.PlaylistItem? pendingJump, long revision) -> void
 FrameFlow.Playback.PlaylistSnapshot.Queued.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Playback.PlaylistItem!>!
 FrameFlow.Playback.PlaylistSnapshot.ResumeIndex.get -> int
 FrameFlow.Playback.PlaylistSnapshot.Revision.get -> long
 FrameFlow.Playback.PlaylistTransition
 FrameFlow.Playback.PlaylistTransition.Index.get -> int
 FrameFlow.Playback.PlaylistTransition.Index.init -> void
-FrameFlow.Playback.PlaylistTransition.Item.get -> FrameFlow.Playback.PlaylistItem?
-FrameFlow.Playback.PlaylistTransition.Item.init -> void
+FrameFlow.Playback.PlaylistTransition.Item.get -> FrameFlow.Playback.PlaylistItem!
 FrameFlow.Playback.PlaylistTransition.MediaInfo.get -> FrameFlow.Media.MediaInfo!
-FrameFlow.Playback.PlaylistTransition.MediaInfo.init -> void
-FrameFlow.Playback.PlaylistTransition.PlaylistTransition(FrameFlow.Media.IMediaSource! Source, FrameFlow.Media.MediaInfo! MediaInfo, int Index, bool Wrapped) -> void
+FrameFlow.Playback.PlaylistTransition.PlaylistTransition(FrameFlow.Playback.PlaylistItem! Item, FrameFlow.Media.MediaInfo! MediaInfo, int Index, bool Wrapped, FrameFlow.Playback.PlaylistItem? Previous, FrameFlow.Playback.PlaylistTransitionReason Reason) -> void
 FrameFlow.Playback.PlaylistTransition.Previous.get -> FrameFlow.Playback.PlaylistItem?
 FrameFlow.Playback.PlaylistTransition.Previous.init -> void
 FrameFlow.Playback.PlaylistTransition.Reason.get -> FrameFlow.Playback.PlaylistTransitionReason
 FrameFlow.Playback.PlaylistTransition.Reason.init -> void
-FrameFlow.Playback.PlaylistTransition.Source.get -> FrameFlow.Media.IMediaSource!
-FrameFlow.Playback.PlaylistTransition.Source.init -> void
 FrameFlow.Playback.PlaylistTransition.Wrapped.get -> bool
 FrameFlow.Playback.PlaylistTransition.Wrapped.init -> void
 FrameFlow.Playback.PlaylistTransitionReason

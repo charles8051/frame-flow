@@ -56,7 +56,7 @@ internal sealed class PlaylistRun : IAsyncDisposable
                         _transitions.Add(t);
                         foreach (var (source, signal) in _sourceWaiters)
                         {
-                            if (ReferenceEquals(source, t.Source))
+                            if (ReferenceEquals(source, t.Item.Source))
                                 signal.TrySetResult();
                         }
                         foreach (var (count, signal) in _countWaiters)

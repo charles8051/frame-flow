@@ -346,7 +346,7 @@ public sealed class PlaylistSessionTranscriptTests
         await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b", "c");
         rig.OnSourceTransitioned(t =>
         {
-            if (t.Source.DisplayName == "b")
+            if (t.Item.Source.DisplayName == "b")
                 rig.Coordinator.RequestJump(rig.PlaylistItem("c"));
         });
 

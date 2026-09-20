@@ -307,8 +307,8 @@ public partial class MainWindow : Window
     /// <summary>Highlights the currently playing file in the playlist (UI thread).</summary>
     private void OnSourceTransitioned(PlaylistTransition transition)
     {
-        UpdateSelection(transition.Source);
-        Title = $"FrameFlow Player — {transition.Source.DisplayName}";
+        UpdateSelection(transition.Item.Source);
+        Title = $"FrameFlow Player — {transition.Item.Source.DisplayName}";
     }
 
     private void UpdateSelection(IMediaSource? source)
