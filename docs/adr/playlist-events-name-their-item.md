@@ -171,9 +171,24 @@ here, because "raises both once" is a promise with four exceptions:
 keeps `IMediaPlaylistPlayer` separate "for now" and defers the fold "to the next release that
 breaks implementers for other reasons". No such release is planned, so an implementer should read
 this as a duplication with no end date attached to it, ending whenever that break next happens. At
-that point there is one surface, every caller can take
-`ItemFailed`, and withdrawing item failures from `ErrorOccurred` stops being a silent break. The
-same boundary governs `ItemLooped` and `LoopRestarted` under decision 3.
+that point there is one surface, every caller can take `ItemFailed`, and withdrawing item failures
+from `ErrorOccurred` stops being a silent break. The same boundary governs `ItemLooped` and
+`LoopRestarted` under decision 3.
+
+> **Amended 2026-09-20. Proposed, not accepted** — pending with the amendment to ADR-0077
+> decision 2, which this follows. Until that is taken, the text above stands as written.
+>
+> "No such release is planned" is no longer true. The pending release contains one change that
+> breaks an implementer of `IMediaPlayer`: breaking change 11, which adds `LoopRestarted` to the
+> interface. That is enough to fire decision 2's condition, and it was reconsidered on that trigger
+> and the fold declined — the condition is retired rather than satisfied, because the small
+> interface exists to be consumed polymorphically and folding taxes implementers for a surface
+> consumers already reach.
+>
+> If that is accepted, "at that point" above describes a point that does not arrive: the
+> duplication has no end date at all rather than an unscheduled one, and #308, #306 and #203 are
+> decided on their own merits instead of waiting on a fold. Nothing about the ordering or the
+> shared instances changes either way.
 
 Settles #306.
 
