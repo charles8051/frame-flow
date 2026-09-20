@@ -772,7 +772,7 @@ public sealed class ClockSelectVideoSinkTests
         // rather than the bare 120 ms (#249).
         time.Advance(TimeSpan.FromMilliseconds(200));
         // Bounded so a cap that never fires fails this test rather than hanging the run.
-        await drain.WaitAsync(TimeSpan.FromSeconds(5));
+        await AwaitDrainAsync(drain);
     }
 
     [Fact]
@@ -1079,7 +1079,7 @@ public sealed class ClockSelectVideoSinkTests
 
         // The clock reaching the frame's end is what ends the run, not the cap.
         clock.Advance(TimeSpan.FromSeconds(1));
-        await drain.WaitAsync(TimeSpan.FromSeconds(5));
+        await AwaitDrainAsync(drain);
         Assert.Equal(new[] { TimeSpan.Zero }, sink.PresentedPts);
     }
 
@@ -1107,9 +1107,70 @@ public sealed class ClockSelectVideoSinkTests
         // rather than wedging EOS forever.
         time.Advance(TimeSpan.FromMilliseconds(1121));
 
-        await drain.WaitAsync(TimeSpan.FromSeconds(5));
+        await AwaitDrainAsync(drain);
     }
 
+    // The bound is real time and the drain completes on a pool thread, so a timeout here has two
+    // explanations: a loop that never ended the run, or a continuation that was queued and never
+    // scheduled. This has only ever fired on a CI runner (#330), never locally, so the failure
+    // watches the drain for a further grace period and says which of the two it was.
+    private static async Task AwaitDrainAsync(Task drain)
+    {
+        try
+        {
+            await drain.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail(
+                "The run did not drain within the bound. "
+                    + await AfterGraceAsync(drain).ConfigureAwait(false)
+            );
+        }
+    }
+
+    /// <summary>
+    /// Watches a task that missed its bound for a further grace period and reports whether it
+    /// arrived, as a fact about the task and not a verdict on the cause.
+    /// </summary>
+    /// <remarks>
+    /// Arriving during the grace is consistent with a late continuation and with a subject that is
+    /// merely slow; not arriving is consistent with a wedged subject and with starvation that
+    /// outlasted the grace. Neither is proof, and the message does not claim one. It is still
+    /// narrower than a pool snapshot, which is process-global, unrelated to this task, and taken
+    /// after the fact: a continuation that ran just before the sample reads identically to one that
+    /// was never queued. The pool figures ride along as context and nothing more (#330).
+    /// </remarks>
+    private static async Task<string> AfterGraceAsync(Task task)
+    {
+        // WaitAsync rather than Task.Delay: the delay form is banned in tests (ADR-0072) and this
+        // is the same primitive the bound above already uses.
+        bool arrived;
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            arrived = true;
+        }
+        catch (TimeoutException)
+        {
+            arrived = false;
+        }
+        catch (Exception)
+        {
+            // It finished, faulted or cancelled. Either way it arrived.
+            arrived = true;
+        }
+        ThreadPool.GetMinThreads(out var minWorker, out _);
+        ThreadPool.GetAvailableThreads(out var availableWorker, out _);
+        return (arrived
+                ? "It drained during the grace after the bound: consistent with a late "
+                    + "continuation, or with a run that is merely slow. "
+                : "It had still not drained by the end of the grace: consistent with a run that "
+                    + "never ended, or with starvation lasting past the grace. ")
+            + $"[context, process-wide: {ThreadPool.ThreadCount} pool threads, "
+            + $"{ThreadPool.PendingWorkItemCount} queued, {availableWorker} of {minWorker}+ workers "
+            + $"free, {Environment.ProcessorCount} cpus]";
+    }
     /// <summary>A minimal CPU <see cref="IVideoFrame"/> that tracks disposal.</summary>
     private sealed class TrackingFrame : IVideoFrame
     {

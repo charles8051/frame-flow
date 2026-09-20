@@ -594,8 +594,51 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
         }
         catch (TimeoutException)
         {
-            Assert.Fail(because);
+            Assert.Fail($"{because} {await AfterGraceAsync(task).ConfigureAwait(false)}");
         }
+    }
+
+    /// <summary>
+    /// Watches a task that missed its bound for a further grace period and reports whether it
+    /// arrived, as a fact about the task and not a verdict on the cause.
+    /// </summary>
+    /// <remarks>
+    /// Arriving during the grace is consistent with a late continuation and with a subject that is
+    /// merely slow; not arriving is consistent with a wedged subject and with starvation that
+    /// outlasted the grace. Neither is proof, and the message does not claim one. It is still
+    /// narrower than a pool snapshot, which is process-global, unrelated to this task, and taken
+    /// after the fact: a continuation that ran just before the sample reads identically to one that
+    /// was never queued. The pool figures ride along as context and nothing more (#330).
+    /// </remarks>
+    internal static async Task<string> AfterGraceAsync(Task task)
+    {
+        // WaitAsync rather than Task.Delay: the delay form is banned in tests (ADR-0072) and this
+        // is the same primitive the bound above already uses.
+        bool arrived;
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            arrived = true;
+        }
+        catch (TimeoutException)
+        {
+            arrived = false;
+        }
+        catch (Exception)
+        {
+            // It finished, faulted or cancelled. Either way it arrived.
+            arrived = true;
+        }
+        ThreadPool.GetMinThreads(out var minWorker, out _);
+        ThreadPool.GetAvailableThreads(out var availableWorker, out _);
+        return (arrived
+                ? "It completed during the grace after the bound: consistent with a late "
+                    + "continuation, or with a subject that is merely slow. "
+                : "It had still not completed by the end of the grace: consistent with a wedged "
+                    + "subject, or with starvation lasting past the grace. ")
+            + $"[context, process-wide: {ThreadPool.ThreadCount} pool threads, "
+            + $"{ThreadPool.PendingWorkItemCount} queued, {availableWorker} of {minWorker}+ workers "
+            + $"free, {Environment.ProcessorCount} cpus]";
     }
 
     /// <summary>
