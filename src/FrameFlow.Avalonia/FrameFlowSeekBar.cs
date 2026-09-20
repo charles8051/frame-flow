@@ -14,14 +14,14 @@ namespace FrameFlow.Avalonia;
 /// <summary>
 /// Interactive timeline scrubber: shows current playback position on
 /// a horizontal slider, click or drag to seek. Bound to an
-/// <see cref="IMediaPlayer"/>.
+/// <see cref="IMediaTransport"/>.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Smooth thumb motion.</b> The control samples
-/// <see cref="IMediaPlayer.Position"/> on a ~30 Hz dispatcher tick and
+/// <see cref="IMediaTransport.Position"/> on a ~30 Hz dispatcher tick and
 /// updates the slider's <see cref="RangeBase.Value"/>.
-/// <see cref="IMediaPlayer.Position"/> is backed by a continuous
+/// <see cref="IMediaTransport.Position"/> is backed by a continuous
 /// wall-clock (the playback clock computes it from elapsed time on
 /// every read), so sampling at render cadence makes the thumb glide on
 /// real elapsed time — no extrapolation, no drift correction. (The old
@@ -38,7 +38,7 @@ namespace FrameFlow.Avalonia;
 /// <para>
 /// <b>Scrub coalescing.</b> A drag raises <see cref="RangeBase.Value"/>
 /// dozens of times per second. Firing
-/// <see cref="IMediaPlayer.SeekAsync"/> on each one floods the playback
+/// <see cref="IMediaTransport.SeekAsync"/> on each one floods the playback
 /// engine — every request triggers a full demux-seek + decoder-flush +
 /// decode-forward cycle, which is what makes scrubbing stutter. Instead
 /// the control routes user targets through a
@@ -80,11 +80,11 @@ public sealed class FrameFlowSeekBar : Slider
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMilliseconds(33);
 
     /// <summary>The player whose position the bar reflects and controls.</summary>
-    public static readonly StyledProperty<IMediaPlayer?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowSeekBar, IMediaPlayer?>(nameof(MediaPlayer));
+    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
+        AvaloniaProperty.Register<FrameFlowSeekBar, IMediaTransport?>(nameof(MediaPlayer));
 
     /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaPlayer? MediaPlayer
+    public IMediaTransport? MediaPlayer
     {
         get => GetValue(MediaPlayerProperty);
         set => SetValue(MediaPlayerProperty, value);
@@ -158,7 +158,7 @@ public sealed class FrameFlowSeekBar : Slider
     {
         base.OnPropertyChanged(change);
         if (change.Property == MediaPlayerProperty)
-            OnMediaPlayerChanged(change.GetNewValue<IMediaPlayer?>());
+            OnMediaPlayerChanged(change.GetNewValue<IMediaTransport?>());
         else if (change.Property == ValueProperty)
             OnValueChangedHandler(change.GetNewValue<double>());
     }
@@ -186,7 +186,7 @@ public sealed class FrameFlowSeekBar : Slider
         _scrub?.Request(TimeSpan.FromSeconds(newValue));
     }
 
-    private void OnMediaPlayerChanged(IMediaPlayer? player)
+    private void OnMediaPlayerChanged(IMediaTransport? player)
     {
         // Rebind the coalescing dispatcher to the new player (or drop it). Any
         // pump still draining against the previous player finishes harmlessly
@@ -226,7 +226,7 @@ public sealed class FrameFlowSeekBar : Slider
                     if (_seekRefusalReported)
                         return;
                     _seekRefusalReported = true;
-                    PlayerCommand.Report(this, nameof(IMediaPlayer.SeekAsync), result);
+                    PlayerCommand.Report(this, nameof(IMediaTransport.SeekAsync), result);
                 });
 
         if (player is null)

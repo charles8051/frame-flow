@@ -3,201 +3,228 @@
 
 using FrameFlow.Media;
 using FrameFlow.Playback;
-using FrameFlow.Playback.Diagnostics;
 
 namespace FrameFlow.Player;
 
 /// <summary>
-/// The player surface: a small, task-based API over
-/// <see cref="IPlaybackController"/>, which it wraps and projects to a
-/// simpler shape. Built by <see cref="FrameFlowPlayer"/>.
+/// The player: an ordered, optionally looping queue of sources presented through ONE warm video
+/// sink and ONE warm audio sink. Item boundaries swap only the decode source; the presenter (sink
+/// + GPU resources) and the playback clock stay warm across the whole queue, so the per-item
+/// present-pipeline rebuild a naive consumer pays is eliminated.
 /// <para>
-/// This is an interface rather than a concrete type because the
-/// <c>FrameFlow.Avalonia</c> chrome controls and the
-/// <c>FrameFlow.Audio.OpenAL</c> fluent extension both take it as a
-/// polymorphic dependency.
+/// There is one player type and every player is a queue, a single file included — it is a queue of
+/// one (ADR-0077 decision 1). <see cref="IMediaTransport"/> is the narrower view of the same
+/// object, for a caller that drives transport and has nothing to say about the queue.
 /// </para>
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Error model (ADR-0069).</b> Transport commands return
-/// <see cref="Result"/> rather than throwing, matching
-/// <see cref="IPlaybackController"/>. A command that the state machine
-/// refuses — a seek on a non-seekable source, a play on a disposed player —
-/// is an expected outcome, and <see cref="Result.Error"/> carries the
-/// <see cref="ErrorCategory"/> the controller produced.
+/// The inherited <see cref="IMediaTransport"/> acts on the <b>current</b>
+/// item: <see cref="IMediaTransport.PlayAsync"/> / <see cref="IMediaTransport.PauseAsync"/>
+/// pause and resume it, <see cref="IMediaTransport.SeekAsync"/> seeks within its
+/// timeline, and <see cref="IMediaTransport.Position"/> /
+/// <see cref="IMediaTransport.Duration"/> / <see cref="IMediaTransport.MediaInfo"/>
+/// reflect it (and update on <see cref="SourceTransitioned"/>).
 /// </para>
 /// <para>
-/// Exceptions are still thrown, for the cases that are not expected
-/// outcomes: <see cref="ArgumentException"/> and friends for a caller that
-/// passed something invalid, and whatever escapes a sink or the decode
-/// stack. Failures that arise mid-playback rather than in answer to a
-/// command surface on <see cref="ErrorOccurred"/>.
+/// <b>The queue.</b> The player keeps a playlist of items that stay after they play:
+/// the sources it was created with, then those added with <see cref="AddAsync"/>. Items
+/// from <see cref="SetNextAsync"/> and <see cref="EnqueueAsync"/> play once and never join
+/// the playlist. When an item ends or is skipped, the player takes the target of a pending
+/// <see cref="JumpToAsync"/>, then the most recent <see cref="SetNextAsync"/> item, then the
+/// next playlist item, then the earliest <see cref="EnqueueAsync"/> item. At the end of a
+/// pass, <see cref="RepeatMode.All"/> goes back to the first playlist item and
+/// <see cref="RepeatMode.Off"/> ends. <see cref="RepeatMode.One"/> repeats the current item
+/// until a skip or jump moves on. <see cref="GetPlaylist"/> returns a snapshot of all of it.
+/// </para>
+/// <para>
+/// For continuous rotation under <see cref="RepeatMode.Off"/>, enqueue the next item from a
+/// <see cref="SourceTransitioned"/> handler with <see cref="EnqueueAsync"/>. Its items leave
+/// once they have played, so the player holds nothing after each one. Items added with
+/// <see cref="AddAsync"/> are kept for the life of the player.
+/// </para>
+/// <para>
+/// <b>At the end of the queue.</b> The last item stays loaded at
+/// <see cref="PlaybackState.Ended"/> if it played to its end or was skipped. Its diagnostics
+/// can be read there, and <see cref="IMediaTransport.SeekAsync"/> pauses on it at the position
+/// sought, so a following <see cref="IMediaTransport.PlayAsync"/> plays it from there.
+/// <see cref="IMediaTransport.PlayAsync"/> from <see cref="PlaybackState.Ended"/> plays the target
+/// of a pending jump, or the next item the queue yields, or else starts the playlist again from
+/// its first item. With nothing to play it returns a failed <see cref="Result"/> with
+/// <see cref="ErrorCategory.InvalidOperation"/>, and the player stays in
+/// <see cref="PlaybackState.Ended"/>. If the last item failed, nothing stays loaded, and a seek
+/// from <see cref="PlaybackState.Ended"/> is refused the same way.
+/// </para>
+/// <para>
+/// <b>Failed items.</b> An item that faults while it plays, or a later item that
+/// cannot be started, raises <see cref="IMediaTransport.ErrorOccurred"/> and is skipped
+/// as though it had ended. The state does not change: under
+/// <see cref="RepeatMode.Off"/> a last item that faults while playing ends the
+/// playlist in <see cref="PlaybackState.Ended"/>, and under
+/// <see cref="RepeatMode.All"/> or <see cref="RepeatMode.One"/> the rotation
+/// continues. An item that cannot be started is passed over under every repeat mode. The
+/// player's very first item is treated as a single source's: if it cannot be opened the load
+/// fails, and if it faults before the first <see cref="IMediaTransport.PlayAsync"/> the player
+/// enters <see cref="PlaybackState.Error"/>. The player gives up and enters <see cref="PlaybackState.Error"/>
+/// when more than eight items fail in a row. An item that ends or is skipped without
+/// failing breaks the run, and so does a fault after an item has played for five
+/// seconds, or for half its length if that is shorter.
 /// </para>
 /// </remarks>
-public interface IMediaPlayer : IAsyncDisposable
+public interface IMediaPlayer : IMediaTransport
 {
-    /// <summary>Begin or resume playback.</summary>
+    /// <summary>The source of the item that most recently started, or <see langword="null"/> before the first.</summary>
+    IMediaSource? CurrentSource { get; }
+
+    /// <summary>
+    /// Adds a source that plays once, after the playlist items left in the current pass.
+    /// </summary>
+    /// <returns>The item added, for <see cref="JumpToAsync"/> or <see cref="RemoveAsync"/>.</returns>
+    Task<PlaylistItem> EnqueueAsync(IMediaSource source, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Makes <paramref name="source"/> the very next item to play, ahead of anything already
+    /// set next or queued. It plays once. A <see langword="null"/> value adds nothing.
+    /// </summary>
+    /// <returns>The item added, or <see langword="null"/> when <paramref name="source"/> is null.</returns>
+    Task<PlaylistItem?> SetNextAsync(IMediaSource? source, CancellationToken cancellationToken = default);
+
+    /// <summary>Appends a source to the playlist, where it stays after it plays.</summary>
+    /// <returns>The item added.</returns>
+    Task<PlaylistItem> AddAsync(IMediaSource source, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns a snapshot of the queue.</summary>
+    PlaylistSnapshot GetPlaylist();
+
+    /// <summary>Makes <paramref name="item"/> the current item.</summary>
+    /// <remarks>
+    /// <para>
+    /// The jump follows <see cref="IMediaTransport.State"/> as a skip does. While
+    /// <see cref="PlaybackState.Playing"/> the item plays; while
+    /// <see cref="PlaybackState.Paused"/> it becomes current and stays paused. Before the first
+    /// play, and at <see cref="PlaybackState.Ended"/>, it takes effect at the next
+    /// <see cref="IMediaTransport.PlayAsync"/>. A jump to a playlist item continues the playlist
+    /// from there. A later jump replaces one not yet taken.
+    /// </para>
+    /// <para>
+    /// A jump to the current item does nothing and succeeds; seek to zero to restart it. A jump
+    /// to an item that is not in the player, including a current item that has been removed, or
+    /// while the player is in
+    /// <see cref="PlaybackState.Error"/> or disposed, returns a failed <see cref="Result"/> with
+    /// <see cref="ErrorCategory.InvalidOperation"/>. The call returns once the jump is recorded;
+    /// <see cref="SourceTransitioned"/> fires when the item starts.
+    /// </para>
+    /// </remarks>
+    Task<Result> JumpToAsync(PlaylistItem item, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes <paramref name="item"/> from the queue. The current item is never stopped:
+    /// removing it lets it play on, and when it ends the player takes the next item as usual,
+    /// without repeating it under <see cref="RepeatMode.One"/>.
+    /// </summary>
     /// <returns>
-    /// A successful <see cref="Result"/>, or one whose
-    /// <see cref="Result.Error"/> says why the command was refused.
+    /// A failed <see cref="Result"/> with <see cref="ErrorCategory.InvalidOperation"/> when the
+    /// item is not in the player.
     /// </returns>
-    Task<Result> PlayAsync(CancellationToken cancellationToken = default);
+    Task<Result> RemoveAsync(PlaylistItem item, CancellationToken cancellationToken = default);
 
-    /// <summary>Pause playback at the current position.</summary>
+    /// <summary>
+    /// Removes every item and any pending jump. The current item plays on, and the playlist
+    /// ends when it does unless items are added first.
+    /// </summary>
+    Task ClearAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Replaces the queue with <paramref name="sources"/> in one edit and jumps to the first of
+    /// them, so a playing player moves to the new playlist at once.
+    /// </summary>
     /// <returns>
-    /// A successful <see cref="Result"/>, or one whose
-    /// <see cref="Result.Error"/> says why the command was refused.
+    /// The new playlist items, or a failed <see cref="Result{T}"/> with
+    /// <see cref="ErrorCategory.InvalidOperation"/> while the player is in
+    /// <see cref="PlaybackState.Error"/> or disposed.
     /// </returns>
-    Task<Result> PauseAsync(CancellationToken cancellationToken = default);
+    /// <exception cref="ArgumentException"><paramref name="sources"/> is empty.</exception>
+    Task<Result<IReadOnlyList<PlaylistItem>>> ReplaceAsync(
+        IEnumerable<IMediaSource> sources,
+        CancellationToken cancellationToken = default
+    );
 
-    /// <summary>Seek to the given position in media time.</summary>
-    /// <returns>
-    /// A successful <see cref="Result"/>, or one whose
-    /// <see cref="Result.Error"/> says why the command was refused —
-    /// seeking a non-seekable source is the common case.
-    /// </returns>
-    Task<Result> SeekAsync(TimeSpan position, CancellationToken cancellationToken = default);
-
-    /// <summary>Change repeat/loop behavior.</summary>
-    /// <returns>
-    /// A successful <see cref="Result"/>, or one whose
-    /// <see cref="Result.Error"/> says why the command was refused.
-    /// </returns>
-    Task<Result> SetRepeatModeAsync(RepeatMode mode, CancellationToken cancellationToken = default);
-
-    /// <summary>Current primary playback state.</summary>
-    PlaybackState State { get; }
-
-    /// <summary>Current playback position.</summary>
-    TimeSpan Position { get; }
-
-    /// <summary>Total duration of the loaded media.</summary>
-    TimeSpan Duration { get; }
-
-    /// <summary>Metadata for the loaded media.</summary>
-    MediaInfo MediaInfo { get; }
-
-    /// <summary>Stream of primary playback state transitions.</summary>
+    /// <summary>End the current item now and hand off to the next (no presenter rebuild).</summary>
     /// <remarks>
-    /// Carries the state the player moved <i>to</i>, which is what a badge or a
-    /// button row needs. The layer below reports the same transitions as
-    /// <see cref="IPlaybackController.PlaybackStateChanged"/>, typed
-    /// <c>StateTransition&lt;PlaybackState&gt;</c> so it also carries the state
-    /// moved <i>from</i>. The two names differ because the two payloads do;
-    /// take the controller's stream if you need the previous state.
+    /// <para>
+    /// The skip follows <see cref="IMediaTransport.State"/>. While
+    /// <see cref="PlaybackState.Playing"/>, the next item plays. While
+    /// <see cref="PlaybackState.Paused"/>, the next item becomes current and stays paused
+    /// until <see cref="IMediaTransport.PlayAsync"/>. A skip before the playlist has first played
+    /// takes effect when it does. At <see cref="PlaybackState.Ended"/> the skip does nothing;
+    /// call <see cref="IMediaTransport.PlayAsync"/> to play what is queued.
+    /// </para>
+    /// <para>
+    /// When nothing follows the current item under <see cref="RepeatMode.Off"/>, the skip ends
+    /// the playlist in <see cref="PlaybackState.Ended"/>, whether it was playing or paused.
+    /// </para>
+    /// <para>
+    /// The call returns once the skip is requested, before the next item is current.
+    /// <see cref="SourceTransitioned"/> fires when it is.
+    /// </para>
     /// </remarks>
-    IObservable<PlaybackState> StateChanged { get; }
-
-    /// <summary>Stream of position updates.</summary>
-    /// <remarks>
-    /// A cadence, not a change notification. The controller samples the
-    /// playback clock on a 250 ms <see cref="PeriodicTimer"/> while the player
-    /// is in <see cref="PlaybackState.Playing"/> and pushes whatever it reads,
-    /// so a value can repeat and the stream is silent while paused. This is
-    /// <see cref="IPlaybackController.PositionTick"/> unprojected.
-    /// </remarks>
-    IObservable<TimeSpan> PositionTick { get; }
+    Task SkipToNextAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Fires when the current item is back at its start after it played to its end. A playlist
-    /// raises it under <see cref="RepeatMode.One"/>, and for its only item under
-    /// <see cref="RepeatMode.All"/>; a single-source player raises it under
-    /// <see cref="RepeatMode.One"/>. It does not fire for a skip, a jump or a rebuild after a
-    /// failure. This is <see cref="IPlaybackController.LoopRestarted"/> unprojected.
+    /// Fires once per hand-off (including the first item) when the presenter
+    /// switches from one source to the next. Carries the new
+    /// <see cref="CurrentSource"/> and its <see cref="MediaInfo"/> so a consumer
+    /// can advance its own model and, under <see cref="RepeatMode.Off"/>, enqueue
+    /// the following item to keep a rotation going. <see cref="PlaylistTransition.Item"/> is
+    /// the item that started.
     /// </summary>
-    IObservable<LoopRestarted> LoopRestarted { get; }
+    IObservable<PlaylistTransition> SourceTransitioned { get; }
 
     /// <summary>
-    /// Fires when an expected loop appears to have stalled — the position
-    /// overran the item duration without a restart (frame delivery stopped while
-    /// the clock kept advancing). Hosts can surface this to health/telemetry.
-    /// </summary>
-    IObservable<LoopStalled> LoopStalled { get; }
-
-    /// <summary>
-    /// Fires when a failure arises during playback rather than in answer to a
-    /// command. A command's own failure comes back on its <see cref="Result"/>
-    /// and is not repeated here.
+    /// Fires when an item failed and was skipped, naming the item and how it failed. Prefer this
+    /// over <see cref="IMediaTransport.ErrorOccurred"/> for item failures: that stream cannot say
+    /// which item an error belongs to, and reading <see cref="GetPlaylist"/> inside its handler
+    /// does not answer it either, because the queue has already moved past the failed item.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Forwarded from <see cref="IPlaybackController.ErrorOccurred"/>. Without
-    /// it a consumer holding only the player surface has no structured error
-    /// channel for anything the decode stack reports mid-stream.
+    /// The same failure also reaches <see cref="IMediaTransport.ErrorOccurred"/>, which stays because
+    /// it is the only failure signal a caller holding that surface has. This one is raised first
+    /// and carries the identical <see cref="PlaybackError"/> instance, so a consumer subscribed to
+    /// both discards the second sighting by reference equality.
     /// </para>
     /// <para>
-    /// An error does not always stop playback. A single-source player raises it
-    /// as it enters <see cref="PlaybackState.Error"/>. An
-    /// <see cref="IMediaPlaylistPlayer"/> also raises it for an item that fails,
-    /// and keeps playing; see that interface.
+    /// It does not fire for every failure, and does not always mean the player carries on. The
+    /// first item is treated as a single source's, so a failure before anything has played fails
+    /// the load or enters <see cref="PlaybackState.Error"/> instead, raising nothing here. Nothing
+    /// fires while the player is disposing. And the failure that exhausts the consecutive-failure
+    /// guard is raised here and then followed by <see cref="PlaybackState.Error"/>, so a consumer
+    /// that retries or re-queues on this event should watch the state too.
     /// </para>
     /// </remarks>
-    IObservable<PlaybackError> ErrorOccurred { get; }
-
-    /// <summary>Returns a snapshot of diagnostics on demand.</summary>
-    /// <remarks>
-    /// <para>
-    /// Named for the ADR-0034 convention that every diagnostics-bearing surface
-    /// in FrameFlow follows — sinks, decoders, the demux session and the
-    /// controller all spell it <c>GetDiagnostics()</c>. Cheap enough for a UI
-    /// timer at ~2 Hz; not a hot-path call.
-    /// </para>
-    /// <para>
-    /// There is no pushed stream of snapshots. Poll this on a timer you own, at
-    /// the rate your consumer needs; ADR-0034 leaves the cadence to the caller.
-    /// Discrete events that must not be missed between polls have their own
-    /// observables: <see cref="StateChanged"/>, <see cref="ErrorOccurred"/> and
-    /// <see cref="LoopStalled"/>.
-    /// </para>
-    /// </remarks>
-    PlaybackDiagnosticsSnapshot GetDiagnostics();
+    IObservable<PlaylistItemFailed> ItemFailed { get; }
 
     /// <summary>
-    /// Whether the underlying audio sink can actually change output gain.
+    /// Fires when the current item is back at its start after playing to its end, naming the item.
+    /// Prefer this over <see cref="IMediaTransport.LoopRestarted"/> when the item matters.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// This is the capability-discovery pattern for the player surface.
-    /// A consumer holds an <see cref="IMediaPlayer"/>, never the sink, so it
-    /// cannot type-test for <see cref="FrameFlow.Media.IVolumeControl"/>
-    /// itself. This property asks that question on its behalf: it is
-    /// <see langword="true"/> exactly when an audio sink is attached and that
-    /// sink implements <see cref="FrameFlow.Media.IVolumeControl"/>.
-    /// </para>
-    /// <para>
-    /// UI should gate on this rather than writing blind. A volume slider bound
-    /// to a player where this is <see langword="false"/> should disable
-    /// itself; otherwise it looks live and does nothing. See
-    /// <c>FrameFlowVolumeControl</c> for the reference treatment.
-    /// </para>
-    /// <para>
-    /// Future capabilities on this surface should follow the same shape:
-    /// a <c>Supports…</c> property backed by a type test on the composed
-    /// object, not a capability record handed up from below.
-    /// </para>
+    /// The same loop also reaches <see cref="IMediaTransport.LoopRestarted"/>. This one is raised
+    /// first and carries the identical <see cref="FrameFlow.Media.LoopRestarted"/> instance, so the
+    /// same reference-equality discard applies.
     /// </remarks>
-    bool SupportsVolumeControl { get; }
+    IObservable<PlaylistItemLooped> ItemLooped { get; }
 
     /// <summary>
-    /// Master output gain. <c>0.0</c> is silent, <c>1.0</c> is unity.
+    /// Fires when the current item was expected to repeat and appears to have wedged instead,
+    /// naming the item. Prefer this over <see cref="IMediaTransport.LoopStalled"/> when the item
+    /// matters.
     /// </summary>
     /// <remarks>
-    /// When <see cref="SupportsVolumeControl"/> is <see langword="false"/>
-    /// the setter is a no-op rather than a throw: a consumer that ignores the
-    /// capability should not crash over a cosmetic control. The getter still
-    /// round-trips whatever was last written, so a UI reading the value back
-    /// to render a label or icon shows what the user chose instead of a
-    /// value they never set.
+    /// The same stall also reaches <see cref="IMediaTransport.LoopStalled"/>. This one is raised first
+    /// and carries the identical <see cref="FrameFlow.Media.LoopStalled"/> instance, so the same
+    /// reference-equality discard applies. Neither is a recovery: the player does not rebuild the
+    /// wedged item.
     /// </remarks>
-    float Volume { get; set; }
-
-    /// <summary>Master mute.</summary>
-    /// <remarks>
-    /// Same no-op-and-round-trip behaviour as <see cref="Volume"/> when
-    /// <see cref="SupportsVolumeControl"/> is <see langword="false"/>. Mute
-    /// needs no capability of its own: a sink with no gain stage cannot mute
-    /// either, so one flag covers both.
-    /// </remarks>
-    bool Muted { get; set; }
+    IObservable<PlaylistItemStalled> ItemStalled { get; }
 }

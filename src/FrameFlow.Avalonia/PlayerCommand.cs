@@ -7,7 +7,7 @@ using FrameFlow.Media;
 namespace FrameFlow.Avalonia;
 
 /// <summary>
-/// Runs an <see cref="Player.IMediaPlayer"/> transport command from a chrome
+/// Runs an <see cref="Player.IMediaTransport"/> transport command from a chrome
 /// control and reports what happened.
 /// </summary>
 /// <remarks>

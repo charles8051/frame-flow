@@ -1003,6 +1003,45 @@ cached its swscale context across frames; it does not, it calls `ReadbackToCpuBg
 the claim is gone rather than made true. Reuse across frames is a follow-up, and next to the PCIe
 transfer and the full-frame scale it is small.
 
+### 38. The two player interfaces swap names
+
+**This one is a compile error at every use, and a mechanical one.** `IMediaPlaylistPlayer` is now
+`IMediaPlayer`, and what `IMediaPlayer` used to name is now `IMediaTransport`.
+
+| Was | Is |
+| --- | --- |
+| `IMediaPlaylistPlayer` | `IMediaPlayer` |
+| `IMediaPlayer` | `IMediaTransport` |
+
+Rename in that order, or the first pass will collide with the second: the name being freed is the
+name being taken.
+
+```csharp
+// Before
+IMediaPlaylistPlayer player = await FrameFlowPlayer.Create()…BuildPlayerAsync();
+IMediaPlayer small = player;
+
+// After
+IMediaPlayer player = await FrameFlowPlayer.Create()…BuildPlayerAsync();
+IMediaTransport transport = player;
+```
+
+Nothing about either type changes — same members, same inheritance, same object returned by
+`BuildPlayerAsync`. Only the names move.
+
+**Why.** `IMediaPlaylistPlayer` read as a *kind* of player, the one to reach for when there is a
+playlist, and ADR-0077 decision 1 is that there is no such kind: every player is a queue and a
+single file is a queue of one. `IMediaPlayer` read as the general case while being the narrower
+view. A reader meeting both concluded "the plain one for a file, the playlist one for several",
+which is wrong in both directions, and type names are the only thing most callers read.
+
+The new name for the small surface is the word the codebase already used for it in prose, and every
+consumer of it is a transport widget: the seek bar, the volume control, the state badge, the
+transport bar, the position label.
+
+ADR-0077 decision 2's amendment has the reasoning, including why the two interfaces stay separate
+rather than folding into one.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

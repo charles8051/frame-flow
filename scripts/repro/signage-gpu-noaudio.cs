@@ -288,7 +288,7 @@ internal static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan t
 
 // A timeout has to separate "never started" from "started and stalled", so it
 // prints the counters that tell those apart rather than only the one waited on.
-internal static string Trajectory(IMediaPlayer player, string headline)
+internal static string Trajectory(IMediaTransport player, string headline)
 {
     var d = player.PollDiagnostics();
     return $"{headline}\n"

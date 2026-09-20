@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 namespace FrameFlow.Player;
 
 /// <summary>
-/// Concrete <see cref="IMediaPlaylistPlayer"/> built by
+/// Concrete <see cref="IMediaPlayer"/> built by
 /// <see cref="FrameFlowPlayer"/>. Wraps an
 /// <see cref="IPlaybackController"/> (driving one warm <c>PlaylistSession</c>)
 /// and a shared <see cref="PlaylistCoordinator"/>, projecting both to the
@@ -23,7 +23,7 @@ namespace FrameFlow.Player;
 /// snapshot — is what lets the metadata follow the playlist without disturbing
 /// the controller's "immutable loaded snapshot" model.
 /// </remarks>
-internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
+internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
 {
     private readonly IPlaybackController _controller;
     private readonly PlaylistCoordinator _coordinator;
@@ -54,7 +54,7 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
         );
     }
 
-    // ── IMediaPlayer: state ─────────────────────────────────────────────────
+    // ── IMediaTransport: state ─────────────────────────────────────────────────
 
     public PlaybackState State => _controller.State;
     public TimeSpan Position => _controller.Position;
@@ -81,7 +81,7 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
     private float _detachedVolume = 1.0f;
 
     // Validation is the sink's contract, not the player's, but a write that
-    // never reaches a sink still has to honour it — otherwise IMediaPlayer.Volume
+    // never reaches a sink still has to honour it — otherwise IMediaTransport.Volume
     // becomes the one path that can read back NaN. Mirrors the guard in
     // IVolumeControl implementations (ADR-0065).
     private static float ValidatedVolume(float value) =>
@@ -120,7 +120,7 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
         }
     }
 
-    // ── IMediaPlayer: transport ─────────────────────────────────────────────
+    // ── IMediaTransport: transport ─────────────────────────────────────────────
 
     // ADR-0069: pass-throughs. The controller already answers in Result.
     public Task<Result> PlayAsync(CancellationToken cancellationToken = default) =>
@@ -153,7 +153,7 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlaylistPlayer
         return result;
     }
 
-    // ── IMediaPlaylistPlayer ────────────────────────────────────────────────
+    // ── IMediaPlayer ────────────────────────────────────────────────
 
     public IMediaSource? CurrentSource => _coordinator.CurrentSource;
 

@@ -88,7 +88,7 @@ static int SdlMain(string[] args)
         // PlaybackStateChanged / SeekStateChanged / RepeatModeChanged /
         // ErrorOccurred, drives Load/Play/Pause/Seek/SetRepeatMode by
         // hand from key + drag-drop events, and inspects controller.State
-        // each tick to detect terminal states. IMediaPlayer intentionally
+        // each tick to detect terminal states. IMediaTransport intentionally
         // hides exactly those transitions, so app/host code should prefer
         // FrameFlowPlayer.Create().WithMedia(...).BuildPlayerAsync(); reach for
         // PlaybackController.Create only when the state machine itself is

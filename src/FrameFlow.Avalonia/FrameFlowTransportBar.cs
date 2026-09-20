@@ -13,7 +13,7 @@ namespace FrameFlow.Avalonia;
 
 /// <summary>
 /// Play / Pause / Stop / Loop button row bound to an
-/// <see cref="IMediaPlayer"/>. Buttons enable/disable based on the
+/// <see cref="IMediaTransport"/>. Buttons enable/disable based on the
 /// player's current state; clicking dispatches the corresponding
 /// async call on the player.
 /// </summary>
@@ -29,20 +29,20 @@ namespace FrameFlow.Avalonia;
 /// <c>SetRepeatModeAsync</c> comes back as a <see cref="Result"/> and is
 /// logged through Avalonia's logger by <c>PlayerCommand</c> (ADR-0069).
 /// The bar has no error affordance of its own: the buttons follow
-/// <see cref="IMediaPlayer.StateChanged"/>, so a refusal leaves them
+/// <see cref="IMediaTransport.StateChanged"/>, so a refusal leaves them
 /// where the state says they belong. A consumer wanting failures that
 /// arise mid-playback rather than in answer to a command should observe
-/// <see cref="IMediaPlayer.ErrorOccurred"/>.
+/// <see cref="IMediaTransport.ErrorOccurred"/>.
 /// </para>
 /// </remarks>
 public sealed class FrameFlowTransportBar : StackPanel
 {
     /// <summary>The player to control.</summary>
-    public static readonly StyledProperty<IMediaPlayer?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowTransportBar, IMediaPlayer?>(nameof(MediaPlayer));
+    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
+        AvaloniaProperty.Register<FrameFlowTransportBar, IMediaTransport?>(nameof(MediaPlayer));
 
     /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaPlayer? MediaPlayer
+    public IMediaTransport? MediaPlayer
     {
         get => GetValue(MediaPlayerProperty);
         set => SetValue(MediaPlayerProperty, value);
@@ -109,7 +109,7 @@ public sealed class FrameFlowTransportBar : StackPanel
     {
         base.OnPropertyChanged(change);
         if (change.Property == MediaPlayerProperty)
-            OnMediaPlayerChanged(change.GetNewValue<IMediaPlayer?>());
+            OnMediaPlayerChanged(change.GetNewValue<IMediaTransport?>());
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -119,7 +119,7 @@ public sealed class FrameFlowTransportBar : StackPanel
         base.OnDetachedFromVisualTree(e);
     }
 
-    private void OnMediaPlayerChanged(IMediaPlayer? player)
+    private void OnMediaPlayerChanged(IMediaTransport? player)
     {
         _stateSubscription?.Dispose();
         _stateSubscription = null;
@@ -137,7 +137,7 @@ public sealed class FrameFlowTransportBar : StackPanel
         if (LoopByDefault)
             PlayerCommand.FireAndForget(
                 this,
-                nameof(IMediaPlayer.SetRepeatModeAsync),
+                nameof(IMediaTransport.SetRepeatModeAsync),
                 () => player.SetRepeatModeAsync(RepeatMode.One),
                 // Repeat mode has no observable to resynchronise from, so a
                 // refused command would otherwise leave the toggle showing a
@@ -170,13 +170,13 @@ public sealed class FrameFlowTransportBar : StackPanel
     private void OnPlayClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (MediaPlayer is { } p)
-            PlayerCommand.FireAndForget(this, nameof(IMediaPlayer.PlayAsync), () => p.PlayAsync());
+            PlayerCommand.FireAndForget(this, nameof(IMediaTransport.PlayAsync), () => p.PlayAsync());
     }
 
     private void OnPauseClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (MediaPlayer is { } p)
-            PlayerCommand.FireAndForget(this, nameof(IMediaPlayer.PauseAsync), () => p.PauseAsync());
+            PlayerCommand.FireAndForget(this, nameof(IMediaTransport.PauseAsync), () => p.PauseAsync());
     }
 
     private void OnStopClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
@@ -209,7 +209,7 @@ public sealed class FrameFlowTransportBar : StackPanel
         var mode = requested ? RepeatMode.One : RepeatMode.Off;
         PlayerCommand.FireAndForget(
             this,
-            nameof(IMediaPlayer.SetRepeatModeAsync),
+            nameof(IMediaTransport.SetRepeatModeAsync),
             () => p.SetRepeatModeAsync(mode),
             // Click already flipped the toggle. Unlike play/pause/stop, whose
             // buttons follow StateChanged, repeat mode has no observable on

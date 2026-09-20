@@ -12,14 +12,14 @@ namespace FrameFlow.Avalonia;
 
 /// <summary>
 /// Display-only badge showing the current playback state of an
-/// <see cref="IMediaPlayer"/> with a color-coded text palette
+/// <see cref="IMediaTransport"/> with a color-coded text palette
 /// (green = Playing, amber = Paused, red = Error, neutral grey
 /// for everything else).
 /// </summary>
 /// <remarks>
 /// <para>
 /// Bind the <see cref="MediaPlayer"/> styled property; the badge
-/// subscribes to <see cref="IMediaPlayer.StateChanged"/>, marshals
+/// subscribes to <see cref="IMediaTransport.StateChanged"/>, marshals
 /// onto the UI thread via <see cref="AvaloniaObservableExtensions.ObserveOnUiThread"/>,
 /// and seeds itself from the current state on assignment. Swap players
 /// (or set to <see langword="null"/>) at any time — the badge disposes
@@ -34,14 +34,14 @@ namespace FrameFlow.Avalonia;
 public sealed class FrameFlowStateBadge : TextBlock
 {
     /// <summary>
-    /// The <see cref="IMediaPlayer"/> whose state the badge displays.
+    /// The <see cref="IMediaTransport"/> whose state the badge displays.
     /// Settable via XAML binding; can be re-assigned or cleared at runtime.
     /// </summary>
-    public static readonly StyledProperty<IMediaPlayer?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowStateBadge, IMediaPlayer?>(nameof(MediaPlayer));
+    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
+        AvaloniaProperty.Register<FrameFlowStateBadge, IMediaTransport?>(nameof(MediaPlayer));
 
     /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaPlayer? MediaPlayer
+    public IMediaTransport? MediaPlayer
     {
         get => GetValue(MediaPlayerProperty);
         set => SetValue(MediaPlayerProperty, value);
@@ -64,7 +64,7 @@ public sealed class FrameFlowStateBadge : TextBlock
     {
         base.OnPropertyChanged(change);
         if (change.Property == MediaPlayerProperty)
-            OnMediaPlayerChanged(change.GetNewValue<IMediaPlayer?>());
+            OnMediaPlayerChanged(change.GetNewValue<IMediaTransport?>());
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -74,7 +74,7 @@ public sealed class FrameFlowStateBadge : TextBlock
         base.OnDetachedFromVisualTree(e);
     }
 
-    private void OnMediaPlayerChanged(IMediaPlayer? player)
+    private void OnMediaPlayerChanged(IMediaTransport? player)
     {
         _stateSubscription?.Dispose();
         _stateSubscription = null;

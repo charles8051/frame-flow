@@ -7,9 +7,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FrameFlow.Player.Tests;
 
 /// <summary>
-/// Covers <see cref="IMediaPlayer.SupportsVolumeControl"/> and the
-/// no-op-and-round-trip behaviour of <see cref="IMediaPlayer.Volume"/> /
-/// <see cref="IMediaPlayer.Muted"/> when the attached audio sink has no gain
+/// Covers <see cref="IMediaTransport.SupportsVolumeControl"/> and the
+/// no-op-and-round-trip behaviour of <see cref="IMediaTransport.Volume"/> /
+/// <see cref="IMediaTransport.Muted"/> when the attached audio sink has no gain
 /// stage.
 /// </summary>
 /// <remarks>
@@ -91,7 +91,7 @@ public sealed class VolumeControlDiscoveryTests
         await using var player = NewPlayer(new GainlessAudioSink());
 
         // The no-op rule covers an absent capability, not invalid input. If the
-        // detached path skipped validation, IMediaPlayer.Volume would be the
+        // detached path skipped validation, IMediaTransport.Volume would be the
         // one route by which a caller could read back NaN.
         Assert.Throws<ArgumentOutOfRangeException>(() => player.Volume = invalid);
     }

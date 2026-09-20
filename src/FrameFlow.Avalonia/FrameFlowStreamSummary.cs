@@ -12,20 +12,20 @@ namespace FrameFlow.Avalonia;
 
 /// <summary>
 /// Display-only one-line summary of an
-/// <see cref="IMediaPlayer"/>'s loaded media —
+/// <see cref="IMediaTransport"/>'s loaded media —
 /// codec, resolution, frame rate, audio sample rate / channels, and
 /// container. Refreshes whenever the player's state changes (which
 /// covers the Initializing → Paused / Playing transition where
-/// <see cref="IMediaPlayer.MediaInfo"/> first becomes available).
+/// <see cref="IMediaTransport.MediaInfo"/> first becomes available).
 /// </summary>
 public sealed class FrameFlowStreamSummary : TextBlock
 {
     /// <summary>The player whose loaded media to summarise.</summary>
-    public static readonly StyledProperty<IMediaPlayer?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowStreamSummary, IMediaPlayer?>(nameof(MediaPlayer));
+    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
+        AvaloniaProperty.Register<FrameFlowStreamSummary, IMediaTransport?>(nameof(MediaPlayer));
 
     /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaPlayer? MediaPlayer
+    public IMediaTransport? MediaPlayer
     {
         get => GetValue(MediaPlayerProperty);
         set => SetValue(MediaPlayerProperty, value);
@@ -46,7 +46,7 @@ public sealed class FrameFlowStreamSummary : TextBlock
     {
         base.OnPropertyChanged(change);
         if (change.Property == MediaPlayerProperty)
-            OnMediaPlayerChanged(change.GetNewValue<IMediaPlayer?>());
+            OnMediaPlayerChanged(change.GetNewValue<IMediaTransport?>());
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -56,7 +56,7 @@ public sealed class FrameFlowStreamSummary : TextBlock
         base.OnDetachedFromVisualTree(e);
     }
 
-    private void OnMediaPlayerChanged(IMediaPlayer? player)
+    private void OnMediaPlayerChanged(IMediaTransport? player)
     {
         _stateSubscription?.Dispose();
         _stateSubscription = null;
@@ -71,7 +71,7 @@ public sealed class FrameFlowStreamSummary : TextBlock
         _stateSubscription = player.StateChanged.ObserveOnUiThread().Subscribe(_ => Refresh(player));
     }
 
-    private void Refresh(IMediaPlayer player)
+    private void Refresh(IMediaTransport player)
     {
         // MediaInfo throws if the player hasn't finished loading.
         // Catch and clear — the next state transition will retry.

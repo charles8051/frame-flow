@@ -286,7 +286,7 @@ internal static class Soak
 
     /// <summary>Measures one window, and returns its presented rate.</summary>
     private static async Task<double?> MeasureAsync(
-        IMediaPlayer player,
+        IMediaTransport player,
         TimeSpan window,
         Report report,
         string name
@@ -349,7 +349,7 @@ internal static class Soak
         return condition();
     }
 
-    internal static string Trajectory(IMediaPlayer player, string headline)
+    internal static string Trajectory(IMediaTransport player, string headline)
     {
         var d = player.PollDiagnostics();
         return $"{headline}\n"

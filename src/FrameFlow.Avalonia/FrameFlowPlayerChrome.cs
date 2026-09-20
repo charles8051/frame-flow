@@ -48,11 +48,11 @@ namespace FrameFlow.Avalonia;
 public sealed class FrameFlowPlayerChrome : UserControl
 {
     /// <summary>The player to display + control.</summary>
-    public static readonly StyledProperty<IMediaPlayer?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowPlayerChrome, IMediaPlayer?>(nameof(MediaPlayer));
+    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
+        AvaloniaProperty.Register<FrameFlowPlayerChrome, IMediaTransport?>(nameof(MediaPlayer));
 
     /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaPlayer? MediaPlayer
+    public IMediaTransport? MediaPlayer
     {
         get => GetValue(MediaPlayerProperty);
         set => SetValue(MediaPlayerProperty, value);
@@ -195,7 +195,7 @@ public sealed class FrameFlowPlayerChrome : UserControl
         base.OnPropertyChanged(change);
         if (change.Property == MediaPlayerProperty)
         {
-            var p = change.GetNewValue<IMediaPlayer?>();
+            var p = change.GetNewValue<IMediaTransport?>();
             _stateBadge.MediaPlayer = p;
             _streamSummary.MediaPlayer = p;
             _positionLabel.MediaPlayer = p;
@@ -317,7 +317,7 @@ public sealed class FrameFlowPlayerChrome : UserControl
             case Key.Left:
                 PlayerCommand.FireAndForget(
                     this,
-                    nameof(IMediaPlayer.SeekAsync),
+                    nameof(IMediaTransport.SeekAsync),
                     () => player.SeekAsync(SeekBy(player, -5))
                 );
                 e.Handled = true;
@@ -325,7 +325,7 @@ public sealed class FrameFlowPlayerChrome : UserControl
             case Key.Right:
                 PlayerCommand.FireAndForget(
                     this,
-                    nameof(IMediaPlayer.SeekAsync),
+                    nameof(IMediaTransport.SeekAsync),
                     () => player.SeekAsync(SeekBy(player, +5))
                 );
                 e.Handled = true;
@@ -333,17 +333,17 @@ public sealed class FrameFlowPlayerChrome : UserControl
         }
     }
 
-    private void TogglePlayPause(IMediaPlayer player)
+    private void TogglePlayPause(IMediaTransport player)
     {
         var playing = player.State == PlaybackState.Playing;
         PlayerCommand.FireAndForget(
             this,
-            playing ? nameof(IMediaPlayer.PauseAsync) : nameof(IMediaPlayer.PlayAsync),
+            playing ? nameof(IMediaTransport.PauseAsync) : nameof(IMediaTransport.PlayAsync),
             () => playing ? player.PauseAsync() : player.PlayAsync()
         );
     }
 
-    private static TimeSpan SeekBy(IMediaPlayer player, double seconds)
+    private static TimeSpan SeekBy(IMediaTransport player, double seconds)
     {
         var target = player.Position + TimeSpan.FromSeconds(seconds);
         if (target < TimeSpan.Zero)

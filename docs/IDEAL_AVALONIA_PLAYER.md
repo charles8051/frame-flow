@@ -20,7 +20,7 @@ Crossbar-shaping roadmap.
 > **Update 2026-09-13 (ADR-0034).** This target originally asked for
 > diagnostics as an `IObservable` with a library-chosen cadence. That
 > gap is closed as *won't do*: ADR-0034 leaves the polling rate to the
-> consumer, and the stub `IMediaPlayer.Diagnostics` observable, which
+> consumer, and the stub `IMediaTransport.Diagnostics` observable, which
 > never emitted, has been removed. Diagnostics are read with
 > `GetDiagnostics()` on a timer the app owns. State, position, errors
 > and loop stalls stay observables, because they are discrete events a
@@ -57,7 +57,7 @@ The ideal player has three layers, each Crossbar-shaped:
 │  Layer 2 — Player builder                                       │
 │  FrameFlowPlayer.Create().WithMedia(path).WithVideo(...).WithAudio(...).Build().  │
 │  Declarative description of the data flow. Compiles to an       │
-│  IMediaPlayer that owns the underlying state + pipelines.       │
+│  IMediaTransport that owns the underlying state + pipelines.       │
 ├─────────────────────────────────────────────────────────────────┤
 │  Layer 1 — Substrate                                            │
 │  IDecodedMediaStream, FramePipeline<T>, pipeline operators      │
@@ -96,7 +96,7 @@ using FrameFlow.Player.Diagnostics;
 
 public partial class MainWindow : Window
 {
-    private IMediaPlayer? _player;
+    private IMediaTransport? _player;
     private DispatcherTimer? _diagnosticsTimer;
 
     public MainWindow()
@@ -283,12 +283,12 @@ The biggest gap. Needs:
 - `IPlayerBuilder` with `.WithVideo(Func<...>)`, `.WithAudio(Func<...>)`,
   `.WithVideoSink(IVideoSink)`, `.WithAudioSink(IAudioSink)`,
   `.WithOptions(FrameFlowOptions)`.
-- `IPlayerBuilder.BuildPlayerAsync()` → `IMediaPlayer`.
-- `IMediaPlayer`: `PlayAsync`, `PauseAsync`, `SeekAsync`,
+- `IPlayerBuilder.BuildPlayerAsync()` → `IMediaTransport`.
+- `IMediaTransport`: `PlayAsync`, `PauseAsync`, `SeekAsync`,
   `SetRepeatMode`, `State`, `Position`, `Duration`, `GetDiagnostics`,
   `LoopRestarted`, `ErrorOccurred`, `DisposeAsync`.
 
-Internally `IMediaPlayer` composes the existing
+Internally `IMediaTransport` composes the existing
 `IPlaybackControllerFactory` / `IDecodedMediaStreamFactory`. The
 *shape* is new, but the implementation reuses the substrate.
 
@@ -303,7 +303,7 @@ it ADR-0041 (future).
   (`player.State`, `player.Position`) as
   `IObservable<T>`. Currently `IPlaybackController` exposes
   `IObservable<StateTransition<PlaybackState>>` etc. directly — the
-  shape is fine; just needs to surface on `IMediaPlayer`.
+  shape is fine; just needs to surface on `IMediaTransport`.
 - ~~**`Sample(TimeSpan)` operator on `IObservable<T>`.** Either pull
   in System.Reactive or write a small implementation. Or expose
   diagnostics with a built-in cadence option.~~ Won't do: diagnostics

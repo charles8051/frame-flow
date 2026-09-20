@@ -18,7 +18,7 @@ namespace FrameFlow.Playback;
 /// </param>
 /// <remarks>
 /// <para>
-/// Raised on <c>IMediaPlaylistPlayer.ItemStalled</c>, which is the channel to prefer over
+/// Raised on <c>IMediaPlayer.ItemStalled</c>, which is the channel to prefer over
 /// <c>LoopStalled</c> when the item matters. Both report the same stall, <c>ItemStalled</c> first.
 /// </para>
 /// <para>

@@ -93,7 +93,7 @@ public partial class MainWindow : Window
     private Yolov8Detector? _yoloDetector;
 
     // Per-playback resources.
-    private IMediaPlayer? _player;
+    private IMediaTransport? _player;
     private OpenAlAudioSink? _audioSink;
     private Channel<PcmAudioBufferRef>? _pcmBridge;
     private Graph.Graph? _captionGraph;

@@ -18,7 +18,7 @@ namespace FrameFlow.Player;
 /// <remarks>
 /// <para>
 /// <b>One terminal.</b> <see cref="IPlayerBuilder.BuildPlayerAsync"/> produces an
-/// <see cref="IMediaPlaylistPlayer"/> — pause, resume, seek, repeat, position and diagnostics,
+/// <see cref="IMediaPlayer"/> — pause, resume, seek, repeat, position and diagnostics,
 /// plus the queue. Every option on the chain means something to it, so there is nothing to refuse
 /// and no narrowing.
 /// </para>
@@ -31,8 +31,8 @@ namespace FrameFlow.Player;
 /// <para>
 /// <b>Media is an option.</b> Every player is a queue and a queue can be empty, so <c>Create</c>
 /// names nothing. A chain with no <c>WithMedia</c> builds a player with its sinks warm and
-/// nothing loaded, and the first <see cref="IMediaPlayer.PlayAsync"/> starts whatever
-/// <see cref="IMediaPlaylistPlayer.AddAsync"/> has put in the queue by then:
+/// nothing loaded, and the first <see cref="IMediaTransport.PlayAsync"/> starts whatever
+/// <see cref="IMediaPlayer.AddAsync"/> has put in the queue by then:
 /// <code>
 /// await using var player = await FrameFlowPlayer
 ///     .Create()

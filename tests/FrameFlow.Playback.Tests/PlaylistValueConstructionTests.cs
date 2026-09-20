@@ -8,7 +8,7 @@ namespace FrameFlow.Playback.Tests;
 /// <see cref="PlaylistTransition"/>: what a consumer can build, and what the snapshot refuses.
 /// </summary>
 /// <remarks>
-/// These types are returned by <c>IMediaPlaylistPlayer</c>, a public interface. Until #318 their
+/// These types are returned by <c>IMediaPlayer</c>, a public interface. Until #318 their
 /// constructors were internal, so the interface could be implemented but not satisfied: no test
 /// double or decorator could produce the values its own members return. Pure values, no session.
 /// </remarks>

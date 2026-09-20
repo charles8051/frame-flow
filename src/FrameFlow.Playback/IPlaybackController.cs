@@ -86,7 +86,7 @@ public interface IPlaybackController : IAsyncDisposable
     /// <remarks>
     /// Carries both ends of the transition, matching
     /// <see cref="SeekStateChanged"/> and <see cref="RepeatModeChanged"/>.
-    /// <c>FrameFlow.Player</c>'s <c>IMediaPlayer.StateChanged</c> projects this
+    /// <c>FrameFlow.Player</c>'s <c>IMediaTransport.StateChanged</c> projects this
     /// to the current state alone, which is why it keeps the shorter name: the
     /// two payloads differ, so one name for both would say they were
     /// interchangeable.

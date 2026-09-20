@@ -24,8 +24,8 @@ namespace FrameFlow.Player;
 /// <b>Media is an option.</b> Every player is a queue and a queue can be empty, so
 /// <see cref="WithMedia(string)"/> is a step in the chain rather than an argument to the entry. A
 /// chain that names none builds a player with its sinks warm and nothing loaded; the first
-/// <see cref="IMediaPlayer.PlayAsync"/> starts whatever
-/// <see cref="IMediaPlaylistPlayer.AddAsync"/> has put in the queue by then.
+/// <see cref="IMediaTransport.PlayAsync"/> starts whatever
+/// <see cref="IMediaPlayer.AddAsync"/> has put in the queue by then.
 /// </para>
 /// <para>
 /// <b>Configurator shape.</b> The <see cref="ConfigureVideo"/> / <see cref="ConfigureAudio"/>
@@ -179,8 +179,8 @@ public interface IPlayerBuilder
     /// Bootstraps the FFmpeg native runtime, loads the first item into a
     /// <see cref="PlaybackController"/>, and returns a ready player — the full
     /// pause/resume/seek/repeat state machine, over the queue the chain named. Playback is not
-    /// started; the caller invokes <see cref="IMediaPlayer.PlayAsync"/> explicitly. A caller who
-    /// wants the small surface names <see cref="IMediaPlayer"/>.
+    /// started; the caller invokes <see cref="IMediaTransport.PlayAsync"/> explicitly. A caller who
+    /// wants the small surface names <see cref="IMediaTransport"/>.
     /// </summary>
-    Task<IMediaPlaylistPlayer> BuildPlayerAsync(CancellationToken cancellationToken = default);
+    Task<IMediaPlayer> BuildPlayerAsync(CancellationToken cancellationToken = default);
 }

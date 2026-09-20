@@ -175,8 +175,8 @@ that point there is one surface, every caller can take `ItemFailed`, and withdra
 from `ErrorOccurred` stops being a silent break. The same boundary governs `ItemLooped` and
 `LoopRestarted` under decision 3.
 
-> **Amended 2026-09-20. Proposed, not accepted** — pending with the amendment to ADR-0077
-> decision 2, which this follows. Until that is taken, the text above stands as written.
+> **Amended 2026-09-20. Accepted**, with the amendment to ADR-0077 decision 2, which this
+> follows. The paragraph above is superseded from here down.
 >
 > "No such release is planned" is no longer true. The pending release contains one change that
 > breaks an implementer of `IMediaPlayer`: breaking change 11, which adds `LoopRestarted` to the
@@ -185,10 +185,13 @@ from `ErrorOccurred` stops being a silent break. The same boundary governs `Item
 > interface exists to be consumed polymorphically and folding taxes implementers for a surface
 > consumers already reach.
 >
-> If that is accepted, "at that point" above describes a point that does not arrive: the
-> duplication has no end date at all rather than an unscheduled one, and #308, #306 and #203 are
-> decided on their own merits instead of waiting on a fold. Nothing about the ordering or the
-> shared instances changes either way.
+> So "at that point" above describes a point that does not arrive: the duplication has no end
+> date at all rather than an unscheduled one, and #308, #306 and #203 are decided on their own
+> merits instead of waiting on a fold. Nothing about the ordering or the shared instances changes.
+>
+> The two interfaces also swapped names — this record's `IMediaPlayer` is now `IMediaTransport`,
+> and `IMediaPlaylistPlayer` is now `IMediaPlayer` ([breaking change 38](../BREAKING-CHANGES.md)).
+> The text above predates that and uses the old names throughout.
 
 Settles #306.
 

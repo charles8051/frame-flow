@@ -26,7 +26,7 @@ public partial class MainWindow : Window
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<MainWindow> _logger;
     private readonly List<IVideoSurface> _surfaces = [];
-    private readonly List<IMediaPlayer> _players = [];
+    private readonly List<IMediaTransport> _players = [];
     private SoakSampler? _sampler;
     private DispatcherTimer? _sampleTimer;
     private DispatcherTimer? _exitTimer;
@@ -189,7 +189,7 @@ public partial class MainWindow : Window
     /// Builds a zero-copy presenter inside <paramref name="host"/> and plays <paramref name="path"/>
     /// through it, looping. Returns the player, or <see langword="null"/> when it could not start.
     /// </summary>
-    private async Task<IMediaPlayer?> StartPlayerAsync(
+    private async Task<IMediaTransport?> StartPlayerAsync(
         string path,
         HardwareDecodeMode hwMode,
         Panel host

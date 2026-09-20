@@ -36,11 +36,11 @@ public partial class MainWindow : Window
 {
     private ILoggerFactory? _loggerFactory;
     private ILogger<MainWindow>? _logger;
-    private IMediaPlayer? _player;
+    private IMediaTransport? _player;
 
     // Folder mode: the same instance as _player, kept typed for the
     // playlist-specific surface (transition stream, jump). Null for a single file.
-    private IMediaPlaylistPlayer? _playlistPlayer;
+    private IMediaPlayer? _playlistPlayer;
     private IDisposable? _transitionSub;
     private IReadOnlyList<PlaylistEntry> _playlistEntries = [];
 

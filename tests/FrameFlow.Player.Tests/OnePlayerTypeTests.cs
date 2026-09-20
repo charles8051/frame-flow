@@ -21,7 +21,7 @@ public sealed class OnePlayerTypeTests
         var source = new MediaSource { DisplayName = "a" };
         var player = NewPlayer(source);
 
-        Assert.IsAssignableFrom<IMediaPlayer>(player);
+        Assert.IsAssignableFrom<IMediaTransport>(player);
         var queued = Assert.Single(player.GetPlaylist().Playlist);
         Assert.Same(source, queued.Source);
         Assert.Same(source, player.CurrentSource ?? queued.Source);
@@ -40,7 +40,7 @@ public sealed class OnePlayerTypeTests
         Assert.Same(added, player.GetPlaylist().Playlist[1]);
     }
 
-    private static IMediaPlaylistPlayer NewPlayer(IMediaSource source) =>
+    private static IMediaPlayer NewPlayer(IMediaSource source) =>
         new PlaylistMediaPlayerCore(
             new PlaylistPlayerQueueTests.StubController(),
             new PlaylistCoordinator([source], RepeatMode.Off),
