@@ -586,6 +586,11 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
 
     // The timeout only bounds a failure: a working sink completes as soon as the release
     // runs, and a broken one never does.
+    //
+    // It reports the thread pool alongside the reason because the bound is real time and the
+    // signal arrives on a pool thread. This timing out has so far only been seen on a CI runner
+    // (#330), never reproduced locally, and the two readings separate the two explanations: a
+    // sink that never released, or a continuation that was queued and never scheduled.
     private static async Task AssertCompletesAsync(Task task, string because)
     {
         try
@@ -594,8 +599,17 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
         }
         catch (TimeoutException)
         {
-            Assert.Fail(because);
+            Assert.Fail($"{because} {ThreadPoolState()}");
         }
+    }
+
+    /// <summary>Pool readings for a timeout message: see <see cref="AssertCompletesAsync"/>.</summary>
+    internal static string ThreadPoolState()
+    {
+        ThreadPool.GetMinThreads(out var minWorker, out _);
+        ThreadPool.GetAvailableThreads(out var availableWorker, out _);
+        return $"[pool: {ThreadPool.ThreadCount} threads, {ThreadPool.PendingWorkItemCount} queued, "
+            + $"{availableWorker} of {minWorker}+ workers free, {Environment.ProcessorCount} cpus]";
     }
 
     /// <summary>

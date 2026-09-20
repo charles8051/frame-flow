@@ -772,7 +772,7 @@ public sealed class ClockSelectVideoSinkTests
         // rather than the bare 120 ms (#249).
         time.Advance(TimeSpan.FromMilliseconds(200));
         // Bounded so a cap that never fires fails this test rather than hanging the run.
-        await drain.WaitAsync(TimeSpan.FromSeconds(5));
+        await AwaitDrainAsync(drain);
     }
 
     [Fact]
@@ -1079,7 +1079,7 @@ public sealed class ClockSelectVideoSinkTests
 
         // The clock reaching the frame's end is what ends the run, not the cap.
         clock.Advance(TimeSpan.FromSeconds(1));
-        await drain.WaitAsync(TimeSpan.FromSeconds(5));
+        await AwaitDrainAsync(drain);
         Assert.Equal(new[] { TimeSpan.Zero }, sink.PresentedPts);
     }
 
@@ -1107,7 +1107,29 @@ public sealed class ClockSelectVideoSinkTests
         // rather than wedging EOS forever.
         time.Advance(TimeSpan.FromMilliseconds(1121));
 
-        await drain.WaitAsync(TimeSpan.FromSeconds(5));
+        await AwaitDrainAsync(drain);
+    }
+
+    // The bound is real time and the drain completes on a pool thread, so a timeout here has two
+    // explanations: a loop that never ended the run, or a continuation that was queued and never
+    // scheduled. This has only ever fired on a CI runner (#330), never locally, so the message
+    // carries the pool readings that tell the two apart.
+    private static async Task AwaitDrainAsync(Task drain)
+    {
+        try
+        {
+            await drain.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException)
+        {
+            ThreadPool.GetMinThreads(out var minWorker, out _);
+            ThreadPool.GetAvailableThreads(out var availableWorker, out _);
+            Assert.Fail(
+                "The run did not drain within the bound. "
+                    + $"[pool: {ThreadPool.ThreadCount} threads, {ThreadPool.PendingWorkItemCount} queued, "
+                    + $"{availableWorker} of {minWorker}+ workers free, {Environment.ProcessorCount} cpus]"
+            );
+        }
     }
 
     /// <summary>A minimal CPU <see cref="IVideoFrame"/> that tracks disposal.</summary>
