@@ -81,7 +81,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// accelerator (ADR-0033), <see cref="DecodeAsync"/> yields
     /// <see cref="GpuVideoFrame"/> instances that wrap the GPU-resident
     /// <c>AVFrame</c>; the consumer is responsible for either reading them
-    /// back to CPU via the <c>FrameFlow.Video</c> <c>ToCpu()</c> operator
+    /// back to CPU via <c>FrameFlow.Video</c>'s <c>VideoOperators.ToCpu(id)</c>
     /// or routing them to a GPU-aware sink (ADR-0038 Phase B). When
     /// <see langword="false"/> (the default), the decoder performs an
     /// internal <c>av_hwframe_transfer_data + sws_scale</c> readback and

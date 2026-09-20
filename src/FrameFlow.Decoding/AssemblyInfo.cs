@@ -15,9 +15,9 @@ using System.Runtime.CompilerServices;
 // barrier on the pump being blocked on a full decoder queue.
 [assembly: InternalsVisibleTo("FrameFlow.Player")]
 
-// ADR-0038: expose GpuVideoFrame's internal AVFrame pointer to the
-// FrameFlow.Video pipeline operators so the ToCpu() operator can perform
-// av_hwframe_transfer_data + sws_scale without round-tripping through
-// public API surface that doesn't fit the native semantics.
+// ADR-0038: expose GpuVideoFrame's internals to the FrameFlow.Video
+// operators. VideoOperators.ToCpu(id) reaches GpuVideoFrame from there;
+// the readback itself goes through the public ReadbackToCpuBgra32, so
+// the grant is wider than that one caller needs (#279).
 [assembly: InternalsVisibleTo("FrameFlow.Video")]
 [assembly: InternalsVisibleTo("FrameFlow.Video.Tests")]

@@ -974,6 +974,35 @@ carries a position on the presentation timeline, which seeks and pauses. The wat
 real time, because its job is to notice that the timeline advanced while frames stopped — reading
 the clock it supervises would make it measure itself.
 
+### 37. `VideoOperators.ToCpu` exists, and the docs that cited it now name it correctly
+
+Not a break. Four doc comments, a `NotSupportedException` message and an `InternalsVisibleTo`
+comment told callers to reach for a `pipeline.ToCpu()` operator in `FrameFlow.Video`. It was never
+written, so every one of them named an API that could not be called.
+
+It exists now, as a node rather than the pre-graph shape ADR-0038 specified:
+
+```csharp
+graph.Pipeline(source)
+    .Then(VideoOperators.ToCpu("readback"))
+    .Then(VideoOperators.Resize("resize", 640, 480))
+    .To(sink);
+```
+
+This is what a hardware-decoding graph was missing. `ConvertPixelFormat`, `Resize` and
+`ResizeAndConvert` all route through `SwScaleVideoConverter.Process`, which calls `ToCpu()` on the
+incoming frame; on a `GpuVideoFrame` that throws. So a decoder yielding hardware frames could not
+reach any CPU operator, and the escape hatch each of them pointed at did not exist.
+
+A frame already on the CPU passes straight through, which is what lets the node sit in a chain
+unconditionally: a graph does not know whether the decoder bound a hwaccel backend, and the answer
+differs per run and per machine.
+
+The messages that cited the old name now name the new one. One of them also claimed the operator
+cached its swscale context across frames; it does not, it calls `ReadbackToCpuBgra32` per frame, and
+the claim is gone rather than made true. Reuse across frames is a follow-up, and next to the PCIe
+transfer and the full-frame scale it is small.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

@@ -11,9 +11,9 @@ namespace FrameFlow.Decoding;
 /// Shared helper for converting a hardware-resident <c>AVFrame*</c> to
 /// a packed CPU-side <see cref="CpuVideoFrame"/> in
 /// <see cref="PixelFormat.Bgra32"/>. Used by
-/// <see cref="GpuVideoFrame.ReadbackToCpuBgra32"/> (one-shot) and by
-/// the <c>FrameFlow.Video</c> <c>ToCpu()</c> operator (which adds its
-/// own caching layer on top).
+/// <see cref="GpuVideoFrame.ReadbackToCpuBgra32"/>, which
+/// <c>FrameFlow.Video</c>'s <c>VideoOperators.ToCpu(id)</c> node calls
+/// once per hardware frame.
 /// </summary>
 internal static unsafe class GpuFrameReadback
 {
