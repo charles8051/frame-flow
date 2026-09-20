@@ -49,15 +49,27 @@ public sealed record PlaylistTransition(
     PlaylistTransitionReason Reason
 )
 {
-    // A non-nullable reference type is a compile-time claim, and the positional constructor still
-    // takes whatever a nullable-oblivious caller hands it. Checked here so "every transition names
-    // its item" holds at run time too, and a subscriber reading Item.Source cannot be the one to
-    // find out otherwise.
-    /// <inheritdoc cref="PlaylistTransition(PlaylistItem, MediaInfo, int, bool, PlaylistItem, PlaylistTransitionReason)"/>
-    public PlaylistItem Item { get; init; } =
+    // Both halves are needed, and they cover different callers. A positional record does not
+    // assign a parameter to a property the type declares itself, so the field initializer is the
+    // constructor's path; the record's copy constructor clones fields directly, so the init
+    // accessor is `with`'s. A non-nullable reference type is only a compile-time claim, and either
+    // caller can be nullable-oblivious.
+    private readonly PlaylistItem _item =
         Item ?? throw new ArgumentNullException(nameof(Item));
+    private readonly MediaInfo _mediaInfo =
+        MediaInfo ?? throw new ArgumentNullException(nameof(MediaInfo));
 
     /// <inheritdoc cref="PlaylistTransition(PlaylistItem, MediaInfo, int, bool, PlaylistItem, PlaylistTransitionReason)"/>
-    public MediaInfo MediaInfo { get; init; } =
-        MediaInfo ?? throw new ArgumentNullException(nameof(MediaInfo));
+    public PlaylistItem Item
+    {
+        get => _item;
+        init => _item = value ?? throw new ArgumentNullException(nameof(Item));
+    }
+
+    /// <inheritdoc cref="PlaylistTransition(PlaylistItem, MediaInfo, int, bool, PlaylistItem, PlaylistTransitionReason)"/>
+    public MediaInfo MediaInfo
+    {
+        get => _mediaInfo;
+        init => _mediaInfo = value ?? throw new ArgumentNullException(nameof(MediaInfo));
+    }
 }
