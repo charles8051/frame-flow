@@ -129,9 +129,14 @@ A caller who wants the small surface keeps naming `IMediaPlayer`; the returned o
 > caller nothing they cannot already reach by taking the larger interface, which is true and is not
 > the load-bearing part. The load-bearing part is what `IMediaPlayer` is *for*: its own summary
 > says it is an interface rather than a concrete type because the `FrameFlow.Avalonia` chrome
-> controls and the `FrameFlow.Audio.OpenAL` extension take it as a polymorphic dependency. It
-> exists to be *consumed* polymorphically, not to be implemented. Folding takes the interface from
-> 17 members to 31.
+> controls take it as a polymorphic dependency. It exists to be *consumed* polymorphically, not to
+> be implemented. Folding takes the interface from 17 members to 31.
+>
+> That summary also names `FrameFlow.Audio.OpenAL`'s fluent extension as the second reason, and
+> that half is stale: `FrameFlow.Audio.OpenAL` references `IMediaPlayer` nowhere, because
+> `WithOpenAlAudio` was retired in this same release (breaking change 29). The chrome is the whole
+> population now. Worth fixing wherever the summary is next edited; it is the same shape of defect
+> as #279, a doc naming a consumer that is not there.
 >
 > That is measured rather than asserted. The one implementer of `IMediaPlayer` in this tree is
 > `FrameFlowVolumeControlTests.FakePlayer`, whose own summary says "only the volume projection is
@@ -152,7 +157,48 @@ A caller who wants the small surface keeps naming `IMediaPlayer`; the returned o
 > #203 — are decided on their own merits, not by it; the playlist-events record already fixes their
 > ordering and their shared instances, which is what made the duplication safe to carry.
 >
-> **This is a proposal until someone with the call accepts it.** It changes no code.
+> **The names, which the split now has to carry.** Declining the fold makes this sharper rather
+> than moot: two interfaces that are permanent have to explain themselves at the call site, where
+> the documentation is not. These do the opposite.
+>
+> `IMediaPlaylistPlayer` reads as a *kind* of player, the one to reach for when there is a
+> playlist. Decision 1 is that there is no such kind: every player is a queue and a single file is
+> a queue of one. `IMediaPlayer` reads as the general case and is the narrower view. So a reader
+> meeting both concludes "the plain one for a file, the playlist one for several", which is wrong
+> in both directions, and the type names are the only thing most callers read.
+>
+> The word for the small surface is already in this repo, just not in the type name. The playlist
+> interface's own remarks call it "the inherited `IMediaPlayer` transport", and every consumer of
+> it is a transport widget: `FrameFlowTransportBar`, `FrameFlowSeekBar`, `FrameFlowVolumeControl`,
+> `FrameFlowPositionLabel`, `FrameFlowStateBadge`, `FrameFlowStreamSummary`, `FrameFlowPlayerChrome`,
+> `FrameFlowPlayerView`.
+>
+> So the proposal is a swap:
+>
+> | Now | Proposed | What it is |
+> |---|---|---|
+> | `IMediaPlaylistPlayer` | `IMediaPlayer` | the player; what `BuildPlayerAsync` returns |
+> | `IMediaPlayer` | `IMediaTransport` | the view the chrome depends on |
+>
+> `MediaPass` is unaffected, and the asymmetry is worth naming because it is the next question a
+> reader asks. A pass has no interface because nothing takes a pass polymorphically; the player has
+> one because eight chrome controls do. Interface count follows polymorphic need, not
+> symmetry. ADR-0079 already separates pass from player on a clock, and
+> `FrameFlowPass.Create` beside `FrameFlowPlayer.Create` says that much at the call site.
+>
+> **The cost runs the other way from the fold, and is worth stating plainly.** The fold taxes
+> implementers, who are few; a rename breaks everyone who *names* either type, which is every
+> consumer. What makes it the better of the two anyway is the shape of the edit: a rename is
+> find-and-replace with a compiler error at every site, while the fold is fourteen method bodies
+> that a test double has to write and will never call. And the surface is already moving — the
+> pending release has 37 entries — so a caller editing for entries 3, 11 and 27 is in the same
+> files.
+>
+> **Decided together or not at all.** If the fold is taken later the rename is wasted work, and if
+> the split is permanent the names are load-bearing. Taking one without the other is the outcome
+> to avoid.
+>
+> > **This is a proposal until someone with the call accepts it.** It changes no code.
 
 ### 3. `RepeatMode.All` loops a single source
 
@@ -361,7 +407,9 @@ broken. The edits are:
 
 ## Revision history
 
-- **Fold condition retired (2026-09-20).** Decision 2's "next release that breaks implementers"
-  condition fired and was not taken; the deferral now rests on what the small interface is for
-  rather than on waiting for cover. Alternative B amended to match. Proposal; no code change.
+- **Fold condition retired, and a rename proposed (2026-09-20).** Decision 2's "next release that
+  breaks implementers" condition fired and was not taken; the deferral now rests on what the small
+  interface is for rather than on waiting for cover. With the split permanent, the two names are
+  proposed to swap: the playlist interface becomes `IMediaPlayer` and the transport view becomes
+  `IMediaTransport`. Alternative B amended to match. Proposal; no code change.
 - **First draft (2026-09-15).** Written from the spike on #224 and its ten-minute hardware run.
