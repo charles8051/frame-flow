@@ -36,6 +36,7 @@ internal sealed class PlaylistCoordinator
     private readonly PlaybackSubject<PlaylistSnapshot> _changed = new();
     private readonly object _raiseGate = new();
     private readonly Queue<PlaylistSnapshot> _pendingChanges = new();
+    private bool _draining;
 
     private PlaylistQueue _queue;
 
@@ -527,24 +528,40 @@ internal sealed class PlaylistCoordinator
     /// </para>
     /// <para>
     /// A subscriber that edits the queue from inside its own handler re-enters this on the same
-    /// thread, which <see langword="lock"/> allows, and drains its own snapshot nested. Order
-    /// still holds.
+    /// thread, which <see langword="lock"/> allows, so <see cref="_draining"/> turns that
+    /// re-entry into an enqueue and the outer loop delivers it. Draining nested instead would
+    /// reorder the stream for every <em>other</em> subscriber: one notification is one
+    /// <c>OnNext</c> across all of them, so a nested drain publishes the later snapshot to
+    /// subscribers that have not received the earlier one yet.
     /// </para>
     /// </remarks>
     private void RaiseChanged()
     {
         lock (_raiseGate)
         {
-            while (true)
-            {
-                PlaylistSnapshot next;
-                lock (_gate)
-                {
-                    if (!_pendingChanges.TryDequeue(out next!))
-                        return;
-                }
+            // Re-entered from inside a handler. What it queued is already in _pendingChanges and
+            // the loop below this frame will take it, in order, once the current OnNext returns.
+            if (_draining)
+                return;
 
-                _changed.OnNext(next);
+            _draining = true;
+            try
+            {
+                while (true)
+                {
+                    PlaylistSnapshot next;
+                    lock (_gate)
+                    {
+                        if (!_pendingChanges.TryDequeue(out next!))
+                            return;
+                    }
+
+                    _changed.OnNext(next);
+                }
+            }
+            finally
+            {
+                _draining = false;
             }
         }
     }

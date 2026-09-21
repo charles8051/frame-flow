@@ -251,6 +251,31 @@ public sealed class PlaylistPlayerQueueTests
         Assert.Equal([2, 3], seen);
     }
 
+    [Fact]
+    public async Task PlaylistChanged_ASecondSubscriberStillSeesRisingRevisions_WhenTheFirstEdits()
+    {
+        // One notification is one OnNext across every subscriber. If a handler's own edit drained
+        // nested, the later snapshot would reach subscriber two before the earlier one it is
+        // still queued to receive, and that subscriber would see revisions go 2 then 1.
+        await using var player = NewPlayer(PlaybackState.Paused, out _);
+        var second = new List<long>();
+        var edited = false;
+
+        using var _editor = player.PlaylistChanged.Subscribe(_ =>
+        {
+            if (edited)
+                return;
+            edited = true;
+            player.AddAsync(Source("from-handler")).GetAwaiter().GetResult();
+        });
+        using var _watcher = player.PlaylistChanged.Subscribe(s => second.Add(s.Revision));
+
+        await player.AddAsync(Source("first"));
+
+        Assert.Equal(2, second.Count);
+        Assert.Equal(second.Order(), second);
+    }
+
     private static PlaylistMediaPlayerCore NewPlayer(
         PlaybackState state,
         out PlaylistCoordinator coordinator
