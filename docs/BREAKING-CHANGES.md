@@ -22,11 +22,14 @@ Nothing breaking yet.
   name `image2`, pass `framerate` as a rational, and pass `pattern_type=none`. Getting any one
   wrong failed in a different way, and the failures read as decode problems rather than
   configuration ones. The factory does all three and works the rational out from the dwell, in
-  exact integer terms, so a fractional dwell needs no invariant formatting: 7.5 seconds is
-  `2/15`. `MediaSource.FromFile` and the `with` form still work, and nothing that used them
-  changes. It takes no position on the extension — whether a file is one image is a fact about
-  the content, and a caller that hands it something animated gets the first frame reported as
-  the whole file, as before. #304.
+  integer terms, so a fractional dwell needs no invariant formatting: 7.5 seconds is `2/15`.
+  `MediaSource.FromFile` and the `with` form still work, and nothing that used them changes.
+  It takes no position on the extension — whether a file is one image is a fact about the
+  content, and a caller that hands it something animated gets the first frame reported as the
+  whole file, as before. A dwell outside `MediaSource.MinimumStillDwell` to
+  `MaximumStillDwell` (one millisecond to ten minutes) is refused: FFmpeg re-derives the
+  rational it is handed, and past that range the duration it reports stops matching the dwell
+  without saying so — at `1/3600` it comes back as zero. #304.
 
 ## `v0.10.0` — since `v0.9.0-alpha.1`
 

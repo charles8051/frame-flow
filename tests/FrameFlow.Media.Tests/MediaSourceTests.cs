@@ -227,6 +227,73 @@ public sealed class MediaSourceTests
     }
 
     [Fact]
+    public void FromStill_QuantisesToTheNearestMillisecond()
+    {
+        // Ticks would be exact, and exactness is not the thing that matters here: FFmpeg
+        // re-derives the rational it is handed, and terms in the billions are one of the two ways
+        // the realized duration stops matching the dwell. A millisecond is finer than a dwell is
+        // ever specified to.
+        // 1.2345678s rounds to 1235ms, and 1000/1235 reduces to 200/247. The integration ladder
+        // confirms that opens a clip of exactly 1.235s.
+        var source = MediaSource.FromStill("slide.png", TimeSpan.FromTicks(12_345_678));
+        Assert.Equal("200/247", source.DemuxerOptions?["framerate"]);
+    }
+
+    [Fact]
+    public void FromStill_KeepsTheTermsSmall()
+    {
+        // The guard behind the quantisation. Every accepted dwell reduces to terms well inside
+        // what FFmpeg re-derives faithfully; measured, the realized duration starts drifting as
+        // the terms grow. See MediaSource.MaximumStillDwell.
+        foreach (var dwell in new[]
+        {
+            TimeSpan.FromTicks(12_345_678),
+            TimeSpan.FromSeconds(7.5),
+            TimeSpan.FromMilliseconds(1),
+            MediaSource.MaximumStillDwell,
+            MediaSource.MaximumStillDwell - TimeSpan.FromTicks(1),
+        })
+        {
+            var rate = MediaSource.FromStill("slide.png", dwell).DemuxerOptions?["framerate"];
+            Assert.NotNull(rate);
+
+            var terms = rate.Split('/');
+            Assert.True(long.Parse(terms[0]) <= 1000, $"numerator too large in {rate}");
+            Assert.True(long.Parse(terms[1]) <= 600_000, $"denominator too large in {rate}");
+        }
+    }
+
+    [Fact]
+    public void FromStill_RefusesADwellPastTheMeasuredCeiling()
+    {
+        // Past it the demuxer succeeds and the clip is simply the wrong length: 1/3600 reports a
+        // duration of zero. A silent wrong answer is what this factory exists to prevent, so the
+        // range it cannot deliver is refused rather than handed over.
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => MediaSource.FromStill("slide.png", MediaSource.MaximumStillDwell + TimeSpan.FromSeconds(1))
+        );
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => MediaSource.FromStill("slide.png", TimeSpan.FromHours(1))
+        );
+    }
+
+    [Fact]
+    public void FromStill_AcceptsTheCeilingItself()
+    {
+        var source = MediaSource.FromStill("slide.png", MediaSource.MaximumStillDwell);
+        Assert.Equal("1/600", source.DemuxerOptions?["framerate"]);
+    }
+
+    [Fact]
+    public void FromStill_RefusesADwellUnderAMillisecond()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => MediaSource.FromStill("slide.png", TimeSpan.FromTicks(1))
+        );
+    }
+
+    [Fact]
     public void FromStill_NeverWritesADecimalPoint()
     {
         // Guards the whole class of culture bugs at once: an integer rational has no separator to
@@ -236,7 +303,6 @@ public sealed class MediaSourceTests
             TimeSpan.FromSeconds(7.5),
             TimeSpan.FromSeconds(0.3),
             TimeSpan.FromMilliseconds(1),
-            TimeSpan.FromTicks(1),
             TimeSpan.FromSeconds(99.999),
         })
         {
