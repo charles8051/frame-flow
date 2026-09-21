@@ -1156,6 +1156,48 @@ serialized and in commit order, which is what lets `Revision` order what you rec
 that a thread changing the queue can wait on another thread's in-flight handler, so keep handlers
 short or marshal to your UI thread as you already do for `SourceTransitioned`.
 
+### 42. A mismatched FFmpeg major fails the bootstrap instead of decoding wrong
+
+**This one is not a compile error**, and before this release it was not an error at all.
+
+FrameFlow reads FFmpeg structs by overlaying the layouts from `FFmpeg.AutoGen.Abstractions`
+onto native pointers (ADR-0017). Those layouts come from one FFmpeg major version's headers,
+and FFmpeg changes struct layouts every major. Every function FrameFlow P/Invokes still exists
+and still links against a different major, so loading one produced a running process that read
+frame, packet and stream fields at the wrong offsets. The bootstrap logged the version it found
+and carried on.
+
+It now compares the loaded `libavutil` major against the one the bindings were generated for and
+fails the bootstrap when they differ, naming both:
+
+```
+FFmpeg ABI mismatch. The loaded libavutil is 61.1.100 (FFmpeg 9.x), but FrameFlow's struct
+bindings are generated for libavutil 59.x (FFmpeg 7.x). ...
+```
+
+`libavutil` majors are not FFmpeg release numbers: 59 is FFmpeg 7.x, 60 is 8.x, 61 is 9.x.
+FrameFlow targets FFmpeg 7.1.
+
+The check runs in the loader, so it covers both entry points. An explicit
+`FrameFlowBootstrapper.Initialize()` returns a failed `FrameFlowBootstrapResult` carrying that
+message. Code that decodes without bootstrapping first gets a `DllNotFoundException` from the
+implicit bootstrap, with the same message inside it.
+
+**Who hits this.** Nobody using the bundled binaries. `FrameFlow.Native.Runtime` ships FFmpeg 7.1
+and matches by construction. It reaches you if you set `CustomFfmpegPath`, or if you rely on
+`ProbeSystemLibraries` against a system FFmpeg that is not 7.x. macOS is the likely case, because
+the package ships no macOS RID and `brew install ffmpeg` is whichever major Homebrew ships that
+week.
+
+**What to write instead.** Install FFmpeg 7.x and point at it. On macOS that is `brew install
+ffmpeg@7`, which is a real keg and is not deprecated. Elsewhere, take the bundled package.
+
+**Why it is worth a break.** The previous behaviour had no failure mode that pointed at the cause.
+A wrong offset surfaces as a wrong resolution, a wrong timestamp, a wrong pixel format or a crash
+somewhere downstream, none of which names FFmpeg. Refusing at bootstrap costs a startup error and
+replaces a silent wrong answer.
+
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

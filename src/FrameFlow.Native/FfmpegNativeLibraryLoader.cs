@@ -236,6 +236,24 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
                 micro
             );
 
+            // The gate sits here rather than only in FrameFlowBootstrapper because this is
+            // where every path converges: the DI bootstrap, and the implicit one the
+            // resolver runs. Returning failure without caching a probe result also keeps
+            // HasSuccessfulLoad() false, so a later resolve re-runs the check instead of
+            // serving the handles a mismatch already rejected.
+            var abiVerdict = Core.FfmpegAbiCheck.Check(version);
+            if (abiVerdict is { IsCompatible: false, Message: { } mismatchMessage })
+            {
+                _logger.LogError(
+                    "FFmpeg ABI mismatch. DetectedAvutilMajor={Detected}, "
+                        + "ExpectedAvutilMajor={Expected}",
+                    abiVerdict.DetectedMajor,
+                    abiVerdict.ExpectedMajor
+                );
+
+                return FfmpegLoadResult.Failure(mismatchMessage);
+            }
+
             var success = FfmpegLoadResult.Success(version);
 
             lock (LoadLock)
@@ -290,6 +308,14 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
         {
             bootstrap = TryImplicitBootstrap();
 
+            // Checked before the cached handle, because a bootstrap can fail with the
+            // libraries loaded. An ABI mismatch is that case: the handles opened, the
+            // struct layouts behind them are the wrong major, and TryLoad recorded them
+            // before the probe ran. Serving one here would hand back the library the
+            // gate just rejected.
+            if (bootstrap is { IsSuccess: false })
+                throw BootstrapFailure(libraryName, bootstrap);
+
             if (TryGetLoadedHandle(libraryName, out cached))
                 return cached;
         }
@@ -314,21 +340,33 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
             }
         }
 
-        // The implicit bootstrap ran and failed. Returning 0 here produces "Unable to load DLL
-        // 'avformat'", which sends the reader after the runtime package rather than the
-        // environment. Carry the bootstrap's diagnostic instead.
+        // The implicit bootstrap ran and failed, and on-demand resolution did not find the
+        // library either.
         if (bootstrap is { IsSuccess: false })
-        {
-            throw new DllNotFoundException(
-                $"FrameFlow could not load the FFmpeg library '{libraryName}'. "
-                    + $"The implicit native bootstrap failed: {bootstrap.Message} "
-                    + "Call FrameFlowBootstrapper.Initialize() with FrameFlowNativeOptions "
-                    + "configured for this environment before decoding."
-            );
-        }
+            throw BootstrapFailure(libraryName, bootstrap);
 
         return 0;
     }
+
+    /// <summary>
+    /// Builds the exception for a resolve that cannot be served because the implicit
+    /// bootstrap failed.
+    /// </summary>
+    /// <remarks>
+    /// Returning 0 instead would produce "Unable to load DLL 'avformat'", which sends the
+    /// reader after the runtime package rather than the environment. The bootstrap's own
+    /// diagnostic names the actual cause, an ABI mismatch included.
+    /// </remarks>
+    private static DllNotFoundException BootstrapFailure(
+        string libraryName,
+        FrameFlowBootstrapResult bootstrap
+    ) =>
+        new(
+            $"FrameFlow could not load the FFmpeg library '{libraryName}'. "
+                + $"The implicit native bootstrap failed: {bootstrap.Message} "
+                + "Call FrameFlowBootstrapper.Initialize() with FrameFlowNativeOptions "
+                + "configured for this environment before decoding."
+        );
 
     private static bool HasSuccessfulLoad()
     {

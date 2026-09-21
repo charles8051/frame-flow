@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using FrameFlow.Media;
+using FrameFlow.Native.Core;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -171,7 +172,35 @@ public sealed class FrameFlowBootstrapper : IFrameFlowBootstrapper
                 loadResult = _loader.TryLoad(searchPath, binarySource);
             }
 
-            if (loadResult.IsSuccess)
+            var abiVerdict = loadResult.IsSuccess
+                ? FfmpegAbiCheck.Check(loadResult.AvutilVersion)
+                : default;
+
+            // A mismatched major links and runs. ADR-0017 overlays generated struct
+            // layouts onto native pointers and FFmpeg moves those layouts every major,
+            // so without this gate the failure is wrong field values, not an error.
+            if (
+                loadResult.IsSuccess
+                && abiVerdict is { IsCompatible: false, Message: { } mismatchMessage }
+            )
+            {
+                _logger.LogError(
+                    "FrameFlow native bootstrap failed: FFmpeg ABI mismatch. "
+                        + "BinarySource={BinarySource}, DetectedAvutilMajor={Detected}, "
+                        + "ExpectedAvutilMajor={Expected}",
+                    binarySource,
+                    abiVerdict.DetectedMajor,
+                    abiVerdict.ExpectedMajor
+                );
+
+                result = new FrameFlowBootstrapResult(
+                    IsSuccess: false,
+                    ResolvedPath: searchPath,
+                    BinarySource: binarySource,
+                    Message: mismatchMessage
+                );
+            }
+            else if (loadResult.IsSuccess)
             {
                 var major = Interop.FFAvUtil.AvVersionMajor(loadResult.AvutilVersion);
                 var minor = Interop.FFAvUtil.AvVersionMinor(loadResult.AvutilVersion);
