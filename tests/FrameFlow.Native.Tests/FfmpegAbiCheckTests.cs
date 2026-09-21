@@ -43,8 +43,8 @@ public sealed class FfmpegAbiCheckTests
     public void ExpectedAvutilMajor_AgreesWithExpectedMajor()
     {
         Assert.Equal(
-            FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvUtil),
-            FfmpegAbiCheck.ExpectedAvutilMajor
+            FfmpegAbiCheck.ExpectedAvutilMajor,
+            FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvUtil)
         );
     }
 
