@@ -123,19 +123,25 @@ public sealed record MediaSource : IMediaSource
     /// <para>
     /// This is a measured limit, not a chosen one. FFmpeg does not store the <c>framerate</c>
     /// option as written: it evaluates the rational and re-derives one, and past a point the
-    /// duration that comes back bears no relation to the dwell asked for. Measured against the
-    /// bundled FFmpeg, opening a still at <c>1/3600</c> reports a duration of <b>zero</b>, at
-    /// <c>1/3601</c> one second, and at <c>1/4000</c> four hundred seconds. None of them
-    /// announce themselves: the demuxer succeeds and the clip is simply the wrong length, which
-    /// is the failure <see cref="FromStill"/> exists to prevent rather than relocate.
+    /// duration that comes back stops tracking the dwell. It does not announce itself either —
+    /// the open succeeds and the clip is simply the wrong length, which is the failure
+    /// <see cref="FromStill"/> exists to prevent rather than relocate. Opening a still at
+    /// <c>1/4000</c> reports four hundred seconds rather than four thousand.
     /// </para>
     /// <para>
     /// Thirty minutes is the last magnitude measured to round-trip within a millisecond, which is
     /// the resolution this factory quantises to and therefore the most it can promise. Walking a
     /// dwell of <c>N</c> milliseconds and one, so the rational does not reduce, the reported
-    /// duration holds to within a millisecond through 30 minutes — at the top of that it lands
-    /// 0.8ms low — and collapses at 59:59.999, where it comes back as zero. The bound sits at the
-    /// last magnitude the ladder proves, not at the first that fails.
+    /// duration holds to within a millisecond through 30 minutes, landing 0.8ms low at the top.
+    /// </para>
+    /// <para>
+    /// Above it the evidence stops agreeing with itself, which is the real reason the bound is
+    /// here. The same rational measured two ways does not give the same answer: at 59:59.999 the
+    /// controller reports exactly one hour, while the same option through the test bench reports
+    /// zero. That disagreement is unexplained, and a range whose behaviour cannot be pinned down
+    /// is not one to make a promise about. Widening this means reconciling those two first, and
+    /// then extending
+    /// <c>StillImageDwellTests.ADwellIsTheDurationTheDemuxerReports</c> and watching it stay green.
     /// </para>
     /// <para>
     /// Widening this is not a breaking change, and the evidence for a wider bound is a longer
