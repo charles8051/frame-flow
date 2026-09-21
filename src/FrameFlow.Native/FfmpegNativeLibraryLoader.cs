@@ -153,6 +153,15 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
     {
         lock (LoadLock)
         {
+            // Ahead of everything else. RejectLoadedLibraries clears the handle table, so
+            // without this a second bootstrap walks the load loop again and calls
+            // NativeLibrary.Load on libraries the ABI check already refused. Those modules
+            // are deliberately never freed, so each pass would add a reference to a mapping
+            // nothing will release. The refusal cannot change: FFmpeg loads once per process
+            // and the rejected libraries are still mapped.
+            if (_abiRejected)
+                return FfmpegLoadResult.AbiMismatch(_abiRejectionMessage!);
+
             // If we've already probed successfully, return the cached result.
             if (_cachedProbeResult.HasValue)
             {
@@ -351,6 +360,27 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
         }
     }
 
+    /// <summary>
+    /// Throws when the ABI check has refused the loaded libraries. Call while holding
+    /// <see cref="LoadLock"/>.
+    /// </summary>
+    /// <remarks>
+    /// The check at the top of <see cref="ResolveDllImport"/> is not enough on its own: it
+    /// releases the lock before the handle lookup, so a bootstrap on another thread can
+    /// latch the refusal in between and this thread would go on to serve or load a handle.
+    /// Re-reading the latch in the same lock acquisition that touches the handle table
+    /// closes that window without serialising the whole resolver.
+    /// </remarks>
+    private static void ThrowIfAbiRejectedUnderLock(string libraryName)
+    {
+        if (!_abiRejected)
+            return;
+
+        throw new DllNotFoundException(
+            $"FrameFlow refused the FFmpeg library '{libraryName}'. {_abiRejectionMessage}"
+        );
+    }
+
     private bool TryLoadLibrary(string libraryName, string? searchPath, out nint handle)
     {
         foreach (var candidate in FFmpegLibraryResolver.CandidatePaths(libraryName, searchPath))
@@ -425,6 +455,10 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
             {
                 lock (LoadLock)
                 {
+                    // Re-read for the same reason as TryGetLoadedHandle: the refusal can be
+                    // latched while this loop is between candidates.
+                    ThrowIfAbiRejectedUnderLock(libraryName);
+
                     LoadedHandles[libraryName] = h;
                 }
                 return h;
@@ -471,6 +505,8 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
     {
         lock (LoadLock)
         {
+            ThrowIfAbiRejectedUnderLock(libraryName);
+
             if (LoadedHandles.TryGetValue(libraryName, out handle) && handle != 0)
                 return true;
         }
