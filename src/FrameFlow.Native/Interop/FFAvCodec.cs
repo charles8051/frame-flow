@@ -18,6 +18,19 @@ namespace FrameFlow.Native.Interop;
 internal static partial class FFAvCodec
 {
     /// <summary>
+    /// Returns the packed version integer for the loaded <c>libavcodec</c> build.
+    /// </summary>
+    /// <remarks>
+    /// Read at bootstrap by <c>FrameFlow.Native.Core.FfmpegAbiCheck</c>. Every library
+    /// in the set is checked, not just <c>libavutil</c>: the generated struct layouts
+    /// FrameFlow overlays come from these libraries' own headers, and a search path
+    /// that resolves them from different FFmpeg generations would otherwise pass a
+    /// check that only looked at one of them.
+    /// </remarks>
+    [LibraryImport("avcodec")]
+    internal static partial uint avcodec_version();
+
+    /// <summary>
     /// Returns a string describing the codec with the given <paramref name="codecId"/>,
     /// or the literal string <c>"unknown"</c> when the ID is not registered.
     /// </summary>

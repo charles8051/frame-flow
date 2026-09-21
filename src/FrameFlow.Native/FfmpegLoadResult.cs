@@ -16,10 +16,17 @@ namespace FrameFlow.Native;
 /// <param name="ErrorMessage">
 /// A human-readable description of the failure, or <see langword="null"/> on success.
 /// </param>
+/// <param name="IsAbiMismatch">
+/// <see langword="true"/> when the libraries loaded but their major versions are not the
+/// ones FrameFlow's struct bindings were generated for. Distinguished from an ordinary load
+/// failure because it is terminal: the libraries are loaded, FFmpeg loads once per process,
+/// and retrying a different search path cannot replace them.
+/// </param>
 internal readonly record struct FfmpegLoadResult(
     bool IsSuccess,
     uint AvutilVersion = 0,
-    string? ErrorMessage = null
+    string? ErrorMessage = null,
+    bool IsAbiMismatch = false
 )
 {
     /// <summary>Returns a successful result carrying the detected avutil version.</summary>
@@ -29,4 +36,8 @@ internal readonly record struct FfmpegLoadResult(
     /// <summary>Returns a failure result with the supplied diagnostic message.</summary>
     public static FfmpegLoadResult Failure(string errorMessage) =>
         new(IsSuccess: false, ErrorMessage: errorMessage);
+
+    /// <summary>Returns a terminal ABI-mismatch failure with the supplied diagnostic.</summary>
+    public static FfmpegLoadResult AbiMismatch(string errorMessage) =>
+        new(IsSuccess: false, ErrorMessage: errorMessage, IsAbiMismatch: true);
 }

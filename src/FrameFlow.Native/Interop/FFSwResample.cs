@@ -20,6 +20,19 @@ namespace FrameFlow.Native.Interop;
 internal static partial class FFSwResample
 {
     /// <summary>
+    /// Returns the packed version integer for the loaded <c>libswresample</c> build.
+    /// </summary>
+    /// <remarks>
+    /// Read at bootstrap by <c>FrameFlow.Native.Core.FfmpegAbiCheck</c>. Every library
+    /// in the set is checked, not just <c>libavutil</c>: the generated struct layouts
+    /// FrameFlow overlays come from these libraries' own headers, and a search path
+    /// that resolves them from different FFmpeg generations would otherwise pass a
+    /// check that only looked at one of them.
+    /// </remarks>
+    [LibraryImport("swresample")]
+    internal static partial uint swresample_version();
+
+    /// <summary>
     /// Allocates a new <c>SwrContext</c>. The returned pointer is zero/null on failure.
     /// Call <see cref="swr_free"/> to release when finished; prefer <see cref="SwrContextHandle"/>.
     /// </summary>

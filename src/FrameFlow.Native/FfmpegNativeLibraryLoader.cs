@@ -71,6 +71,14 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
     // in the same process — rare in production but can occur in tests with multiple instances).
     private static FfmpegLoadResult? _cachedProbeResult;
 
+    // Latched when the ABI check refuses the loaded libraries. FFmpeg loads once per process,
+    // so that refusal cannot be undone by retrying another search path. Read under LoadLock.
+    private static bool _abiRejected;
+
+    // The diagnostic from that refusal, so a later resolve can report the cause rather than
+    // "Unable to load DLL". Written with _abiRejected, read under LoadLock.
+    private static string? _abiRejectionMessage;
+
     public FfmpegNativeLibraryLoader(ILogger<FfmpegNativeLibraryLoader> logger)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -145,6 +153,16 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
     {
         lock (LoadLock)
         {
+            // Ahead of everything else. RejectLoadedLibraries clears the handle table, so
+            // without this a second bootstrap walks the load loop again and calls
+            // NativeLibrary.Load on libraries the ABI check already refused. Those modules
+            // are deliberately never freed (RejectLoadedLibraries says why), so each pass
+            // would add a reference to a mapping nothing will release. The refusal cannot
+            // change: FFmpeg loads once per process and the rejected libraries are still
+            // mapped.
+            if (_abiRejected)
+                return FfmpegLoadResult.AbiMismatch(_abiRejectionMessage!);
+
             // If we've already probed successfully, return the cached result.
             if (_cachedProbeResult.HasValue)
             {
@@ -236,6 +254,28 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
                 micro
             );
 
+            // The gate sits here rather than only in FrameFlowBootstrapper because this is
+            // where every path converges: the DI bootstrap, and the implicit one the
+            // resolver runs.
+            var abiVerdict = Core.FfmpegAbiCheck.Check(ProbeLoadedVersions(version));
+            if (abiVerdict is { IsCompatible: false, Message: { } mismatchMessage })
+            {
+                foreach (var entry in abiVerdict.Mismatched)
+                {
+                    _logger.LogError(
+                        "FFmpeg ABI mismatch on {Library}: loaded major {Detected}, "
+                            + "bindings generated for {Expected}.",
+                        Core.FfmpegAbiCheck.Name(entry.Library),
+                        FFAvUtil.AvVersionMajor(entry.Version),
+                        Core.FfmpegAbiCheck.ExpectedMajor(entry.Library)
+                    );
+                }
+
+                RejectLoadedLibraries(mismatchMessage);
+
+                return FfmpegLoadResult.AbiMismatch(mismatchMessage);
+            }
+
             var success = FfmpegLoadResult.Success(version);
 
             lock (LoadLock)
@@ -251,6 +291,95 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
                 $"FFmpeg libraries loaded but version probe failed: {ex.Message}"
             );
         }
+    }
+
+    /// <summary>
+    /// Reads every required library's own <c>*_version()</c>, so the ABI check sees the
+    /// whole set rather than <c>libavutil</c> alone.
+    /// </summary>
+    /// <remarks>
+    /// The struct layouts FrameFlow overlays are owned by different libraries, and
+    /// <see cref="FFmpegLibraryResolver.CandidatePaths"/> resolves each library
+    /// independently, so a search path can serve them from different FFmpeg generations.
+    /// A check that read only avutil would pass that case.
+    /// </remarks>
+    /// <param name="avutilVersion">
+    /// The avutil version already probed by the caller, so it is not read twice.
+    /// </param>
+    private static IReadOnlyList<Core.FfmpegLibraryVersion> ProbeLoadedVersions(
+        uint avutilVersion
+    ) =>
+        [
+            new(Core.FfmpegLibrary.AvUtil, avutilVersion),
+            new(Core.FfmpegLibrary.SwResample, FFSwResample.swresample_version()),
+            new(Core.FfmpegLibrary.SwScale, FFSwScale.swscale_version()),
+            new(Core.FfmpegLibrary.AvCodec, FFAvCodec.avcodec_version()),
+            new(Core.FfmpegLibrary.AvFormat, FFAvFormat.avformat_version()),
+        ];
+
+    /// <summary>
+    /// Drops every loaded handle and latches the rejection, so nothing can decode against
+    /// libraries the ABI check refused.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Clearing <see cref="LoadedHandles"/> is what closes the hole:
+    /// <see cref="ResolveDllImport"/> serves a cached handle before it consults anything
+    /// else, and <see cref="TryLoad"/> records the handles before it probes versions, so a
+    /// rejected library is otherwise reachable from the next P/Invoke.
+    /// </para>
+    /// <para>
+    /// The modules are not <see cref="NativeLibrary.Free(nint)"/>d. The version probes
+    /// already resolved through them, and the CLR caches a P/Invoke stub's resolved address,
+    /// so freeing could leave a stub pointing into an unmapped module. Leaking the mapping
+    /// on a terminal error path is the cheaper end of that trade.
+    /// </para>
+    /// <para>
+    /// <see cref="_abiRejected"/> is latched rather than recomputed because FFmpeg loads
+    /// once per process: a retry against a different search path cannot replace libraries
+    /// that are already mapped, so re-probing would only rediscover the same mismatch.
+    /// </para>
+    /// </remarks>
+    private static void RejectLoadedLibraries(string message)
+    {
+        lock (LoadLock)
+        {
+            LoadedHandles.Clear();
+            _resolverSearchPath = null;
+            _cachedProbeResult = null;
+            _abiRejected = true;
+            _abiRejectionMessage = message;
+        }
+    }
+
+    private static bool IsAbiRejected(out string message)
+    {
+        lock (LoadLock)
+        {
+            message = _abiRejectionMessage ?? string.Empty;
+            return _abiRejected;
+        }
+    }
+
+    /// <summary>
+    /// Throws when the ABI check has refused the loaded libraries. Call while holding
+    /// <see cref="LoadLock"/>.
+    /// </summary>
+    /// <remarks>
+    /// The check at the top of <see cref="ResolveDllImport"/> is not enough on its own: it
+    /// releases the lock before the handle lookup, so a bootstrap on another thread can
+    /// latch the refusal in between and this thread would go on to serve or load a handle.
+    /// Re-reading the latch in the same lock acquisition that touches the handle table
+    /// closes that window without serialising the whole resolver.
+    /// </remarks>
+    private static void ThrowIfAbiRejectedUnderLock(string libraryName)
+    {
+        if (!_abiRejected)
+            return;
+
+        throw new DllNotFoundException(
+            $"FrameFlow refused the FFmpeg library '{libraryName}'. {_abiRejectionMessage}"
+        );
     }
 
     private bool TryLoadLibrary(string libraryName, string? searchPath, out nint handle)
@@ -277,6 +406,17 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
 
     private static nint ResolveDllImport(string libraryName)
     {
+        // Ahead of the cached handle, because the ABI check refuses libraries that are
+        // already loaded. RejectLoadedLibraries clears the handle table, but the latch is
+        // what stops a fresh load from re-resolving the same libraries: FFmpeg loads once
+        // per process, so they are still mapped and would resolve again.
+        if (IsAbiRejected(out var abiMessage))
+        {
+            throw new DllNotFoundException(
+                $"FrameFlow refused the FFmpeg library '{libraryName}'. {abiMessage}"
+            );
+        }
+
         // If we have a cached handle from a prior TryLoadLibrary call, return it immediately.
         if (TryGetLoadedHandle(libraryName, out var cached))
             return cached;
@@ -289,6 +429,14 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
         if (!HasSuccessfulLoad())
         {
             bootstrap = TryImplicitBootstrap();
+
+            // Checked before the cached handle, because a bootstrap can fail with the
+            // libraries loaded. An ABI mismatch is that case: the handles opened, the
+            // struct layouts behind them are the wrong major, and TryLoad recorded them
+            // before the probe ran. Serving one here would hand back the library the
+            // gate just rejected.
+            if (bootstrap is { IsSuccess: false })
+                throw BootstrapFailure(libraryName, bootstrap);
 
             if (TryGetLoadedHandle(libraryName, out cached))
                 return cached;
@@ -308,27 +456,53 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
             {
                 lock (LoadLock)
                 {
+                    // Re-read for the same reason as TryGetLoadedHandle: the refusal can be
+                    // latched while this loop is between candidates.
+                    //
+                    // This handle is freed on that path, unlike the ones RejectLoadedLibraries
+                    // retains. It was opened a moment ago and recorded nowhere, so no P/Invoke
+                    // stub has resolved through it and there is nothing left pointing into the
+                    // module. Dropping it here would leak a reference for a library the
+                    // process has just been told not to use.
+                    if (_abiRejected)
+                    {
+                        NativeLibrary.Free(h);
+                        ThrowIfAbiRejectedUnderLock(libraryName);
+                    }
+
                     LoadedHandles[libraryName] = h;
                 }
                 return h;
             }
         }
 
-        // The implicit bootstrap ran and failed. Returning 0 here produces "Unable to load DLL
-        // 'avformat'", which sends the reader after the runtime package rather than the
-        // environment. Carry the bootstrap's diagnostic instead.
+        // The implicit bootstrap ran and failed, and on-demand resolution did not find the
+        // library either.
         if (bootstrap is { IsSuccess: false })
-        {
-            throw new DllNotFoundException(
-                $"FrameFlow could not load the FFmpeg library '{libraryName}'. "
-                    + $"The implicit native bootstrap failed: {bootstrap.Message} "
-                    + "Call FrameFlowBootstrapper.Initialize() with FrameFlowNativeOptions "
-                    + "configured for this environment before decoding."
-            );
-        }
+            throw BootstrapFailure(libraryName, bootstrap);
 
         return 0;
     }
+
+    /// <summary>
+    /// Builds the exception for a resolve that cannot be served because the implicit
+    /// bootstrap failed.
+    /// </summary>
+    /// <remarks>
+    /// Returning 0 instead would produce "Unable to load DLL 'avformat'", which sends the
+    /// reader after the runtime package rather than the environment. The bootstrap's own
+    /// diagnostic names the actual cause, an ABI mismatch included.
+    /// </remarks>
+    private static DllNotFoundException BootstrapFailure(
+        string libraryName,
+        FrameFlowBootstrapResult bootstrap
+    ) =>
+        new(
+            $"FrameFlow could not load the FFmpeg library '{libraryName}'. "
+                + $"The implicit native bootstrap failed: {bootstrap.Message} "
+                + "Call FrameFlowBootstrapper.Initialize() with FrameFlowNativeOptions "
+                + "configured for this environment before decoding."
+        );
 
     private static bool HasSuccessfulLoad()
     {
@@ -342,6 +516,8 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
     {
         lock (LoadLock)
         {
+            ThrowIfAbiRejectedUnderLock(libraryName);
+
             if (LoadedHandles.TryGetValue(libraryName, out handle) && handle != 0)
                 return true;
         }

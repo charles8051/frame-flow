@@ -18,6 +18,19 @@ namespace FrameFlow.Native.Interop;
 internal static partial class FFSwScale
 {
     /// <summary>
+    /// Returns the packed version integer for the loaded <c>libswscale</c> build.
+    /// </summary>
+    /// <remarks>
+    /// Read at bootstrap by <c>FrameFlow.Native.Core.FfmpegAbiCheck</c>. Every library
+    /// in the set is checked, not just <c>libavutil</c>: the generated struct layouts
+    /// FrameFlow overlays come from these libraries' own headers, and a search path
+    /// that resolves them from different FFmpeg generations would otherwise pass a
+    /// check that only looked at one of them.
+    /// </remarks>
+    [LibraryImport("swscale")]
+    internal static partial uint swscale_version();
+
+    /// <summary>
     /// Allocates and initialises a scaling/conversion context that converts pixels
     /// from <paramref name="srcW"/>×<paramref name="srcH"/> in
     /// <paramref name="srcFormat"/> to <paramref name="dstW"/>×<paramref name="dstH"/>
