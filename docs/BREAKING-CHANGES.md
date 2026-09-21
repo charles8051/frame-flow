@@ -1113,6 +1113,47 @@ ADR-0024's amendment.
 **If you want the old behaviour**, `player.MediaInfo ?? throw new InvalidOperationException(...)`
 at your call site says so explicitly.
 
+### 41. `IMediaPlayer` gained `PlaylistChanged`
+
+**Only a caller that implements `IMediaPlayer` itself is affected**, the same shape as entries 31
+and 36. An external implementation stops compiling with CS0535 until it adds the member; a caller
+that consumes the player from `FrameFlowPlayer.Create()` is untouched and gains a stream.
+
+```csharp
+IObservable<PlaylistSnapshot> PlaylistChanged { get; }
+```
+
+Nothing observed a queue edit, so a playlist panel or a queue-length readout had to poll
+`GetPlaylist()` on a timer it owned. A poll either misses an add-then-remove pair between ticks
+or runs faster than the data changes. ADR-0034 leaves *diagnostics* to a caller's own cadence
+deliberately, and states the rule that sends this the other way: discrete events that must not be
+missed between polls get their own observable.
+
+```csharp
+// Before:
+_timer = new Timer(_ => Render(player.GetPlaylist()), null, Zero, FromMilliseconds(250));
+
+// After:
+_subscription = player.PlaylistChanged.Subscribe(Render);
+```
+
+The snapshot is the payload rather than something to fetch afterwards, so a handler renders what
+the change produced instead of racing back for a queue that may have moved again.
+`PlaylistSnapshot.Revision` orders them.
+
+**It fires for more than the six edit verbs.** A latched jump and each half of a hand-off also
+change what a snapshot reports, so they raise it too. The rule is exactly "whenever `Revision`
+advances", which is the contract `Revision` already documented. A hand-off is two notifications:
+the take moves `Current`, the report flips `CurrentStarted`.
+
+`SourceTransitioned` is unchanged and answers a different question. It fires only on a hand-off
+and carries the item's `MediaInfo` and the reason. Subscribe to that one to react to an item
+starting, and to this one to redraw a queue.
+
+Raised outside the coordinator's lock, so a handler may call back into the player, on whichever
+thread made the change. For an edit that is the caller's thread; marshal to your UI thread as you
+already do for `SourceTransitioned`.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

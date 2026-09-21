@@ -116,6 +116,81 @@ public sealed class PlaylistPlayerQueueTests
         Assert.Equal(loaded.Duration, player.Duration);
     }
 
+    // ── PlaylistChanged (#311) ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task PlaylistChanged_FiresOnceForEachEditVerb_WithRisingRevisions()
+    {
+        await using var player = NewPlayer(PlaybackState.Paused, out _);
+        var seen = new List<PlaylistSnapshot>();
+        using var _sub = player.PlaylistChanged.Subscribe(seen.Add);
+
+        var added = await player.AddAsync(Source("b"));
+        await player.EnqueueAsync(Source("x"));
+        await player.SetNextAsync(Source("y"));
+        await player.RemoveAsync(added);
+        await player.ReplaceAsync([Source("d")]);
+        await player.ClearAsync();
+
+        Assert.Equal(6, seen.Count);
+        Assert.Equal(seen.Select(s => s.Revision).Order(), seen.Select(s => s.Revision));
+        Assert.Distinct(seen.Select(s => s.Revision));
+    }
+
+    [Fact]
+    public async Task PlaylistChanged_CarriesTheSnapshotTheEditProduced()
+    {
+        // The payload is the queue as of that edit, not a handle to fetch one later: a second
+        // edit landing first would otherwise hand both handlers the same later queue.
+        await using var player = NewPlayer(PlaybackState.Paused, out _);
+        var seen = new List<PlaylistSnapshot>();
+        using var _sub = player.PlaylistChanged.Subscribe(seen.Add);
+
+        var added = await player.AddAsync(Source("b"));
+        var queued = await player.EnqueueAsync(Source("x"));
+
+        Assert.Equal(added, seen[0].Playlist[^1]);
+        Assert.Empty(seen[0].Queued);
+        Assert.Equal([queued], seen[1].Queued);
+    }
+
+    [Fact]
+    public async Task PlaylistChanged_DoesNotFire_ForAnEditThatChangedNothing()
+    {
+        // Remove returns the same queue when it held no such item, so the revision does not move
+        // and there is nothing to redraw. Gating on the call rather than the revision would
+        // report a change that did not happen.
+        await using var player = NewPlayer(PlaybackState.Paused, out var coordinator);
+        var foreign = new PlaylistCoordinator([Source("z")], RepeatMode.Off).Snapshot().Playlist[0];
+        var seen = new List<PlaylistSnapshot>();
+        using var _sub = player.PlaylistChanged.Subscribe(seen.Add);
+
+        var removed = await player.RemoveAsync(foreign);
+        coordinator.ItemEnded();
+
+        Assert.False(removed.IsSuccess);
+        Assert.Empty(seen);
+    }
+
+    [Fact]
+    public async Task PlaylistChanged_FiresForBothHalvesOfAHandOff()
+    {
+        // A hand-off is two commits, and a queue renderer wants both: the take moves Current,
+        // and the report flips CurrentStarted. Neither is an edit, and both change what
+        // GetPlaylist would return, which is what this stream answers.
+        await using var player = NewPlayer(PlaybackState.Playing, out var coordinator);
+        var seen = new List<PlaylistSnapshot>();
+        using var _sub = player.PlaylistChanged.Subscribe(seen.Add);
+
+        var taken = coordinator.TakeStart();
+        coordinator.ReportCurrent(taken!, new MediaInfo("t", TimeSpan.FromSeconds(1), [], []), false);
+
+        Assert.Equal(2, seen.Count);
+        Assert.Same(taken, seen[0].Current);
+        Assert.False(seen[0].CurrentStarted);
+        Assert.True(seen[1].CurrentStarted);
+    }
+
     private static PlaylistMediaPlayerCore NewPlayer(
         PlaybackState state,
         out PlaylistCoordinator coordinator
