@@ -192,6 +192,12 @@ jobs:
 
       - name: Upload test results
         if: always()
+        # A diagnostics upload must not decide whether a release ships. The Test step
+        # above is the gate; this step exists to explain it afterwards. When the
+        # account's Actions storage allowance is full, FinalizeArtifact answers 403 and
+        # a green test run fails the job, which then blocks publish. That happened on
+        # the v0.10.1 tag: Build and Test both passed and the release stopped here.
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.os }}
@@ -550,6 +556,10 @@ jobs:
 
       - name: Upload packages
         if: always()
+        # Same reason as the test-results upload, and it matters more here: by the time
+        # this runs the push to nuget.org has already happened, so failing the job on it
+        # reports a release that did not ship when it did.
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: packages
@@ -562,6 +572,15 @@ jobs:
             not-published/*.nupkg
             not-published/*.snupkg
           if-no-files-found: warn
+          # This is the artifact that fills the allowance. A self-contained publish
+          # carries FFmpeg's binaries, so one of these is ~400MB, and nothing pruned
+          # them: the test-results upload above sets 30 days, this one inherited the
+          # repository default of 90. Ten of them had accumulated to 4.13GB, against
+          # 0.18GB for all 536 test-results artifacts put together, which is what
+          # exhausted the allowance. Fourteen days is long enough to compare a release
+          # against the one before it; past that the packages themselves are on
+          # nuget.org, which is the copy that matters.
+          retention-days: 14
 
       # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
       # clear text — NuGet has no other way to hand a credential to a v3 source in
