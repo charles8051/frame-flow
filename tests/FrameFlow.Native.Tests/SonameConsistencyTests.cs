@@ -103,6 +103,9 @@ public sealed class SonameConsistencyTests
     /// </summary>
     private static readonly string[] ScanRoots = ["src", "tests", "scripts"];
 
+    /// <summary>This file, excluded from its own sweep. See <see cref="SourceFiles"/>.</summary>
+    private const string ThisFileName = "SonameConsistencyTests.cs";
+
     /// <summary>
     /// A floor on what a healthy sweep sees, so a pattern that stopped matching fails here
     /// instead of passing over nothing. 14 files carry a soname today.
@@ -118,12 +121,12 @@ public sealed class SonameConsistencyTests
             "swscale" => FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.SwScale),
             "swresample" => FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.SwResample),
 
-            // Outside FfmpegAbiCheck's set, which covers the five FrameFlow P/Invokes.
-            // fetch-ffmpeg.cs and the macOS build still name these two, because they are
-            // load-time dependencies of the bundled ffmpeg/ffprobe tools, so a bump has to
-            // move them too. Tracked for removal from the macOS artifact in #348.
-            "avdevice" => 61,
-            "avfilter" => 10,
+            // Outside RequiredLibraries, because nothing loads them, but inside
+            // FfmpegLibrary, because their file names are still written down and a bump has
+            // to move those. Read from the binding package like the other five rather than
+            // carried here, so they cannot go stale while the sweep keeps passing them.
+            "avdevice" => FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvDevice),
+            "avfilter" => FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvFilter),
 
             _ => throw new ArgumentOutOfRangeException(nameof(library), library, null),
         };
@@ -145,6 +148,14 @@ public sealed class SonameConsistencyTests
                 {
                     continue;
                 }
+
+                // This file, because its InlineData cases are examples for the matcher and
+                // not references to a library. Holding them to the current major would make
+                // a version bump edit parser fixtures for no reason, and they are covered
+                // by the matcher tests they belong to. Nothing here resolves a library, so
+                // the exclusion costs the sweep nothing.
+                if (Path.GetFileName(file) == ThisFileName)
+                    continue;
 
                 yield return (file, File.ReadAllText(file));
             }
