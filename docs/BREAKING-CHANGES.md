@@ -11,9 +11,78 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
-## Unreleased — since `v0.10.0`
+## `v0.10.1` — since `v0.10.0`
 
-Nothing breaking yet.
+Two refusals where the pipeline used to carry on. Neither is a compile error, and both replace a
+silent wrong answer with a loud one.
+
+### 1. A source FFmpeg opened but could not resolve is refused
+
+**Not a compile error.** Nothing you write changes; what runs does.
+
+`avformat_find_stream_info` logs "Could not find codec parameters" at warning level and still
+returns success, so a container FFmpeg opened without resolving anything loaded looking fine,
+carrying streams whose parameters were still zero. The session decoded nothing and ended at zero
+duration, which a caller cannot tell apart from a valid empty clip (#340).
+
+A source is now refused when it declares no streams, or when none of the streams it declares
+resolved: a video stream counts only with positive dimensions, an audio stream only with a
+positive sample rate and channel count. An unusable track alongside a playable one warns rather
+than fails, so an unsupported video stream in an otherwise fine container still loads.
+
+A caller who relied on the load succeeding gets a failed load with the reason on
+`PlaybackError.Inner`. An animated WebP is the reproducible case (#341, deferred).
+
+### 2. A mismatched FFmpeg major fails the bootstrap instead of decoding wrong
+
+**This one is not a compile error**, and before this release it was not an error at all.
+
+FrameFlow reads FFmpeg structs by overlaying the layouts from `FFmpeg.AutoGen.Abstractions`
+onto native pointers (ADR-0017). Those layouts come from one FFmpeg major version's headers,
+and FFmpeg changes struct layouts every major. Every function FrameFlow P/Invokes still exists
+and still links against a different major, so loading one produced a running process that read
+frame, packet and stream fields at the wrong offsets. The bootstrap logged the version it found
+and carried on.
+
+It now compares each loaded library's major against the one its bindings were generated for and
+fails the bootstrap when any of them differ, naming the offender and both versions:
+
+```
+FFmpeg ABI mismatch. One loaded FFmpeg library is not the major version FrameFlow's struct
+bindings were generated for: libavutil is 61.1.100 (FFmpeg 9.x), expected 59.x (FFmpeg 7.x). ...
+```
+
+All five required libraries are checked, not just `libavutil`. The layouts FrameFlow overlays are
+owned by different libraries, and each one is resolved independently, so a search path can serve
+them from different FFmpeg generations.
+
+Library majors are not FFmpeg release numbers and do not match each other. FrameFlow targets
+FFmpeg 7.1, which is `libavutil` 59, `libavcodec` 61, `libavformat` 61, `libswscale` 8 and
+`libswresample` 5.
+
+The check runs in the loader, so it covers both entry points. An explicit
+`FrameFlowBootstrapper.Initialize()` returns a failed `FrameFlowBootstrapResult` carrying that
+message. Code that decodes without bootstrapping first gets a `DllNotFoundException` from the
+implicit bootstrap, with the same message inside it.
+
+The refusal is terminal for the process. FFmpeg loads once per process, so a mismatch cannot be
+repaired by pointing at different binaries afterwards: the rejected libraries are already mapped.
+`ProbeSystemLibraries` does not fall back after one, and every later P/Invoke throws rather than
+resolving. Bootstrap explicitly if you need to choose the binaries.
+
+**Who hits this.** Nobody using the bundled binaries. `FrameFlow.Native.Runtime` ships FFmpeg 7.1
+and matches by construction. It reaches you if you set `CustomFfmpegPath`, or if you rely on
+`ProbeSystemLibraries` against a system FFmpeg that is not 7.x. macOS is the likely case, because
+the package ships no macOS RID and `brew install ffmpeg` is whichever major Homebrew ships that
+week.
+
+**What to write instead.** Install FFmpeg 7.x and point at it. On macOS that is `brew install
+ffmpeg@7`, which is a real keg and is not deprecated. Elsewhere, take the bundled package.
+
+**Why it is worth a break.** The previous behaviour had no failure mode that pointed at the cause.
+A wrong offset surfaces as a wrong resolution, a wrong timestamp, a wrong pixel format or a crash
+somewhere downstream, none of which names FFmpeg. Refusing at bootstrap costs a startup error and
+replaces a silent wrong answer.
 
 ### Not breaking, but worth knowing
 
@@ -25,11 +94,12 @@ Nothing breaking yet.
   integer terms, so a fractional dwell needs no invariant formatting: 7.5 seconds is `2/15`.
   `MediaSource.FromFile` and the `with` form still work, and nothing that used them changes.
   It takes no position on the extension — whether a file is one image is a fact about the
-  content, and a caller that hands it something animated gets the first frame reported as the
-  whole file, as before. The dwell is rounded to the nearest millisecond, and one outside
+  content, and a caller that hands it a format that can be animated gets the first frame
+  reported as the whole file, unless FFmpeg resolved nothing at all, which entry 1 now refuses.
+  The dwell is rounded to the nearest millisecond, and one outside
   `MediaSource.MinimumStillDwell` to `MaximumStillDwell` (one millisecond to thirty minutes)
   is refused: FFmpeg re-derives the rational it is handed, and past that range the duration it
-  reports stops matching the dwell without saying so — at `1/3600` it comes back as zero. #304.
+  reports stops tracking the dwell without saying so. #304.
 
 ## `v0.10.0` — since `v0.9.0-alpha.1`
 
@@ -1175,58 +1245,6 @@ thread made the change: your thread for an edit, the player's for a hand-off. De
 serialized and in commit order, which is what lets `Revision` order what you receive. The cost is
 that a thread changing the queue can wait on another thread's in-flight handler, so keep handlers
 short or marshal to your UI thread as you already do for `SourceTransitioned`.
-
-### 42. A mismatched FFmpeg major fails the bootstrap instead of decoding wrong
-
-**This one is not a compile error**, and before this release it was not an error at all.
-
-FrameFlow reads FFmpeg structs by overlaying the layouts from `FFmpeg.AutoGen.Abstractions`
-onto native pointers (ADR-0017). Those layouts come from one FFmpeg major version's headers,
-and FFmpeg changes struct layouts every major. Every function FrameFlow P/Invokes still exists
-and still links against a different major, so loading one produced a running process that read
-frame, packet and stream fields at the wrong offsets. The bootstrap logged the version it found
-and carried on.
-
-It now compares each loaded library's major against the one its bindings were generated for and
-fails the bootstrap when any of them differ, naming the offender and both versions:
-
-```
-FFmpeg ABI mismatch. One loaded FFmpeg library is not the major version FrameFlow's struct
-bindings were generated for: libavutil is 61.1.100 (FFmpeg 9.x), expected 59.x (FFmpeg 7.x). ...
-```
-
-All five required libraries are checked, not just `libavutil`. The layouts FrameFlow overlays are
-owned by different libraries, and each one is resolved independently, so a search path can serve
-them from different FFmpeg generations.
-
-Library majors are not FFmpeg release numbers and do not match each other. FrameFlow targets
-FFmpeg 7.1, which is `libavutil` 59, `libavcodec` 61, `libavformat` 61, `libswscale` 8 and
-`libswresample` 5.
-
-The check runs in the loader, so it covers both entry points. An explicit
-`FrameFlowBootstrapper.Initialize()` returns a failed `FrameFlowBootstrapResult` carrying that
-message. Code that decodes without bootstrapping first gets a `DllNotFoundException` from the
-implicit bootstrap, with the same message inside it.
-
-The refusal is terminal for the process. FFmpeg loads once per process, so a mismatch cannot be
-repaired by pointing at different binaries afterwards: the rejected libraries are already mapped.
-`ProbeSystemLibraries` does not fall back after one, and every later P/Invoke throws rather than
-resolving. Bootstrap explicitly if you need to choose the binaries.
-
-**Who hits this.** Nobody using the bundled binaries. `FrameFlow.Native.Runtime` ships FFmpeg 7.1
-and matches by construction. It reaches you if you set `CustomFfmpegPath`, or if you rely on
-`ProbeSystemLibraries` against a system FFmpeg that is not 7.x. macOS is the likely case, because
-the package ships no macOS RID and `brew install ffmpeg` is whichever major Homebrew ships that
-week.
-
-**What to write instead.** Install FFmpeg 7.x and point at it. On macOS that is `brew install
-ffmpeg@7`, which is a real keg and is not deprecated. Elsewhere, take the bundled package.
-
-**Why it is worth a break.** The previous behaviour had no failure mode that pointed at the cause.
-A wrong offset surfaces as a wrong resolution, a wrong timestamp, a wrong pixel format or a crash
-somewhere downstream, none of which names FFmpeg. Refusing at bootstrap costs a startup error and
-replaces a silent wrong answer.
-
 
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
