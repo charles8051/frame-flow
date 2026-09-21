@@ -119,14 +119,31 @@ if [ "$actual_commit" != "$FFMPEG_COMMIT" ]; then
     exit 1
 fi
 
-# The tag is reported, never trusted. A mismatch means upstream moved it, which
-# is worth printing and is not a reason to stop: the commit is the pin.
-tag_ref="refs/tags/$FFMPEG_TAG^{commit}"
-if tag_commit=$(git -C "$SRC_DIR" rev-parse --quiet --verify "$tag_ref" 2>/dev/null); then
+# The tag is reported, never trusted, and it has to be fetched before it can be
+# compared. The fetch above asks for the commit alone, so on a fresh checkout
+# there is no refs/tags/<tag> to read: a rev-parse here without this fetch finds
+# nothing, skips the comparison, and leaves a check that reads like protection
+# and never runs. Every CI run is a fresh checkout, so that is every run.
+#
+# Fetched into a scratch ref rather than refs/tags, so nothing here can be
+# mistaken for the pin later.
+tag_probe="refs/frameflow/tag-probe"
+if git -C "$SRC_DIR" fetch --quiet --depth 1 origin \
+        "+refs/tags/$FFMPEG_TAG:$tag_probe" 2>/dev/null; then
+    tag_commit=$(git -C "$SRC_DIR" rev-parse "$tag_probe^{commit}")
     if [ "$tag_commit" != "$FFMPEG_COMMIT" ]; then
-        echo "warning: upstream tag $FFMPEG_TAG now points at $tag_commit, not the" >&2
-        echo "         pinned $FFMPEG_COMMIT. Building the pin." >&2
+        echo "warning: upstream tag $FFMPEG_TAG points at $tag_commit, not the pinned" >&2
+        echo "         $FFMPEG_COMMIT. Building the pin. The label in BUILD-INFO.txt and" >&2
+        echo "         in THIRD-PARTY-NOTICES.md no longer names what upstream calls it." >&2
+    else
+        echo "==> Tag $FFMPEG_TAG confirmed at $FFMPEG_COMMIT"
     fi
+else
+    # Not fatal. The commit is the pin and it is already checked out and
+    # verified; this only costs the label confirmation. Said out loud so a log
+    # reader does not take silence for a match.
+    echo "warning: could not fetch refs/tags/$FFMPEG_TAG, so the tag label is" >&2
+    echo "         unconfirmed. The pinned commit is still what was built." >&2
 fi
 
 BUILD_DIR="$WORK_DIR/build"
@@ -249,11 +266,17 @@ done
 #      nothing should emit one; if something starts to, the build should stop
 #      rather than ship a dependency whose resolution belongs to the consumer.
 #
-#   3. An @loader_path dependency must name a file that is actually in OUT_DIR.
-#      The collection step copies an allowlist, so a dylib can carry a perfectly
-#      well-formed @loader_path reference to a library that was built and then
-#      not shipped. That passes a syntactic check and fails at dyld on a clean
-#      machine, which is precisely the failure being designed out.
+#   3. An @loader_path dependency must name a SIBLING file that is actually in
+#      OUT_DIR. The collection step copies an allowlist, so a dylib can carry a
+#      perfectly well-formed @loader_path reference to a library that was built
+#      and then not shipped. That passes a syntactic check and fails at dyld on
+#      a clean machine, which is precisely the failure being designed out.
+#
+#      Sibling, not merely "resolves to an existing file": @loader_path/../lib/x
+#      would resolve inside the build workspace, pass an -f test, and not be in
+#      the tarball. Requiring a bare filename rejects that without needing to
+#      canonicalise anything, and it is what every legitimate dependency here
+#      looks like, because the whole output is one flat directory.
 echo "==> Checking for external dependencies"
 leaked=0
 for f in "$OUT_DIR"/*.dylib; do
@@ -261,11 +284,19 @@ for f in "$OUT_DIR"/*.dylib; do
         case "$dep" in
             /usr/lib/*|/System/Library/*) ;;
             @loader_path/*)
-                depfile="$OUT_DIR/${dep#@loader_path/}"
-                if [ ! -f "$depfile" ]; then
-                    echo "  MISSING $(basename "$f") -> $dep (not in the output)" >&2
-                    leaked=1
-                fi
+                depname="${dep#@loader_path/}"
+                case "$depname" in
+                    */*|..|"")
+                        echo "  ESCAPE $(basename "$f") -> $dep (not a sibling)" >&2
+                        leaked=1
+                        ;;
+                    *)
+                        if [ ! -f "$OUT_DIR/$depname" ]; then
+                            echo "  MISSING $(basename "$f") -> $dep (not in the output)" >&2
+                            leaked=1
+                        fi
+                        ;;
+                esac
                 ;;
             @rpath/*)
                 echo "  RPATH $(basename "$f") -> $dep (resolution is the consumer's)" >&2
@@ -286,10 +317,12 @@ if [ "$leaked" -ne 0 ]; then
     echo "                  did not take effect, or a new external library slipped in." >&2
     echo "       RPATH   -> --install-name-dir=@loader_path did not apply to that file." >&2
     echo "       MISSING -> the dependency was built but is not in the LIBS allowlist." >&2
+    echo "       ESCAPE  -> an @loader_path reference that leaves the output directory." >&2
+    echo "                  It may resolve in the build tree and will not be shipped." >&2
     exit 1
 fi
 echo "  clean: every load command is a system path, or an @loader_path sibling"
-echo "         that is present in the output"
+echo "         that is present in the output directory"
 
 # ── Record ───────────────────────────────────────────────────────────────────
 {
