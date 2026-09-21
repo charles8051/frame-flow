@@ -333,7 +333,9 @@ public sealed class MediaPassIntegrationTests
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
             .BuildPlayerAsync();
 
-        Assert.Single(player.MediaInfo.VideoStreams);
+        var info = player.MediaInfo;
+        Assert.NotNull(info);
+        Assert.Single(info.VideoStreams);
         Assert.True(player.Duration > TimeSpan.Zero);
 
         // Pause and seek are the whole reason this terminal exists —
@@ -367,7 +369,9 @@ public sealed class MediaPassIntegrationTests
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
             .BuildPlayerAsync();
 
-        Assert.Single(player.MediaInfo.VideoStreams);
+        var info = player.MediaInfo;
+        Assert.NotNull(info);
+        Assert.Single(info.VideoStreams);
     }
 
     private sealed class CountingVideoSink : IVideoSink

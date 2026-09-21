@@ -518,9 +518,14 @@ public partial class MainWindow : Window
         // FrameFlowStateBadge.
         PlayerChrome.MediaPlayer = _player;
 
-        var hasAudio = _player.MediaInfo.AudioStreams.Count > 0;
         var caveats = new List<string>();
-        if (!hasAudio)
+        // BuildPlayerAsync loaded the first item, so MediaInfo is set here. Kept as three cases
+        // rather than `?.` anyway: a null would mean the load did not happen, which is a
+        // different thing from an item that carries no audio, and reporting it as the latter
+        // would be a caveat about the content when the truth is about the player.
+        if (_player.MediaInfo is not { } info)
+            caveats.Add("stream layout unavailable");
+        else if (info.AudioStreams.Count == 0)
             caveats.Add("no audio — captioning disabled");
         if (_yoloDetector is null)
             caveats.Add("no detection (YOLO unavailable)");

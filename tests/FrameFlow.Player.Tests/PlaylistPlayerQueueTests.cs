@@ -92,6 +92,30 @@ public sealed class PlaylistPlayerQueueTests
         Assert.Same(replaced.Value![0], snapshot.PendingJump);
     }
 
+    [Fact]
+    public async Task MediaInfo_IsNull_BeforeAnItemHasLoaded()
+    {
+        // Reachable and ordinary: a player built without WithMedia, a cleared queue, or the gap
+        // between items. It used to throw InvalidOperationException here, which cost
+        // FrameFlowStreamSummary a bare catch around a property read (#40 in BREAKING-CHANGES).
+        await using var player = NewPlayer(PlaybackState.Idle, out _);
+
+        Assert.Null(player.MediaInfo);
+    }
+
+    [Fact]
+    public async Task MediaInfo_FollowsTheCoordinator_OnceAnItemIsLoaded()
+    {
+        await using var player = NewPlayer(PlaybackState.Playing, out var coordinator);
+        var item = coordinator.Snapshot().Playlist[0];
+        var loaded = new MediaInfo("test", TimeSpan.FromSeconds(3), [], []);
+
+        coordinator.ReportCurrent(item, loaded, wrapped: false);
+
+        Assert.Same(loaded, player.MediaInfo);
+        Assert.Equal(loaded.Duration, player.Duration);
+    }
+
     private static PlaylistMediaPlayerCore NewPlayer(
         PlaybackState state,
         out PlaylistCoordinator coordinator

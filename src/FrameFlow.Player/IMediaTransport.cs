@@ -81,8 +81,17 @@ public interface IMediaTransport : IAsyncDisposable
     /// <summary>Total duration of the loaded media.</summary>
     TimeSpan Duration { get; }
 
-    /// <summary>Metadata for the loaded media.</summary>
-    MediaInfo MediaInfo { get; }
+    /// <summary>
+    /// Metadata for the loaded media, or <see langword="null"/> when nothing is loaded.
+    /// </summary>
+    /// <remarks>
+    /// Null is reachable and ordinary, not an error. A player built without
+    /// <c>WithMedia</c> starts with its sinks warm and an empty queue, a player whose queue
+    /// has been cleared has no current item, and a player between items has not finished
+    /// opening the next one. It becomes non-null when the current item finishes loading,
+    /// and <see cref="StateChanged"/> fires on that transition.
+    /// </remarks>
+    MediaInfo? MediaInfo { get; }
 
     /// <summary>Stream of primary playback state transitions.</summary>
     /// <remarks>
@@ -112,6 +121,12 @@ public interface IMediaTransport : IAsyncDisposable
     /// <see cref="RepeatMode.One"/>. It does not fire for a skip, a jump or a rebuild after a
     /// failure. This is <see cref="IPlaybackController.LoopRestarted"/> unprojected.
     /// </summary>
+    /// <remarks>
+    /// <b>Paired with <see cref="IMediaPlayer.ItemLooped"/>.</b> A loop reaches both,
+    /// <c>ItemLooped</c> first, and <see cref="PlaylistItemLooped.Loop"/> is this exact instance
+    /// rather than a copy. A consumer subscribed to both discards the second sighting by
+    /// reference equality.
+    /// </remarks>
     IObservable<LoopRestarted> LoopRestarted { get; }
 
     /// <summary>
@@ -119,6 +134,18 @@ public interface IMediaTransport : IAsyncDisposable
     /// overran the item duration without a restart (frame delivery stopped while
     /// the clock kept advancing). Hosts can surface this to health/telemetry.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Paired with <see cref="IMediaPlayer.ItemStalled"/>.</b> A stall reaches both,
+    /// <c>ItemStalled</c> first, and <see cref="PlaylistItemStalled.Stall"/> is this exact
+    /// instance rather than a copy. A consumer subscribed to both discards the second sighting
+    /// by reference equality.
+    /// </para>
+    /// <para>
+    /// It fires on the rising edge only, and nothing recovers: the player does not rebuild the
+    /// wedged item or bound the wait.
+    /// </para>
+    /// </remarks>
     IObservable<LoopStalled> LoopStalled { get; }
 
     /// <summary>
@@ -137,6 +164,13 @@ public interface IMediaTransport : IAsyncDisposable
     /// as it enters <see cref="PlaybackState.Error"/>. An
     /// <see cref="IMediaPlayer"/> also raises it for an item that fails,
     /// and keeps playing; see that interface.
+    /// </para>
+    /// <para>
+    /// <b>Paired with <see cref="IMediaPlayer.ItemFailed"/>.</b> An item failure reaches both,
+    /// <c>ItemFailed</c> first, and <see cref="PlaylistItemFailed.Error"/> is this exact
+    /// instance rather than a copy. A consumer subscribed to both discards the second sighting
+    /// by reference equality; one holding only this interface subscribes here and misses
+    /// nothing but the item's identity.
     /// </para>
     /// </remarks>
     IObservable<PlaybackError> ErrorOccurred { get; }

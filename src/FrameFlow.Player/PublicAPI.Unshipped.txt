@@ -7,7 +7,7 @@ FrameFlow.Player.IMediaTransport.ErrorOccurred.get -> System.IObservable<FrameFl
 FrameFlow.Player.IMediaTransport.GetDiagnostics() -> FrameFlow.Playback.Diagnostics.PlaybackDiagnosticsSnapshot!
 FrameFlow.Player.IMediaTransport.LoopRestarted.get -> System.IObservable<FrameFlow.Media.LoopRestarted!>!
 FrameFlow.Player.IMediaTransport.LoopStalled.get -> System.IObservable<FrameFlow.Media.LoopStalled!>!
-FrameFlow.Player.IMediaTransport.MediaInfo.get -> FrameFlow.Media.MediaInfo!
+FrameFlow.Player.IMediaTransport.MediaInfo.get -> FrameFlow.Media.MediaInfo?
 FrameFlow.Player.IMediaTransport.Muted.get -> bool
 FrameFlow.Player.IMediaTransport.Muted.set -> void
 FrameFlow.Player.IMediaTransport.PauseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
