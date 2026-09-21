@@ -192,6 +192,18 @@ jobs:
 
       - name: Upload test results
         if: always()
+        # A diagnostics upload must not decide whether a release ships. The Test step
+        # above is the gate; this step exists to explain it afterwards. When the
+        # account's Actions storage allowance is full, FinalizeArtifact answers 403 and
+        # a green test run fails the job, which then blocks publish. That happened on
+        # the v0.10.1 tag: Build and Test both passed and the release stopped here.
+        #
+        # The failure is still reported. continue-on-error does not suppress the error
+        # annotation the action writes, so a run that shipped without its evidence says
+        # so in the run summary and through the API, and only the job conclusion
+        # changes. A 403 here means the allowance, and the packages artifact below is
+        # what fills it.
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.os }}
@@ -548,20 +560,57 @@ jobs:
           echo "packages below were built. NOTHING WAS PUSHED."
           ls -1 packages/*.nupkg
 
-      - name: Upload packages
+      # The two directories are uploaded separately because they are worth keeping for
+      # different lengths of time, and putting them in one artifact forced the shorter
+      # answer onto both. packages/ went to nuget.org and can be fetched back from
+      # there; not-published/ did not, and this is its only copy.
+      - name: Upload published packages
         if: always()
+        # Same reason as the test-results upload, and it matters more here: by the time
+        # this runs the push to nuget.org has already happened, so failing the job on it
+        # reports a release that did not ship when it did.
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: packages
-          # Both directories: not-published/ holds what the size gate held back,
-          # and an artifact that silently omitted it would make the run harder to
-          # reason about, not easier.
           path: |
             packages/*.nupkg
             packages/*.snupkg
+          if-no-files-found: warn
+          # ~198MB of this: Native.Runtime is 150MB and Native 39MB, both carrying
+          # FFmpeg's binaries. Nothing pruned them before - the test-results upload sets
+          # 30 days, this one inherited the repository default of 90 - and ten of them
+          # reached 4.13GB against 0.18GB for all 536 test-results artifacts together,
+          # which exhausted the account's storage allowance and failed a release whose
+          # tests had passed. Fourteen days is long enough to compare a release against
+          # the one before it. Past that these are on nuget.org.
+          retention-days: 14
+
+      - name: Upload packages nuget.org cannot take
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-not-published
+          path: |
             not-published/*.nupkg
             not-published/*.snupkg
-          if-no-files-found: warn
+          # Normal for a release that held nothing back. The step above already warns
+          # when packages/ is empty, which is the case worth noticing.
+          if-no-files-found: ignore
+          # Deliberately longer than the published set, and it is the same ~200MB of
+          # FrameFlow.MotionClip every time. The size gate holds it back precisely
+          # because nuget.org will not take it, so unlike packages/ there is nowhere
+          # else to fetch it from: delete this and the build is gone. Ninety days is
+          # the repository default, restated here so a later retention edit has to
+          # decide about this one separately rather than inherit an answer meant for
+          # packages that are recoverable.
+          #
+          # This is also the upload whose failure costs the most, for the same reason.
+          # It is continue-on-error like the others, so the run goes green and the
+          # action's error annotation is the only notice: re-run this job before the
+          # runner workspace goes, because nothing else has a copy.
+          retention-days: 90
 
       # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
       # clear text — NuGet has no other way to hand a credential to a v3 source in
