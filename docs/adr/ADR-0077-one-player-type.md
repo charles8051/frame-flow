@@ -110,13 +110,12 @@ A caller who wants the small surface keeps naming `IMediaPlayer`; the returned o
 > [Breaking changes 17 and 18](../BREAKING-CHANGES.md). The interfaces are unchanged, so the rest of
 > this decision stands.
 
-> **Amended 2026-09-20. Proposed, not accepted.** Nothing below is decided until someone with the
-> call takes it; the decision above stands as written until then. The dependent amendment in
-> [playlist-events-name-their-item.md](playlist-events-name-their-item.md) is pending on this one
-> and says so.
+> **Amended 2026-09-20. Accepted.** The fold is declined and the condition retired; the rename
+> below is taken and implemented — [breaking change 38](../BREAKING-CHANGES.md). Records written
+> before this date use the old names, and mean by `IMediaPlayer` what is now `IMediaTransport`.
 >
-> The deferral's condition has fired, and the recommendation is not to take the fold. Recorded
-> here because a condition that fires unnoticed is worse than no condition.
+> The deferral's condition had fired, and the answer is not to take the fold. Recorded here because
+> a condition that fires unnoticed is worse than no condition.
 >
 > **It fired, on one entry rather than the three I first counted.** "The next release that breaks
 > implementers for other reasons" is the release now pending, and breaking change 11 is what fires
@@ -323,9 +322,8 @@ player it applied to.
 Rejected for this record. It breaks every external implementer of the small interface, and it gives
 a caller nothing they cannot get by naming the larger one. Decision 2 defers it.
 
-> **Amended 2026-09-20. Proposed, not accepted**, with decision 2's amendment. Reconsidered when
-> that decision's condition fired, and the recommendation is to reject it again for a better
-> reason: `IMediaPlayer` exists to be consumed polymorphically, not implemented, so the fold taxes
+> **Amended 2026-09-20. Accepted**, with decision 2's amendment. Reconsidered when that
+> decision's condition fired, and rejected again for a better reason: `IMediaPlayer` exists to be consumed polymorphically, not implemented, so the fold taxes
 > implementers for a surface consumers already reach. Decision 2's amendment has the measurement,
 > retires the condition, and proposes the rename the permanent split then needs.
 
@@ -421,9 +419,9 @@ broken. The edits are:
 
 ## Revision history
 
-- **Fold condition retired, and a rename proposed (2026-09-20).** Decision 2's "next release that
+- **Fold condition retired, and the interfaces renamed (2026-09-20).** Decision 2's "next release that
   breaks implementers" condition fired and was not taken; the deferral now rests on what the small
   interface is for rather than on waiting for cover. With the split permanent, the two names are
-  proposed to swap: the playlist interface becomes `IMediaPlayer` and the transport view becomes
-  `IMediaTransport`. Alternative B amended to match. Proposal; no code change.
+  swapped: the playlist interface becomes `IMediaPlayer` and the transport view becomes
+  `IMediaTransport`. Alternative B amended to match. Accepted and implemented; breaking change 38.
 - **First draft (2026-09-15).** Written from the spike on #224 and its ten-minute hardware run.

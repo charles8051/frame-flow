@@ -114,7 +114,7 @@ internal sealed class SoakSampler : IDisposable
     public bool Faulted { get; private set; }
 
     /// <summary>Watches <paramref name="player"/> as the pane named <paramref name="name"/>.</summary>
-    public void Watch(string name, string clip, IMediaPlayer player)
+    public void Watch(string name, string clip, IMediaTransport player)
     {
         var pane = new Pane(name, clip, player);
         pane.Subscribe();
@@ -208,7 +208,7 @@ internal sealed class SoakSampler : IDisposable
         double Fps
     );
 
-    private sealed class Pane(string name, string clip, IMediaPlayer player) : IDisposable
+    private sealed class Pane(string name, string clip, IMediaTransport player) : IDisposable
     {
         private readonly List<IDisposable> _subscriptions = [];
         private long _presentedAtLastSample;

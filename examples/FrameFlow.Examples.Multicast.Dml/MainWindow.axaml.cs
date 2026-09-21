@@ -49,7 +49,7 @@ public partial class MainWindow : Window
     private ILoggerFactory? _loggerFactory;
     private ILogger<MainWindow>? _logger;
 
-    private IMediaPlayer? _player;
+    private IMediaTransport? _player;
     private OpenAlAudioSink? _audioSink;
     private long _broadcastFrameCount;
     private long _broadcastBranchDrops;

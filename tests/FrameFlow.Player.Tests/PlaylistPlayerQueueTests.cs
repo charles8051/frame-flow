@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FrameFlow.Player.Tests;
 
 /// <summary>
-/// The queue verbs on <see cref="IMediaPlaylistPlayer"/> (#171), over a stub controller. The
+/// The queue verbs on <see cref="IMediaPlayer"/> (#171), over a stub controller. The
 /// ordering rules are unit-tested on the coordinator in <c>PlaylistCoordinatorTests</c>; these
 /// pin what the player adds: the items it hands back, and the refusals.
 /// </summary>

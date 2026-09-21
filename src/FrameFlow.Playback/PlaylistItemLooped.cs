@@ -16,7 +16,7 @@ namespace FrameFlow.Playback;
 /// discards the second sighting by reference equality.
 /// </param>
 /// <remarks>
-/// Raised on <c>IMediaPlaylistPlayer.ItemLooped</c>, which is the channel to prefer over
+/// Raised on <c>IMediaPlayer.ItemLooped</c>, which is the channel to prefer over
 /// <c>LoopRestarted</c> when the item matters. Both report the same loop, <c>ItemLooped</c> first.
 /// Nothing is raised while the session is disposing, or from a session the controller has replaced.
 /// </remarks>

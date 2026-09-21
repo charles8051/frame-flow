@@ -39,7 +39,7 @@ namespace FrameFlow.Avalonia;
 /// </para>
 /// <para>
 /// <b>Player ownership.</b> The control NEVER builds an
-/// <see cref="IMediaPlayer"/> itself — that's the consumer's job
+/// <see cref="IMediaTransport"/> itself — that's the consumer's job
 /// via <c>FrameFlowPlayer.Create().WithMedia(path).BuildPlayerAsync()</c>. When the user
 /// clicks Open (chrome's button) or drops a file (this view's
 /// drag-drop), <see cref="FileOpenRequested"/> fires with the chosen
@@ -54,11 +54,11 @@ namespace FrameFlow.Avalonia;
 public sealed class FrameFlowPlayerView : UserControl
 {
     /// <summary>The player to display + control.</summary>
-    public static readonly StyledProperty<IMediaPlayer?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowPlayerView, IMediaPlayer?>(nameof(MediaPlayer));
+    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
+        AvaloniaProperty.Register<FrameFlowPlayerView, IMediaTransport?>(nameof(MediaPlayer));
 
     /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaPlayer? MediaPlayer
+    public IMediaTransport? MediaPlayer
     {
         get => GetValue(MediaPlayerProperty);
         set => SetValue(MediaPlayerProperty, value);
@@ -208,7 +208,7 @@ public sealed class FrameFlowPlayerView : UserControl
         base.OnPropertyChanged(change);
         if (change.Property == MediaPlayerProperty)
         {
-            var p = change.GetNewValue<IMediaPlayer?>();
+            var p = change.GetNewValue<IMediaTransport?>();
             _chrome.MediaPlayer = p;
 
             // Wire the hover-to-reveal state subscription so the
@@ -378,7 +378,7 @@ public sealed class FrameFlowPlayerView : UserControl
 /// <see cref="FrameFlowPlayerView.FileOpenRequested"/> and
 /// <see cref="FrameFlowPlayerChrome.FileOpenRequested"/>. The
 /// consumer inspects <see cref="FilePath"/>, builds an
-/// <see cref="IMediaPlayer"/>, and assigns it to
+/// <see cref="IMediaTransport"/>, and assigns it to
 /// <see cref="FrameFlowPlayerView.MediaPlayer"/>.
 /// </summary>
 public sealed class FileOpenRequestedEventArgs(string filePath) : EventArgs

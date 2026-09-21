@@ -22,9 +22,9 @@ namespace FrameFlow.Media;
 /// </para>
 /// <para>
 /// <b>Discovery.</b> Consumers who hold a sink test for this interface
-/// directly. Consumers who hold an <c>IMediaPlayer</c> cannot — they never see
+/// directly. Consumers who hold an <c>IMediaTransport</c> cannot — they never see
 /// the sink — so the player surface exposes
-/// <c>IMediaPlayer.SupportsVolumeControl</c> instead. That property is the
+/// <c>IMediaTransport.SupportsVolumeControl</c> instead. That property is the
 /// same question asked at the layer that can't answer it with a type test.
 /// </para>
 /// <para>

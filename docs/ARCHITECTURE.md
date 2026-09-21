@@ -296,7 +296,7 @@ one terminal. A clock is the difference between them (ADR-0079).
 
 | Entry | Builder | Terminal | Returns |
 |---|---|---|---|
-| `FrameFlowPlayer.Create()` | `IPlayerBuilder` | `BuildPlayerAsync` | `IMediaPlaylistPlayer` — paced, with seek, pause, repeat and the queue |
+| `FrameFlowPlayer.Create()` | `IPlayerBuilder` | `BuildPlayerAsync` | `IMediaPlayer` — paced, with seek, pause, repeat and the queue |
 | `FrameFlowPass.Create(path)` | `IPassBuilder` | `BuildAsync` | `MediaPass` — one traversal at decode speed, no clock, no transport |
 
 Neither terminal is reachable from the other's chain.
@@ -662,7 +662,7 @@ The UI layer can simplify those into user-facing messages, but the core should p
 
 Where that line falls on the playback stack is settled in
 [ADR-0069](adr/ADR-0069-one-error-model-across-the-playback-stack.md): transport commands on
-`IPlaybackController` and `IMediaPlayer` return `Result`, because a refused command is an
+`IPlaybackController` and `IMediaTransport` return `Result`, because a refused command is an
 expected outcome; construction, argument validation, and anything escaping a sink still throw.
 
 ## Resource ownership rules

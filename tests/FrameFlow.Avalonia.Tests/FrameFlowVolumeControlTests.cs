@@ -9,7 +9,7 @@ namespace FrameFlow.Avalonia.Tests;
 
 /// <summary>
 /// Covers <see cref="FrameFlowVolumeControl"/>'s gating on
-/// <see cref="IMediaPlayer.SupportsVolumeControl"/> (ADR-0065 §4).
+/// <see cref="IMediaTransport.SupportsVolumeControl"/> (ADR-0065 §4).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -137,10 +137,10 @@ public sealed class FrameFlowVolumeControlTests
         c.Children.OfType<Slider>().Single();
 
     /// <summary>
-    /// Minimal <see cref="IMediaPlayer"/>. Only the volume projection is
+    /// Minimal <see cref="IMediaTransport"/>. Only the volume projection is
     /// exercised; the transport and observables are never touched.
     /// </summary>
-    private sealed class FakePlayer : IMediaPlayer
+    private sealed class FakePlayer : IMediaTransport
     {
         public bool SupportsVolumeControl { get; init; }
         public float Volume { get; set; } = 1.0f;

@@ -6,7 +6,7 @@ namespace FrameFlow.Examples.DualPlayer;
 /// Application entry point for the dual-player example.
 /// </summary>
 /// <remarks>
-/// Runs <b>two fully independent <see cref="FrameFlow.Player.IMediaPlayer"/>
+/// Runs <b>two fully independent <see cref="FrameFlow.Player.IMediaTransport"/>
 /// instances in one process</b> — each with its own decoders, video sink,
 /// audio sink, frame pool and playback controller — to exercise the
 /// multi-player-per-process path that has historically been a source of

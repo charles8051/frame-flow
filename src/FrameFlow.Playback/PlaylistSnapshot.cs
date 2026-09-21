@@ -27,7 +27,7 @@ public sealed class PlaylistSnapshot
     /// </summary>
     /// <remarks>
     /// Public so a caller can build one for a test double or a decorator over
-    /// <c>IMediaPlaylistPlayer</c> (#318). The player's own snapshots always satisfy these
+    /// <c>IMediaPlayer</c> (#318). The player's own snapshots always satisfy these
     /// checks; they exist so a hand-built one cannot quietly describe a queue no player could
     /// be in.
     /// </remarks>

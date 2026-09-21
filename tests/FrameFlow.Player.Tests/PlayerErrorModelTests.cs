@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FrameFlow.Player.Tests;
 
 /// <summary>
-/// Covers the ADR-0069 error model on <see cref="IMediaPlayer"/>: transport
+/// Covers the ADR-0069 error model on <see cref="IMediaTransport"/>: transport
 /// commands answer in <see cref="Result"/>, and the structured error reaches
 /// the caller intact.
 /// </summary>
@@ -63,19 +63,19 @@ public sealed class PlayerErrorModelTests
     }
 
     [Theory]
-    [InlineData(nameof(IMediaPlayer.PlayAsync))]
-    [InlineData(nameof(IMediaPlayer.PauseAsync))]
-    [InlineData(nameof(IMediaPlayer.SeekAsync))]
-    [InlineData(nameof(IMediaPlayer.SetRepeatModeAsync))]
+    [InlineData(nameof(IMediaTransport.PlayAsync))]
+    [InlineData(nameof(IMediaTransport.PauseAsync))]
+    [InlineData(nameof(IMediaTransport.SeekAsync))]
+    [InlineData(nameof(IMediaTransport.SetRepeatModeAsync))]
     public async Task EveryTransportCommand_ReportsRefusalTheSameWay(string command)
     {
         await using var player = NewPlayer(new StubController { Failure = Refusal });
 
         var result = command switch
         {
-            nameof(IMediaPlayer.PlayAsync) => await player.PlayAsync(),
-            nameof(IMediaPlayer.PauseAsync) => await player.PauseAsync(),
-            nameof(IMediaPlayer.SeekAsync) => await player.SeekAsync(TimeSpan.Zero),
+            nameof(IMediaTransport.PlayAsync) => await player.PlayAsync(),
+            nameof(IMediaTransport.PauseAsync) => await player.PauseAsync(),
+            nameof(IMediaTransport.SeekAsync) => await player.SeekAsync(TimeSpan.Zero),
             _ => await player.SetRepeatModeAsync(RepeatMode.All),
         };
 
@@ -93,7 +93,7 @@ public sealed class PlayerErrorModelTests
         using var subscription = player.ErrorOccurred.Subscribe(new Capture(e => seen = e));
 
         // A mid-playback failure, not the answer to any command: the channel
-        // IMediaPlayer had no way to expose before ADR-0069.
+        // IMediaTransport had no way to expose before ADR-0069.
         controller.RaiseError(Refusal);
 
         Assert.Same(Refusal, seen);

@@ -15,7 +15,7 @@ namespace FrameFlow.Playback;
 /// </para>
 /// <para>
 /// The constructor is public so a caller can build one for a test double or a decorator over
-/// <c>IMediaPlaylistPlayer</c> (#318). An item built that way belongs to no player, and reference
+/// <c>IMediaPlayer</c> (#318). An item built that way belongs to no player, and reference
 /// equality is what says so: <c>JumpToAsync</c> and <c>RemoveAsync</c> refuse it with a failed
 /// <see cref="Result"/>, exactly as they refuse an item another player owns.
 /// </para>

@@ -180,7 +180,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
         }
     }
 
-    public async Task<IMediaPlaylistPlayer> BuildPlayerAsync(
+    public async Task<IMediaPlayer> BuildPlayerAsync(
         CancellationToken cancellationToken = default
     )
     {

@@ -12,8 +12,8 @@ namespace FrameFlow.Avalonia;
 
 /// <summary>
 /// Composite volume widget: mute toggle (speaker glyph) + slider +
-/// percentage label. Bound to an <see cref="IMediaPlayer"/>'s
-/// <see cref="IMediaPlayer.Volume"/> / <see cref="IMediaPlayer.Muted"/>
+/// percentage label. Bound to an <see cref="IMediaTransport"/>'s
+/// <see cref="IMediaTransport.Volume"/> / <see cref="IMediaTransport.Muted"/>
 /// properties. Settings persist across re-binds because they live on
 /// the underlying audio sink, not on the control.
 /// </summary>
@@ -31,11 +31,11 @@ namespace FrameFlow.Avalonia;
 public sealed class FrameFlowVolumeControl : StackPanel
 {
     /// <summary>The player whose volume/mute to control.</summary>
-    public static readonly StyledProperty<IMediaPlayer?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowVolumeControl, IMediaPlayer?>(nameof(MediaPlayer));
+    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
+        AvaloniaProperty.Register<FrameFlowVolumeControl, IMediaTransport?>(nameof(MediaPlayer));
 
     /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaPlayer? MediaPlayer
+    public IMediaTransport? MediaPlayer
     {
         get => GetValue(MediaPlayerProperty);
         set => SetValue(MediaPlayerProperty, value);
@@ -94,10 +94,10 @@ public sealed class FrameFlowVolumeControl : StackPanel
     {
         base.OnPropertyChanged(change);
         if (change.Property == MediaPlayerProperty)
-            OnMediaPlayerChanged(change.GetNewValue<IMediaPlayer?>());
+            OnMediaPlayerChanged(change.GetNewValue<IMediaTransport?>());
     }
 
-    private void OnMediaPlayerChanged(IMediaPlayer? player)
+    private void OnMediaPlayerChanged(IMediaTransport? player)
     {
         // Enabled only when a player is attached and its audio sink has a gain
         // stage. Writing volume to a player without one is a documented no-op,
@@ -118,7 +118,7 @@ public sealed class FrameFlowVolumeControl : StackPanel
     /// Pushes <paramref name="player"/>'s volume and mute state into the
     /// widgets, or resets to unity and unmuted when it is <see langword="null"/>.
     /// </summary>
-    private void SeedFrom(IMediaPlayer? player)
+    private void SeedFrom(IMediaTransport? player)
     {
         // Volume and mute persist across player lifetimes via the audio-sink
         // singleton, so an existing setting should be reflected immediately.
@@ -171,8 +171,8 @@ public sealed class FrameFlowVolumeControl : StackPanel
     }
 
     /// <summary>
-    /// Re-reads <see cref="IMediaPlayer.Volume"/> and
-    /// <see cref="IMediaPlayer.Muted"/> and refreshes the slider /
+    /// Re-reads <see cref="IMediaTransport.Volume"/> and
+    /// <see cref="IMediaTransport.Muted"/> and refreshes the slider /
     /// mute toggle / glyph / label. Call after mutating the player's
     /// volume or mute from outside the control (e.g. keyboard
     /// shortcuts on a parent view) so the visual state matches.

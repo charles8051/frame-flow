@@ -17,10 +17,10 @@ namespace FrameFlow.Playback;
 /// <param name="Failure">How it failed.</param>
 /// <remarks>
 /// <para>
-/// Raised on <c>IMediaPlaylistPlayer.ItemFailed</c>, which is the channel to prefer over
+/// Raised on <c>IMediaPlayer.ItemFailed</c>, which is the channel to prefer over
 /// <c>ErrorOccurred</c> for item failures. Both report the same failure, <c>ItemFailed</c> first;
 /// <c>ErrorOccurred</c> stays because it is the only failure signal a caller holding the smaller
-/// <c>IMediaPlayer</c> surface has.
+/// <c>IMediaTransport</c> surface has.
 /// </para>
 /// <para>
 /// <b>It does not always mean the player carries on.</b> It usually does: the item is skipped and

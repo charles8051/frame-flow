@@ -11,7 +11,7 @@ namespace FrameFlow.TestBench;
 /// <remarks>
 /// <para>
 /// The bench builds on <see cref="IPlaybackController"/> rather than
-/// <c>IMediaPlayer</c>, per Decision 3. <c>IMediaPlayer</c> has no load — its source is
+/// <c>IMediaTransport</c>, per Decision 3. <c>IMediaTransport</c> has no load — its source is
 /// fixed at construction — and <see cref="IPlaybackController"/> has no volume, so the
 /// two are composed: this type holds the controller, and the audio sink's
 /// <see cref="IVolumeControl"/> when there is one.

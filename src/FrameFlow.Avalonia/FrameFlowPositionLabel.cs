@@ -11,18 +11,18 @@ namespace FrameFlow.Avalonia;
 
 /// <summary>
 /// Display-only label showing
-/// <c>{Position} / {Duration}</c> for an <see cref="IMediaPlayer"/>,
+/// <c>{Position} / {Duration}</c> for an <see cref="IMediaTransport"/>,
 /// updated on a quarter-second dispatcher tick (cheap; matches the
 /// AvaloniaPlayer example's existing cadence).
 /// </summary>
 /// <remarks>
 /// <para>
 /// Position polling uses a <see cref="DispatcherTimer"/> rather than
-/// <see cref="IMediaPlayer.PositionTick"/>, and not for the cadence: that
+/// <see cref="IMediaTransport.PositionTick"/>, and not for the cadence: that
 /// observable is itself a 250 ms tick, the same 4 Hz this timer runs at.
 /// The reason is that it is bound to <see cref="FrameFlow.Media.PlaybackState.Playing"/>
 /// and silent otherwise, so a seek while paused moves
-/// <see cref="IMediaPlayer.Position"/> without emitting. A label driven
+/// <see cref="IMediaTransport.Position"/> without emitting. A label driven
 /// off the stream would keep showing the pre-seek time until playback
 /// resumed; polling shows the new one.
 /// </para>
@@ -30,11 +30,11 @@ namespace FrameFlow.Avalonia;
 public sealed class FrameFlowPositionLabel : TextBlock
 {
     /// <summary>The player whose position to display.</summary>
-    public static readonly StyledProperty<IMediaPlayer?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowPositionLabel, IMediaPlayer?>(nameof(MediaPlayer));
+    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
+        AvaloniaProperty.Register<FrameFlowPositionLabel, IMediaTransport?>(nameof(MediaPlayer));
 
     /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaPlayer? MediaPlayer
+    public IMediaTransport? MediaPlayer
     {
         get => GetValue(MediaPlayerProperty);
         set => SetValue(MediaPlayerProperty, value);

@@ -58,7 +58,7 @@ need rather than an artefact of having built a language.
 `PlaybackDiagnosticsSnapshot.LoopStalled` means "currently appears stalled". A
 stall that recovers before your next poll leaves it `false`, so reading it once
 at the end reports a clean run on exactly the symptom you were watching for.
-Subscribe to `IMediaPlayer.LoopStalled` — it fires once on the rising edge — and
+Subscribe to `IMediaTransport.LoopStalled` — it fires once on the rising edge — and
 count.
 
 **Distinguish an absent flag from a malformed one.** `--gap 20` has no unit.

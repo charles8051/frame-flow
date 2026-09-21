@@ -17,7 +17,7 @@ namespace FrameFlow.Examples.DualPlayer;
 /// Each pane owns a private decode → present chain: its own
 /// <see cref="AvaloniaVideoSink"/> (+ frame pool, supplied by the
 /// <see cref="FrameFlowVideoView"/>), optionally its own
-/// <see cref="OpenAlAudioSink"/>, and its own <see cref="IMediaPlayer"/>
+/// <see cref="OpenAlAudioSink"/>, and its own <see cref="IMediaTransport"/>
 /// backed by a separate playback controller. Nothing is shared between the
 /// two except process-global state (the FFmpeg bootstrap, the OpenAL device
 /// layer, the metrics meters) — which is precisely the surface that
@@ -67,7 +67,7 @@ public partial class MainWindow : Window
         /// Kept for disposal.</summary>
         public OpenAlAudioSink? AudioSink { get; set; }
 
-        public IMediaPlayer? Player { get; set; }
+        public IMediaTransport? Player { get; set; }
     }
 
     /// <summary>Parameterless ctor for the Avalonia XAML previewer.</summary>
