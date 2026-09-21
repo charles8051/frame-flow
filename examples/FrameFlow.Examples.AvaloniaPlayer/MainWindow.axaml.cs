@@ -106,43 +106,19 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Builds the source for a path, naming the demuxer when the file is a still.
+    /// Builds the source for a path, opening it as a held still when this example's extension
+    /// list says the file is one image.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// Probed, a single image opens on a <c>*_pipe</c> demuxer, which reports no duration and
-    /// ends as soon as its one frame is presented. Named as <c>image2</c> with a
-    /// <c>framerate</c>, the same file is a clip of <c>1/framerate</c> seconds holding one
-    /// frame, which is what makes a still hold the screen and a playlist move on afterwards.
-    /// </para>
-    /// <para>
-    /// A fraction rather than a decimal because FFmpeg reads the option as a rational, and
-    /// the invariant culture because a comma decimal separator would not parse.
-    /// </para>
-    /// <para>
-    /// <c>pattern_type=none</c> because image2 otherwise reads the path as a printf sequence
-    /// pattern, so a file actually named <c>photo%03d.png</c> fails to open with "could find
-    /// no file with path ... and index in the range 0-4" even though it is right there. The
-    /// path here always names one existing file, so the pattern handling has nothing to
-    /// offer and one filename in it to break.
-    /// </para>
+    /// The demuxer recipe lives in <see cref="MediaSource.FromStill"/>. What stays here is the
+    /// judgement it deliberately does not make: which files in a folder are one image. That is a
+    /// question about a file picker's content, which this example has an answer for and the
+    /// library does not.
     /// </remarks>
-    private static IMediaSource SourceFor(string path)
-    {
-        var source = MediaSource.FromFile(path);
-        if (!StillExtensions.Contains(Path.GetExtension(path)))
-            return source;
-
-        return source with
-        {
-            InputFormat = "image2",
-            DemuxerOptions = new Dictionary<string, string>
-            {
-                ["framerate"] = FormattableString.Invariant($"1/{StillDwell.TotalSeconds:0.###}"),
-                ["pattern_type"] = "none",
-            },
-        };
-    }
+    private static IMediaSource SourceFor(string path) =>
+        StillExtensions.Contains(Path.GetExtension(path))
+            ? MediaSource.FromStill(path, StillDwell)
+            : MediaSource.FromFile(path);
 
     /// <summary>Builds a player for one file and hands it to the view.</summary>
     private async Task OpenFileAsync(string path)

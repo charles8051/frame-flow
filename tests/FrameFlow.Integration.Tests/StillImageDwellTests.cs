@@ -29,14 +29,7 @@ public sealed class StillImageDwellTests : IClassFixture<FfmpegBootstrapFixture>
     private static readonly TimeSpan Window = TimeSpan.FromSeconds(2);
 
     private static IMediaSource Paced(string path, TimeSpan dwell) =>
-        MediaSource.FromFile(path) with
-        {
-            InputFormat = "image2",
-            DemuxerOptions = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["framerate"] = $"1/{dwell.TotalSeconds:0}",
-            },
-        };
+        MediaSource.FromStill(path, dwell);
 
     [RequiresFfmpegAndCorpusFact]
     public async Task APacedStill_StaysUpForItsDwell_ThenEnds()
@@ -192,4 +185,95 @@ public sealed class StillImageDwellTests : IClassFixture<FfmpegBootstrapFixture>
             await IntegrationTestHelper.StabilizeForDisposeAsync(controller, audioSink, videoSink);
         }
     }
+
+    /// <summary>
+    /// The dwell asked for is the duration the demuxer reports, across the accepted range and
+    /// across rational shapes.
+    /// </summary>
+    /// <remarks>
+    /// The unit tests assert the framerate string this library writes. This asserts the thing
+    /// that actually matters, which is what FFmpeg does with it: the option is not stored as
+    /// written, it is evaluated and re-derived, so a string that looks right can still open a
+    /// clip of the wrong length. Review of #304 raised exactly that, and it is real above
+    /// <see cref="MediaSource.MaximumStillDwell"/> — at <c>1/3600</c> the duration comes back as
+    /// zero. This ladder is the evidence for where the accepted range stops, so widening it
+    /// means extending this and watching it stay green.
+    /// </remarks>
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData(1)]           // the plain case, and what a hand-written recipe produced
+    [InlineData(250)]         // sub-second: the rational inverts to 4/1
+    [InlineData(1235)]        // not a round number of anything
+    [InlineData(7500)]        // the fractional-seconds case, 2/15
+    [InlineData(30_000)]
+    [InlineData(660_001)]     // 11 minutes and a millisecond: awkward, so the rational does not reduce
+    [InlineData(1_799_999)]   // the same shape just inside the ceiling
+    [InlineData(1_800_000)]   // MaximumStillDwell itself
+    public async Task ADwellIsTheDurationTheDemuxerReports(int milliseconds)
+    {
+        var path = IntegrationTestEnvironment.GetCorpusFile(Still);
+        Assert.True(path is not null, $"Corpus file {Still} not found.");
+
+        var dwell = TimeSpan.FromMilliseconds(milliseconds);
+
+        var (controller, audioSink, videoSink) = IntegrationTestHelper.CreateController();
+        await using (controller)
+        {
+            var load = await controller.LoadAsync(MediaSource.FromStill(path!, dwell));
+            Assert.True(load.IsSuccess, $"Load failed: {load.Error?.Message}");
+
+            // To the millisecond, which is the resolution FromStill quantises to and therefore the
+            // most it can promise. Asserting tick equality would be over-claiming: FFmpeg
+            // re-derives the rational, and at 30 minutes with terms that do not reduce the answer
+            // lands 0.8ms low. Anything worse than a millisecond is the failure this ladder is
+            // watching for, and past MaximumStillDwell it is seconds or the whole duration.
+            var error = (controller.Duration - dwell).Duration();
+            Assert.True(
+                error <= TimeSpan.FromMilliseconds(1),
+                $"Asked for {dwell}, demuxer reported {controller.Duration}, off by {error}."
+            );
+
+            await IntegrationTestHelper.StabilizeForDisposeAsync(controller, audioSink, videoSink);
+        }
+    }
+
+    /// <summary>
+    /// A still whose path carries no codec-bearing extension still opens.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="MediaSource.FromStill"/> documents that it takes no position on the extension,
+    /// which review of #304 read as a promise it could not keep: <c>image2</c> guesses the codec
+    /// from the filename, so a content-addressed path was said to fail. Measured here instead of
+    /// argued. The guess failing is not fatal — the codec is then probed from the bytes, and the
+    /// still opens, reports its dwell, and decodes its frame.
+    /// </remarks>
+    [RequiresFfmpegAndCorpusFact]
+    public async Task AStillWithNoCodecBearingExtension_StillOpensAndHolds()
+    {
+        var path = IntegrationTestEnvironment.GetCorpusFile(Still);
+        Assert.True(path is not null, $"Corpus file {Still} not found.");
+
+        // A content-addressed store names files by their hash, so the extension says nothing
+        // about the contents. Copy rather than rename: the corpus is shared with every other test.
+        var opaque = Path.Combine(Path.GetTempPath(), $"frameflow-still-{Guid.NewGuid():N}.bin");
+        File.Copy(path!, opaque);
+
+        try
+        {
+            var (controller, audioSink, videoSink) = IntegrationTestHelper.CreateController();
+            await using (controller)
+            {
+                var load = await controller.LoadAsync(MediaSource.FromStill(opaque, Dwell));
+                Assert.True(load.IsSuccess, $"Load failed: {load.Error?.Message}");
+                Assert.Equal(Dwell, controller.Duration);
+                Assert.Single(controller.MediaInfo!.VideoStreams);
+
+                await IntegrationTestHelper.StabilizeForDisposeAsync(controller, audioSink, videoSink);
+            }
+        }
+        finally
+        {
+            File.Delete(opaque);
+        }
+    }
+
 }

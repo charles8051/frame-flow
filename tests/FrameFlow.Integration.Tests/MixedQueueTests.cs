@@ -37,15 +37,12 @@ public sealed class MixedQueueTests : IClassFixture<FfmpegBootstrapFixture>
         return MediaSource.FromFile(path!);
     }
 
-    private static IMediaSource StillFor(TimeSpan dwell) =>
-        File(Still) with
-        {
-            InputFormat = "image2",
-            DemuxerOptions = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["framerate"] = $"1/{dwell.TotalSeconds:0}",
-            },
-        };
+    private static IMediaSource StillFor(TimeSpan dwell)
+    {
+        var path = IntegrationTestEnvironment.GetCorpusFile(Still);
+        Assert.True(path is not null, $"Corpus file {Still} not found.");
+        return MediaSource.FromStill(path!, dwell);
+    }
 
     [RequiresFfmpegAndCorpusFact]
     public async Task AQueueOfUnlikeItems_PlaysThroughOnOnePlayer()

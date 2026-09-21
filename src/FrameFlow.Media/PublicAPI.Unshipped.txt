@@ -553,6 +553,9 @@ static FrameFlow.Media.HardwareDecodeCapabilities.Empty.get -> FrameFlow.Media.H
 static FrameFlow.Media.HighResolutionTimeProvider.IsSupported.get -> bool
 static FrameFlow.Media.HighResolutionTimeProvider.Preferred.get -> System.TimeProvider!
 static FrameFlow.Media.MediaSource.FromFile(string! path) -> FrameFlow.Media.MediaSource!
+static readonly FrameFlow.Media.MediaSource.MaximumStillDwell -> System.TimeSpan
+static readonly FrameFlow.Media.MediaSource.MinimumStillDwell -> System.TimeSpan
+static FrameFlow.Media.MediaSource.FromStill(string! path, System.TimeSpan dwell) -> FrameFlow.Media.MediaSource!
 static FrameFlow.Media.MediaSource.FromUri(System.Uri! uri) -> FrameFlow.Media.MediaSource!
 static FrameFlow.Media.Result.Fail(FrameFlow.Media.ErrorCategory category, string! message, System.Exception? inner = null) -> FrameFlow.Media.Result
 static FrameFlow.Media.Result.Fail(FrameFlow.Media.PlaybackError! error) -> FrameFlow.Media.Result
