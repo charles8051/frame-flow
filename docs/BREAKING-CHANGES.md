@@ -11,7 +11,7 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
-## Unreleased
+## `v0.10.0-alpha.1` — since `v0.9.0-alpha.1`
 
 ### 1. A configurator without a sink is refused, and it used to run
 
