@@ -1,0 +1,142 @@
+# Builds the osx-arm64 FFmpeg natives from source.
+#
+# It does not run on every push. The output is a pinned artifact, so it is
+# rebuilt when the recipe moves, not when unrelated code does. A rolling build
+# would also tempt someone to treat the newest run as the pin, which is the
+# mistake ADR-0014 and the comment block in scripts/fetch-ffmpeg.cs are both
+# about.
+#
+# The pull_request trigger is filtered to the two files that decide what the
+# bytes are. Changing the recipe is exactly when the build needs proving, and a
+# PR that does not touch them does not pay for a job this long.
+#
+# Publishing is opt-in and dispatch-only. A run with publish-release off uploads
+# the build as a run artifact and nothing else, which is what you want while
+# iterating. A GitHub Release is permanent and its URL goes into
+# scripts/runtime-manifest.json, so it is a separate, deliberate act.
+name: FFmpeg macOS Build
+
+on:
+  pull_request:
+    paths:
+      - scripts/build-ffmpeg-macos.sh
+      - .github/workflows/ffmpeg-macos.yml
+  workflow_dispatch:
+    inputs:
+      publish-release:
+        description: "Publish a GitHub Release (otherwise: run artifact only)"
+        type: boolean
+        default: false
+      release-tag:
+        description: "Tag for the release, e.g. ffmpeg-macos-n7.1.5-1"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # macos-latest is Apple silicon. The script refuses anything else rather
+    # than producing an x86_64 build under an arm64 name.
+    runs-on: macos-latest
+    timeout-minutes: 90
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # nasm for the assembly paths, pkg-config because configure calls it even
+      # with --disable-autodetect. Both are usually present on the runner image;
+      # installing them explicitly keeps the job off that assumption.
+      - name: Install build tools
+        run: brew install nasm pkg-config
+
+      - name: Build
+        run: |
+          chmod +x scripts/build-ffmpeg-macos.sh
+          scripts/build-ffmpeg-macos.sh "$GITHUB_WORKSPACE/ffmpeg-osx-arm64"
+
+      - name: Read build identity
+        id: identity
+        run: |
+          set -euo pipefail
+          commit=$(awk '/^commit:/ {print $2}' ffmpeg-osx-arm64/BUILD-INFO.txt)
+          tag_input="${{ inputs.release-tag }}"
+          echo "tag=${tag_input:-ffmpeg-macos-${commit:0:12}}" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: Stage into runtimes/
+        run: |
+          set -euo pipefail
+          mkdir -p runtimes/osx-arm64/native
+          cp ffmpeg-osx-arm64/*.dylib runtimes/osx-arm64/native/
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      # FrameFlow.Native.Tests is the project that proves these bytes: its
+      # bootstrap tests load all five required libraries for real, and the ABI
+      # gate reads each one's own *_version(). A build with a wrong soname, a
+      # missing library or an unresolvable dependency fails here and names which.
+      #
+      # NOT a full decode run. The corpus fixtures name libopenh264, libkvazaar,
+      # libvpx-vp9, libaom-av1 and libx264, and no Homebrew ffmpeg formula
+      # carries openh264 or kvazaar, so generate-test-corpus.cs cannot produce a
+      # complete corpus on this runner. Running the decode suites here would
+      # report green while skipping the tests that matter, which is worse than
+      # not running them. build.yml generates no corpus either; closing that is
+      # its own piece of work.
+      - name: Test
+        run: |
+          dotnet test tests/FrameFlow.Native.Tests/FrameFlow.Native.Tests.csproj --configuration Release -p:FrameFlowLocalFeedDisable=true
+
+      # Prints each dylib's own install name, so a reader of the log sees the
+      # five majors and the @loader_path prefix rather than inferring them from
+      # a green check.
+      - name: Report install names
+        run: |
+          set -euo pipefail
+          for f in runtimes/osx-arm64/native/*.dylib; do
+            printf '%-28s %s\n' "$(basename "$f")" "$(otool -D "$f" | tail -1)"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-osx-arm64
+          path: ffmpeg-osx-arm64/
+          retention-days: 30
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: inputs.publish-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-osx-arm64
+          path: ffmpeg-osx-arm64
+
+      # One tarball, named for the RID, because that is the shape
+      # scripts/fetch-ffmpeg.cs already downloads and extracts for every other
+      # platform. SHA256SUMS and BUILD-INFO.txt go in beside it, unarchived, so
+      # the checksums and the configure line are readable without downloading
+      # the archive to answer "what is in this".
+      - name: Pack
+        run: |
+          set -euo pipefail
+          tar -czf ffmpeg-osx-arm64.tar.gz -C ffmpeg-osx-arm64 .
+          cp ffmpeg-osx-arm64/SHA256SUMS ffmpeg-osx-arm64/BUILD-INFO.txt .
+          shasum -a 256 ffmpeg-osx-arm64.tar.gz
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "FFmpeg natives for osx-arm64 ($TAG)" --notes-file ffmpeg-osx-arm64/BUILD-INFO.txt ffmpeg-osx-arm64.tar.gz SHA256SUMS BUILD-INFO.txt
