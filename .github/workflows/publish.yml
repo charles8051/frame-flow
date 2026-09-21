@@ -191,28 +191,24 @@ jobs:
         run: dotnet test FrameFlow.slnx --configuration Release --no-build --blame-hang-timeout 5m --blame-crash --logger "trx;LogFileName=test-${{ matrix.os }}.trx"
 
       - name: Upload test results
-        id: upload-test-results
         if: always()
         # A diagnostics upload must not decide whether a release ships. The Test step
         # above is the gate; this step exists to explain it afterwards. When the
         # account's Actions storage allowance is full, FinalizeArtifact answers 403 and
         # a green test run fails the job, which then blocks publish. That happened on
         # the v0.10.1 tag: Build and Test both passed and the release stopped here.
+        #
+        # The failure is still reported. continue-on-error does not suppress the error
+        # annotation the action writes, so a run that shipped without its evidence says
+        # so in the run summary and through the API, and only the job conclusion
+        # changes. A 403 here means the allowance, and the packages artifact below is
+        # what fills it.
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.os }}
           path: "**/test-*.trx"
           retention-days: 30
-
-      # continue-on-error cannot tell a full storage allowance from a permission,
-      # naming or connectivity failure, and on its own it would let any of them leave a
-      # green run with no evidence attached. The annotation is the part that reaches the
-      # run summary and the API, so the absence is reported rather than merely visible
-      # to whoever reads the log.
-      - name: Say so when the test-results upload did not land
-        if: always() && steps.upload-test-results.outcome == 'failure'
-        run: echo "::warning title=No test results attached::The tests ran and their result decided this job; only the upload of the .trx files failed, so this run carries no test evidence. Check the storage allowance first, because a full one answers 403 on FinalizeArtifact."
 
       # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
       # clear text — NuGet has no other way to hand a credential to a v3 source in
@@ -569,7 +565,6 @@ jobs:
       # answer onto both. packages/ went to nuget.org and can be fetched back from
       # there; not-published/ did not, and this is its only copy.
       - name: Upload published packages
-        id: upload-published-packages
         if: always()
         # Same reason as the test-results upload, and it matters more here: by the time
         # this runs the push to nuget.org has already happened, so failing the job on it
@@ -592,7 +587,6 @@ jobs:
           retention-days: 14
 
       - name: Upload packages nuget.org cannot take
-        id: upload-held-back-packages
         if: always()
         continue-on-error: true
         uses: actions/upload-artifact@v7
@@ -611,19 +605,12 @@ jobs:
           # the repository default, restated here so a later retention edit has to
           # decide about this one separately rather than inherit an answer meant for
           # packages that are recoverable.
+          #
+          # This is also the upload whose failure costs the most, for the same reason.
+          # It is continue-on-error like the others, so the run goes green and the
+          # action's error annotation is the only notice: re-run this job before the
+          # runner workspace goes, because nothing else has a copy.
           retention-days: 90
-
-      - name: Say so when a package upload did not land
-        if: always() && (steps.upload-published-packages.outcome == 'failure' || steps.upload-held-back-packages.outcome == 'failure')
-        run: |
-          published="${{ steps.upload-published-packages.outcome }}"
-          held="${{ steps.upload-held-back-packages.outcome }}"
-          if [ "$published" = "failure" ]; then
-            echo "::warning title=No package artifact attached::The push to nuget.org is unaffected and has already happened; only the artifact upload failed, so this run carries no record of what was built."
-          fi
-          if [ "$held" = "failure" ]; then
-            echo "::warning title=Held-back packages were not kept::not-published/ did not upload, and it is the only copy, because nuget.org will not take these. Re-run this job before the workspace is gone."
-          fi
 
       # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
       # clear text — NuGet has no other way to hand a credential to a v3 source in
