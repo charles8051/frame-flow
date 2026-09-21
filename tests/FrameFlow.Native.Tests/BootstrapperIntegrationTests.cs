@@ -30,7 +30,7 @@ public sealed class BootstrapperIntegrationTests
         Assert.True(result.IsSuccess, $"Bootstrap failed: {result.Message}");
     }
 
-    [RequiresFfmpegFact]
+    [RequiresFfmpegBinaryFact(besideLibraries: true)]
     public void Initialize_WithCustomPath_PointingToRealFfmpeg_Succeeds()
     {
         var ffmpegDir = Path.GetDirectoryName(TestEnvironment.FfmpegPath!);
@@ -44,7 +44,7 @@ public sealed class BootstrapperIntegrationTests
         Assert.Equal(ffmpegDir, result.ResolvedPath);
     }
 
-    [RequiresFfmpegFact]
+    [RequiresFfmpegBinaryFact]
     public void FfmpegPath_IsExecutable()
     {
         var path = TestEnvironment.FfmpegPath!;
