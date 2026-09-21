@@ -1042,6 +1042,30 @@ transport bar, the position label.
 ADR-0077 decision 2's amendment has the reasoning, including why the two interfaces stay separate
 rather than folding into one.
 
+### 39. The OpenAL sink's buffer-queue core is internal
+
+`BufferQueueState`, `AlSourceState`, `UploadDecision`, `UnderrunOutcome` and `StartOutcome` leave
+the public surface. Entry 35 made the same move for the loop-stall watchdog's core, and entry 32
+for `LoopStallMetrics`.
+
+The five types are the pure core of `OpenAlAudioSink`: a `(state, input) -> state'` fold over the
+buffer queue, factored out so the queue decisions are unit-testable with no audio device. Nothing
+consumes them. The sink threads the state internally, no public member takes or returns one, and
+the only references outside the package were its own two test suites.
+
+39 lines leave `PublicAPI.Unshipped.txt`, which drops the assembly's public surface from 61
+entries to 22. `PublicAPI.Shipped.txt` is empty for this assembly, so nothing supported is
+withdrawn.
+
+**What you use the sink with is unchanged:** construct `OpenAlAudioSink`, hand it to
+`WithAudioSink`, or register it with `AddFrameFlowOpenAlAudio`. `Volume`, `Muted`,
+`GetPlaybackTime`, `GetDiagnostics`, `BlocksWritten`, `UnderrunCount`, `BackpressureCount` and
+`DeviceDisconnected` are all still there.
+
+If you were reading the sink's queue health, `GetDiagnostics()` returns an
+`AudioSinkDiagnosticsSnapshot` and is the supported answer. `BufferQueueState` never reflected a
+live sink in any case: it is a value the sink folds, not a view onto one.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

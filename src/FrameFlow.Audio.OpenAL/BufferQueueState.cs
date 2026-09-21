@@ -11,7 +11,7 @@ namespace FrameFlow.Audio.OpenAL;
 /// decisions, decoupled from Silk.NET's <c>SourceState</c> enum so the value layer
 /// carries no OpenAL types.
 /// </summary>
-public enum AlSourceState
+internal enum AlSourceState
 {
     /// <summary>The source is playing (or has never been started) — buffers will drain.</summary>
     PlayingOrInitial,
@@ -29,7 +29,7 @@ public enum AlSourceState
 /// <c>FlushStep</c>, computed from scalar device reads instead of inline against the
 /// live OpenAL source.
 /// </summary>
-public enum UploadDecision
+internal enum UploadDecision
 {
     /// <summary>Nothing to upload (staging empty / sink inert). Stop the flush loop.</summary>
     Nothing,
@@ -49,14 +49,14 @@ public enum UploadDecision
 /// state plus whether an underrun was just detected (so the shell logs and bumps its
 /// lock-free underrun counter).
 /// </summary>
-public readonly record struct UnderrunOutcome(BufferQueueState Next, bool Underran);
+internal readonly record struct UnderrunOutcome(BufferQueueState Next, bool Underran);
 
 /// <summary>
 /// Result of <see cref="BufferQueueState.ObserveQueueDepth"/>: the threaded-through next
 /// state plus whether the pre-buffer gate just opened (so the shell calls
 /// <c>SourcePlay</c>).
 /// </summary>
-public readonly record struct StartOutcome(BufferQueueState Next, bool ShouldStartPlayback);
+internal readonly record struct StartOutcome(BufferQueueState Next, bool ShouldStartPlayback);
 
 /// <summary>
 /// The <b>pure core</b> of the OpenAL sink's buffer-queue control logic (§5.2): the PCM
@@ -106,7 +106,7 @@ public readonly record struct StartOutcome(BufferQueueState Next, bool ShouldSta
 /// test that "passes trivially" with no audio device.
 /// </para>
 /// </remarks>
-public readonly record struct BufferQueueState
+internal readonly record struct BufferQueueState
 {
     private readonly int _coalesceTargetSamples;
     private readonly int _preBufferCount;
