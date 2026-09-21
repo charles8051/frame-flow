@@ -156,9 +156,10 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
             // Ahead of everything else. RejectLoadedLibraries clears the handle table, so
             // without this a second bootstrap walks the load loop again and calls
             // NativeLibrary.Load on libraries the ABI check already refused. Those modules
-            // are deliberately never freed, so each pass would add a reference to a mapping
-            // nothing will release. The refusal cannot change: FFmpeg loads once per process
-            // and the rejected libraries are still mapped.
+            // are deliberately never freed (RejectLoadedLibraries says why), so each pass
+            // would add a reference to a mapping nothing will release. The refusal cannot
+            // change: FFmpeg loads once per process and the rejected libraries are still
+            // mapped.
             if (_abiRejected)
                 return FfmpegLoadResult.AbiMismatch(_abiRejectionMessage!);
 
@@ -457,7 +458,17 @@ internal sealed class FfmpegNativeLibraryLoader : IFfmpegLibraryLoader
                 {
                     // Re-read for the same reason as TryGetLoadedHandle: the refusal can be
                     // latched while this loop is between candidates.
-                    ThrowIfAbiRejectedUnderLock(libraryName);
+                    //
+                    // This handle is freed on that path, unlike the ones RejectLoadedLibraries
+                    // retains. It was opened a moment ago and recorded nowhere, so no P/Invoke
+                    // stub has resolved through it and there is nothing left pointing into the
+                    // module. Dropping it here would leak a reference for a library the
+                    // process has just been told not to use.
+                    if (_abiRejected)
+                    {
+                        NativeLibrary.Free(h);
+                        ThrowIfAbiRejectedUnderLock(libraryName);
+                    }
 
                     LoadedHandles[libraryName] = h;
                 }
