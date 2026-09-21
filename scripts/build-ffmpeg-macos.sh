@@ -130,8 +130,14 @@ fi
 tag_probe="refs/frameflow/tag-probe"
 if git -C "$SRC_DIR" fetch --quiet --depth 1 origin \
         "+refs/tags/$FFMPEG_TAG:$tag_probe" 2>/dev/null; then
-    tag_commit=$(git -C "$SRC_DIR" rev-parse "$tag_probe^{commit}")
-    if [ "$tag_commit" != "$FFMPEG_COMMIT" ]; then
+    # Guarded like the fetch. An annotated tag that peels to something other than
+    # a commit would make this rev-parse fail, and under set -e that aborts a
+    # build whose commit pin is already checked out and verified. The tag is a
+    # label; a label that cannot be read is a warning, not a failure.
+    if ! tag_commit=$(git -C "$SRC_DIR" rev-parse "$tag_probe^{commit}" 2>/dev/null); then
+        echo "warning: refs/tags/$FFMPEG_TAG does not peel to a commit, so the tag" >&2
+        echo "         label is unconfirmed. The pinned commit is still what was built." >&2
+    elif [ "$tag_commit" != "$FFMPEG_COMMIT" ]; then
         echo "warning: upstream tag $FFMPEG_TAG points at $tag_commit, not the pinned" >&2
         echo "         $FFMPEG_COMMIT. Building the pin. The label in BUILD-INFO.txt and" >&2
         echo "         in THIRD-PARTY-NOTICES.md no longer names what upstream calls it." >&2
