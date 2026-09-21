@@ -203,8 +203,12 @@ public interface IMediaPlayer : IMediaTransport
     /// queue.
     /// </para>
     /// <para>
-    /// Raised outside the coordinator's lock, so a handler may call back into the player. It is
-    /// raised on whichever thread made the change, which for an edit is the caller's.
+    /// Raised outside the coordinator's lock, so a handler may call back into the player, and on
+    /// whichever thread made the change: the caller's thread for an edit, the player's for a
+    /// hand-off. Delivery is serialized and in commit order, which is what lets
+    /// <c>Revision</c> order what you receive. The cost is that a thread changing the queue can
+    /// wait on another thread's in-flight handler, so keep handlers short or marshal, as a UI
+    /// subscriber does anyway.
     /// </para>
     /// </remarks>
     IObservable<PlaylistSnapshot> PlaylistChanged { get; }

@@ -1151,8 +1151,10 @@ and carries the item's `MediaInfo` and the reason. Subscribe to that one to reac
 starting, and to this one to redraw a queue.
 
 Raised outside the coordinator's lock, so a handler may call back into the player, on whichever
-thread made the change. For an edit that is the caller's thread; marshal to your UI thread as you
-already do for `SourceTransitioned`.
+thread made the change: your thread for an edit, the player's for a hand-off. Delivery is
+serialized and in commit order, which is what lets `Revision` order what you receive. The cost is
+that a thread changing the queue can wait on another thread's in-flight handler, so keep handlers
+short or marshal to your UI thread as you already do for `SourceTransitioned`.
 
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 

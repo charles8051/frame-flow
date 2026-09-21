@@ -191,6 +191,66 @@ public sealed class PlaylistPlayerQueueTests
         Assert.True(seen[1].CurrentStarted);
     }
 
+    [Fact]
+    public async Task PlaylistChanged_RevisionNeverGoesBackwards_AcrossASingleSourceLoad()
+    {
+        // LoadSource builds a queue holding only the loaded source. Built with
+        // PlaylistQueue.Create its revision would restart at zero, so a subscriber that had
+        // already seen 3 would be handed 0 and a consumer ordering on Revision would discard
+        // the replacement as stale.
+        var coordinator = new PlaylistCoordinator(RepeatMode.Off);
+        await using var player = new PlaylistMediaPlayerCore(
+            new StubController { State = PlaybackState.Paused },
+            coordinator,
+            audioSink: null,
+            NullLogger.Instance
+        );
+        var seen = new List<long>();
+
+        await player.AddAsync(Source("a"));
+        await player.AddAsync(Source("b"));
+        using var _sub = player.PlaylistChanged.Subscribe(s => seen.Add(s.Revision));
+        var beforeLoad = player.GetPlaylist().Revision;
+
+        coordinator.LoadSource(Source("loaded"));
+
+        var afterLoad = Assert.Single(seen);
+        Assert.True(
+            afterLoad > beforeLoad,
+            $"revision went {beforeLoad} -> {afterLoad}; it must only ever rise"
+        );
+        Assert.Equal(afterLoad, player.GetPlaylist().Revision);
+    }
+
+    [Fact]
+    public async Task PlaylistChanged_DeliversInCommitOrder_WhenAHandlerEditsFromInsideItself()
+    {
+        // Pins the re-entrant case: a handler may edit the queue, and its own edit arrives after
+        // the notification it is handling rather than nested inside it.
+        //
+        // This does NOT cover the cross-thread ordering the drain exists for. Re-entry is on one
+        // thread, so it comes out in order under any of the designs considered. The race the
+        // drain fixes needs a thread descheduled between releasing the lock and publishing, and
+        // nothing here can place it there.
+        await using var player = NewPlayer(PlaybackState.Paused, out _);
+        var seen = new List<int>();
+        var reentered = false;
+
+        using var _sub = player.PlaylistChanged.Subscribe(s =>
+        {
+            seen.Add(s.Playlist.Count);
+            if (reentered)
+                return;
+            reentered = true;
+            player.AddAsync(Source("second")).GetAwaiter().GetResult();
+        });
+
+        await player.AddAsync(Source("first"));
+
+        // Started at one item: the first add makes two, the re-entrant add makes three.
+        Assert.Equal([2, 3], seen);
+    }
+
     private static PlaylistMediaPlayerCore NewPlayer(
         PlaybackState state,
         out PlaylistCoordinator coordinator

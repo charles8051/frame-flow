@@ -139,6 +139,27 @@ internal sealed record PlaylistQueue
         return new PlaylistQueue { Playlist = [.. playlist], Repeat = repeat };
     }
 
+    /// <summary>
+    /// A queue holding <paramref name="item"/> alone, keeping this queue's repeat mode and
+    /// continuing its revision. Everything else resets: current, reported, the failure counters
+    /// and any reservation. This is what a single source's load does to the queue.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="Create"/>, whose revision starts at zero. A coordinator that has
+    /// already reported a change must never hand a subscriber a revision below one it has seen,
+    /// and <c>Revision</c> is documented to order them.
+    /// </remarks>
+    public PlaylistQueue AsOnly(PlaylistItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        return new PlaylistQueue
+        {
+            Playlist = [item],
+            Repeat = Repeat,
+            Revision = Revision + 1,
+        };
+    }
+
     /// <summary>What an advance decided.</summary>
     internal enum NextKind
     {

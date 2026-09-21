@@ -34,6 +34,8 @@ internal sealed class PlaylistCoordinator
     private readonly object _gate = new();
     private readonly PlaybackSubject<PlaylistTransition> _transitioned = new();
     private readonly PlaybackSubject<PlaylistSnapshot> _changed = new();
+    private readonly object _raiseGate = new();
+    private readonly Queue<PlaylistSnapshot> _pendingChanges = new();
 
     private PlaylistQueue _queue;
 
@@ -154,15 +156,14 @@ internal sealed class PlaylistCoordinator
     public void RequestSkip()
     {
         Action? handler;
-        PlaylistSnapshot? changed = null;
         lock (_gate)
         {
             handler = _skipHandler;
             if (handler is null)
-                changed = Commit(_queue.LatchAdvance(PlaylistAdvance.Skip));
+                Commit(_queue.LatchAdvance(PlaylistAdvance.Skip));
         }
 
-        RaiseChanged(changed);
+        RaiseChanged();
         handler?.Invoke();
     }
 
@@ -222,14 +223,13 @@ internal sealed class PlaylistCoordinator
             );
 
         Action? handler;
-        PlaylistSnapshot? changed;
         lock (_gate)
         {
-            changed = Commit(_queue.Replace(items));
+            Commit(_queue.Replace(items));
             handler = _jumpHandler;
         }
 
-        RaiseChanged(changed);
+        RaiseChanged();
         handler?.Invoke();
         return items;
     }
@@ -279,7 +279,6 @@ internal sealed class PlaylistCoordinator
     internal void LoadSource(IMediaSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        PlaylistSnapshot? changed;
         lock (_gate)
         {
             if (_replayPending)
@@ -288,10 +287,12 @@ internal sealed class PlaylistCoordinator
                 return;
             }
 
-            changed = CommitFresh(PlaylistQueue.Create([new PlaylistItem(source)], _queue.Repeat));
+            // AsOnly, not PlaylistQueue.Create: a fresh queue's revision restarts at zero, and a
+            // subscriber that has already seen revision 3 must not then be handed 0.
+            Commit(_queue.AsOnly(new PlaylistItem(source)));
         }
 
-        RaiseChanged(changed);
+        RaiseChanged();
     }
 
     /// <summary>Whether any item has started since the player was created.</summary>
@@ -356,18 +357,17 @@ internal sealed class PlaylistCoordinator
     internal PlaylistItem? ReserveStart()
     {
         PlaylistItem? reservedStart;
-        PlaylistSnapshot? changed;
         lock (_gate)
         {
             var (queue, reserved) = _queue.ReserveStart();
             if (!reserved)
                 return null;
-            changed = Commit(queue);
+            Commit(queue);
             _replayPending = true;
             reservedStart = queue.ReservedStart;
         }
 
-        RaiseChanged(changed);
+        RaiseChanged();
         return reservedStart;
     }
 
@@ -377,14 +377,13 @@ internal sealed class PlaylistCoordinator
     /// </summary>
     internal void ReleaseStart()
     {
-        PlaylistSnapshot? changed;
         lock (_gate)
         {
             _replayPending = false;
-            changed = Commit(_queue.ReleaseStart());
+            Commit(_queue.ReleaseStart());
         }
 
-        RaiseChanged(changed);
+        RaiseChanged();
     }
 
     /// <summary>
@@ -464,64 +463,90 @@ internal sealed class PlaylistCoordinator
 
     private void Apply(Func<PlaylistQueue, PlaylistQueue> operation)
     {
-        PlaylistSnapshot? changed;
         lock (_gate)
-            changed = Commit(operation(_queue));
+            Commit(operation(_queue));
 
-        RaiseChanged(changed);
+        RaiseChanged();
     }
 
     private T Apply<T>(Func<PlaylistQueue, (PlaylistQueue Queue, T Result)> operation)
     {
         T result;
-        PlaylistSnapshot? changed;
         lock (_gate)
         {
             var (queue, value) = operation(_queue);
             result = value;
-            changed = Commit(queue);
+            Commit(queue);
         }
 
-        RaiseChanged(changed);
+        RaiseChanged();
         return result;
     }
 
     /// <summary>
-    /// Stores <paramref name="next"/> and returns the snapshot <see cref="PlaylistChanged"/>
-    /// should carry, or <see langword="null"/> when the revision did not move. Call while holding
-    /// <see cref="_gate"/>; raise the result after releasing it.
+    /// Stores <paramref name="next"/> and queues the snapshot <see cref="PlaylistChanged"/>
+    /// should carry, when the revision moved. Call while holding <see cref="_gate"/>, then call
+    /// <see cref="RaiseChanged"/> after releasing it.
     /// </summary>
     /// <remarks>
-    /// Every assignment to <c>_queue</c> goes through here or through
-    /// <see cref="CommitFresh"/>. <c>Apply</c> is not the only writer: <see cref="Replace"/>
-    /// and <see cref="LoadSource"/> take the lock themselves because they need more than the
-    /// queue under it, and a first draft that raised from <c>Apply</c> alone silently dropped
-    /// both. The snapshot is taken here, from the queue being committed, rather than read back
-    /// from <c>_queue</c> after the lock: a second edit landing in between would otherwise make
-    /// both notifications carry the later queue and lose the earlier one.
+    /// Every assignment to <c>_queue</c> outside the constructors goes through here. <c>Apply</c>
+    /// is not the only writer: <see cref="Replace"/> and <see cref="LoadSource"/> take the lock
+    /// themselves because they need more than the queue under it, and a first draft that raised
+    /// from <c>Apply</c> alone silently dropped both. The snapshot is taken here, from the queue
+    /// being committed, rather than read back from <c>_queue</c> afterwards: a second edit landing
+    /// in between would otherwise make both notifications carry the later queue.
     /// </remarks>
-    private PlaylistSnapshot? Commit(PlaylistQueue next)
+    private void Commit(PlaylistQueue next)
     {
         var moved = next.Revision != _queue.Revision;
         _queue = next;
-        return moved ? next.Snapshot() : null;
+        if (moved)
+            _pendingChanges.Enqueue(next.Snapshot());
     }
 
     /// <summary>
-    /// Stores a queue built from scratch and always reports it as a change. Its revision counter
-    /// restarts at zero, so there is nothing to compare the outgoing one against.
+    /// Delivers queued snapshots in the order they were committed. Call after releasing
+    /// <see cref="_gate"/>, never while holding it.
     /// </summary>
-    private PlaylistSnapshot CommitFresh(PlaylistQueue next)
+    /// <remarks>
+    /// <para>
+    /// Both locks are load-bearing and neither alone is enough. Raising under <see cref="_gate"/>
+    /// would run a subscriber's callback inside the coordinator's own lock. Raising under no lock
+    /// at all lets a thread that committed <em>later</em> publish first: the commit order is
+    /// established under <c>_gate</c>, but the window between releasing it and calling
+    /// <c>OnNext</c> is not ordered, so an edit and a hand-off on different threads could deliver
+    /// revision 2 before revision 1. A consumer told that <c>Revision</c> orders the stream would
+    /// then render a superseded queue last.
+    /// </para>
+    /// <para>
+    /// So the snapshots are queued under <c>_gate</c>, which puts them in commit order, and this
+    /// lock lets one thread drain that queue at a time. The cost is that a thread committing a
+    /// change can wait on another thread's in-flight handler. Handlers are expected to be short
+    /// or to marshal, which is what a UI subscriber does anyway
+    /// (<c>ObserveOnUiThread</c>).
+    /// </para>
+    /// <para>
+    /// A subscriber that edits the queue from inside its own handler re-enters this on the same
+    /// thread, which <see langword="lock"/> allows, and drains its own snapshot nested. Order
+    /// still holds.
+    /// </para>
+    /// </remarks>
+    private void RaiseChanged()
     {
-        _queue = next;
-        return next.Snapshot();
-    }
+        lock (_raiseGate)
+        {
+            while (true)
+            {
+                PlaylistSnapshot next;
+                lock (_gate)
+                {
+                    if (!_pendingChanges.TryDequeue(out next!))
+                        return;
+                }
 
-    // Outside the lock, so a subscriber may call back into the coordinator.
-    private void RaiseChanged(PlaylistSnapshot? snapshot)
-    {
-        if (snapshot is not null)
-            _changed.OnNext(snapshot);
+                _changed.OnNext(next);
+            }
+        }
     }
 }
 
