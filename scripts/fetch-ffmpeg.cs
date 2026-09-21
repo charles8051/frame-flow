@@ -88,6 +88,32 @@ const string BuildTag = "autobuild-2026-07-31-14-10";
 const string ArchiveVersion = "n7.1.5-12-g1fdbca85aa";
 var baseUrl = $"https://github.com/BtbN/FFmpeg-Builds/releases/download/{BuildTag}";
 
+// ── macOS pin ────────────────────────────────────────────────────────────────
+// BtbN builds no macOS. osx-arm64 comes from this repo's own LGPL build,
+// scripts/build-ffmpeg-macos.sh, published as a GitHub Release by
+// .github/workflows/ffmpeg-macos.yml.
+//
+// It is a different artifact in three ways that matter to a reader:
+//
+//   - Libraries only. No ffmpeg or ffprobe. The corpus encoders a tool would
+//     need are excluded from that build on purpose, so shipping one would only
+//     look like corpus generation worked. generate-test-corpus.cs already
+//     prefers a PATH or Homebrew ffmpeg on macOS.
+//   - Already @loader_path. Built with --install-name-dir=@loader_path, so
+//     there is nothing to patch after extraction, unlike the osx-x64 keg path
+//     below.
+//   - LGPL-2.1, not LGPL-3. It links no external libraries at all, so none of
+//     the Apache-2.0 or LGPL-3 components in BtbN's enable-version3 build are
+//     present. THIRD-PARTY-NOTICES.md records both identities.
+//
+// To move this pin: dispatch the FFmpeg macOS Build workflow with a new
+// release-tag, then update this and the osx-arm64 sha256 values in
+// runtime-manifest.json together.
+const string MacOsReleaseTag = "ffmpeg-macos-n7.1.5-1";
+const string MacOsArchiveName = "ffmpeg-osx-arm64.tar.gz";
+var macOsArchiveUrl =
+    $"https://github.com/charles8051/frame-flow/releases/download/{MacOsReleaseTag}/{MacOsArchiveName}";
+
 var platforms = new Dictionary<string, PlatformInfo>
 {
     // Each entry lists the 7 FFmpeg DLLs/.so/.dylib shipped by BtbN's
@@ -359,9 +385,21 @@ foreach (var rid in ridsToProcess)
         }
     }
 
-    // ── macOS: copy from installed Homebrew keg ──────────────────────────
+    // ── osx-x64 only: copy from an installed Homebrew keg ────────────────
+    //
+    // osx-arm64 no longer comes from here. It downloads a pinned, hashed,
+    // self-contained LGPL artifact like every other RID, and takes the branch
+    // below.
+    //
+    // Intel Macs keep the keg because there is no artifact to download for
+    // them: scripts/build-ffmpeg-macos.sh is arm64-only, since macos-latest
+    // runners are Apple silicon and an x86_64 build would need a cross-compile
+    // with a separate SDK. Everything the comment below says about the keg
+    // still applies to this path, including that its dylibs resolve transitive
+    // dependencies out of the Homebrew prefix, which is why publish.yml does
+    // not pack osx-x64 into the runtime package.
 
-    if (rid.StartsWith("osx-", StringComparison.Ordinal))
+    if (rid == "osx-x64")
     {
         // Raw Homebrew bottles contain unresolved placeholder strings
         // (@@HOMEBREW_PREFIX@@, @@HOMEBREW_CELLAR@@) and depend on optional
@@ -441,9 +479,21 @@ foreach (var rid in ridsToProcess)
     string downloadUrl;
     string archiveName;
 
-    archiveName =
-        $"ffmpeg-{ArchiveVersion}-{platform.Label}-{license}-shared-{FfmpegVersion}.{platform.Extension}";
-    downloadUrl = $"{baseUrl}/{archiveName}";
+    if (rid == "osx-arm64")
+    {
+        // Not BtbN's naming scheme and not their release, so neither Label nor
+        // the license/version segments apply. The build is LGPL by construction
+        // (--disable-gpl --disable-nonfree), so a --license gpl run has nothing
+        // different to fetch; the warning for that case is raised at the top.
+        archiveName = MacOsArchiveName;
+        downloadUrl = macOsArchiveUrl;
+    }
+    else
+    {
+        archiveName =
+            $"ffmpeg-{ArchiveVersion}-{platform.Label}-{license}-shared-{FfmpegVersion}.{platform.Extension}";
+        downloadUrl = $"{baseUrl}/{archiveName}";
+    }
 
     var tempDir = Path.Combine(Path.GetTempPath(), $"frameflow-ffmpeg-{rid}");
     var tempFile = Path.Combine(tempDir, archiveName);
@@ -523,23 +573,18 @@ foreach (var rid in ridsToProcess)
     // Find the archive root — the directory that contains bin/ and/or lib/.
     // On Windows, DLLs are in bin/; on Linux, .so files are in lib/.
     // Search from the parent of bin/ or lib/ so FindLibrary can see both.
+    //
+    // The osx-arm64 archive has neither: it is a flat directory of dylibs, which
+    // is the shape scripts/build-ffmpeg-macos.sh produces because the whole
+    // point of that build is that one directory is self-contained. Falling back
+    // to the extraction root covers it without a RID special case, and costs
+    // nothing for the others: FindLibrary recurses either way, and a genuinely
+    // empty or wrong archive still fails at the per-library NOT FOUND below.
     var binOrLib = Directory
         .EnumerateDirectories(extractDir, "*", SearchOption.AllDirectories)
         .FirstOrDefault(d => Path.GetFileName(d) is "bin" or "lib");
 
-    if (binOrLib is null)
-    {
-        Console.Error.WriteLine("  Could not find bin/ or lib/ directory in extracted archive.");
-        totalFailed++;
-        try
-        {
-            Directory.Delete(tempDir, recursive: true);
-        }
-        catch { }
-        continue;
-    }
-
-    var sourceDir = Path.GetDirectoryName(binOrLib)!;
+    var sourceDir = binOrLib is null ? extractDir : Path.GetDirectoryName(binOrLib)!;
 
     Directory.CreateDirectory(nativeDir);
     var copied = 0;

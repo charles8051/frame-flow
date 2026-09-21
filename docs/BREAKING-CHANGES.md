@@ -72,12 +72,15 @@ resolving. Bootstrap explicitly if you need to choose the binaries.
 
 **Who hits this.** Nobody using the bundled binaries. `FrameFlow.Native.Runtime` ships FFmpeg 7.1
 and matches by construction. It reaches you if you set `CustomFfmpegPath`, or if you rely on
-`ProbeSystemLibraries` against a system FFmpeg that is not 7.x. macOS is the likely case, because
-the package ships no macOS RID and `brew install ffmpeg` is whichever major Homebrew ships that
-week.
+`ProbeSystemLibraries` against a system FFmpeg that is not 7.x.
 
-**What to write instead.** Install FFmpeg 7.x and point at it. On macOS that is `brew install
-ffmpeg@7`, which is a real keg and is not deprecated. Elsewhere, take the bundled package.
+macOS used to be the likely case, because the package shipped no macOS RID and `brew install
+ffmpeg` is whichever major Homebrew ships that week. As of `v0.10.2` it carries `osx-arm64`, so an
+Apple silicon consumer on the bundled binaries is in the first group. Intel Macs still have no RID.
+
+**What to write instead.** Take the bundled package. If you are pinning your own, install FFmpeg
+7.x and point at it; on macOS that is `brew install ffmpeg@7`, which is a real keg and is not
+deprecated.
 
 **Why it is worth a break.** The previous behaviour had no failure mode that pointed at the cause.
 A wrong offset surfaces as a wrong resolution, a wrong timestamp, a wrong pixel format or a crash
