@@ -29,7 +29,11 @@ public sealed class SourceViabilityTests
     private static VideoStreamInfo Video(string codec, int width, int height) =>
         new(0, codec, width, height, 25.0);
 
-    private static AudioStreamInfo Audio(string codec = "aac") => new(1, codec, 44100, 2);
+    private static AudioStreamInfo Audio(
+        string codec = "aac",
+        int sampleRate = 44100,
+        int channels = 2
+    ) => new(1, codec, sampleRate, channels);
 
     // -------------------------------------------------------------------------
     // Classify
@@ -41,7 +45,7 @@ public sealed class SourceViabilityTests
         // What the bundled FFmpeg hands back for an animated .webp.
         var info = Info(video: [Video("webp", 0, 0)]);
 
-        Assert.Equal(SourceViabilityKind.NoResolvedVideo, SourceViability.Classify(info));
+        Assert.Equal(SourceViabilityKind.NoResolvedStreams, SourceViability.Classify(info));
     }
 
     [Fact]
@@ -63,13 +67,31 @@ public sealed class SourceViabilityTests
     }
 
     [Fact]
-    public void AudioCarriesASourceWhoseVideoDidNotResolve()
+    public void ResolvedAudioCarriesASourceWhoseVideoDidNotResolve()
     {
         // An unsupported video track inside an otherwise fine container. Failing the whole
         // load over it would be a regression, so audio alone is enough.
         var info = Info(video: [Video("webp", 0, 0)], audio: [Audio()]);
 
         Assert.Equal(SourceViabilityKind.Playable, SourceViability.Classify(info));
+    }
+
+    [Fact]
+    public void ResolvedVideoCarriesASourceWhoseAudioDidNotResolve()
+    {
+        var info = Info(video: [Video("h264", 1920, 1080)], audio: [Audio(sampleRate: 0)]);
+
+        Assert.Equal(SourceViabilityKind.Playable, SourceViability.Classify(info));
+    }
+
+    [Fact]
+    public void DeclaredAudioIsNotPlayableWhenItsParametersDidNotResolve()
+    {
+        // The symmetric case of the animated-WebP shape: streams declared, nothing resolved.
+        // Declaration alone is not proof of playability on either side.
+        var info = Info(video: [Video("webp", 0, 0)], audio: [Audio(sampleRate: 0, channels: 0)]);
+
+        Assert.Equal(SourceViabilityKind.NoResolvedStreams, SourceViability.Classify(info));
     }
 
     [Fact]
@@ -83,7 +105,7 @@ public sealed class SourceViabilityTests
     [Fact]
     public void NoStreamsAtAllIsItsOwnVerdict()
     {
-        // Distinct from NoResolvedVideo so the error message can say which happened.
+        // Distinct from NoResolvedStreams so the error message can say which happened.
         Assert.Equal(SourceViabilityKind.NoStreams, SourceViability.Classify(Info()));
     }
 
@@ -93,11 +115,24 @@ public sealed class SourceViabilityTests
     [InlineData(0, 240)]
     [InlineData(-1, 240)]
     [InlineData(320, -1)]
-    public void EitherDimensionMissingLeavesTheStreamUnresolved(int width, int height)
+    public void EitherVideoDimensionMissingLeavesTheStreamUnresolved(int width, int height)
     {
         var info = Info(video: [Video("webp", width, height)]);
 
-        Assert.Equal(SourceViabilityKind.NoResolvedVideo, SourceViability.Classify(info));
+        Assert.Equal(SourceViabilityKind.NoResolvedStreams, SourceViability.Classify(info));
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(44100, 0)]
+    [InlineData(0, 2)]
+    [InlineData(-1, 2)]
+    [InlineData(44100, -1)]
+    public void EitherAudioParameterMissingLeavesTheStreamUnresolved(int sampleRate, int channels)
+    {
+        var info = Info(audio: [Audio(sampleRate: sampleRate, channels: channels)]);
+
+        Assert.Equal(SourceViabilityKind.NoResolvedStreams, SourceViability.Classify(info));
     }
 
     [Fact]
@@ -107,54 +142,59 @@ public sealed class SourceViabilityTests
     }
 
     // -------------------------------------------------------------------------
-    // HasUnusableVideo
+    // DescribeStreams / DescribeUnusableStreams
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void UnusableVideoIsReportedAlongsidePlayableAudio()
-    {
-        var info = Info(video: [Video("webp", 0, 0)], audio: [Audio()]);
-
-        Assert.True(SourceViability.HasUnusableVideo(info));
-    }
-
-    [Fact]
-    public void AFullyResolvedSourceHasNoUnusableVideo()
-    {
-        var info = Info(video: [Video("h264", 1920, 1080)], audio: [Audio()]);
-
-        Assert.False(SourceViability.HasUnusableVideo(info));
-    }
-
-    [Fact]
-    public void NoVideoStreamsMeansNoUnusableVideo()
-    {
-        Assert.False(SourceViability.HasUnusableVideo(Info(audio: [Audio()])));
-    }
-
-    // -------------------------------------------------------------------------
-    // DescribeVideoStreams
-    // -------------------------------------------------------------------------
-
-    [Fact]
-    public void DescribeNamesTheCodecAndTheMissingDimensions()
+    public void DescribeNamesTheCodecAndTheMissingParameters()
     {
         var info = Info(video: [Video("webp", 0, 0)]);
 
-        Assert.Equal("webp 0x0", SourceViability.DescribeVideoStreams(info));
+        Assert.Equal("video webp 0x0", SourceViability.DescribeStreams(info));
     }
 
     [Fact]
-    public void DescribeJoinsEveryVideoStream()
+    public void DescribeJoinsVideoThenAudio()
     {
-        var info = Info(video: [Video("h264", 1920, 1080), Video("webp", 0, 0)]);
+        var info = Info(video: [Video("h264", 1920, 1080)], audio: [Audio()]);
 
-        Assert.Equal("h264 1920x1080, webp 0x0", SourceViability.DescribeVideoStreams(info));
+        Assert.Equal(
+            "video h264 1920x1080, audio aac 44100Hz 2ch",
+            SourceViability.DescribeStreams(info)
+        );
     }
 
     [Fact]
-    public void DescribeIsEmptyWithoutVideo()
+    public void DescribeIsEmptyWithoutStreams()
     {
-        Assert.Equal(string.Empty, SourceViability.DescribeVideoStreams(Info()));
+        Assert.Equal(string.Empty, SourceViability.DescribeStreams(Info()));
+    }
+
+    [Fact]
+    public void OnlyTheUnresolvedStreamsAreWarnedAbout()
+    {
+        var info = Info(
+            video: [Video("h264", 1920, 1080), Video("webp", 0, 0)],
+            audio: [Audio(), Audio(codec: "mp3", sampleRate: 0, channels: 0)]
+        );
+
+        Assert.Equal(
+            "video webp 0x0, audio mp3 0Hz 0ch",
+            SourceViability.DescribeUnusableStreams(info)
+        );
+    }
+
+    [Fact]
+    public void AFullyResolvedSourceHasNothingToWarnAbout()
+    {
+        var info = Info(video: [Video("h264", 1920, 1080)], audio: [Audio()]);
+
+        Assert.Equal(string.Empty, SourceViability.DescribeUnusableStreams(info));
+    }
+
+    [Fact]
+    public void DescribeUnusableStreamsRejectsNull()
+    {
+        Assert.Throws<ArgumentNullException>(() => SourceViability.DescribeUnusableStreams(null!));
     }
 }

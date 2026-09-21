@@ -198,11 +198,61 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
             throw new OutOfMemoryException("FFmpeg av_packet_alloc returned null.");
         }
 
-        // Build managed metadata from the open context.
+        // Build managed metadata from the open context, decide whether the container is
+        // worth a session, and say so. Everything up to the ownership transfer below runs
+        // inside this handler: until then the packet and the format context are still the
+        // factory's to free, and that includes an exception raised by a logger.
         MediaInfo mediaInfo;
         try
         {
             mediaInfo = DemuxSession.BuildMediaInfo(formatCtx.DangerousGetHandle());
+
+            // avformat_find_stream_info returns success even when it could not resolve codec
+            // parameters, so an unplayable container arrives here looking fine and would go
+            // on to decode nothing and end at zero duration (#340). Refuse it while the
+            // failure still has a name.
+            var viability = SourceViability.Classify(mediaInfo);
+            if (viability != SourceViabilityKind.Playable)
+            {
+                string detail = viability switch
+                {
+                    SourceViabilityKind.NoStreams => "it declares no audio or video stream",
+                    SourceViabilityKind.NoResolvedStreams =>
+                        "no stream has resolved codec parameters "
+                        + $"({SourceViability.DescribeStreams(mediaInfo)})",
+                    _ => "it offers no playable stream",
+                };
+
+                _logger.LogError(
+                    "Opened media source {DisplayName} but resolved no playable stream: {Detail}",
+                    source.DisplayName,
+                    detail
+                );
+
+                throw new InvalidOperationException(
+                    $"FFmpeg opened media source '{source.DisplayName}' but resolved no playable "
+                        + $"stream: {detail}."
+                );
+            }
+
+            // Playable on another stream, but a declared track is still unusable. The load
+            // stands; the track that will not appear is said out loud.
+            if (SourceViability.DescribeUnusableStreams(mediaInfo) is { Length: > 0 } unusable)
+            {
+                _logger.LogWarning(
+                    "Media source {DisplayName} declares a stream with unresolved codec "
+                        + "parameters; it will not be decoded ({Streams})",
+                    source.DisplayName,
+                    unusable
+                );
+            }
+
+            _logger.LogInformation(
+                "Opened media source {DisplayName} with {VideoStreamCount} video and {AudioStreamCount} audio streams",
+                source.DisplayName,
+                mediaInfo.VideoStreams.Count,
+                mediaInfo.AudioStreams.Count
+            );
         }
         catch
         {
@@ -211,57 +261,6 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
             formatCtx.Dispose();
             throw;
         }
-
-        // avformat_find_stream_info returns success even when it could not resolve codec
-        // parameters, so an unplayable container arrives here looking fine and would go on
-        // to decode nothing and end at zero duration (#340). Refuse it while the failure
-        // still has a name.
-        var viability = SourceViability.Classify(mediaInfo);
-        if (viability != SourceViabilityKind.Playable)
-        {
-            string detail = viability switch
-            {
-                SourceViabilityKind.NoStreams => "it declares no audio or video stream",
-                SourceViabilityKind.NoResolvedVideo =>
-                    "no video stream has resolved codec parameters "
-                        + $"({SourceViability.DescribeVideoStreams(mediaInfo)}) and there is no audio",
-                _ => "it offers no playable stream",
-            };
-
-            _logger.LogError(
-                "Opened media source {DisplayName} but resolved no playable stream: {Detail}",
-                source.DisplayName,
-                detail
-            );
-
-            var tempPkt = packet;
-            FFAvCodec.av_packet_free(ref tempPkt);
-            formatCtx.Dispose();
-
-            throw new InvalidOperationException(
-                $"FFmpeg opened media source '{source.DisplayName}' but resolved no playable "
-                    + $"stream: {detail}."
-            );
-        }
-
-        // Playable on another stream, but a declared video track is still unusable. The
-        // load stands; the video that will not appear is said out loud.
-        if (SourceViability.HasUnusableVideo(mediaInfo))
-        {
-            _logger.LogWarning(
-                "Media source {DisplayName} declares a video stream with unresolved codec "
-                    + "parameters; it will not be decoded ({VideoStreams})",
-                source.DisplayName,
-                SourceViability.DescribeVideoStreams(mediaInfo)
-            );
-        }
-
-        _logger.LogInformation(
-            "Opened media source {DisplayName} with {VideoStreamCount} video and {AudioStreamCount} audio streams",
-            source.DisplayName,
-            mediaInfo.VideoStreams.Count,
-            mediaInfo.AudioStreams.Count
-        );
 
         // Ownership of formatCtx and packet transfers to the new DemuxSession.
         // The session is returned to the caller who is then responsible for disposal.

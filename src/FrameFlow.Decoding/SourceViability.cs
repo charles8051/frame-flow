@@ -11,23 +11,17 @@ namespace FrameFlow.Decoding;
 /// </summary>
 internal enum SourceViabilityKind
 {
-    /// <summary>
-    /// At least one audio stream, or at least one video stream with resolved
-    /// dimensions. The session has something to decode.
-    /// </summary>
+    /// <summary>At least one stream carries resolved codec parameters.</summary>
     Playable,
 
-    /// <summary>
-    /// The container declared neither an audio nor a video stream.
-    /// </summary>
+    /// <summary>The container declared neither an audio nor a video stream.</summary>
     NoStreams,
 
     /// <summary>
-    /// Every declared video stream reported non-positive dimensions and there is no
-    /// audio to fall back on. FFmpeg opened the container but never resolved codec
-    /// parameters for anything in it.
+    /// Streams were declared and none of them resolved. FFmpeg opened the container but
+    /// never worked out what is inside it.
     /// </summary>
-    NoResolvedVideo,
+    NoResolvedStreams,
 }
 
 /// <summary>
@@ -36,72 +30,76 @@ internal enum SourceViabilityKind
 /// <remarks>
 /// <para>
 /// <c>avformat_find_stream_info</c> reports "Could not find codec parameters" at warning
-/// level and still returns a non-negative value, so a container FFmpeg opened but could
-/// not resolve reaches <see cref="DemuxSessionFactory"/> looking successful, carrying a
-/// video stream at <c>0x0</c>. Left alone it becomes a session that decodes nothing and
+/// level and still returns a non-negative value, so a container FFmpeg opened but could not
+/// resolve reaches <see cref="DemuxSessionFactory"/> looking successful, carrying streams
+/// whose parameters are still zero. Left alone it becomes a session that decodes nothing and
 /// ends at zero duration, which a caller cannot tell apart from a valid empty clip. An
 /// animated WebP is the reproducible case (#340, #341).
 /// </para>
 /// <para>
-/// These are total functions over <see cref="MediaInfo"/>. They read no FFmpeg state,
-/// perform no IO, and hold nothing across calls; the shell that owns the format context
-/// decides what to do with the verdict.
+/// Resolution is the only question asked here. Whether FrameFlow can build a decoder for a
+/// codec it did resolve is a separate one, answered later and loudly by
+/// <c>VideoDecoder.Open</c> / <c>AudioDecoder.Open</c>.
+/// </para>
+/// <para>
+/// These are total functions over <see cref="MediaInfo"/>. They read no FFmpeg state, perform
+/// no IO, and hold nothing across calls; the shell that owns the format context decides what
+/// to do with the verdict.
 /// </para>
 /// </remarks>
 internal static class SourceViability
 {
     /// <summary>
-    /// Classify what <paramref name="mediaInfo"/> offers.
+    /// Classify what <paramref name="mediaInfo"/> offers. A video stream counts only with
+    /// positive dimensions and an audio stream only with a positive sample rate and channel
+    /// count, because unresolved codec parameters leave all four at zero.
     /// </summary>
-    /// <remarks>
-    /// Audio alone is enough. A video stream counts only when both dimensions are
-    /// positive, because unresolved codec parameters leave them at zero.
-    /// </remarks>
     public static SourceViabilityKind Classify(MediaInfo mediaInfo)
     {
         ArgumentNullException.ThrowIfNull(mediaInfo);
 
-        if (mediaInfo.AudioStreams.Count > 0)
-            return SourceViabilityKind.Playable;
-
-        if (mediaInfo.VideoStreams.Count == 0)
+        if (mediaInfo.VideoStreams.Count == 0 && mediaInfo.AudioStreams.Count == 0)
             return SourceViabilityKind.NoStreams;
 
-        return mediaInfo.VideoStreams.Any(IsResolved)
+        return mediaInfo.VideoStreams.Any(IsResolved) || mediaInfo.AudioStreams.Any(IsResolved)
             ? SourceViabilityKind.Playable
-            : SourceViabilityKind.NoResolvedVideo;
+            : SourceViabilityKind.NoResolvedStreams;
     }
 
     /// <summary>
-    /// Whether a video stream was declared but left without usable dimensions while the
-    /// source is still playable on another stream.
+    /// Render every declared stream, as <c>"video webp 0x0"</c> or
+    /// <c>"video h264 1920x1080, audio aac 44100Hz 2ch"</c>. Empty when nothing was declared.
+    /// </summary>
+    public static string DescribeStreams(MediaInfo mediaInfo) => Describe(mediaInfo, _ => true);
+
+    /// <summary>
+    /// Render only the declared streams that did not resolve. Empty when they all did.
     /// </summary>
     /// <remarks>
-    /// An unsupported video track inside an otherwise fine container is a real shape, and
-    /// failing the whole load over it would be a regression. The audio plays; the caller
-    /// gets a warning rather than silence about the video that will not.
+    /// An unsupported track inside an otherwise fine container is a real shape, and failing
+    /// the whole load over it would be a regression. The rest plays; the caller gets a
+    /// warning rather than silence about the track that will not.
     /// </remarks>
-    public static bool HasUnusableVideo(MediaInfo mediaInfo)
+    public static string DescribeUnusableStreams(MediaInfo mediaInfo) =>
+        Describe(mediaInfo, resolved => !resolved);
+
+    private static string Describe(MediaInfo mediaInfo, Func<bool, bool> keep)
     {
         ArgumentNullException.ThrowIfNull(mediaInfo);
 
-        return mediaInfo.VideoStreams.Any(v => !IsResolved(v));
-    }
+        var video = mediaInfo
+            .VideoStreams.Where(v => keep(IsResolved(v)))
+            .Select(v => $"video {v.CodecName} {v.Width}x{v.Height}");
 
-    /// <summary>
-    /// Render the declared video streams for a diagnostic message, as
-    /// <c>"webp 0x0"</c> or <c>"h264 1920x1080, webp 0x0"</c>. Empty string when no
-    /// video stream was declared.
-    /// </summary>
-    public static string DescribeVideoStreams(MediaInfo mediaInfo)
-    {
-        ArgumentNullException.ThrowIfNull(mediaInfo);
+        var audio = mediaInfo
+            .AudioStreams.Where(a => keep(IsResolved(a)))
+            .Select(a => $"audio {a.CodecName} {a.SampleRate}Hz {a.Channels}ch");
 
-        return string.Join(
-            ", ",
-            mediaInfo.VideoStreams.Select(v => $"{v.CodecName} {v.Width}x{v.Height}")
-        );
+        return string.Join(", ", video.Concat(audio));
     }
 
     private static bool IsResolved(VideoStreamInfo video) => video.Width > 0 && video.Height > 0;
+
+    private static bool IsResolved(AudioStreamInfo audio) =>
+        audio.SampleRate > 0 && audio.Channels > 0;
 }
