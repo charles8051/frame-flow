@@ -282,7 +282,34 @@ public sealed class MediaSourceTests
     public void FromStill_AcceptsTheCeilingItself()
     {
         var source = MediaSource.FromStill("slide.png", MediaSource.MaximumStillDwell);
-        Assert.Equal("1/600", source.DemuxerOptions?["framerate"]);
+        Assert.Equal("1/1800", source.DemuxerOptions?["framerate"]);
+    }
+
+    [Fact]
+    public void FromStill_QuantisationIsPartOfTheContract()
+    {
+        // Stated on the parameter, not left to be discovered. Everything inside a millisecond
+        // lands on the same clip, and the caller is told so rather than finding out from a
+        // duration that does not match what they asked for.
+        var asked = TimeSpan.FromTicks(10_001); // 1.0001 ms
+        var rounded = MediaSource.FromStill("slide.png", asked);
+        var whole = MediaSource.FromStill("slide.png", TimeSpan.FromMilliseconds(1));
+
+        Assert.Equal(
+            whole.DemuxerOptions?["framerate"],
+            rounded.DemuxerOptions?["framerate"]
+        );
+    }
+
+    [Theory]
+    // Rounds to nearest, away from zero at the midpoint, like the documented contract says.
+    [InlineData(14_000, "1000/1")]  // 1.4 ms -> 1 ms
+    [InlineData(15_000, "500/1")]   // 1.5 ms -> 2 ms
+    [InlineData(16_000, "500/1")]   // 1.6 ms -> 2 ms
+    public void FromStill_RoundsToNearestMillisecond(int ticks, string expected)
+    {
+        var source = MediaSource.FromStill("slide.png", TimeSpan.FromTicks(ticks));
+        Assert.Equal(expected, source.DemuxerOptions?["framerate"]);
     }
 
     [Fact]

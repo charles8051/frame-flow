@@ -52,7 +52,11 @@ public sealed record MediaSource : IMediaSource
     /// duration and a playlist moves on after it.
     /// </summary>
     /// <param name="path">The image file. It is not read here; the demuxer opens it on load.</param>
-    /// <param name="dwell">How long the image is the current item. Must be positive.</param>
+    /// <param name="dwell">
+    /// How long the image is the current item, between <see cref="MinimumStillDwell"/> and
+    /// <see cref="MaximumStillDwell"/>. <b>Rounded to the nearest millisecond</b>: a dwell of
+    /// 1.2345678 seconds opens a clip of 1.235. See the remarks for why.
+    /// </param>
     /// <remarks>
     /// <para>
     /// Probed, a single image opens on a <c>*_pipe</c> demuxer, which reports no duration whatever
@@ -73,6 +77,16 @@ public sealed record MediaSource : IMediaSource
     /// pattern, so a file actually named <c>photo%03d.png</c> fails to open with "could find no file
     /// with path ... and index in the range 0-4" while sitting on disk. The path here names one
     /// existing file, so the pattern handling has nothing to offer and one filename in it to break.
+    /// </para>
+    /// <para>
+    /// <b>The dwell is quantised to the nearest millisecond, deliberately.</b> FFmpeg does not
+    /// store the <c>framerate</c> it is handed; it evaluates the rational and re-derives one, and
+    /// how large the terms are decides whether what comes back matches. A dwell written to the
+    /// tick is exact and reduces to terms in the billions for any value that is not a round
+    /// number of them, which is one of the two ways the realized duration goes wrong
+    /// (see <see cref="MaximumStillDwell"/>). A millisecond is finer than a dwell is specified
+    /// to, and it is the resolution at which the duration comes back equal to the one asked for.
+    /// A caller who needs the sub-millisecond remainder is not asking for a still.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">
@@ -116,14 +130,19 @@ public sealed record MediaSource : IMediaSource
     /// is the failure <see cref="FromStill"/> exists to prevent rather than relocate.
     /// </para>
     /// <para>
-    /// The cliff sits near an hour, and below it there is a second sensitivity to how large the
-    /// reduced terms are, so the accepted range stops well short of both. Ten minutes is
-    /// comfortably inside what measured correct at every rational shape tried, and is already
-    /// far longer than a still is held for. Widening it later is not a breaking change; the
-    /// evidence for a wider bound is a longer ladder in <c>StillImageDwellTests</c>.
+    /// Thirty minutes is the last magnitude measured to round-trip within a millisecond, which is
+    /// the resolution this factory quantises to and therefore the most it can promise. Walking a
+    /// dwell of <c>N</c> milliseconds and one, so the rational does not reduce, the reported
+    /// duration holds to within a millisecond through 30 minutes — at the top of that it lands
+    /// 0.8ms low — and collapses at 59:59.999, where it comes back as zero. The bound sits at the
+    /// last magnitude the ladder proves, not at the first that fails.
+    /// </para>
+    /// <para>
+    /// Widening this is not a breaking change, and the evidence for a wider bound is a longer
+    /// ladder in <c>StillImageDwellTests.ADwellIsTheDurationTheDemuxerReports</c> staying green.
     /// </para>
     /// </remarks>
-    public static readonly TimeSpan MaximumStillDwell = TimeSpan.FromMinutes(10);
+    public static readonly TimeSpan MaximumStillDwell = TimeSpan.FromMinutes(30);
 
     /// <summary>
     /// The <c>framerate</c> that makes one frame last <paramref name="dwell"/>, as a reduced
@@ -139,11 +158,9 @@ public sealed record MediaSource : IMediaSource
     /// <c>2/15</c>.
     /// </para>
     /// <para>
-    /// Milliseconds rather than ticks, which would be exact. The terms matter as well as the
-    /// value: FFmpeg re-derives the rational it was given, and a dwell written in ticks reduces
-    /// to terms in the billions for any value that is not a round number of them, which is one
-    /// of the two ways the realized duration goes wrong (see <see cref="MaximumStillDwell"/>).
-    /// A millisecond is finer than a dwell is ever specified to.
+    /// Milliseconds rather than ticks, which would be exact. <see cref="FromStill"/> has the
+    /// reasoning; the short version is that the size of the terms decides whether FFmpeg gives
+    /// the dwell back, and ticks make them enormous.
     /// </para>
     /// </remarks>
     private static string FrameRateFor(TimeSpan dwell)

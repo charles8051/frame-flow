@@ -205,7 +205,9 @@ public sealed class StillImageDwellTests : IClassFixture<FfmpegBootstrapFixture>
     [InlineData(1235)]        // not a round number of anything
     [InlineData(7500)]        // the fractional-seconds case, 2/15
     [InlineData(30_000)]
-    [InlineData(600_000)]     // MaximumStillDwell itself
+    [InlineData(660_001)]     // 11 minutes and a millisecond: awkward, so the rational does not reduce
+    [InlineData(1_799_999)]   // the same shape just inside the ceiling
+    [InlineData(1_800_000)]   // MaximumStillDwell itself
     public async Task ADwellIsTheDurationTheDemuxerReports(int milliseconds)
     {
         var path = IntegrationTestEnvironment.GetCorpusFile(Still);
@@ -219,9 +221,16 @@ public sealed class StillImageDwellTests : IClassFixture<FfmpegBootstrapFixture>
             var load = await controller.LoadAsync(MediaSource.FromStill(path!, dwell));
             Assert.True(load.IsSuccess, $"Load failed: {load.Error?.Message}");
 
-            // Exactly, not approximately. A still is one frame at 1/dwell, so the demuxer has no
-            // rounding to do once the rational survives the round trip.
-            Assert.Equal(dwell, controller.Duration);
+            // To the millisecond, which is the resolution FromStill quantises to and therefore the
+            // most it can promise. Asserting tick equality would be over-claiming: FFmpeg
+            // re-derives the rational, and at 30 minutes with terms that do not reduce the answer
+            // lands 0.8ms low. Anything worse than a millisecond is the failure this ladder is
+            // watching for, and past MaximumStillDwell it is seconds or the whole duration.
+            var error = (controller.Duration - dwell).Duration();
+            Assert.True(
+                error <= TimeSpan.FromMilliseconds(1),
+                $"Asked for {dwell}, demuxer reported {controller.Duration}, off by {error}."
+            );
 
             await IntegrationTestHelper.StabilizeForDisposeAsync(controller, audioSink, videoSink);
         }

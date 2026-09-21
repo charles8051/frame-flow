@@ -26,10 +26,10 @@ Nothing breaking yet.
   `MediaSource.FromFile` and the `with` form still work, and nothing that used them changes.
   It takes no position on the extension — whether a file is one image is a fact about the
   content, and a caller that hands it something animated gets the first frame reported as the
-  whole file, as before. A dwell outside `MediaSource.MinimumStillDwell` to
-  `MaximumStillDwell` (one millisecond to ten minutes) is refused: FFmpeg re-derives the
-  rational it is handed, and past that range the duration it reports stops matching the dwell
-  without saying so — at `1/3600` it comes back as zero. #304.
+  whole file, as before. The dwell is rounded to the nearest millisecond, and one outside
+  `MediaSource.MinimumStillDwell` to `MaximumStillDwell` (one millisecond to thirty minutes)
+  is refused: FFmpeg re-derives the rational it is handed, and past that range the duration it
+  reports stops matching the dwell without saying so — at `1/3600` it comes back as zero. #304.
 
 ## `v0.10.0` — since `v0.9.0-alpha.1`
 
