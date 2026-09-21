@@ -212,6 +212,50 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
             throw;
         }
 
+        // avformat_find_stream_info returns success even when it could not resolve codec
+        // parameters, so an unplayable container arrives here looking fine and would go on
+        // to decode nothing and end at zero duration (#340). Refuse it while the failure
+        // still has a name.
+        var viability = SourceViability.Classify(mediaInfo);
+        if (viability != SourceViabilityKind.Playable)
+        {
+            string detail = viability switch
+            {
+                SourceViabilityKind.NoStreams => "it declares no audio or video stream",
+                SourceViabilityKind.NoResolvedVideo =>
+                    "no video stream has resolved codec parameters "
+                        + $"({SourceViability.DescribeVideoStreams(mediaInfo)}) and there is no audio",
+                _ => "it offers no playable stream",
+            };
+
+            _logger.LogError(
+                "Opened media source {DisplayName} but resolved no playable stream: {Detail}",
+                source.DisplayName,
+                detail
+            );
+
+            var tempPkt = packet;
+            FFAvCodec.av_packet_free(ref tempPkt);
+            formatCtx.Dispose();
+
+            throw new InvalidOperationException(
+                $"FFmpeg opened media source '{source.DisplayName}' but resolved no playable "
+                    + $"stream: {detail}."
+            );
+        }
+
+        // Playable on another stream, but a declared video track is still unusable. The
+        // load stands; the video that will not appear is said out loud.
+        if (SourceViability.HasUnusableVideo(mediaInfo))
+        {
+            _logger.LogWarning(
+                "Media source {DisplayName} declares a video stream with unresolved codec "
+                    + "parameters; it will not be decoded ({VideoStreams})",
+                source.DisplayName,
+                SourceViability.DescribeVideoStreams(mediaInfo)
+            );
+        }
+
         _logger.LogInformation(
             "Opened media source {DisplayName} with {VideoStreamCount} video and {AudioStreamCount} audio streams",
             source.DisplayName,

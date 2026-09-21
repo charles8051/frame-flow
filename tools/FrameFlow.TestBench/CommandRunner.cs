@@ -172,8 +172,18 @@ internal sealed class CommandRunner(
             return true;
         }
 
-        return Fail(result.Error is { } error ? $"{error.Category}: {error.Message}" : "failed");
+        return Fail(result.Error is { } error ? Describe(error) : "failed");
     }
+
+    /// <summary>
+    /// A load failure collapses to <c>System: Session initialization failed</c> and carries
+    /// the reason on <see cref="PlaybackError.Inner"/>, so a transcript that printed only
+    /// the category and message named every load failure identically.
+    /// </summary>
+    private static string Describe(PlaybackError error) =>
+        error.Inner is { } inner
+            ? $"{error.Category}: {error.Message} — {inner.Message}"
+            : $"{error.Category}: {error.Message}";
 
     private bool Fail(string message)
     {
