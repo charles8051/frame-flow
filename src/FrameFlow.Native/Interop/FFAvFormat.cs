@@ -16,6 +16,19 @@ namespace FrameFlow.Native.Interop;
 internal static partial class FFAvFormat
 {
     /// <summary>
+    /// Returns the packed version integer for the loaded <c>libavformat</c> build.
+    /// </summary>
+    /// <remarks>
+    /// Read at bootstrap by <c>FrameFlow.Native.Core.FfmpegAbiCheck</c>. Every library
+    /// in the set is checked, not just <c>libavutil</c>: the generated struct layouts
+    /// FrameFlow overlays come from these libraries' own headers, and a search path
+    /// that resolves them from different FFmpeg generations would otherwise pass a
+    /// check that only looked at one of them.
+    /// </remarks>
+    [LibraryImport("avformat")]
+    internal static partial uint avformat_version();
+
+    /// <summary>
     /// Opens an input stream and reads the header. On success <paramref name="ctx"/> is
     /// set to the allocated <c>AVFormatContext*</c>; on failure it is set to
     /// <see cref="nint.Zero"/> and the return value is a negative AVERROR code.

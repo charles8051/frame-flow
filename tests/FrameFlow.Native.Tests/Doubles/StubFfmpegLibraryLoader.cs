@@ -28,6 +28,17 @@ internal sealed class StubFfmpegLibraryLoader : IFfmpegLibraryLoader
     /// </summary>
     public string FailureMessage { get; set; } = "Stub: FFmpeg not available.";
 
+    /// <summary>
+    /// When <see langword="true"/>, <see cref="TryLoad"/> returns a terminal ABI-mismatch
+    /// failure rather than a success or an ordinary failure. Takes precedence over
+    /// <see cref="SimulateSuccess"/>.
+    /// </summary>
+    public bool SimulateAbiMismatch { get; set; }
+
+    /// <summary>The diagnostic returned when <see cref="SimulateAbiMismatch"/> is set.</summary>
+    public string AbiMismatchMessage { get; set; } =
+        "Stub: FFmpeg ABI mismatch. libavutil is 61.1.100, expected 59.x.";
+
     /// <summary>Tracks how many times <see cref="TryLoad"/> was invoked.</summary>
     public int CallCount { get; private set; }
 
@@ -43,6 +54,9 @@ internal sealed class StubFfmpegLibraryLoader : IFfmpegLibraryLoader
         CallCount++;
         LastSearchPath = searchPath;
         LastSource = source;
+
+        if (SimulateAbiMismatch)
+            return FfmpegLoadResult.AbiMismatch(AbiMismatchMessage);
 
         return SimulateSuccess
             ? FfmpegLoadResult.Success(AvutilVersion)

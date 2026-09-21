@@ -1167,21 +1167,31 @@ and still links against a different major, so loading one produced a running pro
 frame, packet and stream fields at the wrong offsets. The bootstrap logged the version it found
 and carried on.
 
-It now compares the loaded `libavutil` major against the one the bindings were generated for and
-fails the bootstrap when they differ, naming both:
+It now compares each loaded library's major against the one its bindings were generated for and
+fails the bootstrap when any of them differ, naming the offender and both versions:
 
 ```
-FFmpeg ABI mismatch. The loaded libavutil is 61.1.100 (FFmpeg 9.x), but FrameFlow's struct
-bindings are generated for libavutil 59.x (FFmpeg 7.x). ...
+FFmpeg ABI mismatch. One loaded FFmpeg library is not the major version FrameFlow's struct
+bindings were generated for: libavutil is 61.1.100 (FFmpeg 9.x), expected 59.x (FFmpeg 7.x). ...
 ```
 
-`libavutil` majors are not FFmpeg release numbers: 59 is FFmpeg 7.x, 60 is 8.x, 61 is 9.x.
-FrameFlow targets FFmpeg 7.1.
+All five required libraries are checked, not just `libavutil`. The layouts FrameFlow overlays are
+owned by different libraries, and each one is resolved independently, so a search path can serve
+them from different FFmpeg generations.
+
+Library majors are not FFmpeg release numbers and do not match each other. FrameFlow targets
+FFmpeg 7.1, which is `libavutil` 59, `libavcodec` 61, `libavformat` 61, `libswscale` 8 and
+`libswresample` 5.
 
 The check runs in the loader, so it covers both entry points. An explicit
 `FrameFlowBootstrapper.Initialize()` returns a failed `FrameFlowBootstrapResult` carrying that
 message. Code that decodes without bootstrapping first gets a `DllNotFoundException` from the
 implicit bootstrap, with the same message inside it.
+
+The refusal is terminal for the process. FFmpeg loads once per process, so a mismatch cannot be
+repaired by pointing at different binaries afterwards: the rejected libraries are already mapped.
+`ProbeSystemLibraries` does not fall back after one, and every later P/Invoke throws rather than
+resolving. Bootstrap explicitly if you need to choose the binaries.
 
 **Who hits this.** Nobody using the bundled binaries. `FrameFlow.Native.Runtime` ships FFmpeg 7.1
 and matches by construction. It reaches you if you set `CustomFfmpegPath`, or if you rely on

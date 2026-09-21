@@ -3,37 +3,61 @@ using FrameFlow.Native.Core;
 namespace FrameFlow.Native.Tests;
 
 /// <summary>
-/// Unit tests for <see cref="FfmpegAbiCheck"/>. Pure logic over a packed version integer,
+/// Unit tests for <see cref="FfmpegAbiCheck"/>. Pure logic over packed version integers,
 /// so no FFmpeg binary and no bootstrap are involved.
 /// </summary>
 public sealed class FfmpegAbiCheckTests
 {
-    /// <summary>Packs a libavutil version the way <c>avutil_version()</c> does.</summary>
+    /// <summary>Packs a library version the way the <c>*_version()</c> entry points do.</summary>
     private static uint Pack(int major, int minor = 8, int micro = 100) =>
         ((uint)major << 16) | ((uint)minor << 8) | (uint)micro;
 
+    /// <summary>A set where every library matches, as the bundled FFmpeg 7.1 does.</summary>
+    private static List<FfmpegLibraryVersion> MatchingSet() =>
+        [
+            .. FfmpegAbiCheck.RequiredLibraries.Select(lib => new FfmpegLibraryVersion(
+                lib,
+                Pack(FfmpegAbiCheck.ExpectedMajor(lib))
+            )),
+        ];
+
     /// <summary>
-    /// The binding package supplies the expected major, so this is the one assertion that
-    /// pins a literal. It fails when the <c>FFmpeg.AutoGen.Abstractions</c> reference in
+    /// The binding package supplies the expected majors, so these are the assertions that pin
+    /// literals. They fail when the <c>FFmpeg.AutoGen.Abstractions</c> reference in
     /// <c>FrameFlow.Native.csproj</c> crosses a major version, which is the moment
     /// <c>scripts/fetch-ffmpeg.cs</c>, <c>scripts/runtime-manifest.json</c> and
-    /// <c>THIRD-PARTY-NOTICES.md</c> have to move with it.
+    /// <c>THIRD-PARTY-NOTICES.md</c> have to move with it. The numbers are the sonames the
+    /// bundled payload carries: avutil-59, swresample-5, swscale-8, avcodec-61, avformat-61.
     /// </summary>
     [Fact]
-    public void ExpectedAvutilMajor_IsFFmpeg7()
+    public void ExpectedMajor_MatchesFFmpeg7Sonames()
     {
-        Assert.Equal(59, FfmpegAbiCheck.ExpectedAvutilMajor);
+        Assert.Equal(59, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvUtil));
+        Assert.Equal(5, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.SwResample));
+        Assert.Equal(8, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.SwScale));
+        Assert.Equal(61, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvCodec));
+        Assert.Equal(61, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvFormat));
     }
 
     [Fact]
-    public void Check_MatchingMajor_IsCompatible()
+    public void ExpectedAvutilMajor_AgreesWithExpectedMajor()
+    {
+        Assert.Equal(
+            FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvUtil),
+            FfmpegAbiCheck.ExpectedAvutilMajor
+        );
+    }
+
+    // --- Single-library overload (the shape the bootstrapper's own gate uses) ---
+
+    [Fact]
+    public void Check_MatchingAvutilMajor_IsCompatible()
     {
         var verdict = FfmpegAbiCheck.Check(Pack(FfmpegAbiCheck.ExpectedAvutilMajor));
 
         Assert.True(verdict.IsCompatible);
         Assert.Null(verdict.Message);
-        Assert.Equal(FfmpegAbiCheck.ExpectedAvutilMajor, verdict.DetectedMajor);
-        Assert.Equal(FfmpegAbiCheck.ExpectedAvutilMajor, verdict.ExpectedMajor);
+        Assert.Empty(verdict.Mismatched);
     }
 
     [Fact]
@@ -52,15 +76,15 @@ public sealed class FfmpegAbiCheckTests
     [InlineData(-1)]
     [InlineData(1)]
     [InlineData(2)]
-    public void Check_DifferentMajor_IsIncompatible(int offset)
+    public void Check_DifferentAvutilMajor_IsIncompatible(int offset)
     {
         var detected = FfmpegAbiCheck.ExpectedAvutilMajor + offset;
 
         var verdict = FfmpegAbiCheck.Check(Pack(detected));
 
         Assert.False(verdict.IsCompatible);
-        Assert.Equal(detected, verdict.DetectedMajor);
-        Assert.Equal(FfmpegAbiCheck.ExpectedAvutilMajor, verdict.ExpectedMajor);
+        var entry = Assert.Single(verdict.Mismatched);
+        Assert.Equal(FfmpegLibrary.AvUtil, entry.Library);
     }
 
     /// <summary>
@@ -68,7 +92,7 @@ public sealed class FfmpegAbiCheckTests
     /// the reader unable to tell which side to change.
     /// </summary>
     [Fact]
-    public void Check_DifferentMajor_MessageNamesBothVersions()
+    public void Check_DifferentAvutilMajor_MessageNamesBothVersions()
     {
         var detected = FfmpegAbiCheck.ExpectedAvutilMajor + 2;
 
@@ -92,5 +116,83 @@ public sealed class FfmpegAbiCheckTests
         Assert.NotNull(message);
         Assert.Contains("FFmpeg 9.x", message);
         Assert.Contains("FFmpeg 7.x", message);
+    }
+
+    // --- Whole-set overload ---
+
+    [Fact]
+    public void Check_AllLibrariesMatching_IsCompatible()
+    {
+        var verdict = FfmpegAbiCheck.Check(MatchingSet());
+
+        Assert.True(verdict.IsCompatible);
+        Assert.Empty(verdict.Mismatched);
+    }
+
+    /// <summary>
+    /// The case a libavutil-only check cannot see. Each library is resolved independently, so
+    /// a search path can serve avutil from one FFmpeg generation and avcodec from another.
+    /// avcodec owns <c>AVCodecContext</c> and <c>AVPacket</c>, which FrameFlow overlays.
+    /// </summary>
+    [Fact]
+    public void Check_CompanionLibraryFromAnotherGeneration_IsIncompatible()
+    {
+        var mixed = MatchingSet();
+        var index = mixed.FindIndex(v => v.Library == FfmpegLibrary.AvCodec);
+        mixed[index] = new FfmpegLibraryVersion(
+            FfmpegLibrary.AvCodec,
+            Pack(FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvCodec) + 1)
+        );
+
+        var verdict = FfmpegAbiCheck.Check(mixed);
+
+        Assert.False(verdict.IsCompatible);
+        var entry = Assert.Single(verdict.Mismatched);
+        Assert.Equal(FfmpegLibrary.AvCodec, entry.Library);
+        Assert.Contains("libavcodec", verdict.Message);
+    }
+
+    [Fact]
+    public void Check_SeveralMismatches_MessageNamesEachLibrary()
+    {
+        List<FfmpegLibraryVersion> mixed =
+        [
+            new(FfmpegLibrary.AvUtil, Pack(FfmpegAbiCheck.ExpectedAvutilMajor)),
+            new(FfmpegLibrary.SwScale, Pack(99)),
+            new(FfmpegLibrary.AvFormat, Pack(98)),
+        ];
+
+        var verdict = FfmpegAbiCheck.Check(mixed);
+
+        Assert.False(verdict.IsCompatible);
+        Assert.Equal(2, verdict.Mismatched.Count);
+        Assert.Contains("libswscale", verdict.Message);
+        Assert.Contains("libavformat", verdict.Message);
+        Assert.DoesNotContain("libavutil", verdict.Message);
+    }
+
+    [Fact]
+    public void Check_EmptySet_IsCompatible()
+    {
+        // Nothing probed is nothing to refuse. The loader always passes the full set; this
+        // pins the behaviour rather than leaving it to the reader.
+        var verdict = FfmpegAbiCheck.Check([]);
+
+        Assert.True(verdict.IsCompatible);
+    }
+
+    [Fact]
+    public void Check_NullSet_Throws()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            FfmpegAbiCheck.Check((IReadOnlyList<FfmpegLibraryVersion>)null!)
+        );
+    }
+
+    [Fact]
+    public void Name_CoversEveryRequiredLibrary()
+    {
+        foreach (var library in FfmpegAbiCheck.RequiredLibraries)
+            Assert.StartsWith("lib", FfmpegAbiCheck.Name(library));
     }
 }

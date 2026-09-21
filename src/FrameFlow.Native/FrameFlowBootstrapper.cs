@@ -148,8 +148,13 @@ public sealed class FrameFlowBootstrapper : IFrameFlowBootstrapper
             // When bundled loading fails and the system probe is also enabled, fall through
             // to the system source rather than failing immediately. This is the expected
             // behavior when both UseBundledBinaries and ProbeSystemLibraries are true.
+            // An ABI mismatch is excluded: the libraries did load, FFmpeg loads once per
+            // process, and a second TryLoad cannot replace them. Retrying would report the
+            // same refusal against the system source and search path, naming binaries that
+            // were never the ones loaded.
             if (
                 !loadResult.IsSuccess
+                && !loadResult.IsAbiMismatch
                 && binarySource == FfmpegBinarySource.Bundled
                 && _options.ProbeSystemLibraries
             )
@@ -176,9 +181,15 @@ public sealed class FrameFlowBootstrapper : IFrameFlowBootstrapper
                 ? FfmpegAbiCheck.Check(loadResult.AvutilVersion)
                 : default;
 
-            // A mismatched major links and runs. ADR-0017 overlays generated struct
-            // layouts onto native pointers and FFmpeg moves those layouts every major,
-            // so without this gate the failure is wrong field values, not an error.
+            // A mismatched major links and runs. ADR-0017 overlays generated struct layouts
+            // onto native pointers and FFmpeg moves those layouts every major, so without a
+            // gate the failure is wrong field values, not an error.
+            //
+            // The authoritative gate is in FfmpegNativeLibraryLoader.TryLoad, where both
+            // bootstrap paths converge and where every library's version is readable. This
+            // one covers a loader that reports a version without going through that check,
+            // which is the shape of the test doubles. It does not fire when TryLoad already
+            // caught the mismatch, because that returns IsSuccess: false.
             if (
                 loadResult.IsSuccess
                 && abiVerdict is { IsCompatible: false, Message: { } mismatchMessage }
@@ -186,11 +197,9 @@ public sealed class FrameFlowBootstrapper : IFrameFlowBootstrapper
             {
                 _logger.LogError(
                     "FrameFlow native bootstrap failed: FFmpeg ABI mismatch. "
-                        + "BinarySource={BinarySource}, DetectedAvutilMajor={Detected}, "
-                        + "ExpectedAvutilMajor={Expected}",
+                        + "BinarySource={BinarySource}, Detail={Detail}",
                     binarySource,
-                    abiVerdict.DetectedMajor,
-                    abiVerdict.ExpectedMajor
+                    mismatchMessage
                 );
 
                 result = new FrameFlowBootstrapResult(
