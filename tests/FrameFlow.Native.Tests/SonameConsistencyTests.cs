@@ -107,9 +107,19 @@ public sealed class SonameConsistencyTests
     private const string ThisFileName = "SonameConsistencyTests.cs";
 
     /// <summary>
-    /// A floor on what a healthy sweep sees, so a pattern that stopped matching fails here
-    /// instead of passing over nothing. 14 files carry a soname today.
+    /// A floor on what a healthy sweep sees, so a pattern that matches nothing fails here
+    /// instead of passing over nothing. 23 files carry a soname today, excluding this one.
     /// </summary>
+    /// <remarks>
+    /// Deliberately slack against that 23, because the number legitimately falls when a
+    /// duplicate helper is consolidated or a library is dropped from the fetch, and a floor
+    /// that tracked the count closely would turn every such cleanup into an edit here.
+    ///
+    /// It does not catch a <i>partial</i> pattern break. The first version of this matcher
+    /// anchored on the library stem and silently missed both Unix spellings, which would
+    /// have left roughly fourteen files still matching and cleared any floor worth setting.
+    /// The matcher tests below are what catch that, and they did.
+    /// </remarks>
     private const int MinimumFilesExpected = 10;
 
     private static int ExpectedMajor(string library) =>
