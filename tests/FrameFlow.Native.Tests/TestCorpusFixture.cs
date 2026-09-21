@@ -36,6 +36,40 @@ public static class TestEnvironment
     /// </summary>
     public static bool HasFfmpeg => FfmpegPath is not null;
 
+    /// <summary>
+    /// True when the ffmpeg executable sits in the same directory as the FFmpeg shared
+    /// libraries, which is what <c>scripts/fetch-ffmpeg.cs</c> produces and what a test
+    /// needs before it can treat the binary's directory as a bootstrap target.
+    /// </summary>
+    /// <remarks>
+    /// False for a PATH-resolved ffmpeg whose bin directory holds no shared libraries,
+    /// and false when there is no binary at all.
+    /// </remarks>
+    public static bool FfmpegBinaryIsBesideLibraries
+    {
+        get
+        {
+            if (FfmpegPath is null)
+                return false;
+
+            var libraryDir = FindFfmpegLibraryDirectory();
+            if (libraryDir is null)
+                return false;
+
+            var binaryDir = Path.GetDirectoryName(FfmpegPath);
+            if (binaryDir is null)
+                return false;
+
+            return string.Equals(
+                Path.GetFullPath(binaryDir).TrimEnd(Path.DirectorySeparatorChar),
+                Path.GetFullPath(libraryDir).TrimEnd(Path.DirectorySeparatorChar),
+                OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal
+            );
+        }
+    }
+
     /// <summary>True if the corpus directory has at least one media file.</summary>
     public static bool HasCorpusFiles =>
         Directory.Exists(CorpusDir) && Directory.EnumerateFiles(CorpusDir).Any();
@@ -209,6 +243,63 @@ public sealed class RequiresFfmpegFactAttribute : FactAttribute
                 + "Run scripts/fetch-ffmpeg.cs or install FFmpeg with shared libraries. "
                 + $"Expected {(OperatingSystem.IsWindows() ? "avutil-59.dll" : "libavutil.so.59")} "
                 + "on PATH or in runtimes/{rid}/native/.";
+    }
+}
+
+/// <summary>
+/// Marks a test that requires the ffmpeg <i>executable</i>, not just the shared
+/// libraries, and optionally requires it to sit in the same directory as them.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <see cref="RequiresFfmpegFactAttribute"/> gates on
+/// <see cref="TestEnvironment.HasFfmpegSharedLibraries"/>, which is a different
+/// question. A test that gates on the libraries and then dereferences
+/// <see cref="TestEnvironment.FfmpegPath"/> passes on every layout that ships both
+/// together and fails on one that does not.
+/// </para>
+/// <para>
+/// <paramref name="besideLibraries"/> is the stronger form, for a test that treats
+/// the binary's directory as a directory it can bootstrap against.
+/// <see cref="TestEnvironment.FindFfmpeg"/> falls back to PATH, and a PATH ffmpeg
+/// is usually a launcher shim or a bin directory with no shared libraries in it, so
+/// the assumption holds only when the two resolve to the same place.
+/// </para>
+/// <para>
+/// Two layouts break the weak form. A PATH-only ffmpeg on a machine whose libraries
+/// live in runtimes/{rid}/native, and the osx-arm64 artifact from
+/// scripts/build-ffmpeg-macos.sh, which carries the dylibs and deliberately no
+/// tools because the corpus encoders an ffmpeg binary would need are excluded from
+/// that build.
+/// </para>
+/// </remarks>
+public sealed class RequiresFfmpegBinaryFactAttribute : FactAttribute
+{
+    public RequiresFfmpegBinaryFactAttribute(bool besideLibraries = false)
+    {
+        if (!TestEnvironment.HasFfmpegSharedLibraries)
+        {
+            Skip = "FFmpeg shared libraries not available. Run scripts/fetch-ffmpeg.cs.";
+            return;
+        }
+
+        if (!TestEnvironment.HasFfmpeg)
+        {
+            Skip =
+                "The ffmpeg executable is not available. The shared libraries are, so this "
+                + "is a layout that ships libraries without tools (see "
+                + "scripts/build-ffmpeg-macos.sh) or an install with no ffmpeg on PATH.";
+            return;
+        }
+
+        if (besideLibraries && !TestEnvironment.FfmpegBinaryIsBesideLibraries)
+        {
+            Skip =
+                "The ffmpeg executable and the FFmpeg shared libraries are in different "
+                + "directories, so the binary's directory is not one this test can "
+                + "bootstrap against. Run scripts/fetch-ffmpeg.cs to put both in "
+                + "runtimes/{rid}/native/.";
+        }
     }
 }
 
