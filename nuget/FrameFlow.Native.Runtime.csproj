@@ -65,7 +65,7 @@
     <PackageProjectUrl>https://github.com/charles8051/frame-flow</PackageProjectUrl>
     <RepositoryUrl>https://github.com/charles8051/frame-flow</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <Description>FFmpeg 7.1 shared native libraries for FrameFlow. Provides pre-built binaries for win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, and osx-arm64.</Description>
+    <Description>FFmpeg 7.1 shared native libraries for FrameFlow. Provides pre-built binaries for win-x64, win-arm64, linux-x64, linux-arm64, and osx-arm64.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>ffmpeg;native;runtime;binaries;video;audio;media;cross-platform</PackageTags>
 
@@ -162,13 +162,25 @@
     />
   </ItemGroup>
 
-  <!-- macOS -->
+  <!--
+    macOS: arm64 only.
+
+    osx-x64 had globs here and they never matched, because publish.yml has never
+    fetched it. They are gone rather than left dormant. scripts/fetch-ffmpeg.cs
+    resolves Intel Macs from a Homebrew keg whose dylibs reach into the Homebrew
+    prefix for their transitive dependencies, so a glob that ever did match would
+    publish binaries that load on the machine that built them and nowhere else.
+    Absent is a supported state for a RID here; half-working is not.
+
+    osx-arm64 is a different artifact from the other four. It is built by
+    scripts/build-ffmpeg-macos.sh, links no external libraries, and is therefore
+    LGPL-2.1 rather than the LGPL-3-and-Apache-2.0 of the BtbN builds. The
+    PackageLicenseExpression above still describes the package, which is an
+    aggregate and is governed by the strictest terms in it. It overstates the
+    macOS files specifically, and THIRD-PARTY-NOTICES.md is where that is
+    written down per build rather than per package.
+  -->
   <ItemGroup>
-    <Content Include="../runtimes/osx-x64/native/libavcodec.*.dylib;../runtimes/osx-x64/native/libavformat.*.dylib;../runtimes/osx-x64/native/libavutil.*.dylib;../runtimes/osx-x64/native/libswresample.*.dylib;../runtimes/osx-x64/native/libswscale.*.dylib"
-      PackagePath="runtimes/osx-x64/native"
-      Pack="true"
-      Rid="osx-x64"
-    />
     <Content Include="../runtimes/osx-arm64/native/libavcodec.*.dylib;../runtimes/osx-arm64/native/libavformat.*.dylib;../runtimes/osx-arm64/native/libavutil.*.dylib;../runtimes/osx-arm64/native/libswresample.*.dylib;../runtimes/osx-arm64/native/libswscale.*.dylib"
       PackagePath="runtimes/osx-arm64/native"
       Pack="true"

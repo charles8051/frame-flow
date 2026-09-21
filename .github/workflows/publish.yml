@@ -302,19 +302,26 @@ jobs:
       # FrameFlow.Native.Runtime is packed — the runtime package's whole
       # purpose is to ship those binaries downstream.
       #
-      # osx-x64 / osx-arm64 are intentionally NOT fetched here:
-      # scripts/fetch-ffmpeg.cs resolves macOS binaries via a local
-      # ffmpeg@7 install (/usr/local/opt/ffmpeg@7/lib or
-      # /opt/homebrew/opt/ffmpeg@7/lib), which the ubuntu-latest publish
-      # runner doesn't have. v0.1.0 ships the runtime package without
-      # macOS native binaries; follow-up either matrixes the fetch
-      # across OSes (uploading artifacts) or installs Linuxbrew here.
-      - name: Fetch FFmpeg binaries (Windows + Linux)
+      # osx-arm64 is fetched here now. It used to be excluded along with
+      # osx-x64 because fetch-ffmpeg.cs read both from a local Homebrew keg that
+      # this runner does not have. It no longer does: osx-arm64 downloads a
+      # pinned, hashed, self-contained LGPL artifact built by
+      # .github/workflows/ffmpeg-macos.yml, which needs nothing installed and
+      # works from a Linux runner like any other download.
+      #
+      # osx-x64 stays out, and not only because there is no artifact for it.
+      # fetch-ffmpeg.cs still resolves Intel Macs from the keg, and those dylibs
+      # resolve transitive dependencies out of the Homebrew prefix, so packing
+      # them would publish binaries that load on the machine that built them and
+      # nowhere else. The runtime package's osx-x64 globs were removed for the
+      # same reason: absent is a supported state, half-working is not.
+      - name: Fetch FFmpeg binaries (Windows + Linux + macOS arm64)
         run: |
           dotnet run scripts/fetch-ffmpeg.cs -- --rid win-x64 --force
           dotnet run scripts/fetch-ffmpeg.cs -- --rid win-arm64 --force
           dotnet run scripts/fetch-ffmpeg.cs -- --rid linux-x64 --force
           dotnet run scripts/fetch-ffmpeg.cs -- --rid linux-arm64 --force
+          dotnet run scripts/fetch-ffmpeg.cs -- --rid osx-arm64 --force
 
       - name: Restore
         run: dotnet restore FrameFlow.slnx

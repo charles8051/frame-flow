@@ -9,12 +9,22 @@ and nothing here is legal advice.
 
 ---
 
-## FFmpeg — LGPL-3.0-or-later
+## FFmpeg — LGPL-3.0-or-later (win/linux) and LGPL-2.1-or-later (osx-arm64)
 
-> The heading said `LGPL-2.1-or-later` until 2026-08-31. That was wrong for this
-> build, and the correction is explained under **Configuration** and **FFmpeg's own
-> code** below: `--enable-version3` is not optional here, so 3 is the version that
-> reaches a recipient. FFmpeg's *source* remains offered as "2.1 or later".
+> The heading said `LGPL-2.1-or-later` until 2026-08-31. That was wrong for the
+> BtbN build, and the correction is explained under **Configuration** and
+> **FFmpeg's own code** below: `--enable-version3` is not optional there, so 3 is
+> the version that reaches a recipient. FFmpeg's *source* remains offered as
+> "2.1 or later".
+
+> **Two builds, two licences, since 2026-09-21.** Everything in this section
+> describes the BtbN build unless it says otherwise. The osx-arm64 libraries come
+> from a different build made in this repository, and it is LGPL-2.1-or-later
+> because it links no external libraries at all. Its identity and terms are under
+> **The osx-arm64 build** at the end of this section. The
+> `FrameFlow.Native.Runtime` package declares `LGPL-3.0-or-later AND Apache-2.0`,
+> which governs the package as an aggregate and overstates the macOS files
+> specifically; this file is where the per-build terms are recorded.
 
 Distributed as **unmodified pre-built shared libraries** in the
 `FrameFlow.Native.Runtime` and `FrameFlow.Native` packages: `avcodec`,
@@ -103,6 +113,58 @@ natives and an installer script.
 > set it — that example is not distributed, and exists partly to exercise the
 > bundle-extraction probe in `FrameFlowBootstrapper`. Take advice on what
 > LGPL-2.1 §6 requires before shipping a build shaped that way.
+
+### The osx-arm64 build
+
+BtbN publishes no macOS binaries. Until 2026-09 `scripts/fetch-ffmpeg.cs` copied
+macOS libraries from an installed Homebrew `ffmpeg@7` keg, which could not be
+redistributed: the keg is GPL-3 (it links x264 and x265), and its dylibs resolve
+transitive dependencies out of the Homebrew prefix, so they load only on a machine
+that has Homebrew and that formula. The packages therefore shipped no macOS
+natives at all.
+
+The osx-arm64 libraries now come from a build made in this repository.
+
+- **License:** LGPL-2.1-or-later. Not 3, and no Apache-2.0 component. The reason
+  is the absence rather than a flag: this build is configured
+  `--disable-autodetect`, so it links **no external libraries**, and none of
+  `gmp`, `libaribb24`, `libopencore-amrnb/wb` or `libvmaf` — the components that
+  force `--enable-version3` on the BtbN build — is present. It also carries
+  `--disable-version3` explicitly.
+- **Build recipe:** `scripts/build-ffmpeg-macos.sh`, run by
+  `.github/workflows/ffmpeg-macos.yml`. The full configure line is recorded in
+  the release's `BUILD-INFO.txt`.
+- **Build used:** `ffmpeg-macos-n7.1.5-1`, at
+  https://github.com/charles8051/frame-flow/releases/tag/ffmpeg-macos-n7.1.5-1
+- **Corresponding source:** commit
+  **`3a0867c2bfda4a4d4309ca1a8cbdc6175e67f587`** in
+  https://git.ffmpeg.org/ffmpeg.git, browsable at
+  https://github.com/FFmpeg/FFmpeg/commit/3a0867c2bfda4a4d4309ca1a8cbdc6175e67f587.
+
+  ```
+  git clone https://git.ffmpeg.org/ffmpeg.git && git -C ffmpeg checkout 3a0867c2bf
+  ```
+
+  Upstream calls that commit `n7.1.5`. The build pins the **commit**, and checks
+  the tag against it rather than trusting the tag to produce it, because a tag is
+  a mutable ref.
+- **Modifications:** none to the source. The build is configured, not patched.
+  `--install-name-dir=@loader_path` changes only how each library names its
+  siblings, so the seven files are self-contained in whatever directory they land
+  in. The build fails rather than ships if any load command points outside that
+  directory or outside the system paths.
+- **Relinking:** the same freedom the other platforms have. The libraries are
+  loose `.dylib` files beside the application, replaceable with another build of
+  the same soname. `LICENSE-LGPL-2.1.txt` in this repository states the terms for
+  these files; the LGPL-3 and GPL-3 texts that follow are for the BtbN build.
+- **Not shipped from this build:** `ffmpeg` and `ffprobe`. The build excludes the
+  external encoders those tools need for corpus generation, so it produces
+  libraries only.
+
+**osx-x64 is absent, not broken.** The build is arm64-only, so Intel Macs have no
+artifact and `scripts/fetch-ffmpeg.cs` still resolves them from a Homebrew keg for
+develop-time use. Those keg files are not redistributed and no osx-x64 RID is
+packed.
 
 ## OpenCORE AMR — Apache-2.0
 

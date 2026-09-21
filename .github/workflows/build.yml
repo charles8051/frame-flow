@@ -163,29 +163,15 @@ jobs:
       # Host RID only. The runtime package's all-RID fetch belongs to
       # publish.yml; the tests look under <repo>/runtimes/{rid}/native for the
       # runner's own RID.
-      # macOS has no pinned FFmpeg artifact. fetch-ffmpeg.cs copies from an
-      # already-installed Homebrew keg, because raw bottles carry unresolved
-      # @@HOMEBREW_PREFIX@@ / @@HOMEBREW_CELLAR@@ placeholders and produce
-      # dylibs that fail to load. So the keg has to exist before the fetch runs,
-      # and nothing installed it — which is why the macOS leg has never got past
-      # the next step. It failed with exactly the instruction below:
+      # macOS needed `brew install ffmpeg@7` here until 2026-09, because
+      # fetch-ffmpeg.cs read macOS libraries out of an installed keg and nothing
+      # installed one, so the leg never got past the next step. It downloads a
+      # pinned, hashed artifact now like every other RID, so the step is gone and
+      # a green macOS leg tests the same bytes the package ships.
       #
-      #   ffmpeg@7 not found at /opt/homebrew/opt/ffmpeg@7/lib.
-      #   Install it first: brew install ffmpeg@7
-      #
-      # Pinned to ffmpeg@7 rather than plain `ffmpeg`, which is whichever major
-      # Homebrew ships that week; the script looks for opt/ffmpeg@7 by name.
-      #
-      # Worth knowing: this is NOT the pinned LGPL build the other platforms
-      # download from BtbN. It is a separate Homebrew build with its own
-      # configuration. That only affects dev and CI machines — the published
-      # FrameFlow.Native.Runtime package ships the pinned binaries and no macOS
-      # RID — but do not read a green macOS leg as having tested the shipped
-      # FFmpeg.
-      - name: Install FFmpeg 7 (macOS only)
-        if: runner.os == 'macOS'
-        run: brew install ffmpeg@7
-
+      # macos-latest is Apple silicon, which is the only macOS RID with an
+      # artifact. The build is arm64-only and Intel Macs still come from a keg;
+      # an Intel runner here would fail the fetch with that instruction.
       - name: Fetch FFmpeg binaries (host platform)
         run: dotnet run scripts/fetch-ffmpeg.cs
 
