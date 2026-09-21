@@ -60,11 +60,10 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
     public TimeSpan Position => _controller.Position;
     public TimeSpan Duration => _coordinator.CurrentDuration;
 
-    public MediaInfo MediaInfo =>
-        _coordinator.CurrentMediaInfo
-        ?? throw new InvalidOperationException(
-            "MediaInfo is not yet available — the playlist hasn't loaded its first item."
-        );
+    // Null while nothing is loaded, matching IPlaybackController.MediaInfo. It used to throw,
+    // which made a reachable state look like a caller error and cost FrameFlowStreamSummary a
+    // bare catch around a property read.
+    public MediaInfo? MediaInfo => _coordinator.CurrentMediaInfo;
 
     public IObservable<PlaybackState> StateChanged => _stateChanged;
     public IObservable<TimeSpan> PositionTick => _controller.PositionTick;

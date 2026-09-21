@@ -73,14 +73,9 @@ public sealed class FrameFlowStreamSummary : TextBlock
 
     private void Refresh(IMediaTransport player)
     {
-        // MediaInfo throws if the player hasn't finished loading.
-        // Catch and clear — the next state transition will retry.
-        MediaInfo info;
-        try
-        {
-            info = player.MediaInfo;
-        }
-        catch
+        // Null until the current item finishes loading. Clear and wait; the next state
+        // transition retries.
+        if (player.MediaInfo is not { } info)
         {
             Text = string.Empty;
             return;

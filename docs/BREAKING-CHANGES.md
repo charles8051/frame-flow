@@ -1066,6 +1066,53 @@ If you were reading the sink's queue health, `GetDiagnostics()` returns an
 `AudioSinkDiagnosticsSnapshot` and is the supported answer. `BufferQueueState` never reflected a
 live sink in any case: it is a value the sink folds, not a view onto one.
 
+### 40. `IMediaTransport.MediaInfo` is nullable, and no longer throws
+
+> **This one is a warning, not an error.** `player.MediaInfo.Duration` still compiles. With
+> nullable reference types on you get CS8602 at the dereference; with them off you get nothing
+> until it returns null. It used to throw at the same moment, so the failure moves rather than
+> appears.
+
+```csharp
+// Before: throws InvalidOperationException when nothing is loaded.
+var info = player.MediaInfo;
+
+// After: null when nothing is loaded.
+if (player.MediaInfo is not { } info)
+    return;
+```
+
+**Why.** Null was always reachable and the type denied it. A player built without `WithMedia`
+starts with its sinks warm and an empty queue (ADR-0077's amendment of 2026-09-17), a player
+whose queue was cleared has no current item, and a player between items has not finished opening
+the next. The property answered all three by throwing `InvalidOperationException`, which is the
+exception that means *the caller did something wrong* — and none of those callers had.
+
+The cost showed up in this library's own chrome. `FrameFlowStreamSummary.Refresh` read the
+property inside a bare `catch`:
+
+```csharp
+// Before, in FrameFlowStreamSummary:
+MediaInfo info;
+try { info = player.MediaInfo; }
+catch { Text = string.Empty; return; }
+```
+
+A bare catch to handle an ordinary state, swallowing every other exception on the way past. It is
+now an `is not { } info` check. The test double in `FrameFlowVolumeControlTests` had the same
+tell from the other side: it returned `default!`, which is null behind a null-forgiving operator,
+because there was nothing honest to return.
+
+**This also closes the last silent gap between the two tiers.** `IPlaybackController.MediaInfo`
+was already `MediaInfo?`. 13 member names appear on both it and `IMediaTransport`; every other
+difference between them either does not compile if confused (`PlaybackStateChanged` versus
+`StateChanged` differ in name and payload) or is a different member. `MediaInfo` was the one that
+shared a name, shared a type, and disagreed only in whether null was a value or a throw. See
+ADR-0024's amendment.
+
+**If you want the old behaviour**, `player.MediaInfo ?? throw new InvalidOperationException(...)`
+at your call site says so explicitly.
+
 ## `v0.9.0-alpha.1` — since `v0.8.0-alpha.1`
 
 ### 1. `IMediaPlayer` transport commands return `Result`

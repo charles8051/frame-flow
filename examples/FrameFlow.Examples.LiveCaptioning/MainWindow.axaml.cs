@@ -518,7 +518,8 @@ public partial class MainWindow : Window
         // FrameFlowStateBadge.
         PlayerChrome.MediaPlayer = _player;
 
-        var hasAudio = _player.MediaInfo.AudioStreams.Count > 0;
+        // Null MediaInfo means nothing is loaded, which has no audio either.
+        var hasAudio = _player.MediaInfo?.AudioStreams.Count > 0;
         var caveats = new List<string>();
         if (!hasAudio)
             caveats.Add("no audio — captioning disabled");

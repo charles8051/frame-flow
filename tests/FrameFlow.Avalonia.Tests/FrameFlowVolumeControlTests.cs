@@ -149,7 +149,7 @@ public sealed class FrameFlowVolumeControlTests
         public PlaybackState State => PlaybackState.Idle;
         public TimeSpan Position => TimeSpan.Zero;
         public TimeSpan Duration => TimeSpan.Zero;
-        public MediaInfo MediaInfo => default!;
+        public MediaInfo? MediaInfo => null;
 
         public IObservable<PlaybackState> StateChanged { get; } = new Never<PlaybackState>();
         public IObservable<TimeSpan> PositionTick { get; } = new Never<TimeSpan>();

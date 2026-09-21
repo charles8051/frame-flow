@@ -1,6 +1,7 @@
 # ADR-0024: PlaybackController as Public API Surface
 
-**Status:** Proposed
+**Status:** Accepted (2026-04-07), implemented. Marked *Proposed* until 2026-09-20; see
+*Amendments* at the foot for what shipped and where the tree drifted from the sketch below.
 **Date:** 2026-04-07
 **Supersedes:** None (refines current PlaybackSession public surface)
 **Related:** ADR-0008 (result types), ADR-0020 (lifecycle decoupled from processing), ADR-0022 (long-lived workers with pause gate), ADR-0023 (hierarchical state machine with channel dispatch)
@@ -181,3 +182,35 @@ Considered. A controller that is purely a thread-safe wrapper around session met
 ### Use a mediator/message bus instead of direct callbacks
 
 Rejected as over-engineering. The controller creates the session and wires callbacks at creation time. A mediator adds indirection without solving any problem that direct delegates do not already solve at this scale.
+
+## Amendments
+
+> **Amended 2026-09-20. Accepted, and implemented.** The status line said *Proposed* for a
+> decision that has been in the tree since 2026-04. Every part of it shipped:
+> `IPlaybackController` is public and `PlaybackController.Create` is its factory, and
+> `IPlaybackSession` is `internal` (`src/FrameFlow.Playback/IPlaybackSession.cs:26`), so the
+> demotion in decision 2 and the interface swap in decision 3 both happened.
+>
+> **Two drifts between decision 3's sketch and the tree**, neither changing the decision:
+>
+> - `StopAsync` is `UnloadAsync`. Same operation, and the name matches `LoadAsync`.
+> - The interface grew `ItemFailed`, `ItemLooped` and `ItemStalled`, which name the playlist
+>   item, once ADR-0077 made every player a queue.
+>
+> **The tier boundary this records is still the right one, and it is not free.** ADR-0079 put
+> `IMediaTransport` and `IMediaPlayer` above this interface in `FrameFlow.Player`, and 13 member
+> names now appear on both tiers. They are mostly identical. Where they are not, a reader moving
+> between the two should know:
+>
+> | | `IPlaybackController` | `IMediaTransport` |
+> | --- | --- | --- |
+> | state event | `PlaybackStateChanged`, `IObservable<StateTransition<PlaybackState>>` | `StateChanged`, `IObservable<PlaybackState>` |
+> | item events | on this interface | on `IMediaPlayer`, the playlist tier |
+>
+> The state event differs in both name and payload, so confusing the two does not compile. That
+> is deliberate: the transport tier drops the `Previous` half because its consumers are chrome
+> widgets that render the current state.
+>
+> `MediaInfo` used to be the exception that did not announce itself — nullable here and
+> non-null on `IMediaTransport`, where it threw instead. That is fixed;
+> [breaking change 40](../BREAKING-CHANGES.md) has it. Both tiers now return `MediaInfo?`.
