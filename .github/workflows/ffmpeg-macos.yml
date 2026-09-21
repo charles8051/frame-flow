@@ -57,13 +57,34 @@ jobs:
           chmod +x scripts/build-ffmpeg-macos.sh
           scripts/build-ffmpeg-macos.sh "$GITHUB_WORKSPACE/ffmpeg-osx-arm64"
 
+      # RELEASE_TAG arrives through env, not through ${{ }} interpolated into the
+      # script. A dispatch input is attacker-controlled in the same sense a PR
+      # title is, and interpolation splices it into the shell program itself, so
+      # a value carrying shell syntax would run on the runner. Through env it is
+      # data that the shell only ever expands as a value.
       - name: Read build identity
         id: identity
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
         run: |
           set -euo pipefail
           commit=$(awk '/^commit:/ {print $2}' ffmpeg-osx-arm64/BUILD-INFO.txt)
-          tag_input="${{ inputs.release-tag }}"
-          echo "tag=${tag_input:-ffmpeg-macos-${commit:0:12}}" >> "$GITHUB_OUTPUT"
+
+          # A tag becomes a git ref and a release name, so it is constrained
+          # rather than passed through. Anything outside this set is refused
+          # instead of sanitised: a silently rewritten tag is worse than a
+          # failed run, because runtime-manifest.json would then point at a name
+          # nobody chose.
+          if [ -n "$RELEASE_TAG" ]; then
+            case "$RELEASE_TAG" in
+              *[!A-Za-z0-9._-]*)
+                echo "::error::release-tag may contain only A-Z a-z 0-9 . _ -"
+                exit 1
+                ;;
+            esac
+          fi
+
+          echo "tag=${RELEASE_TAG:-ffmpeg-macos-${commit:0:12}}" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
       - name: Stage into runtimes/
