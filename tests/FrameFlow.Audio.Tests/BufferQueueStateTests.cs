@@ -117,10 +117,18 @@ public sealed class BufferQueueStateTests
         );
     }
 
-    [Theory]
-    [InlineData(AlSourceState.Paused)]
-    [InlineData(AlSourceState.Stopped)]
-    public void PlanUpload_AbortWhenPoolEmptyAndSourceWontDrain(AlSourceState state)
+    // One [Fact] per case rather than an [InlineData] pair: AlSourceState is internal
+    // (#336), and a public test method cannot name it in its signature (CS0051). A private
+    // helper can, and xunit v2 only discovers public methods.
+    [Fact]
+    public void PlanUpload_AbortWhenPoolEmptyAndSourcePaused() =>
+        AssertPlanUploadAborts(AlSourceState.Paused);
+
+    [Fact]
+    public void PlanUpload_AbortWhenPoolEmptyAndSourceStopped() =>
+        AssertPlanUploadAborts(AlSourceState.Stopped);
+
+    private static void AssertPlanUploadAborts(AlSourceState state)
     {
         // No free buffer AND the source is paused/stopped → no buffer will ever return;
         // abandon the flush so the pipeline worker reaches the barrier promptly.
@@ -194,10 +202,15 @@ public sealed class BufferQueueStateTests
         Assert.False(outcome.Next.SourceStarted);
     }
 
-    [Theory]
-    [InlineData(AlSourceState.PlayingOrInitial)]
-    [InlineData(AlSourceState.Paused)]
-    public void ObserveUnderrun_NotFlaggedWhenSourceNotStopped(AlSourceState state)
+    [Fact]
+    public void ObserveUnderrun_NotFlaggedWhenSourcePlaying() =>
+        AssertNoUnderrun(AlSourceState.PlayingOrInitial);
+
+    [Fact]
+    public void ObserveUnderrun_NotFlaggedWhenSourcePaused() =>
+        AssertNoUnderrun(AlSourceState.Paused);
+
+    private static void AssertNoUnderrun(AlSourceState state)
     {
         // A still-playing or merely-paused source is not starved.
         var started = New().AppendStaging(CoalesceTarget).ObserveQueueDepth(PreBuffer).Next;
