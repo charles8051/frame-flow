@@ -29,14 +29,7 @@ public sealed class StillImageDwellTests : IClassFixture<FfmpegBootstrapFixture>
     private static readonly TimeSpan Window = TimeSpan.FromSeconds(2);
 
     private static IMediaSource Paced(string path, TimeSpan dwell) =>
-        MediaSource.FromFile(path) with
-        {
-            InputFormat = "image2",
-            DemuxerOptions = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["framerate"] = $"1/{dwell.TotalSeconds:0}",
-            },
-        };
+        MediaSource.FromStill(path, dwell);
 
     [RequiresFfmpegAndCorpusFact]
     public async Task APacedStill_StaysUpForItsDwell_ThenEnds()

@@ -11,6 +11,23 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## Unreleased — since `v0.10.0`
+
+Nothing breaking yet.
+
+### Not breaking, but worth knowing
+
+- **`MediaSource.FromStill(path, dwell)` opens a still, so the `image2` recipe has one home.**
+  Opening a single image as a clip of a known length took three settings a caller had to know:
+  name `image2`, pass `framerate` as a rational, and pass `pattern_type=none`. Getting any one
+  wrong failed in a different way, and the failures read as decode problems rather than
+  configuration ones. The factory does all three and works the rational out from the dwell, in
+  exact integer terms, so a fractional dwell needs no invariant formatting: 7.5 seconds is
+  `2/15`. `MediaSource.FromFile` and the `with` form still work, and nothing that used them
+  changes. It takes no position on the extension — whether a file is one image is a fact about
+  the content, and a caller that hands it something animated gets the first frame reported as
+  the whole file, as before. #304.
+
 ## `v0.10.0` — since `v0.9.0-alpha.1`
 
 ### 1. A configurator without a sink is refused, and it used to run

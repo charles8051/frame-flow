@@ -57,6 +57,10 @@ status      # Ended 00:03.000/00:03.000
 sequence pattern, so a file actually named `photo%03d.png` fails with "could find no file
 with path ... and index in the range 0-4" while sitting right there on disk.
 
+The flags above are the general escape hatch, shown here on the case that motivated them. In
+code, `MediaSource.FromStill(path, dwell)` applies the same three settings and works the
+rational out from the dwell, so a caller opening a still does not repeat any of this.
+
 Durations are a number and a unit: `250ms`, `1.5s`, `2m`, `1h`. The unit is required — a
 bare number would have to mean seconds or milliseconds by convention, and a script that
 meant the other one is off by a thousand without saying so.

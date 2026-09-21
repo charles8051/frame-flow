@@ -172,4 +172,120 @@ public sealed class MediaSourceTests
         var source = new MediaSource { DisplayName = "Test" };
         Assert.Null(source.FilePath);
     }
+
+    // -----------------------------------------------------------------------
+    // FromStill — the image2 recipe, in one place (#304)
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void FromStill_NamesImage2_RatherThanLettingTheFileBeProbed()
+    {
+        // Probed, a single image opens on a *_pipe demuxer that reports no duration, so the item
+        // ends as soon as its one frame is presented. Naming the demuxer is the whole point.
+        var source = MediaSource.FromStill("slide.png", TimeSpan.FromSeconds(5));
+        Assert.Equal("image2", source.InputFormat);
+    }
+
+    [Fact]
+    public void FromStill_KeepsWhatFromFileSets()
+    {
+        var expected = MediaSource.FromFile("some/path/slide.png");
+        var source = MediaSource.FromStill("some/path/slide.png", TimeSpan.FromSeconds(5));
+
+        Assert.Equal(expected.DisplayName, source.DisplayName);
+        Assert.Equal(expected.FilePath, source.FilePath);
+        Assert.Equal(expected.Uri, source.Uri);
+    }
+
+    [Theory]
+    // A whole number of seconds reduces to 1/n, which is what a hand-written recipe produces.
+    [InlineData(5, "1/5")]
+    [InlineData(1, "1/1")]
+    [InlineData(13, "1/13")]
+    [InlineData(120, "1/120")]
+    public void FromStill_WritesAWholeSecondDwell_AsOneOverTheSeconds(int seconds, string expected)
+    {
+        var source = MediaSource.FromStill("slide.png", TimeSpan.FromSeconds(seconds));
+        Assert.Equal(expected, source.DemuxerOptions?["framerate"]);
+    }
+
+    [Fact]
+    public void FromStill_WritesAFractionalDwell_AsExactIntegerTerms()
+    {
+        // The reason this factory takes a TimeSpan rather than a formatted string. Writing the
+        // seconds into the denominator gives "1/7.5" — a decimal inside a rational, which then
+        // has to be formatted invariantly or a comma separator breaks it. Ticks give 2/15.
+        var source = MediaSource.FromStill("slide.png", TimeSpan.FromSeconds(7.5));
+        Assert.Equal("2/15", source.DemuxerOptions?["framerate"]);
+    }
+
+    [Fact]
+    public void FromStill_WritesASubSecondDwell_AsAFrameRateAboveOne()
+    {
+        var source = MediaSource.FromStill("slide.png", TimeSpan.FromMilliseconds(250));
+        Assert.Equal("4/1", source.DemuxerOptions?["framerate"]);
+    }
+
+    [Fact]
+    public void FromStill_NeverWritesADecimalPoint()
+    {
+        // Guards the whole class of culture bugs at once: an integer rational has no separator to
+        // get wrong, so no call site has to remember to format invariantly.
+        foreach (var dwell in new[]
+        {
+            TimeSpan.FromSeconds(7.5),
+            TimeSpan.FromSeconds(0.3),
+            TimeSpan.FromMilliseconds(1),
+            TimeSpan.FromTicks(1),
+            TimeSpan.FromSeconds(99.999),
+        })
+        {
+            var rate = MediaSource.FromStill("slide.png", dwell).DemuxerOptions?["framerate"];
+            Assert.NotNull(rate);
+            Assert.DoesNotContain('.', rate);
+            Assert.DoesNotContain(',', rate);
+        }
+    }
+
+    [Fact]
+    public void FromStill_SetsPatternTypeNone()
+    {
+        // image2 otherwise reads the path as a printf sequence pattern, so a file actually named
+        // photo%03d.png fails to open while sitting on disk.
+        var source = MediaSource.FromStill("photo%03d.png", TimeSpan.FromSeconds(5));
+        Assert.Equal("none", source.DemuxerOptions?["pattern_type"]);
+    }
+
+    [Fact]
+    public void FromStill_ComparesOptionKeysOrdinally()
+    {
+        // Comparison is FFmpeg's, not the dictionary's, so a set with two keys differing only in
+        // case is ambiguous. IMediaSource.DemuxerOptions documents Ordinal; honour it here.
+        var source = MediaSource.FromStill("slide.png", TimeSpan.FromSeconds(5));
+        Assert.NotNull(source.DemuxerOptions);
+        Assert.False(source.DemuxerOptions.ContainsKey("FrameRate"));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void FromStill_RefusesANonPositiveDwell(int seconds)
+    {
+        // A still with no duration is exactly what this factory exists to avoid producing.
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => MediaSource.FromStill("slide.png", TimeSpan.FromSeconds(seconds))
+        );
+    }
+
+    [Fact]
+    public void FromStill_TakesNoPositionOnTheExtension()
+    {
+        // Deliberate: whether a file is one image is a fact about the content, and a
+        // content-addressed store has no extension to read. The caller decides, not the factory.
+        var animated = MediaSource.FromStill("maybe-animated.webp", TimeSpan.FromSeconds(5));
+        var extensionless = MediaSource.FromStill("0bfe12ab.bin", TimeSpan.FromSeconds(5));
+
+        Assert.Equal("image2", animated.InputFormat);
+        Assert.Equal("image2", extensionless.InputFormat);
+    }
 }

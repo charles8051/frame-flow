@@ -35,15 +35,12 @@ public sealed class VideoFormatAnnouncementTests : IClassFixture<FfmpegBootstrap
         return MediaSource.FromFile(path!);
     }
 
-    private static IMediaSource PacedStill(int seconds) =>
-        File(Still) with
-        {
-            InputFormat = "image2",
-            DemuxerOptions = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["framerate"] = $"1/{seconds}",
-            },
-        };
+    private static IMediaSource PacedStill(int seconds)
+    {
+        var path = IntegrationTestEnvironment.GetCorpusFile(Still);
+        Assert.True(path is not null, $"Corpus file {Still} not found.");
+        return MediaSource.FromStill(path!, TimeSpan.FromSeconds(seconds));
+    }
 
     private static async Task<FormatRecordingSink> PlayAsync(params IMediaSource[] queue)
     {
