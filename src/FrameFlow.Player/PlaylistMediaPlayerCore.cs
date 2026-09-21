@@ -158,6 +158,8 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
 
     public IObservable<PlaylistTransition> SourceTransitioned => _coordinator.SourceTransitioned;
 
+    public IObservable<PlaylistSnapshot> PlaylistChanged => _coordinator.PlaylistChanged;
+
     // Both come from the controller rather than the coordinator: the ordering against
     // ErrorOccurred / LoopRestarted, and the drop of a report from a superseded session, are
     // properties of the controller's dispatch loop, and a coordinator-side raise would have

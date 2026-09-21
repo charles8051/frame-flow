@@ -181,6 +181,39 @@ public interface IMediaPlayer : IMediaTransport
     IObservable<PlaylistTransition> SourceTransitioned { get; }
 
     /// <summary>
+    /// Fires with the queue as it now stands, whenever it changes. Renders a playlist panel or a
+    /// queue length without polling <see cref="GetPlaylist"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The snapshot is the event's payload rather than something to fetch afterwards, so a
+    /// handler renders what the change produced instead of racing back for a queue that may have
+    /// moved again. <see cref="PlaylistSnapshot.Revision"/> orders them.
+    /// </para>
+    /// <para>
+    /// <b>It fires for more than the six edit verbs.</b> A latched jump and each half of a
+    /// hand-off also change what a snapshot reports, so they raise it too, exactly matching when
+    /// <c>Revision</c> advances. That is the point: the question this answers is "is the queue I
+    /// drew still current", and the answer moves when the current item does.
+    /// </para>
+    /// <para>
+    /// <see cref="SourceTransitioned"/> answers a different question. It fires only on a
+    /// hand-off, and carries the item's <see cref="FrameFlow.Media.MediaInfo"/> and the reason.
+    /// Subscribe to that one to react to an item starting; subscribe to this one to redraw a
+    /// queue.
+    /// </para>
+    /// <para>
+    /// Raised outside the coordinator's lock, so a handler may call back into the player, and on
+    /// whichever thread made the change: the caller's thread for an edit, the player's for a
+    /// hand-off. Delivery is serialized and in commit order, which is what lets
+    /// <c>Revision</c> order what you receive. The cost is that a thread changing the queue can
+    /// wait on another thread's in-flight handler, so keep handlers short or marshal, as a UI
+    /// subscriber does anyway.
+    /// </para>
+    /// </remarks>
+    IObservable<PlaylistSnapshot> PlaylistChanged { get; }
+
+    /// <summary>
     /// Fires when an item failed and was skipped, naming the item and how it failed. Prefer this
     /// over <see cref="IMediaTransport.ErrorOccurred"/> for item failures: that stream cannot say
     /// which item an error belongs to, and reading <see cref="GetPlaylist"/> inside its handler

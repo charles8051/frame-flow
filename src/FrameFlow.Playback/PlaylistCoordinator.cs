@@ -33,6 +33,10 @@ internal sealed class PlaylistCoordinator
 {
     private readonly object _gate = new();
     private readonly PlaybackSubject<PlaylistTransition> _transitioned = new();
+    private readonly PlaybackSubject<PlaylistSnapshot> _changed = new();
+    private readonly object _raiseGate = new();
+    private readonly Queue<PlaylistSnapshot> _pendingChanges = new();
+    private bool _draining;
 
     private PlaylistQueue _queue;
 
@@ -100,6 +104,19 @@ internal sealed class PlaylistCoordinator
     /// <summary>Fires once per hand-off (including the first item) with the now-current item.</summary>
     public IObservable<PlaylistTransition> SourceTransitioned => _transitioned;
 
+    /// <summary>
+    /// Fires with the snapshot the change produced, whenever the queue's
+    /// <see cref="PlaylistQueue.Revision"/> advances.
+    /// </summary>
+    /// <remarks>
+    /// Gated on the revision rather than on the call, because <see cref="Apply(Func{PlaylistQueue,
+    /// PlaylistQueue})"/> is also how the session steps its own bookkeeping. Exactly the nine
+    /// operations that change what a snapshot reports move the revision: the six edit verbs, a
+    /// latched jump, and the two halves of a hand-off. <c>ItemEnded</c>, <c>ItemFailed</c> and the
+    /// advance latch do not.
+    /// </remarks>
+    public IObservable<PlaylistSnapshot> PlaylistChanged => _changed;
+
     /// <summary>Appends a source to the playlist, where it stays after it plays.</summary>
     public PlaylistItem Add(IMediaSource source)
     {
@@ -144,9 +161,10 @@ internal sealed class PlaylistCoordinator
         {
             handler = _skipHandler;
             if (handler is null)
-                _queue = _queue.LatchAdvance(PlaylistAdvance.Skip);
+                Commit(_queue.LatchAdvance(PlaylistAdvance.Skip));
         }
 
+        RaiseChanged();
         handler?.Invoke();
     }
 
@@ -208,10 +226,11 @@ internal sealed class PlaylistCoordinator
         Action? handler;
         lock (_gate)
         {
-            _queue = _queue.Replace(items);
+            Commit(_queue.Replace(items));
             handler = _jumpHandler;
         }
 
+        RaiseChanged();
         handler?.Invoke();
         return items;
     }
@@ -269,8 +288,12 @@ internal sealed class PlaylistCoordinator
                 return;
             }
 
-            _queue = PlaylistQueue.Create([new PlaylistItem(source)], _queue.Repeat);
+            // AsOnly, not PlaylistQueue.Create: a fresh queue's revision restarts at zero, and a
+            // subscriber that has already seen revision 3 must not then be handed 0.
+            Commit(_queue.AsOnly(new PlaylistItem(source)));
         }
+
+        RaiseChanged();
     }
 
     /// <summary>Whether any item has started since the player was created.</summary>
@@ -334,15 +357,19 @@ internal sealed class PlaylistCoordinator
     /// </remarks>
     internal PlaylistItem? ReserveStart()
     {
+        PlaylistItem? reservedStart;
         lock (_gate)
         {
             var (queue, reserved) = _queue.ReserveStart();
             if (!reserved)
                 return null;
-            _queue = queue;
+            Commit(queue);
             _replayPending = true;
-            return queue.ReservedStart;
+            reservedStart = queue.ReservedStart;
         }
+
+        RaiseChanged();
+        return reservedStart;
     }
 
     /// <summary>
@@ -354,8 +381,10 @@ internal sealed class PlaylistCoordinator
         lock (_gate)
         {
             _replayPending = false;
-            _queue = _queue.ReleaseStart();
+            Commit(_queue.ReleaseStart());
         }
+
+        RaiseChanged();
     }
 
     /// <summary>
@@ -425,22 +454,115 @@ internal sealed class PlaylistCoordinator
     /// Disposes the transition subject. Called by whoever owns this coordinator: the player
     /// wrapper for a playlist, and the session factory for a controller's own queue of one.
     /// </summary>
-    internal void Dispose() => _transitioned.Dispose();
+    internal void Dispose()
+    {
+        _transitioned.Dispose();
+        _changed.Dispose();
+    }
 
     // ── Private ─────────────────────────────────────────────────────────────
 
     private void Apply(Func<PlaylistQueue, PlaylistQueue> operation)
     {
         lock (_gate)
-            _queue = operation(_queue);
+            Commit(operation(_queue));
+
+        RaiseChanged();
     }
 
     private T Apply<T>(Func<PlaylistQueue, (PlaylistQueue Queue, T Result)> operation)
     {
+        T result;
         lock (_gate)
         {
-            (_queue, var result) = operation(_queue);
-            return result;
+            var (queue, value) = operation(_queue);
+            result = value;
+            Commit(queue);
+        }
+
+        RaiseChanged();
+        return result;
+    }
+
+    /// <summary>
+    /// Stores <paramref name="next"/> and queues the snapshot <see cref="PlaylistChanged"/>
+    /// should carry, when the revision moved. Call while holding <see cref="_gate"/>, then call
+    /// <see cref="RaiseChanged"/> after releasing it.
+    /// </summary>
+    /// <remarks>
+    /// Every assignment to <c>_queue</c> outside the constructors goes through here. <c>Apply</c>
+    /// is not the only writer: <see cref="Replace"/> and <see cref="LoadSource"/> take the lock
+    /// themselves because they need more than the queue under it, and a first draft that raised
+    /// from <c>Apply</c> alone silently dropped both. The snapshot is taken here, from the queue
+    /// being committed, rather than read back from <c>_queue</c> afterwards: a second edit landing
+    /// in between would otherwise make both notifications carry the later queue.
+    /// </remarks>
+    private void Commit(PlaylistQueue next)
+    {
+        var moved = next.Revision != _queue.Revision;
+        _queue = next;
+        if (moved)
+            _pendingChanges.Enqueue(next.Snapshot());
+    }
+
+    /// <summary>
+    /// Delivers queued snapshots in the order they were committed. Call after releasing
+    /// <see cref="_gate"/>, never while holding it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both locks are load-bearing and neither alone is enough. Raising under <see cref="_gate"/>
+    /// would run a subscriber's callback inside the coordinator's own lock. Raising under no lock
+    /// at all lets a thread that committed <em>later</em> publish first: the commit order is
+    /// established under <c>_gate</c>, but the window between releasing it and calling
+    /// <c>OnNext</c> is not ordered, so an edit and a hand-off on different threads could deliver
+    /// revision 2 before revision 1. A consumer told that <c>Revision</c> orders the stream would
+    /// then render a superseded queue last.
+    /// </para>
+    /// <para>
+    /// So the snapshots are queued under <c>_gate</c>, which puts them in commit order, and this
+    /// lock lets one thread drain that queue at a time. The cost is that a thread committing a
+    /// change can wait on another thread's in-flight handler. Handlers are expected to be short
+    /// or to marshal, which is what a UI subscriber does anyway
+    /// (<c>ObserveOnUiThread</c>).
+    /// </para>
+    /// <para>
+    /// A subscriber that edits the queue from inside its own handler re-enters this on the same
+    /// thread, which <see langword="lock"/> allows, so <see cref="_draining"/> turns that
+    /// re-entry into an enqueue and the outer loop delivers it. Draining nested instead would
+    /// reorder the stream for every <em>other</em> subscriber: one notification is one
+    /// <c>OnNext</c> across all of them, so a nested drain publishes the later snapshot to
+    /// subscribers that have not received the earlier one yet.
+    /// </para>
+    /// </remarks>
+    private void RaiseChanged()
+    {
+        lock (_raiseGate)
+        {
+            // Re-entered from inside a handler. What it queued is already in _pendingChanges and
+            // the loop below this frame will take it, in order, once the current OnNext returns.
+            if (_draining)
+                return;
+
+            _draining = true;
+            try
+            {
+                while (true)
+                {
+                    PlaylistSnapshot next;
+                    lock (_gate)
+                    {
+                        if (!_pendingChanges.TryDequeue(out next!))
+                            return;
+                    }
+
+                    _changed.OnNext(next);
+                }
+            }
+            finally
+            {
+                _draining = false;
+            }
         }
     }
 }
