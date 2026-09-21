@@ -191,6 +191,7 @@ jobs:
         run: dotnet test FrameFlow.slnx --configuration Release --no-build --blame-hang-timeout 5m --blame-crash --logger "trx;LogFileName=test-${{ matrix.os }}.trx"
 
       - name: Upload test results
+        id: upload-test-results
         if: always()
         # A diagnostics upload must not decide whether a release ships. The Test step
         # above is the gate; this step exists to explain it afterwards. When the
@@ -203,6 +204,15 @@ jobs:
           name: test-results-${{ matrix.os }}
           path: "**/test-*.trx"
           retention-days: 30
+
+      # continue-on-error cannot tell a full storage allowance from a permission,
+      # naming or connectivity failure, and on its own it would let any of them leave a
+      # green run with no evidence attached. The annotation is the part that reaches the
+      # run summary and the API, so the absence is reported rather than merely visible
+      # to whoever reads the log.
+      - name: Say so when the test-results upload did not land
+        if: always() && steps.upload-test-results.outcome == 'failure'
+        run: echo "::warning title=No test results attached::The tests ran and their result decided this job; only the upload of the .trx files failed, so this run carries no test evidence. Check the storage allowance first, because a full one answers 403 on FinalizeArtifact."
 
       # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
       # clear text — NuGet has no other way to hand a credential to a v3 source in
@@ -554,7 +564,12 @@ jobs:
           echo "packages below were built. NOTHING WAS PUSHED."
           ls -1 packages/*.nupkg
 
-      - name: Upload packages
+      # The two directories are uploaded separately because they are worth keeping for
+      # different lengths of time, and putting them in one artifact forced the shorter
+      # answer onto both. packages/ went to nuget.org and can be fetched back from
+      # there; not-published/ did not, and this is its only copy.
+      - name: Upload published packages
+        id: upload-published-packages
         if: always()
         # Same reason as the test-results upload, and it matters more here: by the time
         # this runs the push to nuget.org has already happened, so failing the job on it
@@ -563,24 +578,52 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: packages
-          # Both directories: not-published/ holds what the size gate held back,
-          # and an artifact that silently omitted it would make the run harder to
-          # reason about, not easier.
           path: |
             packages/*.nupkg
             packages/*.snupkg
+          if-no-files-found: warn
+          # ~198MB of this: Native.Runtime is 150MB and Native 39MB, both carrying
+          # FFmpeg's binaries. Nothing pruned them before - the test-results upload sets
+          # 30 days, this one inherited the repository default of 90 - and ten of them
+          # reached 4.13GB against 0.18GB for all 536 test-results artifacts together,
+          # which exhausted the account's storage allowance and failed a release whose
+          # tests had passed. Fourteen days is long enough to compare a release against
+          # the one before it. Past that these are on nuget.org.
+          retention-days: 14
+
+      - name: Upload packages nuget.org cannot take
+        id: upload-held-back-packages
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-not-published
+          path: |
             not-published/*.nupkg
             not-published/*.snupkg
-          if-no-files-found: warn
-          # This is the artifact that fills the allowance. A self-contained publish
-          # carries FFmpeg's binaries, so one of these is ~400MB, and nothing pruned
-          # them: the test-results upload above sets 30 days, this one inherited the
-          # repository default of 90. Ten of them had accumulated to 4.13GB, against
-          # 0.18GB for all 536 test-results artifacts put together, which is what
-          # exhausted the allowance. Fourteen days is long enough to compare a release
-          # against the one before it; past that the packages themselves are on
-          # nuget.org, which is the copy that matters.
-          retention-days: 14
+          # Normal for a release that held nothing back. The step above already warns
+          # when packages/ is empty, which is the case worth noticing.
+          if-no-files-found: ignore
+          # Deliberately longer than the published set, and it is the same ~200MB of
+          # FrameFlow.MotionClip every time. The size gate holds it back precisely
+          # because nuget.org will not take it, so unlike packages/ there is nowhere
+          # else to fetch it from: delete this and the build is gone. Ninety days is
+          # the repository default, restated here so a later retention edit has to
+          # decide about this one separately rather than inherit an answer meant for
+          # packages that are recoverable.
+          retention-days: 90
+
+      - name: Say so when a package upload did not land
+        if: always() && (steps.upload-published-packages.outcome == 'failure' || steps.upload-held-back-packages.outcome == 'failure')
+        run: |
+          published="${{ steps.upload-published-packages.outcome }}"
+          held="${{ steps.upload-held-back-packages.outcome }}"
+          if [ "$published" = "failure" ]; then
+            echo "::warning title=No package artifact attached::The push to nuget.org is unaffected and has already happened; only the artifact upload failed, so this run carries no record of what was built."
+          fi
+          if [ "$held" = "failure" ]; then
+            echo "::warning title=Held-back packages were not kept::not-published/ did not upload, and it is the only copy, because nuget.org will not take these. Re-run this job before the workspace is gone."
+          fi
 
       # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
       # clear text — NuGet has no other way to hand a credential to a v3 source in
