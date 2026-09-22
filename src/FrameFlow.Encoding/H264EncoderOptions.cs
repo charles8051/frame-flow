@@ -27,14 +27,15 @@ namespace FrameFlow.Encoding;
 /// <b>Why resolution rather than a fixed default.</b> <c>libopenh264</c> is
 /// statically linked into the FFmpeg that FrameFlow ships for Windows and Linux,
 /// and on those platforms it is what resolves — deterministic, hardware-independent,
-/// and the same encoder on both. FrameFlow ships no FFmpeg for macOS: the
-/// bootstrapper resolves a Homebrew <c>ffmpeg@7</c> keg instead, and that build has
-/// no <c>libopenh264</c>. A fixed default therefore threw on every Mac, while
-/// <c>h264_videotoolbox</c> was sitting there unused.
+/// and the same encoder on both. macOS resolves <c>h264_videotoolbox</c> instead, and
+/// has to: the osx-arm64 libraries FrameFlow ships are built <c>--disable-autodetect</c>
+/// and link no external encoder at all, and an Intel Mac falls back to a Homebrew
+/// <c>ffmpeg</c> that does not carry <c>libopenh264</c> either. A fixed default threw on
+/// every Mac, while <c>h264_videotoolbox</c> was sitting there unused.
 /// </para>
 /// <para>
 /// <b>On <c>libx264</c>.</b> It is not in the resolution order, and that is a
-/// deliberate omission rather than a licence guarantee. Homebrew's <c>ffmpeg@7</c>
+/// deliberate omission rather than a licence guarantee. Homebrew's <c>ffmpeg</c>
 /// is configured <c>--enable-gpl --enable-libx264</c>, so a macOS consumer on the
 /// bring-your-own path is already running a GPL FFmpeg whatever encoder is chosen;
 /// FrameFlow's LGPL statement covers the builds it ships, not the one it finds.

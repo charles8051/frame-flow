@@ -526,7 +526,7 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
     /// Channel layout is configured via the <c>in_channel_count</c> / <c>out_channel_count</c>
     /// integer options rather than the legacy mask API because the old <c>in_channel_layout</c>
     /// mask option is deprecated and may silently produce incorrect layouts for multi-channel
-    /// sources in FFmpeg 7.x. FFmpeg derives the default layout from the channel count.
+    /// sources. FFmpeg derives the default layout from the channel count.
     /// </para>
     /// </remarks>
     /// <param name="framePtr">
@@ -548,7 +548,7 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
         int sourceSampleRate = frame.sample_rate;
         int sourceChannels = frame.ch_layout.nb_channels;
 
-        // Use the FFmpeg 7.x channel layout string API via av_opt_set.
+        // Use the channel layout string API via av_opt_set.
         // The legacy in_channel_layout mask API is deprecated and swr_init rejects it
         // with EINVAL (-22) in FFmpeg 7.x even when other parameters are correct.
         string inChlayout = sourceChannels switch

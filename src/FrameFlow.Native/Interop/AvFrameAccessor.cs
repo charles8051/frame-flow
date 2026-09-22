@@ -13,11 +13,11 @@ namespace FrameFlow.Native.Interop;
 /// <remarks>
 /// <para>
 /// Uses <see cref="System.Runtime.CompilerServices.Unsafe.AsRef{T}(void*)"/> to overlay the <c>FFmpeg.AutoGen.Abstractions.AVFrame</c>
-/// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 7.1
-/// by the AutoGen binding generator, which derives them from the FFmpeg 7.1 C headers.
+/// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 9.0
+/// by the AutoGen binding generator, which derives them from the FFmpeg 9.0 C headers.
 /// </para>
 /// <para>
-/// Key field positions in the AutoGen binding (FFmpeg 7.1):
+/// Key field positions in the AutoGen binding (FFmpeg 9.0):
 /// <code>
 ///   data[8]           — offset 0   (8 × 8-byte plane pointers)
 ///   linesize[8]       — offset 64  (8 × 4-byte strides)

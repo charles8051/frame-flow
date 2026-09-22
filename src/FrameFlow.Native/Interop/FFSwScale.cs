@@ -13,7 +13,7 @@ namespace FrameFlow.Native.Interop;
 /// and context cleanup.
 /// All pointer parameters are <see cref="nint"/>; raw pointer values must not escape
 /// outside <c>FrameFlow.Native</c> and <c>FrameFlow.Decoding</c> (ADR-0005).
-/// Targets FFmpeg 7.x (libswscale-10).
+/// Targets FFmpeg 9.x (libswscale-10).
 /// </remarks>
 internal static partial class FFSwScale
 {
@@ -119,7 +119,7 @@ internal static partial class FFSwScale
     /// <summary>
     /// AV_PIX_FMT_UYVY422 — packed UYVY 4:2:2 (U0 Y0 V0 Y1). Common capture-card
     /// output. NOTE: enum 17 is <c>AV_PIX_FMT_BGR8</c>, not UYVY — the correct
-    /// FFmpeg 7.x value is <b>15</b>. Getting this wrong renders camera frames
+    /// FFmpeg 9.x value is <b>15</b>. Getting this wrong renders camera frames
     /// with visible luma but rainbow-scrambled chroma (swscale interprets the
     /// 2-byte UYVY surface as 1-byte BGR8 and reads sideways through it).
     /// </summary>

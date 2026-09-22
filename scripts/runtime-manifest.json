@@ -207,41 +207,41 @@
       ]
     },
     "osx-arm64": {
-      "archiveUrl": "https://github.com/charles8051/frame-flow/releases/download/ffmpeg-macos-n7.1.5-1/ffmpeg-osx-arm64.tar.gz",
+      "archiveUrl": "https://github.com/charles8051/frame-flow/releases/download/ffmpeg-macos-n9.0.2-1/ffmpeg-osx-arm64.tar.gz",
       "libraries": [
         {
           "name": "libavformat.63.dylib",
-          "sha256": "4dd6550eff5d95d5f0a5b8d897ea0d4a4ed701d2a390b09cca2e7dabd60dda48",
+          "sha256": "042c8a51e6b98591e86782fe4d3242476d14fb78e0b984e6473645b459d454f3",
           "target": "runtimes/osx-arm64/native/libavformat.63.dylib"
         },
         {
           "name": "libavcodec.63.dylib",
-          "sha256": "e9cc63fc331c713db372286dd2b3d2893608df466d52b22694f9dca1512593b9",
+          "sha256": "d641028428aa609130dc64dd6a487060413e325c634f275c1b13bf4fb6aea38d",
           "target": "runtimes/osx-arm64/native/libavcodec.63.dylib"
         },
         {
           "name": "libavutil.61.dylib",
-          "sha256": "45de0e2169ee4d84b2cc224223e8d204b7ff4c4b8625a40d3906b3b035f91a5a",
+          "sha256": "f999be135517786b985f4dcc78a0e37919916786e6fe81a7fc694fa4188e6c71",
           "target": "runtimes/osx-arm64/native/libavutil.61.dylib"
         },
         {
           "name": "libavdevice.63.dylib",
-          "sha256": "be54978574190cec8720713edd18a9ca310136667f2b5592eac4917bdd28dec2",
+          "sha256": "6c96b599f1c32919d7770fc076a7a2a921f19bbcb80539400a4416142ba54fd7",
           "target": "runtimes/osx-arm64/native/libavdevice.63.dylib"
         },
         {
           "name": "libavfilter.12.dylib",
-          "sha256": "4d504304cf901001b1979cc09ed071c74147738b419d1947a328460fe5e44f29",
+          "sha256": "750b5b2e069d7827b0860a85fdfdf1c2b63ce3bf2c2010af177ca4160dbfe619",
           "target": "runtimes/osx-arm64/native/libavfilter.12.dylib"
         },
         {
           "name": "libswscale.10.dylib",
-          "sha256": "2ea0554ee81ee3fa9bc845f15f609161313e525fffdb26fcfad02bf43093d5dc",
+          "sha256": "67390e81e1bd52edda47ca0dc2675c280bd09179db10015f28fa492309398f56",
           "target": "runtimes/osx-arm64/native/libswscale.10.dylib"
         },
         {
           "name": "libswresample.7.dylib",
-          "sha256": "a6b938276900ba79a5f4b4b52eb46a9e8efd80db873b6dde0d53cee22f237f7f",
+          "sha256": "314b31d0de283fedc5867416e3475e37741609d18754ad39f562b82b6d1005ee",
           "target": "runtimes/osx-arm64/native/libswresample.7.dylib"
         }
       ]

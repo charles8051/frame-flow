@@ -13,11 +13,11 @@ namespace FrameFlow.Native.Interop;
 /// <para>
 /// This is a partial class that extends <see cref="FFAvUtil"/> declared in
 /// <c>FFAvUtil.cs</c>. Splitting by phase keeps the surface auditable.
-/// Targets FFmpeg 7.x (libavutil-61).
+/// Targets FFmpeg 9.x (libavutil-61).
 /// </para>
 /// <para>
 /// Note: AVPacket lifecycle functions (<c>av_packet_alloc</c>, <c>av_packet_free</c>,
-/// <c>av_packet_unref</c>) are declared in <see cref="FFAvCodec"/> because in FFmpeg 7.x
+/// <c>av_packet_unref</c>) are declared in <see cref="FFAvCodec"/> because
 /// the AVPacket type lives in <c>libavcodec</c>, not <c>libavutil</c>.
 /// </para>
 /// </remarks>
@@ -116,7 +116,7 @@ internal static partial class FFAvUtil
     /// <summary>
     /// Sets a named string option on an <c>AVClass</c>-headed object.
     /// Used for setting channel layout via <c>"in_chlayout"</c> / <c>"out_chlayout"</c>
-    /// in FFmpeg 7.x where the legacy mask API is deprecated.
+    /// where the legacy mask API is deprecated.
     /// </summary>
     [LibraryImport("avutil")]
     [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]

@@ -28,7 +28,7 @@ on:
         type: boolean
         default: false
       release-tag:
-        description: "Tag for the release, e.g. ffmpeg-macos-n7.1.5-1"
+        description: "Tag for the release, e.g. ffmpeg-macos-n9.0.2-1"
         type: string
         default: ""
 

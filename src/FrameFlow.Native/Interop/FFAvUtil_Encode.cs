@@ -11,7 +11,7 @@ namespace FrameFlow.Native.Interop;
 /// reusable YUV420P source frame.
 /// </summary>
 /// <remarks>
-/// Partial extension of <see cref="FFAvUtil"/>. Targets FFmpeg 7.x
+/// Partial extension of <see cref="FFAvUtil"/>. Targets FFmpeg 9.x
 /// (libavutil-61). Timestamp rescaling (<c>av_rescale_q</c>) and frame
 /// lifecycle (<c>av_frame_alloc</c> / <c>av_frame_free</c> /
 /// <c>av_frame_unref</c>) are declared in the existing

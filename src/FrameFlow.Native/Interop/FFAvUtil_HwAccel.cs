@@ -14,7 +14,7 @@ namespace FrameFlow.Native.Interop;
 /// <para>
 /// Partial class extension of <see cref="FFAvUtil"/>. Split out so the hwaccel
 /// surface is auditable separately from the Phase 01 / Phase 03 declarations.
-/// Targets FFmpeg 7.x (libavutil-61).
+/// Targets FFmpeg 9.x (libavutil-61).
 /// </para>
 /// <para>
 /// The <c>AVHWDeviceType</c> integer values mirror FFmpeg's
@@ -25,7 +25,7 @@ namespace FrameFlow.Native.Interop;
 internal static partial class FFAvUtil
 {
     // -------------------------------------------------------------------------
-    // AVHWDeviceType enumeration values (FFmpeg 7.x stable)
+    // AVHWDeviceType enumeration values (FFmpeg 9.x stable)
     // -------------------------------------------------------------------------
 
     internal const int AvHwDeviceTypeNone = 0;

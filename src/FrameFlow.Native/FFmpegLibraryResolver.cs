@@ -22,7 +22,7 @@ internal static class FFmpegLibraryResolver
         "avformat",
     ];
 
-    // FFmpeg 7.x version suffixes per library.
+    // FFmpeg 9.x version suffixes per library.
     // These correspond to the SONAME / DLL name used in the v7 release series.
     private static readonly IReadOnlyDictionary<string, string> WindowsSuffixes = new Dictionary<
         string,

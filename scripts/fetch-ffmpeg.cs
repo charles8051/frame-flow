@@ -109,7 +109,7 @@ var baseUrl = $"https://github.com/BtbN/FFmpeg-Builds/releases/download/{BuildTa
 // To move this pin: dispatch the FFmpeg macOS Build workflow with a new
 // release-tag, then update this and the osx-arm64 sha256 values in
 // runtime-manifest.json together.
-const string MacOsReleaseTag = "ffmpeg-macos-n7.1.5-1";
+const string MacOsReleaseTag = "ffmpeg-macos-n9.0.2-1";
 const string MacOsArchiveName = "ffmpeg-osx-arm64.tar.gz";
 var macOsArchiveUrl =
     $"https://github.com/charles8051/frame-flow/releases/download/{MacOsReleaseTag}/{MacOsArchiveName}";
@@ -478,7 +478,7 @@ foreach (var rid in ridsToProcess)
         // Patch inter-FFmpeg install names to use @loader_path so the bundled
         // dylibs find each other without requiring the original Homebrew keg paths.
         // Transitive Homebrew dependencies (libsoxr, libvpx, etc.) keep their
-        // absolute Homebrew paths; those remain valid as long as ffmpeg@7 is installed.
+        // absolute Homebrew paths; those remain valid as long as ffmpeg is installed.
         if (kegCopied > 0)
         {
             Console.WriteLine("  Patching dylib install names...");
@@ -878,7 +878,7 @@ static string? FindLibrary(string searchDir, string libName)
 /// other via <c>@loader_path</c> rather than absolute Homebrew keg paths.
 /// This makes the bundled dylibs self-contained for FFmpeg-to-FFmpeg dependencies.
 /// Transitive Homebrew dependencies (libsoxr, libvpx, etc.) are left as-is;
-/// they resolve from the Homebrew prefix as long as ffmpeg@7 remains installed.
+/// they resolve from the Homebrew prefix as long as ffmpeg remains installed.
 /// Each dylib is re-signed with an ad-hoc signature after modification.
 /// </summary>
 static void FixMacOsDylibInstallNames(string nativeDir, string[] libs)

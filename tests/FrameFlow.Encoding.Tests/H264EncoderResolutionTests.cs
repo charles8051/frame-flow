@@ -18,9 +18,9 @@ namespace FrameFlow.Encoding.Tests;
 /// <para>
 /// The order exists because a fixed default threw on every Mac. FrameFlow ships FFmpeg
 /// for Windows and Linux with <c>libopenh264</c> statically linked; it ships none for
-/// macOS, where the bootstrapper resolves a Homebrew <c>ffmpeg@7</c> keg that has no
+/// macOS, where the bootstrapper resolves a Homebrew <c>ffmpeg</c> keg that has no
 /// openh264 and does have <c>h264_videotoolbox</c>. Verified against Homebrew
-/// <c>ffmpeg@7</c> 7.1.3 on arm64.
+/// a Homebrew <c>ffmpeg</c> on Intel, since arm64 now ships its own libraries.
 /// </para>
 /// </remarks>
 public sealed class H264EncoderResolutionTests
@@ -55,7 +55,7 @@ public sealed class H264EncoderResolutionTests
     [Fact]
     public void Libx264IsNotInThePreferenceOrder()
     {
-        // Deliberate omission, and not a licence guarantee: Homebrew's ffmpeg@7 is built
+        // Deliberate omission, and not a licence guarantee: Homebrew's ffmpeg is built
         // --enable-gpl --enable-libx264, so a macOS consumer is on a GPL FFmpeg whatever
         // we pick. VideoToolbox is preferred because it is on every Mac and does not
         // depend on which optional formulae their build happened to include. Anyone who

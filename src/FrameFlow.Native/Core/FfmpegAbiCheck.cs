@@ -58,8 +58,8 @@ internal readonly record struct FfmpegLibraryVersion(FfmpegLibrary Library, uint
 /// </para>
 /// <para>
 /// The versions compared are the per-library ones, not FFmpeg's own release number, and
-/// they do not match each other. FFmpeg 7.1 is libavutil 59, libavcodec 61, libavformat 61,
-/// libswscale 8 and libswresample 5.
+/// they do not match each other. FFmpeg 9.0 is libavutil 61, libavcodec 63, libavformat 63,
+/// libswscale 10 and libswresample 7.
 /// </para>
 /// <para>
 /// This type is pure. It takes the packed version integers that the <c>*_version()</c>
