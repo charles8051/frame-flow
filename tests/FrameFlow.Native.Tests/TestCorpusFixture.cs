@@ -201,11 +201,19 @@ public static class TestEnvironment
         return FindFfmpegLibraryDirectory() is not null;
     }
 
+    /// <summary>
+    /// The avutil file name for the FFmpeg major FrameFlow targets, per platform.
+    /// </summary>
+    /// <remarks>
+    /// One major, not a search across several. The struct layouts FrameFlow overlays come
+    /// from one FFmpeg version's headers, so finding a different major here would locate a
+    /// directory the bootstrap then refuses. SonameConsistencyTests holds these three
+    /// literals to the version the bindings were generated for.
+    /// </remarks>
     private static string GetAvutilSharedLibraryName()
     {
-        // Try both FFmpeg 7.x and 8.x avutil names.
         if (OperatingSystem.IsWindows())
-            return "avutil-59.dll"; // FFmpeg 7.x; 8.x would be avutil-60.dll
+            return "avutil-59.dll";
 
         if (OperatingSystem.IsMacOS())
             return "libavutil.59.dylib";

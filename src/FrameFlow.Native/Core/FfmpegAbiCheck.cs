@@ -8,8 +8,15 @@ using FFmpegAbstractions = FFmpeg.AutoGen.Abstractions;
 namespace FrameFlow.Native.Core;
 
 /// <summary>
-/// The FFmpeg shared libraries FrameFlow requires, as the ABI check names them.
+/// The FFmpeg shared libraries FrameFlow knows the names and versions of.
 /// </summary>
+/// <remarks>
+/// Larger than the set the ABI check enforces. The first five are what FrameFlow
+/// P/Invokes and what <see cref="FfmpegAbiCheck.RequiredLibraries"/> lists. AvDevice and
+/// AvFilter are here because they are still named on disk - scripts/fetch-ffmpeg.cs pulls
+/// them as load-time dependencies of the bundled ffmpeg/ffprobe tools - so a version bump
+/// has to move their file names too, and something has to say what those names are.
+/// </remarks>
 internal enum FfmpegLibrary
 {
     AvUtil,
@@ -17,6 +24,8 @@ internal enum FfmpegLibrary
     SwScale,
     AvCodec,
     AvFormat,
+    AvDevice,
+    AvFilter,
 }
 
 /// <summary>
@@ -72,6 +81,12 @@ internal static class FfmpegAbiCheck
     internal const int ExpectedAvutilMajor = FFmpegAbstractions.ffmpeg.LIBAVUTIL_VERSION_MAJOR;
 
     /// <summary>The library set the check covers, in the order the loader loads them.</summary>
+    /// <remarks>
+    /// Five, not the seven in <see cref="FfmpegLibrary"/>. AvDevice and AvFilter are never
+    /// loaded: nothing under src/ P/Invokes them and
+    /// <c>FFmpegLibraryResolver.RequiredLibraries</c> is the same five. They have expected
+    /// majors so their file names can be checked, not so their ABI can be.
+    /// </remarks>
     internal static readonly IReadOnlyList<FfmpegLibrary> RequiredLibraries =
     [
         FfmpegLibrary.AvUtil,
@@ -90,6 +105,8 @@ internal static class FfmpegAbiCheck
             FfmpegLibrary.SwScale => FFmpegAbstractions.ffmpeg.LIBSWSCALE_VERSION_MAJOR,
             FfmpegLibrary.AvCodec => FFmpegAbstractions.ffmpeg.LIBAVCODEC_VERSION_MAJOR,
             FfmpegLibrary.AvFormat => FFmpegAbstractions.ffmpeg.LIBAVFORMAT_VERSION_MAJOR,
+            FfmpegLibrary.AvDevice => FFmpegAbstractions.ffmpeg.LIBAVDEVICE_VERSION_MAJOR,
+            FfmpegLibrary.AvFilter => FFmpegAbstractions.ffmpeg.LIBAVFILTER_VERSION_MAJOR,
             _ => throw new ArgumentOutOfRangeException(nameof(library)),
         };
 
@@ -102,6 +119,8 @@ internal static class FfmpegAbiCheck
             FfmpegLibrary.SwScale => "libswscale",
             FfmpegLibrary.AvCodec => "libavcodec",
             FfmpegLibrary.AvFormat => "libavformat",
+            FfmpegLibrary.AvDevice => "libavdevice",
+            FfmpegLibrary.AvFilter => "libavfilter",
             _ => throw new ArgumentOutOfRangeException(nameof(library)),
         };
 

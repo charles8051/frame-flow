@@ -27,7 +27,11 @@ public sealed class FfmpegAbiCheckTests
     /// <c>FrameFlow.Native.csproj</c> crosses a major version, which is the moment
     /// <c>scripts/fetch-ffmpeg.cs</c>, <c>scripts/runtime-manifest.json</c> and
     /// <c>THIRD-PARTY-NOTICES.md</c> have to move with it. The numbers are the sonames the
-    /// bundled payload carries: avutil-59, swresample-5, swscale-8, avcodec-61, avformat-61.
+    /// fetched payload carries: avutil-59, swresample-5, swscale-8, avcodec-61,
+    /// avformat-61, avdevice-61, avfilter-10.
+    ///
+    /// All seven, including the two nothing loads, because SonameConsistencyTests holds the
+    /// file names on disk to these values.
     /// </summary>
     [Fact]
     public void ExpectedMajor_MatchesFFmpeg7Sonames()
@@ -37,14 +41,16 @@ public sealed class FfmpegAbiCheckTests
         Assert.Equal(8, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.SwScale));
         Assert.Equal(61, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvCodec));
         Assert.Equal(61, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvFormat));
+        Assert.Equal(61, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvDevice));
+        Assert.Equal(10, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvFilter));
     }
 
     [Fact]
     public void ExpectedAvutilMajor_AgreesWithExpectedMajor()
     {
         Assert.Equal(
-            FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvUtil),
-            FfmpegAbiCheck.ExpectedAvutilMajor
+            FfmpegAbiCheck.ExpectedAvutilMajor,
+            FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvUtil)
         );
     }
 
@@ -190,9 +196,33 @@ public sealed class FfmpegAbiCheckTests
     }
 
     [Fact]
-    public void Name_CoversEveryRequiredLibrary()
+    public void Name_CoversEveryLibrary()
     {
-        foreach (var library in FfmpegAbiCheck.RequiredLibraries)
+        foreach (FfmpegLibrary library in Enum.GetValues<FfmpegLibrary>())
             Assert.StartsWith("lib", FfmpegAbiCheck.Name(library));
+    }
+
+    /// <summary>
+    /// Every enum value, not just the required five. AvDevice and AvFilter are never
+    /// loaded, but SonameConsistencyTests reads their majors to check the file names on
+    /// disk, and an unhandled case there would throw rather than fail an assertion.
+    /// </summary>
+    [Fact]
+    public void ExpectedMajor_CoversEveryLibrary()
+    {
+        foreach (FfmpegLibrary library in Enum.GetValues<FfmpegLibrary>())
+            Assert.True(FfmpegAbiCheck.ExpectedMajor(library) > 0);
+    }
+
+    /// <summary>
+    /// The ABI gate enforces five. Adding a name to the enum must not quietly enlist a
+    /// library the loader never loads into the compatibility check.
+    /// </summary>
+    [Fact]
+    public void RequiredLibraries_ExcludesTheOnesNothingLoads()
+    {
+        Assert.DoesNotContain(FfmpegLibrary.AvDevice, FfmpegAbiCheck.RequiredLibraries);
+        Assert.DoesNotContain(FfmpegLibrary.AvFilter, FfmpegAbiCheck.RequiredLibraries);
+        Assert.Equal(5, FfmpegAbiCheck.RequiredLibraries.Count);
     }
 }
