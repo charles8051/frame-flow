@@ -100,8 +100,7 @@ var baseUrl = $"https://github.com/BtbN/FFmpeg-Builds/releases/download/{BuildTa
 //     look like corpus generation worked. generate-test-corpus.cs already
 //     prefers a PATH or Homebrew ffmpeg on macOS.
 //   - Already @loader_path. Built with --install-name-dir=@loader_path, so
-//     there is nothing to patch after extraction, unlike the osx-x64 keg path
-//     below.
+//     there is nothing to patch after extraction.
 //   - LGPL-2.1, not LGPL-3. It links no external libraries at all, so none of
 //     the Apache-2.0 or LGPL-3 components in BtbN's enable-version3 build are
 //     present. THIRD-PARTY-NOTICES.md records both identities.
@@ -172,19 +171,6 @@ var platforms = new Dictionary<string, PlatformInfo>
             "libavfilter.so.12",
             "libswscale.so.10",
             "libswresample.so.7",
-        ]
-    ),
-    ["osx-x64"] = new(
-        "sonoma",
-        "tar.gz",
-        [
-            "libavformat.63.dylib",
-            "libavcodec.63.dylib",
-            "libavutil.61.dylib",
-            "libavdevice.63.dylib",
-            "libavfilter.12.dylib",
-            "libswscale.10.dylib",
-            "libswresample.7.dylib",
         ]
     ),
     ["osx-arm64"] = new(
@@ -384,111 +370,6 @@ foreach (var rid in ridsToProcess)
             continue;
         }
     }
-
-    // ── osx-x64 only: copy from an installed Homebrew keg ────────────────
-    //
-    // osx-arm64 no longer comes from here. It downloads a pinned, hashed,
-    // self-contained LGPL artifact like every other RID, and takes the branch
-    // below.
-    //
-    // Intel Macs keep the keg because there is no artifact to download for
-    // them: scripts/build-ffmpeg-macos.sh is arm64-only, since macos-latest
-    // runners are Apple silicon and an x86_64 build would need a cross-compile
-    // with a separate SDK. Everything the comment below says about the keg
-    // still applies to this path, including that its dylibs resolve transitive
-    // dependencies out of the Homebrew prefix, which is why publish.yml does
-    // not pack osx-x64 into the runtime package.
-
-    if (rid == "osx-x64")
-    {
-        // Raw Homebrew bottles contain unresolved placeholder strings
-        // (@@HOMEBREW_PREFIX@@, @@HOMEBREW_CELLAR@@) and depend on optional
-        // Homebrew packages (libsoxr, libvpx, etc.) that may not be installed.
-        // Downloading and extracting the bottle directly produces dylibs that
-        // fail to load at runtime. The only reliable macOS approach is to copy
-        // from the already-installed Homebrew keg, where all placeholders have
-        // been resolved and transitive dependencies are satisfied.
-        // The unversioned formula, not ffmpeg@9, because Homebrew has no ffmpeg@9.
-        // It cuts ffmpeg@N when N+1 takes the unversioned slot, so ffmpeg@9 appears
-        // when FFmpeg 10 ships and today `ffmpeg` is the only 9.x keg there is.
-        //
-        // That means this path floats: `brew upgrade` moves it to 10 the week that
-        // lands. Acceptable now in a way it was not before, because the ABI check in
-        // FrameFlow.Native reads every library's own *_version() at bootstrap and
-        // refuses a major the bindings were not generated for. A float used to decode
-        // wrong; it now fails to start, by name.
-        //
-        // Intel Macs only. osx-arm64 downloads a pinned artifact and never reaches here.
-        const string KegName = "ffmpeg";
-        var homebrewPrefix = "/usr/local";
-        var kegLibDir = Path.Combine(homebrewPrefix, "opt", KegName, "lib");
-        var kegBinDir = Path.Combine(homebrewPrefix, "opt", KegName, "bin");
-
-        if (!Directory.Exists(kegLibDir))
-        {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"  {KegName} not found at {kegLibDir}.");
-            Console.WriteLine($"  Install it first: brew install {KegName}");
-            Console.WriteLine(
-                "  It has to be a 9.x build. The bootstrap refuses any other major."
-            );
-            Console.ResetColor();
-            totalFailed++;
-            continue;
-        }
-
-        Directory.CreateDirectory(nativeDir);
-        var kegCopied = 0;
-
-        foreach (var lib in platform.Libs)
-        {
-            var src = Path.Combine(kegLibDir, lib);
-            if (!File.Exists(src))
-            {
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"    {lib, -25} NOT FOUND in {kegLibDir}");
-                Console.ResetColor();
-                continue;
-            }
-            File.Copy(src, Path.Combine(nativeDir, lib), overwrite: true);
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.Write($"    {lib, -25} ");
-            Console.ResetColor();
-            Console.WriteLine("PLACED");
-            kegCopied++;
-        }
-
-        // Copy ffmpeg and ffprobe executables from the keg bin/ directory.
-        foreach (var tool in ToolFileNames(rid))
-        {
-            var src = Path.Combine(kegBinDir, tool);
-            if (File.Exists(src))
-            {
-                var dest = Path.Combine(nativeDir, tool);
-                File.Copy(src, dest, overwrite: true);
-                SetExecutable(dest);
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.Write($"    {tool, -25} ");
-                Console.ResetColor();
-                Console.WriteLine("PLACED");
-                kegCopied++;
-            }
-        }
-
-        // Patch inter-FFmpeg install names to use @loader_path so the bundled
-        // dylibs find each other without requiring the original Homebrew keg paths.
-        // Transitive Homebrew dependencies (libsoxr, libvpx, etc.) keep their
-        // absolute Homebrew paths; those remain valid as long as ffmpeg is installed.
-        if (kegCopied > 0)
-        {
-            Console.WriteLine("  Patching dylib install names...");
-            FixMacOsDylibInstallNames(nativeDir, platform.Libs);
-        }
-
-        totalCopied += kegCopied;
-        continue; // Skip the download/extract path below.
-    }
-
     // ── Resolve download URL (non-macOS platforms) ──────────────────────
 
     string downloadUrl;
@@ -874,68 +755,9 @@ static string? FindLibrary(string searchDir, string libName)
 }
 
 /// <summary>
-/// Patches inter-FFmpeg install names in the copied dylibs so they reference each
-/// other via <c>@loader_path</c> rather than absolute Homebrew keg paths.
-/// This makes the bundled dylibs self-contained for FFmpeg-to-FFmpeg dependencies.
-/// Transitive Homebrew dependencies (libsoxr, libvpx, etc.) are left as-is;
-/// they resolve from the Homebrew prefix as long as ffmpeg remains installed.
-/// Each dylib is re-signed with an ad-hoc signature after modification.
-/// </summary>
-static void FixMacOsDylibInstallNames(string nativeDir, string[] libs)
-{
-    var dylibNames = new HashSet<string>(
-        libs.Where(l => l.EndsWith(".dylib", StringComparison.OrdinalIgnoreCase)),
-        StringComparer.OrdinalIgnoreCase
-    );
-
-    foreach (var lib in dylibNames)
-    {
-        var dylibPath = Path.Combine(nativeDir, lib);
-        if (!File.Exists(dylibPath))
-            continue;
-
-        // Fix the dylib's own install name.
-        RunTool("install_name_tool", ["-id", $"@loader_path/{lib}", dylibPath]);
-
-        // Parse otool -L output to find references that point to other bundled dylibs.
-        var otoolOutput = RunToolOutput("otool", ["-L", dylibPath]);
-        var lines = otoolOutput.Split('\n').Skip(1); // first line is "filename:"
-
-        foreach (var line in lines)
-        {
-            var trimmed = line.Trim();
-            if (string.IsNullOrEmpty(trimmed))
-                continue;
-
-            // Format: "<dep-path> (compatibility version X, current version Y)"
-            var parenIdx = trimmed.IndexOf(" (", StringComparison.Ordinal);
-            var depPath = parenIdx >= 0 ? trimmed[..parenIdx] : trimmed;
-
-            // Only fix references to other bundled FFmpeg dylibs.
-            var depFileName = Path.GetFileName(depPath);
-            if (!dylibNames.Contains(depFileName))
-                continue;
-
-            var newRef = $"@loader_path/{depFileName}";
-            if (!string.Equals(depPath, newRef, StringComparison.Ordinal))
-            {
-                RunTool("install_name_tool", ["-change", depPath, newRef, dylibPath]);
-                Console.ForegroundColor = ConsoleColor.DarkGray;
-                Console.WriteLine($"    {lib}: {depFileName} → @loader_path");
-                Console.ResetColor();
-            }
-        }
-
-        // Re-apply an ad-hoc signature after modifying the binary.
-        RunTool("codesign", ["--force", "--sign", "-", dylibPath]);
-    }
-}
-
-/// <summary>
 /// Points a staged Linux ELF executable at its own directory, by rewriting every
-/// <c>DT_RPATH</c> string in place to <c>$ORIGIN</c>. The Linux counterpart of
-/// <see cref="FixMacOsDylibInstallNames"/>. Idempotent: a tool that already reads
-/// <c>$ORIGIN</c> is left untouched, so this can be re-run over a staged tree.
+/// <c>DT_RPATH</c> string in place to <c>$ORIGIN</c>. Idempotent: a tool that already
+/// reads <c>$ORIGIN</c> is left untouched, so this can be re-run over a staged tree.
 /// </summary>
 /// <returns><see langword="null"/> on success, otherwise why it could not be done.</returns>
 /// <remarks>

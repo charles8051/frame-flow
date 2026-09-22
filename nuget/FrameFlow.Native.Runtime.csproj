@@ -165,12 +165,10 @@
   <!--
     macOS: arm64 only.
 
-    osx-x64 had globs here and they never matched, because publish.yml has never
-    fetched it. They are gone rather than left dormant. scripts/fetch-ffmpeg.cs
-    resolves Intel Macs from a Homebrew keg whose dylibs reach into the Homebrew
-    prefix for their transitive dependencies, so a glob that ever did match would
-    publish binaries that load on the machine that built them and nowhere else.
-    Absent is a supported state for a RID here; half-working is not.
+    osx-x64 is gone entirely as of 2026-09, script and globs alike. No RID ever
+    shipped for it, Apple's last Intel Mac shipped in 2023, and macOS 26 is the
+    final release supporting them. An Intel consumer supplies their own FFmpeg
+    and the ABI check tells them if the major is wrong.
 
     osx-arm64 is a different artifact from the other four. It is built by
     scripts/build-ffmpeg-macos.sh, links no external libraries, and is therefore

@@ -169,9 +169,9 @@ jobs:
       # pinned, hashed artifact now like every other RID, so the step is gone and
       # a green macOS leg tests the same bytes the package ships.
       #
-      # macos-latest is Apple silicon, which is the only macOS RID with an
-      # artifact. The build is arm64-only and Intel Macs still come from a keg;
-      # an Intel runner here would fail the fetch with that instruction.
+      # macos-latest is Apple silicon, which is the only macOS architecture
+      # FrameFlow supports. An Intel runner would fail the fetch: the RID was
+      # removed in 2026-09.
       - name: Fetch FFmpeg binaries (host platform)
         run: dotnet run scripts/fetch-ffmpeg.cs
 
