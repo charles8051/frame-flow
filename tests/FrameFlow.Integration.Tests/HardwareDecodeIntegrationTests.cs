@@ -89,6 +89,15 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
     /// nothing, so the assertion only runs where it is answerable.
     /// </para>
     /// <para>
+    /// The gate is coarser than the assertion, and that is a known residual rather than an
+    /// oversight. It asks whether any backend <i>device</i> initialised;
+    /// <see cref="HardwareDecodeCapabilities"/> carries no per-codec dimension, so it cannot
+    /// ask whether that backend decodes H.264. A machine with an initialising device and no
+    /// H.264 decoder therefore fails here rather than skipping. H.264 is the most widely
+    /// supported hardware codec, so that combination is unusual; #355 tracks surfacing the
+    /// codec dimension, which <c>avcodec_get_hw_config</c> already supplies at decode time.
+    /// </para>
+    /// <para>
     /// It asserts H.264, deliberately, and not the codec-agnostic claim. Hardware support
     /// is per codec: on the machine this was written for, H.264, HEVC and VP9 decode on
     /// D3D11VA while AV1 falls back to software on the same GPU. A test that demanded
@@ -113,6 +122,10 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
             capture.LoadResult.IsSuccess,
             $"LoadAsync failed: {capture.LoadResult.Error?.Message}"
         );
+        Assert.True(
+            capture.PlayResult.IsSuccess,
+            $"PlayAsync failed: {capture.PlayResult.Error?.Message}"
+        );
         Assert.Equal(PlaybackState.Ended, capture.FinalState);
         Assert.NotEmpty(capture.Video);
 
@@ -125,8 +138,14 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
         Assert.True(
             backend is not null,
             "Auto decoded H.264 in software while the probe reported an initialised "
-                + $"backend ({available}). Either hardware decode stopped being selected, "
-                + "or the probe is reporting a device that cannot decode this stream."
+                + $"backend ({available}). "
+                + "Most likely: hardware decode stopped being selected, which is what this "
+                + "test exists to catch. "
+                + "Otherwise: this machine has a backend whose device initialises but which "
+                + "cannot decode H.264. HardwareDecodeCapabilities has no codec dimension, so "
+                + "RequiresHardwareDecodeFact cannot gate on that and this test fails where it "
+                + "should skip. See #355. If that is the case here, say so on the issue rather "
+                + "than weakening the assertion."
         );
     }
 
