@@ -1,3 +1,4 @@
+using FrameFlow.Media;
 using FrameFlow.Native;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -27,6 +28,8 @@ public sealed class FfmpegBootstrapFixture : IDisposable
     // that runs as part of FrameFlowBootstrapper.Initialize().
     private static readonly object _gate = new();
     private static bool? _cachedIsBootstrapped;
+    private static HardwareDecodeCapabilities _cachedCapabilities =
+        HardwareDecodeCapabilities.Empty;
 
     /// <summary>
     /// <see langword="true"/> when FFmpeg was successfully bootstrapped.
@@ -34,12 +37,38 @@ public sealed class FfmpegBootstrapFixture : IDisposable
     /// </summary>
     public bool IsBootstrapped { get; }
 
+    /// <summary>
+    /// What the hardware-decode probe found during that bootstrap, or
+    /// <see cref="HardwareDecodeCapabilities.Empty"/> when it did not run.
+    /// </summary>
+    /// <remarks>
+    /// The probe already runs inside <c>Initialize()</c>; this only keeps its answer
+    /// rather than discarding it. Reading it a second time is not an option:
+    /// <c>av_hwdevice_ctx_create</c> is not thread-safe, which is what the gate above
+    /// exists for.
+    /// </remarks>
+    public HardwareDecodeCapabilities Capabilities => ReadCapabilities();
+
     public FfmpegBootstrapFixture()
     {
         lock (_gate)
         {
             _cachedIsBootstrapped ??= TryBootstrap();
             IsBootstrapped = _cachedIsBootstrapped.Value;
+        }
+    }
+
+    /// <summary>
+    /// Bootstraps if nothing has yet, and returns what the probe found. Shared by the
+    /// fixture and by <see cref="RequiresHardwareDecodeFactAttribute"/>, so the two
+    /// cannot race the probe against each other.
+    /// </summary>
+    internal static HardwareDecodeCapabilities ReadCapabilities()
+    {
+        lock (_gate)
+        {
+            _cachedIsBootstrapped ??= TryBootstrap();
+            return _cachedCapabilities;
         }
     }
 
@@ -53,7 +82,10 @@ public sealed class FfmpegBootstrapFixture : IDisposable
         {
             var options = new FrameFlowNativeOptions { CustomFfmpegPath = libraryDir };
             var bootstrapper = new FrameFlowBootstrapper(options, NullLoggerFactory.Instance);
-            return bootstrapper.Initialize().IsSuccess;
+            var result = bootstrapper.Initialize();
+            if (result.IsSuccess)
+                _cachedCapabilities = result.Capabilities;
+            return result.IsSuccess;
         }
         catch
         {
@@ -173,6 +205,46 @@ internal sealed class RequiresFfmpegAndCorpusFactAttribute : FactAttribute
 
         if (!IntegrationTestEnvironment.HasCorpusFiles)
             Skip = "Test corpus not generated. Run scripts/generate-test-corpus.cs first.";
+    }
+}
+
+/// <summary>
+/// Skips unless the hardware-decode probe initialised at least one backend.
+/// </summary>
+/// <remarks>
+/// <para>
+/// For assertions about <i>which</i> decoder was selected, which are only meaningful on a
+/// machine that has one. A GPU-less runner skips; a machine with a working backend
+/// asserts. That keeps the test machine-independent without making it vacuous: an early
+/// return would record a pass and hide the missing coverage from the skip count.
+/// </para>
+/// <para>
+/// Initialised, not merely present. <see cref="HardwareDecodeBackend.Initialized"/> means
+/// the device opened, which is the precondition for a decoder being able to bind it.
+/// </para>
+/// </remarks>
+internal sealed class RequiresHardwareDecodeFactAttribute : FactAttribute
+{
+    public RequiresHardwareDecodeFactAttribute()
+    {
+        if (!IntegrationTestEnvironment.HasFfmpegSharedLibraries)
+        {
+            Skip = "FFmpeg shared libraries not available.";
+            return;
+        }
+
+        if (!IntegrationTestEnvironment.HasCorpusFiles)
+        {
+            Skip = "Test corpus not generated. Run scripts/generate-test-corpus.cs first.";
+            return;
+        }
+
+        var initialised = FfmpegBootstrapFixture.ReadCapabilities().Available.Count(b =>
+            b.Initialized
+        );
+
+        if (initialised == 0)
+            Skip = "No hardware decode backend initialised on this machine.";
     }
 }
 

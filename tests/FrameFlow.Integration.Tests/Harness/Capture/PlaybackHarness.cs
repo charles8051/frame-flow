@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using FrameFlow.Audio.TestKit;
 using FrameFlow.Media;
+using FrameFlow.Playback.Diagnostics;
 using FrameFlow.Playback;
 
 namespace FrameFlow.Integration.Tests.Harness.Capture;
@@ -64,7 +65,10 @@ internal static class PlaybackHarness
                 Video: videoSink.Captures,
                 FinalState: controller.State,
                 LoadResult: loadResult,
-                PlayResult: playResult
+                PlayResult: playResult,
+                // Read before the finally block disposes the controller. The run is over,
+                // so the counters are final rather than a sample of a moving pipeline.
+                Diagnostics: controller.GetDiagnostics()
             );
         }
         finally
@@ -117,7 +121,10 @@ internal static class PlaybackHarness
                 Video: videoSink.Captures,
                 FinalState: controller.State,
                 LoadResult: loadResult,
-                PlayResult: playResult
+                PlayResult: playResult,
+                // Read before the finally block disposes the controller. The run is over,
+                // so the counters are final rather than a sample of a moving pipeline.
+                Diagnostics: controller.GetDiagnostics()
             );
         }
         finally
@@ -308,5 +315,6 @@ internal sealed record PlaybackCaptureResult(
     IReadOnlyList<VideoCapture> Video,
     PlaybackState FinalState,
     Result LoadResult,
-    Result PlayResult
+    Result PlayResult,
+    PlaybackDiagnosticsSnapshot Diagnostics
 );
