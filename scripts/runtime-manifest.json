@@ -1,6 +1,6 @@
 {
   "version": "9.0",
-  "description": "FFmpeg shared libraries and the bundled ffmpeg/ffprobe tools for FrameFlow develop-time use. sha256 is of the extracted file, not the archive, and changes with every build - regenerate the affected RIDs when a pin moves. The tools are listed alongside the libraries because fetch-ffmpeg.cs installs them too and generate-test-corpus.cs executes ffmpeg. Two pins, not one: win/linux come from the BtbN build named by buildTag/archiveVersion, and osx-arm64 from this repo's own LGPL build (scripts/build-ffmpeg-macos.sh) published as a GitHub Release - it carries libraries only, links no external libraries, and is LGPL-2.1 rather than the BtbN build's LGPL-3-and-Apache-2.0. osx-x64 is absent because that build is arm64-only and fetch-ffmpeg.cs still resolves Intel Macs from a local Homebrew keg, so there is no pinned artifact to hash - the unversioned `ffmpeg` formula, because Homebrew cuts ffmpeg@N only when N+1 takes the unversioned slot and so has no ffmpeg@9 until FFmpeg 10 ships. That keg floats; the ABI check in FrameFlow.Native refuses a major the bindings were not generated for, so a float fails the bootstrap rather than decoding wrong. The BtbN hashes are for the LGPL build only; a --license gpl run is unverified by design.",
+  "description": "FFmpeg shared libraries and the bundled ffmpeg/ffprobe tools for FrameFlow develop-time use. sha256 is of the extracted file, not the archive, and changes with every build - regenerate the affected RIDs when a pin moves. The tools are listed alongside the libraries because fetch-ffmpeg.cs installs them too and generate-test-corpus.cs executes ffmpeg. Two pins, not one: win/linux come from the BtbN build named by buildTag/archiveVersion, and osx-arm64 from this repo's own LGPL build (scripts/build-ffmpeg-macos.sh) published as a GitHub Release - it carries libraries only, links no external libraries, and is LGPL-2.1 rather than the BtbN build's LGPL-3-and-Apache-2.0. osx-x64 does not exist: Intel macOS was dropped in 2026-09 and fetch-ffmpeg.cs rejects the RID. The BtbN hashes are for the LGPL build only; a --license gpl run is unverified by design.",
   "source": "https://github.com/BtbN/FFmpeg-Builds/releases",
   "buildTag": "autobuild-2026-08-31-13-27",
   "archiveVersion": "n9.0.1-11-ge47273f4d9",
@@ -207,41 +207,36 @@
       ]
     },
     "osx-arm64": {
-      "archiveUrl": "https://github.com/charles8051/frame-flow/releases/download/ffmpeg-macos-n9.0.2-1/ffmpeg-osx-arm64.tar.gz",
+      "archiveUrl": "https://github.com/charles8051/frame-flow/releases/download/ffmpeg-macos-n9.0.2-2/ffmpeg-osx-arm64.tar.gz",
       "libraries": [
         {
           "name": "libavformat.63.dylib",
-          "sha256": "042c8a51e6b98591e86782fe4d3242476d14fb78e0b984e6473645b459d454f3",
+          "sha256": "b2008e3d1902852f63a8873a33d00341e9d81d9d32a72dc9449b4606d332c597",
           "target": "runtimes/osx-arm64/native/libavformat.63.dylib"
         },
         {
           "name": "libavcodec.63.dylib",
-          "sha256": "d641028428aa609130dc64dd6a487060413e325c634f275c1b13bf4fb6aea38d",
+          "sha256": "7154163863db5946561316e5e7747cf0480ddab785c30208d08478c43ba87e39",
           "target": "runtimes/osx-arm64/native/libavcodec.63.dylib"
         },
         {
           "name": "libavutil.61.dylib",
-          "sha256": "f999be135517786b985f4dcc78a0e37919916786e6fe81a7fc694fa4188e6c71",
+          "sha256": "25fd7ffdf5ca4be41428c8eabddef59154795dc2266c5843d2a612696e070c2f",
           "target": "runtimes/osx-arm64/native/libavutil.61.dylib"
         },
         {
-          "name": "libavdevice.63.dylib",
-          "sha256": "6c96b599f1c32919d7770fc076a7a2a921f19bbcb80539400a4416142ba54fd7",
-          "target": "runtimes/osx-arm64/native/libavdevice.63.dylib"
-        },
-        {
           "name": "libavfilter.12.dylib",
-          "sha256": "750b5b2e069d7827b0860a85fdfdf1c2b63ce3bf2c2010af177ca4160dbfe619",
+          "sha256": "0f7929e58f04d1bc01b8e056c2574fcb07e7b5240ed0447cabe83d1c0e9f8b67",
           "target": "runtimes/osx-arm64/native/libavfilter.12.dylib"
         },
         {
           "name": "libswscale.10.dylib",
-          "sha256": "67390e81e1bd52edda47ca0dc2675c280bd09179db10015f28fa492309398f56",
+          "sha256": "af4426183dfae8bf96841705ffde71c9c88e8a1b91e5c2ff10812cf3f25842e3",
           "target": "runtimes/osx-arm64/native/libswscale.10.dylib"
         },
         {
           "name": "libswresample.7.dylib",
-          "sha256": "314b31d0de283fedc5867416e3475e37741609d18754ad39f562b82b6d1005ee",
+          "sha256": "e70bea5a6829e144d17eca5456fe1b8e16814579fe2a6911f9677b2af1a1db8f",
           "target": "runtimes/osx-arm64/native/libswresample.7.dylib"
         }
       ]

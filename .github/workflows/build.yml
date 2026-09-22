@@ -6,15 +6,18 @@ name: Build and Test
 # A pull request gets ubuntu-latest + windows-latest, always. Until 2026-09-11
 # this workflow was dispatch-only and nothing built a PR at all — the only
 # check on one was the Peanut Gallery reviewer, whose pass means "the panel
-# ran", not "it compiles". #110 merged on that alone. The two legs here are the
-# platforms FrameFlow.Native.Runtime actually ships a RID for.
+# ran", not "it compiles". #110 merged on that alone.
 #
 # A dispatch still picks any subset of the three, and macOS is reachable only
-# that way. It is the 10x-billed runner, and its FFmpeg comes from a Homebrew
-# keg rather than the pinned LGPL build the other platforms download, so a
-# green macOS leg answers a weaker question than the other two for ten times
-# the price. Cross-platform runs being expensive is why there was no PR trigger
-# at all; capping the automatic matrix at two is what makes one affordable.
+# that way. The reason is now purely price: it is the 10x-billed runner.
+#
+# It used to be more than price. Until 2026-09 the macOS leg took its FFmpeg
+# from a Homebrew keg rather than a pinned build, so a green macOS run answered
+# a weaker question than the other two. That is no longer true: osx-arm64
+# downloads the same pinned, hashed artifact every other RID does, and
+# FrameFlow.Native.Runtime ships a RID for it. A macOS dispatch now tests the
+# bytes the package ships. Worth running before anything that touches the
+# native layer, rather than only when something looks wrong.
 #
 # Restore runs unauthenticated, so a fork pull request builds like any other and
 # nothing here reads a secret. This workflow used to add the private GitHub
@@ -169,9 +172,9 @@ jobs:
       # pinned, hashed artifact now like every other RID, so the step is gone and
       # a green macOS leg tests the same bytes the package ships.
       #
-      # macos-latest is Apple silicon, which is the only macOS RID with an
-      # artifact. The build is arm64-only and Intel Macs still come from a keg;
-      # an Intel runner here would fail the fetch with that instruction.
+      # macos-latest is Apple silicon, which is the only macOS architecture
+      # FrameFlow supports. An Intel runner would fail the fetch: the RID was
+      # removed in 2026-09.
       - name: Fetch FFmpeg binaries (host platform)
         run: dotnet run scripts/fetch-ffmpeg.cs
 

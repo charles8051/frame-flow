@@ -8,9 +8,8 @@
 # ===============
 # Every other RID takes a pinned, sha256-verified LGPL artifact from BtbN.
 # BtbN builds no macOS, and until this script existed scripts/fetch-ffmpeg.cs
-# copied macOS libraries from an installed Homebrew keg. That works on a
-# developer's own machine and nowhere else, which is still why osx-x64 - the one
-# macOS RID with no artifact - is not redistributed:
+# copied macOS libraries from an installed Homebrew keg. That worked on a
+# developer's own machine and nowhere else:
 #
 #   - The keg is GPL-3 (x264, x265), against ADR-0046's LGPL-only choice.
 #   - Its dylibs reference libvpx, libsoxr and friends at absolute paths inside
@@ -27,7 +26,7 @@
 # ================
 # out/
 #   libavcodec.63.dylib  libavformat.63.dylib  libavutil.61.dylib
-#   libavdevice.63.dylib libavfilter.12.dylib
+#   libavfilter.12.dylib
 #   libswscale.10.dylib   libswresample.7.dylib
 #   SHA256SUMS
 #   BUILD-INFO.txt          <- configure line and versions
@@ -78,11 +77,11 @@ if [ "$(uname -s)" != "Darwin" ]; then
     exit 1
 fi
 
-# arm64 only, deliberately. macos-latest runners are Apple silicon, and an
-# x86_64 dylib would need a cross-compile with a separate SDK. Every Mac sold
-# since 2020 is arm64. osx-x64 stays absent from the package rather than being
-# shipped half-built: nuget/FrameFlow.Native.Runtime.csproj refuses a partial
-# RID, and absent is a supported state there.
+# arm64 only, and macOS is arm64 only. Intel support was dropped in 2026-09
+# rather than deferred: no osx-x64 RID has ever shipped, Apple's last Intel Mac
+# shipped in 2023, and macOS 26 is the final release supporting them. An Intel
+# leg here would be one more matrix entry (macos-26-intel exists), so the reason
+# is that nobody is served by it, not that it is hard.
 if [ "$(uname -m)" != "arm64" ]; then
     echo "error: this script builds osx-arm64 and this host is $(uname -m)." >&2
     exit 1
@@ -186,6 +185,17 @@ mkdir -p "$BUILD_DIR"
 #                                     enabled-component report instead, which is
 #                                     the same information from the same build.
 #
+#   --disable-avdevice                libavdevice is capture and playback devices,
+#                                     and with autodetect off it builds to 42 KB of
+#                                     nothing: every device is platform-specific and
+#                                     none survives. Capture in FrameFlow belongs to
+#                                     Periphery.Camera, which CameraPushSource wraps,
+#                                     so an avdevice path would compete with it as
+#                                     well as being empty. libavfilter stays: it is
+#                                     538 filters, and whether FrameFlow should expose
+#                                     them as an operator is an open question rather
+#                                     than a no.
+#
 #   --enable-videotoolbox             Not optional. H264EncoderOptions resolves
 #                                     h264_videotoolbox on macOS, and hardware
 #                                     decode (ADR-0033) probes it. Autodetect
@@ -215,6 +225,7 @@ CONFIGURE_ARGS=(
     --enable-videotoolbox
     --enable-audiotoolbox
     --disable-programs
+    --disable-avdevice
     --arch=arm64
     --install-name-dir=@loader_path
 )
@@ -236,7 +247,6 @@ mkdir -p "$OUT_DIR"
 
 LIBS=(
     libavcodec.63.dylib
-    libavdevice.63.dylib
     libavfilter.12.dylib
     libavformat.63.dylib
     libavutil.61.dylib

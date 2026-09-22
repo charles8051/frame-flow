@@ -161,10 +161,10 @@ The osx-arm64 libraries now come from a build made in this repository.
   external encoders those tools need for corpus generation, so it produces
   libraries only.
 
-**osx-x64 is absent, not broken.** The build is arm64-only, so Intel Macs have no
-artifact and `scripts/fetch-ffmpeg.cs` still resolves them from a Homebrew keg for
-develop-time use. Those keg files are not redistributed and no osx-x64 RID is
-packed.
+**macOS is Apple silicon only.** Intel support was removed in 2026-09. No osx-x64 RID
+ever shipped, so nothing here was ever distributed under any licence for it. An Intel
+consumer supplies their own FFmpeg, which this file does not cover: these notices
+describe the binaries FrameFlow ships.
 
 ## OpenCORE AMR — Apache-2.0
 

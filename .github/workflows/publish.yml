@@ -304,17 +304,15 @@ jobs:
       #
       # osx-arm64 is fetched here now. It used to be excluded along with
       # osx-x64 because fetch-ffmpeg.cs read both from a local Homebrew keg that
-      # this runner does not have. It no longer does: osx-arm64 downloads a
+      # this runner does not have. osx-arm64 downloads a
       # pinned, hashed, self-contained LGPL artifact built by
       # .github/workflows/ffmpeg-macos.yml, which needs nothing installed and
       # works from a Linux runner like any other download.
       #
-      # osx-x64 stays out, and not only because there is no artifact for it.
-      # fetch-ffmpeg.cs still resolves Intel Macs from the keg, and those dylibs
-      # resolve transitive dependencies out of the Homebrew prefix, so packing
-      # them would publish binaries that load on the machine that built them and
-      # nowhere else. The runtime package's osx-x64 globs were removed for the
-      # same reason: absent is a supported state, half-working is not.
+      # osx-x64 does not exist any more. fetch-ffmpeg.cs rejects the RID, the
+      # runtime package has no globs for it, and nothing ever shipped: Apple's
+      # last Intel Mac shipped in 2023 and macOS 26 is the final release
+      # supporting them.
       - name: Fetch FFmpeg binaries (Windows + Linux + macOS arm64)
         run: |
           dotnet run scripts/fetch-ffmpeg.cs -- --rid win-x64 --force

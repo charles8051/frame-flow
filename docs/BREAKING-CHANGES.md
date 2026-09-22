@@ -13,8 +13,8 @@ errors, which announce themselves. A few are not, and those are called out.
 
 ## `v0.10.1` — since `v0.10.0`
 
-Two refusals where the pipeline used to carry on, and the FFmpeg major they guard. None is a
-compile error.
+Two refusals where the pipeline used to carry on, the FFmpeg major they guard, and one platform
+that is no longer pretended to be supported. None is a compile error.
 
 ### 1. A source FFmpeg opened but could not resolve is refused
 
@@ -76,7 +76,8 @@ the bindings were generated for and matches by construction. Entry 3 changes whi
 
 macOS used to be the likely case, because the package shipped no macOS RID and `brew install
 ffmpeg` is whichever major Homebrew ships that week. As of `v0.10.2` it carries `osx-arm64`, so an
-Apple silicon consumer on the bundled binaries is in the first group. Intel Macs still have no RID.
+Apple silicon consumer on the bundled binaries is in the first group. Intel Macs have no RID and
+never had one; entry 4 removes what remained of the path.
 
 **What to write instead.** Take the bundled package. If you are pinning your own, install the
 major the package targets and point at it. Entry 3 below moves that from 7.1 to 9.0 in this same
@@ -131,6 +132,26 @@ Vulkan hwaccels) are available to a consumer who asks for them by name.
 identities in `THIRD-PARTY-NOTICES.md` move with this. The BtbN build still carries
 `--enable-version3` with `libopencore-amr`, `libaribb24` and `gmp`, read off the shipped binary
 rather than inferred; the macOS build still links nothing external.
+
+### 4. Intel macOS is not supported
+
+**Not a compile error, and not a change to anything that shipped.** No `osx-x64` RID has ever
+been in `FrameFlow.Native.Runtime`, so nothing is removed from the package. What is removed is
+the develop-time path that pretended otherwise: `scripts/fetch-ffmpeg.cs` no longer knows the
+RID, and the 165 lines of Homebrew-keg handling and `install_name` patching that existed only
+for it are gone.
+
+**Why now.** Apple's last Intel Mac shipped in 2023 and macOS 26 is the final release supporting
+them. The path had no CI coverage, no known user, and had just been changed in entry 3 without
+anyone running it.
+
+**Not a cost problem.** `macos-26-intel` is a current GitHub runner, so an Intel leg would have
+been one matrix entry. It was dropped because nobody is served by it, not because it is hard.
+
+**If you are on an Intel Mac.** Install FFmpeg 9.x and point at it with
+`FrameFlowNativeOptions.CustomFfmpegPath`, or let `ProbeSystemLibraries` find it. Entry 2's check
+tells you by name if the major is wrong. That is the same arrangement every macOS consumer had
+before `v0.10.2`.
 
 ### Not breaking, but worth knowing
 
