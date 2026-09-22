@@ -1,3 +1,5 @@
+using FrameFlow.Decoding;
+using FrameFlow.Media;
 using FrameFlow.Native;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -27,6 +29,8 @@ public sealed class FfmpegBootstrapFixture : IDisposable
     // that runs as part of FrameFlowBootstrapper.Initialize().
     private static readonly object _gate = new();
     private static bool? _cachedIsBootstrapped;
+    private static HardwareDecodeCapabilities _cachedCapabilities =
+        HardwareDecodeCapabilities.Empty;
 
     /// <summary>
     /// <see langword="true"/> when FFmpeg was successfully bootstrapped.
@@ -34,12 +38,38 @@ public sealed class FfmpegBootstrapFixture : IDisposable
     /// </summary>
     public bool IsBootstrapped { get; }
 
+    /// <summary>
+    /// What the hardware-decode probe found during that bootstrap, or
+    /// <see cref="HardwareDecodeCapabilities.Empty"/> when it did not run.
+    /// </summary>
+    /// <remarks>
+    /// The probe already runs inside <c>Initialize()</c>; this only keeps its answer
+    /// rather than discarding it. Reading it a second time is not an option:
+    /// <c>av_hwdevice_ctx_create</c> is not thread-safe, which is what the gate above
+    /// exists for.
+    /// </remarks>
+    public HardwareDecodeCapabilities Capabilities => ReadCapabilities();
+
     public FfmpegBootstrapFixture()
     {
         lock (_gate)
         {
             _cachedIsBootstrapped ??= TryBootstrap();
             IsBootstrapped = _cachedIsBootstrapped.Value;
+        }
+    }
+
+    /// <summary>
+    /// Bootstraps if nothing has yet, and returns what the probe found. Shared by the
+    /// fixture and by <see cref="RequiresHardwareDecodeFactAttribute"/>, so the two
+    /// cannot race the probe against each other.
+    /// </summary>
+    internal static HardwareDecodeCapabilities ReadCapabilities()
+    {
+        lock (_gate)
+        {
+            _cachedIsBootstrapped ??= TryBootstrap();
+            return _cachedCapabilities;
         }
     }
 
@@ -53,7 +83,10 @@ public sealed class FfmpegBootstrapFixture : IDisposable
         {
             var options = new FrameFlowNativeOptions { CustomFfmpegPath = libraryDir };
             var bootstrapper = new FrameFlowBootstrapper(options, NullLoggerFactory.Instance);
-            return bootstrapper.Initialize().IsSuccess;
+            var result = bootstrapper.Initialize();
+            if (result.IsSuccess)
+                _cachedCapabilities = result.Capabilities;
+            return result.IsSuccess;
         }
         catch
         {
@@ -173,6 +206,71 @@ internal sealed class RequiresFfmpegAndCorpusFactAttribute : FactAttribute
 
         if (!IntegrationTestEnvironment.HasCorpusFiles)
             Skip = "Test corpus not generated. Run scripts/generate-test-corpus.cs first.";
+    }
+}
+
+/// <summary>
+/// Skips unless a named codec can actually use hardware decode on this machine.
+/// </summary>
+/// <remarks>
+/// <para>
+/// For assertions about <i>which</i> decoder was selected, which are only meaningful where
+/// hardware is available for the codec under test. A GPU-less runner skips; so does a
+/// machine whose device opens but whose decoder for that codec cannot bind it. A skip and
+/// not an early return, per the convention on
+/// <see cref="RequiresCorpusFileFactAttribute"/>: an early return records a pass and hides
+/// the missing coverage from the skip count.
+/// </para>
+/// <para>
+/// <b>Per codec, not per device.</b> Gating on
+/// <see cref="HardwareDecodeBackend.Initialized"/> alone would be coarser than the
+/// assertion it guards: a device opening says nothing about whether a given codec can use
+/// it. On one machine H.264, HEVC and VP9 bind D3D11VA while AV1 falls back to software
+/// against the same initialised device, so the device-level question would let an AV1
+/// assertion run where it cannot be answered.
+/// </para>
+/// <para>
+/// <c>VideoDecoder.HasHardwareCandidate</c> asks the same question the decode path asks,
+/// so the gate and the assertion cannot disagree about what "available" means. It reports
+/// what the codec advertises rather than what the driver will manage for a particular
+/// stream, which is the stronger claim <see cref="TryBindSingle"/> settles and this gate
+/// deliberately does not.
+/// </para>
+/// </remarks>
+internal sealed class RequiresHardwareDecodeFactAttribute : FactAttribute
+{
+    /// <param name="codecId">
+    /// The FFmpeg <c>AVCodecID</c> the gated test decodes. <c>27</c> is
+    /// <c>AV_CODEC_ID_H264</c>.
+    /// </param>
+    public RequiresHardwareDecodeFactAttribute(int codecId)
+    {
+        if (!IntegrationTestEnvironment.HasFfmpegSharedLibraries)
+        {
+            Skip = "FFmpeg shared libraries not available.";
+            return;
+        }
+
+        if (!IntegrationTestEnvironment.HasCorpusFiles)
+        {
+            Skip = "Test corpus not generated. Run scripts/generate-test-corpus.cs first.";
+            return;
+        }
+
+        var capabilities = FfmpegBootstrapFixture.ReadCapabilities();
+
+        if (!capabilities.Available.Any(b => b.Initialized))
+        {
+            Skip = "No hardware decode backend initialised on this machine.";
+            return;
+        }
+
+        if (!VideoDecoder.HasHardwareCandidate(codecId, capabilities))
+        {
+            Skip =
+                $"A hardware backend initialised, but no decoder for codec {codecId} "
+                + "advertises a hardware config for it on this machine.";
+        }
     }
 }
 

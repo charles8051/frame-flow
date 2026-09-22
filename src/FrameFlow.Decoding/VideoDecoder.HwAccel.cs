@@ -313,6 +313,38 @@ public sealed partial class VideoDecoder
         return null;
     }
 
+    /// <summary>
+    /// Whether <paramref name="codecId"/> advertises a hardware config for any backend
+    /// whose device initialised on this host.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The per-codec question <see cref="HardwareDecodeCapabilities"/> cannot answer: it
+    /// reports which devices opened, and a device opening says nothing about whether a
+    /// given codec can use it. On one machine H.264, HEVC and VP9 bind D3D11VA while AV1
+    /// falls back to software against the same initialised device.
+    /// </para>
+    /// <para>
+    /// It reports what the codec <i>advertises</i>, not what the driver will manage for a
+    /// particular stream: profile, bit depth and resolution all still decide, and
+    /// <c>TryBindSingle</c> is where that is found out. Stronger than "a device opened",
+    /// weaker than "this clip decodes on hardware".
+    /// </para>
+    /// <para>
+    /// Internal and narrow on purpose. Surfacing the codec dimension on the public
+    /// capabilities surface is #355; this is the slice the decode path already computes,
+    /// exposed so a test can gate on the same question the decoder asks.
+    /// </para>
+    /// </remarks>
+    internal static bool HasHardwareCandidate(
+        int codecId,
+        HardwareDecodeCapabilities capabilities
+    )
+    {
+        nint codec = FFAvCodec.avcodec_find_decoder(codecId);
+        return codec != nint.Zero && EnumerateCandidates(codec, capabilities).Count > 0;
+    }
+
     private static List<HwAccelCandidate> EnumerateCandidates(
         nint codec,
         HardwareDecodeCapabilities capabilities
