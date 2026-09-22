@@ -180,7 +180,6 @@ var platforms = new Dictionary<string, PlatformInfo>
             "libavformat.63.dylib",
             "libavcodec.63.dylib",
             "libavutil.61.dylib",
-            "libavdevice.63.dylib",
             "libavfilter.12.dylib",
             "libswscale.10.dylib",
             "libswresample.7.dylib",

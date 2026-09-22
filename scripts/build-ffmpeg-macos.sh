@@ -26,7 +26,7 @@
 # ================
 # out/
 #   libavcodec.63.dylib  libavformat.63.dylib  libavutil.61.dylib
-#   libavdevice.63.dylib libavfilter.12.dylib
+#   libavfilter.12.dylib
 #   libswscale.10.dylib   libswresample.7.dylib
 #   SHA256SUMS
 #   BUILD-INFO.txt          <- configure line and versions
@@ -185,6 +185,17 @@ mkdir -p "$BUILD_DIR"
 #                                     enabled-component report instead, which is
 #                                     the same information from the same build.
 #
+#   --disable-avdevice                libavdevice is capture and playback devices,
+#                                     and with autodetect off it builds to 42 KB of
+#                                     nothing: every device is platform-specific and
+#                                     none survives. Capture in FrameFlow belongs to
+#                                     Periphery.Camera, which CameraPushSource wraps,
+#                                     so an avdevice path would compete with it as
+#                                     well as being empty. libavfilter stays: it is
+#                                     538 filters, and whether FrameFlow should expose
+#                                     them as an operator is an open question rather
+#                                     than a no.
+#
 #   --enable-videotoolbox             Not optional. H264EncoderOptions resolves
 #                                     h264_videotoolbox on macOS, and hardware
 #                                     decode (ADR-0033) probes it. Autodetect
@@ -214,6 +225,7 @@ CONFIGURE_ARGS=(
     --enable-videotoolbox
     --enable-audiotoolbox
     --disable-programs
+    --disable-avdevice
     --arch=arm64
     --install-name-dir=@loader_path
 )
@@ -235,7 +247,6 @@ mkdir -p "$OUT_DIR"
 
 LIBS=(
     libavcodec.63.dylib
-    libavdevice.63.dylib
     libavfilter.12.dylib
     libavformat.63.dylib
     libavutil.61.dylib
