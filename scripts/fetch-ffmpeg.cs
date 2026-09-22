@@ -108,7 +108,7 @@ var baseUrl = $"https://github.com/BtbN/FFmpeg-Builds/releases/download/{BuildTa
 // To move this pin: dispatch the FFmpeg macOS Build workflow with a new
 // release-tag, then update this and the osx-arm64 sha256 values in
 // runtime-manifest.json together.
-const string MacOsReleaseTag = "ffmpeg-macos-n9.0.2-1";
+const string MacOsReleaseTag = "ffmpeg-macos-n9.0.2-2";
 const string MacOsArchiveName = "ffmpeg-osx-arm64.tar.gz";
 var macOsArchiveUrl =
     $"https://github.com/charles8051/frame-flow/releases/download/{MacOsReleaseTag}/{MacOsArchiveName}";
