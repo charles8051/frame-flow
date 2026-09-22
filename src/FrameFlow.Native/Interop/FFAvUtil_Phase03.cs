@@ -13,7 +13,7 @@ namespace FrameFlow.Native.Interop;
 /// <para>
 /// This is a partial class that extends <see cref="FFAvUtil"/> declared in
 /// <c>FFAvUtil.cs</c>. Splitting by phase keeps the surface auditable.
-/// Targets FFmpeg 7.x (libavutil-59).
+/// Targets FFmpeg 7.x (libavutil-61).
 /// </para>
 /// <para>
 /// Note: AVPacket lifecycle functions (<c>av_packet_alloc</c>, <c>av_packet_free</c>,

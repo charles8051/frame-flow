@@ -13,7 +13,7 @@ namespace FrameFlow.Native.Interop;
 /// decoder open, and the send-packet / receive-frame decode loop (Phase 03).
 /// All pointer parameters are <see cref="nint"/>; raw pointer values must not escape
 /// outside <c>FrameFlow.Native</c> and <c>FrameFlow.Decoding</c> (ADR-0005).
-/// Targets FFmpeg 7.x (libavcodec-61).
+/// Targets FFmpeg 7.x (libavcodec-63).
 /// </remarks>
 internal static partial class FFAvCodec
 {

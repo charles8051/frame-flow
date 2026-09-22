@@ -12,7 +12,7 @@ namespace FrameFlow.Native.Interop;
 /// </summary>
 /// <remarks>
 /// Partial extension of <see cref="FFAvUtil"/>. Targets FFmpeg 7.x
-/// (libavutil-59). Timestamp rescaling (<c>av_rescale_q</c>) and frame
+/// (libavutil-61). Timestamp rescaling (<c>av_rescale_q</c>) and frame
 /// lifecycle (<c>av_frame_alloc</c> / <c>av_frame_free</c> /
 /// <c>av_frame_unref</c>) are declared in the existing
 /// <c>FFAvUtil_Phase03.cs</c> and reused by the encode path.

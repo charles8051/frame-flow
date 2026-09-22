@@ -20,6 +20,13 @@ public sealed class FrameFlowBootstrapperAbiGateTests
     private static uint Pack(int major, int minor = 8, int micro = 100) =>
         ((uint)major << 16) | ((uint)minor << 8) | (uint)micro;
 
+    /// <summary>
+    /// A libavutil major the bindings were not generated for, whatever they were generated
+    /// for. Derived rather than written down, so a version bump cannot turn the mismatch
+    /// case into a matching one and quietly delete the coverage.
+    /// </summary>
+    private static int WrongMajor => FfmpegAbiCheck.ExpectedAvutilMajor - 2;
+
     private static FrameFlowBootstrapper Create(
         StubFfmpegLibraryLoader loader,
         FrameFlowNativeOptions? options = null
@@ -46,9 +53,12 @@ public sealed class FrameFlowBootstrapperAbiGateTests
     [Fact]
     public void Initialize_MismatchedAvutilMajor_Fails()
     {
-        // 61 is FFmpeg 9.x. The bindings are generated for 7.x, and every function this
-        // project P/Invokes still links against 9, so nothing else in the load path notices.
-        var loader = new StubFfmpegLibraryLoader { AvutilVersion = Pack(61) };
+        // 59 is FFmpeg 7.x, the previous pin, and every function this project P/Invokes
+        // links against both, so nothing else in the load path notices.
+        //
+        // This case named 61 as the wrong major until the move to FFmpeg 9 made it the
+        // right one. WrongMajor keeps the two sides apart by construction.
+        var loader = new StubFfmpegLibraryLoader { AvutilVersion = Pack(WrongMajor) };
 
         var result = Create(loader).Initialize();
 
@@ -65,12 +75,12 @@ public sealed class FrameFlowBootstrapperAbiGateTests
     {
         var loader = new StubFfmpegLibraryLoader
         {
-            AvutilVersion = Pack(61, minor: 1, micro: 100),
+            AvutilVersion = Pack(WrongMajor, minor: 1, micro: 100),
         };
 
         var result = Create(loader).Initialize();
 
-        Assert.Contains("61.1.100", result.Message);
+        Assert.Contains($"{WrongMajor}.1.100", result.Message);
         Assert.Contains($"{FfmpegAbiCheck.ExpectedAvutilMajor}.x", result.Message);
     }
 
@@ -81,7 +91,7 @@ public sealed class FrameFlowBootstrapperAbiGateTests
     [Fact]
     public void Initialize_MismatchedAvutilMajor_ReportsResolvedBinarySource()
     {
-        var loader = new StubFfmpegLibraryLoader { AvutilVersion = Pack(61) };
+        var loader = new StubFfmpegLibraryLoader { AvutilVersion = Pack(WrongMajor) };
 
         var result = Create(loader).Initialize();
 
@@ -96,7 +106,7 @@ public sealed class FrameFlowBootstrapperAbiGateTests
     [Fact]
     public void Initialize_MismatchedAvutilMajor_SecondCallAlsoFails()
     {
-        var loader = new StubFfmpegLibraryLoader { AvutilVersion = Pack(61) };
+        var loader = new StubFfmpegLibraryLoader { AvutilVersion = Pack(WrongMajor) };
         var bootstrapper = Create(loader);
 
         bootstrapper.Initialize();
@@ -170,7 +180,7 @@ public sealed class FrameFlowBootstrapperAbiGateTests
         var loader = new StubFfmpegLibraryLoader
         {
             SimulateAbiMismatch = true,
-            AbiMismatchMessage = "Stub: libavcodec is 62.0.100, expected 61.x.",
+            AbiMismatchMessage = "Stub: libavcodec is 62.0.100, expected 63.x.",
         };
 
         var result = Create(loader).Initialize();

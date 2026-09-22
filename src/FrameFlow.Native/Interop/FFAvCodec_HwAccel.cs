@@ -12,7 +12,7 @@ namespace FrameFlow.Native.Interop;
 /// </summary>
 /// <remarks>
 /// Partial class extension of <see cref="FFAvCodec"/>. Targets FFmpeg 7.x
-/// (libavcodec-61).
+/// (libavcodec-63).
 /// </remarks>
 internal static partial class FFAvCodec
 {

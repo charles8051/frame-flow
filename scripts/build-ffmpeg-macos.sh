@@ -2,14 +2,15 @@
 # Copyright 2026 Charles Lee
 # SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 #
-# Builds FFmpeg 7.1 as LGPL shared libraries for osx-arm64, self-contained.
+# Builds FFmpeg 9.0 as LGPL shared libraries for osx-arm64, self-contained.
 #
 # WHY THIS EXISTS
 # ===============
 # Every other RID takes a pinned, sha256-verified LGPL artifact from BtbN.
-# BtbN builds no macOS, so scripts/fetch-ffmpeg.cs copies from an installed
-# Homebrew ffmpeg@7 keg instead. That works on a developer's own machine and
-# nowhere else:
+# BtbN builds no macOS, and until this script existed scripts/fetch-ffmpeg.cs
+# copied macOS libraries from an installed Homebrew keg. That works on a
+# developer's own machine and nowhere else, which is still why osx-x64 - the one
+# macOS RID with no artifact - is not redistributed:
 #
 #   - The keg is GPL-3 (x264, x265), against ADR-0046's LGPL-only choice.
 #   - Its dylibs reference libvpx, libsoxr and friends at absolute paths inside
@@ -25,9 +26,9 @@
 # WHAT IT PRODUCES
 # ================
 # out/
-#   libavcodec.61.dylib  libavformat.61.dylib  libavutil.59.dylib
-#   libavdevice.61.dylib libavfilter.10.dylib
-#   libswscale.8.dylib   libswresample.5.dylib
+#   libavcodec.63.dylib  libavformat.63.dylib  libavutil.61.dylib
+#   libavdevice.63.dylib libavfilter.12.dylib
+#   libswscale.10.dylib   libswresample.7.dylib
 #   SHA256SUMS
 #   BUILD-INFO.txt          <- configure line and versions
 #
@@ -62,8 +63,8 @@ set -euo pipefail
 # Moving this pin means regenerating every osx sha256 in
 # scripts/runtime-manifest.json and the build identity in THIRD-PARTY-NOTICES.md,
 # which is the LGPL corresponding-source pointer.
-FFMPEG_TAG="n7.1.5"
-FFMPEG_COMMIT="3a0867c2bfda4a4d4309ca1a8cbdc6175e67f587"
+FFMPEG_TAG="n9.0.2"
+FFMPEG_COMMIT="946fcce07b6dcd0331c8cc609192aeff5e1924f8"
 FFMPEG_REPO="https://github.com/FFmpeg/FFmpeg.git"
 
 OUT_DIR="${1:-$(pwd)/out}"
@@ -234,13 +235,13 @@ rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
 LIBS=(
-    libavcodec.61.dylib
-    libavdevice.61.dylib
-    libavfilter.10.dylib
-    libavformat.61.dylib
-    libavutil.59.dylib
-    libswresample.5.dylib
-    libswscale.8.dylib
+    libavcodec.63.dylib
+    libavdevice.63.dylib
+    libavfilter.12.dylib
+    libavformat.63.dylib
+    libavutil.61.dylib
+    libswresample.7.dylib
+    libswscale.10.dylib
 )
 
 for lib in "${LIBS[@]}"; do

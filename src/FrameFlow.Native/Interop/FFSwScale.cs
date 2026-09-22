@@ -13,7 +13,7 @@ namespace FrameFlow.Native.Interop;
 /// and context cleanup.
 /// All pointer parameters are <see cref="nint"/>; raw pointer values must not escape
 /// outside <c>FrameFlow.Native</c> and <c>FrameFlow.Decoding</c> (ADR-0005).
-/// Targets FFmpeg 7.x (libswscale-8).
+/// Targets FFmpeg 7.x (libswscale-10).
 /// </remarks>
 internal static partial class FFSwScale
 {

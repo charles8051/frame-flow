@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="FFmpeg.AutoGen.Abstractions" Version="7.1.1" />
+    <PackageReference Include="FFmpeg.AutoGen.Abstractions" Version="9.0.1.1" />
     <PackageReference
       Include="Microsoft.Extensions.DependencyInjection.Abstractions"
       Version="9.*"
@@ -42,12 +42,12 @@
     built constantly during development on machines that may not have
     pulled the natives.
   -->
-  <ItemGroup Condition="Exists('..\..\runtimes\win-x64\native\avutil-59.dll')">
-    <None Include="..\..\runtimes\win-x64\native\avutil-59.dll"    Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
-    <None Include="..\..\runtimes\win-x64\native\avcodec-61.dll"   Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
-    <None Include="..\..\runtimes\win-x64\native\avformat-61.dll"  Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
-    <None Include="..\..\runtimes\win-x64\native\swscale-8.dll"    Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
-    <None Include="..\..\runtimes\win-x64\native\swresample-5.dll" Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
+  <ItemGroup Condition="Exists('..\..\runtimes\win-x64\native\avutil-61.dll')">
+    <None Include="..\..\runtimes\win-x64\native\avutil-61.dll"    Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
+    <None Include="..\..\runtimes\win-x64\native\avcodec-63.dll"   Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
+    <None Include="..\..\runtimes\win-x64\native\avformat-63.dll"  Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
+    <None Include="..\..\runtimes\win-x64\native\swscale-10.dll"    Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
+    <None Include="..\..\runtimes\win-x64\native\swresample-7.dll" Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
   </ItemGroup>
 
   <!--
@@ -77,7 +77,7 @@
     the point: the empty package was produced by an ordinary build, so an
     ordinary build is where this has to fire.
 
-    Checks all five, not just avutil-59 as the ItemGroup Condition does. A
+    Checks all five, not just avutil-61 as the ItemGroup Condition does. A
     partial runtimes/ directory — an interrupted fetch, or an FFmpeg soname bump
     that moves some libraries and not others — otherwise satisfies the
     Condition, packs whatever it matched, and reintroduces the same class of
@@ -93,7 +93,7 @@
     Condition="'$(FrameFlowAllowNativelessPack)' != 'true'"
   >
     <ItemGroup>
-      <_ExpectedFFmpegNative Include="avutil-59.dll;avcodec-61.dll;avformat-61.dll;swscale-8.dll;swresample-5.dll" />
+      <_ExpectedFFmpegNative Include="avutil-61.dll;avcodec-63.dll;avformat-63.dll;swscale-10.dll;swresample-7.dll" />
       <_MissingFFmpegNative
         Include="@(_ExpectedFFmpegNative)"
         Condition="!Exists('$(MSBuildThisFileDirectory)../../runtimes/win-x64/native/%(Identity)')"

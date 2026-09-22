@@ -1,5 +1,6 @@
 using FrameFlow.Media;
 using FrameFlow.Native;
+using FrameFlow.Native.Core;
 
 namespace FrameFlow.Native.Tests.Doubles;
 
@@ -12,9 +13,15 @@ internal sealed class StubFfmpegLibraryLoader : IFfmpegLibraryLoader
 {
     /// <summary>
     /// The packed <c>avutil</c> version integer to report on success.
-    /// Defaults to a plausible FFmpeg 7.x value (59.x.x → 59 &lt;&lt; 16).
     /// </summary>
-    public uint AvutilVersion { get; set; } = (59u << 16) | (8u << 8) | 100u;
+    /// <remarks>
+    /// Derived from <see cref="FfmpegAbiCheck.ExpectedAvutilMajor"/> rather than written as
+    /// a literal. The bootstrapper's ABI gate refuses any other major, so a hard-coded
+    /// default turns every stub-based success test red on the next FFmpeg bump - which is
+    /// what a literal 59 did when this moved to FFmpeg 9.
+    /// </remarks>
+    public uint AvutilVersion { get; set; } =
+        ((uint)FfmpegAbiCheck.ExpectedAvutilMajor << 16) | (8u << 8) | 100u;
 
     /// <summary>
     /// When <see langword="true"/> (the default), <see cref="TryLoad"/> returns a success result.
@@ -37,7 +44,7 @@ internal sealed class StubFfmpegLibraryLoader : IFfmpegLibraryLoader
 
     /// <summary>The diagnostic returned when <see cref="SimulateAbiMismatch"/> is set.</summary>
     public string AbiMismatchMessage { get; set; } =
-        "Stub: FFmpeg ABI mismatch. libavutil is 61.1.100, expected 59.x.";
+        "Stub: FFmpeg ABI mismatch. libavutil is 59.1.100, expected 61.x.";
 
     /// <summary>Tracks how many times <see cref="TryLoad"/> was invoked.</summary>
     public int CallCount { get; private set; }

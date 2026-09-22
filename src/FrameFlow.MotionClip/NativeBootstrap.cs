@@ -51,9 +51,9 @@ internal static class NativeBootstrap
             : OperatingSystem.IsMacOS() ? $"osx-{arch}"
             : $"linux-{arch}";
         string libName =
-            OperatingSystem.IsWindows() ? "avutil-59.dll"
-            : OperatingSystem.IsMacOS() ? "libavutil.59.dylib"
-            : "libavutil.so.59";
+            OperatingSystem.IsWindows() ? "avutil-61.dll"
+            : OperatingSystem.IsMacOS() ? "libavutil.61.dylib"
+            : "libavutil.so.61";
 
         string? dir = AppContext.BaseDirectory;
         while (dir is not null)

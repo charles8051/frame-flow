@@ -101,17 +101,29 @@ public sealed class SonameConsistencyTests
     /// Directories that actually resolve libraries. Docs are excluded on purpose: they
     /// record history, and a sentence about what a name used to be is not a defect.
     /// </summary>
-    private static readonly string[] ScanRoots = ["src", "tests", "scripts"];
+    private static readonly string[] ScanRoots = ["src", "tests", "scripts", "nuget"];
+
+    /// <summary>
+    /// File types that name a library by its on-disk file name.
+    /// </summary>
+    /// <remarks>
+    /// <c>.cs</c> alone was not enough. The FFmpeg 9 move found the pack guard in
+    /// <c>FrameFlow.Native.csproj</c>, which lists the five file names twice and fails the
+    /// build when they are missing, still on the old major and invisible to this sweep.
+    /// <c>.csproj</c>, <c>.json</c> (runtime-manifest) and <c>.sh</c> (the macOS build's
+    /// LIBS array) all carry real names and are covered now.
+    /// </remarks>
+    private static readonly string[] ScanExtensions = ["*.cs", "*.csproj", "*.json", "*.sh"];
 
     /// <summary>This file, excluded from its own sweep. See <see cref="SourceFiles"/>.</summary>
     private const string ThisFileName = "SonameConsistencyTests.cs";
 
     /// <summary>
     /// A floor on what a healthy sweep sees, so a pattern that matches nothing fails here
-    /// instead of passing over nothing. 23 files carry a soname today, excluding this one.
+    /// instead of passing over nothing. 26 files carry a soname today, excluding this one.
     /// </summary>
     /// <remarks>
-    /// Deliberately slack against that 23, because the number legitimately falls when a
+    /// Deliberately slack against that 26, because the number legitimately falls when a
     /// duplicate helper is consolidated or a library is dropped from the fetch, and a floor
     /// that tracked the count closely would turn every such cleanup into an edit here.
     ///
@@ -149,7 +161,11 @@ public sealed class SonameConsistencyTests
             if (!Directory.Exists(dir))
                 continue;
 
-            foreach (var file in Directory.EnumerateFiles(dir, "*.cs", SearchOption.AllDirectories))
+            var files = ScanExtensions.SelectMany(ext =>
+                Directory.EnumerateFiles(dir, ext, SearchOption.AllDirectories)
+            );
+
+            foreach (var file in files)
             {
                 // Build output carries copies of the sources and generated files; scanning
                 // it would double-report and would depend on what was last built.

@@ -14,7 +14,7 @@ namespace FrameFlow.Native.Interop;
 /// <para>
 /// Partial class extension of <see cref="FFAvUtil"/>. Split out so the hwaccel
 /// surface is auditable separately from the Phase 01 / Phase 03 declarations.
-/// Targets FFmpeg 7.x (libavutil-59).
+/// Targets FFmpeg 7.x (libavutil-61).
 /// </para>
 /// <para>
 /// The <c>AVHWDeviceType</c> integer values mirror FFmpeg's
