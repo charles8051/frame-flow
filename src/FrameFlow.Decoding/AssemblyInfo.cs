@@ -7,6 +7,11 @@ using System.Runtime.CompilerServices;
 // can access DemuxSession constructors and BuildMediaInfo without real FFmpeg binaries.
 [assembly: InternalsVisibleTo("FrameFlow.Decoding.Tests")]
 
+// For RequiresHardwareDecodeFactAttribute, which gates on
+// VideoDecoder.HasHardwareCandidate so a machine whose backend opens but whose
+// H.264 decoder cannot use it skips rather than failing.
+[assembly: InternalsVisibleTo("FrameFlow.Integration.Tests")]
+
 // Expose internal demux classification seams to playback contract tests that
 // lock cross-assembly EOF-vs-fault semantics without real FFmpeg runtime setup.
 [assembly: InternalsVisibleTo("FrameFlow.Playback.Tests")]

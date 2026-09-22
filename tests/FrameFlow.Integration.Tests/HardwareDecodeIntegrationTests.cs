@@ -85,23 +85,16 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
     /// </para>
     /// <para>
     /// This closes that by gating instead of asserting unconditionally.
-    /// <see cref="RequiresHardwareDecodeFactAttribute"/> skips where the probe initialised
-    /// nothing, so the assertion only runs where it is answerable.
+    /// <see cref="RequiresHardwareDecodeFactAttribute"/> skips where H.264 cannot use
+    /// hardware here, so the assertion only runs where it is answerable.
     /// </para>
     /// <para>
-    /// The gate is coarser than the assertion, and that is a known residual rather than an
-    /// oversight. It asks whether any backend <i>device</i> initialised;
-    /// <see cref="HardwareDecodeCapabilities"/> carries no per-codec dimension, so it cannot
-    /// ask whether that backend decodes H.264. A machine with an initialising device and no
-    /// H.264 decoder therefore fails here rather than skipping. H.264 is the most widely
-    /// supported hardware codec, so that combination is unusual; #355 tracks surfacing the
-    /// codec dimension, which <c>avcodec_get_hw_config</c> already supplies at decode time.
-    /// </para>
-    /// <para>
-    /// It asserts H.264, deliberately, and not the codec-agnostic claim. Hardware support
-    /// is per codec: on the machine this was written for, H.264, HEVC and VP9 decode on
-    /// D3D11VA while AV1 falls back to software on the same GPU. A test that demanded
-    /// hardware for every fixture would encode one machine's capability matrix.
+    /// The gate asks about the codec, not just the device, and that matters: hardware
+    /// support is per codec. On the machine this was written for, H.264, HEVC and VP9
+    /// decode on D3D11VA while AV1 falls back to software against the same initialised
+    /// device. A device-level gate would let an assertion run where the codec cannot
+    /// answer it, and a test demanding hardware for every fixture would encode one
+    /// machine's capability matrix.
     /// </para>
     /// <para>
     /// <c>HardwareBackend</c> names the backend that produced the frames rather than the
@@ -110,7 +103,8 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
     /// hardware, which is what #74 corrected and what makes this worth asserting.
     /// </para>
     /// </remarks>
-    [RequiresHardwareDecodeFact]
+    // 27 is AV_CODEC_ID_H264.
+    [RequiresHardwareDecodeFact(codecId: 27)]
     public async Task Auto_WithABackendAvailable_DecodesH264OnHardware()
     {
         var capture = await PlaybackHarness.PlayCorpusFileAsync(
@@ -137,15 +131,11 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
 
         Assert.True(
             backend is not null,
-            "Auto decoded H.264 in software while the probe reported an initialised "
-                + $"backend ({available}). "
-                + "Most likely: hardware decode stopped being selected, which is what this "
-                + "test exists to catch. "
-                + "Otherwise: this machine has a backend whose device initialises but which "
-                + "cannot decode H.264. HardwareDecodeCapabilities has no codec dimension, so "
-                + "RequiresHardwareDecodeFact cannot gate on that and this test fails where it "
-                + "should skip. See #355. If that is the case here, say so on the issue rather "
-                + "than weakening the assertion."
+            "Auto decoded H.264 in software, on a machine where the H.264 decoder "
+                + $"advertises a hardware config for an initialised backend ({available}). "
+                + "The gate and the decoder were asked the same question and gave different "
+                + "answers, so either hardware decode stopped being selected, or binding it "
+                + "failed for this stream in particular."
         );
     }
 

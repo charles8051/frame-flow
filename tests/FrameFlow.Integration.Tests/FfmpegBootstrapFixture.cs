@@ -1,3 +1,4 @@
+using FrameFlow.Decoding;
 using FrameFlow.Media;
 using FrameFlow.Native;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -209,23 +210,40 @@ internal sealed class RequiresFfmpegAndCorpusFactAttribute : FactAttribute
 }
 
 /// <summary>
-/// Skips unless the hardware-decode probe initialised at least one backend.
+/// Skips unless a named codec can actually use hardware decode on this machine.
 /// </summary>
 /// <remarks>
 /// <para>
-/// For assertions about <i>which</i> decoder was selected, which are only meaningful on a
-/// machine that has one. A GPU-less runner skips; a machine with a working backend
-/// asserts. That keeps the test machine-independent without making it vacuous: an early
-/// return would record a pass and hide the missing coverage from the skip count.
+/// For assertions about <i>which</i> decoder was selected, which are only meaningful where
+/// hardware is available for the codec under test. A GPU-less runner skips; so does a
+/// machine whose device opens but whose decoder for that codec cannot bind it. A skip and
+/// not an early return, per the convention on
+/// <see cref="RequiresCorpusFileFactAttribute"/>: an early return records a pass and hides
+/// the missing coverage from the skip count.
 /// </para>
 /// <para>
-/// Initialised, not merely present. <see cref="HardwareDecodeBackend.Initialized"/> means
-/// the device opened, which is the precondition for a decoder being able to bind it.
+/// <b>Per codec, not per device.</b> Gating on
+/// <see cref="HardwareDecodeBackend.Initialized"/> alone would be coarser than the
+/// assertion it guards: a device opening says nothing about whether a given codec can use
+/// it. On one machine H.264, HEVC and VP9 bind D3D11VA while AV1 falls back to software
+/// against the same initialised device, so the device-level question would let an AV1
+/// assertion run where it cannot be answered.
+/// </para>
+/// <para>
+/// <c>VideoDecoder.HasHardwareCandidate</c> asks the same question the decode path asks,
+/// so the gate and the assertion cannot disagree about what "available" means. It reports
+/// what the codec advertises rather than what the driver will manage for a particular
+/// stream, which is the stronger claim <see cref="TryBindSingle"/> settles and this gate
+/// deliberately does not.
 /// </para>
 /// </remarks>
 internal sealed class RequiresHardwareDecodeFactAttribute : FactAttribute
 {
-    public RequiresHardwareDecodeFactAttribute()
+    /// <param name="codecId">
+    /// The FFmpeg <c>AVCodecID</c> the gated test decodes. <c>27</c> is
+    /// <c>AV_CODEC_ID_H264</c>.
+    /// </param>
+    public RequiresHardwareDecodeFactAttribute(int codecId)
     {
         if (!IntegrationTestEnvironment.HasFfmpegSharedLibraries)
         {
@@ -239,12 +257,20 @@ internal sealed class RequiresHardwareDecodeFactAttribute : FactAttribute
             return;
         }
 
-        var initialised = FfmpegBootstrapFixture.ReadCapabilities().Available.Count(b =>
-            b.Initialized
-        );
+        var capabilities = FfmpegBootstrapFixture.ReadCapabilities();
 
-        if (initialised == 0)
+        if (!capabilities.Available.Any(b => b.Initialized))
+        {
             Skip = "No hardware decode backend initialised on this machine.";
+            return;
+        }
+
+        if (!VideoDecoder.HasHardwareCandidate(codecId, capabilities))
+        {
+            Skip =
+                $"A hardware backend initialised, but no decoder for codec {codecId} "
+                + "advertises a hardware config for it on this machine.";
+        }
     }
 }
 
