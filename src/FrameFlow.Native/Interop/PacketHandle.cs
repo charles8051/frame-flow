@@ -50,7 +50,7 @@ internal sealed class PacketHandle : SafeHandle
     /// </summary>
     protected override bool ReleaseHandle()
     {
-        // av_packet_free is in libavcodec in FFmpeg 7.x, not libavutil.
+        // av_packet_free is in libavcodec, not libavutil.
         FFAvCodec.av_packet_free(ref handle);
         return true;
     }

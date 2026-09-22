@@ -15,7 +15,7 @@ namespace FrameFlow.Native.Interop;
 /// <para>
 /// Partial extension of <see cref="FFAvFormat"/> declared in
 /// <c>FFAvFormat.cs</c> (which binds the demux/input direction). Targets
-/// FFmpeg 7.x (libavformat-61).
+/// FFmpeg 9.x (libavformat-63).
 /// </para>
 /// <para>
 /// All pointer parameters are <see cref="nint"/>; raw pointer values must not

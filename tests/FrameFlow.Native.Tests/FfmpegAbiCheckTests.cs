@@ -12,7 +12,7 @@ public sealed class FfmpegAbiCheckTests
     private static uint Pack(int major, int minor = 8, int micro = 100) =>
         ((uint)major << 16) | ((uint)minor << 8) | (uint)micro;
 
-    /// <summary>A set where every library matches, as the bundled FFmpeg 7.1 does.</summary>
+    /// <summary>A set where every library matches, as the fetched FFmpeg 9.0 does.</summary>
     private static List<FfmpegLibraryVersion> MatchingSet() =>
         [
             .. FfmpegAbiCheck.RequiredLibraries.Select(lib => new FfmpegLibraryVersion(
@@ -27,22 +27,22 @@ public sealed class FfmpegAbiCheckTests
     /// <c>FrameFlow.Native.csproj</c> crosses a major version, which is the moment
     /// <c>scripts/fetch-ffmpeg.cs</c>, <c>scripts/runtime-manifest.json</c> and
     /// <c>THIRD-PARTY-NOTICES.md</c> have to move with it. The numbers are the sonames the
-    /// fetched payload carries: avutil-59, swresample-5, swscale-8, avcodec-61,
-    /// avformat-61, avdevice-61, avfilter-10.
+    /// fetched payload carries: avutil-61, swresample-7, swscale-10, avcodec-63,
+    /// avformat-63, avdevice-63, avfilter-12.
     ///
     /// All seven, including the two nothing loads, because SonameConsistencyTests holds the
     /// file names on disk to these values.
     /// </summary>
     [Fact]
-    public void ExpectedMajor_MatchesFFmpeg7Sonames()
+    public void ExpectedMajor_MatchesFFmpeg9Sonames()
     {
-        Assert.Equal(59, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvUtil));
-        Assert.Equal(5, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.SwResample));
-        Assert.Equal(8, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.SwScale));
-        Assert.Equal(61, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvCodec));
-        Assert.Equal(61, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvFormat));
-        Assert.Equal(61, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvDevice));
-        Assert.Equal(10, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvFilter));
+        Assert.Equal(61, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvUtil));
+        Assert.Equal(7, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.SwResample));
+        Assert.Equal(10, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.SwScale));
+        Assert.Equal(63, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvCodec));
+        Assert.Equal(63, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvFormat));
+        Assert.Equal(63, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvDevice));
+        Assert.Equal(12, FfmpegAbiCheck.ExpectedMajor(FfmpegLibrary.AvFilter));
     }
 
     [Fact]
@@ -111,17 +111,22 @@ public sealed class FfmpegAbiCheckTests
 
     /// <summary>
     /// libavutil majors do not match FFmpeg release numbers, so the message translates the
-    /// ones it knows. 61 is FFmpeg 9.x, which is what a macOS box running an unversioned
-    /// <c>brew install ffmpeg</c> supplies today.
+    /// ones it knows. 59 is FFmpeg 7.x, which is what a machine still holding the previous
+    /// pin supplies, and 61 is the FFmpeg 9.x this build wants.
     /// </summary>
+    /// <remarks>
+    /// This case named 61 as the wrong version until the move to FFmpeg 9, when 61 became
+    /// the right one. Worth remembering if a later bump makes 59 correct again for some
+    /// library: the two numbers here have to stay on opposite sides of the comparison.
+    /// </remarks>
     [Fact]
-    public void Check_Avutil61_MessageNamesFFmpeg9()
+    public void Check_Avutil59_MessageNamesFFmpeg7AndFFmpeg9()
     {
-        var message = FfmpegAbiCheck.Check(Pack(61)).Message;
+        var message = FfmpegAbiCheck.Check(Pack(59)).Message;
 
         Assert.NotNull(message);
-        Assert.Contains("FFmpeg 9.x", message);
         Assert.Contains("FFmpeg 7.x", message);
+        Assert.Contains("FFmpeg 9.x", message);
     }
 
     // --- Whole-set overload ---

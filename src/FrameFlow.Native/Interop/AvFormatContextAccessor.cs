@@ -13,8 +13,8 @@ namespace FrameFlow.Native.Interop;
 /// <remarks>
 /// <para>
 /// Uses <see cref="System.Runtime.CompilerServices.Unsafe.AsRef{T}(void*)"/> to overlay the <c>FFmpeg.AutoGen.Abstractions.AVFormatContext</c>
-/// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 7.1
-/// by the AutoGen binding generator, which derives them from the FFmpeg 7.1 C headers.
+/// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 9.0
+/// by the AutoGen binding generator, which derives them from the FFmpeg 9.0 C headers.
 /// </para>
 /// <para>
 /// This type does not own the native pointer. The caller is responsible for keeping the
@@ -69,7 +69,7 @@ internal readonly unsafe ref struct AvFormatContextAccessor
 /// <remarks>
 /// <para>
 /// Uses <see cref="System.Runtime.CompilerServices.Unsafe.AsRef{T}(void*)"/> to overlay the <c>FFmpeg.AutoGen.Abstractions.AVStream</c>
-/// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 7.1.
+/// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 9.0.
 /// </para>
 /// <para>
 /// This type does not own the native pointer. The caller is responsible for keeping the
@@ -154,7 +154,7 @@ internal readonly unsafe ref struct AvStreamAccessor
 /// <remarks>
 /// <para>
 /// Uses <see cref="System.Runtime.CompilerServices.Unsafe.AsRef{T}(void*)"/> to overlay the <c>FFmpeg.AutoGen.Abstractions.AVCodecParameters</c>
-/// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 7.1.
+/// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 9.0.
 /// </para>
 /// </remarks>
 internal readonly unsafe ref struct AvCodecParAccessor
@@ -235,7 +235,7 @@ internal readonly unsafe ref struct AvCodecParAccessor
 /// <remarks>
 /// <para>
 /// Uses <see cref="System.Runtime.CompilerServices.Unsafe.AsRef{T}(void*)"/> to overlay the <c>FFmpeg.AutoGen.Abstractions.AVPacket</c>
-/// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 7.1.
+/// struct definition onto the raw pointer. Field positions are guaranteed correct for FFmpeg 9.0.
 /// </para>
 /// </remarks>
 internal readonly unsafe ref struct AvPacketAccessor

@@ -40,7 +40,7 @@ public sealed class FFmpegLibraryResolverTests
 
         var name = FFmpegLibraryResolver.PlatformFileName("avutil");
         Assert.EndsWith(".dll", name, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("avutil-59", name, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("avutil-61", name, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -51,7 +51,7 @@ public sealed class FFmpegLibraryResolverTests
 
         var name = FFmpegLibraryResolver.PlatformFileName("avformat");
         Assert.EndsWith(".dll", name, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("avformat-61", name, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("avformat-63", name, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

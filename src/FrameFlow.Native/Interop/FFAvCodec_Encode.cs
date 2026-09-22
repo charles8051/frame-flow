@@ -15,8 +15,8 @@ namespace FrameFlow.Native.Interop;
 /// This is a partial class that extends <see cref="FFAvCodec"/> declared in
 /// <c>FFAvCodec.cs</c>. The decode direction (<c>avcodec_send_packet</c> /
 /// <c>avcodec_receive_frame</c>) lives there; the write direction lives here
-/// so the read/write surfaces stay auditable side by side. Targets FFmpeg 7.x
-/// (libavcodec-61).
+/// so the read/write surfaces stay auditable side by side. Targets FFmpeg 9.x
+/// (libavcodec-63).
 /// </para>
 /// <para>
 /// All pointer parameters are <see cref="nint"/>; raw pointer values must not

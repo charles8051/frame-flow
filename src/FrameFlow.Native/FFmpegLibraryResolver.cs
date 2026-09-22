@@ -7,7 +7,7 @@ namespace FrameFlow.Native;
 
 /// <summary>
 /// Encapsulates the platform-specific mapping from FFmpeg library short names
-/// (e.g. <c>"avutil"</c>) to their on-disk file names (e.g. <c>avutil-59.dll</c>).
+/// (e.g. <c>"avutil"</c>) to their on-disk file names (e.g. <c>avutil-61.dll</c>).
 /// </summary>
 internal static class FFmpegLibraryResolver
 {
@@ -22,18 +22,18 @@ internal static class FFmpegLibraryResolver
         "avformat",
     ];
 
-    // FFmpeg 7.x version suffixes per library.
+    // FFmpeg 9.x version suffixes per library.
     // These correspond to the SONAME / DLL name used in the v7 release series.
     private static readonly IReadOnlyDictionary<string, string> WindowsSuffixes = new Dictionary<
         string,
         string
     >(StringComparer.OrdinalIgnoreCase)
     {
-        ["avutil"] = "avutil-59",
-        ["swresample"] = "swresample-5",
-        ["swscale"] = "swscale-8",
-        ["avcodec"] = "avcodec-61",
-        ["avformat"] = "avformat-61",
+        ["avutil"] = "avutil-61",
+        ["swresample"] = "swresample-7",
+        ["swscale"] = "swscale-10",
+        ["avcodec"] = "avcodec-63",
+        ["avformat"] = "avformat-63",
     };
 
     private static readonly IReadOnlyDictionary<string, string> UnixSonames = new Dictionary<
@@ -41,11 +41,11 @@ internal static class FFmpegLibraryResolver
         string
     >(StringComparer.OrdinalIgnoreCase)
     {
-        ["avutil"] = "libavutil.so.59",
-        ["swresample"] = "libswresample.so.5",
-        ["swscale"] = "libswscale.so.8",
-        ["avcodec"] = "libavcodec.so.61",
-        ["avformat"] = "libavformat.so.61",
+        ["avutil"] = "libavutil.so.61",
+        ["swresample"] = "libswresample.so.7",
+        ["swscale"] = "libswscale.so.10",
+        ["avcodec"] = "libavcodec.so.63",
+        ["avformat"] = "libavformat.so.63",
     };
 
     private static readonly IReadOnlyDictionary<string, string> MacOsDylibNames = new Dictionary<
@@ -53,11 +53,11 @@ internal static class FFmpegLibraryResolver
         string
     >(StringComparer.OrdinalIgnoreCase)
     {
-        ["avutil"] = "libavutil.59.dylib",
-        ["swresample"] = "libswresample.5.dylib",
-        ["swscale"] = "libswscale.8.dylib",
-        ["avcodec"] = "libavcodec.61.dylib",
-        ["avformat"] = "libavformat.61.dylib",
+        ["avutil"] = "libavutil.61.dylib",
+        ["swresample"] = "libswresample.7.dylib",
+        ["swscale"] = "libswscale.10.dylib",
+        ["avcodec"] = "libavcodec.63.dylib",
+        ["avformat"] = "libavformat.63.dylib",
     };
 
     /// <summary>
@@ -65,7 +65,7 @@ internal static class FFmpegLibraryResolver
     /// </summary>
     /// <param name="libraryName">Short name, e.g. <c>"avutil"</c>.</param>
     /// <returns>
-    /// The on-disk file name including version suffix, e.g. <c>avutil-59.dll</c> on Windows.
+    /// The on-disk file name including version suffix, e.g. <c>avutil-61.dll</c> on Windows.
     /// Falls back to the bare library name when the short name is not in the known map.
     /// </returns>
     internal static string PlatformFileName(string libraryName)

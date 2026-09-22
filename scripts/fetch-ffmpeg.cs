@@ -1,7 +1,7 @@
 #!/usr/bin/env dotnet
 #:property TargetFramework=net10.0
 
-// Downloads pre-built FFmpeg 7.1 shared libraries for local development and CI.
+// Downloads pre-built FFmpeg 9.0 shared libraries for local development and CI.
 //
 // Reads scripts/runtime-manifest.json to determine which libraries are needed,
 // their expected SHA-256 checksums, and where to place them. Supports manifest-
@@ -48,7 +48,7 @@ if (ridIdx >= 0 && ridIdx + 1 < args.Length)
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
-const string FfmpegVersion = "7.1";
+const string FfmpegVersion = "9.0";
 
 // Pinned to a dated autobuild rather than the rolling `latest` tag — and
 // specifically to an END-OF-MONTH one. That distinction is the whole point.
@@ -84,8 +84,8 @@ const string FfmpegVersion = "7.1";
 //      download rather than silently passing.
 //   4. Update the build identity in THIRD-PARTY-NOTICES.md, which is the
 //      LGPL-2.1 corresponding-source pointer.
-const string BuildTag = "autobuild-2026-07-31-14-10";
-const string ArchiveVersion = "n7.1.5-12-g1fdbca85aa";
+const string BuildTag = "autobuild-2026-08-31-13-27";
+const string ArchiveVersion = "n9.0.1-11-ge47273f4d9";
 var baseUrl = $"https://github.com/BtbN/FFmpeg-Builds/releases/download/{BuildTag}";
 
 // ── macOS pin ────────────────────────────────────────────────────────────────
@@ -109,7 +109,7 @@ var baseUrl = $"https://github.com/BtbN/FFmpeg-Builds/releases/download/{BuildTa
 // To move this pin: dispatch the FFmpeg macOS Build workflow with a new
 // release-tag, then update this and the osx-arm64 sha256 values in
 // runtime-manifest.json together.
-const string MacOsReleaseTag = "ffmpeg-macos-n7.1.5-1";
+const string MacOsReleaseTag = "ffmpeg-macos-n9.0.2-1";
 const string MacOsArchiveName = "ffmpeg-osx-arm64.tar.gz";
 var macOsArchiveUrl =
     $"https://github.com/charles8051/frame-flow/releases/download/{MacOsReleaseTag}/{MacOsArchiveName}";
@@ -126,78 +126,78 @@ var platforms = new Dictionary<string, PlatformInfo>
         "win64",
         "zip",
         [
-            "avformat-61.dll",
-            "avcodec-61.dll",
-            "avutil-59.dll",
-            "avdevice-61.dll",
-            "avfilter-10.dll",
-            "swscale-8.dll",
-            "swresample-5.dll",
+            "avformat-63.dll",
+            "avcodec-63.dll",
+            "avutil-61.dll",
+            "avdevice-63.dll",
+            "avfilter-12.dll",
+            "swscale-10.dll",
+            "swresample-7.dll",
         ]
     ),
     ["win-arm64"] = new(
         "winarm64",
         "zip",
         [
-            "avformat-61.dll",
-            "avcodec-61.dll",
-            "avutil-59.dll",
-            "avdevice-61.dll",
-            "avfilter-10.dll",
-            "swscale-8.dll",
-            "swresample-5.dll",
+            "avformat-63.dll",
+            "avcodec-63.dll",
+            "avutil-61.dll",
+            "avdevice-63.dll",
+            "avfilter-12.dll",
+            "swscale-10.dll",
+            "swresample-7.dll",
         ]
     ),
     ["linux-x64"] = new(
         "linux64",
         "tar.xz",
         [
-            "libavformat.so.61",
-            "libavcodec.so.61",
-            "libavutil.so.59",
-            "libavdevice.so.61",
-            "libavfilter.so.10",
-            "libswscale.so.8",
-            "libswresample.so.5",
+            "libavformat.so.63",
+            "libavcodec.so.63",
+            "libavutil.so.61",
+            "libavdevice.so.63",
+            "libavfilter.so.12",
+            "libswscale.so.10",
+            "libswresample.so.7",
         ]
     ),
     ["linux-arm64"] = new(
         "linuxarm64",
         "tar.xz",
         [
-            "libavformat.so.61",
-            "libavcodec.so.61",
-            "libavutil.so.59",
-            "libavdevice.so.61",
-            "libavfilter.so.10",
-            "libswscale.so.8",
-            "libswresample.so.5",
+            "libavformat.so.63",
+            "libavcodec.so.63",
+            "libavutil.so.61",
+            "libavdevice.so.63",
+            "libavfilter.so.12",
+            "libswscale.so.10",
+            "libswresample.so.7",
         ]
     ),
     ["osx-x64"] = new(
         "sonoma",
         "tar.gz",
         [
-            "libavformat.61.dylib",
-            "libavcodec.61.dylib",
-            "libavutil.59.dylib",
-            "libavdevice.61.dylib",
-            "libavfilter.10.dylib",
-            "libswscale.8.dylib",
-            "libswresample.5.dylib",
+            "libavformat.63.dylib",
+            "libavcodec.63.dylib",
+            "libavutil.61.dylib",
+            "libavdevice.63.dylib",
+            "libavfilter.12.dylib",
+            "libswscale.10.dylib",
+            "libswresample.7.dylib",
         ]
     ),
     ["osx-arm64"] = new(
         "arm64_sequoia",
         "tar.gz",
         [
-            "libavformat.61.dylib",
-            "libavcodec.61.dylib",
-            "libavutil.59.dylib",
-            "libavdevice.61.dylib",
-            "libavfilter.10.dylib",
-            "libswscale.8.dylib",
-            "libswresample.5.dylib",
+            "libavformat.63.dylib",
+            "libavcodec.63.dylib",
+            "libavutil.61.dylib",
+            "libavdevice.63.dylib",
+            "libavfilter.12.dylib",
+            "libswscale.10.dylib",
+            "libswresample.7.dylib",
         ]
     ),
 };
@@ -408,15 +408,30 @@ foreach (var rid in ridsToProcess)
         // fail to load at runtime. The only reliable macOS approach is to copy
         // from the already-installed Homebrew keg, where all placeholders have
         // been resolved and transitive dependencies are satisfied.
-        var homebrewPrefix = rid == "osx-arm64" ? "/opt/homebrew" : "/usr/local";
-        var kegLibDir = Path.Combine(homebrewPrefix, "opt", "ffmpeg@7", "lib");
-        var kegBinDir = Path.Combine(homebrewPrefix, "opt", "ffmpeg@7", "bin");
+        // The unversioned formula, not ffmpeg@9, because Homebrew has no ffmpeg@9.
+        // It cuts ffmpeg@N when N+1 takes the unversioned slot, so ffmpeg@9 appears
+        // when FFmpeg 10 ships and today `ffmpeg` is the only 9.x keg there is.
+        //
+        // That means this path floats: `brew upgrade` moves it to 10 the week that
+        // lands. Acceptable now in a way it was not before, because the ABI check in
+        // FrameFlow.Native reads every library's own *_version() at bootstrap and
+        // refuses a major the bindings were not generated for. A float used to decode
+        // wrong; it now fails to start, by name.
+        //
+        // Intel Macs only. osx-arm64 downloads a pinned artifact and never reaches here.
+        const string KegName = "ffmpeg";
+        var homebrewPrefix = "/usr/local";
+        var kegLibDir = Path.Combine(homebrewPrefix, "opt", KegName, "lib");
+        var kegBinDir = Path.Combine(homebrewPrefix, "opt", KegName, "bin");
 
         if (!Directory.Exists(kegLibDir))
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"  ffmpeg@7 not found at {kegLibDir}.");
-            Console.WriteLine("  Install it first: brew install ffmpeg@7");
+            Console.WriteLine($"  {KegName} not found at {kegLibDir}.");
+            Console.WriteLine($"  Install it first: brew install {KegName}");
+            Console.WriteLine(
+                "  It has to be a 9.x build. The bootstrap refuses any other major."
+            );
             Console.ResetColor();
             totalFailed++;
             continue;
@@ -463,7 +478,7 @@ foreach (var rid in ridsToProcess)
         // Patch inter-FFmpeg install names to use @loader_path so the bundled
         // dylibs find each other without requiring the original Homebrew keg paths.
         // Transitive Homebrew dependencies (libsoxr, libvpx, etc.) keep their
-        // absolute Homebrew paths; those remain valid as long as ffmpeg@7 is installed.
+        // absolute Homebrew paths; those remain valid as long as ffmpeg is installed.
         if (kegCopied > 0)
         {
             Console.WriteLine("  Patching dylib install names...");
@@ -542,7 +557,7 @@ foreach (var rid in ridsToProcess)
     {
         // tar.xz — use tar command (available on Windows 10+, Linux, macOS).
         // On Windows, tar cannot create symlinks without admin privileges. Linux
-        // .so archives contain symlinks (e.g., libavutil.so.59 → libavutil.so.59.39.100).
+        // .so archives contain symlinks (e.g., libavutil.so.61 → libavutil.so.61.39.100).
         // tar exits with code 2 for symlink failures but still extracts the real files.
         // We treat this as non-fatal and rely on FindLibrary to locate the real files.
         Directory.CreateDirectory(extractDir);
@@ -797,7 +812,7 @@ static void SetExecutable(string path)
 /// <summary>
 /// Finds a library file in the extracted archive. On Linux, tar extraction on Windows
 /// creates MSYS symlinks that .NET cannot follow. The real file has the fully-versioned
-/// name (e.g., libavutil.so.59.39.100). We search for it by pattern and return it
+/// name (e.g., libavutil.so.61.39.100). We search for it by pattern and return it
 /// so the caller can copy it with the SONAME filename.
 /// </summary>
 static string? FindLibrary(string searchDir, string libName)
@@ -817,7 +832,7 @@ static string? FindLibrary(string searchDir, string libName)
             catch { }
         }
 
-        // Linux .so: libName = "libavutil.so.59", real file = "libavutil.so.59.39.100"
+        // Linux .so: libName = "libavutil.so.61", real file = "libavutil.so.61.39.100"
         if (
             name.StartsWith(libName + ".", StringComparison.Ordinal)
             && name.Length > libName.Length + 1
@@ -831,7 +846,7 @@ static string? FindLibrary(string searchDir, string libName)
             catch { }
         }
 
-        // macOS .dylib: libName = "libavutil.59.dylib", real file = "libavutil.59.39.100.dylib"
+        // macOS .dylib: libName = "libavutil.61.dylib", real file = "libavutil.59.39.100.dylib"
         // Strip ".dylib" from both, compare the prefix
         if (
             libName.EndsWith(".dylib", StringComparison.Ordinal)
@@ -863,7 +878,7 @@ static string? FindLibrary(string searchDir, string libName)
 /// other via <c>@loader_path</c> rather than absolute Homebrew keg paths.
 /// This makes the bundled dylibs self-contained for FFmpeg-to-FFmpeg dependencies.
 /// Transitive Homebrew dependencies (libsoxr, libvpx, etc.) are left as-is;
-/// they resolve from the Homebrew prefix as long as ffmpeg@7 remains installed.
+/// they resolve from the Homebrew prefix as long as ffmpeg remains installed.
 /// Each dylib is re-signed with an ad-hoc signature after modification.
 /// </summary>
 static void FixMacOsDylibInstallNames(string nativeDir, string[] libs)

@@ -190,7 +190,7 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
         }
 
         // Allocate the reusable packet buffer.
-        // av_packet_alloc is in libavcodec in FFmpeg 7.x (not libavutil).
+        // av_packet_alloc is in libavcodec, not libavutil.
         nint packet = FFAvCodec.av_packet_alloc();
         if (packet == nint.Zero)
         {

@@ -36,20 +36,20 @@ develop-time convenience and are not redistributed.
 - **Upstream project:** https://ffmpeg.org — source at https://git.ffmpeg.org/ffmpeg.git
 - **License:** LGPL-3.0-or-later for this build — https://www.ffmpeg.org/legal.html
   (FFmpeg's source is offered as LGPL-2.1-or-later; see below for why this build is 3)
-- **Build used:** FFmpeg 7.1 (`n7.1.5-12-g1fdbca85aa`), LGPL shared build from
-  BtbN/FFmpeg-Builds, release tag `autobuild-2026-07-31-14-10`.
+- **Build used:** FFmpeg 9.0 (`n9.0.1-11-ge47273f4d9`), LGPL shared build from
+  BtbN/FFmpeg-Builds, release tag `autobuild-2026-08-31-13-27`.
 - **Corresponding source:** commit
-  **`1fdbca85aaea513c9cc6c14d347f76543346d3da`** in
+  **`e47273f4d9227152dcbf543cebaf9e2430ddbcc4`** in
   https://git.ffmpeg.org/ffmpeg.git, browsable at
-  https://github.com/FFmpeg/FFmpeg/commit/1fdbca85aaea513c9cc6c14d347f76543346d3da.
+  https://github.com/FFmpeg/FFmpeg/commit/e47273f4d9227152dcbf543cebaf9e2430ddbcc4.
 
   ```
-  git clone https://git.ffmpeg.org/ffmpeg.git && git -C ffmpeg checkout 1fdbca85aa
+  git clone https://git.ffmpeg.org/ffmpeg.git && git -C ffmpeg checkout e47273f4d9
   ```
 
-  The build name encodes it as `n7.1.5-12-g1fdbca85aa`, which is `git describe`
-  output: 12 commits after tag `n7.1.5`, at commit `1fdbca85aa`. **The leading
-  `g` means "git" and is not part of the hash** — `g1fdbca85aa` is not a valid
+  The build name encodes it as `n9.0.1-11-ge47273f4d9`, which is `git describe`
+  output: 11 commits after tag `n9.0.1`, at commit `e47273f4d9`. **The leading
+  `g` means "git" and is not part of the hash** — `ge47273f4d9` is not a valid
   object id and will not resolve. The full hash is given above so nobody has to
   decode that to exercise this offer.
 
@@ -134,18 +134,18 @@ The osx-arm64 libraries now come from a build made in this repository.
 - **Build recipe:** `scripts/build-ffmpeg-macos.sh`, run by
   `.github/workflows/ffmpeg-macos.yml`. The full configure line is recorded in
   the release's `BUILD-INFO.txt`.
-- **Build used:** `ffmpeg-macos-n7.1.5-1`, at
-  https://github.com/charles8051/frame-flow/releases/tag/ffmpeg-macos-n7.1.5-1
+- **Build used:** `ffmpeg-macos-n9.0.2-1`, at
+  https://github.com/charles8051/frame-flow/releases/tag/ffmpeg-macos-n9.0.2-1
 - **Corresponding source:** commit
-  **`3a0867c2bfda4a4d4309ca1a8cbdc6175e67f587`** in
+  **`946fcce07b6dcd0331c8cc609192aeff5e1924f8`** in
   https://git.ffmpeg.org/ffmpeg.git, browsable at
-  https://github.com/FFmpeg/FFmpeg/commit/3a0867c2bfda4a4d4309ca1a8cbdc6175e67f587.
+  https://github.com/FFmpeg/FFmpeg/commit/946fcce07b6dcd0331c8cc609192aeff5e1924f8.
 
   ```
-  git clone https://git.ffmpeg.org/ffmpeg.git && git -C ffmpeg checkout 3a0867c2bf
+  git clone https://git.ffmpeg.org/ffmpeg.git && git -C ffmpeg checkout 946fcce07b
   ```
 
-  Upstream calls that commit `n7.1.5`. The build pins the **commit**, and checks
+  Upstream calls that commit `n9.0.2`. The build pins the **commit**, and checks
   the tag against it rather than trusting the tag to produce it, because a tag is
   a mutable ref.
 - **Modifications:** none to the source. The build is configured, not patched.

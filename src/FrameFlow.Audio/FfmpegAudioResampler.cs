@@ -223,7 +223,7 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
 
     private void ConfigureSwr(nint swrPtr, int sourceSampleRate, int sourceChannels)
     {
-        // FFmpeg 7.x: use the string-based channel layout API. Numeric mask
+        // Use the string-based channel layout API. The numeric mask
         // layouts are deprecated and swr_init rejects them with EINVAL.
         string inLayout = ChannelLayoutName(sourceChannels);
         string outLayout = ChannelLayoutName(TargetChannels);

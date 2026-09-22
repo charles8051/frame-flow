@@ -17,7 +17,7 @@ the tests read them from there by repo-relative path.
 
 ## `fetch-ffmpeg.cs` — FFmpeg native libraries
 
-Downloads the FFmpeg 7.x shared-build DLLs from BtbN's GitHub
+Downloads the FFmpeg 9.x shared-build DLLs from BtbN's GitHub
 release archive into `runtimes/{rid}/native/`. Required on a fresh
 clone before anything decoding-related works.
 

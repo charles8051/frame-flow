@@ -458,14 +458,21 @@ public sealed class FrameFlowBootstrapper : IFrameFlowBootstrapper
     }
 
     /// <summary>
-    /// Probes well-known Homebrew paths for an installed <c>ffmpeg@7</c> formula.
+    /// Probes well-known Homebrew paths for an installed <c>ffmpeg</c> formula.
     /// Returns the lib directory path if found, or <see langword="null"/> to fall through
     /// to bare-name OS loader resolution.
     /// </summary>
+    /// <remarks>
+    /// The unversioned formula, because Homebrew has no <c>ffmpeg@9</c>: it cuts
+    /// <c>ffmpeg@N</c> when N+1 takes the unversioned slot, so one appears when FFmpeg 10
+    /// ships. Whatever this finds is checked by the ABI gate before anything decodes, so a
+    /// prefix holding the wrong major fails the bootstrap by name instead of being used.
+    /// </remarks>
     private static string? ResolveMacOsHomebrewPath()
     {
-        // ffmpeg@7 is keg-only so it is not symlinked into the main prefix lib.
-        var kegPath = HomebrewLayout.KegLibDirectory("ffmpeg@7");
+        // Keg-only formulae are not symlinked into the main prefix lib, so the opt path is
+        // checked first; the unversioned ffmpeg is usually linked, and is checked below.
+        var kegPath = HomebrewLayout.KegLibDirectory("ffmpeg");
         if (Directory.Exists(kegPath))
             return kegPath;
 

@@ -67,9 +67,9 @@ internal static class TestEnvironment
     }
 
     private static string LibName() =>
-        OperatingSystem.IsWindows() ? "avutil-59.dll"
-        : OperatingSystem.IsMacOS() ? "libavutil.59.dylib"
-        : "libavutil.so.59";
+        OperatingSystem.IsWindows() ? "avutil-61.dll"
+        : OperatingSystem.IsMacOS() ? "libavutil.61.dylib"
+        : "libavutil.so.61";
 
     private static string? FindNativeRuntimeDir()
     {

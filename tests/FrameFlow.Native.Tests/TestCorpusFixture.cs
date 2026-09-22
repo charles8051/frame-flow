@@ -22,7 +22,7 @@ public static class TestEnvironment
     public static string RepoRoot => CachedRepoRoot.Value;
 
     /// <summary>
-    /// True if FFmpeg shared libraries (e.g. avutil-59.dll, libavutil.so.59) are
+    /// True if FFmpeg shared libraries (e.g. avutil-61.dll, libavutil.so.61) are
     /// loadable on this machine. This is a stronger check than <see cref="FfmpegPath"/>:
     /// a static ffmpeg executable does not imply that the shared libraries are present.
     /// Integration tests that require <see cref="NativeLibrary.Load"/> to succeed must
@@ -213,12 +213,12 @@ public static class TestEnvironment
     private static string GetAvutilSharedLibraryName()
     {
         if (OperatingSystem.IsWindows())
-            return "avutil-59.dll";
+            return "avutil-61.dll";
 
         if (OperatingSystem.IsMacOS())
-            return "libavutil.59.dylib";
+            return "libavutil.61.dylib";
 
-        return "libavutil.so.59";
+        return "libavutil.so.61";
     }
 
     private static string GetCurrentRid()
@@ -249,7 +249,7 @@ public sealed class RequiresFfmpegFactAttribute : FactAttribute
             Skip =
                 "FFmpeg shared libraries not available. "
                 + "Run scripts/fetch-ffmpeg.cs or install FFmpeg with shared libraries. "
-                + $"Expected {(OperatingSystem.IsWindows() ? "avutil-59.dll" : "libavutil.so.59")} "
+                + $"Expected {(OperatingSystem.IsWindows() ? "avutil-61.dll" : "libavutil.so.61")} "
                 + "on PATH or in runtimes/{rid}/native/.";
     }
 }

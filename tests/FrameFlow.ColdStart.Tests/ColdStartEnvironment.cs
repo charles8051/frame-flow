@@ -39,9 +39,9 @@ internal static class ColdStartEnvironment
         get
         {
             var libName =
-                OperatingSystem.IsWindows() ? "avutil-59.dll"
-                : OperatingSystem.IsMacOS() ? "libavutil.59.dylib"
-                : "libavutil.so.59";
+                OperatingSystem.IsWindows() ? "avutil-61.dll"
+                : OperatingSystem.IsMacOS() ? "libavutil.61.dylib"
+                : "libavutil.so.61";
 
             var bundled = Path.Combine(
                 AppContext.BaseDirectory,

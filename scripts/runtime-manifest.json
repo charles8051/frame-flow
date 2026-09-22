@@ -1,248 +1,248 @@
 {
-  "version": "7.1",
-  "description": "FFmpeg shared libraries and the bundled ffmpeg/ffprobe tools for FrameFlow develop-time use. sha256 is of the extracted file, not the archive, and changes with every build - regenerate the affected RIDs when a pin moves. The tools are listed alongside the libraries because fetch-ffmpeg.cs installs them too and generate-test-corpus.cs executes ffmpeg. Two pins, not one: win/linux come from the BtbN build named by buildTag/archiveVersion, and osx-arm64 from this repo's own LGPL build (scripts/build-ffmpeg-macos.sh) published as a GitHub Release - it carries libraries only, links no external libraries, and is LGPL-2.1 rather than the BtbN build's LGPL-3-and-Apache-2.0. osx-x64 is absent because that build is arm64-only and fetch-ffmpeg.cs still resolves Intel Macs from a local Homebrew ffmpeg@7 keg, so there is no pinned artifact to hash. The BtbN hashes are for the LGPL build only; a --license gpl run is unverified by design.",
+  "version": "9.0",
+  "description": "FFmpeg shared libraries and the bundled ffmpeg/ffprobe tools for FrameFlow develop-time use. sha256 is of the extracted file, not the archive, and changes with every build - regenerate the affected RIDs when a pin moves. The tools are listed alongside the libraries because fetch-ffmpeg.cs installs them too and generate-test-corpus.cs executes ffmpeg. Two pins, not one: win/linux come from the BtbN build named by buildTag/archiveVersion, and osx-arm64 from this repo's own LGPL build (scripts/build-ffmpeg-macos.sh) published as a GitHub Release - it carries libraries only, links no external libraries, and is LGPL-2.1 rather than the BtbN build's LGPL-3-and-Apache-2.0. osx-x64 is absent because that build is arm64-only and fetch-ffmpeg.cs still resolves Intel Macs from a local Homebrew keg, so there is no pinned artifact to hash - the unversioned `ffmpeg` formula, because Homebrew cuts ffmpeg@N only when N+1 takes the unversioned slot and so has no ffmpeg@9 until FFmpeg 10 ships. That keg floats; the ABI check in FrameFlow.Native refuses a major the bindings were not generated for, so a float fails the bootstrap rather than decoding wrong. The BtbN hashes are for the LGPL build only; a --license gpl run is unverified by design.",
   "source": "https://github.com/BtbN/FFmpeg-Builds/releases",
-  "buildTag": "autobuild-2026-07-31-14-10",
-  "archiveVersion": "n7.1.5-12-g1fdbca85aa",
+  "buildTag": "autobuild-2026-08-31-13-27",
+  "archiveVersion": "n9.0.1-11-ge47273f4d9",
   "license": "lgpl",
   "runtimes": {
     "win-x64": {
-      "archiveUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n7.1.5-12-g1fdbca85aa-win64-lgpl-shared-7.1.zip",
+      "archiveUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-win64-lgpl-shared-9.0.zip",
       "libraries": [
         {
-          "name": "avformat-61.dll",
-          "sha256": "3ef409dc46aea8cb163068637546033cfa6c2c92b9d0c0a1e1eee011027168a0",
-          "target": "runtimes/win-x64/native/avformat-61.dll"
+          "name": "avformat-63.dll",
+          "sha256": "f37686ed82f1a47489632ea942991e0aed4aaad8df17c70300539b2fa82e195d",
+          "target": "runtimes/win-x64/native/avformat-63.dll"
         },
         {
-          "name": "avcodec-61.dll",
-          "sha256": "30ec40e6210e592d02e626589a9997e3f793e83dac078aaa3ed410fcbdb20723",
-          "target": "runtimes/win-x64/native/avcodec-61.dll"
+          "name": "avcodec-63.dll",
+          "sha256": "0fcba54e4a04fe363e91962266baf956a2219b872a0c3827c0743afeb407b9d8",
+          "target": "runtimes/win-x64/native/avcodec-63.dll"
         },
         {
-          "name": "avutil-59.dll",
-          "sha256": "99cb38dcb14027a74651eae812d9dd992ec4d0e66d19c2fc55c24af6c66e9a54",
-          "target": "runtimes/win-x64/native/avutil-59.dll"
+          "name": "avutil-61.dll",
+          "sha256": "a3ab4a3df7288b8760467d898c99aae5bef2ad9da6b20fcae9feb274520aff0d",
+          "target": "runtimes/win-x64/native/avutil-61.dll"
         },
         {
-          "name": "avdevice-61.dll",
-          "sha256": "4bd591b126fcec2093e481c11c3f28533fd5c3bd4bcf64484f14ef1db12d51f7",
-          "target": "runtimes/win-x64/native/avdevice-61.dll"
+          "name": "avdevice-63.dll",
+          "sha256": "3acf3f263e79c16e2fd27a4044ffbffa0552ed6d4b8436d057ee0204bb3d8a70",
+          "target": "runtimes/win-x64/native/avdevice-63.dll"
         },
         {
-          "name": "avfilter-10.dll",
-          "sha256": "5270813c632c7aa6b51ed41104dede624a346e4d32d0e3a6158069781b544e41",
-          "target": "runtimes/win-x64/native/avfilter-10.dll"
+          "name": "avfilter-12.dll",
+          "sha256": "64721ae7c4f57d1a3d60d9ab2c0d5abf245fc7061a5bc3a1684f6bbbd3a21aec",
+          "target": "runtimes/win-x64/native/avfilter-12.dll"
         },
         {
-          "name": "swscale-8.dll",
-          "sha256": "8a74ed235b17980e7f41de482c95b9ec8426c6d41235cab56c0eb74183b7d1e0",
-          "target": "runtimes/win-x64/native/swscale-8.dll"
+          "name": "swscale-10.dll",
+          "sha256": "2e6e2b028616db997d93f006009804f694185a15a5bfe7702df139c90332b4c0",
+          "target": "runtimes/win-x64/native/swscale-10.dll"
         },
         {
-          "name": "swresample-5.dll",
-          "sha256": "3906fac6b66139bd1a526f83cfcfd81cdb047a0ea9fc97b5761b7e7bf2722eb0",
-          "target": "runtimes/win-x64/native/swresample-5.dll"
+          "name": "swresample-7.dll",
+          "sha256": "5b7d2df8a57f09b810c8311a13a08a59f84d66b34cb9b80f2e3782cc8ab7be76",
+          "target": "runtimes/win-x64/native/swresample-7.dll"
         },
         {
           "name": "ffmpeg.exe",
-          "sha256": "26919699927f3beab15c7ab7af7fdd66e12f8b8b11affa22c96fa842ce7f1734",
+          "sha256": "00c485e687c534b2d21aeaa7f4220c3927854cf5bb7ae1a38f42f6631eed91ab",
           "target": "runtimes/win-x64/native/ffmpeg.exe"
         },
         {
           "name": "ffprobe.exe",
-          "sha256": "6b5de6119db70146f21c9ef8d007a75c2c3aa7c3cc3882344de0c09031dbd337",
+          "sha256": "98b036a86389952aa40a016741507567d32f6e9ec718788521c1ad0ebdab06f8",
           "target": "runtimes/win-x64/native/ffprobe.exe"
         }
       ]
     },
     "win-arm64": {
-      "archiveUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n7.1.5-12-g1fdbca85aa-winarm64-lgpl-shared-7.1.zip",
+      "archiveUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-winarm64-lgpl-shared-9.0.zip",
       "libraries": [
         {
-          "name": "avformat-61.dll",
-          "sha256": "15fb14185559db523c8dddf97f719e12a8d983b91c0366934b0fa13c8b867ea8",
-          "target": "runtimes/win-arm64/native/avformat-61.dll"
+          "name": "avformat-63.dll",
+          "sha256": "62217293cb7c2105d72422c91ca30dc6fab034f0601ef41a286d9259570648e3",
+          "target": "runtimes/win-arm64/native/avformat-63.dll"
         },
         {
-          "name": "avcodec-61.dll",
-          "sha256": "52e6023be7641e7a008f15a62899fee1a88b7c452ec0cc0b3226c824b6e35667",
-          "target": "runtimes/win-arm64/native/avcodec-61.dll"
+          "name": "avcodec-63.dll",
+          "sha256": "c34742cac7bc0d140607172ad5feb760a099b0cb1521f2509491af472c69f8a2",
+          "target": "runtimes/win-arm64/native/avcodec-63.dll"
         },
         {
-          "name": "avutil-59.dll",
-          "sha256": "b500be8cd9c6e1da9b89a3c64e9b9887e06e60e8d85c56cabe97f91c3a0cf688",
-          "target": "runtimes/win-arm64/native/avutil-59.dll"
+          "name": "avutil-61.dll",
+          "sha256": "b96786e9862165f0d04d6a2d3c14720488d0edff5d7f0a00a86db6db8e93ef8f",
+          "target": "runtimes/win-arm64/native/avutil-61.dll"
         },
         {
-          "name": "avdevice-61.dll",
-          "sha256": "0b9b4ea7fd43a1efd51dde8e185b42b912ecc3285e844197d24ee836f8e15a2e",
-          "target": "runtimes/win-arm64/native/avdevice-61.dll"
+          "name": "avdevice-63.dll",
+          "sha256": "1854df5481a00971c35bc618771b9936befe9e51e1c34fcc6c6afcb9601809d2",
+          "target": "runtimes/win-arm64/native/avdevice-63.dll"
         },
         {
-          "name": "avfilter-10.dll",
-          "sha256": "c78a9c355fc85191eac30ea292f3c1ed13725e38a14d19f1d88bcd1fe64c3785",
-          "target": "runtimes/win-arm64/native/avfilter-10.dll"
+          "name": "avfilter-12.dll",
+          "sha256": "96d249edae4e22cc8f6baf63cc47f384ddd73dc4ee72a2b89214f0f3c13e4cc1",
+          "target": "runtimes/win-arm64/native/avfilter-12.dll"
         },
         {
-          "name": "swscale-8.dll",
-          "sha256": "e428e3db2589ccd2a5abd401c713c63834c9a6ff0866155d556d130d17949c62",
-          "target": "runtimes/win-arm64/native/swscale-8.dll"
+          "name": "swscale-10.dll",
+          "sha256": "5bac8bf00311b7704ceef89507edb2dd58f6f9634c9dacf1141fdc9f4d84b907",
+          "target": "runtimes/win-arm64/native/swscale-10.dll"
         },
         {
-          "name": "swresample-5.dll",
-          "sha256": "6a6adbbdb99fe5ae79c9865e4c2972c177773e40d930c484adb36962219cedf0",
-          "target": "runtimes/win-arm64/native/swresample-5.dll"
+          "name": "swresample-7.dll",
+          "sha256": "0d33422e7b9a1a18efeb8a40cd959cb59ba8fc43bc89c6001d308597f62503d1",
+          "target": "runtimes/win-arm64/native/swresample-7.dll"
         },
         {
           "name": "ffmpeg.exe",
-          "sha256": "075badc7a889cfbf68ef8465037bc172678f18e0300c7444f106d453bbd6b080",
+          "sha256": "915ddbf88ac676183db24b1deb42b6e68580222ecbb3c0d03aebf03cdca99842",
           "target": "runtimes/win-arm64/native/ffmpeg.exe"
         },
         {
           "name": "ffprobe.exe",
-          "sha256": "0e30c3e6903945af5e0f3f1059ffd4b6bb722acf1bfe6aa9fe814d0001e22a93",
+          "sha256": "b61246d75198648dba14a931e5dc40449eb55f6ad361837feb07afaf1b738423",
           "target": "runtimes/win-arm64/native/ffprobe.exe"
         }
       ]
     },
     "linux-x64": {
-      "archiveUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n7.1.5-12-g1fdbca85aa-linux64-lgpl-shared-7.1.tar.xz",
+      "archiveUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-linux64-lgpl-shared-9.0.tar.xz",
       "libraries": [
         {
-          "name": "libavformat.so.61",
-          "sha256": "028ffe1e9cdc8e1fc813b17d43eb1d83023241143420593f0f6f4f37d14c4a10",
-          "target": "runtimes/linux-x64/native/libavformat.so.61"
+          "name": "libavformat.so.63",
+          "sha256": "c6ef982156af8fc62a5f8209f170c34c6b6a81a94d08f7cd3d31894404a5e9e5",
+          "target": "runtimes/linux-x64/native/libavformat.so.63"
         },
         {
-          "name": "libavcodec.so.61",
-          "sha256": "2f1016ec9afb24195177648621ea30323d5971a4745ad29577a78596353d3eee",
-          "target": "runtimes/linux-x64/native/libavcodec.so.61"
+          "name": "libavcodec.so.63",
+          "sha256": "5720a5060f4c6963aab3b220fe59c8e4be245aa804f2581377887869fdec5ae0",
+          "target": "runtimes/linux-x64/native/libavcodec.so.63"
         },
         {
-          "name": "libavutil.so.59",
-          "sha256": "e29ba0197f6ef991b6a3ccb4b5f1224b325aa8291cba19ffd49fa7b4a9c7f2d2",
-          "target": "runtimes/linux-x64/native/libavutil.so.59"
+          "name": "libavutil.so.61",
+          "sha256": "18b9ad9e7d86546ca6c0febd996b65490dc761d962766a673af5215ed3ff1996",
+          "target": "runtimes/linux-x64/native/libavutil.so.61"
         },
         {
-          "name": "libavdevice.so.61",
-          "sha256": "b925c98830d267065ea614caafce288aa4c2b56f32632c6bc77d5668bfc03089",
-          "target": "runtimes/linux-x64/native/libavdevice.so.61"
+          "name": "libavdevice.so.63",
+          "sha256": "6762c1bc60458c7cbc10eb56950132065d95ebab8b414f7aa31b1af4ea7ddcd8",
+          "target": "runtimes/linux-x64/native/libavdevice.so.63"
         },
         {
-          "name": "libavfilter.so.10",
-          "sha256": "d1249a8ee752e65afce531991c98f80c3a146e3f7368004075c4c7a75e1ec956",
-          "target": "runtimes/linux-x64/native/libavfilter.so.10"
+          "name": "libavfilter.so.12",
+          "sha256": "8bc68e596fb23a1fd261d5c85f2cf372f3e82745a2c7c4e3e85328c83ae47039",
+          "target": "runtimes/linux-x64/native/libavfilter.so.12"
         },
         {
-          "name": "libswscale.so.8",
-          "sha256": "de9bfa9c7629e04b0d2f1bd3119aff8216d23f42c0d0224307f2790c066cb79b",
-          "target": "runtimes/linux-x64/native/libswscale.so.8"
+          "name": "libswscale.so.10",
+          "sha256": "d598cea5a6ec671b3dae020816b4522a606df76e66b99983d5ee44a7ed434863",
+          "target": "runtimes/linux-x64/native/libswscale.so.10"
         },
         {
-          "name": "libswresample.so.5",
-          "sha256": "0a93e2ededaedf078b5a391f002fe2dc83beb92718fd8803b1b04323bf02211e",
-          "target": "runtimes/linux-x64/native/libswresample.so.5"
-        },
-        {
-          "name": "ffprobe",
-          "sha256": "dc00f21268f47f44560c3a80e03c0af14057787cd77d4e3348753b235e665322",
-          "target": "runtimes/linux-x64/native/ffprobe"
+          "name": "libswresample.so.7",
+          "sha256": "2708edd101c6093cba0ed7914512da4f09b45f54ad2efd15b26ebab3acc491b5",
+          "target": "runtimes/linux-x64/native/libswresample.so.7"
         },
         {
           "name": "ffmpeg",
-          "sha256": "48b2129ef22860058504c6e6b58b7e1af2b533e7c40d29a10a059d67ce21383c",
+          "sha256": "988e7758d60a6a6d4ea1dbb27c453835a6b8aa6468b9322dccb0edbf00aa601e",
           "target": "runtimes/linux-x64/native/ffmpeg"
+        },
+        {
+          "name": "ffprobe",
+          "sha256": "baa82997c35065d42d774681181724b4b9eb3d6c2443e9060a3fa6ec5d8e3e98",
+          "target": "runtimes/linux-x64/native/ffprobe"
         }
       ]
     },
     "linux-arm64": {
-      "archiveUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n7.1.5-12-g1fdbca85aa-linuxarm64-lgpl-shared-7.1.tar.xz",
+      "archiveUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-linuxarm64-lgpl-shared-9.0.tar.xz",
       "libraries": [
         {
-          "name": "libavformat.so.61",
-          "sha256": "ec598aa11f26cd22f83dc720213eb060c79a6535d3490aef02764584213eeedc",
-          "target": "runtimes/linux-arm64/native/libavformat.so.61"
+          "name": "libavformat.so.63",
+          "sha256": "937c1c636f8725d48a6767addce64e7697cd4f441624f68eeea05b140d6f9283",
+          "target": "runtimes/linux-arm64/native/libavformat.so.63"
         },
         {
-          "name": "libavcodec.so.61",
-          "sha256": "1f356fadbb39aacb193fa38e50d1227bd2e9c53e4278ec924d38eee99b6fad37",
-          "target": "runtimes/linux-arm64/native/libavcodec.so.61"
+          "name": "libavcodec.so.63",
+          "sha256": "6b729709ffa8bb643db6dbedd01c73fe98977352b1addb6c5a832828f41e3900",
+          "target": "runtimes/linux-arm64/native/libavcodec.so.63"
         },
         {
-          "name": "libavutil.so.59",
-          "sha256": "cb535a5c6ea2143e1d2cddb5a5fe5fdbb1234dbf5bac6722a0e4f0de71938906",
-          "target": "runtimes/linux-arm64/native/libavutil.so.59"
+          "name": "libavutil.so.61",
+          "sha256": "3903b283b3bdf8361f68daf16db5bc294f02670d6935aecae61ce0a4896aa9be",
+          "target": "runtimes/linux-arm64/native/libavutil.so.61"
         },
         {
-          "name": "libavdevice.so.61",
-          "sha256": "c4881f7ba30bbe313289ae6a22f6a3aec387c38e25f88575bd4089fc78c02787",
-          "target": "runtimes/linux-arm64/native/libavdevice.so.61"
+          "name": "libavdevice.so.63",
+          "sha256": "eade09241c0a06f12aa4b6105c57f222a39052149fc7fc2e49f69c75204e72a4",
+          "target": "runtimes/linux-arm64/native/libavdevice.so.63"
         },
         {
-          "name": "libavfilter.so.10",
-          "sha256": "6f94ce50d46faee454b601d4e5e26b2aa688bec060f4ba1a235a18e3a658b26c",
-          "target": "runtimes/linux-arm64/native/libavfilter.so.10"
+          "name": "libavfilter.so.12",
+          "sha256": "1b94c3998ad10bf76b50d30a5930dbd8283b9fddcde5c24fac715105d03ab693",
+          "target": "runtimes/linux-arm64/native/libavfilter.so.12"
         },
         {
-          "name": "libswscale.so.8",
-          "sha256": "b686ee3560302bf5ab508f29ac44d95afde2862808b470cf17765314d9c14a2d",
-          "target": "runtimes/linux-arm64/native/libswscale.so.8"
+          "name": "libswscale.so.10",
+          "sha256": "6708c4b772a7fef04dbaeae807ecaef87653e4f462c1c7cc56e9c150b7bc8d2a",
+          "target": "runtimes/linux-arm64/native/libswscale.so.10"
         },
         {
-          "name": "libswresample.so.5",
-          "sha256": "d42129fa357894c703953bf6658243a5453b7f4d4e7072cc232a516146fb7239",
-          "target": "runtimes/linux-arm64/native/libswresample.so.5"
-        },
-        {
-          "name": "ffprobe",
-          "sha256": "17cef7d0c0714d6c7d3913b463ffef33c7bbe0a1758eb16e89f483cd488bac54",
-          "target": "runtimes/linux-arm64/native/ffprobe"
+          "name": "libswresample.so.7",
+          "sha256": "70fcb59db1fa92ff24c92745d5ea834bb3f81635cfef20375dbbf025a9e78fe1",
+          "target": "runtimes/linux-arm64/native/libswresample.so.7"
         },
         {
           "name": "ffmpeg",
-          "sha256": "3cc6293ce5c156fe18b0d671508f91f3365bc1aec3f888830e58f0f4e0e77a13",
+          "sha256": "9a6fc79dc24a4273cf927230bcfd01726c725cdfc0ca8ff14990710b7ee294c7",
           "target": "runtimes/linux-arm64/native/ffmpeg"
+        },
+        {
+          "name": "ffprobe",
+          "sha256": "81350ac5f56e89fd6fc812e41cce5a3e7aa6a0d7d4fc3e96e10e1e74e431ed98",
+          "target": "runtimes/linux-arm64/native/ffprobe"
         }
       ]
     },
     "osx-arm64": {
-      "archiveUrl": "https://github.com/charles8051/frame-flow/releases/download/ffmpeg-macos-n7.1.5-1/ffmpeg-osx-arm64.tar.gz",
+      "archiveUrl": "https://github.com/charles8051/frame-flow/releases/download/ffmpeg-macos-n9.0.2-1/ffmpeg-osx-arm64.tar.gz",
       "libraries": [
         {
-          "name": "libavformat.61.dylib",
-          "sha256": "4dd6550eff5d95d5f0a5b8d897ea0d4a4ed701d2a390b09cca2e7dabd60dda48",
-          "target": "runtimes/osx-arm64/native/libavformat.61.dylib"
+          "name": "libavformat.63.dylib",
+          "sha256": "042c8a51e6b98591e86782fe4d3242476d14fb78e0b984e6473645b459d454f3",
+          "target": "runtimes/osx-arm64/native/libavformat.63.dylib"
         },
         {
-          "name": "libavcodec.61.dylib",
-          "sha256": "e9cc63fc331c713db372286dd2b3d2893608df466d52b22694f9dca1512593b9",
-          "target": "runtimes/osx-arm64/native/libavcodec.61.dylib"
+          "name": "libavcodec.63.dylib",
+          "sha256": "d641028428aa609130dc64dd6a487060413e325c634f275c1b13bf4fb6aea38d",
+          "target": "runtimes/osx-arm64/native/libavcodec.63.dylib"
         },
         {
-          "name": "libavutil.59.dylib",
-          "sha256": "45de0e2169ee4d84b2cc224223e8d204b7ff4c4b8625a40d3906b3b035f91a5a",
-          "target": "runtimes/osx-arm64/native/libavutil.59.dylib"
+          "name": "libavutil.61.dylib",
+          "sha256": "f999be135517786b985f4dcc78a0e37919916786e6fe81a7fc694fa4188e6c71",
+          "target": "runtimes/osx-arm64/native/libavutil.61.dylib"
         },
         {
-          "name": "libavdevice.61.dylib",
-          "sha256": "be54978574190cec8720713edd18a9ca310136667f2b5592eac4917bdd28dec2",
-          "target": "runtimes/osx-arm64/native/libavdevice.61.dylib"
+          "name": "libavdevice.63.dylib",
+          "sha256": "6c96b599f1c32919d7770fc076a7a2a921f19bbcb80539400a4416142ba54fd7",
+          "target": "runtimes/osx-arm64/native/libavdevice.63.dylib"
         },
         {
-          "name": "libavfilter.10.dylib",
-          "sha256": "4d504304cf901001b1979cc09ed071c74147738b419d1947a328460fe5e44f29",
-          "target": "runtimes/osx-arm64/native/libavfilter.10.dylib"
+          "name": "libavfilter.12.dylib",
+          "sha256": "750b5b2e069d7827b0860a85fdfdf1c2b63ce3bf2c2010af177ca4160dbfe619",
+          "target": "runtimes/osx-arm64/native/libavfilter.12.dylib"
         },
         {
-          "name": "libswscale.8.dylib",
-          "sha256": "2ea0554ee81ee3fa9bc845f15f609161313e525fffdb26fcfad02bf43093d5dc",
-          "target": "runtimes/osx-arm64/native/libswscale.8.dylib"
+          "name": "libswscale.10.dylib",
+          "sha256": "67390e81e1bd52edda47ca0dc2675c280bd09179db10015f28fa492309398f56",
+          "target": "runtimes/osx-arm64/native/libswscale.10.dylib"
         },
         {
-          "name": "libswresample.5.dylib",
-          "sha256": "a6b938276900ba79a5f4b4b52eb46a9e8efd80db873b6dde0d53cee22f237f7f",
-          "target": "runtimes/osx-arm64/native/libswresample.5.dylib"
+          "name": "libswresample.7.dylib",
+          "sha256": "314b31d0de283fedc5867416e3475e37741609d18754ad39f562b82b6d1005ee",
+          "target": "runtimes/osx-arm64/native/libswresample.7.dylib"
         }
       ]
     }

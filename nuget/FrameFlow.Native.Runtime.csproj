@@ -65,7 +65,7 @@
     <PackageProjectUrl>https://github.com/charles8051/frame-flow</PackageProjectUrl>
     <RepositoryUrl>https://github.com/charles8051/frame-flow</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <Description>FFmpeg 7.1 shared native libraries for FrameFlow. Provides pre-built binaries for win-x64, win-arm64, linux-x64, linux-arm64, and osx-arm64.</Description>
+    <Description>FFmpeg 9.0 shared native libraries for FrameFlow. Provides pre-built binaries for win-x64, win-arm64, linux-x64, linux-arm64, and osx-arm64.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>ffmpeg;native;runtime;binaries;video;audio;media;cross-platform</PackageTags>
 
@@ -125,7 +125,7 @@
     CI never hit it only because it does not run fetch-cuda.cs before packing,
     which is an accident of ordering rather than a guard.
 
-    The patterns stay version-agnostic (`avcodec-*.dll`, not `avcodec-61.dll`)
+    The patterns stay version-agnostic (`avcodec-*.dll`, not `avcodec-63.dll`)
     so an FFmpeg soname bump does not silently drop a library, while still
     matching nothing NVIDIA ships.
 

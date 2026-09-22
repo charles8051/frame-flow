@@ -71,9 +71,9 @@ internal static class TestEnvironment
 
         var nativeDir = Path.Combine(repoRoot, "runtimes", rid, "native");
         var libName =
-            OperatingSystem.IsWindows() ? "avutil-59.dll"
-            : OperatingSystem.IsMacOS() ? "libavutil.59.dylib"
-            : "libavutil.so.59";
+            OperatingSystem.IsWindows() ? "avutil-61.dll"
+            : OperatingSystem.IsMacOS() ? "libavutil.61.dylib"
+            : "libavutil.so.61";
 
         if (File.Exists(Path.Combine(nativeDir, libName)))
             return nativeDir;

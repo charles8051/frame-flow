@@ -11,8 +11,8 @@ namespace FrameFlow.Native.Interop;
 /// per-codec hardware capability enumeration (ADR-0033).
 /// </summary>
 /// <remarks>
-/// Partial class extension of <see cref="FFAvCodec"/>. Targets FFmpeg 7.x
-/// (libavcodec-61).
+/// Partial class extension of <see cref="FFAvCodec"/>. Targets FFmpeg 9.x
+/// (libavcodec-63).
 /// </remarks>
 internal static partial class FFAvCodec
 {
@@ -35,7 +35,7 @@ internal static partial class FFAvCodec
 /// Read-only view onto a native <c>AVCodecHWConfig</c> struct.
 /// </summary>
 /// <remarks>
-/// The struct layout in FFmpeg 7.x (libavcodec/codec.h) is:
+/// The struct layout in FFmpeg 9.x (libavcodec/codec.h) is:
 /// <code>
 /// typedef struct AVCodecHWConfig {
 ///     enum AVPixelFormat pix_fmt;     // offset 0,  4 bytes

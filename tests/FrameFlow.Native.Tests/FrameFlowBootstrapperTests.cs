@@ -411,14 +411,14 @@ public sealed class FrameFlowBootstrapperTests
         var loader = new StubFfmpegLibraryLoader
         {
             SimulateSuccess = false,
-            FailureMessage = "avutil-59.dll not found",
+            FailureMessage = "avutil-61.dll not found",
         };
         var bootstrapper = Create(loader: loader);
 
         var result = bootstrapper.Initialize();
 
         Assert.Contains(
-            "avutil-59.dll not found",
+            "avutil-61.dll not found",
             result.Message,
             StringComparison.OrdinalIgnoreCase
         );

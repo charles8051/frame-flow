@@ -11,7 +11,7 @@ namespace FrameFlow.Media;
 /// <remarks>
 /// <para>
 /// Both bootstrappers look for a keg-only formula in the same place:
-/// <c>FrameFlowBootstrapper</c> for <c>ffmpeg@7</c> and <c>SdlBootstrapper</c> for
+/// <c>FrameFlowBootstrapper</c> for <c>ffmpeg</c> and <c>SdlBootstrapper</c> for
 /// <c>sdl2</c>. Each derived the prefix and assembled the keg path itself, in two different
 /// expressions of the same rule. Sharing it here follows <see cref="BundleExtractionHelper"/>
 /// and <see cref="RuntimeIdentifierHelper"/>, which are in this assembly for the same reason:
@@ -37,7 +37,7 @@ internal static class HomebrewLayout
     /// formulae are not symlinked into <see cref="LinkedLibDirectory"/>, which is why both
     /// bootstrappers probe here first.
     /// </summary>
-    /// <param name="formula">The Homebrew formula name, e.g. <c>ffmpeg@7</c> or <c>sdl2</c>.</param>
+    /// <param name="formula">The Homebrew formula name, e.g. <c>ffmpeg</c> or <c>sdl2</c>.</param>
     public static string KegLibDirectory(string formula)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(formula);

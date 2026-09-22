@@ -217,7 +217,7 @@ public sealed class DemuxSession : IDemuxSession
         _logger.LogDebug("DemuxSession disposing.");
 
         // Free the reusable packet first (data is already unref'd after each read).
-        // av_packet_free is in libavcodec in FFmpeg 7.x.
+        // av_packet_free is in libavcodec, not libavutil.
         var pkt = _packet;
         if (pkt != nint.Zero)
             FFAvCodec.av_packet_free(ref pkt);
@@ -268,7 +268,7 @@ public sealed class DemuxSession : IDemuxSession
         finally
         {
             // Unref the packet data. The AVPacket struct itself is reused next call.
-            // av_packet_unref is in libavcodec in FFmpeg 7.x.
+            // av_packet_unref is in libavcodec, not libavutil.
             FFAvCodec.av_packet_unref(_packet);
         }
     }

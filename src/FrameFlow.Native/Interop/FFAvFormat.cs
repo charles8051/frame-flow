@@ -11,7 +11,7 @@ namespace FrameFlow.Native.Interop;
 /// <remarks>
 /// Phase 02 surface: container open, stream info, packet read, seek, and close.
 /// Additional declarations will be added in later phases (ADR-0011).
-/// All functions target FFmpeg 7.x (libavformat-61).
+/// All functions target FFmpeg 9.x (libavformat-63).
 /// </remarks>
 internal static partial class FFAvFormat
 {

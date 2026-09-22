@@ -816,8 +816,8 @@ static string? FindFfmpeg(string? overridePath, string repoRoot)
     {
         var homebrewPrefix = arch == "arm64" ? "/opt/homebrew" : "/usr/local";
 
-        // Prefer the keg-only ffmpeg@7 binary for version consistency.
-        var kegBin = Path.Combine(homebrewPrefix, "opt", "ffmpeg@7", "bin", "ffmpeg");
+        // Prefer the keg-only ffmpeg binary for version consistency.
+        var kegBin = Path.Combine(homebrewPrefix, "opt", "ffmpeg", "bin", "ffmpeg");
         if (File.Exists(kegBin))
             return kegBin;
 
