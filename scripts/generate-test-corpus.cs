@@ -234,6 +234,20 @@ Gen(
 
 Section("Category 5: Edge cases");
 
+// The only fixture whose timestamps do not start at zero. MPEG-TS conventionally
+// starts at 1.4s, so this needs no flag to produce the offset - remuxing any of
+// the others with -output_ts_offset reproduces the same shape, which is how the
+// container was ruled out as the variable (#358). Everything above the demuxer
+// works in media time, and while every fixture began at zero nothing could reach
+// the conversion. -g 24 gives it a keyframe a second so it is also a usable seek
+// target, since seek is the other direction of the same conversion.
+Gen(
+    "test-video-h264-start-offset.ts",
+    "-f lavfi -i testsrc2=size=320x240:rate=24:duration=3",
+    "-c:v libopenh264 -preset fast -pix_fmt yuv420p -g 24 -an",
+    new(Width: 320, Height: 240, Fps: 24, DurationSec: 3.0)
+);
+
 Gen(
     "test-subsecond.mp4",
     "-f lavfi -i testsrc2=size=320x240:rate=30:duration=0.5 -f lavfi -i sine=frequency=440:sample_rate=44100:duration=0.5",
@@ -588,6 +602,17 @@ return failed > 0 || unavailable > 0 ? 1 : 0;
 // Helpers
 // ═════════════════════════════════════════════════════════════════════════════
 
+// ffprobe prints one row per matching stream, and a container that declares a
+// program - MPEG-TS does - reports the same stream once per program. Comparing the
+// whole output against a single expected value then fails with the two sides
+// reading identically ("asked for yuv420p, encoder wrote yuv420p"), because the
+// difference is an interior newline that Trim cannot reach.
+string? FirstLine(string? output) =>
+    output
+        ?.Split((char)10, StringSplitOptions.RemoveEmptyEntries)
+        .Select(l => l.Trim())
+        .FirstOrDefault(l => l.Length > 0);
+
 void Section(string title)
 {
     Console.WriteLine();
@@ -716,10 +741,10 @@ void Gen(string fileName, string inputs, string options, MediaSpec spec, int tim
             var probe = FindFfprobe(ffmpeg!);
             var actual = probe is null
                 ? null
-                : RunProcess(
+                : FirstLine(RunProcess(
                     probe,
                     $"-v error -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0 \"{outPath}\""
-                )?.Trim();
+                ));
 
             // An unverifiable output is treated as a failed one. Accepting it
             // would defeat the whole point of the check: the fixture would ship
@@ -761,10 +786,10 @@ void Gen(string fileName, string inputs, string options, MediaSpec spec, int tim
             var probe = FindFfprobe(ffmpeg!);
             var hasB = probe is null
                 ? null
-                : RunProcess(
+                : FirstLine(RunProcess(
                     probe,
                     $"-v error -select_streams v:0 -show_entries stream=has_b_frames -of csv=p=0 \"{outPath}\""
-                )?.Trim();
+                ));
 
             if (string.IsNullOrEmpty(hasB) || hasB == "0")
             {

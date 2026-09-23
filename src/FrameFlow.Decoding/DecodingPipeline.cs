@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Threading.Channels;
+using FrameFlow.Decoding.Core;
 using FrameFlow.Decoding.Internal;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
@@ -37,6 +38,10 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
     private readonly int _videoStreamIndex;
     private readonly int _audioStreamIndex;
     private nint _pendingPacketPtr;
+
+    // Per-stream container-to-media-time offsets, in each stream's own time base (#358).
+    private readonly long _videoPacketOffset;
+    private readonly long _audioPacketOffset;
     private int _pendingPacketStreamIndex = -1;
     private bool _disposed;
 
@@ -75,6 +80,25 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
 
         _videoStreamIndex = demuxSession.MediaInfo.VideoStreams.FirstOrDefault()?.StreamIndex ?? -1;
         _audioStreamIndex = demuxSession.MediaInfo.AudioStreams.FirstOrDefault()?.StreamIndex ?? -1;
+
+        // Each stream's share of the container's start offset, in that stream's own time
+        // base, resolved once here because neither the origin nor a time base changes over
+        // a session (#358). The pump subtracts it from every packet it reads, which is the
+        // single point where container time becomes media time: decoders derive frame
+        // timestamps from the packets they are sent, so nothing below this needs to know.
+        _videoPacketOffset = StreamOffset(demuxSession, _videoStreamIndex);
+        _audioPacketOffset = StreamOffset(demuxSession, _audioStreamIndex);
+    }
+
+    private static unsafe long StreamOffset(DemuxSession demuxSession, int streamIndex)
+    {
+        var origin = demuxSession.Origin;
+        nint ctx = demuxSession.FormatContextPtr;
+        if (origin.IsZero || streamIndex < 0 || ctx == nint.Zero)
+            return 0;
+
+        var stream = new AvStreamAccessor(new AvFormatContextAccessor(ctx).GetStream(streamIndex));
+        return origin.InStreamUnits(stream.TimeBaseNum, stream.TimeBaseDen);
     }
 
     /// <summary>
@@ -171,6 +195,14 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
                 {
                     var pkt = new AvPacketAccessor(packetPtr);
                     streamIndex = pkt.StreamIndex;
+
+                    // Container time -> media time, before the packet is routed or cloned,
+                    // so it happens exactly once per packet and a retained pending packet
+                    // is already shifted when it is delivered on a later run (#358).
+                    if (streamIndex == _videoStreamIndex)
+                        pkt.ShiftToMediaTime(_videoPacketOffset);
+                    else if (streamIndex == _audioStreamIndex)
+                        pkt.ShiftToMediaTime(_audioPacketOffset);
 
                     // ADR-0034: bump the demux session's packet/bytes counters. The
                     // pump reads directly from the format context for performance,
