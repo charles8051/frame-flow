@@ -11,10 +11,84 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## `v0.11.0` — since `v0.10.1`
+
+A new FFmpeg major under the bindings, and one platform that is no longer pretended to be
+supported. Neither is a compile error, and neither changes the public API.
+
+**Why the minor, not a patch.** FrameFlow is pre-1.0, where the minor position is the breaking
+one. Nothing here is a compile error, so a consumer on `~0.10.1` would have taken it silently:
+a self-supplied FFmpeg 7 install is now refused at bootstrap, and `osx-x64` is gone from the
+develop-time path.
+
+### 1. FrameFlow targets FFmpeg 9.0, not 7.1
+
+**Not a compile error for consumers**, unless you name a library file yourself.
+
+`FrameFlow.Native.Runtime` now ships FFmpeg 9.0, and the bindings are generated from its headers.
+The library file names all change, and they do not change by the same amount:
+
+| Library | 7.1 | 9.0 |
+|---|---|---|
+| `libavutil` | 59 | 61 |
+| `libavcodec` | 61 | 63 |
+| `libavformat` | 61 | 63 |
+| `libavdevice` | 61 | 63 |
+| `libavfilter` | 10 | 12 |
+| `libswscale` | 8 | 10 |
+| `libswresample` | 5 | 7 |
+
+**Who hits this.** Nobody on the bundled package: it carries the matching binaries, and the ABI
+check `v0.10.1` added confirms it at bootstrap.
+
+You are affected if you supply FFmpeg yourself, through `CustomFfmpegPath` or
+`ProbeSystemLibraries`. A 7.x install that worked before is now refused at bootstrap, by name.
+That is `v0.10.1`'s ABI check doing its job rather than a second break: before it existed, this
+upgrade would have decoded against the wrong struct layouts instead of failing.
+
+**What to write instead.** Install FFmpeg 9.x. On macOS that is `brew install ffmpeg`, the
+unversioned formula, because Homebrew has no `ffmpeg@9` and will not cut one until FFmpeg 10
+ships. That formula floats, which the bootstrap check makes safe: when Homebrew moves it to 10,
+FrameFlow refuses to start rather than decoding wrong.
+
+**The public API does not change.** No type, member or signature moves. All 57 functions FrameFlow
+P/Invokes exist in both majors, and the struct fields it reads (`ch_layout`, `pts`, `dts`,
+`time_base`, `hw_device_ctx`, `nb_streams` and the rest) are unchanged. What moved is which bytes
+are on disk.
+
+**What you get.** swscale was rebuilt on a new op-dispatch backend in FFmpeg 8, which is the path
+`ConvertPixelFormat` runs on, and autovectorization is no longer disabled on x86, ARM and AArch64.
+Neither is measured here. The codec additions across 8 and 9 (VVC, APV, ProRes RAW, animated WebP,
+Vulkan hwaccels) are available to a consumer who asks for them by name.
+
+**macOS is LGPL-2.1, the rest is LGPL-3.** Unchanged in shape from `v0.11.0`, and both build
+identities in `THIRD-PARTY-NOTICES.md` move with this. The BtbN build still carries
+`--enable-version3` with `libopencore-amr`, `libaribb24` and `gmp`, read off the shipped binary
+rather than inferred; the macOS build still links nothing external.
+
+### 2. Intel macOS is not supported
+
+**Not a compile error, and not a change to anything that shipped.** No `osx-x64` RID has ever
+been in `FrameFlow.Native.Runtime`, so nothing is removed from the package. What is removed is
+the develop-time path that pretended otherwise: `scripts/fetch-ffmpeg.cs` no longer knows the
+RID, and the 165 lines of Homebrew-keg handling and `install_name` patching that existed only
+for it are gone.
+
+**Why now.** Apple's last Intel Mac shipped in 2023 and macOS 26 is the final release supporting
+them. The path had no CI coverage, no known user, and had just been changed by entry 1 without
+anyone running it.
+
+**Not a cost problem.** `macos-26-intel` is a current GitHub runner, so an Intel leg would have
+been one matrix entry. It was dropped because nobody is served by it, not because it is hard.
+
+**If you are on an Intel Mac.** Install FFmpeg 9.x and point at it with
+`FrameFlowNativeOptions.CustomFfmpegPath`, or let `ProbeSystemLibraries` find it. The ABI check
+`v0.10.1` added tells you by name if the major is wrong. That is the same arrangement every
+macOS consumer had before `v0.11.0`.
+
 ## `v0.10.1` — since `v0.10.0`
 
-Two refusals where the pipeline used to carry on, the FFmpeg major they guard, and one platform
-that is no longer pretended to be supported. None is a compile error.
+Two refusals where the pipeline used to carry on. Neither is a compile error.
 
 ### 1. A source FFmpeg opened but could not resolve is refused
 
@@ -71,87 +145,23 @@ repaired by pointing at different binaries afterwards: the rejected libraries ar
 resolving. Bootstrap explicitly if you need to choose the binaries.
 
 **Who hits this.** Nobody using the bundled binaries. `FrameFlow.Native.Runtime` ships the major
-the bindings were generated for and matches by construction. Entry 3 changes which one that is. It reaches you if you set `CustomFfmpegPath`, or if you rely on
+the bindings were generated for and matches by construction. `v0.11.0` changes which one that
+is. It reaches you if you set `CustomFfmpegPath`, or if you rely on
 `ProbeSystemLibraries` against a system FFmpeg that is not 7.x.
 
 macOS used to be the likely case, because the package shipped no macOS RID and `brew install
-ffmpeg` is whichever major Homebrew ships that week. As of `v0.10.2` it carries `osx-arm64`, so an
-Apple silicon consumer on the bundled binaries is in the first group. Intel Macs have no RID and
-never had one; entry 4 removes what remained of the path.
+ffmpeg` is whichever major Homebrew ships that week. As of `v0.11.0` it carries `osx-arm64`, so
+an Apple silicon consumer on the bundled binaries is in the first group. Intel Macs have no RID
+and never had one; `v0.11.0` removes what remained of the path.
 
 **What to write instead.** Take the bundled package. If you are pinning your own, install the
-major the package targets and point at it. Entry 3 below moves that from 7.1 to 9.0 in this same
-release, so read it before installing anything.
+major the package targets and point at it. `v0.11.0` moves that from 7.1 to 9.0, so read its
+first entry before installing anything.
 
 **Why it is worth a break.** The previous behaviour had no failure mode that pointed at the cause.
 A wrong offset surfaces as a wrong resolution, a wrong timestamp, a wrong pixel format or a crash
 somewhere downstream, none of which names FFmpeg. Refusing at bootstrap costs a startup error and
 replaces a silent wrong answer.
-
-### 3. FrameFlow targets FFmpeg 9.0, not 7.1
-
-**Not a compile error for consumers**, unless you name a library file yourself.
-
-`FrameFlow.Native.Runtime` now ships FFmpeg 9.0, and the bindings are generated from its headers.
-The library file names all change, and they do not change by the same amount:
-
-| Library | 7.1 | 9.0 |
-|---|---|---|
-| `libavutil` | 59 | 61 |
-| `libavcodec` | 61 | 63 |
-| `libavformat` | 61 | 63 |
-| `libavdevice` | 61 | 63 |
-| `libavfilter` | 10 | 12 |
-| `libswscale` | 8 | 10 |
-| `libswresample` | 5 | 7 |
-
-**Who hits this.** Nobody on the bundled package: it carries the matching binaries, and entry 2's
-check confirms it at bootstrap.
-
-You are affected if you supply FFmpeg yourself, through `CustomFfmpegPath` or
-`ProbeSystemLibraries`. A 7.x install that worked before is now refused at bootstrap, by name.
-That is entry 2 doing its job rather than a second break: before it existed, this upgrade would
-have decoded against the wrong struct layouts instead of failing.
-
-**What to write instead.** Install FFmpeg 9.x. On macOS that is `brew install ffmpeg`, the
-unversioned formula, because Homebrew has no `ffmpeg@9` and will not cut one until FFmpeg 10
-ships. That formula floats, which the bootstrap check makes safe: when Homebrew moves it to 10,
-FrameFlow refuses to start rather than decoding wrong.
-
-**The public API does not change.** No type, member or signature moves. All 57 functions FrameFlow
-P/Invokes exist in both majors, and the struct fields it reads (`ch_layout`, `pts`, `dts`,
-`time_base`, `hw_device_ctx`, `nb_streams` and the rest) are unchanged. What moved is which bytes
-are on disk.
-
-**What you get.** swscale was rebuilt on a new op-dispatch backend in FFmpeg 8, which is the path
-`ConvertPixelFormat` runs on, and autovectorization is no longer disabled on x86, ARM and AArch64.
-Neither is measured here. The codec additions across 8 and 9 (VVC, APV, ProRes RAW, animated WebP,
-Vulkan hwaccels) are available to a consumer who asks for them by name.
-
-**macOS is LGPL-2.1, the rest is LGPL-3.** Unchanged in shape from `v0.10.2`, and both build
-identities in `THIRD-PARTY-NOTICES.md` move with this. The BtbN build still carries
-`--enable-version3` with `libopencore-amr`, `libaribb24` and `gmp`, read off the shipped binary
-rather than inferred; the macOS build still links nothing external.
-
-### 4. Intel macOS is not supported
-
-**Not a compile error, and not a change to anything that shipped.** No `osx-x64` RID has ever
-been in `FrameFlow.Native.Runtime`, so nothing is removed from the package. What is removed is
-the develop-time path that pretended otherwise: `scripts/fetch-ffmpeg.cs` no longer knows the
-RID, and the 165 lines of Homebrew-keg handling and `install_name` patching that existed only
-for it are gone.
-
-**Why now.** Apple's last Intel Mac shipped in 2023 and macOS 26 is the final release supporting
-them. The path had no CI coverage, no known user, and had just been changed in entry 3 without
-anyone running it.
-
-**Not a cost problem.** `macos-26-intel` is a current GitHub runner, so an Intel leg would have
-been one matrix entry. It was dropped because nobody is served by it, not because it is hard.
-
-**If you are on an Intel Mac.** Install FFmpeg 9.x and point at it with
-`FrameFlowNativeOptions.CustomFfmpegPath`, or let `ProbeSystemLibraries` find it. Entry 2's check
-tells you by name if the major is wrong. That is the same arrangement every macOS consumer had
-before `v0.10.2`.
 
 ### Not breaking, but worth knowing
 
