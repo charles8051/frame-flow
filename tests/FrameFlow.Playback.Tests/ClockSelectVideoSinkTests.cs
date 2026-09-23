@@ -1110,6 +1110,107 @@ public sealed class ClockSelectVideoSinkTests
         await AwaitDrainAsync(drain);
     }
 
+    /// <summary>
+    /// A master that has stopped ends the hold when it stops, not when the cap expires (#359).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the five seconds the issue is about. The audio sink masters the clock, and its
+    /// timeline can be marginally shorter than the video's — AAC carries encoder delay and
+    /// padding, so a clip's decoded audio ends a little before its picture does. The hold
+    /// waits for the clock to reach the last frame's end, the clock stops at the end of the
+    /// audio, and the whole cap is paid: measured at 5.2s after a 2s clip.
+    /// </para>
+    /// <para>
+    /// The fake time advanced here totals two probe slices, an order of magnitude inside the
+    /// 1120 ms cap the hold arms. Ending on the cap instead would leave the drain incomplete
+    /// at that point, which is what this asserts along the way.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task StoppedMaster_EndsTheHoldWithoutWaitingOutTheCap()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        var time = new FakeTimeProvider();
+        await using var pacer = new ClockSelectVideoSink(
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120), timeProvider: time);
+
+        pacer.BeginRun();
+        // On screen for a second, so the hold's cap is 1120 ms and any early end is the probe.
+        await pacer.PresentAsync(
+            new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(1)), default);
+        await sink.WaitForCountAsync(1);
+
+        var parked = pacer.ParkGeneration;
+        pacer.SignalInputComplete();
+        var drain = pacer.WaitForDrainAsync(default);
+        await pacer.WaitForParkAfterAsync(parked);
+        Assert.Equal(TimeSpan.FromMilliseconds(1120), pacer.LastHoldCap);
+        Assert.False(drain.IsCompleted);
+
+        // The clock never moves from zero. One slice expires: one non-advancing reading is
+        // not a verdict, so the hold is still on.
+        parked = pacer.ParkGeneration;
+        time.Advance(ClockSelectVideoSink.HoldProbeSlice);
+        await pacer.WaitForParkAfterAsync(parked);
+        Assert.False(drain.IsCompleted);
+
+        // The second consecutive one ends it, 200 ms in rather than 1120 ms in.
+        time.Advance(ClockSelectVideoSink.HoldProbeSlice);
+        await AwaitDrainAsync(drain);
+
+        Assert.Equal(new[] { TimeSpan.Zero }, sink.PresentedPts);
+    }
+
+    /// <summary>
+    /// A master that is running behind but still moving is not cut off (#249).
+    /// </summary>
+    /// <remarks>
+    /// The risk the probe introduces. Ending the hold on a clock that has merely fallen behind
+    /// truncates the last frame's display and fires Ended early, which is the defect the hold
+    /// exists to prevent. Any advance resets the count, so a clock that keeps moving — however
+    /// slowly — never accumulates a verdict, and the run ends when it arrives.
+    /// </remarks>
+    [Fact]
+    public async Task SlowMaster_IsNotCutOffByTheProbe()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        var time = new FakeTimeProvider();
+        await using var pacer = new ClockSelectVideoSink(
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120), timeProvider: time);
+
+        pacer.BeginRun();
+        await pacer.PresentAsync(
+            new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(1)), default);
+        await sink.WaitForCountAsync(1);
+
+        var parked = pacer.ParkGeneration;
+        pacer.SignalInputComplete();
+        var drain = pacer.WaitForDrainAsync(default);
+        await pacer.WaitForParkAfterAsync(parked);
+
+        // Five slices, the clock crawling forward by a tenth of the frame each time. Well past
+        // the two consecutive stalls that would end the hold if "slow" counted as "stopped".
+        for (int i = 1; i <= 5; i++)
+        {
+            parked = pacer.ParkGeneration;
+            clock.Advance(TimeSpan.FromMilliseconds(i * 10));
+            time.Advance(ClockSelectVideoSink.HoldProbeSlice);
+            await pacer.WaitForParkAfterAsync(parked);
+            Assert.False(
+                drain.IsCompleted,
+                $"the hold ended after {i} slice(s) against a clock that was still advancing"
+            );
+        }
+
+        // It ends when the clock arrives, exactly as it did before the probe existed.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await AwaitDrainAsync(drain);
+        Assert.Equal(new[] { TimeSpan.Zero }, sink.PresentedPts);
+    }
+
     // The bound is real time and the drain completes on a pool thread, so a timeout here has two
     // explanations: a loop that never ended the run, or a continuation that was queued and never
     // scheduled. This has only ever fired on a CI runner (#330), never locally, so the failure
