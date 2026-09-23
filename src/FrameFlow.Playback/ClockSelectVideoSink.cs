@@ -332,6 +332,27 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     }
 
     /// <summary>
+    /// How long one end-of-content probe slice waits before the master's liveness is
+    /// observed. It sets the resolution of the check, not the verdict:
+    /// <see cref="MasterClockStall"/> needs
+    /// <see cref="MasterClockStall.DefaultStallsBeforeStopped"/> consecutive non-advancing
+    /// slices, so the window that decides is the product of the two, and the hold's own cap
+    /// still backstops the whole thing. Sampling finely and requiring many misses tolerates a
+    /// clock that publishes irregularly better than sampling coarsely would: a single advance
+    /// anywhere in the window resets the count.
+    /// </summary>
+    internal static readonly TimeSpan HoldProbeSlice = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>
+    /// The per-slice deadline for the end-of-content probe. Uncancelled while paused, so a
+    /// paused hold parks on the clock exactly as it did before (#127).
+    /// </summary>
+    private CancellationTokenSource CreateHoldProbeSource(bool paused) =>
+        paused
+            ? new CancellationTokenSource()
+            : new CancellationTokenSource(HoldProbeSlice, _timeProvider);
+
+    /// <summary>
     /// The end-of-content hold's cap: the last frame's remaining display interval plus
     /// <c>maxWait</c> as slack. A remaining interval at or below zero means the frame is
     /// already due to end, which leaves the bare slack and the pre-existing behaviour.
@@ -1082,28 +1103,70 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                         // The cap is its own source so it can be armed through _timeProvider;
                         // CancelAfter on a linked source always uses the platform timer queue.
                         using var holdCap = CreateHoldCapSource(holdPaused, holdRemaining);
-                        using (
-                            var holdCts = CancellationTokenSource.CreateLinkedTokenSource(
-                                ct,
-                                holdRecheckToken,
-                                holdCap.Token
-                            )
-                        )
+
+                        // The hold is waited in probe slices rather than in one call, so a
+                        // master that STOPS short of the target ends the run when it stops
+                        // instead of when the cap expires (#359). The cap has to stay generous
+                        // — a slow master must not be cut off mid-display (#249) — and a
+                        // liveness probe separates the two cases without trading one for the
+                        // other: a slow clock still advances, a stopped one does not. The cap
+                        // below is unchanged and still bounds the hold if the probe never
+                        // trips.
+                        var probe = MasterClockProbe.From(_clock.Latest);
+                        // Wall time in the hold, so the probe's verdict cannot end the run
+                        // before the last frame has had its display interval. Through
+                        // _timeProvider, like every other timer here, so a test drives it.
+                        long holdStarted = _timeProvider.GetTimestamp();
+                        while (true)
                         {
-                            try
+                            using var holdSlice = CreateHoldProbeSource(holdPaused);
+                            using (
+                                var holdCts = CancellationTokenSource.CreateLinkedTokenSource(
+                                    ct,
+                                    holdRecheckToken,
+                                    holdCap.Token,
+                                    holdSlice.Token
+                                )
+                            )
                             {
-                                await ParkedAwaitAsync(
-                                        _clock.WaitUntilAsync(holdTarget, holdCts.Token)
-                                    )
-                                    .ConfigureAwait(false);
+                                try
+                                {
+                                    await ParkedAwaitAsync(
+                                            _clock.WaitUntilAsync(holdTarget, holdCts.Token)
+                                        )
+                                        .ConfigureAwait(false);
+                                }
+                                catch (OperationCanceledException)
+                                    when (!ct.IsCancellationRequested)
+                                {
+                                    // Flush/seek (recheck) ⇒ re-evaluate; never EOS on a
+                                    // discontinuity. Cap fired (master not advancing) ⇒ end
+                                    // the run anyway via the drain below.
+                                    holdRechecked = holdRecheckToken.IsCancellationRequested;
+                                }
                             }
-                            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                            {
-                                // Flush/seek (recheck) ⇒ re-evaluate; never EOS on a
-                                // discontinuity. Cap fired (master not advancing) ⇒ end
-                                // the run anyway via the drain below.
-                                holdRechecked = holdRecheckToken.IsCancellationRequested;
-                            }
+
+                            if (ct.IsCancellationRequested || holdRechecked)
+                                break;
+                            // The backstop fired, or the clock arrived: either way the hold is
+                            // over and the drain below decides the run, exactly as before.
+                            if (holdCap.IsCancellationRequested || _clock.Latest >= holdTarget)
+                                break;
+                            // Only the probe slice expired. While paused the clock is stopped
+                            // because the user stopped it, so no verdict is drawn (#127) and
+                            // the hold waits for the resume as it always did.
+                            if (holdPaused)
+                                continue;
+
+                            bool stopped;
+                            (probe, stopped) = MasterClockStall.Observe(
+                                probe,
+                                _clock.Latest,
+                                _timeProvider.GetElapsedTime(holdStarted),
+                                holdRemaining
+                            );
+                            if (stopped)
+                                break;
                         }
                         if (holdRechecked)
                             continue;
