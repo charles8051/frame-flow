@@ -60,16 +60,43 @@ public sealed class AlphaPixelFormatTests : IClassFixture<FfmpegBootstrapFixture
         );
         Assert.Equal(PlaybackState.Ended, capture.FinalState);
 
-        var decoder = capture.Diagnostics.Pipeline.Stream.VideoDecoder;
+        var pipeline = capture.Diagnostics.Pipeline;
+        var decoder = pipeline.Stream.VideoDecoder;
 
-        // The count, not merely "some frames arrived". The bug dropped every frame
-        // of the file, and a partial-decode regression on a four-plane format would
-        // look the same to a NotEmpty assertion.
+        // The clip is video-only, so one packet is one coded frame and the
+        // accounting below can compare packets against frames. Asserted rather than
+        // assumed, matching DecodePressureTests.
         Assert.True(
-            decoder.FramesDecoded == expectedFrames,
-            $"Decoded {decoder.FramesDecoded} of {expectedFrames} frames from a "
-                + "yuva420p source. Zero means the conversion rejected every frame, which "
-                + "is the #341 shape; a number in between means it rejected some."
+            pipeline.Stream.Demux.PacketsRead == expectedFrames,
+            $"demuxed {pipeline.Stream.Demux.PacketsRead} packets from a video-only clip "
+                + $"of {expectedFrames} frames, so packets and frames do not correspond one "
+                + "to one here and the accounting below would not be sound."
+        );
+
+        // Every frame is accounted for: decoded, shed for backpressure, or dropped
+        // while resynchronising to the next keyframe after a shed. Not
+        // FramesDecoded == expected on its own, which a loaded runner could fail for
+        // a reason that has nothing to do with pixel formats; and not "some frames
+        // arrived", which a partial-conversion regression would pass. On the broken
+        // build all three counters read zero, so the sum is zero and this still
+        // fails.
+        var accounted =
+            decoder.FramesDecoded
+            + decoder.PacketsDroppedForBackpressure
+            + decoder.PacketsDroppedToGopResync;
+        Assert.True(
+            accounted == expectedFrames,
+            $"{expectedFrames} frames in the file, {accounted} accounted for — "
+                + $"{decoder.FramesDecoded} decoded, {decoder.PacketsDroppedForBackpressure} "
+                + $"shed, {decoder.PacketsDroppedToGopResync} dropped to GOP resync. Zero "
+                + "decoded is the #341 shape: the conversion rejected every frame of a "
+                + "yuva420p source."
+        );
+
+        // Shedding explains a shortfall; it does not explain decoding nothing.
+        Assert.True(
+            decoder.FramesDecoded > 0,
+            "No frame of a yuva420p source converted at all."
         );
 
         Assert.True(
