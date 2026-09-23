@@ -1038,24 +1038,21 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
             // sws_scale expects arrays of plane pointers and strides.
             // Source planes come from the AVFrame data array.
-            byte* srcPlane0 = accessor.GetDataPointer(0);
-            byte* srcPlane1 = accessor.GetDataPointer(1);
-            byte* srcPlane2 = accessor.GetDataPointer(2);
-            int srcLineSize0 = accessor.GetLineSize(0);
-            int srcLineSize1 = accessor.GetLineSize(1);
-            int srcLineSize2 = accessor.GetLineSize(2);
-
+            //
+            // All four, not three. swscale validates one pointer per plane the
+            // source format declares, and four-plane formats exist: yuva420p and
+            // the other YUVA variants, plus GBRAP. Hardcoding srcSlice[3] = null
+            // made every one of them fail the check with "bad src image pointers",
+            // so nothing decoded at all. Reading data[3] costs nothing on a
+            // three-plane format, where FFmpeg leaves it null and linesize[3] zero
+            // — the same values this used to write by hand.
             byte** srcSlice = stackalloc byte*[4];
-            srcSlice[0] = srcPlane0;
-            srcSlice[1] = srcPlane1;
-            srcSlice[2] = srcPlane2;
-            srcSlice[3] = null;
-
             int* srcStrides = stackalloc int[4];
-            srcStrides[0] = srcLineSize0;
-            srcStrides[1] = srcLineSize1;
-            srcStrides[2] = srcLineSize2;
-            srcStrides[3] = 0;
+            for (int plane = 0; plane < 4; plane++)
+            {
+                srcSlice[plane] = accessor.GetDataPointer(plane);
+                srcStrides[plane] = accessor.GetLineSize(plane);
+            }
 
             // sws_scale expects 4 destination plane pointers/strides even for packed
             // single-plane output formats like BGRA. Passing 1-element arrays lets the
@@ -1085,6 +1082,13 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
             if (rowsWritten <= 0)
             {
+                // Count it. A conversion that fails for every frame of a stream
+                // otherwise reports nothing: the demuxer reads every packet, this
+                // returns null each time, and playback reaches Ended with zero
+                // frames and zero errors. That is how the four-plane bug above
+                // stayed invisible.
+                Interlocked.Increment(ref _decodeErrors);
+                LogScaleFailed(_logger, srcWidth, srcHeight, srcFormat, rowsWritten);
                 buffer.Dispose();
                 return null;
             }
@@ -1332,4 +1336,17 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         Message = "av_hwframe_transfer_data failed with code {ReturnCode}; dropping frame."
     )]
     private static partial void LogHwTransferFailed(ILogger logger, int returnCode);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "sws_scale returned {RowsWritten} for a {Width}x{Height} "
+            + "AVPixelFormat {SourceFormat} frame; dropping frame."
+    )]
+    private static partial void LogScaleFailed(
+        ILogger logger,
+        int width,
+        int height,
+        int sourceFormat,
+        int rowsWritten
+    );
 }
