@@ -51,6 +51,24 @@ internal readonly unsafe ref struct AvFormatContextAccessor
     }
 
     /// <summary>
+    /// Container start time in microseconds (AV_TIME_BASE), or <c>AV_NOPTS_VALUE</c>
+    /// when the container does not state one.
+    /// </summary>
+    /// <remarks>
+    /// The minimum start time across the container's streams, which is what makes it the
+    /// right basis for shifting every stream by one amount. See
+    /// <c>FrameFlow.Decoding.Core.MediaTimeOrigin</c>.
+    /// </remarks>
+    internal long StartTime
+    {
+        get
+        {
+            ref AVFormatContext ctx = ref Unsafe.AsRef<AVFormatContext>((void*)_ptr);
+            return ctx.start_time;
+        }
+    }
+
+    /// <summary>
     /// Returns the <c>AVStream*</c> for the stream at <paramref name="index"/>.
     /// </summary>
     internal nint GetStream(int index)
@@ -285,5 +303,33 @@ internal readonly unsafe ref struct AvPacketAccessor
             ref AVPacket pkt = ref Unsafe.AsRef<AVPacket>((void*)_ptr);
             return pkt.size;
         }
+    }
+
+    /// <summary>
+    /// Subtracts <paramref name="offsetInStreamUnits"/> from this packet's <c>pts</c> and
+    /// <c>dts</c>, moving it from container time into media time (#358).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both timestamps shift by the same constant, so decode order and the dts-to-pts
+    /// relationship the decoder reorders on are unchanged.
+    /// </para>
+    /// <para>
+    /// A timestamp the container did not supply keeps the <c>AV_NOPTS_VALUE</c> sentinel
+    /// instead of being shifted into an ordinary-looking number. The decision of what to
+    /// subtract is
+    /// <c>FrameFlow.Decoding.Core.MediaTimeOrigin.ToMediaTimestamp</c>; this writes it.
+    /// </para>
+    /// </remarks>
+    internal void ShiftToMediaTime(long offsetInStreamUnits)
+    {
+        if (offsetInStreamUnits == 0)
+            return;
+
+        ref AVPacket pkt = ref Unsafe.AsRef<AVPacket>((void*)_ptr);
+        if (pkt.pts != FFAvUtil.AvNoPtsValue)
+            pkt.pts -= offsetInStreamUnits;
+        if (pkt.dts != FFAvUtil.AvNoPtsValue)
+            pkt.dts -= offsetInStreamUnits;
     }
 }

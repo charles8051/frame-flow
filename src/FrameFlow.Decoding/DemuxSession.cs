@@ -3,6 +3,7 @@
 
 using System.Runtime.CompilerServices;
 using FFmpeg.AutoGen.Abstractions;
+using FrameFlow.Decoding.Core;
 using FrameFlow.Decoding.Diagnostics;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
@@ -54,6 +55,10 @@ public sealed class DemuxSession : IDemuxSession
     private long _seeksPerformed;
     private int _endOfStreamReached; // bool encoded as int for Interlocked.Exchange
 
+    // Container time minus media time (#358). Read once at construction because
+    // AVFormatContext.start_time does not change over a session's life.
+    private readonly MediaTimeOrigin _origin;
+
     /// <summary>
     /// Internal constructor — callers must use <see cref="DemuxSessionFactory.OpenAsync"/>
     /// which validates arguments and performs the FFmpeg open sequence.
@@ -79,6 +84,25 @@ public sealed class DemuxSession : IDemuxSession
         _packet = packet;
         MediaInfo = mediaInfo ?? throw new ArgumentNullException(nameof(mediaInfo));
         _logger = logger ?? NullLogger.Instance;
+        _origin = ReadOrigin(_formatCtx.DangerousGetHandle());
+    }
+
+    /// <summary>
+    /// The offset between this container's timestamps and media time, which the decoding
+    /// pipeline applies to the packets it reads from the same context.
+    /// </summary>
+    internal MediaTimeOrigin Origin => _origin;
+
+    private static unsafe MediaTimeOrigin ReadOrigin(nint ctx)
+    {
+        if (ctx == nint.Zero)
+            return MediaTimeOrigin.Zero;
+
+        long startTime = new AvFormatContextAccessor(ctx).StartTime;
+        return MediaTimeOrigin.FromContainerStartTime(
+            startTime != FFAvUtil.AvNoPtsValue,
+            startTime
+        );
     }
 
     /// <inheritdoc/>
@@ -113,7 +137,12 @@ public sealed class DemuxSession : IDemuxSession
         cancellationToken.ThrowIfCancellationRequested();
 
         // Seek using the global time base (stream_index = -1, timestamp in microseconds).
-        long timestamp = (long)(position.TotalSeconds * FFAvFormat.AvTimeBase);
+        //
+        // The caller's position is media time, which starts at zero; av_seek_frame wants
+        // the container's own domain, which need not (#358). Converting back here is the
+        // inverse of the shift applied to every packet leaving this session, so a seek to
+        // the position a frame reported lands on that frame.
+        long timestamp = _origin.ToContainerMicroseconds(position);
         nint ctxPtr = _formatCtx.DangerousGetHandle();
         int result = FFAvFormat.av_seek_frame(
             ctxPtr,
@@ -326,8 +355,18 @@ public sealed class DemuxSession : IDemuxSession
         bool hasPts = rawPts != FFAvUtil.AvNoPtsValue;
         bool hasDts = rawDts != FFAvUtil.AvNoPtsValue;
 
-        TimeSpan pts = hasPts ? RescaleToTimeSpan(rawPts, timeBaseNum, timeBaseDen) : TimeSpan.Zero;
-        TimeSpan dts = hasDts ? RescaleToTimeSpan(rawDts, timeBaseNum, timeBaseDen) : TimeSpan.Zero;
+        // Media time, not container time (#358): a DemuxPacket's timestamps are on the
+        // same scale as the positions the rest of the API takes and reports.
+        long offset = _origin.InStreamUnits(timeBaseNum, timeBaseDen);
+        long mediaPts = MediaTimeOrigin.ToMediaTimestamp(rawPts, hasPts, offset);
+        long mediaDts = MediaTimeOrigin.ToMediaTimestamp(rawDts, hasDts, offset);
+
+        TimeSpan pts = hasPts
+            ? RescaleToTimeSpan(mediaPts, timeBaseNum, timeBaseDen)
+            : TimeSpan.Zero;
+        TimeSpan dts = hasDts
+            ? RescaleToTimeSpan(mediaDts, timeBaseNum, timeBaseDen)
+            : TimeSpan.Zero;
         TimeSpan duration =
             rawDuration > 0
                 ? RescaleToTimeSpan(rawDuration, timeBaseNum, timeBaseDen)
