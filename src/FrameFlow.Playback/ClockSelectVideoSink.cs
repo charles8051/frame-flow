@@ -1113,6 +1113,10 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                         // below is unchanged and still bounds the hold if the probe never
                         // trips.
                         var probe = MasterClockProbe.From(_clock.Latest);
+                        // Wall time in the hold, so the probe's verdict cannot end the run
+                        // before the last frame has had its display interval. Through
+                        // _timeProvider, like every other timer here, so a test drives it.
+                        long holdStarted = _timeProvider.GetTimestamp();
                         while (true)
                         {
                             using var holdSlice = CreateHoldProbeSource(holdPaused);
@@ -1155,7 +1159,12 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                                 continue;
 
                             bool stopped;
-                            (probe, stopped) = MasterClockStall.Observe(probe, _clock.Latest);
+                            (probe, stopped) = MasterClockStall.Observe(
+                                probe,
+                                _clock.Latest,
+                                _timeProvider.GetElapsedTime(holdStarted),
+                                holdRemaining
+                            );
                             if (stopped)
                                 break;
                         }

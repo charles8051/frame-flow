@@ -1111,7 +1111,8 @@ public sealed class ClockSelectVideoSinkTests
     }
 
     /// <summary>
-    /// A master that has stopped ends the hold when it stops, not when the cap expires (#359).
+    /// A stopped master ends the hold when the last frame finishes displaying, not a stall cap
+    /// later (#359).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1122,22 +1123,20 @@ public sealed class ClockSelectVideoSinkTests
     /// audio, and the whole cap is paid: measured at 5.2s after a 2s clip.
     /// </para>
     /// <para>
-    /// The fake time advanced here totals two probe slices, an order of magnitude inside the
-    /// 1120 ms cap the hold arms. Ending on the cap instead would leave the drain incomplete
-    /// at that point, which is what this asserts along the way.
+    /// <c>maxWait</c> here is the production 5s so the saving is the production saving. The
+    /// frame owes a second of display, so the hold ends one second in rather than six.
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task StoppedMaster_EndsTheHoldWithoutWaitingOutTheCap()
+    public async Task StoppedMaster_EndsTheHoldOnceTheFrameHasHadItsTime()
     {
         var clock = new FakeClock();
         var sink = new RecordingSink();
         var time = new FakeTimeProvider();
         await using var pacer = new ClockSelectVideoSink(
-            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120), timeProvider: time);
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromSeconds(5), timeProvider: time);
 
         pacer.BeginRun();
-        // On screen for a second, so the hold's cap is 1120 ms and any early end is the probe.
         await pacer.PresentAsync(
             new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(1)), default);
         await sink.WaitForCountAsync(1);
@@ -1146,25 +1145,25 @@ public sealed class ClockSelectVideoSinkTests
         pacer.SignalInputComplete();
         var drain = pacer.WaitForDrainAsync(default);
         await pacer.WaitForParkAfterAsync(parked);
-        Assert.Equal(TimeSpan.FromMilliseconds(1120), pacer.LastHoldCap);
-        Assert.False(drain.IsCompleted);
+        Assert.Equal(TimeSpan.FromSeconds(6), pacer.LastHoldCap);
 
-        // The clock never moves from zero. Every slice up to the threshold expires without
-        // ending the hold: no single reading, and no number of them below the threshold, is a
-        // verdict.
-        for (int i = 1; i < MasterClockStall.DefaultStallsBeforeStopped; i++)
+        // The clock never moves. Every slice short of the frame's own second leaves the hold
+        // on: the stall window is satisfied long before this, and the elapsed-time gate is
+        // what holds the verdict back.
+        var slices = (int)(TimeSpan.FromSeconds(1) / ClockSelectVideoSink.HoldProbeSlice);
+        for (int i = 1; i < slices; i++)
         {
             parked = pacer.ParkGeneration;
             time.Advance(ClockSelectVideoSink.HoldProbeSlice);
             await pacer.WaitForParkAfterAsync(parked);
             Assert.False(
                 drain.IsCompleted,
-                $"the hold ended after {i} non-advancing slice(s), below the threshold"
+                $"the hold ended {i * 100} ms in, before the frame had its second"
             );
         }
 
-        // The one that completes the run of consecutive misses ends it, half a second in
-        // rather than 1120 ms in.
+        // The slice that completes the frame's display interval ends it — five seconds before
+        // the cap would have.
         time.Advance(ClockSelectVideoSink.HoldProbeSlice);
         await AwaitDrainAsync(drain);
 
@@ -1172,75 +1171,26 @@ public sealed class ClockSelectVideoSinkTests
     }
 
     /// <summary>
-    /// A master that is running behind but still moving is not cut off (#249).
+    /// A master that stops publishing for longer than the stall window is still not allowed to
+    /// cut the frame short.
     /// </summary>
     /// <remarks>
-    /// The risk the probe introduces. Ending the hold on a clock that has merely fallen behind
-    /// truncates the last frame's display and fires Ended early, which is the defect the hold
-    /// exists to prevent. Any advance resets the count, so a clock that keeps moving — however
-    /// slowly — never accumulates a verdict, and the run ends when it arrives.
+    /// The residual a stall window alone cannot close: whatever threshold it uses, a healthy
+    /// master that stalls for longer under load crosses it. The elapsed-time gate is what makes
+    /// that harmless — while the frame still owes display time the verdict cannot end the run,
+    /// so a wrong liveness read costs nothing. Here the stall runs to four times the window.
     /// </remarks>
     [Fact]
-    public async Task SlowMaster_IsNotCutOffByTheProbe()
+    public async Task MasterStalledPastTheWindow_StillCannotTruncateTheFrame()
     {
         var clock = new FakeClock();
         var sink = new RecordingSink();
         var time = new FakeTimeProvider();
         await using var pacer = new ClockSelectVideoSink(
-            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120), timeProvider: time);
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromSeconds(5), timeProvider: time);
 
         pacer.BeginRun();
-        await pacer.PresentAsync(
-            new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(1)), default);
-        await sink.WaitForCountAsync(1);
-
-        var parked = pacer.ParkGeneration;
-        pacer.SignalInputComplete();
-        var drain = pacer.WaitForDrainAsync(default);
-        await pacer.WaitForParkAfterAsync(parked);
-
-        // Five slices, the clock crawling forward by a tenth of the frame each time. Well past
-        // the two consecutive stalls that would end the hold if "slow" counted as "stopped".
-        for (int i = 1; i <= 5; i++)
-        {
-            parked = pacer.ParkGeneration;
-            clock.Advance(TimeSpan.FromMilliseconds(i * 10));
-            time.Advance(ClockSelectVideoSink.HoldProbeSlice);
-            await pacer.WaitForParkAfterAsync(parked);
-            Assert.False(
-                drain.IsCompleted,
-                $"the hold ended after {i} slice(s) against a clock that was still advancing"
-            );
-        }
-
-        // It ends when the clock arrives, exactly as it did before the probe existed.
-        clock.Advance(TimeSpan.FromSeconds(1));
-        await AwaitDrainAsync(drain);
-        Assert.Equal(new[] { TimeSpan.Zero }, sink.PresentedPts);
-    }
-
-    /// <summary>
-    /// A master that stops publishing for a while and then resumes is not cut off.
-    /// </summary>
-    /// <remarks>
-    /// The case a short window would get wrong. A device under load can stop publishing
-    /// transiently; treating that as a stop truncates the last frame's display, which is the
-    /// defect the hold exists to prevent (#249). The count only survives consecutive misses,
-    /// so a single advance anywhere in the window clears it however often the stall repeats.
-    /// </remarks>
-    [Fact]
-    public async Task TransientlyStalledMaster_IsNotCutOffByTheProbe()
-    {
-        var clock = new FakeClock();
-        var sink = new RecordingSink();
-        var time = new FakeTimeProvider();
-        await using var pacer = new ClockSelectVideoSink(
-            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120), timeProvider: time);
-
-        pacer.BeginRun();
-        // A five-second display interval, so the hold's backstop cap is 5120 ms and the three
-        // rounds below (1500 ms of probe slices) cannot reach it. Any early end here is the
-        // probe's verdict, which is what this test is about.
+        // Five seconds on screen. A still opened through the image demuxer decodes to this.
         await pacer.PresentAsync(
             new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(5)), default);
         await sink.WaitForCountAsync(1);
@@ -1250,29 +1200,64 @@ public sealed class ClockSelectVideoSinkTests
         var drain = pacer.WaitForDrainAsync(default);
         await pacer.WaitForParkAfterAsync(parked);
 
-        // Three rounds of "stall to one slice short of the threshold, then publish". Each
-        // round spends longer stalled than a two-slice window would have tolerated.
-        var published = TimeSpan.Zero;
-        for (int round = 0; round < 3; round++)
+        // A dead clock for four windows' worth of slices. Without the gate the verdict would
+        // have landed at the first window and taken four fifths of a second off the still.
+        for (int i = 1; i <= MasterClockStall.DefaultStallsBeforeStopped * 4; i++)
         {
-            for (int i = 1; i < MasterClockStall.DefaultStallsBeforeStopped; i++)
-            {
-                parked = pacer.ParkGeneration;
-                time.Advance(ClockSelectVideoSink.HoldProbeSlice);
-                await pacer.WaitForParkAfterAsync(parked);
-                Assert.False(
-                    drain.IsCompleted,
-                    $"round {round}: the hold ended after {i} slice(s) of a transient stall"
-                );
-            }
-
-            // The device catches up. One advance is all it takes to clear the count.
             parked = pacer.ParkGeneration;
-            published += TimeSpan.FromMilliseconds(10);
-            clock.Advance(published);
             time.Advance(ClockSelectVideoSink.HoldProbeSlice);
             await pacer.WaitForParkAfterAsync(parked);
-            Assert.False(drain.IsCompleted, $"round {round}: the hold ended on a clock that resumed");
+            Assert.False(
+                drain.IsCompleted,
+                $"the hold ended after {i} stalled slice(s) while the frame still owed display time"
+            );
+        }
+
+        // It ends when the clock arrives, exactly as it did before the probe existed.
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await AwaitDrainAsync(drain);
+        Assert.Equal(new[] { TimeSpan.Zero }, sink.PresentedPts);
+    }
+
+    /// <summary>
+    /// A master that is running behind but still moving is not cut off (#249).
+    /// </summary>
+    /// <remarks>
+    /// Any advance resets the stall count, so a clock that keeps moving — however slowly —
+    /// never reaches a verdict in the first place, independently of the elapsed-time gate.
+    /// </remarks>
+    [Fact]
+    public async Task SlowMaster_IsNotCutOffByTheProbe()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        var time = new FakeTimeProvider();
+        await using var pacer = new ClockSelectVideoSink(
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromSeconds(5), timeProvider: time);
+
+        pacer.BeginRun();
+        await pacer.PresentAsync(
+            new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(5)), default);
+        await sink.WaitForCountAsync(1);
+
+        var parked = pacer.ParkGeneration;
+        pacer.SignalInputComplete();
+        var drain = pacer.WaitForDrainAsync(default);
+        await pacer.WaitForParkAfterAsync(parked);
+
+        // The clock crawls forward on every slice, never reaching the frame's end.
+        var crawled = TimeSpan.Zero;
+        for (int i = 1; i <= MasterClockStall.DefaultStallsBeforeStopped * 3; i++)
+        {
+            parked = pacer.ParkGeneration;
+            crawled += TimeSpan.FromMilliseconds(10);
+            clock.Advance(crawled);
+            time.Advance(ClockSelectVideoSink.HoldProbeSlice);
+            await pacer.WaitForParkAfterAsync(parked);
+            Assert.False(
+                drain.IsCompleted,
+                $"the hold ended after {i} slice(s) against a clock that was still advancing"
+            );
         }
 
         clock.Advance(TimeSpan.FromSeconds(5));

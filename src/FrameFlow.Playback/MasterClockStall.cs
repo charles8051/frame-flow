@@ -50,19 +50,23 @@ internal readonly record struct MasterClockProbeOutcome(MasterClockProbe Next, b
 /// only when the clock has demonstrably stopped moving.
 /// </para>
 /// <para>
-/// <b>The consecutive-stall requirement.</b> One non-advancing reading is not enough, and
-/// neither are two. The window has to clear two different things. A master publishes on its
-/// own cadence — the OpenAL sink's device value moves once per mixing period, 20 ms on the
-/// measured device — so a short window can see no change on a perfectly healthy clock purely
-/// from where the samples landed. And a healthy master can stop publishing <i>transiently</i>
-/// under load and then resume; declaring it stopped truncates the last frame's display, which
-/// is the failure the hold exists to prevent.
+/// <b>Two conditions, not one.</b> A stall window alone cannot be made safe: whatever
+/// threshold it uses, a healthy master that stops publishing for longer under load crosses it
+/// and gets called stopped, and truncating the last frame's display is the failure the hold
+/// exists to prevent. So the verdict is also gated on the frame having had its display
+/// interval in <i>wall</i> time. Once that has elapsed the hold has already done its job, and
+/// ending it cannot truncate anything no matter how wrong the liveness read was. The window
+/// decides <i>when</i> a stopped master is noticed; the elapsed-time gate decides whether
+/// noticing is allowed to end the run.
 /// </para>
 /// <para>
-/// So the window is sized against the worst of those rather than the best: at the caller's
-/// slice it spans half a second, an order of magnitude over the device period, and any single
-/// advance resets it. A master that stalls and resumes is never called stopped, however many
-/// times it does it, because the count only survives consecutive misses.
+/// <b>The consecutive-stall requirement.</b> Given that gate the window only has to avoid
+/// crying stopped needlessly, and one non-advancing reading is not enough for that. A master
+/// publishes on its own cadence — the OpenAL sink's device value moves once per mixing
+/// period, 20 ms on the measured device — so a short window can see no change on a perfectly
+/// healthy clock purely from where the samples landed. At the caller's slice the window spans
+/// half a second, an order of magnitude over the device period, and any single advance resets
+/// it, so a master that resumes inside the window is never called stopped at all.
 /// </para>
 /// <para>
 /// A paused master does not advance either, so the caller does not observe while paused; the
@@ -96,6 +100,14 @@ internal static class MasterClockStall
     /// </summary>
     /// <param name="prior">The state from the previous observation, or <see cref="MasterClockProbe.From"/>.</param>
     /// <param name="reading">The clock's value now.</param>
+    /// <param name="elapsedInHold">Wall time since the hold began.</param>
+    /// <param name="displayRemainingAtStart">
+    /// How much of the last frame's display interval was still owed when the hold began.
+    /// <see cref="MasterClockProbeOutcome.Stopped"/> stays <see langword="false"/> until
+    /// <paramref name="elapsedInHold"/> covers it, so a wrong liveness read cannot cut the
+    /// frame short — it can only make the run end at the moment the frame was due to finish
+    /// anyway.
+    /// </param>
     /// <param name="stallsBeforeStopped">
     /// How many consecutive non-advancing observations mean stopped. A value below one makes
     /// the first non-advancing reading decisive.
@@ -103,6 +115,8 @@ internal static class MasterClockStall
     public static MasterClockProbeOutcome Observe(
         MasterClockProbe prior,
         TimeSpan reading,
+        TimeSpan elapsedInHold,
+        TimeSpan displayRemainingAtStart,
         int stallsBeforeStopped = DefaultStallsBeforeStopped
     )
     {
@@ -110,9 +124,12 @@ internal static class MasterClockStall
         int stalls = advanced ? 0 : prior.ConsecutiveStalls + 1;
         long highWater = advanced ? reading.Ticks : prior.HighWaterTicks;
 
+        bool stalled = !advanced && stalls >= stallsBeforeStopped;
+        bool frameHasHadItsTime = elapsedInHold >= displayRemainingAtStart;
+
         return new MasterClockProbeOutcome(
             new MasterClockProbe(highWater, stalls),
-            Stopped: !advanced && stalls >= stallsBeforeStopped
+            Stopped: stalled && frameHasHadItsTime
         );
     }
 }

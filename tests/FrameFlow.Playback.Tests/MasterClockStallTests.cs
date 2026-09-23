@@ -17,6 +17,89 @@ public sealed class MasterClockStallTests
     private static MasterClockProbe Seed(double seconds) =>
         MasterClockProbe.From(TimeSpan.FromSeconds(seconds));
 
+    /// <summary>
+    /// An observation taken after the last frame has had its display interval, which is the
+    /// half of the decision these cases are not about. The gate itself is
+    /// <see cref="Observe_WhileTheFrameIsStillDisplaying_IsNeverStopped"/>.
+    /// </summary>
+    private static MasterClockProbeOutcome Observe(
+        MasterClockProbe prior,
+        TimeSpan reading,
+        int? stallsBeforeStopped = null
+    ) =>
+        MasterClockStall.Observe(
+            prior,
+            reading,
+            elapsedInHold: TimeSpan.FromHours(1),
+            displayRemainingAtStart: TimeSpan.Zero,
+            stallsBeforeStopped
+                ?? MasterClockStall.DefaultStallsBeforeStopped
+        );
+
+    /// <summary>
+    /// The verdict cannot end the hold while the last frame still owes display time, however
+    /// certainly the clock has stopped. A liveness read that is wrong then would cut the frame
+    /// short, which is the failure the hold exists to prevent (#249); gated this way the worst
+    /// a wrong read can do is end the run at the moment the frame was due to finish anyway.
+    /// </summary>
+    [Fact]
+    public void Observe_WhileTheFrameIsStillDisplaying_IsNeverStopped()
+    {
+        var probe = Seed(2);
+
+        // Far more consecutive stalls than the threshold, against a frame with a second still
+        // to run and only a tenth of it elapsed.
+        for (int i = 0; i < MasterClockStall.DefaultStallsBeforeStopped * 4; i++)
+        {
+            var outcome = MasterClockStall.Observe(
+                probe,
+                TimeSpan.FromSeconds(2),
+                elapsedInHold: TimeSpan.FromMilliseconds(100),
+                displayRemainingAtStart: TimeSpan.FromSeconds(1)
+            );
+
+            Assert.False(outcome.Stopped);
+            probe = outcome.Next;
+        }
+
+        // The same probe state, once the interval has elapsed.
+        Assert.True(
+            MasterClockStall
+                .Observe(
+                    probe,
+                    TimeSpan.FromSeconds(2),
+                    elapsedInHold: TimeSpan.FromSeconds(1),
+                    displayRemainingAtStart: TimeSpan.FromSeconds(1)
+                )
+                .Stopped
+        );
+    }
+
+    /// <summary>
+    /// A frame that owed nothing when the hold began is gated on nothing, so the window alone
+    /// decides. This is the common case: the last frame of a clip is usually already at or
+    /// past its end by the time the buffer empties.
+    /// </summary>
+    [Fact]
+    public void Observe_WithNoDisplayTimeOwed_IsDecidedByTheWindowAlone()
+    {
+        var probe = Seed(2);
+        MasterClockProbeOutcome outcome = default;
+
+        for (int i = 0; i < MasterClockStall.DefaultStallsBeforeStopped; i++)
+        {
+            outcome = MasterClockStall.Observe(
+                probe,
+                TimeSpan.FromSeconds(2),
+                elapsedInHold: TimeSpan.Zero,
+                displayRemainingAtStart: TimeSpan.Zero
+            );
+            probe = outcome.Next;
+        }
+
+        Assert.True(outcome.Stopped);
+    }
+
     [Fact]
     public void From_SeedsTheHighWaterAndNoStalls()
     {
@@ -33,7 +116,7 @@ public sealed class MasterClockStallTests
     [Fact]
     public void Observe_OneStall_IsNotStopped()
     {
-        var outcome = MasterClockStall.Observe(Seed(2), TimeSpan.FromSeconds(2));
+        var outcome = Observe(Seed(2), TimeSpan.FromSeconds(2));
 
         Assert.False(outcome.Stopped);
         Assert.Equal(1, outcome.Next.ConsecutiveStalls);
@@ -47,7 +130,7 @@ public sealed class MasterClockStallTests
 
         for (int i = 1; i <= MasterClockStall.DefaultStallsBeforeStopped; i++)
         {
-            outcome = MasterClockStall.Observe(probe, TimeSpan.FromSeconds(2));
+            outcome = Observe(probe, TimeSpan.FromSeconds(2));
             Assert.Equal(i >= MasterClockStall.DefaultStallsBeforeStopped, outcome.Stopped);
             probe = outcome.Next;
         }
@@ -63,10 +146,10 @@ public sealed class MasterClockStallTests
     [Fact]
     public void Observe_AnAdvance_ResetsTheCount()
     {
-        var stalled = MasterClockStall.Observe(Seed(2), TimeSpan.FromSeconds(2));
+        var stalled = Observe(Seed(2), TimeSpan.FromSeconds(2));
         Assert.Equal(1, stalled.Next.ConsecutiveStalls);
 
-        var moved = MasterClockStall.Observe(stalled.Next, TimeSpan.FromSeconds(2.001));
+        var moved = Observe(stalled.Next, TimeSpan.FromSeconds(2.001));
 
         Assert.False(moved.Stopped);
         Assert.Equal(0, moved.Next.ConsecutiveStalls);
@@ -81,7 +164,7 @@ public sealed class MasterClockStallTests
         // Ten observations, each advancing by a hair. Nothing here is a stall.
         for (int i = 1; i <= 10; i++)
         {
-            var outcome = MasterClockStall.Observe(probe, TimeSpan.FromMilliseconds(i));
+            var outcome = Observe(probe, TimeSpan.FromMilliseconds(i));
             Assert.False(outcome.Stopped);
             probe = outcome.Next;
         }
@@ -103,7 +186,7 @@ public sealed class MasterClockStallTests
         // stalls accumulate exactly as if the clock had not moved at all.
         for (int i = 0; i < MasterClockStall.DefaultStallsBeforeStopped; i++)
         {
-            outcome = MasterClockStall.Observe(probe, TimeSpan.FromSeconds(1));
+            outcome = Observe(probe, TimeSpan.FromSeconds(1));
             probe = outcome.Next;
         }
 
@@ -121,11 +204,11 @@ public sealed class MasterClockStallTests
 
         for (int i = 1; i < threshold; i++)
         {
-            var below = MasterClockStall.Observe(probe, TimeSpan.FromSeconds(2), threshold);
+            var below = Observe(probe, TimeSpan.FromSeconds(2), threshold);
             Assert.False(below.Stopped);
             probe = below.Next;
         }
 
-        Assert.True(MasterClockStall.Observe(probe, TimeSpan.FromSeconds(2), threshold).Stopped);
+        Assert.True(Observe(probe, TimeSpan.FromSeconds(2), threshold).Stopped);
     }
 }
