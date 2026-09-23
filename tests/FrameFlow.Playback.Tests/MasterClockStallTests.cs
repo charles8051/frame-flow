@@ -40,13 +40,20 @@ public sealed class MasterClockStallTests
     }
 
     [Fact]
-    public void Observe_TwoConsecutiveStalls_IsStopped()
+    public void Observe_TheThresholdthConsecutiveStall_IsStopped()
     {
-        var first = MasterClockStall.Observe(Seed(2), TimeSpan.FromSeconds(2));
-        var second = MasterClockStall.Observe(first.Next, TimeSpan.FromSeconds(2));
+        var probe = Seed(2);
+        MasterClockProbeOutcome outcome = default;
 
-        Assert.True(second.Stopped);
-        Assert.Equal(2, second.Next.ConsecutiveStalls);
+        for (int i = 1; i <= MasterClockStall.DefaultStallsBeforeStopped; i++)
+        {
+            outcome = MasterClockStall.Observe(probe, TimeSpan.FromSeconds(2));
+            Assert.Equal(i >= MasterClockStall.DefaultStallsBeforeStopped, outcome.Stopped);
+            probe = outcome.Next;
+        }
+
+        Assert.True(outcome.Stopped);
+        Assert.Equal(MasterClockStall.DefaultStallsBeforeStopped, probe.ConsecutiveStalls);
     }
 
     /// <summary>
@@ -89,11 +96,19 @@ public sealed class MasterClockStallTests
     [Fact]
     public void Observe_AReadingThatWentBackwards_IsNotProgress()
     {
-        var first = MasterClockStall.Observe(Seed(5), TimeSpan.FromSeconds(1));
-        var second = MasterClockStall.Observe(first.Next, TimeSpan.FromSeconds(1));
+        var probe = Seed(5);
+        MasterClockProbeOutcome outcome = default;
 
-        Assert.True(second.Stopped);
-        Assert.Equal(TimeSpan.FromSeconds(5).Ticks, second.Next.HighWaterTicks);
+        // Every reading is below the high water, so none of them counts as an advance and the
+        // stalls accumulate exactly as if the clock had not moved at all.
+        for (int i = 0; i < MasterClockStall.DefaultStallsBeforeStopped; i++)
+        {
+            outcome = MasterClockStall.Observe(probe, TimeSpan.FromSeconds(1));
+            probe = outcome.Next;
+        }
+
+        Assert.True(outcome.Stopped);
+        Assert.Equal(TimeSpan.FromSeconds(5).Ticks, probe.HighWaterTicks);
     }
 
     [Theory]

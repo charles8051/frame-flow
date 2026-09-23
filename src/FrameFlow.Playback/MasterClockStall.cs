@@ -50,11 +50,19 @@ internal readonly record struct MasterClockProbeOutcome(MasterClockProbe Next, b
 /// only when the clock has demonstrably stopped moving.
 /// </para>
 /// <para>
-/// <b>The consecutive-stall requirement.</b> One non-advancing reading is not enough. A
-/// master publishes on its own cadence — the OpenAL sink's device value moves once per
-/// mixing period — so a single observation can fall inside one period and see no change on a
-/// perfectly healthy clock. Requiring several in a row makes the verdict depend on a span
-/// longer than any plausible publish interval rather than on where one sample landed.
+/// <b>The consecutive-stall requirement.</b> One non-advancing reading is not enough, and
+/// neither are two. The window has to clear two different things. A master publishes on its
+/// own cadence — the OpenAL sink's device value moves once per mixing period, 20 ms on the
+/// measured device — so a short window can see no change on a perfectly healthy clock purely
+/// from where the samples landed. And a healthy master can stop publishing <i>transiently</i>
+/// under load and then resume; declaring it stopped truncates the last frame's display, which
+/// is the failure the hold exists to prevent.
+/// </para>
+/// <para>
+/// So the window is sized against the worst of those rather than the best: at the caller's
+/// slice it spans half a second, an order of magnitude over the device period, and any single
+/// advance resets it. A master that stalls and resumes is never called stopped, however many
+/// times it does it, because the count only survives consecutive misses.
 /// </para>
 /// <para>
 /// A paused master does not advance either, so the caller does not observe while paused; the
@@ -64,14 +72,24 @@ internal readonly record struct MasterClockProbeOutcome(MasterClockProbe Next, b
 internal static class MasterClockStall
 {
     /// <summary>
-    /// Consecutive non-advancing observations before the master counts as stopped.
+    /// Consecutive non-advancing observations before the master counts as stopped. At
+    /// <see cref="ClockSelectVideoSink.HoldProbeSlice"/> this is a window of half a second.
     /// </summary>
     /// <remarks>
-    /// With the caller's probe interval this sets how long after the master stops the hold
-    /// ends. It buys latency, not correctness: the backstop cap still bounds the hold if this
-    /// never trips, and a healthy master resets the count on any advance.
+    /// <para>
+    /// Sized to outlast both the publish cadence of the masters in the tree and a transient
+    /// stall in one of them, not to detect a stop as early as possible. The audio sink
+    /// interpolates between device updates with elapsed wall time, so its <c>Latest</c>
+    /// advances continuously while the device is running and half a second of no movement is
+    /// not a sampling artifact; the wallclock master always advances.
+    /// </para>
+    /// <para>
+    /// It buys latency, not correctness, and the trade is lopsided: the cost of waiting
+    /// longer is a slightly later <c>Ended</c>, and the cost of deciding too early is a
+    /// truncated final frame. The backstop cap still bounds the hold if this never trips.
+    /// </para>
     /// </remarks>
-    internal const int DefaultStallsBeforeStopped = 2;
+    internal const int DefaultStallsBeforeStopped = 5;
 
     /// <summary>
     /// Folds one clock reading into the probe.

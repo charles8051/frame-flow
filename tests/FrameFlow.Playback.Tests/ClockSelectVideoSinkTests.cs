@@ -1149,14 +1149,22 @@ public sealed class ClockSelectVideoSinkTests
         Assert.Equal(TimeSpan.FromMilliseconds(1120), pacer.LastHoldCap);
         Assert.False(drain.IsCompleted);
 
-        // The clock never moves from zero. One slice expires: one non-advancing reading is
-        // not a verdict, so the hold is still on.
-        parked = pacer.ParkGeneration;
-        time.Advance(ClockSelectVideoSink.HoldProbeSlice);
-        await pacer.WaitForParkAfterAsync(parked);
-        Assert.False(drain.IsCompleted);
+        // The clock never moves from zero. Every slice up to the threshold expires without
+        // ending the hold: no single reading, and no number of them below the threshold, is a
+        // verdict.
+        for (int i = 1; i < MasterClockStall.DefaultStallsBeforeStopped; i++)
+        {
+            parked = pacer.ParkGeneration;
+            time.Advance(ClockSelectVideoSink.HoldProbeSlice);
+            await pacer.WaitForParkAfterAsync(parked);
+            Assert.False(
+                drain.IsCompleted,
+                $"the hold ended after {i} non-advancing slice(s), below the threshold"
+            );
+        }
 
-        // The second consecutive one ends it, 200 ms in rather than 1120 ms in.
+        // The one that completes the run of consecutive misses ends it, half a second in
+        // rather than 1120 ms in.
         time.Advance(ClockSelectVideoSink.HoldProbeSlice);
         await AwaitDrainAsync(drain);
 
@@ -1207,6 +1215,67 @@ public sealed class ClockSelectVideoSinkTests
 
         // It ends when the clock arrives, exactly as it did before the probe existed.
         clock.Advance(TimeSpan.FromSeconds(1));
+        await AwaitDrainAsync(drain);
+        Assert.Equal(new[] { TimeSpan.Zero }, sink.PresentedPts);
+    }
+
+    /// <summary>
+    /// A master that stops publishing for a while and then resumes is not cut off.
+    /// </summary>
+    /// <remarks>
+    /// The case a short window would get wrong. A device under load can stop publishing
+    /// transiently; treating that as a stop truncates the last frame's display, which is the
+    /// defect the hold exists to prevent (#249). The count only survives consecutive misses,
+    /// so a single advance anywhere in the window clears it however often the stall repeats.
+    /// </remarks>
+    [Fact]
+    public async Task TransientlyStalledMaster_IsNotCutOffByTheProbe()
+    {
+        var clock = new FakeClock();
+        var sink = new RecordingSink();
+        var time = new FakeTimeProvider();
+        await using var pacer = new ClockSelectVideoSink(
+            sink, clock, capacity: 4, maxWait: TimeSpan.FromMilliseconds(120), timeProvider: time);
+
+        pacer.BeginRun();
+        // A five-second display interval, so the hold's backstop cap is 5120 ms and the three
+        // rounds below (1500 ms of probe slices) cannot reach it. Any early end here is the
+        // probe's verdict, which is what this test is about.
+        await pacer.PresentAsync(
+            new TrackingFrame(TimeSpan.Zero, TimeSpan.FromSeconds(5)), default);
+        await sink.WaitForCountAsync(1);
+
+        var parked = pacer.ParkGeneration;
+        pacer.SignalInputComplete();
+        var drain = pacer.WaitForDrainAsync(default);
+        await pacer.WaitForParkAfterAsync(parked);
+
+        // Three rounds of "stall to one slice short of the threshold, then publish". Each
+        // round spends longer stalled than a two-slice window would have tolerated.
+        var published = TimeSpan.Zero;
+        for (int round = 0; round < 3; round++)
+        {
+            for (int i = 1; i < MasterClockStall.DefaultStallsBeforeStopped; i++)
+            {
+                parked = pacer.ParkGeneration;
+                time.Advance(ClockSelectVideoSink.HoldProbeSlice);
+                await pacer.WaitForParkAfterAsync(parked);
+                Assert.False(
+                    drain.IsCompleted,
+                    $"round {round}: the hold ended after {i} slice(s) of a transient stall"
+                );
+            }
+
+            // The device catches up. One advance is all it takes to clear the count.
+            parked = pacer.ParkGeneration;
+            published += TimeSpan.FromMilliseconds(10);
+            clock.Advance(published);
+            time.Advance(ClockSelectVideoSink.HoldProbeSlice);
+            await pacer.WaitForParkAfterAsync(parked);
+            Assert.False(drain.IsCompleted, $"round {round}: the hold ended on a clock that resumed");
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(5));
         await AwaitDrainAsync(drain);
         Assert.Equal(new[] { TimeSpan.Zero }, sink.PresentedPts);
     }

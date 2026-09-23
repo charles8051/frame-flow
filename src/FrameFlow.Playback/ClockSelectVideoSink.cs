@@ -333,10 +333,13 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
 
     /// <summary>
     /// How long one end-of-content probe slice waits before the master's liveness is
-    /// observed. It bounds how soon after a master stops the hold ends, not whether the hold
-    /// is correct: <see cref="MasterClockStall"/> needs
+    /// observed. It sets the resolution of the check, not the verdict:
+    /// <see cref="MasterClockStall"/> needs
     /// <see cref="MasterClockStall.DefaultStallsBeforeStopped"/> consecutive non-advancing
-    /// slices, and the hold's own cap still backstops the whole thing.
+    /// slices, so the window that decides is the product of the two, and the hold's own cap
+    /// still backstops the whole thing. Sampling finely and requiring many misses tolerates a
+    /// clock that publishes irregularly better than sampling coarsely would: a single advance
+    /// anywhere in the window resets the count.
     /// </summary>
     internal static readonly TimeSpan HoldProbeSlice = TimeSpan.FromMilliseconds(100);
 
