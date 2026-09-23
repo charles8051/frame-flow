@@ -137,6 +137,17 @@
     "hasAudio": false
   },
   {
+    "filename": "test-video-ffv1-yuva420p.mkv",
+    "durationSeconds": 3,
+    "durationToleranceMs": 350,
+    "width": 320,
+    "height": 240,
+    "fps": 24,
+    "expectedVideoFrames": 72,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
     "filename": "test-subsecond.mp4",
     "durationSeconds": 0.5,
     "durationToleranceMs": 500,

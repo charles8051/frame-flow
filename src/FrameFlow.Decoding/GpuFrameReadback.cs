@@ -103,24 +103,18 @@ internal static unsafe class GpuFrameReadback
             using var dstPin = outputBuffer.Memory.Pin();
             byte* dstData = (byte*)dstPin.Pointer;
 
-            byte* srcPlane0 = accessor.GetDataPointer(0);
-            byte* srcPlane1 = accessor.GetDataPointer(1);
-            byte* srcPlane2 = accessor.GetDataPointer(2);
-            int srcStride0 = accessor.GetLineSize(0);
-            int srcStride1 = accessor.GetLineSize(1);
-            int srcStride2 = accessor.GetLineSize(2);
-
+            // All four planes, matching VideoDecoder.BuildManagedFrameFromCpu. No
+            // four-plane format reaches here today: this converts a frame
+            // transferred off the GPU, and the transfer formats are nv12 and p010.
+            // Kept identical anyway so the two call sites cannot drift, and because
+            // it is a no-op for the formats that do arrive.
             byte** srcSlice = stackalloc byte*[4];
-            srcSlice[0] = srcPlane0;
-            srcSlice[1] = srcPlane1;
-            srcSlice[2] = srcPlane2;
-            srcSlice[3] = null;
-
             int* srcStrides = stackalloc int[4];
-            srcStrides[0] = srcStride0;
-            srcStrides[1] = srcStride1;
-            srcStrides[2] = srcStride2;
-            srcStrides[3] = 0;
+            for (int plane = 0; plane < 4; plane++)
+            {
+                srcSlice[plane] = accessor.GetDataPointer(plane);
+                srcStrides[plane] = accessor.GetLineSize(plane);
+            }
 
             byte** dstSlice = stackalloc byte*[4];
             dstSlice[0] = dstData;

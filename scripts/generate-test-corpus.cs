@@ -215,6 +215,19 @@ Gen(
     new(Width: 1280, Height: 720, Fps: 60, DurationSec: 3.0)
 );
 
+// Four planes, which is one more than the rest of this category has. Every
+// other fixture here is one, two or three, and a call site that passed only
+// three source plane pointers to sws_scale therefore converted all of them and
+// failed every YUVA frame with "bad src image pointers" (#341). ffv1 rather
+// than a webp: the demuxer and the codec are not what decides this, the plane
+// count is, and ffv1 is builtin so no build can report the fixture UNAVL.
+Gen(
+    "test-video-ffv1-yuva420p.mkv",
+    "-f lavfi -i testsrc2=size=320x240:rate=24:duration=3",
+    "-c:v ffv1 -pix_fmt yuva420p -an",
+    new(Width: 320, Height: 240, Fps: 24, DurationSec: 3.0)
+);
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Category 5: Edge cases
 // ═════════════════════════════════════════════════════════════════════════════
