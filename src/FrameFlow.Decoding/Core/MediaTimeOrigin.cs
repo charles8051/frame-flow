@@ -61,12 +61,33 @@ internal readonly record struct MediaTimeOrigin(long Microseconds)
     /// This origin expressed in one stream's time base, which is the unit a packet's
     /// <c>pts</c> and <c>dts</c> are in. Returns zero for a degenerate time base.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The intermediate product is 128-bit because the 64-bit one overflows at time bases
+    /// that exist: a nanosecond time base (Matroska states timestamps in nanoseconds) and a
+    /// start time of a few hours give <c>Microseconds * timeBaseDen</c> above
+    /// <see cref="long.MaxValue"/> while the offset itself is nowhere near it. A wrapped
+    /// product is worse than no offset, because it shifts every packet by an arbitrary
+    /// amount rather than leaving them where they were.
+    /// </para>
+    /// <para>
+    /// An offset that does not fit in a <see cref="long"/> after scaling yields zero. It
+    /// cannot be subtracted from timestamps in a domain that cannot express it, and
+    /// leaving them alone is bounded and inspectable where a saturated value is neither.
+    /// </para>
+    /// </remarks>
     /// <param name="timeBaseNum">Numerator of the stream time base.</param>
     /// <param name="timeBaseDen">Denominator of the stream time base.</param>
-    public long InStreamUnits(int timeBaseNum, int timeBaseDen) =>
-        Microseconds == 0 || timeBaseNum <= 0 || timeBaseDen <= 0
-            ? 0
-            : Microseconds * timeBaseDen / (timeBaseNum * MicrosecondsPerSecond);
+    public long InStreamUnits(int timeBaseNum, int timeBaseDen)
+    {
+        if (Microseconds == 0 || timeBaseNum <= 0 || timeBaseDen <= 0)
+            return 0;
+
+        Int128 scaled =
+            (Int128)Microseconds * timeBaseDen / ((Int128)timeBaseNum * MicrosecondsPerSecond);
+
+        return scaled >= long.MinValue && scaled <= long.MaxValue ? (long)scaled : 0;
+    }
 
     /// <summary>
     /// Shifts one raw container timestamp into media time.

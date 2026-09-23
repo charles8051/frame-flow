@@ -71,6 +71,34 @@ public sealed class MediaTimeOriginTests
             MediaTimeOrigin.FromContainerStartTime(true, MpegTsStart).InStreamUnits(num, den)
         );
 
+    /// <summary>
+    /// A nanosecond time base and a start time of hours overflow a 64-bit intermediate
+    /// while the offset itself fits comfortably. Matroska states timestamps in
+    /// nanoseconds, and a recording pulled off a live stream can start hours in.
+    /// </summary>
+    [Fact]
+    public void InStreamUnits_WithALargeOffsetAndANanosecondTimeBase_DoesNotOverflow()
+    {
+        // 3 hours, which times 1e9 exceeds long.MaxValue as a 64-bit product.
+        var origin = MediaTimeOrigin.FromContainerStartTime(true, 10_800_000_000);
+
+        Assert.Equal(10_800_000_000_000, origin.InStreamUnits(1, 1_000_000_000));
+    }
+
+    /// <summary>
+    /// An offset that still does not fit after scaling yields no offset rather than a
+    /// wrapped one: it cannot be subtracted from timestamps in a domain that cannot
+    /// express it, and leaving them alone is the bounded failure.
+    /// </summary>
+    [Fact]
+    public void InStreamUnits_WhenTheScaledOffsetCannotFit_IsZero() =>
+        Assert.Equal(
+            0,
+            MediaTimeOrigin
+                .FromContainerStartTime(true, long.MaxValue / 2)
+                .InStreamUnits(1, 1_000_000_000)
+        );
+
     [Fact]
     public void ToMediaTimestamp_SubtractsTheOffset() =>
         Assert.Equal(9_000, MediaTimeOrigin.ToMediaTimestamp(135_000, hasTimestamp: true, 126_000));
