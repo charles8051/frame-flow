@@ -246,6 +246,16 @@ land.
   presenter's converter already performs per frame, and leaves ADR-0025's sink-owned pool
   alone. Paired with the [video lookahead](../feature-specs/video-lookahead/spec.md) spec,
   which is the only thing that would spend the depth.
+- [One ownership contract for frames in every memory domain](frame-ownership.md) — every graph
+  item is ref-counted except `Media.CpuVideoFrame`, the output of the decoder's CPU path and of
+  every converter, and that one type is why fan-out clones (ADR-0054), joins throw (#91) and
+  `LatestWins` edges copy (#93). Makes `AddRef` total and same-instance, frames immutable once
+  published, and graph items the frames themselves (#42). Keeping a one-shot frame never
+  protected a pool, since those frames rent from a growable pool; the pools that stall are fixed
+  ones, hardware decode slices and camera leases. So a fixed-pool source copies out by default,
+  and only a consumer that releases within a frame period opts in to the fixed-pool frame. It
+  adopts Periphery's camera frame contract, supersedes ADR-0054, and absorbs four decisions of
+  frame-pool ownership. The fixed-pool default is the question it puts to review.
 - [Declared pull: the master clock as a graph-visible dependency](declared-pull-clock.md) — the
   substrate models edges and nodes, and the master clock is neither, so no rule and no diagnostic
   can see which nodes depend on one. It set out to register clock readers on the `Graph`. Drafting
