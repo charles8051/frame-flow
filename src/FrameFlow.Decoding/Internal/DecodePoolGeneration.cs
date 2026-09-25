@@ -40,6 +40,12 @@ internal interface IPoolWaiter
     /// wait is expected and is not a probable deadlock.
     /// </summary>
     bool PoolWatchdogSuspended { get; }
+
+    /// <summary>
+    /// Moves on every change of <see cref="PoolWatchdogSuspended"/>, so a watchdog interval can
+    /// tell that a pause began or ended inside it.
+    /// </summary>
+    int PoolWatchdogEpoch { get; }
 }
 
 internal sealed partial class DecodePoolGeneration
@@ -144,6 +150,10 @@ internal sealed partial class DecodePoolGeneration
     /// has handed out its budget. Reports a probable deadlock once when a wait sees no release
     /// for <paramref name="watchdog"/>, and keeps waiting.
     /// </summary>
+    /// <remarks>
+    /// Only a whole interval of unpaused waiting counts: an interval in which the waiter was
+    /// suspended, or became suspended or resumed, is discarded and a fresh one starts.
+    /// </remarks>
     /// <param name="clock">The watchdog's clock.</param>
     /// <param name="watchdog">How long a wait sees no release before it is reported.</param>
     /// <param name="waiter">
@@ -179,13 +189,17 @@ internal sealed partial class DecodePoolGeneration
                 waiter?.OnPoolWait();
             }
 
+            int epoch = waiter?.PoolWatchdogEpoch ?? 0;
             try
             {
                 await released.WaitAsync(watchdog, clock, cancellationToken).ConfigureAwait(false);
             }
             catch (TimeoutException)
             {
-                if (!reported && waiter?.PoolWatchdogSuspended != true)
+                bool quiet =
+                    waiter is null
+                    || (!waiter.PoolWatchdogSuspended && waiter.PoolWatchdogEpoch == epoch);
+                if (!reported && quiet)
                 {
                     reported = true;
                     LogProbableDeadlock(_logger, _source, budget, watchdog.TotalSeconds);

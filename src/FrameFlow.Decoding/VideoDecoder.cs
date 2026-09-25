@@ -78,6 +78,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     // starts.
     private long _poolBudgetWaits;
     private int _poolWatchdogSuspended;
+    private int _poolWatchdogEpoch;
 
     /// <summary>
     /// Set while playback is paused. Holders then keep their frames on purpose, and a decoder
@@ -86,12 +87,18 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     internal bool PoolWatchdogSuspended
     {
         get => Volatile.Read(ref _poolWatchdogSuspended) != 0;
-        set => Volatile.Write(ref _poolWatchdogSuspended, value ? 1 : 0);
+        set
+        {
+            if (Interlocked.Exchange(ref _poolWatchdogSuspended, value ? 1 : 0) != (value ? 1 : 0))
+                Interlocked.Increment(ref _poolWatchdogEpoch);
+        }
     }
 
     void IPoolWaiter.OnPoolWait() => Interlocked.Increment(ref _poolBudgetWaits);
 
     bool IPoolWaiter.PoolWatchdogSuspended => PoolWatchdogSuspended;
+
+    int IPoolWaiter.PoolWatchdogEpoch => Volatile.Read(ref _poolWatchdogEpoch);
 
     /// <summary>
     /// The clock the pool guard's watchdog runs on. A test injects a fake to make the report

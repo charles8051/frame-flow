@@ -10,7 +10,8 @@ namespace FrameFlow.Decoding.Tests;
 /// </summary>
 /// <remarks>
 /// A pool changes <c>DecodePoolMetrics.Capacity</c> while it lives, so this class runs in the
-/// decode-pool collection with the tests that assert on it.
+/// decode-pool collection with the tests that assert on it, and every test releases each holder
+/// it adds: its frames and the pool's own.
 /// </remarks>
 [Collection(DecodePoolCollection.Name)]
 public sealed class DecodePoolGenerationTests
@@ -28,6 +29,7 @@ public sealed class DecodePoolGenerationTests
         await pool.WaitForRoomAsync(new FakeTimeProvider(), Watchdog, Waiter(() => waits++), CancellationToken.None);
 
         Assert.Equal(0, waits);
+        pool.DetachFrame();
         pool.Release();
     }
 
@@ -64,6 +66,9 @@ public sealed class DecodePoolGenerationTests
         await pool.WaitForRoomAsync(new FakeTimeProvider(), Watchdog, Waiter(() => waits++), CancellationToken.None);
 
         Assert.Equal(0, waits);
+        for (int i = 0; i < 25; i++)
+            pool.DetachFrame();
+        pool.Release();
     }
 
     [Fact]
@@ -79,6 +84,8 @@ public sealed class DecodePoolGenerationTests
         cts.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wait.WaitAsync(FailureBound));
+        pool.DetachFrame();
+        pool.Release();
     }
 
     [Fact]
@@ -104,10 +111,11 @@ public sealed class DecodePoolGenerationTests
 
         Assert.False(next.IsCompleted);
         Assert.Equal(1, logger.Warnings);
+        pool.Release();
     }
 
     [Fact]
-    public async Task AWaitWhileTheWatchdogIsSuspended_IsNotReported_UntilItResumes()
+    public async Task AWaitWhileTheWatchdogIsSuspended_IsNotReported_UntilAWholeIntervalAfterItResumes()
     {
         // Paused playback: holders keep their frames on purpose, so a long wait is expected.
         var clock = new FakeTimeProvider();
@@ -115,33 +123,57 @@ public sealed class DecodePoolGenerationTests
         var pool = new DecodePoolGeneration(1, size: 20, budget: 1, logger, "D3D11Va");
         pool.AttachFrame();
         var waiter = new TestWaiter { PoolWatchdogSuspended = true };
-
-        var wait = pool.WaitForRoomAsync(clock, Watchdog, waiter, CancellationToken.None).AsTask();
-
-        // Each interval ends in a timeout the wait handles before it waits again; the second
-        // one cannot fire until the first has been handled, so it proves the first was not
-        // reported.
-        var firstWarning = logger.NextWarning;
-        clock.Advance(Watchdog);
-        await waiter.WaitsHandled(1).WaitAsync(FailureBound);
-        Assert.False(firstWarning.IsCompleted);
-
-        // Resumed: the next interval that ends without a release is reported. The guard arms
-        // that interval after handling the last, so keep ending intervals until it reports.
-        waiter.PoolWatchdogSuspended = false;
         var warning = logger.NextWarning;
-        await Task.Run(async () =>
-        {
-            while (!warning.IsCompleted)
-            {
-                clock.Advance(Watchdog);
-                await Task.Yield();
-            }
-        }).WaitAsync(FailureBound);
-        Assert.Contains("budget of 1", await warning);
+
+        // The guard reads the epoch as it arms each interval, and again as an unsuspended one
+        // ends, so the counts below say when the next interval is armed.
+        var wait = pool.WaitForRoomAsync(clock, Watchdog, waiter, CancellationToken.None).AsTask();
+        await waiter.EpochReads(1).WaitAsync(FailureBound); // armed
+
+        clock.Advance(Watchdog); // an interval spent suspended: ends without reading the epoch
+        await waiter.EpochReads(2).WaitAsync(FailureBound); // armed again
+
+        waiter.PoolWatchdogSuspended = false;
+        clock.Advance(Watchdog); // an interval that saw the resume: ends, then re-arms
+        await waiter.EpochReads(4).WaitAsync(FailureBound);
+        Assert.False(warning.IsCompleted);
+
+        clock.Advance(Watchdog); // a whole interval of unpaused waiting
+        Assert.Contains("budget of 1", await warning.WaitAsync(FailureBound));
 
         pool.DetachFrame();
         await wait.WaitAsync(FailureBound);
+        pool.Release();
+    }
+
+    [Fact]
+    public async Task APauseInsideAnInterval_StartsAFreshOne()
+    {
+        // Waited 9 s, paused, resumed: the interval that held the pause is discarded, so the
+        // report needs another whole interval after the resume.
+        var clock = new FakeTimeProvider();
+        var logger = new RecordingLogger();
+        var pool = new DecodePoolGeneration(1, size: 20, budget: 1, logger, "D3D11Va");
+        pool.AttachFrame();
+        var waiter = new TestWaiter();
+        var warning = logger.NextWarning;
+
+        var wait = pool.WaitForRoomAsync(clock, Watchdog, waiter, CancellationToken.None).AsTask();
+        await waiter.EpochReads(1).WaitAsync(FailureBound); // armed
+
+        clock.Advance(Watchdog - TimeSpan.FromSeconds(1));
+        waiter.PoolWatchdogSuspended = true;
+        waiter.PoolWatchdogSuspended = false;
+        clock.Advance(TimeSpan.FromSeconds(1)); // the interval ends having seen a pause, re-arms
+        await waiter.EpochReads(3).WaitAsync(FailureBound);
+        Assert.False(warning.IsCompleted);
+
+        clock.Advance(Watchdog);
+        Assert.Contains("budget of 1", await warning.WaitAsync(FailureBound));
+
+        pool.DetachFrame();
+        await wait.WaitAsync(FailureBound);
+        pool.Release();
     }
 
     [Fact]
@@ -159,54 +191,70 @@ public sealed class DecodePoolGenerationTests
         pool.DetachFrame();
         pool.AttachFrame();
         Assert.Equal(2, logger.Warnings);
+
+        pool.DetachFrame();
+        pool.DetachFrame();
+        pool.Release();
     }
 
     private static TestWaiter Waiter(Action onWait) => new() { OnWait = onWait };
 
-    /// <summary>A decoder stand-in: counts waits, and says whether the watchdog is suspended.</summary>
+    /// <summary>
+    /// A decoder stand-in: counts waits, says whether the watchdog is suspended, and lets a test
+    /// wait for the guard's reads of the epoch, which mark when it arms an interval.
+    /// </summary>
     private sealed class TestWaiter : IPoolWaiter
     {
-        private int _suspended;
-        private int _suspendedReads;
         private readonly object _gate = new();
-        private readonly List<(int Count, TaskCompletionSource Done)> _readWaits = [];
+        private readonly List<(int Count, TaskCompletionSource Done)> _armWaits = [];
+        private int _suspended;
+        private int _epoch;
+        private int _armed;
 
         public Action? OnWait { get; init; }
 
         public bool PoolWatchdogSuspended
         {
+            get => Volatile.Read(ref _suspended) != 0;
+            set
+            {
+                if (Interlocked.Exchange(ref _suspended, value ? 1 : 0) != (value ? 1 : 0))
+                    Interlocked.Increment(ref _epoch);
+            }
+        }
+
+        public int PoolWatchdogEpoch
+        {
             get
             {
-                bool value = Volatile.Read(ref _suspended) != 0;
-                int reads = Interlocked.Increment(ref _suspendedReads);
+                int armed = Interlocked.Increment(ref _armed);
                 lock (_gate)
                 {
-                    foreach (var (count, done) in _readWaits)
+                    foreach (var (count, done) in _armWaits)
                     {
-                        if (reads >= count)
+                        if (armed >= count)
                             done.TrySetResult();
                     }
                 }
-                return value;
+                return Volatile.Read(ref _epoch);
             }
-            set => Volatile.Write(ref _suspended, value ? 1 : 0);
         }
 
         public void OnPoolWait() => OnWait?.Invoke();
 
         /// <summary>
-        /// Completes once the guard has asked about suspension <paramref name="count"/> times,
-        /// which it does once per interval that ends without a release.
+        /// Completes once the guard has read the epoch <paramref name="count"/> times: once as it
+        /// arms each interval, and once more as an interval ends while unsuspended.
         /// </summary>
-        public Task WaitsHandled(int count)
+        public Task EpochReads(int count)
         {
             var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             lock (_gate)
             {
-                if (Volatile.Read(ref _suspendedReads) >= count)
+                if (Volatile.Read(ref _armed) >= count)
                     done.TrySetResult();
                 else
-                    _readWaits.Add((count, done));
+                    _armWaits.Add((count, done));
             }
             return done.Task;
         }
