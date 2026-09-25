@@ -1,11 +1,11 @@
-# Fixed-pool frames are budgeted when the graph is built
+# ADR-0081: Fixed-pool frames are budgeted when the graph is built
 
-**Status:** Proposed. Draft, pending number assignment at merge. Not implemented. Revised once
-after review; see [Revision history](#revision-history).
+**Status:** Accepted (2026-09-24), ahead of its implementation, which #373 tracks. Proposed and
+revised the same day; see [Revision history](#revision-history). Not implemented.
 
 **Date:** 2026-09-24
 
-**Depends on:** [One ownership contract for graph items](frame-ownership.md), for same-instance
+**Depends on:** [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md), for same-instance
 counting and the disposing rule.
 
 **Amends:** [Frame-pool ownership](frame-pool-ownership.md): decision 1 (pool model as data) is
@@ -13,7 +13,8 @@ what this record reads; decision 2 (the D3D11 copy-out pool) stops being the way
 protected; decision 7 (an observable ceiling) becomes per decoder. Also corrects how ADR-0057 and
 `DecodePoolMetrics` describe pool exhaustion (#370).
 
-**Related:** #90, #227, #231, #232, #233, #292, #294, #370. Periphery ADR-0035 §8b.
+**Related:** #90, #227, #231, #232, #233, #292, #294, #370. Periphery ADR-0035 §8b. Tracked in
+#373.
 
 ## Context
 

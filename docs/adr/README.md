@@ -246,27 +246,6 @@ land.
   presenter's converter already performs per frame, and leaves ADR-0025's sink-owned pool
   alone. Paired with the [video lookahead](../feature-specs/video-lookahead/spec.md) spec,
   which is the only thing that would spend the depth.
-- [One ownership contract for graph items](frame-ownership.md) — every graph item counts
-  references except `Media.CpuVideoFrame`, the output of the decoder's CPU path and of every
-  converter, and the rest disagree on what an extra `Dispose` does. The one-shot frame is why
-  fan-out clones (ADR-0054), joins throw (#91) and `LatestWins` edges copy (#93). Decides one
-  counting rule (atomic, same instance, no revival), one disposing rule (exactly one reference per
-  call, never a throw), how a body forwards an input, immutable frames written only inside a
-  fill callback, and graph items that are the frames themselves (#42). Keeping a frame one-shot never
-  protected a pool, because those frames rent from a growable one. Supersedes ADR-0054. The
-  first draft also decided a fixed-pool policy and storage kinds; review moved those to
-  [fixed-pool budget](fixed-pool-budget.md) and frame-pool ownership.
-- [Fixed-pool frames are budgeted when the graph is built](fixed-pool-budget.md) — hardware
-  decode slices and camera leases come from fixed pools, and in FFmpeg 9.0 an exhausted D3D11VA
-  pool drops pictures silently rather than stalling (#370). Every holder declares a count, nodes
-  declare whether they forward their input's storage, and each fixed-pool source sums the counts
-  to its first storage boundary when the graph is built. The decoder sizes its pool with
-  `extra_hw_frames`, the camera sizes `BufferCount` or copies, and zero-copy is whatever fits. A
-  per-source guard makes a breach loud and has the decoder wait instead of dropping. It lands
-  in two phases: the guard and a pool sized for the player first, the declarations once #294 makes
-  hardware frames the default. Rejects copy-out by default, the ownership record's first draft,
-  because its opt-in rule is false for the player's own presenter and its D3D11 copy depends on
-  work gated on #231.
 - [Declared pull: the master clock as a graph-visible dependency](declared-pull-clock.md) — the
   substrate models edges and nodes, and the master clock is neither, so no rule and no diagnostic
   can see which nodes depend on one. It set out to register clock readers on the `Graph`. Drafting
@@ -451,3 +430,28 @@ decode-device identity / ownership decision landed as
 presenter freeze (Decision 1) and then — Decision 2, implemented 2026-06-21 — making the swap
 gapless by giving the converter its own D3D11 device so it rebinds in place instead of rebuilding,
 plus splitting enqueued-vs-committed present observability.)
+
+ADR-0080 and ADR-0081 were numbered and accepted on 2026-09-24, ahead of their implementation,
+which #372 and #373 track.
+
+- [One ownership contract for graph items](ADR-0080-one-ownership-contract-for-graph-items.md) — every graph item counts
+  references except `Media.CpuVideoFrame`, the output of the decoder's CPU path and of every
+  converter, and the rest disagree on what an extra `Dispose` does. The one-shot frame is why
+  fan-out clones (ADR-0054), joins throw (#91) and `LatestWins` edges copy (#93). Decides one
+  counting rule (atomic, same instance, no revival), one disposing rule (exactly one reference per
+  call, never a throw), how a body forwards an input, immutable frames written only inside a
+  fill callback, and graph items that are the frames themselves (#42). Keeping a frame one-shot never
+  protected a pool, because those frames rent from a growable one. Supersedes ADR-0054. The
+  first draft also decided a fixed-pool policy and storage kinds; review moved those to
+  [ADR-0081](ADR-0081-fixed-pool-budget.md) and frame-pool ownership.
+- [Fixed-pool frames are budgeted when the graph is built](ADR-0081-fixed-pool-budget.md) — hardware
+  decode slices and camera leases come from fixed pools, and in FFmpeg 9.0 an exhausted D3D11VA
+  pool drops pictures silently rather than stalling (#370). Every holder declares a count, nodes
+  declare whether they forward their input's storage, and each fixed-pool source sums the counts
+  to its first storage boundary when the graph is built. The decoder sizes its pool with
+  `extra_hw_frames`, the camera sizes `BufferCount` or copies, and zero-copy is whatever fits. A
+  per-source guard makes a breach loud and has the decoder wait instead of dropping. It lands
+  in two phases: the guard and a pool sized for the player first, the declarations once #294 makes
+  hardware frames the default. Rejects copy-out by default, the ownership record's first draft,
+  because its opt-in rule is false for the player's own presenter and its D3D11 copy depends on
+  work gated on #231.

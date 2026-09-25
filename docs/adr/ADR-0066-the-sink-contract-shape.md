@@ -9,6 +9,10 @@ Accepted. Records the model the sink interfaces already follow, documents the
 `AsSinkNode` adapter mechanism, and **rejects** the `ISink<T>` shared base
 proposed in #93.
 
+> **Amended 2026-09-24 by [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md).** The substrate adapter hands the item itself to
+> `PresentAsync`, and `VideoFrameRef.Detach` goes with the wrapper (#42). The ownership rule is
+> unchanged.
+
 **Amended 2026-08-26** after an independent review. The rejection stands; the
 cost figure that accompanied it in §2 was wrong and has been corrected. See
 §2's "Correction" note — the reparent is nearly free, which strengthens the

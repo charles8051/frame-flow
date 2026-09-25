@@ -2,6 +2,10 @@
 
 **Status:** Draft, pending number assignment at merge. Not implemented.
 
+> **Amended 2026-09-24 by [ADR-0081](ADR-0081-fixed-pool-budget.md).** ADR-0081 reads decision 1's pool model. Decision 2's copy-out
+> pool is no longer how fixed pools are protected; it remains the answer for a lookahead deeper
+> than a decode pool can be sized for. Decision 7's ceiling becomes per decoder (#229).
+
 **Date:** 2026-09-15
 
 **Related:**
