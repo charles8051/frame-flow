@@ -13,10 +13,9 @@ namespace FrameFlow.Media.Diagnostics;
 /// <para>
 /// Frames are shared by reference count (ADR-0080), so one buffer can outlive the node that
 /// produced it for as long as any holder keeps it. This gauge is the instrument for deciding
-/// whether that memory needs a FrameFlow-owned pool (#381). Bytes are the length of each frame's
-/// <see cref="CpuVideoFrame.PixelData"/>, which for a buffer rented from
-/// <see cref="System.Buffers.MemoryPool{T}.Shared"/> is the whole rented array, so the shared
-/// pool's rounding to a power of two is counted.
+/// whether that memory needs a FrameFlow-owned pool (#381). Bytes are the length of the array
+/// each frame rents, so <see cref="System.Buffers.ArrayPool{T}.Shared"/>'s rounding to a power of
+/// two is counted.
 /// </para>
 /// <para>
 /// A frame is counted once, from construction to its final release. <c>AddRef</c> shares the

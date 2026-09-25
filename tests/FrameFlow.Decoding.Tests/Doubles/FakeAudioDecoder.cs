@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Runtime.CompilerServices;
 using FrameFlow.Media;
 
@@ -61,7 +60,7 @@ internal sealed class FakeAudioDecoder : IAudioDecoder
     // -----------------------------------------------------------------------
 
     /// <summary>
-    /// Creates a minimal <see cref="PcmAudioBuffer"/> backed by a small pooled buffer.
+    /// Creates a minimal, silent <see cref="PcmAudioBuffer"/>.
     /// The block contains <paramref name="sampleCount"/> interleaved stereo S16 samples.
     /// </summary>
     public static PcmAudioBuffer MakeBlock(
@@ -72,8 +71,18 @@ internal sealed class FakeAudioDecoder : IAudioDecoder
     )
     {
         int totalSamples = sampleCount * channels;
-        var owner = MemoryPool<short>.Shared.Rent(totalSamples);
-        return new PcmAudioBuffer(owner, totalSamples, sampleRate, channels, pts);
+        return PcmAudioBuffer.Create(
+            totalSamples,
+            sampleRate,
+            channels,
+            pts,
+            0,
+            static (span, _) =>
+            {
+                span.Clear();
+                return span.Length;
+            }
+        );
     }
 
     public void ResetPacketQueue() { }

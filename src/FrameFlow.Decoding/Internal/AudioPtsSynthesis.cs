@@ -69,23 +69,27 @@ internal static class AudioPtsSynthesis
         int targetSampleRate
     )
     {
-        TimeSpan pts;
-        bool usedSynthetic;
+        TimeSpan pts = PtsFor(state, hasValidPts, framePts, timeBaseNum, timeBaseDen, targetSampleRate);
+        var next = new PtsSynthesisState(state.AccumulatedSamples + outputSamplesPerChannel);
+        return new PtsSynthesisResult(pts, next, UsedSynthetic: !hasValidPts);
+    }
 
-        if (hasValidPts)
-        {
-            pts = TimeSpan.FromSeconds((double)framePts * timeBaseNum / timeBaseDen);
-            usedSynthetic = false;
-        }
-        else
-        {
+    /// <summary>
+    /// The timestamp <see cref="Advance"/> gives a frame, without advancing. It depends only on
+    /// the samples emitted before the frame, so a caller can have it before the frame is
+    /// converted.
+    /// </summary>
+    public static TimeSpan PtsFor(
+        PtsSynthesisState state,
+        bool hasValidPts,
+        long framePts,
+        int timeBaseNum,
+        int timeBaseDen,
+        int targetSampleRate
+    ) =>
+        hasValidPts
+            ? TimeSpan.FromSeconds((double)framePts * timeBaseNum / timeBaseDen)
             // Synthesise from the count accumulated BEFORE this frame's samples are added,
             // so the first PTS-less frame lands at t=0.
-            pts = TimeSpan.FromSeconds((double)state.AccumulatedSamples / targetSampleRate);
-            usedSynthetic = true;
-        }
-
-        var next = new PtsSynthesisState(state.AccumulatedSamples + outputSamplesPerChannel);
-        return new PtsSynthesisResult(pts, next, usedSynthetic);
-    }
+            : TimeSpan.FromSeconds((double)state.AccumulatedSamples / targetSampleRate);
 }

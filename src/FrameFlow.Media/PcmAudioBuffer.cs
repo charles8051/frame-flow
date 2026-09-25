@@ -15,11 +15,10 @@ namespace FrameFlow.Media;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Refcounted ownership (amending ADR-0012).</b> A freshly-constructed
-/// buffer starts at refcount 1. Each <see cref="AddRef"/> increments;
-/// each <see cref="Dispose"/> decrements. When the count reaches zero
-/// the wrapped <see cref="IMemoryOwner{T}"/> is disposed, returning the
-/// pooled buffer to <see cref="System.Buffers.MemoryPool{T}.Shared"/>.
+/// <b>Refcounted ownership (amending ADR-0012).</b> A new buffer starts
+/// at refcount 1. Each <see cref="AddRef"/> increments; each
+/// <see cref="Dispose"/> decrements. When the count reaches zero the
+/// sample storage returns to its pool.
 /// This is the audio counterpart to <see cref="IVideoFrame.AddRef"/>
 /// and formally amends ADR-0012's single-owner stance for audio buffers
 /// per the graph substrate's <see cref="IAudioBuffer"/> contract.
@@ -45,6 +44,14 @@ namespace FrameFlow.Media;
 /// compiling unchanged.
 /// </para>
 /// <para>
+/// <b>Immutable once created (ADR-0080, decision 5).</b> A buffer is made
+/// by <see cref="Create{TState}"/>, which rents storage, runs a fill
+/// callback over it, and returns the buffer. <see cref="Samples"/> is
+/// read-only, and no holder can reach the storage to free it. A debug
+/// build fills released storage with a fixed value, so a read through a
+/// <see cref="Samples"/> view kept past the final release fails every time.
+/// </para>
+/// <para>
 /// <b>Format.</b> Samples are signed 16-bit, interleaved
 /// (<see cref="AudioSampleFormat.Int16"/>) — that's what the decoder
 /// produces and what the audio sinks consume. Non-S16 inputs are
@@ -54,21 +61,17 @@ namespace FrameFlow.Media;
 /// </remarks>
 public sealed class PcmAudioBuffer : IAudioBuffer
 {
+    /// <summary>The value a debug build writes over storage when the buffer is released.</summary>
+    internal const short ReleasedFill = unchecked((short)0xDDDD);
+
     // ── Backing state ─────────────────────────────────────────────
     private int _refCount = 1;
+    private readonly short[] _storage;
+    private readonly ArrayPool<short> _pool;
 
     /// <summary>
-    /// The pooled memory owner for the raw PCM sample data. Disposed
-    /// (returned to the pool) when the buffer's refcount reaches zero.
-    /// </summary>
-    public IMemoryOwner<short> SampleData { get; }
-
-    /// <summary>
-    /// Total scalar PCM samples in <see cref="SampleData"/>
-    /// (interleaved layout — <see cref="FrameCount"/> ×
-    /// <see cref="ChannelCount"/>). May be less than
-    /// <c>SampleData.Memory.Length</c> when the pool returns an
-    /// oversized buffer.
+    /// Total scalar PCM samples in <see cref="Samples"/> (interleaved
+    /// layout — <see cref="FrameCount"/> × <see cref="ChannelCount"/>).
     /// </summary>
     public int SampleCount { get; }
 
@@ -116,28 +119,17 @@ public sealed class PcmAudioBuffer : IAudioBuffer
     /// <inheritdoc />
     public FrameMemoryDomain MemoryDomain => FrameMemoryDomain.Cpu;
 
-    /// <param name="sampleData">
-    /// Pooled memory owner. Ownership transfers to this buffer on
-    /// construction; the buffer is responsible for disposing it once
-    /// the refcount reaches zero.
-    /// </param>
-    /// <param name="sampleCount">
-    /// Total scalar samples (interleaved). For mono S16 this equals
-    /// <see cref="FrameCount"/>; for stereo S16 it equals
-    /// <see cref="FrameCount"/> × 2.
-    /// </param>
-    /// <param name="sampleRate">Sample rate in Hz.</param>
-    /// <param name="channels">Number of channels.</param>
-    /// <param name="presentationTime">Presentation timestamp.</param>
-    public PcmAudioBuffer(
-        IMemoryOwner<short> sampleData,
+    private PcmAudioBuffer(
+        short[] storage,
+        ArrayPool<short> pool,
         int sampleCount,
         int sampleRate,
         int channels,
         TimeSpan presentationTime
     )
     {
-        SampleData = sampleData;
+        _storage = storage;
+        _pool = pool;
         SampleCount = sampleCount;
         SampleRate = sampleRate;
         Channels = channels;
@@ -145,11 +137,80 @@ public sealed class PcmAudioBuffer : IAudioBuffer
     }
 
     /// <summary>
-    /// Gets a read-only view of the valid PCM sample data sliced to
-    /// <see cref="SampleCount"/> elements. The returned memory is
-    /// valid until the buffer's refcount reaches zero.
+    /// Creates a buffer: rents room for <paramref name="capacity"/> scalar
+    /// samples, runs <paramref name="fill"/> over it, and returns a buffer
+    /// holding the samples the callback reports writing.
     /// </summary>
-    public ReadOnlyMemory<short> Samples => SampleData.Memory[..SampleCount];
+    /// <typeparam name="TState">State passed through to <paramref name="fill"/>.</typeparam>
+    /// <param name="capacity">
+    /// The most scalar samples (interleaved) the callback may write. A
+    /// producer that learns its count only while filling, such as a
+    /// resampler, passes an upper bound.
+    /// </param>
+    /// <param name="sampleRate">Sample rate in Hz.</param>
+    /// <param name="channels">Number of channels.</param>
+    /// <param name="presentationTime">Presentation timestamp.</param>
+    /// <param name="state">Passed to <paramref name="fill"/>, so it can be a static lambda that allocates nothing.</param>
+    /// <param name="fill">
+    /// Writes interleaved samples from the start of the span and returns how
+    /// many it wrote, between 0 and <paramref name="capacity"/>. It runs once,
+    /// before the buffer exists.
+    /// </param>
+    /// <param name="pool">Where the storage comes from. Defaults to <see cref="ArrayPool{T}.Shared"/>.</param>
+    /// <returns>The buffer, holding one reference.</returns>
+    /// <remarks>
+    /// If <paramref name="fill"/> throws, the storage goes back to
+    /// <paramref name="pool"/> and the exception propagates unchanged, even
+    /// when the pool's <c>Return</c> throws too. No buffer is created.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="fill"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="capacity"/> is negative.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="fill"/> reported a count below 0 or above <paramref name="capacity"/>.
+    /// </exception>
+    public static PcmAudioBuffer Create<TState>(
+        int capacity,
+        int sampleRate,
+        int channels,
+        TimeSpan presentationTime,
+        TState state,
+        PcmAudioFill<TState> fill,
+        ArrayPool<short>? pool = null
+    )
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(capacity);
+        ArgumentNullException.ThrowIfNull(fill);
+
+        pool ??= ArrayPool<short>.Shared;
+        short[] storage = pool.Rent(capacity);
+
+        int written;
+        try
+        {
+            written = fill(storage.AsSpan(0, capacity), state);
+        }
+        catch
+        {
+            ReturnStorageAfterFailure(pool, storage);
+            throw;
+        }
+
+        if ((uint)written > (uint)capacity)
+        {
+            ReturnStorageAfterFailure(pool, storage);
+            throw new InvalidOperationException(
+                $"The fill callback reported {written} samples for a capacity of {capacity}."
+            );
+        }
+
+        return new PcmAudioBuffer(storage, pool, written, sampleRate, channels, presentationTime);
+    }
+
+    /// <summary>
+    /// Gets a read-only view of the <see cref="SampleCount"/> valid
+    /// samples. The view is valid until the buffer's refcount reaches zero.
+    /// </summary>
+    public ReadOnlyMemory<short> Samples => _storage.AsMemory(0, SampleCount);
 
     // ── Refcount surface ──────────────────────────────────────────
 
@@ -171,6 +232,30 @@ public sealed class PcmAudioBuffer : IAudioBuffer
     public void Dispose()
     {
         if (RefCounting.Release(ref _refCount, this))
-            SampleData.Dispose();
+            ReturnStorage(_pool, _storage);
+    }
+
+    private static void ReturnStorage(ArrayPool<short> pool, short[] storage)
+    {
+#if DEBUG
+        storage.AsSpan().Fill(ReleasedFill);
+#endif
+        pool.Return(storage);
+    }
+
+    /// <summary>
+    /// Returns the storage on a failure path. The failure's own exception is the one the caller
+    /// sees; a pool that also throws from <c>Return</c> leaves the array to the garbage collector.
+    /// </summary>
+    private static void ReturnStorageAfterFailure(ArrayPool<short> pool, short[] storage)
+    {
+        try
+        {
+            ReturnStorage(pool, storage);
+        }
+        catch (Exception)
+        {
+            // Deliberately dropped: rethrowing here would replace the exception being reported.
+        }
     }
 }

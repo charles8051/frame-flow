@@ -337,6 +337,13 @@ exercises the over-release path on purpose. The check now counts every over-rele
 into an attached debugger in a debug build. `FrameFlow.Graph.RefCounting` holds the rule, and
 every counted item routes through it.
 
+**2026-09-25, the fill factory and the planar CPU frame (#378, #379).** Decisions 4 and 5 are
+implemented. `CpuVideoFrame.Create` and `PcmAudioBuffer.Create` rent from
+`ArrayPool<T>.Shared`, the pool `MemoryPool<T>.Shared` wraps, so #381's decision stands; a caller
+may pass another pool. The audio fill returns how many samples it wrote, because a resampler learns
+that only while converting. The CPU frame lays out up to three planes from its format, and
+`CloneCpu` copies each. The decoder's internal buffer pool went with the public constructors.
+
 **2026-09-25, the sink frame pool (#382).** The second open question is decided: the pool is
 deleted. `PooledCpuVideoFrame` went with it, so decision 4's merge becomes giving
 `Media.CpuVideoFrame` planes (#379), and decision 5 has no `WriteData` left to remove.

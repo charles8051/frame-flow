@@ -1,155 +1,207 @@
+using System.Runtime.CompilerServices;
 using FrameFlow.Media.Tests.Doubles;
 
 namespace FrameFlow.Media.Tests;
 
+/// <summary>
+/// <see cref="CpuVideoFrame.Create{TState}"/>: the one way to make a CPU frame (ADR-0080,
+/// decision 5). It lays the planes out from the format, runs the fill once, and publishes a frame
+/// nothing can write to afterwards.
+/// </summary>
 public sealed class CpuVideoFrameTests
 {
-    // -----------------------------------------------------------------------
-    // Helpers
-    // -----------------------------------------------------------------------
+    private static CpuVideoFrame Bgra(
+        int width = 4,
+        int height = 2,
+        TimeSpan pts = default,
+        TimeSpan duration = default,
+        CountingArrayPool<byte>? pool = null
+    ) =>
+        CpuVideoFrame.Create(
+            PixelFormat.Bgra32,
+            width,
+            height,
+            pts,
+            duration,
+            0,
+            static (planes, _) =>
+            {
+                for (int i = 0; i < planes.Y.Length; i++)
+                    planes.Y[i] = (byte)i;
+            },
+            pool
+        );
 
-    private static CpuVideoFrame MakeFrame(
-        FakeMemoryOwner<byte>? owner = null,
-        int width = 320,
-        int height = 240,
-        int stride = 1280,
-        PixelFormat format = PixelFormat.Bgra32,
-        TimeSpan presentationTime = default
+    // ── Metadata ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void Create_StoresTheFramesMetadata()
+    {
+        using var frame = Bgra(
+            width: 6,
+            height: 3,
+            pts: TimeSpan.FromSeconds(3.5),
+            duration: TimeSpan.FromMilliseconds(40)
+        );
+
+        Assert.Equal(6, frame.Width);
+        Assert.Equal(3, frame.Height);
+        Assert.Equal(PixelFormat.Bgra32, frame.Format);
+        Assert.Equal(TimeSpan.FromSeconds(3.5), frame.PresentationTime);
+        Assert.Equal(TimeSpan.FromSeconds(3.5), frame.Pts);
+        Assert.Equal(TimeSpan.FromMilliseconds(40), frame.Duration);
+        Assert.Equal(24, frame.Stride);
+    }
+
+    [Fact]
+    public void Create_AcceptsANegativePresentationTime()
+    {
+        using var frame = Bgra(pts: TimeSpan.FromMilliseconds(-100));
+        Assert.Equal(TimeSpan.FromMilliseconds(-100), frame.PresentationTime);
+    }
+
+    [Fact]
+    public void Create_AcceptsAZeroSizedFrame()
+    {
+        using var frame = Bgra(width: 0, height: 0);
+
+        var cpu = frame.ToCpu();
+        Assert.True(cpu.PlaneY.IsEmpty);
+    }
+
+    // ── Layout ────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(PixelFormat.Bgra32, 5, 3, 20, 0, 0, 0, 0)]
+    [InlineData(PixelFormat.Rgba32, 5, 3, 20, 0, 0, 0, 0)]
+    [InlineData(PixelFormat.Yuyv422, 5, 3, 12, 0, 0, 0, 0)]
+    [InlineData(PixelFormat.Uyvy422, 4, 3, 8, 0, 0, 0, 0)]
+    [InlineData(PixelFormat.Yuv420P, 5, 3, 5, 3, 2, 3, 2)]
+    [InlineData(PixelFormat.Nv12, 5, 3, 5, 6, 2, 0, 0)]
+    public void Create_LaysOutEachPlaneForTheFormat(
+        PixelFormat format,
+        int width,
+        int height,
+        int strideY,
+        int strideU,
+        int rowsU,
+        int strideV,
+        int rowsV
     )
     {
-        owner ??= FakeMemoryOwner<byte>.OfLength(stride * height);
-        return new CpuVideoFrame(owner, width, height, stride, format, presentationTime);
-    }
+        using var frame = CpuVideoFrame.Create(
+            format,
+            width,
+            height,
+            TimeSpan.Zero,
+            TimeSpan.Zero,
+            0,
+            static (_, _) => { }
+        );
 
-    // -----------------------------------------------------------------------
-    // Constructor — property storage
-    // -----------------------------------------------------------------------
-
-    [Fact]
-    public void Constructor_StoresWidth()
-    {
-        var frame = MakeFrame(width: 1920);
-        Assert.Equal(1920, frame.Width);
-    }
-
-    [Fact]
-    public void Constructor_StoresHeight()
-    {
-        var frame = MakeFrame(height: 1080);
-        Assert.Equal(1080, frame.Height);
-    }
-
-    [Fact]
-    public void Constructor_StoresStride()
-    {
-        var frame = MakeFrame(stride: 7680);
-        Assert.Equal(7680, frame.Stride);
+        var cpu = frame.ToCpu();
+        Assert.Equal(strideY, cpu.StrideY);
+        Assert.Equal(strideY * height, cpu.PlaneY.Length);
+        Assert.Equal(strideU, cpu.StrideU);
+        Assert.Equal(strideU * rowsU, cpu.PlaneU.Length);
+        Assert.Equal(strideV, cpu.StrideV);
+        Assert.Equal(strideV * rowsV, cpu.PlaneV.Length);
+        Assert.Equal(width, cpu.Width);
+        Assert.Equal(height, cpu.Height);
     }
 
     [Fact]
-    public void Constructor_StoresFormat()
+    public void AsCpu_ReturnsWhatTheFillWroteToEachPlane()
     {
-        var frame = MakeFrame(format: PixelFormat.Rgba32);
-        Assert.Equal(PixelFormat.Rgba32, frame.Format);
+        using var frame = CpuVideoFrame.Create(
+            PixelFormat.Yuv420P,
+            4,
+            2,
+            TimeSpan.Zero,
+            TimeSpan.Zero,
+            0,
+            static (planes, _) =>
+            {
+                planes.Y.Fill(1);
+                planes.U.Fill(2);
+                planes.V.Fill(3);
+            }
+        );
+
+        var cpu = frame.ToCpu();
+        Assert.All(cpu.PlaneY.ToArray(), b => Assert.Equal(1, b));
+        Assert.All(cpu.PlaneU.ToArray(), b => Assert.Equal(2, b));
+        Assert.All(cpu.PlaneV.ToArray(), b => Assert.Equal(3, b));
     }
 
     [Fact]
-    public void Constructor_StoresPresentationTime()
+    public void Create_GivesTheFillTheFramesShape()
     {
-        var pts = TimeSpan.FromSeconds(3.5);
-        var frame = MakeFrame(presentationTime: pts);
-        Assert.Equal(pts, frame.PresentationTime);
+        var seen = new StrongBox<(int, int, PixelFormat, int)>();
+        using var frame = CpuVideoFrame.Create(
+            PixelFormat.Nv12,
+            6,
+            4,
+            TimeSpan.Zero,
+            TimeSpan.Zero,
+            seen,
+            static (planes, box) =>
+                box.Value = (planes.Width, planes.Height, planes.Format, planes.StrideY)
+        );
+
+        Assert.Equal((6, 4, PixelFormat.Nv12, 6), seen.Value);
     }
 
     [Fact]
-    public void Constructor_StoresPixelData()
+    public void Create_RejectsNegativeDimensions()
     {
-        var owner = FakeMemoryOwner<byte>.OfLength(1280);
-        var frame = MakeFrame(owner: owner);
-        Assert.Same(owner, frame.PixelData);
-    }
-
-    // -----------------------------------------------------------------------
-    // Interface implementation
-    // -----------------------------------------------------------------------
-
-    [Fact]
-    public void ImplementsIVideoFrame()
-    {
-        var frame = MakeFrame();
-        Assert.IsAssignableFrom<IVideoFrame>(frame);
+        Assert.Throws<ArgumentOutOfRangeException>(() => Bgra(width: -1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Bgra(height: -1));
     }
 
     [Fact]
-    public void ImplementsIDisposable()
+    public void Create_RejectsAnUnknownFormat()
     {
-        var frame = MakeFrame();
-        Assert.IsAssignableFrom<IDisposable>(frame);
-    }
-
-    // -----------------------------------------------------------------------
-    // Dispose — delegates to PixelData
-    // -----------------------------------------------------------------------
-
-    [Fact]
-    public void Dispose_CallsPixelDataDispose()
-    {
-        var owner = FakeMemoryOwner<byte>.OfLength(1280);
-        var frame = MakeFrame(owner: owner);
-
-        Assert.False(owner.IsDisposed);
-        frame.Dispose();
-        Assert.True(owner.IsDisposed);
+        Assert.Throws<ArgumentException>(() =>
+            CpuVideoFrame.Create(
+                (PixelFormat)999,
+                2,
+                2,
+                TimeSpan.Zero,
+                TimeSpan.Zero,
+                0,
+                static (_, _) => { }
+            )
+        );
     }
 
     [Fact]
-    public void Dispose_PixelDataDisposeCallCount_IsOne_AfterSingleDispose()
+    public void Create_RejectsAFrameTooLargeForOneArray()
     {
-        var owner = FakeMemoryOwner<byte>.OfLength(1280);
-        var frame = MakeFrame(owner: owner);
-
-        frame.Dispose();
-
-        Assert.Equal(1, owner.DisposeCallCount);
+        Assert.Throws<ArgumentOutOfRangeException>(() => Bgra(width: 65_536, height: 65_536));
     }
 
-    // -----------------------------------------------------------------------
-    // Dispose idempotency (ADR-0012: safe to dispose multiple times)
-    // -----------------------------------------------------------------------
+    // ── Storage ───────────────────────────────────────────────────────
 
     [Fact]
-    public void Dispose_CalledTwice_DoesNotThrow()
+    public void TheFinalRelease_ReturnsTheStorageOnce()
     {
-        var owner = FakeMemoryOwner<byte>.OfLength(1280);
-        var frame = MakeFrame(owner: owner);
-
-        var ex = Record.Exception(() =>
-        {
-            frame.Dispose();
-            frame.Dispose();
-        });
-
-        Assert.Null(ex);
-    }
-
-    [Fact]
-    public void Dispose_CalledTwice_ReturnsThePixelDataOnce()
-    {
-        // The frame counts references (ADR-0080): the first Dispose is the final release,
-        // and the second is an over-release that frees nothing.
-        var owner = FakeMemoryOwner<byte>.OfLength(1280);
-        var frame = MakeFrame(owner: owner);
+        var pool = new CountingArrayPool<byte>();
+        var frame = Bgra(pool: pool);
+        var shared = frame.AddRef();
 
         frame.Dispose();
-        frame.Dispose();
+        Assert.Equal(0, pool.Returns);
 
-        Assert.Equal(1, owner.DisposeCallCount);
+        shared.Dispose();
+        Assert.Equal(1, pool.Rents);
+        Assert.Equal(1, pool.Returns);
     }
 
     [Fact]
     public void AfterTheFinalRelease_AsCpuIsNullAndToCpuThrows()
     {
-        var frame = MakeFrame(owner: FakeMemoryOwner<byte>.OfLength(1280));
+        var frame = Bgra();
 
         frame.Dispose();
 
@@ -157,29 +209,75 @@ public sealed class CpuVideoFrameTests
         Assert.Throws<ObjectDisposedException>(() => frame.ToCpu());
     }
 
-    // -----------------------------------------------------------------------
-    // Zero-size frames are edge cases that should construct without error
-    // -----------------------------------------------------------------------
-
     [Fact]
-    public void Constructor_ZeroWidthAndHeight_DoesNotThrow()
+    public void AFillThatThrows_ReturnsTheStorage_AndPropagatesItsException()
     {
-        var owner = FakeMemoryOwner<byte>.OfLength(0);
-        var ex = Record.Exception(() =>
-            new CpuVideoFrame(owner, 0, 0, 0, PixelFormat.Bgra32, TimeSpan.Zero)
+        var pool = new CountingArrayPool<byte>();
+        var thrown = new InvalidOperationException("fill failed");
+
+        var caught = Assert.Throws<InvalidOperationException>(() =>
+            CpuVideoFrame.Create(
+                PixelFormat.Bgra32,
+                2,
+                2,
+                TimeSpan.Zero,
+                TimeSpan.Zero,
+                thrown,
+                static (_, ex) => throw ex,
+                pool
+            )
         );
-        Assert.Null(ex);
-    }
 
-    // -----------------------------------------------------------------------
-    // Negative / zero presentation time is valid (pre-roll)
-    // -----------------------------------------------------------------------
+        Assert.Same(thrown, caught);
+        Assert.Equal(1, pool.Rents);
+        Assert.Equal(1, pool.Returns);
+    }
 
     [Fact]
-    public void Constructor_NegativePresentationTime_StoresCorrectly()
+    public void AFillThatThrows_StillPropagatesItsException_WhenThePoolThrowsOnReturn()
     {
-        var pts = TimeSpan.FromMilliseconds(-100);
-        var frame = MakeFrame(presentationTime: pts);
-        Assert.Equal(pts, frame.PresentationTime);
+        var pool = new CountingArrayPool<byte> { ThrowOnReturn = true };
+        var thrown = new FormatException("fill failed");
+
+        var caught = Assert.Throws<FormatException>(() =>
+            CpuVideoFrame.Create(
+                PixelFormat.Bgra32,
+                2,
+                2,
+                TimeSpan.Zero,
+                TimeSpan.Zero,
+                thrown,
+                static (_, ex) => throw ex,
+                pool
+            )
+        );
+
+        Assert.Same(thrown, caught);
     }
+
+    [Fact]
+    public void AZeroSizedFrame_ReturnsItsArrayToThePool()
+    {
+        var pool = new CountingArrayPool<byte>();
+        var frame = Bgra(width: 0, height: 0, pool: pool);
+
+        frame.Dispose();
+
+        Assert.Equal(1, pool.Returns);
+    }
+
+#if DEBUG
+    [Fact]
+    public void ReleasedStorage_ReadsAsTheReleaseFill_ThroughAViewKeptPastTheRelease()
+    {
+        var pool = new CountingArrayPool<byte>();
+        var frame = Bgra(pool: pool);
+        var kept = frame.ToCpu().PlaneY;
+        Assert.Equal(1, kept.Span[1]);
+
+        frame.Dispose();
+
+        Assert.All(kept.ToArray(), b => Assert.Equal(CpuVideoFrame.ReleasedFill, b));
+    }
+#endif
 }

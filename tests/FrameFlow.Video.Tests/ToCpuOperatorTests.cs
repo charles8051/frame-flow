@@ -1,4 +1,3 @@
-using System.Buffers;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 
@@ -88,21 +87,16 @@ public sealed class ToCpuOperatorTests
         return await node.Body(input, CancellationToken.None);
     }
 
-    private static CpuVideoFrame MakeCpuFrame(int width = 8, int height = 8)
-    {
-        int stride = width * 4;
-        var owner = MemoryPool<byte>.Shared.Rent(stride * height);
-        owner.Memory.Span.Clear();
-        return new CpuVideoFrame(
-            pixelData: owner,
-            width: width,
-            height: height,
-            stride: stride,
-            format: PixelFormat.Bgra32,
-            presentationTime: TimeSpan.Zero,
-            duration: TimeSpan.FromMilliseconds(33)
+    private static CpuVideoFrame MakeCpuFrame(int width = 8, int height = 8) =>
+        CpuVideoFrame.Create(
+            PixelFormat.Bgra32,
+            width,
+            height,
+            TimeSpan.Zero,
+            TimeSpan.FromMilliseconds(33),
+            0,
+            static (planes, _) => planes.Y.Clear()
         );
-    }
 
     /// <summary>A GPU-domain frame that is not a <c>GpuVideoFrame</c>.</summary>
     private sealed class ForeignGpuFrame : IVideoFrame

@@ -1,4 +1,3 @@
-using System.Buffers;
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Media;
 using FrameFlow.Graph;
@@ -397,16 +396,22 @@ public sealed class OpenAlAudioSinkTests : IClassFixture<FfmpegBootstrapFixture>
         TimeSpan pts
     )
     {
-        var owner = MemoryPool<short>.Shared.Rent(samples);
-        var span = owner.Memory.Span[..samples];
-
-        for (int i = 0; i < samples; i++)
-        {
-            double phase = (2.0 * Math.PI * 440.0 * (i / channels)) / sampleRate;
-            span[i] = (short)(Math.Sin(phase) * 8000);
-        }
-
-        return new PcmAudioBuffer(owner, samples, sampleRate, channels, pts);
+        return PcmAudioBuffer.Create(
+            samples,
+            sampleRate,
+            channels,
+            pts,
+            (Rate: sampleRate, Channels: channels),
+            static (span, p) =>
+            {
+                for (int i = 0; i < span.Length; i++)
+                {
+                    double phase = (2.0 * Math.PI * 440.0 * (i / p.Channels)) / p.Rate;
+                    span[i] = (short)(Math.Sin(phase) * 8000);
+                }
+                return span.Length;
+            }
+        );
     }
 
     // ── IClockSource contract ───────────────────────────────────────────────

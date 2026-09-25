@@ -1,7 +1,6 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-using System.Buffers;
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Audio.TestKit;
 using FrameFlow.Media;
@@ -565,11 +564,20 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
 
     private static ValueTask PresentBlockAsync(OpenAlAudioSink sink, short amplitude, int blockIndex)
     {
-        var owner = MemoryPool<short>.Shared.Rent(ScalarsPerBlock);
-        owner.Memory.Span[..ScalarsPerBlock].Fill(amplitude);
         var pts = TimeSpan.FromTicks(BlockDuration.Ticks * blockIndex);
         return sink.PresentAsync(
-            new PcmAudioBuffer(owner, ScalarsPerBlock, Rate, Channels, pts),
+            PcmAudioBuffer.Create(
+                ScalarsPerBlock,
+                Rate,
+                Channels,
+                pts,
+                amplitude,
+                static (span, amplitude) =>
+                {
+                    span.Fill(amplitude);
+                    return span.Length;
+                }
+            ),
             CancellationToken.None
         );
     }

@@ -1,5 +1,5 @@
-using System.Buffers;
 using FrameFlow.Media.Diagnostics;
+using FrameFlow.Media.Tests.Doubles;
 using FrameFlow.Tests.Shared;
 using Xunit;
 
@@ -19,7 +19,8 @@ public sealed class CpuFrameMetricsTests
         long bytesBefore = CpuFrameMetrics.OutstandingBytes;
         int framesBefore = CpuFrameMetrics.OutstandingFrames;
 
-        var frame = new CpuVideoFrame(new Owner(1000), 10, 25, 40, PixelFormat.Bgra32, TimeSpan.Zero);
+        // 10 x 25 Bgra32 is 1000 bytes, and the counting pool rents exactly that.
+        var frame = Frame(10, 25, new CountingArrayPool<byte>());
 
         Assert.Equal(bytesBefore + 1000, CpuFrameMetrics.OutstandingBytes);
         Assert.Equal(framesBefore + 1, CpuFrameMetrics.OutstandingFrames);
@@ -42,11 +43,11 @@ public sealed class CpuFrameMetricsTests
     }
 
     [Fact]
-    public void AFrameWhoseBufferOwnerThrowsOnDispose_IsStillCountedOut()
+    public void AFrameWhosePoolThrowsOnReturn_IsStillCountedOut()
     {
         long bytesBefore = CpuFrameMetrics.OutstandingBytes;
         int framesBefore = CpuFrameMetrics.OutstandingFrames;
-        var frame = new CpuVideoFrame(new ThrowingOwner(500), 5, 25, 20, PixelFormat.Bgra32, TimeSpan.Zero);
+        var frame = Frame(5, 25, new CountingArrayPool<byte> { ThrowOnReturn = true });
 
         Assert.Throws<InvalidOperationException>(() => frame.Dispose());
 
@@ -54,17 +55,15 @@ public sealed class CpuFrameMetricsTests
         Assert.Equal(framesBefore, CpuFrameMetrics.OutstandingFrames);
     }
 
-    private sealed class ThrowingOwner(int length) : IMemoryOwner<byte>
-    {
-        public Memory<byte> Memory { get; } = new byte[length];
-
-        public void Dispose() => throw new InvalidOperationException("owner failed");
-    }
-
-    private sealed class Owner(int length) : IMemoryOwner<byte>
-    {
-        public Memory<byte> Memory { get; } = new byte[length];
-
-        public void Dispose() { }
-    }
+    private static CpuVideoFrame Frame(int width, int height, CountingArrayPool<byte> pool) =>
+        CpuVideoFrame.Create(
+            PixelFormat.Bgra32,
+            width,
+            height,
+            TimeSpan.Zero,
+            TimeSpan.Zero,
+            0,
+            static (_, _) => { },
+            pool
+        );
 }

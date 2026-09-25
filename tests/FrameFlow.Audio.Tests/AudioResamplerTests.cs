@@ -1,4 +1,3 @@
-using System.Buffers;
 using FrameFlow.Audio;
 using FrameFlow.Media;
 
@@ -226,24 +225,26 @@ public sealed class AudioResamplerTests : IClassFixture<FfmpegBootstrapFixture>
     {
         int framesPerChannel = (int)(sampleRate * durationSeconds);
         int totalSamples = framesPerChannel * channels;
-        var owner = MemoryPool<short>.Shared.Rent(Math.Max(1, totalSamples));
-        var span = owner.Memory.Span;
 
-        for (int frame = 0; frame < framesPerChannel; frame++)
-        {
-            double t = (double)frame / sampleRate;
-            double v = Math.Sin(2 * Math.PI * frequencyHz * t);
-            short s = (short)(v * 16_000); // moderate amplitude, no clipping
-            for (int c = 0; c < channels; c++)
-                span[frame * channels + c] = s;
-        }
-
-        return new PcmAudioBuffer(
-            sampleData: owner,
-            sampleCount: totalSamples,
-            sampleRate: sampleRate,
-            channels: channels,
-            presentationTime: pts ?? TimeSpan.Zero
+        return PcmAudioBuffer.Create(
+            totalSamples,
+            sampleRate,
+            channels,
+            pts ?? TimeSpan.Zero,
+            (Rate: sampleRate, Channels: channels, Frequency: frequencyHz),
+            static (span, p) =>
+            {
+                int framesPerChannel = span.Length / p.Channels;
+                for (int frame = 0; frame < framesPerChannel; frame++)
+                {
+                    double t = (double)frame / p.Rate;
+                    double v = Math.Sin(2 * Math.PI * p.Frequency * t);
+                    short s = (short)(v * 16_000); // moderate amplitude, no clipping
+                    for (int c = 0; c < p.Channels; c++)
+                        span[frame * p.Channels + c] = s;
+                }
+                return span.Length;
+            }
         );
     }
 }

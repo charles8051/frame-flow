@@ -36,8 +36,8 @@ namespace FrameFlow.Decoding;
 /// <para>
 /// Ownership contract (ADR-0005, ADR-0012):
 /// All FFmpeg native resources are allocated by this class and freed during <see cref="DisposeAsync"/>.
-/// Each yielded <see cref="PcmAudioBuffer"/> owns its audio buffer via <see cref="IMemoryOwner{T}"/>
-/// (rented from <see cref="MemoryPool{T}.Shared"/>). Ownership of each block transfers to the
+/// Each yielded <see cref="PcmAudioBuffer"/> owns its sample storage, rented from
+/// <see cref="ArrayPool{T}.Shared"/>. Ownership of each block transfers to the
 /// caller on yield; the caller must dispose each block after consumption.
 /// </para>
 /// <para>
@@ -617,50 +617,6 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
         long delayedSamples = FFSwResample.swr_get_delay(swrPtr, _targetSampleRate);
         int maxOutputSamples = (int)(delayedSamples + nbInputSamples) + 256;
 
-        // Rent a pooled buffer large enough for maxOutputSamples × TargetChannels shorts.
-        IMemoryOwner<short> owner = MemoryPool<short>.Shared.Rent(
-            maxOutputSamples * TargetChannels
-        );
-        int actualOutputSamples;
-
-        fixed (short* outBufFixed = owner.Memory.Span)
-        {
-            nint outBuf = (nint)outBufFixed;
-
-            // extended_data is the byte** plane pointer array that swr_convert expects
-            // directly as its input parameter. For interleaved formats extended_data[0]
-            // points to the single interleaved buffer. For planar formats extended_data[i]
-            // points to channel i's plane buffer.
-            //
-            // The fallback to framePtr (= &data[0] since data is at offset 0) handles
-            // the edge case of a malformed frame where extended_data is null.
-            nint inPlanes = (nint)frame.extended_data;
-            if (inPlanes == nint.Zero)
-                inPlanes = framePtr;
-
-            actualOutputSamples = FFSwResample.swr_convert(
-                swrPtr,
-                ref outBuf,
-                maxOutputSamples,
-                inPlanes,
-                nbInputSamples
-            );
-        }
-
-        if (actualOutputSamples < 0)
-        {
-            owner.Dispose();
-            throw new InvalidOperationException(
-                $"swr_convert failed with code {actualOutputSamples}."
-            );
-        }
-
-        if (actualOutputSamples == 0)
-        {
-            owner.Dispose();
-            return null;
-        }
-
         // ------------------------------------------------------------------
         // Normalise PTS → TimeSpan
         // ------------------------------------------------------------------
@@ -676,20 +632,45 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
             tbDen = _timeBaseDen;
         }
 
-        // PTS synthesis is a pure fold (ADR-0055 follow-up): compute this frame's
-        // timestamp and advance the accumulator value in one total function.
+        // The timestamp comes from the samples emitted before this frame, so it is known
+        // before the frame is converted; the accumulator advances after (ADR-0055 follow-up).
         bool hasValidPts = framePts != FFAvUtil.AvNoPtsValue && tbDen != 0;
+        TimeSpan pts = AudioPtsSynthesis.PtsFor(
+            _ptsSynthesis,
+            hasValidPts,
+            framePts,
+            tbNum,
+            tbDen,
+            _targetSampleRate
+        );
+
+        // swr_convert writes straight into the buffer's storage. A failure throws out of
+        // the fill, and the factory returns the storage before rethrowing.
+        var buffer = PcmAudioBuffer.Create(
+            maxOutputSamples * TargetChannels,
+            _targetSampleRate,
+            TargetChannels,
+            pts,
+            (Swr: swrPtr, Frame: framePtr, MaxOutput: maxOutputSamples, Channels: TargetChannels),
+            static (samples, s) => ConvertInto(samples, s.Swr, s.Frame, s.MaxOutput) * s.Channels
+        );
+
+        if (buffer.SampleCount == 0)
+        {
+            buffer.Dispose();
+            return null;
+        }
+
         var ptsStep = AudioPtsSynthesis.Advance(
             _ptsSynthesis,
             hasValidPts,
             framePts,
             tbNum,
             tbDen,
-            actualOutputSamples,
+            buffer.SampleCount / TargetChannels,
             _targetSampleRate
         );
         _ptsSynthesis = ptsStep.State;
-        TimeSpan pts = ptsStep.Pts;
         if (ptsStep.UsedSynthetic)
         {
             // ADR-0034: latch the synthetic-PTS diagnostic so the snapshot can tell the
@@ -697,9 +678,54 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
             Interlocked.Exchange(ref _usedSyntheticPts, 1);
         }
 
-        // sampleCount = output samples per channel × channels (interleaved)
-        int sampleCount = actualOutputSamples * TargetChannels;
-        return new PcmAudioBuffer(owner, sampleCount, _targetSampleRate, TargetChannels, pts);
+        return buffer;
+    }
+
+    /// <summary>
+    /// Resamples the decoded <c>AVFrame</c> at <paramref name="framePtr"/> into
+    /// <paramref name="samples"/> and returns the output samples per channel.
+    /// </summary>
+    private static unsafe int ConvertInto(
+        Span<short> samples,
+        nint swrPtr,
+        nint framePtr,
+        int maxOutputSamples
+    )
+    {
+        ref AVFrame frame = ref Unsafe.AsRef<AVFrame>((void*)framePtr);
+
+        fixed (short* outBufFixed = samples)
+        {
+            nint outBuf = (nint)outBufFixed;
+
+            // extended_data is the byte** plane pointer array that swr_convert expects
+            // directly as its input parameter. For interleaved formats extended_data[0]
+            // points to the single interleaved buffer. For planar formats extended_data[i]
+            // points to channel i's plane buffer.
+            //
+            // The fallback to framePtr (= &data[0] since data is at offset 0) handles
+            // the edge case of a malformed frame where extended_data is null.
+            nint inPlanes = (nint)frame.extended_data;
+            if (inPlanes == nint.Zero)
+                inPlanes = framePtr;
+
+            int actualOutputSamples = FFSwResample.swr_convert(
+                swrPtr,
+                ref outBuf,
+                maxOutputSamples,
+                inPlanes,
+                frame.nb_samples
+            );
+
+            if (actualOutputSamples < 0)
+            {
+                throw new InvalidOperationException(
+                    $"swr_convert failed with code {actualOutputSamples}."
+                );
+            }
+
+            return actualOutputSamples;
+        }
     }
 
     // -----------------------------------------------------------------------

@@ -1,4 +1,4 @@
-using System.Buffers;
+using FrameFlow.Media.Tests.Doubles;
 using FrameFlow.Tests.Shared;
 using Xunit;
 
@@ -14,9 +14,17 @@ public sealed class RefCountingRuleTests
         RefCountConformance.AssertFollowsTheRule<PcmAudioBuffer>(
             () =>
             {
-                var owner = new CountingOwner<short>(64);
-                var buffer = new PcmAudioBuffer(owner, 64, 48_000, 1, TimeSpan.Zero);
-                return (buffer, () => owner.Disposals);
+                var pool = new CountingArrayPool<short>();
+                var buffer = PcmAudioBuffer.Create(
+                    64,
+                    48_000,
+                    1,
+                    TimeSpan.Zero,
+                    0,
+                    static (span, _) => span.Length,
+                    pool
+                );
+                return (buffer, () => pool.Returns);
             },
             buffer => buffer.AddRef()
         );
@@ -28,22 +36,20 @@ public sealed class RefCountingRuleTests
         RefCountConformance.AssertFollowsTheRule<CpuVideoFrame>(
             () =>
             {
-                var owner = new CountingOwner<byte>(16);
-                var frame = new CpuVideoFrame(owner, 2, 2, 8, PixelFormat.Bgra32, TimeSpan.Zero);
-                return (frame, () => owner.Disposals);
+                var pool = new CountingArrayPool<byte>();
+                var frame = CpuVideoFrame.Create(
+                    PixelFormat.Bgra32,
+                    2,
+                    2,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    0,
+                    static (_, _) => { },
+                    pool
+                );
+                return (frame, () => pool.Returns);
             },
             frame => frame.AddRef()
         );
-    }
-
-    private sealed class CountingOwner<T>(int length) : IMemoryOwner<T>
-    {
-        private readonly T[] _array = new T[length];
-
-        public int Disposals { get; private set; }
-
-        public Memory<T> Memory => _array;
-
-        public void Dispose() => Disposals++;
     }
 }

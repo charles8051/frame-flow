@@ -1,4 +1,3 @@
-using System.Buffers;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 
@@ -192,31 +191,25 @@ public sealed class VideoOperatorsTests : IClassFixture<FfmpegBootstrapFixture>
     // Helpers (mirrors the helper in VideoPipelineExtensionsTests)
     // ─────────────────────────────────────────────────────────────
 
-    private static CpuVideoFrame MakeSolidBgraFrame(int width, int height)
-    {
-        const byte b = 10, g = 20, r = 30, a = 255;
-        int stride = width * 4;
-        var owner = MemoryPool<byte>.Shared.Rent(stride * height);
-        var span = owner.Memory.Span;
-        for (int row = 0; row < height; row++)
-        {
-            for (int col = 0; col < width; col++)
+    private static CpuVideoFrame MakeSolidBgraFrame(int width, int height) =>
+        CpuVideoFrame.Create(
+            PixelFormat.Bgra32,
+            width,
+            height,
+            TimeSpan.Zero,
+            TimeSpan.FromMilliseconds(33),
+            0,
+            static (planes, _) =>
             {
-                int o = row * stride + col * 4;
-                span[o + 0] = b;
-                span[o + 1] = g;
-                span[o + 2] = r;
-                span[o + 3] = a;
+                const byte b = 10, g = 20, r = 30, a = 255;
+                var px = planes.Y;
+                for (int o = 0; o < px.Length; o += 4)
+                {
+                    px[o + 0] = b;
+                    px[o + 1] = g;
+                    px[o + 2] = r;
+                    px[o + 3] = a;
+                }
             }
-        }
-        return new CpuVideoFrame(
-            pixelData: owner,
-            width: width,
-            height: height,
-            stride: stride,
-            format: PixelFormat.Bgra32,
-            presentationTime: TimeSpan.Zero,
-            duration: TimeSpan.FromMilliseconds(33)
         );
-    }
 }

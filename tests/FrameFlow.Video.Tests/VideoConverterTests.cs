@@ -1,4 +1,3 @@
-using System.Buffers;
 using FrameFlow.Media;
 using FrameFlow.Video;
 
@@ -87,7 +86,7 @@ public sealed class VideoConverterTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.Equal(PixelFormat.Rgba32, dst.Format);
         Assert.Equal(src.Width, dst.Width);
         Assert.Equal(src.Height, dst.Height);
-        var px = dst.PixelData.Memory.Span;
+        var px = dst.ToCpu().PlaneY.Span;
         Assert.Equal(30, px[0]); // R
         Assert.Equal(20, px[1]); // G
         Assert.Equal(10, px[2]); // B
@@ -106,7 +105,7 @@ public sealed class VideoConverterTests : IClassFixture<FfmpegBootstrapFixture>
         using var dst = converter.Process(src);
 
         Assert.Equal(PixelFormat.Bgra32, dst.Format);
-        var px = dst.PixelData.Memory.Span;
+        var px = dst.ToCpu().PlaneY.Span;
         for (int i = 0; i < 4; i++)
         {
             Assert.Equal(5, px[i * 4 + 0]);
@@ -131,7 +130,7 @@ public sealed class VideoConverterTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.Equal(16, dst.Height);
         Assert.Equal(PixelFormat.Bgra32, dst.Format);
 
-        var px = dst.PixelData.Memory.Span;
+        var px = dst.ToCpu().PlaneY.Span;
         for (int row = 0; row < 16; row++)
         {
             for (int col = 0; col < 16; col++)
@@ -155,7 +154,7 @@ public sealed class VideoConverterTests : IClassFixture<FfmpegBootstrapFixture>
 
         Assert.Equal(4, dst.Width);
         Assert.Equal(4, dst.Height);
-        var px = dst.PixelData.Memory.Span;
+        var px = dst.ToCpu().PlaneY.Span;
         for (int row = 0; row < 4; row++)
         {
             for (int col = 0; col < 4; col++)
@@ -186,7 +185,7 @@ public sealed class VideoConverterTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.Equal(PixelFormat.Rgba32, dst.Format);
 
         // Sample a middle pixel — solid color so any pixel should do.
-        var px = dst.PixelData.Memory.Span;
+        var px = dst.ToCpu().PlaneY.Span;
         int mid = (16 * dst.Stride) + (16 * 4);
         Assert.Equal(3, px[mid + 0]); // R
         Assert.Equal(2, px[mid + 1]); // G
@@ -252,30 +251,24 @@ public sealed class VideoConverterTests : IClassFixture<FfmpegBootstrapFixture>
         byte r,
         byte a,
         TimeSpan? pts = null
-    )
-    {
-        int stride = width * 4;
-        var owner = MemoryPool<byte>.Shared.Rent(stride * height);
-        var span = owner.Memory.Span;
-        for (int row = 0; row < height; row++)
-        {
-            for (int col = 0; col < width; col++)
+    ) =>
+        CpuVideoFrame.Create(
+            PixelFormat.Bgra32,
+            width,
+            height,
+            pts ?? TimeSpan.Zero,
+            TimeSpan.Zero,
+            (B: b, G: g, R: r, A: a),
+            static (planes, c) =>
             {
-                int o = row * stride + col * 4;
-                span[o + 0] = b;
-                span[o + 1] = g;
-                span[o + 2] = r;
-                span[o + 3] = a;
+                var px = planes.Y;
+                for (int o = 0; o < px.Length; o += 4)
+                {
+                    px[o + 0] = c.B;
+                    px[o + 1] = c.G;
+                    px[o + 2] = c.R;
+                    px[o + 3] = c.A;
+                }
             }
-        }
-
-        return new CpuVideoFrame(
-            pixelData: owner,
-            width: width,
-            height: height,
-            stride: stride,
-            format: PixelFormat.Bgra32,
-            presentationTime: pts ?? TimeSpan.Zero
         );
-    }
 }

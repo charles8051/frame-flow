@@ -1,212 +1,187 @@
-using System.Buffers;
 using FrameFlow.Media.Tests.Doubles;
 
 namespace FrameFlow.Media.Tests;
 
+/// <summary>
+/// <see cref="PcmAudioBuffer.Create{TState}"/>: the one way to make a PCM buffer (ADR-0080,
+/// decision 5). The fill writes up to the capacity and reports how many samples it wrote.
+/// </summary>
 public sealed class PcmAudioBlockTests
 {
-    // -----------------------------------------------------------------------
-    // Construction — property storage
-    // -----------------------------------------------------------------------
+    private static PcmAudioBuffer Ramp(
+        int capacity,
+        int written,
+        int sampleRate = 44_100,
+        int channels = 2,
+        TimeSpan pts = default,
+        CountingArrayPool<short>? pool = null
+    ) =>
+        PcmAudioBuffer.Create(
+            capacity,
+            sampleRate,
+            channels,
+            pts,
+            written,
+            static (span, written) =>
+            {
+                for (int i = 0; i < written; i++)
+                    span[i] = (short)((i + 1) * 10);
+                return written;
+            },
+            pool
+        );
+
+    // ── Metadata ──────────────────────────────────────────────────────
 
     [Fact]
-    public void Constructor_StoresSampleRate()
+    public void Create_StoresTheBuffersMetadata()
     {
-        using var owner = FakeMemoryOwner<short>.OfLength(0);
-        using var block = new PcmAudioBuffer(
-            owner,
-            sampleCount: 0,
-            sampleRate: 44100,
-            channels: 2,
-            TimeSpan.Zero
-        );
-        Assert.Equal(44100, block.SampleRate);
-    }
+        using var block = Ramp(8, 6, sampleRate: 48_000, channels: 2, pts: TimeSpan.FromSeconds(1.5));
 
-    [Fact]
-    public void Constructor_StoresChannels()
-    {
-        using var owner = FakeMemoryOwner<short>.OfLength(0);
-        using var block = new PcmAudioBuffer(
-            owner,
-            sampleCount: 0,
-            sampleRate: 44100,
-            channels: 2,
-            TimeSpan.Zero
-        );
+        Assert.Equal(48_000, block.SampleRate);
         Assert.Equal(2, block.Channels);
-    }
-
-    [Fact]
-    public void Constructor_StoresPresentationTime()
-    {
-        var pts = TimeSpan.FromSeconds(1.5);
-        using var owner = FakeMemoryOwner<short>.OfLength(0);
-        using var block = new PcmAudioBuffer(
-            owner,
-            sampleCount: 0,
-            sampleRate: 44100,
-            channels: 2,
-            pts
-        );
-        Assert.Equal(pts, block.PresentationTime);
-    }
-
-    [Fact]
-    public void Constructor_StoresSampleCount()
-    {
-        using var owner = FakeMemoryOwner<short>.OfLength(8);
-        using var block = new PcmAudioBuffer(
-            owner,
-            sampleCount: 6,
-            sampleRate: 44100,
-            channels: 2,
-            TimeSpan.Zero
-        );
+        Assert.Equal(TimeSpan.FromSeconds(1.5), block.PresentationTime);
         Assert.Equal(6, block.SampleCount);
+        Assert.Equal(3, block.FrameCount);
     }
 
-    // -----------------------------------------------------------------------
-    // Samples property — sliced view
-    // -----------------------------------------------------------------------
+    // ── Samples ───────────────────────────────────────────────────────
 
     [Fact]
-    public void Samples_ReturnsSlicedToSampleCount()
+    public void Samples_AreTheOnesTheFillReportedWriting()
     {
-        var data = new short[] { 10, 20, 30, 40, 50 };
-        var owner = FakeMemoryOwner<short>.FromArray(data);
-        using var block = new PcmAudioBuffer(
-            owner,
-            sampleCount: 3,
-            sampleRate: 44100,
-            channels: 1,
-            TimeSpan.Zero
-        );
+        using var block = Ramp(capacity: 5, written: 3, channels: 1);
 
-        var samples = block.Samples;
-
-        Assert.Equal(3, samples.Length);
-        Assert.Equal(10, samples.Span[0]);
-        Assert.Equal(20, samples.Span[1]);
-        Assert.Equal(30, samples.Span[2]);
+        Assert.Equal(new short[] { 10, 20, 30 }, block.Samples.ToArray());
     }
 
     [Fact]
-    public void Samples_WhenSampleCountEqualsBufferLength_ReturnsFullBuffer()
+    public void Samples_CanFillTheWholeCapacity()
     {
-        var data = new short[] { 1, 2, 3 };
-        var owner = FakeMemoryOwner<short>.FromArray(data);
-        using var block = new PcmAudioBuffer(
-            owner,
-            sampleCount: 3,
-            sampleRate: 48000,
-            channels: 1,
-            TimeSpan.Zero
-        );
+        using var block = Ramp(capacity: 3, written: 3, channels: 1);
 
         Assert.Equal(3, block.Samples.Length);
     }
 
     [Fact]
-    public void Samples_WhenSampleCountIsZero_ReturnsEmpty()
+    public void AFillThatWritesNothing_MakesAnEmptyBuffer()
     {
-        using var owner = FakeMemoryOwner<short>.OfLength(4);
-        using var block = new PcmAudioBuffer(
-            owner,
-            sampleCount: 0,
-            sampleRate: 44100,
-            channels: 1,
-            TimeSpan.Zero
-        );
+        using var block = Ramp(capacity: 4, written: 0);
 
-        Assert.Equal(0, block.Samples.Length);
+        Assert.Equal(0, block.SampleCount);
+        Assert.True(block.Samples.IsEmpty);
     }
 
-    // -----------------------------------------------------------------------
-    // Ownership and disposal
-    // -----------------------------------------------------------------------
-
     [Fact]
-    public void Dispose_DisposesUnderlyingMemoryOwner()
+    public void ZeroCapacity_IsValid_AndItsArrayGoesBackToThePool()
     {
-        var owner = FakeMemoryOwner<short>.OfLength(4);
-        var block = new PcmAudioBuffer(
-            owner,
-            sampleCount: 4,
-            sampleRate: 44100,
-            channels: 2,
-            TimeSpan.Zero
-        );
+        var pool = new CountingArrayPool<short>();
+        var block = Ramp(capacity: 0, written: 0, pool: pool);
 
         block.Dispose();
 
-        Assert.True(owner.IsDisposed);
+        Assert.Equal(0, block.SampleCount);
+        Assert.Equal(1, pool.Returns);
     }
 
     [Fact]
-    public void Dispose_CallsUnderlyingOwnerExactlyOnce()
+    public void ZeroCapacity_FromTheSharedPool_ReleasesCleanly()
     {
-        var owner = FakeMemoryOwner<short>.OfLength(4);
-        var block = new PcmAudioBuffer(
-            owner,
-            sampleCount: 4,
-            sampleRate: 44100,
-            channels: 2,
-            TimeSpan.Zero
-        );
+        var block = Ramp(capacity: 0, written: 0);
 
-        block.Dispose();
+        var ex = Record.Exception(block.Dispose);
 
-        Assert.Equal(1, owner.DisposeCallCount);
-    }
-
-    [Fact]
-    public void SampleData_ExposesUnderlyingOwner()
-    {
-        var owner = FakeMemoryOwner<short>.OfLength(4);
-        using var block = new PcmAudioBuffer(
-            owner,
-            sampleCount: 4,
-            sampleRate: 44100,
-            channels: 2,
-            TimeSpan.Zero
-        );
-
-        Assert.Same(owner, block.SampleData);
-    }
-
-    // -----------------------------------------------------------------------
-    // Edge cases
-    // -----------------------------------------------------------------------
-
-    [Fact]
-    public void ZeroSampleCount_IsValid()
-    {
-        using var owner = FakeMemoryOwner<short>.OfLength(0);
-        var ex = Record.Exception(() =>
-        {
-            using var block = new PcmAudioBuffer(
-                owner,
-                sampleCount: 0,
-                sampleRate: 44100,
-                channels: 2,
-                TimeSpan.Zero
-            );
-        });
         Assert.Null(ex);
     }
 
-    [Fact]
-    public void ZeroPresentationTime_IsValid()
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(5)]
+    public void AFillReportingACountOutsideTheCapacity_Throws_AndReturnsTheStorage(int written)
     {
-        using var owner = FakeMemoryOwner<short>.OfLength(0);
-        using var block = new PcmAudioBuffer(
-            owner,
-            sampleCount: 0,
-            sampleRate: 44100,
-            channels: 2,
-            TimeSpan.Zero
+        var pool = new CountingArrayPool<short>();
+
+        Assert.Throws<InvalidOperationException>(() =>
+            PcmAudioBuffer.Create(4, 48_000, 2, TimeSpan.Zero, written, static (_, n) => n, pool)
         );
-        Assert.Equal(TimeSpan.Zero, block.PresentationTime);
+
+        Assert.Equal(1, pool.Returns);
     }
+
+    [Fact]
+    public void Create_RejectsANegativeCapacity()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => Ramp(capacity: -1, written: 0));
+    }
+
+    // ── Storage ───────────────────────────────────────────────────────
+
+    [Fact]
+    public void TheFinalRelease_ReturnsTheStorageOnce()
+    {
+        var pool = new CountingArrayPool<short>();
+        var block = Ramp(4, 4, pool: pool);
+        var shared = block.AddRef();
+
+        block.Dispose();
+        Assert.Equal(0, pool.Returns);
+
+        shared.Dispose();
+        Assert.Equal(1, pool.Rents);
+        Assert.Equal(1, pool.Returns);
+    }
+
+    [Fact]
+    public void AFillThatThrows_ReturnsTheStorage_AndPropagatesItsException()
+    {
+        var pool = new CountingArrayPool<short>();
+        var thrown = new InvalidOperationException("fill failed");
+
+        var caught = Assert.Throws<InvalidOperationException>(() =>
+            PcmAudioBuffer.Create(4, 48_000, 2, TimeSpan.Zero, thrown, static (_, ex) => throw ex, pool)
+        );
+
+        Assert.Same(thrown, caught);
+        Assert.Equal(1, pool.Rents);
+        Assert.Equal(1, pool.Returns);
+    }
+
+    [Fact]
+    public void AFillThatThrows_StillPropagatesItsException_WhenThePoolThrowsOnReturn()
+    {
+        var pool = new CountingArrayPool<short> { ThrowOnReturn = true };
+        var thrown = new FormatException("fill failed");
+
+        var caught = Assert.Throws<FormatException>(() =>
+            PcmAudioBuffer.Create(4, 48_000, 2, TimeSpan.Zero, thrown, static (_, ex) => throw ex, pool)
+        );
+
+        Assert.Same(thrown, caught);
+    }
+
+    [Fact]
+    public void AnOutOfRangeCount_StillReportsItself_WhenThePoolThrowsOnReturn()
+    {
+        var pool = new CountingArrayPool<short> { ThrowOnReturn = true };
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            PcmAudioBuffer.Create(4, 48_000, 2, TimeSpan.Zero, 5, static (_, n) => n, pool)
+        );
+
+        Assert.Contains("capacity of 4", ex.Message);
+    }
+
+#if DEBUG
+    [Fact]
+    public void ReleasedStorage_ReadsAsTheReleaseFill_ThroughAViewKeptPastTheRelease()
+    {
+        var block = Ramp(4, 4, pool: new CountingArrayPool<short>());
+        var kept = block.Samples;
+        Assert.Equal(10, kept.Span[0]);
+
+        block.Dispose();
+
+        Assert.All(kept.ToArray(), s => Assert.Equal(PcmAudioBuffer.ReleasedFill, s));
+    }
+#endif
 }
