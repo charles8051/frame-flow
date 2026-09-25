@@ -1,6 +1,7 @@
 # FrameFlow
 
-Cross-platform FFmpeg-based media playback for .NET, with a UI-agnostic core.
+Cross-platform FFmpeg media pipelines for .NET: decode, encode, play back,
+capture from cameras, and run inference on frames. UI-agnostic core.
 
 FrameFlow decodes and plays audio and video on Windows, Linux and macOS. The
 playback core has no UI dependency: A/V sync, seeking, and buffering happen
