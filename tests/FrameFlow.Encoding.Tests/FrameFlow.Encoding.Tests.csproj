@@ -24,4 +24,7 @@
     <ProjectReference Include="..\..\src\FrameFlow.Media\FrameFlow.Media.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Native\FrameFlow.Native.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\RefCountConformance.cs" Link="Shared\RefCountConformance.cs" />
+  </ItemGroup>
 </Project>

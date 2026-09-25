@@ -92,15 +92,15 @@ public sealed class EncodedPacket : IRefCounted
     /// <inheritdoc/>
     public IRefCounted AddRef()
     {
-        Interlocked.Increment(ref _refCount);
+        RefCounting.AddRef(ref _refCount, this);
         return this;
     }
 
     /// <inheritdoc/>
     public void Dispose()
     {
-        // Managed payload — nothing native to free when the count hits zero.
-        // The decrement keeps the substrate's ownership accounting balanced.
-        Interlocked.Decrement(ref _refCount);
+        // Managed payload, so the final release frees nothing. The count still makes
+        // AddRef after the final release fail, and an over-release visible.
+        RefCounting.Release(ref _refCount, this);
     }
 }

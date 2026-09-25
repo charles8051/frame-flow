@@ -106,9 +106,10 @@ change to match.
 Each `Dispose` releases exactly one reference. A `Dispose` that acts once per instance, as
 `CameraVideoFrame`'s does, is a defect on any shareable item (#369). A wrapper forwards every call.
 
-Releasing below zero calls `Debug.Fail` and increments an over-release counter. It never throws:
-the pumps dispose inside `catch` blocks, and `DrainUntilCompletedAsync` abandons the rest of its
-drain at the first exception (`NodePumps.cs:628-645`). This replaces the five behaviours in the
+Releasing below zero is counted (`RefCounting.OverReleases` and the
+`frameflow.graph.over_releases` metric) and, in a debug build, breaks into an attached debugger.
+It never throws: the pumps dispose inside `catch` blocks, and `DrainUntilCompletedAsync` abandons
+the rest of its drain at the first exception (`NodePumps.cs:628-645`). This replaces the five behaviours in the
 table.
 
 A counting bug now damages every branch rather than one. An extra `Dispose` while the count is two
@@ -320,3 +321,9 @@ denied.
 
 **2026-09-24, third automated review.** Decision 5 now says what the fill factory does when the
 callback throws: it returns the storage and rethrows the original exception.
+
+**2026-09-24, implementation of decision 2 (#374).** Decision 2 first asked for `Debug.Fail`. In
+.NET that terminates the process when no debugger is attached, including a test host that
+exercises the over-release path on purpose. The check now counts every over-release and breaks
+into an attached debugger in a debug build. `FrameFlow.Graph.RefCounting` holds the rule, and
+every counted item routes through it.
