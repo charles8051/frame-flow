@@ -8,22 +8,51 @@ namespace FrameFlow.Decoding.Tests;
 /// <summary>
 /// A hardware decoder whose frames are all held waits at its pool budget instead of decoding into
 /// an exhausted pool (#383). Without the guard, the same hold fails <c>avcodec_send_packet</c> and
-/// the decode enumeration throws (#370).
+/// the decode enumeration throws (#370). An allowance for held frames (#384) grows the pool, so a
+/// caller can hold more than its default spare surfaces.
 /// </summary>
 [Collection(DecodePoolCollection.Name)]
 public sealed class DecodePoolGuardHardwareTests(FfmpegBootstrapFixture fixture)
     : IClassFixture<FfmpegBootstrapFixture>
 {
     private const string Fixture = "test-video-h264-yuv420p.mp4";
+
+    // The #370 reproduction's HEVC clip: it ran out at 5 held frames, which is all its default
+    // pool leaves spare.
+    private const string HevcPressureFixture = "test-portrait-hevc-pressure.mp4";
     private static readonly TimeSpan FailureBound = TimeSpan.FromSeconds(30);
 
     // 27 is AV_CODEC_ID_H264.
-    [RequiresHardwareDecodeFact(codecId: 27)]
-    public async Task HoldingEveryFrame_ParksTheDecoderAtItsBudget_AndReleasingThemLetsItFinish()
+    [RequiresHardwareDecodeFact(codecId: 27, fixedPool: true)]
+    public Task HoldingEveryFrame_ParksTheDecoderAtItsBudget_AndReleasingThemLetsItFinish() =>
+        HoldEveryFrameThenReleaseAsync(Fixture, options: null);
+
+    // 172 is AV_CODEC_ID_HEVC.
+    [RequiresHardwareDecodeFact(codecId: 172, fixedPool: true)]
+    public async Task AnAllowancePastTheDefaultSpareSurfaces_IsHeldWithoutAFault()
     {
-        int expected = await CountSoftwareFramesAsync();
-        await using var demux = await OpenAsync();
-        await using var decoder = OpenHardware(demux);
+        const int held = 8;
+
+        var parked = await HoldEveryFrameThenReleaseAsync(
+            HevcPressureFixture,
+            new VideoDecoderOptions { HeldHardwareFrames = held }
+        );
+
+        Assert.Equal(held, parked.HardwareFrameBudget);
+    }
+
+    /// <summary>
+    /// Holds every frame the decoder yields until it parks, and checks it parked at its budget
+    /// rather than faulting. Then releases them and checks every frame arrives.
+    /// </summary>
+    private async Task<VideoDecoderDiagnosticsSnapshot> HoldEveryFrameThenReleaseAsync(
+        string clip,
+        VideoDecoderOptions? options
+    )
+    {
+        int expected = await CountSoftwareFramesAsync(clip);
+        await using var demux = await OpenAsync(clip);
+        await using var decoder = OpenHardware(demux, options);
         await QueueAllAsync(demux, decoder);
 
         var held = new ConcurrentQueue<IVideoFrame>();
@@ -67,14 +96,15 @@ public sealed class DecodePoolGuardHardwareTests(FfmpegBootstrapFixture fixture)
         Assert.Equal(expected, decoded);
         Assert.Equal(0, decoder.GetDiagnostics().DecodeErrors);
         Assert.Equal(parked.HardwareFrameBudget, released);
+        return parked;
     }
 
     // 27 is AV_CODEC_ID_H264.
-    [RequiresHardwareDecodeFact(codecId: 27)]
+    [RequiresHardwareDecodeFact(codecId: 27, fixedPool: true)]
     public async Task AParkedDecoder_EndsItsEnumerationWhenCancelled()
     {
-        await using var demux = await OpenAsync();
-        await using var decoder = OpenHardware(demux);
+        await using var demux = await OpenAsync(Fixture);
+        await using var decoder = OpenHardware(demux, options: null);
         await QueueAllAsync(demux, decoder);
         using var cts = new CancellationTokenSource();
 
@@ -95,22 +125,23 @@ public sealed class DecodePoolGuardHardwareTests(FfmpegBootstrapFixture fixture)
             frame.Dispose();
     }
 
-    private VideoDecoder OpenHardware(DemuxSession demux)
+    private VideoDecoder OpenHardware(DemuxSession demux, VideoDecoderOptions? options)
     {
         var decoder = VideoDecoder.Open(
             demux.FormatContextPtr,
             demux.MediaInfo.VideoStreams[0].StreamIndex,
             new HardwareDecodeOptions { Mode = HardwareDecodeMode.Required },
             fixture.Capabilities,
-            loggerFactory: null
+            loggerFactory: null,
+            videoOptions: options
         );
         decoder.YieldHardwareFrames = true;
         return decoder;
     }
 
-    private static async Task<int> CountSoftwareFramesAsync()
+    private static async Task<int> CountSoftwareFramesAsync(string clip)
     {
-        await using var demux = await OpenAsync();
+        await using var demux = await OpenAsync(clip);
         await using var decoder = VideoDecoder.Open(
             demux.FormatContextPtr,
             demux.MediaInfo.VideoStreams[0].StreamIndex,
@@ -128,10 +159,10 @@ public sealed class DecodePoolGuardHardwareTests(FfmpegBootstrapFixture fixture)
         return count;
     }
 
-    private static async Task<DemuxSession> OpenAsync()
+    private static async Task<DemuxSession> OpenAsync(string clip)
     {
-        var file = TestEnvironment.GetCorpusFile(Fixture);
-        Assert.True(file is not null, $"Corpus is present but {Fixture} is missing.");
+        var file = TestEnvironment.GetCorpusFile(clip);
+        Assert.True(file is not null, $"Corpus is present but {clip} is missing.");
         return (DemuxSession)await new DemuxSessionFactory().OpenAsync(MediaSource.FromFile(file!));
     }
 

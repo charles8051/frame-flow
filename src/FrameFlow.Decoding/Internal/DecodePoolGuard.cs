@@ -59,6 +59,14 @@ internal static class DecodePoolGuard
         };
 
     /// <summary>
+    /// The <c>extra_hw_frames</c> to open a decoder with so that <paramref name="heldFrames"/>
+    /// can be out at once: what the pool's spare surfaces do not cover. Zero for a growable pool,
+    /// which FFmpeg does not size.
+    /// </summary>
+    public static int ExtraSurfacesFor(HardwareDecodeBackendKind backend, int heldFrames) =>
+        SpareSurfaces(backend) is int spare ? Math.Max(0, heldFrames - spare) : 0;
+
+    /// <summary>
     /// The phase-1 budget: the pool's spare surfaces plus the <c>extra_hw_frames</c> the decoder
     /// opened with. Zero, which leaves the pool unguarded, for a growable pool, and for an
     /// uncharacterised one opened without extra surfaces, where nothing says how many are free.

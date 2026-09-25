@@ -139,6 +139,46 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
         );
     }
 
+    /// <summary>
+    /// A player that yields hardware frames opens its decoder with an allowance for what its
+    /// own path holds (#384), so the decoder's budget is that count rather than the pool's
+    /// default spare surfaces.
+    /// </summary>
+    // 27 is AV_CODEC_ID_H264.
+    [RequiresHardwareDecodeFact(codecId: 27, fixedPool: true)]
+    public async Task YieldingHardwareFrames_BudgetsTheDecoderForWhatThePlayerHolds()
+    {
+        var videoSink = new HarnessVideoSink();
+        var audioSink = new HarnessAudioSink();
+        var controller = PlaybackController.Create(
+            videoSink: videoSink,
+            audioSink: audioSink,
+            hardwareDecodeMode: HardwareDecodeMode.Auto,
+            yieldHardwareFrames: true
+        );
+
+        try
+        {
+            var (load, play) = await IntegrationTestHelper.RunToCompletionAsync(
+                controller,
+                MediaSource.FromFile(PlaybackHarness.ResolveCorpusPath("test-av-h264-aac.mp4"))
+            );
+            Assert.True(load.IsSuccess, $"LoadAsync failed: {load.Error?.Message}");
+            Assert.True(play.IsSuccess, $"PlayAsync failed: {play.Error?.Message}");
+
+            var decoder = controller.GetDiagnostics().Pipeline.Stream.VideoDecoder;
+            Assert.True(decoder.HardwareBackend is not null, "the player decoded in software");
+            Assert.Equal(SubstrateSession.HeldHardwareFrames, decoder.HardwareFrameBudget);
+        }
+        finally
+        {
+            await IntegrationTestHelper.StabilizeForDisposeAsync(controller, audioSink, videoSink);
+            await controller.DisposeAsync();
+            await videoSink.DisposeAsync();
+            await audioSink.DisposeAsync();
+        }
+    }
+
     // Required-with-empty-capabilities is covered at the decoder layer, where the
     // decision actually lives, by
     // FrameFlow.Decoding.Tests.HardwareDecodeRequiredTests. It does not belong

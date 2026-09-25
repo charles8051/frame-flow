@@ -10,11 +10,13 @@ namespace FrameFlow.Decoding;
 /// Mirrors <see cref="AudioDecoderOptions"/>. Kept deliberately small — the
 /// runtime full-queue policy (<see cref="VideoDecoder.DropNewestWhenQueueFull"/>)
 /// and hardware-frame yield (<see cref="VideoDecoder.YieldHardwareFrames"/>) stay
-/// mutable on the decoder because callers toggle them after construction; only the
-/// construction-time packet-queue depth lives here.
+/// mutable on the decoder because callers toggle them after construction; only
+/// settings fixed when the decoder opens live here.
 /// </remarks>
 public sealed class VideoDecoderOptions
 {
+    private readonly int _heldHardwareFrames;
+
     /// <summary>
     /// Capacity of the decoder's internal bounded packet queue, in packets.
     /// The demux pump writes cloned packets into this queue; once it is full the
@@ -54,4 +56,24 @@ public sealed class VideoDecoderOptions
     /// pin it; a fixed count reintroduces the frame-rate dependence described there.
     /// </remarks>
     public int? PacketQueueCapacity { get; init; }
+
+    /// <summary>
+    /// How many hardware frames the caller holds at once after the decoder yields them
+    /// (<see cref="VideoDecoder.YieldHardwareFrames"/>). Defaults to 0. Must not be negative.
+    /// </summary>
+    /// <remarks>
+    /// A decoder on a fixed pool (D3D11VA, DXVA2) asks FFmpeg for the surfaces this needs
+    /// beyond the pool's spare ones (<c>extra_hw_frames</c>), and waits for a release when this
+    /// many are out (ADR-0081). A growable pool (VideoToolbox) ignores it. Software decode and the
+    /// readback path hold no pool surfaces.
+    /// </remarks>
+    public int HeldHardwareFrames
+    {
+        get => _heldHardwareFrames;
+        init
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            _heldHardwareFrames = value;
+        }
+    }
 }

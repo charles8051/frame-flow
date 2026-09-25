@@ -187,6 +187,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     private readonly FrameFlow.Media.HardwareDecodeCapabilities? _hwCapabilities;
     private readonly bool _yieldHardwareFrames;
 
+    /// <summary>
+    /// The hardware frames the player's own path holds at once (#384): the pacer's ring, the
+    /// presenter's slot, and one frame in flight between the decoder and the ring.
+    /// </summary>
+    internal const int HeldHardwareFrames = ClockSelectVideoSink.DefaultCapacity + 2;
+
     public SubstrateSession(
         IVideoSink? videoSink,
         IAudioSink? audioSink,
@@ -469,10 +475,16 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 // applied here to avoid any production behavior change. The
                 // VideoDecoderOptions.PacketQueueCapacity knob is available if a future,
                 // separately-validated tuning pass wants a tighter no-audio queue.
+                //
+                // A decoder that yields hardware frames sizes its pool for what the player's
+                // path holds, and waits at that budget (ADR-0081).
                 var videoFactory = DecoderFactories.CreateVideo(
                     new HardwareDecodeOptions { Mode = _hwMode },
                     _hwCapabilities,
-                    _loggerFactory
+                    _loggerFactory,
+                    _yieldHardwareFrames
+                        ? new VideoDecoderOptions { HeldHardwareFrames = HeldHardwareFrames }
+                        : null
                 );
                 videoDecoder = videoFactory(demux) as VideoDecoder;
                 if (videoDecoder is not null)
