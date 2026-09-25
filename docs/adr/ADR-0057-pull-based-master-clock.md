@@ -7,6 +7,9 @@ Accepted.
 > **Note 2026-09-24.** Pool exhaustion does not stall the decoder. In FFmpeg 9.0 the allocation
 > fails and the picture is dropped with one log line (#370, read from source and not yet
 > reproduced). [ADR-0081](ADR-0081-fixed-pool-budget.md) corrects the description and budgets the pool.
+>
+> **Note 2026-09-25.** Reproduced, and the note above is wrong too: `avcodec_send_packet` returns
+> an error, the decode enumeration throws, and the player faults ([the reproduction](../investigations/2026-09-25-d3d11va-pool-exhaustion.md), #370).
 
 ## Context
 
