@@ -101,8 +101,15 @@ after it.
 
 If the candidates alone reach the limit, the join stops reading its secondary edge until the
 primary advances past one of them. That is the back-pressure ADR-0073 gives `MaxLead`. The primary
-edge is never paused, and every candidate is released once the primary passes its end, so the join
-progresses whenever the primary does.
+edge is never paused, and the join's primary loop never waits on its secondary: the secondary is
+read by a separate loop (`NodePumps.cs:311`), and each primary is resolved at once against what is
+retained, taking the newest match or none (`NodePumps.cs:375-381`, `SyncJoin.cs:386-388`). So a
+paused secondary edge cannot stop primaries from being emitted.
+
+What a full limit costs is match quality. A newer secondary still on the paused edge is not seen
+until the primary passes the end of a retained one and releases it. Under `Within`, when every
+candidate contains the primary's time, primaries keep matching the newest of them until then.
+Choosing the limit by the rule below keeps that from happening in steady state.
 
 It inherits `MaxLead`'s deadlock as well: if one branch feeds both inputs and blocks when full, the
 paused secondary edge stops that branch and the primary never arrives (ADR-0073, "Why opt-in rather
@@ -280,3 +287,7 @@ pauses the secondary edge only when every retained secondary lies ahead of the p
 so the candidates left at the limit are not all ahead of the primary. Decision 1 now says the pause
 waits on the primary advancing, inherits `MaxLead`'s fork-rejoin deadlock, and is refused by the
 same topology check.
+
+**2026-09-24, fourth automated review.** A `Within` join whose candidates all contain the
+primary's time was said to stall at its limit. It does not: the join's primary loop never waits on
+the secondary. Decision 1 now cites the pump and says the cost of a full limit is match quality.
