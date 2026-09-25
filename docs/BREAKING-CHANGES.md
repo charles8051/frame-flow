@@ -136,6 +136,33 @@ and `DetectedFaceFrameRef` keep their names and count their own references the s
 per frame. Frames now count references themselves (ADR-0080), so the frame can be the item.
 ADR-0080 decision 6, #42.
 
+### 5. Fan-out has no cloner
+
+**A compile error.**
+
+`EdgeConfig<T>`, `EdgeOptionsExtensions.WithCloner`, `Graph.Connect(from, to, EdgeConfig<T>)` and
+`GraphChain<T>.Branch(EdgeConfig<T>)` are deleted. Every branch of a fan-out shares the item by
+`AddRef`.
+
+| Before | After |
+|---|---|
+| `EdgeOptions.LatestWins().WithCloner<IVideoFrame>(f => f.CloneCpu())` | `EdgeOptions.LatestWins()` |
+| `graph.Connect(from, to, options.WithCloner(...))` | `graph.Connect(from, to, options)` |
+| `chain.Branch(options.WithCloner(...))` | `chain.Branch(options)` |
+
+A graph that forks a chain with `Branch` and then wires its trunk twice is no longer refused: with
+every branch holding a reference, it is an ordinary fan-out.
+
+**Who hits this.** Anyone who used `WithCloner` to fan out frames that could not be shared.
+
+**What to write instead.** Drop the cloner. A branch that wants a private copy it can keep
+independently of the source's storage calls `CloneCpu()` in its own node. That is the case for a
+long-held frame from a fixed pool, such as a camera lease (ADR-0081).
+
+**Why.** The cloner existed because CPU frames could not be shared, and it copied every frame for
+every branch: about 750 MB/s across three 1080p presenters at 30 fps, estimated from frame sizes.
+Frames count references now, so a branch can share the frame. ADR-0080 decision 7, #380, #93.
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be

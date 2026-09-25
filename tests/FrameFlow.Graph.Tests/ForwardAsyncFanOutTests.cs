@@ -1,3 +1,4 @@
+using FrameFlow.Tests.Shared;
 using Xunit;
 
 // `Graph` is both a namespace (FrameFlow.Graph) and a type
@@ -8,23 +9,19 @@ using GraphRunner = FrameFlow.Graph.Graph;
 namespace FrameFlow.Graph.Tests;
 
 /// <summary>
-/// Ownership / refcount tests for the fan-out path
-/// (<c>NodePumps.ForwardAsync</c>) extended by ADR-0054's per-edge cloner.
-/// Every flowing item is a <see cref="RefBox{T}"/> so the test can assert
-/// the substrate balances refcounts to zero on every distribution shape —
-/// the inherit branch, AddRef siblings, cloner branches, the all-cloner
-/// case, and the cloner-throws error path.
+/// Ownership / refcount tests for the fan-out path (<c>NodePumps.ForwardAsync</c>). Every branch
+/// shares the one item by <c>AddRef</c> (ADR-0080), so each shape must balance the count to zero,
+/// including the path where an <c>AddRef</c> throws.
 /// </summary>
 /// <remarks>
-/// Each pump terminates before <see cref="GraphRunner.RunAsync"/> returns
+/// The over-release counter is process-wide, so this runs in the non-parallel ref-counting
+/// collection. Each pump terminates before <see cref="GraphRunner.RunAsync"/> returns
 /// (or throws), so asserting <see cref="RefBox{T}.RefCount"/> immediately
 /// afterward observes the fully-settled state — no polling needed.
 /// </remarks>
+[Collection(RefCountingCollection.Name)]
 public sealed class ForwardAsyncFanOutTests
 {
-    /// <summary>Sentinel thrown by a misbehaving cloner; keeps the propagated fault unambiguous.</summary>
-    private sealed class ClonerBoomException : Exception { }
-
     // ── Helpers ─────────────────────────────────────────────────────────
 
     /// <summary>
@@ -47,29 +44,7 @@ public sealed class ForwardAsyncFanOutTests
         where T : class, IRefCounted =>
         new(id, (_, _) => ValueTask.CompletedTask);
 
-    /// <summary>
-    /// A cloner edge that deep-copies the boxed value into a fresh
-    /// <see cref="RefBox{T}"/> and records it, so the test can assert the
-    /// clone is also disposed. Mirrors the MotionClip preview wireup shape
-    /// (<c>LatestWins().WithCloner(...)</c>).
-    /// </summary>
-    private static EdgeConfig<RefBox<int>> CloneInto(List<RefBox<int>> recorded) =>
-        EdgeOptions
-            .LatestWins()
-            .WithCloner<RefBox<int>>(src =>
-            {
-                var clone = RefBox.Of(src.Value);
-                recorded.Add(clone);
-                return clone;
-            });
-
-    /// <summary>A cloner edge whose cloner always throws.</summary>
-    private static EdgeConfig<RefBox<int>> ThrowingCloner() =>
-        EdgeOptions
-            .LatestWins()
-            .WithCloner<RefBox<int>>(_ => throw new ClonerBoomException());
-
-    // ── Success-path matrix ─────────────────────────────────────────────
+    // ── Success paths ───────────────────────────────────────────────────
 
     [Fact]
     public async Task NoConsumers_DisposesIncomingRef()
@@ -86,7 +61,7 @@ public sealed class ForwardAsyncFanOutTests
     }
 
     [Fact]
-    public async Task SingleConsumer_NoCloner_InheritsAndDisposes()
+    public async Task SingleConsumer_TakesTheIncomingRef()
     {
         var box = RefBox.Of(1);
         var src = Emit(box);
@@ -101,139 +76,72 @@ public sealed class ForwardAsyncFanOutTests
     }
 
     [Fact]
-    public async Task SingleConsumer_WithCloner_DisposesOriginalAndClone()
+    public async Task ThreeConsumers_ShareTheItem_AllReleased()
     {
-        var box = RefBox.Of(7);
-        var clones = new List<RefBox<int>>();
+        long overReleasesBefore = RefCounting.OverReleases;
+        var box = RefBox.Of(1);
         var src = Emit(box);
-        var sink = NullSink<RefBox<int>>("sink");
+        var seen = new List<RefBox<int>>();
+        SinkNode<RefBox<int>> Recording(string id) =>
+            new(
+                id,
+                (item, _) =>
+                {
+                    lock (seen)
+                        seen.Add(item);
+                    return ValueTask.CompletedTask;
+                }
+            );
 
         var graph = new GraphRunner();
-        graph.Connect(src.Output, sink.Input, CloneInto(clones));
+        graph.Connect(src.Output, Recording("a").Input);
+        graph.Connect(src.Output, Recording("b").Input);
+        graph.Connect(src.Output, Recording("c").Input);
 
         await graph.RunAsync();
 
-        Assert.Equal(0, box.RefCount); // incoming ref had no inheritor → released
-        var clone = Assert.Single(clones);
-        Assert.Equal(0, clone.RefCount); // clone consumed + disposed by the sink
-    }
-
-    [Fact]
-    public async Task TwoConsumers_NoCloner_AddRefFanOut_AllDisposed()
-    {
-        var box = RefBox.Of(1);
-        var src = Emit(box);
-        var sinkA = NullSink<RefBox<int>>("a");
-        var sinkB = NullSink<RefBox<int>>("b");
-
-        var graph = new GraphRunner();
-        graph.Connect(src.Output, sinkA.Input); // inherits
-        graph.Connect(src.Output, sinkB.Input); // AddRef
-
-        await graph.RunAsync();
-
+        Assert.Equal(3, seen.Count);
+        Assert.All(seen, item => Assert.Same(box, item));
         Assert.Equal(0, box.RefCount);
+        Assert.Equal(overReleasesBefore, RefCounting.OverReleases);
     }
 
+    // ── Error path ──────────────────────────────────────────────────────
+
     [Fact]
-    public async Task MixedInheritAndCloner_AllDisposed()
+    public async Task AnAddRefThatThrows_ReleasesTheRefsTaken_AndTheIncomingOne()
     {
-        var box = RefBox.Of(3);
-        var clones = new List<RefBox<int>>();
-        var src = Emit(box);
-        var gate = NullSink<RefBox<int>>("gate");
-        var preview = NullSink<RefBox<int>>("preview");
+        // The second AddRef throws, so one extra ref has been taken and nothing written. The
+        // pump releases that ref and the incoming one before the fault propagates.
+        var item = new FailingSecondAddRef();
+        var src = Emit(item);
 
         var graph = new GraphRunner();
-        graph.Connect(src.Output, gate.Input); // cloner-less → inherits
-        graph.Connect(src.Output, preview.Input, CloneInto(clones)); // cloned sibling
+        graph.Connect(src.Output, NullSink<FailingSecondAddRef>("a").Input);
+        graph.Connect(src.Output, NullSink<FailingSecondAddRef>("b").Input);
+        graph.Connect(src.Output, NullSink<FailingSecondAddRef>("c").Input);
 
-        await graph.RunAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => graph.RunAsync());
 
-        Assert.Equal(0, box.RefCount);
-        Assert.Equal(0, Assert.Single(clones).RefCount);
+        Assert.Equal(0, item.RefCount);
     }
 
-    [Fact]
-    public async Task AllCloner_TwoBranches_DisposesIncomingAndAllClones()
+    /// <summary>An item whose second <c>AddRef</c> throws, after counting its first.</summary>
+    private sealed class FailingSecondAddRef : IRefCounted
     {
-        var box = RefBox.Of(9);
-        var clones = new List<RefBox<int>>();
-        var src = Emit(box);
-        var sinkA = NullSink<RefBox<int>>("a");
-        var sinkB = NullSink<RefBox<int>>("b");
+        private int _refCount = 1;
+        private int _addRefs;
 
-        var graph = new GraphRunner();
-        graph.Connect(src.Output, sinkA.Input, CloneInto(clones));
-        graph.Connect(src.Output, sinkB.Input, CloneInto(clones));
+        public int RefCount => Volatile.Read(ref _refCount);
 
-        await graph.RunAsync();
+        public IRefCounted AddRef()
+        {
+            if (++_addRefs == 2)
+                throw new InvalidOperationException("second AddRef fails");
+            Interlocked.Increment(ref _refCount);
+            return this;
+        }
 
-        Assert.Equal(0, box.RefCount); // nobody inherited → released
-        Assert.Equal(2, clones.Count);
-        Assert.All(clones, c => Assert.Equal(0, c.RefCount));
-    }
-
-    // ── Error path: cloner throws (regression for the ADR-0054 leak) ─────
-
-    [Fact]
-    public async Task ThrowingCloner_WithInheritingBranch_DisposesIncomingRef()
-    {
-        // gate inherits (branch 0), preview's cloner throws (branch 1).
-        // Pre-fix: the incoming ref was skipped in the catch and leaked.
-        var box = RefBox.Of(1);
-        var src = Emit(box);
-        var gate = NullSink<RefBox<int>>("gate");
-        var preview = NullSink<RefBox<int>>("preview");
-
-        var graph = new GraphRunner();
-        graph.Connect(src.Output, gate.Input);
-        graph.Connect(src.Output, preview.Input, ThrowingCloner());
-
-        await Assert.ThrowsAsync<ClonerBoomException>(() => graph.RunAsync());
-
-        Assert.Equal(0, box.RefCount);
-    }
-
-    [Fact]
-    public async Task ThrowingCloner_WithAddRefSibling_DisposesAllRefs()
-    {
-        // inherit (0) + AddRef sibling (1) + throwing cloner (2). Because
-        // RefBox.AddRef() returns `this`, the AddRef'd slot is reference-
-        // equal to the incoming ref; pre-fix the catch skipped both via
-        // !ReferenceEquals and leaked two refs. The box must still reach 0.
-        var box = RefBox.Of(1);
-        var src = Emit(box);
-        var a = NullSink<RefBox<int>>("a");
-        var b = NullSink<RefBox<int>>("b");
-        var c = NullSink<RefBox<int>>("c");
-
-        var graph = new GraphRunner();
-        graph.Connect(src.Output, a.Input); // inherits
-        graph.Connect(src.Output, b.Input); // AddRef (returns `this`)
-        graph.Connect(src.Output, c.Input, ThrowingCloner());
-
-        await Assert.ThrowsAsync<ClonerBoomException>(() => graph.RunAsync());
-
-        Assert.Equal(0, box.RefCount);
-    }
-
-    [Fact]
-    public async Task ThrowingCloner_AllCloner_DisposesIncomingRef()
-    {
-        // Every branch has a cloner; the first one throws. firstNoCloner < 0,
-        // so the incoming ref must be disposed in the catch.
-        var box = RefBox.Of(1);
-        var src = Emit(box);
-        var a = NullSink<RefBox<int>>("a");
-        var b = NullSink<RefBox<int>>("b");
-
-        var graph = new GraphRunner();
-        graph.Connect(src.Output, a.Input, ThrowingCloner());
-        graph.Connect(src.Output, b.Input, CloneInto(new List<RefBox<int>>()));
-
-        await Assert.ThrowsAsync<ClonerBoomException>(() => graph.RunAsync());
-
-        Assert.Equal(0, box.RefCount);
+        public void Dispose() => Interlocked.Decrement(ref _refCount);
     }
 }

@@ -415,9 +415,10 @@ public partial class MainWindow : Window
             "camera-convert",
             PixelFormat.Bgra32);
 
-        // Terminal fan-out: clone the BGRA32 frame three times (each
-        // pane disposes its own independently), dispatch to the three
-        // pane sinks. PresentAsync on each pane returns immediately
+        // Terminal fan-out: each of the three panes takes its own
+        // reference to the converted BGRA32 frame (ADR-0080) and releases
+        // it independently. The converter has already released the
+        // camera lease, so the panes pin no camera buffer. PresentAsync on each pane returns immediately
         // (queue-of-one with displacement), so Task.WhenAll completes
         // at the speed of the *slowest queueing op* — not the slowest
         // render. Same shape as the file Multicast sibling.
@@ -427,15 +428,15 @@ public partial class MainWindow : Window
             {
                 Interlocked.Increment(ref _broadcastFrameCount);
 
-                var clone1 = item.CloneCpu();
-                var clone2 = item.CloneCpu();
-                var clone3 = item.CloneCpu();
+                var frame1 = item.AddRef();
+                var frame2 = item.AddRef();
+                var frame3 = item.AddRef();
                 try
                 {
                     await Task.WhenAll(
-                        pane1.PresentAsync(clone1, ct2).AsTask(),
-                        pane2.PresentAsync(clone2, ct2).AsTask(),
-                        pane3.PresentAsync(clone3, ct2).AsTask()
+                        pane1.PresentAsync(frame1, ct2).AsTask(),
+                        pane2.PresentAsync(frame2, ct2).AsTask(),
+                        pane3.PresentAsync(frame3, ct2).AsTask()
                     ).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { throw; }

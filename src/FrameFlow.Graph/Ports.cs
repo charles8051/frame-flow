@@ -67,10 +67,8 @@ public sealed class InputPort<T> : IPort, IWireableInput
 /// <summary>
 /// An output port: the node writes items of type <typeparamref name="T"/>
 /// to this port. A single output port can have multiple downstream
-/// connections — each branch either gets a fresh ref via <c>AddRef</c>
-/// (the default), or an explicitly-cloned item when the branch supplied
-/// a cloner via <see cref="EdgeOptionsExtensions.WithCloner{T}"/>
-/// (per ADR-0054, for an item type whose <c>AddRef</c> throws).
+/// connections, and every branch shares the item by <c>AddRef</c>
+/// (ADR-0080).
 /// </summary>
 public sealed class OutputPort<T> : IPort
     where T : class, IRefCounted
@@ -95,21 +93,9 @@ public sealed class OutputPort<T> : IPort
 
 /// <summary>
 /// Internal per-branch wireup record carried on an
-/// <see cref="OutputPort{T}"/>. Pairs a <see cref="ChannelWriter{T}"/>
-/// with an optional cloner used by the fan-out path in
-/// <c>NodePumps.ForwardAsync</c>; see ADR-0054.
+/// <see cref="OutputPort{T}"/>: the downstream channel writer the fan-out
+/// path in <c>NodePumps.ForwardAsync</c> writes to.
 /// </summary>
 /// <param name="Writer">The downstream channel writer.</param>
-/// <param name="Cloner">
-/// When non-<see langword="null"/>, the fan-out invokes <c>Cloner(item)</c>
-/// to produce the per-branch item instead of calling <c>item.AddRef()</c>.
-/// Required for an item type whose <c>AddRef</c> throws.
-/// </param>
-/// <param name="Inherit">
-/// Whether this edge is the trunk of a chain-built fork, and so takes the incoming ref rather
-/// than a clone or an <c>AddRef</c>. Set only by <see cref="GraphChain{T}.Branch(EdgeConfig{T})"/>'s trunk;
-/// a <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeConfig{T})"/> edge is never
-/// marked and keeps ADR-0054's first-cloner-less rule.
-/// </param>
-internal sealed record OutputEdge<T>(ChannelWriter<T> Writer, Func<T, T>? Cloner, bool Inherit = false)
+internal sealed record OutputEdge<T>(ChannelWriter<T> Writer)
     where T : class, IRefCounted;

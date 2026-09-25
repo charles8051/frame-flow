@@ -16,11 +16,9 @@ namespace FrameFlow.Graph;
 /// ADR-0001 §2), <see cref="ITensor"/> exposes <see cref="AddRef"/>
 /// directly. Tensors are the graph substrate's own primitive — there is no
 /// equivalent of the Periphery / FrameFlow split — so the substrate
-/// can rely on the refcount being part of the contract. This makes
-/// fan-out over <see cref="ITensor"/> ergonomic: an edge can share a
-/// tensor by bumping its refcount, without the caller-supplied
-/// <see cref="EdgeConfig{T}.Cloner"/> that <see cref="IFrame"/> edges
-/// need (ADR-0054).
+/// can rely on the refcount being part of the contract, and fan-out
+/// over <see cref="ITensor"/> shares a tensor by bumping its refcount,
+/// as it does every graph item (ADR-0080).
 /// </para>
 /// <para>
 /// <b>Memory domain.</b> Tensors carry a

@@ -42,20 +42,12 @@ FrameFlow.Graph.DType.UInt32 = 9 -> FrameFlow.Graph.DType
 FrameFlow.Graph.DType.UInt64 = 11 -> FrameFlow.Graph.DType
 FrameFlow.Graph.DType.UInt8 = 5 -> FrameFlow.Graph.DType
 FrameFlow.Graph.DTypeExtensions
-FrameFlow.Graph.EdgeConfig<T>
-FrameFlow.Graph.EdgeConfig<T>.Cloner.get -> System.Func<T!, T!>?
-FrameFlow.Graph.EdgeConfig<T>.Cloner.init -> void
-FrameFlow.Graph.EdgeConfig<T>.EdgeConfig() -> void
-FrameFlow.Graph.EdgeConfig<T>.EdgeConfig(FrameFlow.Graph.EdgeOptions! Options, System.Func<T!, T!>? Cloner) -> void
-FrameFlow.Graph.EdgeConfig<T>.Options.get -> FrameFlow.Graph.EdgeOptions!
-FrameFlow.Graph.EdgeConfig<T>.Options.init -> void
 FrameFlow.Graph.EdgeOptions
 FrameFlow.Graph.EdgeOptions.Capacity.get -> int
 FrameFlow.Graph.EdgeOptions.Capacity.init -> void
 FrameFlow.Graph.EdgeOptions.EdgeOptions(int Capacity = 1, FrameFlow.Graph.Overflow Overflow = FrameFlow.Graph.Overflow.Block) -> void
 FrameFlow.Graph.EdgeOptions.Overflow.get -> FrameFlow.Graph.Overflow
 FrameFlow.Graph.EdgeOptions.Overflow.init -> void
-FrameFlow.Graph.EdgeOptionsExtensions
 FrameFlow.Graph.FailureResponse
 FrameFlow.Graph.FailureResponse.Discard = 1 -> FrameFlow.Graph.FailureResponse
 FrameFlow.Graph.FailureResponse.Propagate = 0 -> FrameFlow.Graph.FailureResponse
@@ -65,12 +57,10 @@ FrameFlow.Graph.FrameMemoryDomain.Gpu = 1 -> FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Graph.Graph
 FrameFlow.Graph.Graph.Add<T>(T node) -> T
 FrameFlow.Graph.Graph.BeforeEachRun(System.Action! beforeRun) -> FrameFlow.Graph.Graph!
-FrameFlow.Graph.Graph.Connect<T>(FrameFlow.Graph.OutputPort<T!>! from, FrameFlow.Graph.InputPort<T!>! to, FrameFlow.Graph.EdgeConfig<T!> config) -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.Graph.Connect<T>(FrameFlow.Graph.OutputPort<T!>! from, FrameFlow.Graph.InputPort<T!>! to, FrameFlow.Graph.EdgeOptions? options = null) -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.Graph.Graph() -> void
 FrameFlow.Graph.Graph.RunAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
 FrameFlow.Graph.GraphChain<T>
-FrameFlow.Graph.GraphChain<T>.Branch(FrameFlow.Graph.EdgeConfig<T!> config) -> FrameFlow.Graph.GraphChain<T!>
 FrameFlow.Graph.GraphChain<T>.Branch(FrameFlow.Graph.EdgeOptions! options) -> FrameFlow.Graph.GraphChain<T!>
 FrameFlow.Graph.GraphChain<T>.Graph.get -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.GraphChain<T>.GraphChain() -> void
@@ -214,7 +204,6 @@ static FrameFlow.Graph.DTypeExtensions.ClrType(this FrameFlow.Graph.DType dtype)
 static FrameFlow.Graph.EdgeOptions.Buffered(int capacity) -> FrameFlow.Graph.EdgeOptions!
 static FrameFlow.Graph.EdgeOptions.Default.get -> FrameFlow.Graph.EdgeOptions!
 static FrameFlow.Graph.EdgeOptions.LatestWins(int capacity = 1) -> FrameFlow.Graph.EdgeOptions!
-static FrameFlow.Graph.EdgeOptionsExtensions.WithCloner<T>(this FrameFlow.Graph.EdgeOptions! options, System.Func<T!, T!>! cloner) -> FrameFlow.Graph.EdgeConfig<T!>
 static FrameFlow.Graph.GraphChainExtensions.Pipeline<T>(this FrameFlow.Graph.Graph! graph, FrameFlow.Graph.OutputPort<T!>! from) -> FrameFlow.Graph.GraphChain<T!>
 static FrameFlow.Graph.GraphChainExtensions.Pipeline<T>(this FrameFlow.Graph.Graph! graph, FrameFlow.Graph.SourceNode<T!>! source) -> FrameFlow.Graph.GraphChain<T!>
 static FrameFlow.Graph.RefBox.Of<T>(T value, System.Action<T>? onLastRelease = null) -> FrameFlow.Graph.RefBox<T>!

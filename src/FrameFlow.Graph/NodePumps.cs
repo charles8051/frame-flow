@@ -516,14 +516,9 @@ internal static class NodePumps
     // ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Distributes one upstream item across all outgoing branches.
-    /// Per ADR-0054, each branch either inherits the incoming ref
-    /// (the first cloner-less branch), receives a fresh ref via
-    /// <c>AddRef</c> (every other cloner-less branch), or receives
-    /// an independently-produced item via its
-    /// <see cref="OutputEdge{T}.Cloner"/>. When every branch has a
-    /// cloner, the incoming ref is disposed once all clones are
-    /// produced — no branch inherited it.
+    /// Distributes one upstream item across all outgoing branches. The first branch takes the
+    /// incoming reference and every other branch an <c>AddRef</c> of it, which returns the same
+    /// instance (ADR-0080), so every branch holds the one item.
     /// </summary>
     private static async ValueTask ForwardAsync<T>(
         T item,
@@ -538,79 +533,32 @@ internal static class NodePumps
             return;
         }
 
-        // Who inherits the incoming ref. A chain-built fork names its trunk, because Branch
-        // wires the sibling first and the scan below would otherwise hand the ref to a
-        // cloner-less sibling. Everything else keeps ADR-0054's rule: the first cloner-less
-        // branch inherits, other cloner-less branches AddRef, cloner branches clone, and if
-        // every branch clones the incoming ref has no inheritor and is disposed below.
-        int firstNoCloner = -1;
-        for (int i = 0; i < outputs.Count; i++)
-        {
-            if (outputs[i].Inherit)
-            {
-                firstNoCloner = i;
-                break;
-            }
-
-            if (outputs[i].Cloner is null && firstNoCloner < 0)
-                firstNoCloner = i;
-        }
-
-        // Materialise per-branch items up front so a cloner that
-        // throws doesn't leave partially-produced refs leaking. On
-        // failure, no write has happened yet — so dispose every
-        // per-branch ref already produced AND the incoming ref, then
-        // rethrow. (See ADR-0054 "Cloner throws".)
-        var branchItems = new T?[outputs.Count];
+        // Take every branch's reference before any write. A branch that is written first and
+        // read at once releases its reference, which must not be the last one while a later
+        // branch still has to be written. If an AddRef throws, nothing has been written: release
+        // the references taken so far and the incoming one, and rethrow.
+        int taken = 0;
         try
         {
-            for (int i = 0; i < outputs.Count; i++)
-            {
-                var edge = outputs[i];
-                if (i == firstNoCloner)
-                    branchItems[i] = item;
-                else if (edge.Cloner is { } clone)
-                    branchItems[i] = clone(item);
-                else
-                {
-                    // AddRef returns the same instance (ADR-0080, decision 1), so the branch
-                    // takes the item it already holds.
-                    item.AddRef();
-                    branchItems[i] = item;
-                }
-            }
+            for (; taken < outputs.Count - 1; taken++)
+                item.AddRef();
         }
         catch
         {
-            // No branch has been written yet: ForwardAsync still owns the
-            // incoming ref plus every per-branch ref it produced. Dispose
-            // them all. An AddRef'd slot IS `item`, so disposing each
-            // balances its increment.
-            for (int j = 0; j < branchItems.Length; j++)
-                branchItems[j]?.Dispose();
-
-            // If the inheriting slot was never assigned, the incoming ref
-            // hasn't been released yet. (If it was, the loop above already
-            // released it exactly once via that slot.)
-            if (firstNoCloner < 0 || branchItems[firstNoCloner] is null)
+            for (int i = 0; i <= taken; i++)
                 item.Dispose();
             throw;
         }
 
-        // In the all-cloner case nothing inherited the incoming ref: every
-        // branch holds an independent clone, so the incoming ref is dead
-        // weight now. Release it BEFORE the writes — that keeps the write
-        // path leak-free too, since a write that throws on cancellation
-        // then only has to account for its own branch item (which
-        // WriteOrDisposeAsync disposes).
-        if (firstNoCloner < 0)
-            item.Dispose();
+        if (outputs.Count == 1)
+        {
+            await WriteOrDisposeAsync(outputs[0].Writer, item, ct).ConfigureAwait(false);
+            return;
+        }
 
         var writeTasks = new Task[outputs.Count];
         for (int i = 0; i < outputs.Count; i++)
-        {
-            writeTasks[i] = WriteOrDisposeAsync(outputs[i].Writer, branchItems[i]!, ct).AsTask();
-        }
+            writeTasks[i] = WriteOrDisposeAsync(outputs[i].Writer, item, ct).AsTask();
 
         await Task.WhenAll(writeTasks).ConfigureAwait(false);
     }

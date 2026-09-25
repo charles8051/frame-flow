@@ -1,7 +1,7 @@
 # ADR-0054 — Fan-out with explicit cloning for one-shot frames
 
 Status: Superseded by [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md) (2026-09-24), which shares frames by reference count instead of
-cloning them. The cloner stays in the code until #380 removes it. Accepted 2026-05-30.
+cloning them. #380 removed the cloner, `WithCloner` and `EdgeConfig<T>` (2026-09-25). Accepted 2026-05-30.
 Supersedes / extends: ADR-0049 §2 (substrate fork, primitives that may
 be removed later) — this ADR fills a gap that analysis left open.
 
