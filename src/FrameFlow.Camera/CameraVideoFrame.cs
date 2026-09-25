@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Graph;
 using FrameFlow.Media;
 using Periphery.Camera;
 
@@ -34,18 +35,18 @@ namespace FrameFlow.Camera;
 /// where possible.
 /// </para>
 /// <para>
-/// <b>Ref counting.</b> Each <see cref="CameraVideoFrame"/> instance
-/// holds exactly one ref on the inner <see cref="ICameraFrame"/>. The
-/// wrapper does not track its own refcount separately —
-/// <see cref="AddRef"/> calls through to the camera frame's
-/// <c>AddRef</c> and returns this same instance, and <see cref="Dispose"/>
-/// disposes the camera frame's ref. The discipline lines up with the
-/// IVideoFrame contract (one ref per consumer).
+/// <b>Ref counting.</b> The wrapper counts its own references
+/// (<see cref="RefCounting"/>, ADR-0080) and holds exactly one
+/// reference on the inner <see cref="ICameraFrame"/>, which it releases on its
+/// own final release. <see cref="AddRef"/> returns this same instance, so every
+/// holder shares one lease, and the frame stays readable until the last holder
+/// disposes it.
 /// </para>
 /// </remarks>
 public sealed class CameraVideoFrame : IVideoFrame
 {
     private ICameraFrame? _inner;
+    private int _refCount = 1;
 
     /// <summary>Constructs an adapter that adopts one ref on <paramref name="inner"/>.</summary>
     public CameraVideoFrame(ICameraFrame inner)
@@ -78,7 +79,7 @@ public sealed class CameraVideoFrame : IVideoFrame
     /// <inheritdoc />
     public IVideoFrame AddRef()
     {
-        Inner.AddRef();
+        RefCounting.AddRef(ref _refCount, this);
         return this;
     }
 
@@ -100,6 +101,10 @@ public sealed class CameraVideoFrame : IVideoFrame
     /// <inheritdoc />
     public void Dispose()
     {
+        if (!RefCounting.Release(ref _refCount, this))
+            return;
+
+        // The final release gives the lease back to the camera's pool.
         var frame = Interlocked.Exchange(ref _inner, null);
         frame?.Dispose();
     }
