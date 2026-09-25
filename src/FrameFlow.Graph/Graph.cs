@@ -128,8 +128,8 @@ public sealed class Graph
     /// <see cref="EdgeConfig{T}"/> that may carry a per-branch cloner
     /// (per ADR-0054). When the config's cloner is non-<see langword="null"/>,
     /// fan-out invokes the cloner instead of <c>AddRef</c> for this
-    /// specific branch — required for one-shot frame types (e.g.
-    /// converter outputs) and useful when a branch wants an
+    /// specific branch — required for an item type whose <c>AddRef</c>
+    /// throws, and useful when a branch wants an
     /// independent deep copy regardless. Sibling branches without a
     /// cloner continue to use <c>AddRef</c>.
     /// </summary>

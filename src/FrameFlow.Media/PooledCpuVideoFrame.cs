@@ -9,9 +9,8 @@ namespace FrameFlow.Media;
 /// <summary>
 /// CPU-resident <see cref="IVideoFrame"/> backed by a pooled byte array
 /// with atomic ref counting. The pooled sibling of the public
-/// one-shot <see cref="CpuVideoFrame"/> — both implement
-/// <see cref="IVideoFrame"/> but only this one supports
-/// <see cref="AddRef"/> (decoder-produced frames don't).
+/// <see cref="CpuVideoFrame"/>; both count references by the same rule
+/// (<see cref="RefCounting"/>).
 /// </summary>
 /// <remarks>
 /// <para>

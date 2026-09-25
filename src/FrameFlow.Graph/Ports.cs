@@ -103,8 +103,7 @@ public sealed class OutputPort<T> : IPort
 /// <param name="Cloner">
 /// When non-<see langword="null"/>, the fan-out invokes <c>Cloner(item)</c>
 /// to produce the per-branch item instead of calling <c>item.AddRef()</c>.
-/// Required for one-shot frame types (e.g. converter outputs) where
-/// <c>AddRef</c> throws by design.
+/// Required for an item type whose <c>AddRef</c> throws.
 /// </param>
 /// <param name="Inherit">
 /// Whether this edge is the trunk of a chain-built fork, and so takes the incoming ref rather

@@ -95,11 +95,6 @@ public sealed class VideoFrameRef : IRefCounted, IFrame
     public IRefCounted AddRef()
     {
         var f = _frame ?? throw new ObjectDisposedException(nameof(VideoFrameRef));
-        // May throw for one-shot frames (decoder-produced
-        // Media.CpuVideoFrame, converter outputs); that's the same
-        // contract IVideoFrame.AddRef already exposes — callers that
-        // need fan-out over one-shot frames must use
-        // VideoFrameExtensions.CloneCpu instead.
         f.AddRef();
         return new VideoFrameRef(f);
     }
@@ -115,11 +110,10 @@ public sealed class VideoFrameRef : IRefCounted, IFrame
     /// Used by sink adapters that pass the frame to
     /// <see cref="IVideoSink.PresentAsync"/> per the ADR-0044 sink
     /// contract ("the sink takes ownership of the frame and is
-    /// responsible for disposing it"). Detach avoids both
-    /// the <see cref="AddRef"/> call (which one-shot decoder frames
-    /// reject) and the double-dispose that would otherwise happen
-    /// when the substrate releases the wrapper after the sink body
-    /// returns.
+    /// responsible for disposing it"). Detach hands the sink the
+    /// wrapper's own reference, and avoids the double-dispose that would
+    /// otherwise happen when the substrate releases the wrapper after the
+    /// sink body returns.
     /// </remarks>
     public IVideoFrame? Detach() => Interlocked.Exchange(ref _frame, null);
 

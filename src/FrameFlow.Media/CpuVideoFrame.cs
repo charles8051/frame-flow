@@ -20,14 +20,17 @@ namespace FrameFlow.Media;
 /// Implements <see cref="IVideoFrame"/> for the sink-based pipeline path.
 /// </para>
 /// <para>
-/// Decoder-produced frames are one-shot (not pooled), so <see cref="AddRef"/>
-/// throws <see cref="NotSupportedException"/>. Pooled frames use the
-/// <c>Playback.CpuVideoFrame</c> implementation instead.
+/// The frame counts its own references (<see cref="RefCounting"/>, ADR-0080):
+/// <see cref="AddRef"/> returns this same instance, every holder shares the one
+/// buffer, and the final <see cref="Dispose"/> returns it to its pool. After that
+/// <see cref="AsCpu"/> returns <see langword="null"/> and <see cref="ToCpu"/> throws.
 /// </para>
 /// </remarks>
 public sealed class CpuVideoFrame : IVideoFrame
 {
-    /// <summary>Pooled pixel buffer. Caller must dispose to return to pool.</summary>
+    private int _refCount = 1;
+
+    /// <summary>Pooled pixel buffer, returned to its pool on the frame's final release.</summary>
     public IMemoryOwner<byte> PixelData { get; }
 
     /// <inheritdoc />
@@ -78,20 +81,21 @@ public sealed class CpuVideoFrame : IVideoFrame
     // ── IVideoFrame ref counting ──────────────────────────────────────
 
     /// <inheritdoc />
-    /// <exception cref="NotSupportedException">
-    /// Decoder-produced frames are one-shot and do not participate in
-    /// ref-counted pooling. Use <c>Playback.CpuVideoFrame</c> for pooled frames.
-    /// </exception>
-    public IVideoFrame AddRef() =>
-        throw new NotSupportedException(
-            "Decoder-produced Media.CpuVideoFrame is one-shot and does not support ref counting."
-        );
+    /// <exception cref="ObjectDisposedException">The frame has already been released.</exception>
+    public IVideoFrame AddRef()
+    {
+        RefCounting.AddRef(ref _refCount, this);
+        return this;
+    }
 
     // ── IVideoFrame domain access ─────────────────────────────────────
 
     /// <inheritdoc />
     public CpuFrameData? AsCpu()
     {
+        if (Volatile.Read(ref _refCount) <= 0)
+            return null;
+
         return new CpuFrameData(
             PlaneY: PixelData.Memory,
             PlaneU: ReadOnlyMemory<byte>.Empty,
@@ -105,8 +109,13 @@ public sealed class CpuVideoFrame : IVideoFrame
     }
 
     /// <inheritdoc />
-    public CpuFrameData ToCpu() => AsCpu()!.Value;
+    public CpuFrameData ToCpu() =>
+        AsCpu() ?? throw new ObjectDisposedException(nameof(CpuVideoFrame));
 
     /// <inheritdoc />
-    public void Dispose() => PixelData.Dispose();
+    public void Dispose()
+    {
+        if (RefCounting.Release(ref _refCount, this))
+            PixelData.Dispose();
+    }
 }

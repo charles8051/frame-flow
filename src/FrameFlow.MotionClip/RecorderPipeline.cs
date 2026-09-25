@@ -37,9 +37,9 @@ internal static class RecorderPipeline
     /// the gate (which drives motion detection and clip assembly) and the
     /// preview sink (which renders frames to the UI). The preview branch
     /// carries an explicit cloner so the substrate hands the sink an
-    /// independent <see cref="VideoFrameExtensions.CloneCpu"/> per frame —
-    /// required because the converter output is a one-shot frame type whose
-    /// <see cref="IRefCounted.AddRef"/> throws by design (ADR-0054). The
+    /// independent <see cref="VideoFrameExtensions.CloneCpu"/> per frame. That
+    /// copy was required while converter outputs could not be shared (ADR-0054);
+    /// they count references now (ADR-0080), and #380 removes the cloner. The
     /// preview edge is <see cref="EdgeOptions.LatestWins(int)"/> so a slow
     /// UI drops frames rather than back-pressuring motion detection. The
     /// gate-to-encoder edge stays <c>Buffered(cap=1)</c> so "save in
