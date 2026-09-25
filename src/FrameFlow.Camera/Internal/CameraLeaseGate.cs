@@ -19,7 +19,7 @@ internal sealed partial class CameraLeaseGate
     private readonly string _source;
     private CameraLeaseState _state;
     private long _framesCopied;
-    private bool _shortfallReported;
+    private int _shortfallReported;
 
     public CameraLeaseGate(int limit, ILogger logger, string source)
     {
@@ -54,41 +54,25 @@ internal sealed partial class CameraLeaseGate
     /// <summary>Frames handed to the graph as copies.</summary>
     public long FramesCopied => Interlocked.Read(ref _framesCopied);
 
-    /// <summary>Whether the graph's budget has the source copy every frame.</summary>
-    public bool CopiesEveryFrame
-    {
-        get
-        {
-            lock (_gate)
-                return _state.CopiesEveryFrame;
-        }
-    }
-
     /// <summary>
-    /// Takes the graph's camera budget before a run (ADR-0081, decision 4). A graph that can
-    /// hold more camera frames than the session's BufferCount leaves it gets a copy of every
-    /// frame, and the shortfall is logged once.
+    /// Takes the graph's camera budget before a run (ADR-0081, decision 4). A budget larger than
+    /// the session's <c>BufferCount</c> leaves the graph is logged once. Frames past the limit
+    /// are copied by <see cref="HandOff"/> whatever the budget, so capture keeps its buffers
+    /// either way.
     /// </summary>
     public void ApplyBudget(FrameBudget budget)
     {
         ArgumentNullException.ThrowIfNull(budget);
-        bool report;
-        int limit;
-        lock (_gate)
-        {
-            limit = _state.Limit;
-            bool copyAll = CameraLeaseBudget.CopiesEveryFrame(budget.Frames, limit);
-            _state = _state with { CopiesEveryFrame = copyAll };
-            report = copyAll && !_shortfallReported;
-            _shortfallReported |= copyAll;
-        }
-
-        if (!report)
+        int limit = Limit;
+        if (!CameraLeaseBudget.Exceeds(budget.Frames, limit))
             return;
+        if (Interlocked.Exchange(ref _shortfallReported, 1) != 0)
+            return;
+
         if (budget.Frames is { } frames)
             LogShortfall(_logger, _source, frames, limit, frames - limit);
         else
-            LogUnbounded(_logger, _source, budget.UnboundedHolder!);
+            LogUnbounded(_logger, _source, budget.UnboundedHolder!, limit);
     }
 
     /// <summary>
@@ -137,8 +121,9 @@ internal sealed partial class CameraLeaseGate
     [LoggerMessage(
         Level = LogLevel.Information,
         Message = "Camera source {Source}: the graph can hold {Frames} camera frames, more than the "
-            + "{Limit} the session's BufferCount leaves it, so every frame is copied into CPU "
-            + "memory. Raise CameraSessionOptions.BufferCount by {Shortfall} to keep them zero-copy."
+            + "{Limit} the session's BufferCount leaves it, so frames past {Limit} are copied into "
+            + "CPU memory. Raise CameraSessionOptions.BufferCount by {Shortfall} to keep them all "
+            + "zero-copy."
     )]
     private static partial void LogShortfall(
         ILogger logger,
@@ -151,7 +136,8 @@ internal sealed partial class CameraLeaseGate
     [LoggerMessage(
         Level = LogLevel.Information,
         Message = "Camera source {Source}: '{Holder}' declares no bound on the frames it holds, so "
-            + "every frame is copied into CPU memory. Declare its Holding to keep them zero-copy."
+            + "frames past {Limit} are copied into CPU memory. Declare its Holding to size the "
+            + "session for the graph."
     )]
-    private static partial void LogUnbounded(ILogger logger, string source, string holder);
+    private static partial void LogUnbounded(ILogger logger, string source, string holder, int limit);
 }

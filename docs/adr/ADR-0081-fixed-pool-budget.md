@@ -294,8 +294,10 @@ complete.
   holds without bound over a fixed pool is refused and names the holder: the player refuses at
   load, and a plain graph refuses at run. A budget larger than the pool the decoder was opened for
   is logged once, and the guard waits.
-- **The camera push source.** It copies every frame when the graph can hold more than its share of
-  `BufferCount`, and logs the shortfall once.
+- **The camera push source.** It logs once, before the run, when the graph can hold more than its
+  share of `BufferCount`. It does not copy every frame, as decision 4 says: the guard (decision 5)
+  already copies each frame that arrives while the graph holds its share, which protects capture
+  as well at a fraction of the copies. Review on #411 pointed that out.
 - **Sessions FrameFlow opens.** The recorder's `CameraTracking` opens its session with at least the
   graph's camera budget plus the bridge's frame. The camera examples open theirs with 4.
 

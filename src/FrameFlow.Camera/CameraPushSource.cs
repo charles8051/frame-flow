@@ -30,10 +30,10 @@ namespace FrameFlow.Camera;
 /// <para>
 /// <b>Leases.</b> The graph may hold <c>BufferCount</c> of the session's frames, less the
 /// bridge's capacity, as zero-copy leases, since a consumer holding more than
-/// <c>BufferCount</c> starves capture (ADR-0081). A graph whose camera budget is larger gets
-/// a copy of every frame in CPU memory, and the shortfall is logged once. A graph that fits
-/// still gets a copy of any frame that arrives while it holds its share, with the lease
-/// returned at once.
+/// <c>BufferCount</c> starves capture (ADR-0081). A frame that arrives while the graph holds its
+/// share is copied into CPU memory and its lease returned at once. A graph whose camera budget
+/// is larger than its share is logged once before it runs, with the <c>BufferCount</c> that
+/// would keep every frame zero-copy.
 /// </para>
 /// <para>
 /// It does <b>not</b> own the <see cref="CameraSession"/>: whoever opened the

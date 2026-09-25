@@ -132,57 +132,58 @@ public sealed class CameraLeaseGateTests
     }
 
     [Fact]
-    public void ABudgetOverTheLimit_CopiesEveryFrame_AndLogsTheShortfallOnce()
+    public void ABudgetOverTheLimit_IsLoggedOnce_AndOnlyFramesPastTheLimitAreCopied()
     {
         var logger = new RecordingLogger();
         var gate = new CameraLeaseGate(limit: 2, logger, "camera");
 
         gate.ApplyBudget(FrameBudget.Of(3));
         gate.ApplyBudget(FrameBudget.Of(3));
+        Assert.Equal(1, logger.Informations);
+
         var first = gate.HandOff(new FakeCameraFrame(Pixel));
         var second = gate.HandOff(new FakeCameraFrame(Pixel));
+        var third = gate.HandOff(new FakeCameraFrame(Pixel));
 
-        Assert.True(gate.CopiesEveryFrame);
-        Assert.IsType<CpuVideoFrame>(first);
-        Assert.IsType<CpuVideoFrame>(second);
-        Assert.Equal(0, gate.Outstanding);
-        Assert.Equal(1, logger.Informations);
+        Assert.IsType<CameraVideoFrame>(first);
+        Assert.IsType<CameraVideoFrame>(second);
+        Assert.IsType<CpuVideoFrame>(third);
         first.Dispose();
         second.Dispose();
+        third.Dispose();
     }
 
     [Fact]
-    public void ABudgetThatFits_HandsOverLeases()
+    public void ABudgetThatFits_IsNotLogged()
     {
         var logger = new RecordingLogger();
         var gate = new CameraLeaseGate(limit: 3, logger, "camera");
 
         gate.ApplyBudget(FrameBudget.Of(3));
-        var frame = gate.HandOff(new FakeCameraFrame(Pixel));
 
-        Assert.False(gate.CopiesEveryFrame);
-        Assert.IsType<CameraVideoFrame>(frame);
         Assert.Equal(0, logger.Informations);
-        frame.Dispose();
     }
 
     [Fact]
     public async Task ThePushSource_IsToldItsGraphsBudget_BeforeTheRun()
     {
         // A BufferCount of 3 less a bridge of 1 leaves the graph 2. The sink declares nothing, so
-        // the budget is unbounded and every frame is a copy.
+        // the budget is unbounded, which is logged before the first frame arrives.
         using var bridge = new CameraFramePushBridge(capacity: 1);
+        var logger = new RecordingLogger();
         var (source, gate) = CameraPushSource.GuardedSource(
             bridge,
             bufferCount: 3,
             capacity: 1,
-            new RecordingLogger(),
+            logger,
             "camera"
         );
+        int loggedBeforeTheFrame = -1;
         var received = new TaskCompletionSource<IVideoFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
         var graph = new FrameFlow.Graph.Graph();
         graph.Pipeline(source).To(new SinkNode<IVideoFrame>("sink", (frame, _) =>
         {
+            loggedBeforeTheFrame = logger.Informations;
             received.TrySetResult(frame.AddRef());
             return ValueTask.CompletedTask;
         }));
@@ -195,10 +196,12 @@ public sealed class CameraLeaseGateTests
         bridge.Dispose();
         await run.WaitAsync(TimeSpan.FromSeconds(15));
 
-        Assert.True(gate.CopiesEveryFrame);
-        Assert.IsType<CpuVideoFrame>(only);
-        Assert.Equal(0, lease.RefCount);
+        Assert.Equal(1, loggedBeforeTheFrame);
+        // Under its share, the frame is the lease itself.
+        Assert.IsType<CameraVideoFrame>(only);
+        Assert.Equal(1, gate.Outstanding);
         only.Dispose();
+        Assert.Equal(0, lease.RefCount);
     }
 
     /// <summary>Counts information-level entries.</summary>

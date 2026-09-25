@@ -20,15 +20,7 @@ internal enum CameraHandoff
 /// <param name="Outstanding">Leases handed to the graph and not yet released.</param>
 /// <param name="Limit">The most leases the graph may hold.</param>
 /// <param name="CopyReported">Whether the first copy has been logged.</param>
-/// <param name="CopiesEveryFrame">
-/// Whether the graph can hold more camera frames than the limit, so every frame is copied.
-/// </param>
-internal readonly record struct CameraLeaseState(
-    int Outstanding,
-    int Limit,
-    bool CopyReported,
-    bool CopiesEveryFrame = false
-)
+internal readonly record struct CameraLeaseState(int Outstanding, int Limit, bool CopyReported)
 {
     /// <summary>A source that has handed nothing out.</summary>
     public static CameraLeaseState Initial(int limit) => new(0, limit, false);
@@ -59,27 +51,23 @@ internal static class CameraLeaseBudget
         Math.Max(0, bufferCount - bridgeCapacity);
 
     /// <summary>
-    /// Whether the source copies every frame, given the graph's camera budget: when the graph can
-    /// hold more than the limit, or holds without bound (ADR-0081, decision 4).
+    /// Whether the graph's camera budget exceeds the limit: the graph can hold more camera frames
+    /// than the session's <c>BufferCount</c> leaves it, or holds without bound (ADR-0081, decision
+    /// 4). Frames past the limit are then copied, one at a time, by <see cref="Next"/>.
     /// </summary>
-    public static bool CopiesEveryFrame(int? budgetFrames, int limit) =>
+    public static bool Exceeds(int? budgetFrames, int limit) =>
         budgetFrames is not { } frames || frames > limit;
 
     /// <summary>
-    /// Hands the next frame over: as its lease while the graph holds fewer than the limit and the
-    /// budget fits, otherwise as a copy. The first copy past the limit is reported; a budget that
-    /// does not fit is reported where it is applied.
+    /// Hands the next frame over: as its lease while the graph holds fewer than the limit,
+    /// otherwise as a copy. The first copy is reported.
     /// </summary>
     public static (CameraLeaseState State, CameraHandoff Handoff, bool ReportCopy) Next(
         CameraLeaseState state
     ) =>
-        !state.CopiesEveryFrame && state.Outstanding < state.Limit
+        state.Outstanding < state.Limit
             ? (state with { Outstanding = state.Outstanding + 1 }, CameraHandoff.Lease, false)
-            : (
-                state with { CopyReported = true },
-                CameraHandoff.Copy,
-                !state.CopyReported && !state.CopiesEveryFrame
-            );
+            : (state with { CopyReported = true }, CameraHandoff.Copy, !state.CopyReported);
 
     /// <summary>The graph released a lease it was handed.</summary>
     public static CameraLeaseState Released(CameraLeaseState state) =>
