@@ -6,10 +6,10 @@ namespace FrameFlow.Avalonia.Tests;
 public sealed class AvaloniaVideoSinkHoldingTests
 {
     [AvaloniaFact]
-    public async Task MaxHeldFrames_IsTheFrameSlot()
+    public async Task MaxHeldFrames_IsTheSlotAndAFrameARendererHasTaken()
     {
         await using var sink = new AvaloniaVideoSink();
 
-        Assert.Equal(1, sink.MaxHeldFrames);
+        Assert.Equal(2, sink.MaxHeldFrames);
     }
 }

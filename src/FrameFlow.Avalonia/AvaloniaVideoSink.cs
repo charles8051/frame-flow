@@ -268,10 +268,11 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
 
     /// <inheritdoc />
     /// <remarks>
-    /// The frame slot. A bound view copies the frame out and releases it in the call; with no
-    /// view the slot keeps it until the next render.
+    /// The frame slot, and a frame taken by <see cref="RenderPendingFrame"/>, which its caller
+    /// holds while it renders and the slot fills again. A bound view copies the frame out and
+    /// releases it in the call.
     /// </remarks>
-    public int? MaxHeldFrames => 1;
+    public int? MaxHeldFrames => 2;
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()
