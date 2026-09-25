@@ -83,13 +83,19 @@ FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.FramesDecoded.get
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.FramesDecoded.init -> void
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareBackend.get -> FrameFlow.Media.HardwareDecodeBackendKind?
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareBackend.init -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareFrameBudget.get -> int
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareFrameBudget.init -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareFramesOutstanding.get -> int
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareFramesOutstanding.init -> void
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwarePoolSize.get -> int
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwarePoolSize.init -> void
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedForBackpressure.get -> long
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedForBackpressure.init -> void
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedToGopResync.get -> long
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedToGopResync.init -> void
-FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.VideoDecoderDiagnosticsSnapshot(long FramesDecoded, long DecodeErrors, FrameFlow.Media.HardwareDecodeBackendKind? HardwareBackend, long PacketsDroppedForBackpressure = 0, long PacketsDroppedToGopResync = 0, int HardwarePoolSize = 0) -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PoolBudgetWaits.get -> long
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PoolBudgetWaits.init -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.VideoDecoderDiagnosticsSnapshot(long FramesDecoded, long DecodeErrors, FrameFlow.Media.HardwareDecodeBackendKind? HardwareBackend, long PacketsDroppedForBackpressure = 0, long PacketsDroppedToGopResync = 0, int HardwarePoolSize = 0, int HardwareFramesOutstanding = 0, int HardwareFrameBudget = 0, long PoolBudgetWaits = 0) -> void
 FrameFlow.Decoding.FrameFlowDecodingOptions
 FrameFlow.Decoding.FrameFlowDecodingOptions.AudioDecoderFactory.get -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IAudioDecoder?>?
 FrameFlow.Decoding.FrameFlowDecodingOptions.AudioDecoderFactory.set -> void

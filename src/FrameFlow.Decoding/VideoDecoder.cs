@@ -52,7 +52,7 @@ namespace FrameFlow.Decoding;
 /// The output stride is always <c>width * 4</c> (no padding).
 /// </para>
 /// </remarks>
-public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFrame>
+public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFrame>, IPoolWaiter
 {
     private readonly CodecContextHandle _codecCtx;
     private readonly FrameHandle _frame;
@@ -73,6 +73,44 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     // snapshot. Written by the decode worker and on dispose, both under _codecSync.
     private DecodePoolGeneration? _pool;
     private int _hwPoolSize;
+
+    // Times the decoder waited at its pool budget before decoding (#383), counted as each wait
+    // starts.
+    private long _poolBudgetWaits;
+    private int _poolWatchdogSuspended;
+    private int _poolWatchdogEpoch;
+
+    /// <summary>
+    /// Set while playback is paused. Holders then keep their frames on purpose, and a decoder
+    /// parked at its pool budget is the intended state, so the watchdog does not report it.
+    /// </summary>
+    internal bool PoolWatchdogSuspended
+    {
+        get => Volatile.Read(ref _poolWatchdogSuspended) != 0;
+        set
+        {
+            if (Interlocked.Exchange(ref _poolWatchdogSuspended, value ? 1 : 0) != (value ? 1 : 0))
+                Interlocked.Increment(ref _poolWatchdogEpoch);
+        }
+    }
+
+    void IPoolWaiter.OnPoolWait() => Interlocked.Increment(ref _poolBudgetWaits);
+
+    bool IPoolWaiter.PoolWatchdogSuspended => PoolWatchdogSuspended;
+
+    int IPoolWaiter.PoolWatchdogEpoch => Volatile.Read(ref _poolWatchdogEpoch);
+
+    /// <summary>
+    /// The clock the pool guard's watchdog runs on. A test injects a fake to make the report
+    /// deterministic.
+    /// </summary>
+    internal TimeProvider PoolWatchdogClock { get; set; } = TimeProvider.System;
+
+    /// <summary>
+    /// How long the decoder waits at its pool budget with no release before it reports a
+    /// probable deadlock. It keeps waiting afterwards.
+    /// </summary>
+    internal TimeSpan PoolWatchdogInterval { get; set; } = TimeSpan.FromSeconds(10);
 
     // ADR-0038: when true, hwaccel-active decoders yield GpuVideoFrame
     // (cloned AVFrame*) instead of doing the internal readback path.
@@ -356,13 +394,19 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         CancellationToken cancellationToken
     )
     {
+        bool pending;
         lock (_codecSync)
         {
             if (_disposed)
                 return false;
             // A packet held un-accepted from a prior (cancelled) session is the next input.
-            if (_pendingRetryPacketPtr != nint.Zero)
-                return true;
+            pending = _pendingRetryPacketPtr != nint.Zero;
+        }
+
+        if (pending)
+        {
+            await WaitForPoolRoomAsync(cancellationToken).ConfigureAwait(false);
+            return true;
         }
 
         while (await _packetQueue.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
@@ -379,6 +423,10 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 {
                     _pendingRetryPacketPtr = item.packetPtr;
                 }
+
+                // Held as the pending packet first, so a cancelled wait keeps it for the next
+                // session rather than dropping it.
+                await WaitForPoolRoomAsync(cancellationToken).ConfigureAwait(false);
                 return true;
             }
         }
@@ -529,6 +577,22 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     }
 
     /// <summary>
+    /// Waits, before a packet is decoded, while the current pool has handed out its budget
+    /// (ADR-0081 decision 5). Decoding into an exhausted pool fails the call and faults the
+    /// decoder (#370), so the pool paces the decoder instead. A flush never reaches here:
+    /// draining allocates nothing.
+    /// </summary>
+    private async ValueTask WaitForPoolRoomAsync(CancellationToken cancellationToken)
+    {
+        if (_pool is not { } pool)
+            return;
+
+        await pool
+            .WaitForRoomAsync(PoolWatchdogClock, PoolWatchdogInterval, this, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Follows the pool the decoded frame came from. The pool is created in <c>get_format</c>,
     /// so the first hardware frame is the earliest point it is known; a renegotiation can
     /// replace it with another, or with software decode, which has none.
@@ -540,10 +604,18 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         if (framesContext == (_pool?.FramesContext ?? nint.Zero))
             return;
 
+        var backend = (HardwareDecodeBackendKind)_boundBackend;
         SetPool(
             framesContext == nint.Zero
                 ? null
-                : new DecodePoolGeneration(framesContext, accessor.GetHwFramesPoolSize())
+                : new DecodePoolGeneration(
+                    framesContext,
+                    accessor.GetHwFramesPoolSize(),
+                    // Nothing sets extra_hw_frames yet, so the budget is the spare surfaces.
+                    DecodePoolGuard.BudgetFor(backend, extraHwFrames: 0),
+                    _logger,
+                    backend.ToString()
+                )
         );
     }
 
@@ -771,7 +843,10 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             HardwareBackend: HardwareBackend,
             PacketsDroppedForBackpressure: Interlocked.Read(ref _packetsDroppedForBackpressure),
             PacketsDroppedToGopResync: Interlocked.Read(ref _packetsDroppedToGopResync),
-            HardwarePoolSize: Volatile.Read(ref _hwPoolSize)
+            HardwarePoolSize: Volatile.Read(ref _hwPoolSize),
+            HardwareFramesOutstanding: _pool?.Outstanding ?? 0,
+            HardwareFrameBudget: _pool?.Budget ?? 0,
+            PoolBudgetWaits: Interlocked.Read(ref _poolBudgetWaits)
         );
 
     /// <inheritdoc/>

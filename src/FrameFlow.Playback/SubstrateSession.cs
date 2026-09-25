@@ -913,6 +913,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// </remarks>
     private void OpenGates()
     {
+        if (_videoDecoder is { } decoder)
+            decoder.PoolWatchdogSuspended = false;
         _videoPacer?.Resume();
         _videoGate.Open();
         _audioGate.Open();
@@ -926,6 +928,11 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         _videoGate.Close();
         _audioGate.Close();
         _videoPacer?.Pause();
+
+        // Holders stop releasing while the gates are shut, so a decoder parked at its pool
+        // budget is waiting on purpose (ADR-0081 decision 5).
+        if (_videoDecoder is { } decoder)
+            decoder.PoolWatchdogSuspended = true;
     }
 
     public async ValueTask PauseAsync(CancellationToken cancellationToken = default)
