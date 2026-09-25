@@ -1,6 +1,7 @@
 # Fixed-pool frames are budgeted when the graph is built
 
-**Status:** Proposed. Draft, pending number assignment at merge. Not implemented.
+**Status:** Proposed. Draft, pending number assignment at merge. Not implemented. Revised once
+after review; see [Revision history](#revision-history).
 
 **Date:** 2026-09-24
 
@@ -84,9 +85,14 @@ that release within one frame period. Review found four problems:
 
 Every node or sink that can hold a frame past its own call declares the most frames it holds, as a
 count. Time does not matter to a pool, so `ClockSelectVideoSink` declares 3 and `PausableGate`
-declares 1, although both hold without a time limit while paused. A holder bounded by a duration,
-`SyncJoinNode`'s `Window` and `MaxLead`, converts at the stream's nominal frame rate. An item that
-carries frames, `ClipSegment`, declares frames, not items. An operator declares 1 for the call in
+declares 1, although both hold without a time limit while paused.
+
+A duration does not bound a count: a variable-frame-rate source can put any number of frames into
+a window. A holder bounded only by a duration therefore also declares a count cap, or counts as
+unbounded. `SyncJoinNode` gains a retained-count limit next to `Window` and `MaxLead`; at the
+limit it stops reading its secondary edge, as it already does past `MaxLead`.
+
+An item that carries frames, `ClipSegment`, declares frames, not items. An operator declares 1 for the call in
 flight, and an edge declares its capacity.
 
 `IVideoSink` gains the declaration, because sinks hold frames outside the graph. A holder that
@@ -136,8 +142,19 @@ Each fixed-pool source counts its own outstanding frames against its budget.
 - **At the budget with no release for a set interval** is reported as a probable deadlock: a holder
   that will never release, rather than a slow one.
 
+The decoder's wait observes the source's cancellation token. Stop, seek and graph teardown cancel
+the source before they drain the holders, so a source parked at its budget exits, and teardown then
+releases what the holders kept. While playback is paused, a decoder parked at its budget is the
+intended state: it has nothing to decode ahead into.
+
+The wait counts only frames the source has handed downstream, so it does not block lateness
+recovery. `ClockSelectVideoSink` drops a late frame and its slice returns at once, and the
+decoder's discard levels (lateness-driven decode skip) drop frames before they are handed on. A
+source at its budget while the pipeline is late has a holder that is not releasing, and waiting is
+then the right response, because decoding into an exhausted pool drops pictures (#370).
+
 The guard's policy is a pure transition from outstanding count, budget and event to an action. The
-shell owns the wait and the watchdog's clock. `DecodePoolMetrics` becomes per decoder and carries
+shell owns the wait, its cancellation and the watchdog's clock. `DecodePoolMetrics` becomes per decoder and carries
 the ceiling, replacing the process-wide gauge.
 
 ### 6. The D3D11 copy-out pool is not how fixed pools are protected
@@ -163,9 +180,13 @@ already rejects. Rejected as the rule for hardware frames.
 It cannot size a pool before the decoder opens, and it finds an under-declared holder only after
 the breach. Kept as decision 5, as the backstop rather than the mechanism.
 
-### D. A large `extra_hw_frames` on every decoder
+### D. A fixed `extra_hw_frames` allowance, with no declarations
 
-VRAM for slices nobody holds, and still no guarantee for a graph that holds more. Rejected.
+Suggested by the automated review of this record as proportionate to the one known path. It is
+proportionate, and it is the first phase of the order of work below. As the end state it is
+rejected: an allowance sized for the player is wrong for any other graph that holds hardware
+frames, and without declarations nothing says which graphs those are until the guard reports a
+breach.
 
 ## Consequences
 
@@ -187,10 +208,23 @@ VRAM for slices nobody holds, and still no guarantee for a graph that holds more
   pump is paced by a consumed stream's wait queue, and with lateness-driven decode skip.
 - Each extra slice costs one decoded surface of VRAM, about 3 MB at 1080p NV12.
 
+## Order of work
+
+1. **The guard and a pool sized for the player.** The per-source guard (decision 5) with its
+   cancellable decoder wait, per-decoder metrics with the ceiling, and an `extra_hw_frames` that
+   covers the player's own path: the ring's 3 frames, the presenter slot's 1 and 1 in flight,
+   less the backend's spare count. The camera source gets the same guard against `BufferCount`. No
+   declarations. This covers the one path that carries hardware frames today and makes a breach
+   anywhere visible.
+2. **Declarations and the build-time budget** (decisions 1 to 4), once a graph outside the player
+   carries fixed-pool frames by default. #294, yielding hardware frames by default, is that
+   trigger. LiveCaptioning's GPU mode and #292's inference operator are the known cases waiting on
+   it.
+
 ## Open questions
 
 - Spare counts for VAAPI, NVDEC and Vulkan.
-- Which frame rate converts a duration bound on a variable-frame-rate source.
+- What `SyncJoinNode` does with the secondaries behind the primary when it reaches its count limit.
 - Whether operators declare explicitly or default to 1.
 - The watchdog interval.
 - Whether #294, yielding hardware frames by default, waits for this record.
@@ -205,3 +239,16 @@ None has run.
 - #370's mechanism is reproduced before decision 5's decoder wait is built: hold frames until the
   pool-exhausted log line appears, then compare the rest of the GOP against a software decode.
 - With `extra_hw_frames` set from the budget, the same hold no longer produces the log line.
+- A decoder parked at its budget exits when its source is cancelled. The test barriers on the
+  source's own exit signal, not on a delay.
+
+## Revision history
+
+**2026-09-24, first automated review (#371).** Four findings. A duration bound does not bound a
+count on a variable-frame-rate source, so decision 1 now requires a count cap next to any duration
+bound, and `SyncJoinNode` gains one. The decoder's wait had no stated exit, so decision 5 now says
+it observes cancellation and that teardown cancels sources before draining holders. The wait was
+said to be able to block lateness recovery; decision 5 now says why it does not, since it counts
+only frames handed downstream. Graph-wide declarations were called disproportionate to the one
+known path; the new order of work lands the guard and a pool sized for the player first, and the
+declarations when #294 makes hardware frames the default.

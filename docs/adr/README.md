@@ -262,7 +262,9 @@ land.
   declare whether they forward their input's storage, and each fixed-pool source sums the counts
   to its first storage boundary when the graph is built. The decoder sizes its pool with
   `extra_hw_frames`, the camera sizes `BufferCount` or copies, and zero-copy is whatever fits. A
-  per-source guard makes a breach loud and has the decoder wait instead of dropping. Rejects
+  per-source guard makes a breach loud and has the decoder wait instead of dropping. It lands
+  in two phases: the guard and a pool sized for the player first, the declarations once #294 makes
+  hardware frames the default. Rejects
   copy-out by default, the ownership record's first draft, because its opt-in rule is false for
   the player's own presenter and its D3D11 copy depends on work gated on #231.
 - [Declared pull: the master clock as a graph-visible dependency](declared-pull-clock.md) — the
