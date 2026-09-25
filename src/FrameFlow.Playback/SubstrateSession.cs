@@ -1538,7 +1538,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// <remarks>
     /// Computed on a copy of the path with a stand-in source and the pacer's declaration, so it
     /// is known before the decoder opens and can size the decoder's pool. The configurator runs
-    /// once more to build the copy, as it does for every graph a seek rebuilds.
+    /// once more to build the copy, as it does for every graph a seek rebuilds, and its contract
+    /// is to wire the same path each time.
     /// </remarks>
     internal static FrameBudget VideoFrameBudget(
         Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? configurator,

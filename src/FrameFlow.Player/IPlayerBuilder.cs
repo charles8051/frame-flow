@@ -103,8 +103,10 @@ public interface IPlayerBuilder
     /// <remarks>
     /// The configurator runs once for each graph the player builds: for each item, after each
     /// seek, and, when the player sizes a hardware decoder's pool, once more before the decoder
-    /// opens. Build new nodes on each call. A node instance is wired into one graph only, so a
-    /// configurator that attaches the same node twice fails with its input already connected.
+    /// opens. Build new nodes on each call, wired the same way each time: the player sizes the
+    /// pool from one call's graph and runs another's. A node instance is wired into one graph
+    /// only, so a configurator that attaches the same node twice fails with its input already
+    /// connected.
     /// </remarks>
     /// <remarks>Replaces any previously-configured video transform.</remarks>
     IPlayerBuilder ConfigureVideo(
@@ -117,8 +119,9 @@ public interface IPlayerBuilder
     /// </summary>
     /// <remarks>
     /// The configurator runs once for each graph the player builds: for each item, and after
-    /// each seek. Build new nodes on each call. A node instance is wired into one graph only, so a
-    /// configurator that attaches the same node twice fails with its input already connected.
+    /// each seek. Build new nodes on each call, wired the same way each time. A node instance is
+    /// wired into one graph only, so a configurator that attaches the same node twice fails with
+    /// its input already connected.
     /// </remarks>
     /// <remarks>Replaces any previously-configured audio transform.</remarks>
     IPlayerBuilder ConfigureAudio(
