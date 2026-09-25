@@ -66,7 +66,8 @@ public sealed class GpuVideoFrame : IVideoFrame
     private int _refCount = 1;
 
     // The pool this frame's surface belongs to, held until the final release so the pool's
-    // surfaces stay in DecodePoolMetrics.Capacity while this frame pins one of them (#229).
+    // surfaces stay in DecodePoolMetrics.Capacity while this frame pins one of them (#229), and
+    // so the pool's guard can count the frame against its budget (#383).
     private DecodePoolGeneration? _pool;
 
     /// <inheritdoc/>
@@ -186,7 +187,7 @@ public sealed class GpuVideoFrame : IVideoFrame
             return null;
 
         var frame = FromOwnedAvFrame(cloned, width, height, softwareFormat, pts, duration, backend);
-        pool?.Retain();
+        pool?.AttachFrame();
         frame._pool = pool;
         return frame;
     }
@@ -380,7 +381,7 @@ public sealed class GpuVideoFrame : IVideoFrame
         _handle = null;
         // The pinned hwframe-pool slice is returned (perf survey §A1 telemetry).
         DecodePoolMetrics.OnLeaseReleased();
-        _pool?.Release();
+        _pool?.DetachFrame();
         _pool = null;
     }
 }

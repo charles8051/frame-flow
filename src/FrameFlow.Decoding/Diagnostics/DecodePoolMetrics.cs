@@ -15,8 +15,10 @@ namespace FrameFlow.Decoding.Diagnostics;
 /// A pacing path that holds decoded frames keeps their slices pinned, so under load the
 /// outstanding count climbs toward the pool's size. When a pool runs out, FFmpeg 9.0 fails the
 /// decode call and the decoder faults (#370, reproduced in
-/// <c>docs/investigations/2026-09-25-d3d11va-pool-exhaustion.md</c>). A pacing change that
-/// <i>drops</i> late frames returns their slices at once, so the count stays low.
+/// <c>docs/investigations/2026-09-25-d3d11va-pool-exhaustion.md</c>), so a guarded decoder
+/// waits at its budget instead (<see cref="VideoDecoderDiagnosticsSnapshot.PoolBudgetWaits"/>).
+/// A pacing change that <i>drops</i> late frames returns their slices at once, so the count
+/// stays low.
 /// </para>
 /// <para>
 /// A lease is acquired exactly once per pinned pool surface — in

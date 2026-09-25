@@ -259,12 +259,14 @@ breach.
 
 - Spare counts for VAAPI, NVDEC and Vulkan.
 - Whether operators declare explicitly or default to 1.
-- The watchdog interval.
+- ~~The watchdog interval.~~ 10 s, set in #383, long enough that a slow consumer is not reported.
+  Pause does not cancel the decode pump, so a paused player's decoder can sit at its budget; the
+  session suspends the watchdog while its gates are shut.
 - Whether #294, yielding hardware frames by default, waits for this record.
 
 ## Validation
 
-The #370 reproduction has run; the rest has not.
+The #370 reproduction and the guard's tests (#383) have run; the rest has not.
 
 - The budget computation and the guard's transition are pure and get table tests over topologies
   from the tree: the player's D3D11 path, LiveCaptioning in GPU mode, Camera.Multicast and the
@@ -278,6 +280,13 @@ The #370 reproduction has run; the rest has not.
   source's own exit signal, not on a delay.
 
 ## Revision history
+
+**2026-09-25, the guard (#383).** Decision 5 is implemented. The phase-1 budget is the pool
+model's spare surfaces (3 on D3D11VA and DXVA2) plus `extra_hw_frames`; a growable pool, or an
+uncharacterised one opened without extra surfaces, is unguarded. The guard lives on each pool
+generation, so frames from a pool a renegotiation replaced do not count against the new one. The
+decoder waits after taking its next packet and before sending it, and a flush never waits. With
+every frame held, a hardware H.264 decoder now parks at its budget instead of faulting.
 
 **2026-09-25, #370 reproduced.** Exhaustion fails the decode call rather than dropping the
 picture, and HEVC's spare count on the test clip equals what the player's own path holds. See the

@@ -20,6 +20,10 @@ using System.Runtime.CompilerServices;
 // barrier on the pump being blocked on a full decoder queue.
 [assembly: InternalsVisibleTo("FrameFlow.Player")]
 
+// The playback session suspends the decoder's pool watchdog while it is paused (#383): holders
+// keep their frames on purpose then, and a decoder parked at its budget is not a deadlock.
+[assembly: InternalsVisibleTo("FrameFlow.Playback")]
+
 // ADR-0038: expose GpuVideoFrame's internals to the FrameFlow.Video
 // operators. VideoOperators.ToCpu(id) reaches GpuVideoFrame from there;
 // the readback itself goes through the public ReadbackToCpuBgra32, so

@@ -70,13 +70,31 @@ namespace FrameFlow.Decoding.Diagnostics;
 /// <c>get_format</c>, which runs on the first decoded frame, so it is not known when
 /// <c>Open</c> returns.
 /// </param>
+/// <param name="HardwareFramesOutstanding">
+/// Frames built from the current pool and handed downstream that are still live. Frames from a
+/// pool the decoder has since replaced are not counted: they pin none of the current pool's
+/// surfaces.
+/// </param>
+/// <param name="HardwareFrameBudget">
+/// The most frames the current pool may hand out before the decoder waits for a release
+/// (ADR-0081 decision 5): the pool's spare surfaces plus <c>extra_hw_frames</c>. Zero when the
+/// pool is unguarded: software decode, a pool that grows, or an uncharacterised backend with no
+/// extra surfaces.
+/// </param>
+/// <param name="PoolBudgetWaits">
+/// Times the decoder waited at its budget before decoding. Each is back-pressure from holders
+/// that would otherwise have exhausted the pool and faulted the decoder (#370).
+/// </param>
 public sealed record VideoDecoderDiagnosticsSnapshot(
     long FramesDecoded,
     long DecodeErrors,
     HardwareDecodeBackendKind? HardwareBackend,
     long PacketsDroppedForBackpressure = 0,
     long PacketsDroppedToGopResync = 0,
-    int HardwarePoolSize = 0
+    int HardwarePoolSize = 0,
+    int HardwareFramesOutstanding = 0,
+    int HardwareFrameBudget = 0,
+    long PoolBudgetWaits = 0
 )
 {
     /// <summary>
