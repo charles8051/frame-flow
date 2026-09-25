@@ -57,6 +57,31 @@ public sealed class DecodePoolGuardTests
     }
 
     [Theory]
+    // Frames from a fixed pool: the budget fits, is over the pool, or has no bound.
+    [InlineData(HardwareDecodeBackendKind.D3D11Va, 7, true, 10, "Fits")]
+    [InlineData(HardwareDecodeBackendKind.D3D11Va, 7, true, 9, "Fits")]
+    [InlineData(HardwareDecodeBackendKind.D3D11Va, 7, true, 11, "OverPool")]
+    [InlineData(HardwareDecodeBackendKind.D3D11Va, 7, true, null, "Unbounded")]
+    [InlineData(HardwareDecodeBackendKind.Cuda, 0, true, 1, "OverPool")]
+    // No fixed pool reaches the graph: a readback decoder, software, or a pool that grows.
+    [InlineData(HardwareDecodeBackendKind.D3D11Va, 7, false, null, "NoPool")]
+    [InlineData(null, 0, true, null, "NoPool")]
+    [InlineData(HardwareDecodeBackendKind.VideoToolbox, 0, true, null, "NoPool")]
+    public void AGraphsBudget_IsJudgedAgainstThePoolTheDecoderOpened(
+        HardwareDecodeBackendKind? backend,
+        int extra,
+        bool yields,
+        int? budget,
+        string verdict
+    )
+    {
+        Assert.Equal(
+            Enum.Parse<PoolBudgetVerdict>(verdict),
+            DecodePoolGuard.Judge(backend, extra, yields, budget)
+        );
+    }
+
+    [Theory]
     [InlineData(HardwareDecodeBackendKind.D3D11Va, 0, 3)]
     [InlineData(HardwareDecodeBackendKind.D3D11Va, 2, 5)]
     [InlineData(HardwareDecodeBackendKind.D3D11Va, -4, 3)]

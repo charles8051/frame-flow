@@ -7,6 +7,7 @@ using System.Threading.Channels;
 using FFmpeg.AutoGen.Abstractions;
 using FrameFlow.Decoding.Diagnostics;
 using FrameFlow.Decoding.Internal;
+using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
@@ -77,6 +78,53 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     // The surfaces the decoder opened with beyond the pool's default (extra_hw_frames, #384).
     // Set once by Open; part of every pool's budget.
     private int _extraHwFrames;
+
+    // Set once the decoder has logged that a graph can hold more than its pool was opened for.
+    private int _overPoolReported;
+
+    /// <summary>
+    /// Checks a graph's frame budget against the pool this decoder opened (ADR-0081, decision
+    /// 4). A graph source calls it before each run.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The decoder hands the graph frames from a fixed pool, and a holder on the path declares no
+    /// bound. No pool size would be enough, and a readback per frame is what yielding hardware
+    /// frames exists to avoid, so the run is refused.
+    /// </exception>
+    internal void CheckFrameBudget(FrameBudget budget)
+    {
+        ArgumentNullException.ThrowIfNull(budget);
+        var backend = _boundBackend == NoHardwareBackend
+            ? (HardwareDecodeBackendKind?)null
+            : (HardwareDecodeBackendKind)_boundBackend;
+
+        switch (DecodePoolGuard.Judge(backend, _extraHwFrames, YieldHardwareFrames, budget.Frames))
+        {
+            case PoolBudgetVerdict.Unbounded:
+                throw new InvalidOperationException(
+                    $"'{budget.UnboundedHolder}' declares no bound on the frames it holds, and "
+                        + $"this decoder hands the graph frames from a fixed {backend} pool, which "
+                        + "no size can cover. Declare the node's Holding, or the sink's "
+                        + "MaxHeldFrames (ADR-0081)."
+                );
+            case PoolBudgetVerdict.OverPool when Interlocked.Exchange(ref _overPoolReported, 1) == 0:
+                LogBudgetOverPool(
+                    _logger,
+                    budget.Frames!.Value,
+                    backend!.Value.ToString(),
+                    DecodePoolGuard.BudgetFor(backend.Value, _extraHwFrames)
+                );
+                break;
+        }
+    }
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The graph can hold {Frames} hardware frames, and the {Backend} pool was opened "
+            + "for {Budget}. The decoder will wait at {Budget}; open it with "
+            + "VideoDecoderOptions.HeldHardwareFrames = {Frames} to size the pool for the graph."
+    )]
+    private static partial void LogBudgetOverPool(ILogger logger, int frames, string backend, int budget);
 
     // Times the decoder waited at its pool budget before decoding (#383), counted as each wait
     // starts.

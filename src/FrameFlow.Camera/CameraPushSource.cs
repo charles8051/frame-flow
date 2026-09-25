@@ -29,9 +29,11 @@ namespace FrameFlow.Camera;
 /// </para>
 /// <para>
 /// <b>Leases.</b> The graph may hold <c>BufferCount</c> of the session's frames, less the
-/// bridge's capacity, as zero-copy leases. A frame that arrives while the graph holds that many
-/// is copied into CPU memory and its lease returned at once, since a consumer holding more than
-/// <c>BufferCount</c> starves capture (ADR-0081). The first copy is logged.
+/// bridge's capacity, as zero-copy leases, since a consumer holding more than
+/// <c>BufferCount</c> starves capture (ADR-0081). A frame that arrives while the graph holds its
+/// share is copied into CPU memory and its lease returned at once. A graph whose camera budget
+/// is larger than its share is logged once before it runs, with the <c>BufferCount</c> that
+/// would keep every frame zero-copy.
 /// </para>
 /// <para>
 /// It does <b>not</b> own the <see cref="CameraSession"/>: whoever opened the
@@ -108,7 +110,7 @@ public sealed class CameraPushSource : IAsyncDisposable
             logger,
             id
         );
-        return (bridge.AsVideoFrameSourceNode(id, gate.HandOff), gate);
+        return (bridge.AsVideoFrameSourceNode(id, gate.HandOff, gate.ApplyBudget), gate);
     }
 
     /// <summary>

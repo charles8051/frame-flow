@@ -51,6 +51,14 @@ internal static class CameraLeaseBudget
         Math.Max(0, bufferCount - bridgeCapacity);
 
     /// <summary>
+    /// Whether the graph's camera budget exceeds the limit: the graph can hold more camera frames
+    /// than the session's <c>BufferCount</c> leaves it, or holds without bound (ADR-0081, decision
+    /// 4). Frames past the limit are then copied, one at a time, by <see cref="Next"/>.
+    /// </summary>
+    public static bool Exceeds(int? budgetFrames, int limit) =>
+        budgetFrames is not { } frames || frames > limit;
+
+    /// <summary>
     /// Hands the next frame over: as its lease while the graph holds fewer than the limit,
     /// otherwise as a copy. The first copy is reported.
     /// </summary>

@@ -1,3 +1,4 @@
+using FrameFlow.Graph;
 using System.Collections.Concurrent;
 using FrameFlow.Decoding.Diagnostics;
 using FrameFlow.Media;
@@ -39,6 +40,31 @@ public sealed class DecodePoolGuardHardwareTests(FfmpegBootstrapFixture fixture)
         );
 
         Assert.Equal(held, parked.HardwareFrameBudget);
+    }
+
+    /// <summary>
+    /// A graph whose path holds hardware frames without bound is refused before it runs, and
+    /// names the holder (ADR-0081, decision 4). No pool size could cover it.
+    /// </summary>
+    // 27 is AV_CODEC_ID_H264.
+    [RequiresHardwareDecodeFact(codecId: 27, fixedPool: true)]
+    public async Task AGraphThatHoldsWithoutBound_IsRefusedBeforeItRuns()
+    {
+        await using var demux = await OpenAsync(Fixture);
+        await using var decoder = OpenHardware(demux, options: null);
+        // Every packet is queued, so a run that is not refused decodes to the end and the
+        // assertion fails, rather than waiting for input.
+        await QueueAllAsync(demux, decoder);
+        var graph = new FrameFlow.Graph.Graph();
+        graph
+            .Pipeline(decoder.AsSourceNode("video-source"))
+            .To(new SinkNode<IVideoFrame>("keeps-everything", (_, _) => ValueTask.CompletedTask));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => graph.RunAsync(CancellationToken.None).WaitAsync(FailureBound)
+        );
+
+        Assert.Contains("keeps-everything", ex.Message, StringComparison.Ordinal);
     }
 
     /// <summary>

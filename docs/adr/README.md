@@ -431,8 +431,8 @@ presenter freeze (Decision 1) and then — Decision 2, implemented 2026-06-21 �
 gapless by giving the converter its own D3D11 device so it rebinds in place instead of rebuilding,
 plus splitting enqueued-vs-committed present observability.)
 
-ADR-0080 and ADR-0081 were numbered and accepted on 2026-09-24, ahead of their implementation,
-which #372 and #373 track.
+ADR-0080 and ADR-0081 were numbered and accepted on 2026-09-24, and implemented under #372 and
+#373.
 
 - [One ownership contract for graph items](ADR-0080-one-ownership-contract-for-graph-items.md) — every graph item counts
   references except `Media.CpuVideoFrame`, the output of the decoder's CPU path and of every
@@ -449,10 +449,9 @@ which #372 and #373 track.
   pool fails the decode call, so the player faults (#370, reproduced). It
   decides that every holder declares a count, nodes declare whether they forward their input's
   storage, and each fixed-pool source sums the counts to its first storage boundary when the graph
-  is built. The decoder is to size its pool with `extra_hw_frames`, the camera to size
-  `BufferCount` or copy, and zero-copy is whatever fits. A per-source guard is to make a breach
-  loud and have the decoder wait instead of dropping. None of it is implemented; #373 tracks it in
-  two phases, the guard and a pool sized for the player first, the declarations once #294 makes
-  hardware frames the default. Rejects copy-out by default, the ownership record's first draft,
+  is built. The decoder sizes its pool with `extra_hw_frames`, the camera sizes `BufferCount` or
+  copies, and zero-copy is whatever fits. A per-source guard makes a breach loud and has the
+  decoder wait instead of faulting. Implemented under #373 in two phases: the guard and a pool
+  sized for the player, then the declarations and the build-time budget. Rejects copy-out by default, the ownership record's first draft,
   because its opt-in rule is false for the player's own presenter and its D3D11 copy depends on
   work gated on #231.

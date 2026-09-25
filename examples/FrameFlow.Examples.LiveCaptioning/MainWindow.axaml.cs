@@ -571,7 +571,8 @@ public partial class MainWindow : Window
     private static OperatorNode<IVideoFrame, IVideoFrame> GpuFramesOnly() =>
         new(
             "gpu-frames-only",
-            (frame, _) => ValueTask.FromResult<IVideoFrame?>(frame is GpuVideoFrame ? frame : null)
+            (frame, _) => ValueTask.FromResult<IVideoFrame?>(frame is GpuVideoFrame ? frame : null),
+            holding: FrameFlow.Graph.Holding.InFlight
         );
 
     /// <summary>
@@ -607,7 +608,9 @@ public partial class MainWindow : Window
                     _logger?.LogWarning(ex, "YOLO inference faulted on a frame.");
                     return null;
                 }
-            }
+            },
+            // It holds the frame for the inference and emits detections, not frames.
+            holding: FrameFlow.Graph.Holding.Boundary
         );
 
         static async ValueTask<RefBox<DetectionSet>?> DetectAsync(

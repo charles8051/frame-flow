@@ -73,6 +73,9 @@ public static class DecoderSourceAdapters
                 // terminal-consumes.
                 return enumerator.Current;
             },
+            // A decoder yielding hardware frames checks what the graph can hold against its
+            // pool before each run (ADR-0081).
+            onBudget: decoder is VideoDecoder video ? video.CheckFrameBudget : null,
             cleanup: async () =>
             {
                 // The substrate calls this once when the source pump

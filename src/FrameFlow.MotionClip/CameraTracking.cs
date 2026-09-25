@@ -165,8 +165,14 @@ internal static class CameraTracking
         ILogger logger,
         Action? onDisconnected,
         CancellationToken ct
-    ) =>
-        DeviceSessionHost<CameraSession>.StartAsync(
+    )
+    {
+        int bufferCount = Math.Max(
+            cameraBuffers,
+            RecorderPipeline.CameraBufferCount(gate, encoderSink, preview) ?? cameraBuffers
+        );
+
+        return DeviceSessionHost<CameraSession>.StartAsync(
             profile,
             createSession: (device, c) =>
                 CameraSession
@@ -180,12 +186,11 @@ internal static class CameraTracking
                         CameraPixelFormat.Uyvy
                     )
                     .MaxResolution(CameraMaxWidth, CameraMaxHeight)
-                    // Override Periphery's default pool size (3) when the caller
-                    // wants more headroom: under DropIncoming exhaustion, all-
-                    // buffers-outstanding-while-encoder-busy is what produces the
-                    // "Frame dropped (#N); pool exhausted" warnings. Raising
-                    // BufferCount lets the camera ride out a slow encoder burst.
-                    .WithSessionOptions(o => o with { BufferCount = cameraBuffers })
+                    // At least what the recorder's graph can hold of the camera's frames, so
+                    // the push source hands them over zero-copy (ADR-0081), and more when the
+                    // caller wants headroom: all buffers out while the encoder is busy is what
+                    // produces the "Frame dropped (#N)" warnings.
+                    .WithSessionOptions(o => o with { BufferCount = bufferCount })
                     .WithLogger(loggerFactory.CreateLogger<CameraSession>())
                     .OpenAsync(c),
             onSessionEnded: async _ =>
@@ -283,4 +288,5 @@ internal static class CameraTracking
             },
             ct: ct
         );
+    }
 }

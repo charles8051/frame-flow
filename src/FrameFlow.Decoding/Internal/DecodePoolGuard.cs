@@ -21,6 +21,24 @@ internal readonly record struct PoolGuardState(int Outstanding, int Budget, bool
     public bool IsGuarded => Budget > 0;
 }
 
+/// <summary>What a graph's frame budget means for a hardware decoder's pool (ADR-0081).</summary>
+internal enum PoolBudgetVerdict
+{
+    /// <summary>No fixed pool: software decode, readback, or a pool that grows.</summary>
+    NoPool,
+
+    /// <summary>The pool was opened with room for everything the graph can hold.</summary>
+    Fits,
+
+    /// <summary>
+    /// The graph can hold more than the pool was opened for. The decoder waits at its budget.
+    /// </summary>
+    OverPool,
+
+    /// <summary>A holder on the path declares no bound, so no pool size is enough.</summary>
+    Unbounded,
+}
+
 /// <summary>
 /// The fixed-pool guard's policy (ADR-0081 decision 5, phase 1), as total functions over
 /// <see cref="PoolGuardState"/>. The shell (<see cref="DecodePoolGeneration"/>) owns the wait,
@@ -73,6 +91,27 @@ internal static class DecodePoolGuard
     /// </summary>
     public static int BudgetFor(HardwareDecodeBackendKind backend, int extraHwFrames) =>
         SpareSurfaces(backend) is int spare ? spare + Math.Max(0, extraHwFrames) : 0;
+
+    /// <summary>
+    /// Judges a graph's budget against the pool a decoder opened: <paramref name="budgetFrames"/>
+    /// is the most frames the graph can hold, or <see langword="null"/> when a holder on the path
+    /// declares no bound.
+    /// </summary>
+    public static PoolBudgetVerdict Judge(
+        HardwareDecodeBackendKind? backend,
+        int extraHwFrames,
+        bool yieldsHardwareFrames,
+        int? budgetFrames
+    )
+    {
+        if (!yieldsHardwareFrames || backend is not { } bound || SpareSurfaces(bound) is null)
+            return PoolBudgetVerdict.NoPool;
+        if (budgetFrames is not { } frames)
+            return PoolBudgetVerdict.Unbounded;
+        return frames > BudgetFor(bound, extraHwFrames)
+            ? PoolBudgetVerdict.OverPool
+            : PoolBudgetVerdict.Fits;
+    }
 
     /// <summary>Whether the decoder may decode into the pool now.</summary>
     public static bool MayDecode(PoolGuardState state) =>

@@ -70,4 +70,23 @@ internal static class RecorderPipeline
         display.Then(gateNode).To(encoderNode, EdgeOptions.Buffered(capacity: 1));
         return graph;
     }
+
+    /// <summary>
+    /// The <c>BufferCount</c> a camera session needs to hand this pipeline its frames without
+    /// copying: the camera budget of the graph <see cref="BuildGraph"/> wires, and the frame the
+    /// push source's bridge holds ahead of it (ADR-0081, decision 4). <see langword="null"/> when
+    /// the graph holds camera frames without bound.
+    /// </summary>
+    public static int? CameraBufferCount(
+        RecordingGate gate,
+        ClipEncoderSink encoderSink,
+        IVideoSink? preview = null
+    )
+    {
+        var standIn = new SourceNode<IVideoFrame>("camera-source", static _ => default);
+        var budget = BuildGraph(standIn, gate, encoderSink, preview).FrameBudgetFor(standIn.Output);
+
+        // AsPushVideoFrameSource's bridge holds one frame at its default capacity.
+        return budget.Frames + 1;
+    }
 }

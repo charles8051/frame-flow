@@ -165,6 +165,9 @@ internal sealed class HarnessVideoSink : IVideoSink
         );
 
     /// <inheritdoc />
+    /// <summary>The pending frame, and the one the pump is rendering.</summary>
+    public int? MaxHeldFrames => 2;
+
     public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct)
     {
         Interlocked.Increment(ref _formatChangedCount);

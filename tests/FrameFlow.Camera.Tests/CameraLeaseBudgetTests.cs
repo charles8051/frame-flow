@@ -58,6 +58,16 @@ public sealed class CameraLeaseBudgetTests
         Assert.Equal(0, CameraLeaseBudget.Released(CameraLeaseState.Initial(2)).Outstanding);
     }
 
+    [Theory]
+    [InlineData(2, 2, false)]
+    [InlineData(1, 2, false)]
+    [InlineData(3, 2, true)]
+    [InlineData(null, 2, true)]
+    public void ABudgetOverTheLimit_OrUnbounded_Exceeds(int? budget, int limit, bool exceeds)
+    {
+        Assert.Equal(exceeds, CameraLeaseBudget.Exceeds(budget, limit));
+    }
+
     [Fact]
     public void AZeroLimit_CopiesEveryFrame()
     {

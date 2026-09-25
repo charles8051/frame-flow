@@ -1,7 +1,7 @@
 # ADR-0081: Fixed-pool frames are budgeted when the graph is built
 
-**Status:** Accepted (2026-09-24), ahead of its implementation, which #373 tracks. Proposed and
-revised the same day; see [Revision history](#revision-history). Not implemented.
+**Status:** Accepted (2026-09-24) and implemented (2026-09-25, #373). Proposed and revised the
+same day; see [Revision history](#revision-history).
 
 > **Amended 2026-09-25.** #370 is reproduced ([the reproduction](../investigations/2026-09-25-d3d11va-pool-exhaustion.md)). An exhausted
 > pool fails `avcodec_send_packet`, so the decode enumeration throws and the player faults; it does
@@ -266,8 +266,8 @@ breach.
 
 ## Validation
 
-The #370 reproduction and the tests for the guard (#383), the player's allowance (#384) and the
-camera guard (#385) have run; the rest has not.
+The #370 reproduction, the tests for phase 1 (#383, #384, #385) and the budget's table tests over
+the four topologies (#387) have run. Measuring the budget's VRAM cost on the player has not.
 
 - The budget computation and the guard's transition are pure and get table tests over topologies
   from the tree: the player's D3D11 path, LiveCaptioning in GPU mode, Camera.Multicast and the
@@ -283,6 +283,23 @@ camera guard (#385) have run; the rest has not.
   source's own exit signal, not on a delay.
 
 ## Revision history
+
+**2026-09-25, the budget applied (#387, second part).** Decision 4 is implemented, and phase 2 is
+complete.
+
+- **The player.** It computes its video path's budget before the decoder opens, and opens the
+  decoder with `extra_hw_frames` for it. The player's own path over the D3D11 sink is 11 frames,
+  where phase 1's allowance was 5.
+- **Decoders.** Any hardware decoder source checks its graph's budget before each run. A path that
+  holds without bound over a fixed pool is refused and names the holder: the player refuses at
+  load, and a plain graph refuses at run. A budget larger than the pool the decoder was opened for
+  is logged once, and the guard waits.
+- **The camera push source.** It logs once, before the run, when the graph can hold more than its
+  share of `BufferCount`. It does not copy every frame, as decision 4 says: the guard (decision 5)
+  already copies each frame that arrives while the graph holds its share, which protects capture
+  as well at a fraction of the copies. Review on #411 pointed that out.
+- **Sessions FrameFlow opens.** The recorder's `CameraTracking` opens its session with at least the
+  graph's camera budget plus the bridge's frame. The camera examples open theirs with 4.
 
 **2026-09-25, the budget computed (#387, first part).** Decision 3 is implemented.
 
