@@ -154,6 +154,9 @@ current producer fills its buffer synchronously, including through a pointer for
 per-rent `IMemoryOwner` wrapper rather than adding an allocation. `PcmAudioBuffer` gets the same
 factory.
 
+If the fill callback throws, the factory returns the storage to its pool and rethrows the
+original exception unchanged. No frame is published, so nothing else can hold the storage.
+
 This removes `CpuVideoFrame.PixelData` and `PcmAudioBuffer.SampleData` (`:64`), both public
 `IMemoryOwner`s through which any holder can free shared storage, and the unused
 `PooledCpuVideoFrame.WriteData` (`:186`).
@@ -314,3 +317,6 @@ now creates a frame with one call and a fill callback, so the spans never outliv
 plainly that a producer keeping a pointer past it is on its own. Decision 8 now names the
 compatibility break for joins over already-counted frame secondaries, which the first revision
 denied.
+
+**2026-09-24, third automated review.** Decision 5 now says what the fill factory does when the
+callback throws: it returns the storage and rethrows the original exception.
