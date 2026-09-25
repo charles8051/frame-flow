@@ -17,10 +17,13 @@ namespace FrameFlow.Graph;
 /// <b>Output ownership.</b> When the operator returns a non-null
 /// output, the substrate takes ownership of that ref. To forward the
 /// input, return the input itself: the substrate sees the same object
-/// and moves its ref downstream instead of releasing it. Never return
-/// <c>input.AddRef()</c>. <c>AddRef</c> returns the same instance
-/// (ADR-0080), so the substrate still sees a pass-through and moves one
-/// ref, and the extra one leaks on every item.
+/// and moves its ref downstream instead of releasing it. That is right for
+/// every item type. Do not return <c>input.AddRef()</c> instead: for a type
+/// whose <c>AddRef</c> returns the same instance (ADR-0080), the substrate
+/// still sees a pass-through and moves one ref, and the extra one leaks on
+/// every item. Until #42 removes them, <c>VideoFrameRef</c>,
+/// <c>PcmAudioBufferRef</c> and the detection composites return a new
+/// wrapper instead, which the substrate treats as a fresh output.
 /// </para>
 /// <para>
 /// <b>Retaining the input across invocations.</b> If the operator
