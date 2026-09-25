@@ -446,12 +446,13 @@ which #372 and #373 track.
   [ADR-0081](ADR-0081-fixed-pool-budget.md) and frame-pool ownership.
 - [Fixed-pool frames are budgeted when the graph is built](ADR-0081-fixed-pool-budget.md) — hardware
   decode slices and camera leases come from fixed pools, and in FFmpeg 9.0 an exhausted D3D11VA
-  pool drops pictures silently rather than stalling (#370). Every holder declares a count, nodes
-  declare whether they forward their input's storage, and each fixed-pool source sums the counts
-  to its first storage boundary when the graph is built. The decoder sizes its pool with
-  `extra_hw_frames`, the camera sizes `BufferCount` or copies, and zero-copy is whatever fits. A
-  per-source guard makes a breach loud and has the decoder wait instead of dropping. It lands
-  in two phases: the guard and a pool sized for the player first, the declarations once #294 makes
+  pool drops pictures silently rather than stalling (#370), which is still today's behaviour. It
+  decides that every holder declares a count, nodes declare whether they forward their input's
+  storage, and each fixed-pool source sums the counts to its first storage boundary when the graph
+  is built. The decoder is to size its pool with `extra_hw_frames`, the camera to size
+  `BufferCount` or copy, and zero-copy is whatever fits. A per-source guard is to make a breach
+  loud and have the decoder wait instead of dropping. None of it is implemented; #373 tracks it in
+  two phases, the guard and a pool sized for the player first, the declarations once #294 makes
   hardware frames the default. Rejects copy-out by default, the ownership record's first draft,
   because its opt-in rule is false for the player's own presenter and its D3D11 copy depends on
   work gated on #231.
