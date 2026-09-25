@@ -70,7 +70,7 @@ public sealed class InputPort<T> : IPort, IWireableInput
 /// connections — each branch either gets a fresh ref via <c>AddRef</c>
 /// (the default), or an explicitly-cloned item when the branch supplied
 /// a cloner via <see cref="EdgeOptionsExtensions.WithCloner{T}"/>
-/// (per ADR-0054, for one-shot frame types whose <c>AddRef</c> throws).
+/// (per ADR-0054, for an item type whose <c>AddRef</c> throws).
 /// </summary>
 public sealed class OutputPort<T> : IPort
     where T : class, IRefCounted

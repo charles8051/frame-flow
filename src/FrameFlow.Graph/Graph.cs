@@ -110,8 +110,8 @@ public sealed class Graph
     /// given options. Both ports' owners are automatically added to
     /// the graph if not already present. This overload uses the
     /// substrate's default fan-out semantics — siblings get a fresh
-    /// ref via <c>AddRef</c>. For one-shot frame types whose
-    /// <c>AddRef</c> throws, use the
+    /// ref via <c>AddRef</c>. For an item type whose <c>AddRef</c>
+    /// throws, use the
     /// <see cref="Connect{T}(OutputPort{T}, InputPort{T}, EdgeConfig{T})"/>
     /// overload with an explicit cloner (ADR-0054).
     /// </summary>
