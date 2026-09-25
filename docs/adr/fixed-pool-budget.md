@@ -89,8 +89,15 @@ declares 1, although both hold without a time limit while paused.
 
 A duration does not bound a count: a variable-frame-rate source can put any number of frames into
 a window. A holder bounded only by a duration therefore also declares a count cap, or counts as
-unbounded. `SyncJoinNode` gains a retained-count limit next to `Window` and `MaxLead`; at the
-limit it stops reading its secondary edge, as it already does past `MaxLead`.
+unbounded. `SyncJoinNode` gains a retained-count limit next to `Window` and `MaxLead`.
+
+At the limit, the join first releases every retained secondary that can no longer match. Between
+window resets the primary's time does not go backwards, so under `MostRecentAtOrBefore` only the
+newest secondary at or before the primary can match now or later, and every older one is released.
+Under `Within`, a secondary whose interval ends at or before the primary is released. The join
+stops reading its secondary edge only when every retained secondary can still match, which means
+they all lie ahead of the primary: the case `MaxLead` already handles by pausing the secondary
+edge until the primary catches up. So the limit never strands the join behind stale frames.
 
 An item that carries frames, `ClipSegment`, declares frames, not items. An operator declares 1 for the call in
 flight, and an edge declares its capacity.
@@ -224,7 +231,6 @@ breach.
 ## Open questions
 
 - Spare counts for VAAPI, NVDEC and Vulkan.
-- What `SyncJoinNode` does with the secondaries behind the primary when it reaches its count limit.
 - Whether operators declare explicitly or default to 1.
 - The watchdog interval.
 - Whether #294, yielding hardware frames by default, waits for this record.
@@ -252,3 +258,7 @@ said to be able to block lateness recovery; decision 5 now says why it does not,
 only frames handed downstream. Graph-wide declarations were called disproportionate to the one
 known path; the new order of work lands the guard and a pool sized for the player first, and the
 declarations when #294 makes hardware frames the default.
+
+**2026-09-24, second automated review.** A join at its count limit could stop reading while it
+held only secondaries that can no longer match, and stall. Decision 1 now releases those first and
+pauses the secondary edge only when every retained secondary lies ahead of the primary.
