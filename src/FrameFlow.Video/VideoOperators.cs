@@ -41,7 +41,7 @@ namespace FrameFlow.Video;
 /// </para>
 /// <para>
 /// <b>Frame ownership.</b> Each operator wraps its output frame in
-/// a fresh <see cref="VideoFrameRef"/>. The substrate disposes the
+/// a fresh <see cref="IVideoFrame"/>. The substrate disposes the
 /// input wrapper after the operator returns (releasing the input's
 /// ref on the underlying frame); the output wrapper flows downstream
 /// and is eventually disposed by the sink (releasing the output
@@ -58,7 +58,7 @@ public static class VideoOperators
     /// <paramref name="target"/> pixel format, keeping source
     /// dimensions.
     /// </summary>
-    public static OperatorNode<VideoFrameRef, VideoFrameRef> ConvertPixelFormat(
+    public static OperatorNode<IVideoFrame, IVideoFrame> ConvertPixelFormat(
         string id,
         PixelFormat target
     )
@@ -78,7 +78,7 @@ public static class VideoOperators
     /// <paramref name="width"/> × <paramref name="height"/>, keeping
     /// source pixel format.
     /// </summary>
-    public static OperatorNode<VideoFrameRef, VideoFrameRef> Resize(
+    public static OperatorNode<IVideoFrame, IVideoFrame> Resize(
         string id,
         int width,
         int height
@@ -96,7 +96,7 @@ public static class VideoOperators
     /// Builds an operator node that resizes AND converts in a single
     /// swscale pass.
     /// </summary>
-    public static OperatorNode<VideoFrameRef, VideoFrameRef> ResizeAndConvert(
+    public static OperatorNode<IVideoFrame, IVideoFrame> ResizeAndConvert(
         string id,
         int width,
         int height,
@@ -148,9 +148,10 @@ public static class VideoOperators
     /// wants something else converts after this, not instead of it.
     /// </para>
     /// <para>
-    /// <b>Ownership.</b> A readback allocates a new frame, so the output wrapper owns it and the
-    /// substrate disposes the input's GPU frame as usual. The pass-through has nothing new to own,
-    /// so it moves the frame out of the input wrapper instead of copying or sharing it.
+    /// <b>Ownership.</b> A readback allocates a new frame, which goes downstream, and the
+    /// substrate releases the input's GPU frame when the body returns, so its decode slice is free
+    /// before the next node runs. A CPU frame is forwarded by returning it: the substrate sees the
+    /// same object and moves its reference downstream (ADR-0080, decision 3).
     /// </para>
     /// </remarks>
     /// <param name="id">Node id, unique within the graph.</param>
@@ -160,43 +161,29 @@ public static class VideoOperators
     /// <c>av_hwframe_transfer_data</c> on an <c>AVFrame</c>, so it has nothing to say about a
     /// GPU frame from some other stack (#232).
     /// </exception>
-    public static OperatorNode<VideoFrameRef, VideoFrameRef> ToCpu(string id)
+    public static OperatorNode<IVideoFrame, IVideoFrame> ToCpu(string id)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
 
-        return new OperatorNode<VideoFrameRef, VideoFrameRef>(
+        return new OperatorNode<IVideoFrame, IVideoFrame>(
             id,
             (input, ct) =>
             {
-                var frame = input.Frame;
-                if (frame.MemoryDomain == FrameMemoryDomain.Cpu)
-                {
-                    // Already here, so hand the same frame on. Detach rather than AddRef: a
-                    // decoder's CpuVideoFrame is one-shot and rejects ref counting outright (#41),
-                    // and the substrate disposes the input wrapper when the operator returns, so
-                    // sharing is not on the table anyway. Detach moves ownership to the wrapper
-                    // going downstream and leaves the input wrapper's dispose a no-op — the same
-                    // move ADR-0044's sink adapters make for the same two reasons.
-                    var detached =
-                        input.Detach()
-                        ?? throw new InvalidOperationException(
-                            $"ToCpu('{id}') received an input wrapper that was already detached "
-                                + "or disposed."
-                        );
-                    return ValueTask.FromResult<VideoFrameRef?>(new VideoFrameRef(detached));
-                }
+                // Already on the CPU: forward the input itself.
+                if (input.MemoryDomain == FrameMemoryDomain.Cpu)
+                    return ValueTask.FromResult<IVideoFrame?>(input);
 
-                if (frame is not GpuVideoFrame gpu)
+                if (input is not GpuVideoFrame gpu)
                 {
                     throw new NotSupportedException(
-                        $"ToCpu('{id}') received a GPU frame of type {frame.GetType().Name}, which "
+                        $"ToCpu('{id}') received a GPU frame of type {input.GetType().Name}, which "
                             + "is not a GpuVideoFrame. The readback is av_hwframe_transfer_data on "
                             + "an AVFrame and has no path for another GPU stack."
                     );
                 }
 
-                return ValueTask.FromResult<VideoFrameRef?>(
-                    new VideoFrameRef(gpu.ReadbackToCpuBgra32())
+                return ValueTask.FromResult<IVideoFrame?>(
+                    gpu.ReadbackToCpuBgra32()
                 );
             }
         );
@@ -208,19 +195,19 @@ public static class VideoOperators
     /// for the lifetime of the graph run; the <c>SafeHandle</c>-wrapped
     /// native context inside is finalized by GC after the run.
     /// </summary>
-    private static OperatorNode<VideoFrameRef, VideoFrameRef> BuildConverterNode(
+    private static OperatorNode<IVideoFrame, IVideoFrame> BuildConverterNode(
         string id,
         IVideoConverter converter
     )
     {
-        return new OperatorNode<VideoFrameRef, VideoFrameRef>(
+        return new OperatorNode<IVideoFrame, IVideoFrame>(
             id,
             (input, ct) =>
             {
-                var output = converter.Process(input.Frame);
+                var output = converter.Process(input);
                 // VideoConverter.Process returns a fresh frame the
                 // caller owns one ref on. Wrap and forward.
-                return ValueTask.FromResult<VideoFrameRef?>(new VideoFrameRef(output));
+                return ValueTask.FromResult<IVideoFrame?>(output);
             }
         );
     }

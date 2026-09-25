@@ -25,7 +25,7 @@ namespace FrameFlow.Examples.Camera.Multicast;
 /// design — same UX (Refresh/Disconnect, ObservableCollection picker,
 /// <see cref="DeviceSessionHost{TSession}"/>-managed lifecycle) but inside
 /// FrameFlow's graph substrate so the fan-out is a substrate
-/// <c>SinkNode&lt;VideoFrameRef&gt;</c>.
+/// <c>SinkNode&lt;IVideoFrame&gt;</c>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -421,15 +421,15 @@ public partial class MainWindow : Window
         // (queue-of-one with displacement), so Task.WhenAll completes
         // at the speed of the *slowest queueing op* — not the slowest
         // render. Same shape as the file Multicast sibling.
-        var fanout = new SinkNode<VideoFrameRef>(
+        var fanout = new SinkNode<IVideoFrame>(
             "broadcast-fanout",
             async (item, ct2) =>
             {
                 Interlocked.Increment(ref _broadcastFrameCount);
 
-                var clone1 = item.Frame.CloneCpu();
-                var clone2 = item.Frame.CloneCpu();
-                var clone3 = item.Frame.CloneCpu();
+                var clone1 = item.CloneCpu();
+                var clone2 = item.CloneCpu();
+                var clone3 = item.CloneCpu();
                 try
                 {
                     await Task.WhenAll(

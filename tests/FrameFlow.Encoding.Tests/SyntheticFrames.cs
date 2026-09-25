@@ -37,8 +37,4 @@ internal static class SyntheticFrames
                 }
             }
         );
-
-    /// <summary>Creates a synthetic frame wrapped as a substrate <see cref="VideoFrameRef"/>.</summary>
-    internal static VideoFrameRef CreateBgraRef(int width, int height, int frameIndex, int fps = 30) =>
-        new(CreateBgra(width, height, frameIndex, fps));
 }

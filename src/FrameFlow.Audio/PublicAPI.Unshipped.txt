@@ -7,5 +7,5 @@ FrameFlow.Audio.IAudioResampler.Process(FrameFlow.Media.PcmAudioBuffer! input) -
 FrameFlow.Audio.IAudioResampler.Reset() -> void
 FrameFlow.Audio.IAudioResampler.TargetChannels.get -> int
 FrameFlow.Audio.IAudioResampler.TargetSampleRate.get -> int
-static FrameFlow.Audio.AudioOperators.Resample(string! id, int targetSampleRate, int targetChannels) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.PcmAudioBufferRef!, FrameFlow.Media.PcmAudioBufferRef!>!
+static FrameFlow.Audio.AudioOperators.Resample(string! id, int targetSampleRate, int targetChannels) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.PcmAudioBuffer!, FrameFlow.Media.PcmAudioBuffer!>!
 static FrameFlow.Audio.AudioResampler.Create(int targetSampleRate, int targetChannels) -> FrameFlow.Audio.IAudioResampler!

@@ -4,7 +4,7 @@ using Xunit;
 namespace FrameFlow.Media.Tests;
 
 /// <summary>
-/// <see cref="VideoFrameRef"/> is an <see cref="IFrame"/>, so a join that retains it must set a
+/// <see cref="IVideoFrame"/> is an <see cref="IFrame"/>, so a join that retains it must set a
 /// lead bound (ADR-0080, decision 8).
 /// </summary>
 public sealed class SyncJoinFrameSecondaryTests
@@ -13,10 +13,10 @@ public sealed class SyncJoinFrameSecondaryTests
     public void VideoFrameRefSecondary_WithoutALead_IsRefused()
     {
         var ex = Assert.Throws<ArgumentException>(() =>
-            new SyncJoinNode<VideoFrameRef, VideoFrameRef, VideoFrameRef>(
+            new SyncJoinNode<IVideoFrame, IVideoFrame, IVideoFrame>(
                 "frames",
-                (primary, _, _) => ValueTask.FromResult<VideoFrameRef?>(primary),
-                new SyncJoinKeys<VideoFrameRef, VideoFrameRef>(
+                (primary, _, _) => ValueTask.FromResult<IVideoFrame?>(primary),
+                new SyncJoinKeys<IVideoFrame, IVideoFrame>(
                     p => p.Timestamp,
                     s => (s.Timestamp, s.Timestamp)
                 ),

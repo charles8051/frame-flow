@@ -18,7 +18,7 @@ namespace FrameFlow.Graph.Tests;
 /// </para>
 /// <para>
 /// <see cref="OneShot"/> is the type that makes the difference observable: its <c>AddRef</c>
-/// throws, exactly as <c>Media.CpuVideoFrame</c>'s does.
+/// throws, the one kind of item that still needs a cloner (#380 removes cloners).
 /// </para>
 /// </remarks>
 public sealed class GraphChainForkTests
@@ -44,49 +44,6 @@ public sealed class GraphChainForkTests
         // was ever attempted on a one-shot item.
         Assert.Equal([1, 2, 3], trunkSeen);
         Assert.Equal([1, 2, 3], branchSeen);
-    }
-
-    [Fact]
-    public async Task ACloserlessBranch_StillLeavesTheOriginalItemWithTheTrunk()
-    {
-        // The case the marker exists for. An AddRef-able item lets a branch be wired without a
-        // cloner, and Branch wires it before the trunk, so the first-cloner-less scan alone would
-        // give the branch the incoming item and hand the trunk a fresh ref. Nothing throws either
-        // way; what changes is which consumer holds the original.
-        var graph = new GraphRunner();
-        var source = TaggedSource(3);
-        var trunkOriginals = 0;
-        var branchOriginals = 0;
-
-        var head = graph.Pipeline(source);
-        head.Branch(EdgeOptions.Buffered(4))
-            .To(
-                new SinkNode<Tagged>(
-                    "branch",
-                    (item, _) =>
-                    {
-                        if (item.IsOriginal)
-                            branchOriginals++;
-                        return ValueTask.CompletedTask;
-                    }
-                )
-            );
-        head.To(
-            new SinkNode<Tagged>(
-                "trunk",
-                (item, _) =>
-                {
-                    if (item.IsOriginal)
-                        trunkOriginals++;
-                    return ValueTask.CompletedTask;
-                }
-            )
-        );
-
-        await graph.RunAsync(CancellationToken.None);
-
-        Assert.Equal(3, trunkOriginals);
-        Assert.Equal(0, branchOriginals);
     }
 
     [Fact]
@@ -262,30 +219,6 @@ public sealed class GraphChainForkTests
     }
 
     // ─── Helpers ────────────────────────────────────────────────────
-
-    /// <summary>
-    /// An AddRef-able item that says whether it is the one the producer made. Its <c>AddRef</c>
-    /// returns a fresh wrapper, the way <c>VideoFrameRef</c> does, so a consumer can tell an
-    /// inherited item from a ref of one.
-    /// </summary>
-    private sealed class Tagged(int value, bool isOriginal) : IRefCounted
-    {
-        public int Value => value;
-        public bool IsOriginal => isOriginal;
-
-        public IRefCounted AddRef() => new Tagged(value, isOriginal: false);
-
-        public void Dispose() { }
-    }
-
-    private static SourceNode<Tagged> TaggedSource(int count)
-    {
-        int next = 0;
-        return new SourceNode<Tagged>(
-            "source",
-            _ => ValueTask.FromResult(next < count ? new Tagged(++next, isOriginal: true) : null)
-        );
-    }
 
     /// <summary>An item whose <c>AddRef</c> throws, like a converter's one-shot frame.</summary>
     private sealed class OneShot(int value) : IRefCounted

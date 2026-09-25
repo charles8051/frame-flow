@@ -29,12 +29,12 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
     private readonly FrameFlow.Media.HardwareDecodeCapabilities? _hwCapabilities;
     private readonly ILoggerFactory _loggerFactory;
     private readonly Func<
-        GraphChain<VideoFrameRef>,
-        GraphChain<VideoFrameRef>
+        GraphChain<IVideoFrame>,
+        GraphChain<IVideoFrame>
     >? _videoConfigurator;
     private readonly Func<
-        GraphChain<PcmAudioBufferRef>,
-        GraphChain<PcmAudioBufferRef>
+        GraphChain<PcmAudioBuffer>,
+        GraphChain<PcmAudioBuffer>
     >? _audioConfigurator;
     private readonly bool _yieldHardwareFrames;
 
@@ -56,8 +56,8 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         HardwareDecodeMode hwMode = HardwareDecodeMode.Auto,
         FrameFlow.Media.HardwareDecodeCapabilities? hardwareDecodeCapabilities = null,
         ILoggerFactory? loggerFactory = null,
-        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? videoConfigurator = null,
-        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? audioConfigurator = null,
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? videoConfigurator = null,
+        Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator = null,
         bool yieldHardwareFrames = false,
         LatenessRecoveryOptions? latenessRecovery = null
     )

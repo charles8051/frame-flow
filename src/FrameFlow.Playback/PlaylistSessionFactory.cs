@@ -46,8 +46,8 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
         HardwareDecodeMode hwMode = HardwareDecodeMode.Auto,
         HardwareDecodeCapabilities? hardwareDecodeCapabilities = null,
         ILoggerFactory? loggerFactory = null,
-        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? videoConfigurator = null,
-        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? audioConfigurator = null,
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? videoConfigurator = null,
+        Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator = null,
         bool yieldHardwareFrames = false,
         LatenessRecoveryOptions? latenessRecovery = null,
         bool loadsSource = false

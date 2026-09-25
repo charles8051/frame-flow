@@ -167,7 +167,7 @@ public sealed class MotionClipRecorder : IAsyncDisposable
     /// for headless, wrapped in <see cref="Task.Run(Func{Task})"/> for the
     /// windowed shell so the UI thread isn't blocked.
     /// </summary>
-    public FrameFlow.Graph.Graph BuildGraph(SourceNode<VideoFrameRef> source)
+    public FrameFlow.Graph.Graph BuildGraph(SourceNode<IVideoFrame> source)
     {
         ArgumentNullException.ThrowIfNull(source);
         return RecorderPipeline.BuildGraph(source, _gate, _encoder, _preview);

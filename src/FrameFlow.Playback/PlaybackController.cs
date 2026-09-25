@@ -133,8 +133,8 @@ public static class PlaybackController
         RepeatMode initialRepeatMode = RepeatMode.Off,
         IPlaybackClock? clock = null,
         ILoggerFactory? loggerFactory = null,
-        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? configureVideo = null,
-        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? configureAudio = null,
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? configureVideo = null,
+        Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? configureAudio = null,
         LatenessRecoveryOptions? latenessRecovery = null,
         TimeProvider? timeProvider = null
     )
@@ -242,8 +242,8 @@ public static class PlaybackController
         RepeatMode initialRepeatMode = RepeatMode.All,
         IPlaybackClock? clock = null,
         ILoggerFactory? loggerFactory = null,
-        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? configureVideo = null,
-        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? configureAudio = null,
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? configureVideo = null,
+        Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? configureAudio = null,
         LatenessRecoveryOptions? latenessRecovery = null,
         TimeProvider? timeProvider = null
     )

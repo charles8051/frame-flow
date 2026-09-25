@@ -35,4 +35,4 @@ FrameFlow.Whisper.WhisperOptions.WindowSize.get -> System.TimeSpan
 FrameFlow.Whisper.WhisperOptions.WindowSize.init -> void
 static FrameFlow.Whisper.CaptionOperators.AnimatedReveal(string! id, double wordsPerSecond = 5) -> FrameFlow.Graph.MultiOperatorNode<FrameFlow.Whisper.CaptionRef!, FrameFlow.Whisper.CaptionRef!>!
 static FrameFlow.Whisper.CaptionOperators.SplitOnPunctuation(string! id) -> FrameFlow.Graph.MultiOperatorNode<FrameFlow.Whisper.CaptionRef!, FrameFlow.Whisper.CaptionRef!>!
-static FrameFlow.Whisper.WhisperOperators.TranscribeWithWhisper(string! id, string! modelPath, FrameFlow.Whisper.WhisperOptions? options = null) -> FrameFlow.Graph.MultiOperatorNode<FrameFlow.Media.PcmAudioBufferRef!, FrameFlow.Whisper.CaptionRef!>!
+static FrameFlow.Whisper.WhisperOperators.TranscribeWithWhisper(string! id, string! modelPath, FrameFlow.Whisper.WhisperOptions? options = null) -> FrameFlow.Graph.MultiOperatorNode<FrameFlow.Media.PcmAudioBuffer!, FrameFlow.Whisper.CaptionRef!>!

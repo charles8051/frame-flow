@@ -117,7 +117,7 @@ public sealed class RecordingGate : IDisposable
     /// Build the operator node bound to this gate's state. Call once per
     /// pipeline construction.
     /// </summary>
-    public OperatorNode<VideoFrameRef, ClipSegment> Build(string id = "recording-gate") =>
+    public OperatorNode<IVideoFrame, ClipSegment> Build(string id = "recording-gate") =>
         new(id, ProcessAsync);
 
     /// <summary>
@@ -142,9 +142,9 @@ public sealed class RecordingGate : IDisposable
         return EmitSegment(ClipEndReason.Flushed);
     }
 
-    private ValueTask<ClipSegment?> ProcessAsync(VideoFrameRef input, CancellationToken ct)
+    private ValueTask<ClipSegment?> ProcessAsync(IVideoFrame input, CancellationToken ct)
     {
-        IVideoFrame frame = input.Frame;
+        IVideoFrame frame = input;
 
         bool moved = _motion.Process(frame);
 

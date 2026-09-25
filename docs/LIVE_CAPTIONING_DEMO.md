@@ -213,7 +213,7 @@ Steps:
 
 1. Write `ForwardingAudioSink : IAudioSink, IClockSource`. It owns
    an inner `OpenAlAudioSink` for audible output and exposes a
-   `Channel<PcmAudioBufferRef>` for ASR consumers via a property.
+   `Channel<PcmAudioBuffer>` for ASR consumers via a property.
 2. `PresentAsync(IAudioBuffer, ct)` forwards to the inner sink AND
    clones the buffer into the channel (via PCM copy —
    `ReadOnlyMemory<short>` doesn't transfer ownership). Channel is

@@ -25,10 +25,9 @@ namespace FrameFlow.Graph;
 /// <b>Generic substrate, specific shape.</b> The substrate's graph
 /// primitives (<see cref="GraphChain{T}"/>, <see cref="Consumer{TIn}"/>,
 /// <see cref="SinkNode{TIn}"/>) are constrained to
-/// <see cref="IRefCounted"/> at the wrapper level and
-/// <see cref="IDisposable"/> at the payload level, so an audio chain
-/// is a <c>GraphChain&lt;PcmAudioBufferRef&gt;</c> with no further
-/// substrate changes. Consumers compose
+/// <see cref="IRefCounted"/>, which this interface extends, so an audio
+/// chain is a <c>GraphChain&lt;PcmAudioBuffer&gt;</c> with the buffer
+/// itself as the graph item (ADR-0080, decision 6). Consumers compose
 /// <c>graph.Pipeline(audioSource).Then(resample).To(audioSink.AsSinkNode())</c>
 /// exactly as they would for video.
 /// </para>
@@ -52,7 +51,7 @@ namespace FrameFlow.Graph;
 /// rare, but the seam is the same shape as <c>ICudaTensor</c>).
 /// </para>
 /// </remarks>
-public interface IAudioBuffer : IDisposable
+public interface IAudioBuffer : IRefCounted
 {
     /// <summary>Presentation timestamp of the first audio frame in this buffer.</summary>
     TimeSpan Timestamp { get; }
@@ -94,5 +93,8 @@ public interface IAudioBuffer : IDisposable
     /// <exception cref="ObjectDisposedException">
     /// The buffer's reference count is already zero.
     /// </exception>
-    IAudioBuffer AddRef();
+    new IAudioBuffer AddRef();
+
+    /// <summary>The graph's view of <see cref="AddRef"/>: the same call, the same instance.</summary>
+    IRefCounted IRefCounted.AddRef() => AddRef();
 }

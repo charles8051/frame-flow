@@ -27,7 +27,7 @@ namespace FrameFlow.Media;
 /// <b>Dataflow contract (ADR-0066).</b> The dataflow facet is
 /// <see cref="PresentAsync"/>; the adapter
 /// (<c>FrameFlow.Media.SinkAdapters.AsSinkNode</c>) wraps each
-/// <see cref="IVideoSink"/> as a substrate <c>SinkNode&lt;VideoFrameRef&gt;</c>
+/// <see cref="IVideoSink"/> as a substrate <c>SinkNode&lt;IVideoFrame&gt;</c>
 /// whose body invokes <see cref="PresentAsync"/>. The lifecycle/resource
 /// facet is everything else on this interface
 /// (<see cref="OnFormatChangedAsync"/>,
@@ -75,7 +75,7 @@ public interface IVideoSink : IAsyncDisposable
     /// <paramref name="frame"/> and is responsible for disposing it
     /// after presentation (or immediately, if dropping). The substrate
     /// invokes this method exactly once per frame from a
-    /// <c>SinkNode&lt;VideoFrameRef&gt;</c> body.
+    /// <c>SinkNode&lt;IVideoFrame&gt;</c> body.
     /// </summary>
     /// <param name="frame">The frame to present. Ownership transfers to the sink.</param>
     /// <param name="ct">Cancellation token observed during async work (rare).</param>

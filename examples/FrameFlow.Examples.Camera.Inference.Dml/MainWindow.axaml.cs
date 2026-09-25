@@ -287,19 +287,19 @@ public partial class MainWindow : Window
         graph
             .Pipeline(camSource.Source)
             .Then(VideoOperators.ConvertPixelFormat("camera-convert", PixelFormat.Bgra32))
-            .To(new SinkNode<VideoFrameRef>(
+            .To(new SinkNode<IVideoFrame>(
                 "detect-sink",
                 async (item, frameCt) =>
                 {
                     Interlocked.Increment(ref _frameCount);
 
                     // CloneCpu so the pane owns/disposes its frame independently
-                    // of the graph's VideoFrameRef. PresentAsync returns
+                    // of the graph's IVideoFrame. PresentAsync returns
                     // immediately (queue-of-one), so this sink never blocks on
                     // inference — slow models drop frames, they don't stall.
                     if (_activePane is not { } pane)
                         return;
-                    await pane.PresentAsync(item.Frame.CloneCpu(), frameCt).ConfigureAwait(false);
+                    await pane.PresentAsync(item.CloneCpu(), frameCt).ConfigureAwait(false);
                 }));
 
         Dispatcher.UIThread.Post(() => StatusText.Text = $"Capturing from {_cameraLabel}.");

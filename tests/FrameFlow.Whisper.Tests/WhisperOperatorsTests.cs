@@ -78,7 +78,7 @@ public sealed class WhisperOperatorsTests
     public void TranscribeWithWhisper_BuildsNode_WithoutTouchingModelFile()
     {
         // The model path doesn't exist — but construction must not throw.
-        // Lazy load happens only when the first PcmAudioBufferRef arrives
+        // Lazy load happens only when the first PcmAudioBuffer arrives
         // through the substrate's pump. This pins the "construction is
         // cheap, model load is per-graph-run" contract that the old
         // version established.

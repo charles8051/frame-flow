@@ -16,7 +16,7 @@ public static class YoloOperators
 {
     /// <summary>
     /// Builds a 1→1 detection operator from a detection delegate. Each
-    /// upstream <see cref="VideoFrameRef"/> becomes a
+    /// upstream <see cref="IVideoFrame"/> becomes a
     /// <see cref="DetectedVideoFrameRef"/> carrying both the frame and
     /// the detection results.
     /// </summary>
@@ -28,7 +28,7 @@ public static class YoloOperators
     /// <c>CudaYolov8Detector.Detect</c> / <c>DmlYolov8Detector.Detect</c>,
     /// either of which can be passed directly as a method group).
     /// </param>
-    public static OperatorNode<VideoFrameRef, DetectedVideoFrameRef> DetectWith(
+    public static OperatorNode<IVideoFrame, DetectedVideoFrameRef> DetectWith(
         string id,
         Func<IVideoFrame, IReadOnlyList<Detection>> detect
     )
@@ -36,15 +36,15 @@ public static class YoloOperators
         ArgumentNullException.ThrowIfNull(id);
         ArgumentNullException.ThrowIfNull(detect);
 
-        return new OperatorNode<VideoFrameRef, DetectedVideoFrameRef>(
+        return new OperatorNode<IVideoFrame, DetectedVideoFrameRef>(
             id,
             (input, ct) =>
             {
-                var detections = detect(input.Frame);
-                // AddRef the input's frame so the output wrapper owns
-                // its own ref. The substrate disposes `input` after
-                // this returns; the new wrapper carries the bumped ref.
-                var videoCopy = (VideoFrameRef)input.AddRef();
+                var detections = detect(input);
+                // AddRef the input's frame so the output item holds
+                // its own ref. The substrate releases `input` after
+                // this returns.
+                var videoCopy = input.AddRef();
                 return ValueTask.FromResult<DetectedVideoFrameRef?>(
                     new DetectedVideoFrameRef(videoCopy, detections)
                 );

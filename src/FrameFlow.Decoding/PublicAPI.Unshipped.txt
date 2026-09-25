@@ -195,8 +195,8 @@ static FrameFlow.Decoding.DecoderFactories.CreateAudio(Microsoft.Extensions.Logg
 static FrameFlow.Decoding.DecoderFactories.CreateAudio(Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory, FrameFlow.Decoding.AudioDecoderOptions? audioOptions) -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IAudioDecoder?>!
 static FrameFlow.Decoding.DecoderFactories.CreateVideo(FrameFlow.Media.HardwareDecodeOptions! options, FrameFlow.Media.HardwareDecodeCapabilities? capabilities, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory, FrameFlow.Decoding.VideoDecoderOptions? videoOptions = null) -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IVideoDecoder?>!
 static FrameFlow.Decoding.DecoderFactories.Video.get -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IVideoDecoder?>!
-static FrameFlow.Decoding.DecoderSourceAdapters.AsSourceNode(this FrameFlow.Decoding.IAudioDecoder! decoder, string! id = "audio-decoder") -> FrameFlow.Graph.SourceNode<FrameFlow.Media.PcmAudioBufferRef!>!
-static FrameFlow.Decoding.DecoderSourceAdapters.AsSourceNode(this FrameFlow.Decoding.IVideoDecoder! decoder, string! id = "video-decoder") -> FrameFlow.Graph.SourceNode<FrameFlow.Media.VideoFrameRef!>!
+static FrameFlow.Decoding.DecoderSourceAdapters.AsSourceNode(this FrameFlow.Decoding.IAudioDecoder! decoder, string! id = "audio-decoder") -> FrameFlow.Graph.SourceNode<FrameFlow.Media.PcmAudioBuffer!>!
+static FrameFlow.Decoding.DecoderSourceAdapters.AsSourceNode(this FrameFlow.Decoding.IVideoDecoder! decoder, string! id = "video-decoder") -> FrameFlow.Graph.SourceNode<FrameFlow.Media.IVideoFrame!>!
 static FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot.Empty.get -> FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot!
 static FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.Empty.get -> FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot!
 static FrameFlow.Decoding.Diagnostics.DecodePoolMetrics.OnLeaseAcquired() -> void

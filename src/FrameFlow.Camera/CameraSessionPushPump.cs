@@ -9,7 +9,7 @@ namespace FrameFlow.Camera;
 /// <summary>
 /// Drains a <see cref="CameraSession"/>'s capture stream and re-publishes each
 /// frame via push to a <see cref="CameraFramePushBridge"/>, which exposes them
-/// to a graph as a <c>SourceNode&lt;VideoFrameRef&gt;</c>. Internal plumbing
+/// to a graph as a <c>SourceNode&lt;IVideoFrame&gt;</c>. Internal plumbing
 /// behind <see cref="CameraSessionSourceExtensions.AsPushVideoFrameSource"/>;
 /// real consumers (e.g. a router whose subscriber callback hands borrowed
 /// frames to <see cref="CameraFramePushBridge.Push"/>) drive the bridge

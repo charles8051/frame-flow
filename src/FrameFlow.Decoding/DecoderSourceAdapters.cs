@@ -11,19 +11,18 @@ namespace FrameFlow.Decoding;
 /// <see cref="IAudioDecoder"/> as source nodes.
 /// The decoders already yield
 /// <see cref="IAsyncEnumerable{T}"/>, so the adapter is a thin
-/// shim that owns an enumerator and converts each yielded frame
-/// into a refcounted wrapper.
+/// shim that owns an enumerator and emits each yielded frame or
+/// buffer as the graph item itself.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Frame ownership.</b> The decoder's
 /// <see cref="IAsyncEnumerator{T}"/> yields frames where each
 /// frame's refcount is owned by the consumer (per the
-/// <see cref="IVideoDecoder"/> contract). The adapter wraps each
-/// yielded frame in a <see cref="VideoFrameRef"/> /
-/// <see cref="PcmAudioBufferRef"/> that adopts the existing ref.
-/// The substrate then disposes the wrapper when the item is
-/// terminal-consumed, which disposes the underlying frame's ref.
+/// <see cref="IVideoDecoder"/> contract). The adapter emits each
+/// yielded <see cref="IVideoFrame"/> or <see cref="PcmAudioBuffer"/>
+/// with that ref, and the substrate releases it when the item is
+/// terminal-consumed (ADR-0080, decision 6).
 /// </para>
 /// <para>
 /// <b>Lifecycle.</b> The enumerator is lazily created on first
@@ -38,11 +37,11 @@ public static class DecoderSourceAdapters
 {
     /// <summary>
     /// Wraps an <see cref="IVideoDecoder"/> as a source node that
-    /// yields <see cref="VideoFrameRef"/> items.
+    /// yields <see cref="IVideoFrame"/> items.
     /// </summary>
     /// <param name="decoder">The video decoder to wrap.</param>
     /// <param name="id">Node id for graph diagnostics.</param>
-    public static SourceNode<VideoFrameRef> AsSourceNode(
+    public static SourceNode<IVideoFrame> AsSourceNode(
         this IVideoDecoder decoder,
         string id = "video-decoder"
     )
@@ -52,7 +51,7 @@ public static class DecoderSourceAdapters
 
         IAsyncEnumerator<IVideoFrame>? enumerator = null;
 
-        return new SourceNode<VideoFrameRef>(
+        return new SourceNode<IVideoFrame>(
             id,
             async (ct) =>
             {
@@ -70,9 +69,9 @@ public static class DecoderSourceAdapters
                 }
 
                 // Decoder yields frame with refcount=1 (owned by consumer).
-                // VideoFrameRef adopts the ref; substrate disposes the
-                // wrapper after the item terminal-consumes.
-                return new VideoFrameRef(enumerator.Current);
+                // The graph takes that ref and releases it after the item
+                // terminal-consumes.
+                return enumerator.Current;
             },
             cleanup: async () =>
             {
@@ -95,9 +94,9 @@ public static class DecoderSourceAdapters
 
     /// <summary>
     /// Wraps an <see cref="IAudioDecoder"/> as a source node that
-    /// yields <see cref="PcmAudioBufferRef"/> items.
+    /// yields <see cref="PcmAudioBuffer"/> items.
     /// </summary>
-    public static SourceNode<PcmAudioBufferRef> AsSourceNode(
+    public static SourceNode<PcmAudioBuffer> AsSourceNode(
         this IAudioDecoder decoder,
         string id = "audio-decoder"
     )
@@ -107,7 +106,7 @@ public static class DecoderSourceAdapters
 
         IAsyncEnumerator<PcmAudioBuffer>? enumerator = null;
 
-        return new SourceNode<PcmAudioBufferRef>(
+        return new SourceNode<PcmAudioBuffer>(
             id,
             async (ct) =>
             {
@@ -121,7 +120,7 @@ public static class DecoderSourceAdapters
                     return null;
                 }
 
-                return new PcmAudioBufferRef(enumerator.Current);
+                return enumerator.Current;
             },
             cleanup: async () =>
             {

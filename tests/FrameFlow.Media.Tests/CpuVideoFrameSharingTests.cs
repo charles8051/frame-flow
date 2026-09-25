@@ -18,13 +18,13 @@ public sealed class CpuVideoFrameSharingTests
         var pool = new CountingArrayPool<byte>();
         var frame = NewFrame(pool);
 
-        var join = new SyncJoinNode<RefBox<int>, VideoFrameRef, RefBox<string>>(
+        var join = new SyncJoinNode<RefBox<int>, IVideoFrame, RefBox<string>>(
             "join",
             (primary, secondary, _) =>
                 ValueTask.FromResult<RefBox<string>?>(
                     RefBox.Of($"{primary.Value}={(secondary is null ? "none" : "frame")}")
                 ),
-            new SyncJoinKeys<RefBox<int>, VideoFrameRef>(
+            new SyncJoinKeys<RefBox<int>, IVideoFrame>(
                 p => TimeSpan.FromMilliseconds(p.Value),
                 s => (s.Timestamp, s.Timestamp)
             ),
@@ -34,10 +34,10 @@ public sealed class CpuVideoFrameSharingTests
         );
 
         int secondaryPulls = 0;
-        var secondary = new SourceNode<VideoFrameRef>(
+        var secondary = new SourceNode<IVideoFrame>(
             "secondary",
-            _ => ValueTask.FromResult<VideoFrameRef?>(
-                secondaryPulls++ == 0 ? new VideoFrameRef(frame) : null
+            _ => ValueTask.FromResult<IVideoFrame?>(
+                secondaryPulls++ == 0 ? frame : null
             )
         );
 
@@ -75,9 +75,9 @@ public sealed class CpuVideoFrameSharingTests
         var frame = NewFrame(pool);
 
         int pulls = 0;
-        var source = new SourceNode<VideoFrameRef>(
+        var source = new SourceNode<IVideoFrame>(
             "source",
-            _ => ValueTask.FromResult<VideoFrameRef?>(pulls++ == 0 ? new VideoFrameRef(frame) : null)
+            _ => ValueTask.FromResult<IVideoFrame?>(pulls++ == 0 ? frame : null)
         );
 
         int trunkReads = 0;
@@ -96,12 +96,12 @@ public sealed class CpuVideoFrameSharingTests
     }
 
     /// <summary>A sink that counts the frames it could read while it held them.</summary>
-    private static SinkNode<VideoFrameRef> Read(string id, Action onReadable) =>
+    private static SinkNode<IVideoFrame> Read(string id, Action onReadable) =>
         new(
             id,
             (item, _) =>
             {
-                if (item.Frame.AsCpu() is not null)
+                if (item.AsCpu() is not null)
                     onReadable();
                 return ValueTask.CompletedTask;
             }

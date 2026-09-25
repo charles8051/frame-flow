@@ -15,7 +15,7 @@ namespace FrameFlow.Video.Tests;
 /// <b>What this validates beyond Phase 0 / 1:</b>
 /// </para>
 /// <list type="bullet">
-/// <item>The <see cref="VideoFrameRef"/> adapter pattern works — an
+/// <item>The <see cref="IVideoFrame"/> adapter pattern works — an
 /// existing FrameFlow domain type can ride the substrate without
 /// changes to <c>FrameFlow.Media</c>.</item>
 /// <item>An ordinary 1→1 operator (<c>swscale</c>-backed pixel-format
@@ -41,26 +41,26 @@ public sealed class VideoOperatorsTests : IClassFixture<FfmpegBootstrapFixture>
         var captured = new List<(int W, int H, PixelFormat Fmt)>();
 
         var index = 0;
-        var source = new SourceNode<VideoFrameRef>(
+        var source = new SourceNode<IVideoFrame>(
             "src",
             (ct) =>
             {
                 if (index >= 3)
-                    return ValueTask.FromResult<VideoFrameRef?>(null);
+                    return ValueTask.FromResult<IVideoFrame?>(null);
                 var frame = MakeSolidBgraFrame(8, 8);
                 index++;
-                return ValueTask.FromResult<VideoFrameRef?>(new VideoFrameRef(frame));
+                return ValueTask.FromResult<IVideoFrame?>(frame);
             }
         );
 
         var convert = VideoOperators.ConvertPixelFormat("convert", PixelFormat.Rgba32);
 
-        var sink = new SinkNode<VideoFrameRef>(
+        var sink = new SinkNode<IVideoFrame>(
             "sink",
             (item, ct) =>
             {
                 lock (captured)
-                    captured.Add((item.Frame.Width, item.Frame.Height, item.Frame.Format));
+                    captured.Add((item.Width, item.Height, item.Format));
                 return ValueTask.CompletedTask;
             }
         );
@@ -85,27 +85,27 @@ public sealed class VideoOperatorsTests : IClassFixture<FfmpegBootstrapFixture>
         var dims = new List<(int W, int H)>();
 
         var index = 0;
-        var source = new SourceNode<VideoFrameRef>(
+        var source = new SourceNode<IVideoFrame>(
             "src",
             (ct) =>
             {
                 if (index >= 2)
-                    return ValueTask.FromResult<VideoFrameRef?>(null);
+                    return ValueTask.FromResult<IVideoFrame?>(null);
                 index++;
-                return ValueTask.FromResult<VideoFrameRef?>(
-                    new VideoFrameRef(MakeSolidBgraFrame(32, 16))
+                return ValueTask.FromResult<IVideoFrame?>(
+                    MakeSolidBgraFrame(32, 16)
                 );
             }
         );
 
         var resize = VideoOperators.Resize("resize", 64, 32);
 
-        var sink = new SinkNode<VideoFrameRef>(
+        var sink = new SinkNode<IVideoFrame>(
             "sink",
             (item, ct) =>
             {
                 lock (dims)
-                    dims.Add((item.Frame.Width, item.Frame.Height));
+                    dims.Add((item.Width, item.Height));
                 return ValueTask.CompletedTask;
             }
         );
@@ -132,27 +132,27 @@ public sealed class VideoOperatorsTests : IClassFixture<FfmpegBootstrapFixture>
         var captured = new List<(int W, int H, PixelFormat Fmt)>();
 
         var index = 0;
-        var source = new SourceNode<VideoFrameRef>(
+        var source = new SourceNode<IVideoFrame>(
             "src",
             (ct) =>
             {
                 if (index >= 1)
-                    return ValueTask.FromResult<VideoFrameRef?>(null);
+                    return ValueTask.FromResult<IVideoFrame?>(null);
                 index++;
-                return ValueTask.FromResult<VideoFrameRef?>(
-                    new VideoFrameRef(MakeSolidBgraFrame(32, 32))
+                return ValueTask.FromResult<IVideoFrame?>(
+                    MakeSolidBgraFrame(32, 32)
                 );
             }
         );
 
         var resizeAndConvert = VideoOperators.ResizeAndConvert("rc", 64, 64, PixelFormat.Rgba32);
 
-        var sink = new SinkNode<VideoFrameRef>(
+        var sink = new SinkNode<IVideoFrame>(
             "sink",
             (item, ct) =>
             {
                 lock (captured)
-                    captured.Add((item.Frame.Width, item.Frame.Height, item.Frame.Format));
+                    captured.Add((item.Width, item.Height, item.Format));
                 return ValueTask.CompletedTask;
             }
         );

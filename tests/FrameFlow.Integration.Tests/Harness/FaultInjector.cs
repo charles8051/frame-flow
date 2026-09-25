@@ -21,7 +21,7 @@ internal sealed class FaultInjector(Func<int, bool> breaks)
     /// <summary>How many chains have been built.</summary>
     public int Chains => Volatile.Read(ref _chains);
 
-    public GraphChain<VideoFrameRef> Configure(GraphChain<VideoFrameRef> chain)
+    public GraphChain<IVideoFrame> Configure(GraphChain<IVideoFrame> chain)
     {
         var index = Interlocked.Increment(ref _chains) - 1;
         if (!breaks(index))
@@ -29,12 +29,12 @@ internal sealed class FaultInjector(Func<int, bool> breaks)
 
         var frames = 0;
         return chain.Then(
-            new OperatorNode<VideoFrameRef, VideoFrameRef>(
+            new OperatorNode<IVideoFrame, IVideoFrame>(
                 "inject-fault",
                 (frame, _) =>
                     ++frames == FaultFrame
                         ? throw new InjectedFault(index)
-                        : ValueTask.FromResult<VideoFrameRef?>(frame)
+                        : ValueTask.FromResult<IVideoFrame?>(frame)
             )
         );
     }

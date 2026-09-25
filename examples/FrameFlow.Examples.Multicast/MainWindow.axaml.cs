@@ -406,12 +406,12 @@ public partial class MainWindow : Window
                         // the literal realization of the CPU path's aspiration below:
                         // "each frame's refcount peaks at N (one per pane)."
                         var counted = chain.Then(
-                            new OperatorNode<VideoFrameRef, VideoFrameRef>(
+                            new OperatorNode<IVideoFrame, IVideoFrame>(
                                 "gpu-broadcast-count",
                                 (item, ct) =>
                                 {
                                     Interlocked.Increment(ref _broadcastFrameCount);
-                                    return ValueTask.FromResult<VideoFrameRef?>(item);
+                                    return ValueTask.FromResult<IVideoFrame?>(item);
                                 }
                             )
                         );
@@ -433,12 +433,12 @@ public partial class MainWindow : Window
                         )
                     );
                     var afterCount = afterConvert.Then(
-                        new OperatorNode<VideoFrameRef, VideoFrameRef>(
+                        new OperatorNode<IVideoFrame, IVideoFrame>(
                             "broadcast-count",
                             (item, ct) =>
                             {
                                 Interlocked.Increment(ref _broadcastFrameCount);
-                                return ValueTask.FromResult<VideoFrameRef?>(item);
+                                return ValueTask.FromResult<IVideoFrame?>(item);
                             }
                         )
                     );

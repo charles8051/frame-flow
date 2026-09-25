@@ -86,16 +86,15 @@ public static class CameraSourceAdapters
     /// <summary>
     /// Wraps an <see cref="IAsyncEnumerable{T}"/> of
     /// <see cref="ICameraFrame"/>s as a
-    /// <see cref="SourceNode{VideoFrameRef}"/>, so a camera capture
+    /// <see cref="SourceNode{IVideoFrame}"/>, so a camera capture
     /// stream drops directly into the same pipeline shape video
-    /// decoder outputs use (<c>SourceNode&lt;VideoFrameRef&gt;</c>).
-    /// Each emitted frame is a <see cref="CameraVideoFrame"/> wrapped
-    /// in a <see cref="VideoFrameRef"/>. Downstream sinks call
-    /// <c>frame.CloneCpu()</c> as they would on a decoded video frame
-    /// — the clone is an independent owned copy; disposing the
-    /// VideoFrameRef returns the inner camera frame to its pool.
+    /// decoder outputs use (<c>SourceNode&lt;IVideoFrame&gt;</c>).
+    /// Each emitted frame is a <see cref="CameraVideoFrame"/>, an
+    /// <see cref="IVideoFrame"/> over the camera frame. Downstream nodes
+    /// share it by reference as they would a decoded video frame; its
+    /// final release returns the camera frame to its pool.
     /// </summary>
-    public static SourceNode<VideoFrameRef> AsVideoFrameSourceNode<T>(
+    public static SourceNode<IVideoFrame> AsVideoFrameSourceNode<T>(
         this IAsyncEnumerable<T> source,
         string id = "camera-video-source"
     )
@@ -105,7 +104,7 @@ public static class CameraSourceAdapters
         ArgumentNullException.ThrowIfNull(id);
 
         IAsyncEnumerator<T>? enumerator = null;
-        return new SourceNode<VideoFrameRef>(
+        return new SourceNode<IVideoFrame>(
             id,
             async (ct) =>
             {
@@ -114,11 +113,10 @@ public static class CameraSourceAdapters
                 {
                     return null;
                 }
-                // Adopt the camera frame's ref via CameraVideoFrame,
-                // then wrap as VideoFrameRef so the substrate sees an
-                // IRefCounted with the standard IVideoFrame surface.
+                // CameraVideoFrame adopts the camera frame's ref and is
+                // itself the graph item.
                 var videoFrame = new CameraVideoFrame(enumerator.Current);
-                return new VideoFrameRef(videoFrame);
+                return videoFrame;
             },
             cleanup: async () =>
             {

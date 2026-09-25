@@ -32,7 +32,7 @@ public sealed class H264Mp4RoundTripTests : IClassFixture<FfmpegBootstrapFixture
     {
         await using var writer = Mp4VideoWriter.Create(path, DefaultOptions());
         for (int i = 0; i < frameCount; i++)
-            await writer.WriteAsync(SyntheticFrames.CreateBgraRef(Width, Height, i, Fps));
+            await writer.WriteAsync(SyntheticFrames.CreateBgra(Width, Height, i, Fps));
         await writer.CompleteAsync();
     }
 
@@ -126,15 +126,15 @@ public sealed class H264Mp4RoundTripTests : IClassFixture<FfmpegBootstrapFixture
 
             var graph = new FrameFlow.Graph.Graph();
             int produced = 0;
-            var source = new SourceNode<VideoFrameRef>(
+            var source = new SourceNode<IVideoFrame>(
                 "synthetic-frames",
                 _ =>
                 {
                     if (produced >= FrameCount)
-                        return ValueTask.FromResult<VideoFrameRef?>(null);
-                    var frame = SyntheticFrames.CreateBgraRef(Width, Height, produced, Fps);
+                        return ValueTask.FromResult<IVideoFrame?>(null);
+                    var frame = SyntheticFrames.CreateBgra(Width, Height, produced, Fps);
                     produced++;
-                    return ValueTask.FromResult<VideoFrameRef?>(frame);
+                    return ValueTask.FromResult<IVideoFrame?>(frame);
                 }
             );
 
@@ -202,7 +202,7 @@ public sealed class H264Mp4RoundTripTests : IClassFixture<FfmpegBootstrapFixture
         {
             await using var writer = Mp4VideoWriter.Create(path, DefaultOptions());
             for (int i = 0; i < 5; i++)
-                await writer.WriteAsync(SyntheticFrames.CreateBgraRef(Width, Height, i, Fps));
+                await writer.WriteAsync(SyntheticFrames.CreateBgra(Width, Height, i, Fps));
             await writer.CompleteAsync();
             await writer.CompleteAsync(); // second call must be a no-op
 
@@ -224,7 +224,7 @@ public sealed class H264Mp4RoundTripTests : IClassFixture<FfmpegBootstrapFixture
             await using (var writer = Mp4VideoWriter.Create(path, DefaultOptions()))
             {
                 for (int i = 0; i < 10; i++)
-                    await writer.WriteAsync(SyntheticFrames.CreateBgraRef(Width, Height, i, Fps));
+                    await writer.WriteAsync(SyntheticFrames.CreateBgra(Width, Height, i, Fps));
             }
 
             var factory = new DemuxSessionFactory();

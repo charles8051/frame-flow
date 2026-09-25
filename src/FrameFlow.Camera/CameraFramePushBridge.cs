@@ -145,9 +145,9 @@ public sealed class CameraFramePushBridge : IDisposable
 
     /// <summary>
     /// Exposes the bridge's frames as a
-    /// <see cref="SourceNode{VideoFrameRef}"/>, matching the shape of
+    /// <see cref="SourceNode{IVideoFrame}"/>, matching the shape of
     /// FrameFlow's decoded-video pipelines. Use this when downstream
-    /// operators expect <see cref="VideoFrameRef"/> (the standard shape
+    /// operators expect <see cref="IVideoFrame"/> (the standard shape
     /// for <c>VideoOperators</c>, YOLO operators, video sinks).
     /// </summary>
     /// <param name="id">Node id for graph diagnostics.</param>
@@ -157,7 +157,7 @@ public sealed class CameraFramePushBridge : IDisposable
     /// <exception cref="ObjectDisposedException">
     /// The bridge has been disposed.
     /// </exception>
-    public SourceNode<VideoFrameRef> AsVideoFrameSourceNode(string id = "camera-push-source")
+    public SourceNode<IVideoFrame> AsVideoFrameSourceNode(string id = "camera-push-source")
     {
         ClaimSource();
         return _channel.Reader.ReadAllAsync().AsVideoFrameSourceNode(id);

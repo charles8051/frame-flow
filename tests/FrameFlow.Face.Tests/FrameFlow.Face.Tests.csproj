@@ -32,4 +32,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/FrameFlow.Graph/FrameFlow.Graph.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\RefCountConformance.cs" Link="Shared\RefCountConformance.cs" />
+  </ItemGroup>
 </Project>

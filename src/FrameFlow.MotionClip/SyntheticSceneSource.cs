@@ -32,14 +32,14 @@ internal static class SyntheticSceneSource
     /// Builds the source node. Cancellation (Ctrl+C / <c>--exit-after</c>)
     /// ends the stream cleanly via end-of-stream rather than a fault.
     /// </summary>
-    public static SourceNode<VideoFrameRef> Create(int width, int height, int fps)
+    public static SourceNode<IVideoFrame> Create(int width, int height, int fps)
     {
         var interval = TimeSpan.FromSeconds(1.0 / fps);
         int motionEveryFrames = fps * 8; // a motion window every ~8 s
         int motionLengthFrames = (int)(fps * 1.5); // each window lasts ~1.5 s
         int frameIndex = 0;
 
-        return new SourceNode<VideoFrameRef>(
+        return new SourceNode<IVideoFrame>(
             "synthetic-scene",
             async ct =>
             {
@@ -55,7 +55,7 @@ internal static class SyntheticSceneSource
                 int i = frameIndex++;
                 bool moving = (i % motionEveryFrames) < motionLengthFrames;
                 CpuVideoFrame frame = RenderFrame(width, height, i, fps, moving);
-                return new VideoFrameRef(frame);
+                return frame;
             }
         );
     }
