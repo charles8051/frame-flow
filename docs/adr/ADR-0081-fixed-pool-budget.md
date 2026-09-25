@@ -266,8 +266,8 @@ breach.
 
 ## Validation
 
-The #370 reproduction and the tests for the guard (#383) and the player's allowance (#384) have
-run; the rest has not.
+The #370 reproduction and the tests for the guard (#383), the player's allowance (#384) and the
+camera guard (#385) have run; the rest has not.
 
 - The budget computation and the guard's transition are pure and get table tests over topologies
   from the tree: the player's D3D11 path, LiveCaptioning in GPU mode, Camera.Multicast and the
@@ -283,6 +283,13 @@ run; the rest has not.
   source's own exit signal, not on a delay.
 
 ## Revision history
+
+**2026-09-25, the camera guard (#385).** `AsPushVideoFrameSource` hands the graph at most the
+session's `BufferCount` less its bridge's capacity as zero-copy leases. A frame that arrives while
+the graph holds that many is copied into pooled CPU storage and its lease returned at once, and
+the first copy is logged. Phase 1 copies only past the limit, frame by frame, rather than every
+frame when the budget does not fit, since there is no budget yet. The pull adapters do not know
+the session and stay unguarded.
 
 **2026-09-25, the player's allowance (#384).** A decoder that yields hardware frames to the
 player opens with `extra_hw_frames` for 5 held frames (the ring's 3, the presenter slot's 1 and 1

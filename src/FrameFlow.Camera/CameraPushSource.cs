@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Threading.Channels;
+using FrameFlow.Camera.Internal;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 using Microsoft.Extensions.Logging;
@@ -20,11 +21,17 @@ namespace FrameFlow.Camera;
 /// <remarks>
 /// <para>
 /// This is the <b>push</b>-style counterpart to
-/// <see cref="CameraSourceAdapters.AsVideoFrameSourceNode{T}"/> (pull). Push
+/// <see cref="CameraSourceAdapters.AsVideoFrameSourceNode{T}(IAsyncEnumerable{T}, string)"/> (pull). Push
 /// decouples the camera's cadence from the graph's: stale frames are dropped at
 /// the bridge rather than backpressuring capture. Because it owns a background
 /// pump it is <see cref="IAsyncDisposable"/> — dispose it after the graph
 /// completes to await pump teardown.
+/// </para>
+/// <para>
+/// <b>Leases.</b> The graph may hold <c>BufferCount</c> of the session's frames, less the
+/// bridge's capacity, as zero-copy leases. A frame that arrives while the graph holds that many
+/// is copied into CPU memory and its lease returned at once, since a consumer holding more than
+/// <c>BufferCount</c> starves capture (ADR-0081). The first copy is logged.
 /// </para>
 /// <para>
 /// It does <b>not</b> own the <see cref="CameraSession"/>: whoever opened the
@@ -73,8 +80,35 @@ public sealed class CameraPushSource : IAsyncDisposable
             lf.CreateLogger<CameraSessionPushPump>()
         );
         Task pumpTask = Task.Run(() => pump.RunAsync(ct), ct);
-        SourceNode<IVideoFrame> source = bridge.AsVideoFrameSourceNode(id);
+        var (source, _) = GuardedSource(
+            bridge,
+            session.Options.BufferCount,
+            capacity,
+            lf.CreateLogger<CameraPushSource>(),
+            id
+        );
         return new CameraPushSource(pumpTask, source);
+    }
+
+    /// <summary>
+    /// The graph source over <paramref name="bridge"/>, handing the graph at most the leases
+    /// the session's <paramref name="bufferCount"/> leaves after the bridge's
+    /// <paramref name="capacity"/>, and copies past that.
+    /// </summary>
+    internal static (SourceNode<IVideoFrame> Source, CameraLeaseGate Gate) GuardedSource(
+        CameraFramePushBridge bridge,
+        int bufferCount,
+        int capacity,
+        ILogger logger,
+        string id
+    )
+    {
+        var gate = new CameraLeaseGate(
+            CameraLeaseBudget.LimitFor(bufferCount, capacity),
+            logger,
+            id
+        );
+        return (bridge.AsVideoFrameSourceNode(id, gate.HandOff), gate);
     }
 
     /// <summary>

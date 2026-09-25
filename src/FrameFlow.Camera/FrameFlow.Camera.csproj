@@ -36,4 +36,8 @@
   <ItemGroup>
     <Using Include="FrameFlow.Graph" />
   </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="FrameFlow.Camera.Tests" />
+  </ItemGroup>
 </Project>
