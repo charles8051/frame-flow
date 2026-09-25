@@ -58,6 +58,28 @@ public sealed class CameraLeaseBudgetTests
         Assert.Equal(0, CameraLeaseBudget.Released(CameraLeaseState.Initial(2)).Outstanding);
     }
 
+    [Theory]
+    [InlineData(2, 2, false)]
+    [InlineData(1, 2, false)]
+    [InlineData(3, 2, true)]
+    [InlineData(null, 2, true)]
+    public void ABudgetOverTheLimit_CopiesEveryFrame(int? budget, int limit, bool copyAll)
+    {
+        Assert.Equal(copyAll, CameraLeaseBudget.CopiesEveryFrame(budget, limit));
+    }
+
+    [Fact]
+    public void CopyingEveryFrame_CopiesUnderTheLimitToo_AndDoesNotReportEachCopy()
+    {
+        var state = CameraLeaseState.Initial(2) with { CopiesEveryFrame = true };
+
+        var (next, handoff, report) = CameraLeaseBudget.Next(state);
+
+        Assert.Equal(CameraHandoff.Copy, handoff);
+        Assert.False(report);
+        Assert.Equal(0, next.Outstanding);
+    }
+
     [Fact]
     public void AZeroLimit_CopiesEveryFrame()
     {

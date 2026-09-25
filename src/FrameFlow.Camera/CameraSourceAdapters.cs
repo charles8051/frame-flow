@@ -100,17 +100,19 @@ public static class CameraSourceAdapters
     )
         where T : class, ICameraFrame =>
         // CameraVideoFrame adopts the camera frame's ref and is itself the graph item.
-        source.AsVideoFrameSourceNode(id, static frame => new CameraVideoFrame(frame));
+        source.AsVideoFrameSourceNode(id, static frame => new CameraVideoFrame(frame), onBudget: null);
 
     /// <summary>
     /// As <see cref="AsVideoFrameSourceNode{T}(IAsyncEnumerable{T}, string)"/>, with
-    /// <paramref name="handOff"/> deciding what the graph gets for each frame. It takes the
-    /// frame's ref.
+    /// <paramref name="handOff"/> deciding what the graph gets for each frame, and
+    /// <paramref name="onBudget"/> told the graph's camera budget before each run. The hand-off
+    /// takes the frame's ref.
     /// </summary>
     internal static SourceNode<IVideoFrame> AsVideoFrameSourceNode<T>(
         this IAsyncEnumerable<T> source,
         string id,
-        Func<ICameraFrame, IVideoFrame> handOff
+        Func<ICameraFrame, IVideoFrame> handOff,
+        Action<FrameBudget>? onBudget
     )
         where T : class, ICameraFrame
     {
@@ -130,6 +132,7 @@ public static class CameraSourceAdapters
                 }
                 return handOff(enumerator.Current);
             },
+            onBudget: onBudget,
             cleanup: async () =>
             {
                 if (enumerator is not null)

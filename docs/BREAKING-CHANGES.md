@@ -179,6 +179,44 @@ rebuilt. An application that builds from source does not.
 the most frames it keeps at once. A node that passes none counts as holding without bound, and a
 pool cannot be sized for a path through it (ADR-0081).
 
+### 7. Hardware frames through a holder that declares nothing are refused
+
+**A runtime error, not a compile error.**
+
+A player built with `WithHardwareFrames()` now sizes its decoder's pool from what its video path
+can hold (ADR-0081). The path's nodes and its sink have to declare how much they hold:
+`holding:` on a node, `MaxHeldFrames` on an `IVideoSink`. When the decoder binds a fixed pool
+(D3D11VA, DXVA2, or an uncharacterised one such as NVDEC or VAAPI) and anything on the path declares
+nothing, `LoadAsync` fails and names that node. A plain graph over such a decoder fails `RunAsync`
+the same way. Software decode, readback and VideoToolbox are unaffected.
+
+**Who hits this.** Anyone yielding hardware frames through their own `IVideoSink`, or through
+their own nodes in `ConfigureVideo`. Every sink and node in this repository declares.
+
+**What to write instead.** Give each node `holding:`, the most frames it keeps at once counting the
+call. A node that emits a new frame and releases its input is `Holding.Boundary`, and the path
+stops counting there. Give each sink `MaxHeldFrames`, the most it keeps after `PresentAsync`
+returns.
+
+**Why.** An exhausted fixed pool fails the decode (#370). A pool sized from declarations does not
+run out, and a holder with no declaration could hold any number of frames.
+
+### 8. A camera push source can copy every frame
+
+**A behaviour change, not an error.**
+
+`AsPushVideoFrameSource` hands the graph at most the session's `BufferCount`, less its bridge's
+capacity, as zero-copy leases. When the graph can hold more camera frames than that, or declares
+nothing somewhere on the path, it now copies every frame into CPU memory and logs the shortfall
+once.
+
+**Who hits this.** A camera graph whose first node holds the frame rather than converting it, over
+a session left at the default `BufferCount` of 3.
+
+**What to write instead.** Open the session with a `BufferCount` of at least the graph's camera
+budget plus the bridge's capacity. `Graph.FrameBudgetFor(source.Output)` gives the budget. A graph
+that converts first needs 4.
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be

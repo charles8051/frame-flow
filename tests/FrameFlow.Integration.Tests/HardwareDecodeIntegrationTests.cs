@@ -140,9 +140,9 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
     }
 
     /// <summary>
-    /// A player that yields hardware frames opens its decoder with an allowance for what its
-    /// own path holds (#384), so the decoder's budget is that count rather than the pool's
-    /// default spare surfaces.
+    /// A player that yields hardware frames opens its decoder for what its video path can hold
+    /// (ADR-0081, #387), so the decoder's budget is that path's frame budget rather than the
+    /// pool's default spare surfaces.
     /// </summary>
     // 27 is AV_CODEC_ID_H264.
     [RequiresHardwareDecodeFact(codecId: 27, fixedPool: true)]
@@ -168,7 +168,10 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
 
             var decoder = controller.GetDiagnostics().Pipeline.Stream.VideoDecoder;
             Assert.True(decoder.HardwareBackend is not null, "the player decoded in software");
-            Assert.Equal(SubstrateSession.HeldHardwareFrames, decoder.HardwareFrameBudget);
+            Assert.Equal(
+                SubstrateSession.VideoFrameBudget(configurator: null, videoSink).Frames,
+                decoder.HardwareFrameBudget
+            );
         }
         finally
         {
@@ -177,6 +180,91 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
             await videoSink.DisposeAsync();
             await audioSink.DisposeAsync();
         }
+    }
+
+    /// <summary>
+    /// A sink that does not say how many frames it keeps leaves the video path unbounded, and a
+    /// player yielding frames from a fixed hardware pool refuses to load rather than guess
+    /// (ADR-0081, decision 4).
+    /// </summary>
+    // 27 is AV_CODEC_ID_H264.
+    [RequiresHardwareDecodeFact(codecId: 27, fixedPool: true)]
+    public async Task YieldingHardwareFrames_ToASinkThatDoesNotSay_IsRefusedAtLoad()
+    {
+        var videoSink = new UndeclaredVideoSink();
+        var controller = PlaybackController.Create(
+            videoSink: videoSink,
+            hardwareDecodeMode: HardwareDecodeMode.Required,
+            yieldHardwareFrames: true
+        );
+
+        try
+        {
+            var load = await controller.LoadAsync(
+                MediaSource.FromFile(PlaybackHarness.ResolveCorpusPath("test-av-h264-aac.mp4"))
+            );
+
+            Assert.False(load.IsSuccess);
+            Assert.Contains("video-sink", load.Error?.ToString() ?? "", StringComparison.Ordinal);
+        }
+        finally
+        {
+            await controller.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// The #370 reproduction's HEVC clip, whose default pool faults at 6 held frames, plays
+    /// through a player yielding hardware frames with its pool sized from the budget.
+    /// </summary>
+    // 172 is AV_CODEC_ID_HEVC.
+    [RequiresHardwareDecodeFact(codecId: 172, fixedPool: true)]
+    public async Task TheHevcPressureClip_PlaysWithItsPoolSizedFromTheBudget()
+    {
+        var videoSink = new HarnessVideoSink();
+        var controller = PlaybackController.Create(
+            videoSink: videoSink,
+            hardwareDecodeMode: HardwareDecodeMode.Required,
+            yieldHardwareFrames: true
+        );
+
+        try
+        {
+            var (load, play) = await IntegrationTestHelper.RunToCompletionAsync(
+                controller,
+                MediaSource.FromFile(PlaybackHarness.ResolveCorpusPath("test-portrait-hevc-pressure.mp4"))
+            );
+            Assert.True(load.IsSuccess, $"LoadAsync failed: {load.Error?.Message}");
+            Assert.True(play.IsSuccess, $"PlayAsync failed: {play.Error?.Message}");
+            Assert.Equal(PlaybackState.Ended, controller.State);
+
+            var decoder = controller.GetDiagnostics().Pipeline.Stream.VideoDecoder;
+            Assert.Equal(
+                SubstrateSession.VideoFrameBudget(configurator: null, videoSink).Frames,
+                decoder.HardwareFrameBudget
+            );
+            Assert.Equal(0, decoder.DecodeErrors);
+        }
+        finally
+        {
+            await IntegrationTestHelper.StabilizeForDisposeAsync(controller, videoSink: videoSink);
+            await controller.DisposeAsync();
+            await videoSink.DisposeAsync();
+        }
+    }
+
+    private sealed class UndeclaredVideoSink : IVideoSink
+    {
+        public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
+        {
+            frame.Dispose();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) =>
+            ValueTask.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     // Required-with-empty-capabilities is covered at the decoder layer, where the

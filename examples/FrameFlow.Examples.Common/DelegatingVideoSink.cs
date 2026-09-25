@@ -21,11 +21,19 @@ namespace FrameFlow.Examples.Common;
 /// it disposes the frame, or hands it to something that will.
 /// </para>
 /// </remarks>
-public sealed class DelegatingVideoSink(Func<IVideoFrame, CancellationToken, ValueTask> present)
-    : IVideoSink
+public sealed class DelegatingVideoSink(
+    Func<IVideoFrame, CancellationToken, ValueTask> present,
+    int? maxHeldFrames = null
+) : IVideoSink
 {
     private readonly Func<IVideoFrame, CancellationToken, ValueTask> _present =
         present ?? throw new ArgumentNullException(nameof(present));
+
+    /// <summary>
+    /// What the delegate's presenters keep after it returns, as the caller declares it
+    /// (ADR-0081). <see langword="null"/> when the caller does not say.
+    /// </summary>
+    public int? MaxHeldFrames => maxHeldFrames;
 
     /// <inheritdoc />
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct) => _present(frame, ct);

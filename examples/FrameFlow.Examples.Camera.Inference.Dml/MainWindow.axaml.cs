@@ -270,6 +270,10 @@ public partial class MainWindow : Window
                 CameraPixelFormat.Yuy2,
                 CameraPixelFormat.Uyvy)
             .MaxResolution(1280, 720)
+            // The graph holds three camera frames (the source's, the edge's and the
+            // converter's) and the push source's bridge one more, so the session needs four to
+            // hand them over without copying (ADR-0081).
+            .WithSessionOptions(o => o with { BufferCount = 4 })
             .WithLogger(_loggerFactory.CreateLogger<CameraSession>())
             .OpenAsync(ct);
 

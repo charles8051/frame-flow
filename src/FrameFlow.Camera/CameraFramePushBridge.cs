@@ -165,15 +165,17 @@ public sealed class CameraFramePushBridge : IDisposable
 
     /// <summary>
     /// As <see cref="AsVideoFrameSourceNode(string)"/>, with <paramref name="handOff"/> deciding
-    /// what the graph gets for each frame. It takes the bridge's ref.
+    /// what the graph gets for each frame, and <paramref name="onBudget"/> told the graph's
+    /// camera budget before each run. The hand-off takes the bridge's ref.
     /// </summary>
     internal SourceNode<IVideoFrame> AsVideoFrameSourceNode(
         string id,
-        Func<ICameraFrame, IVideoFrame> handOff
+        Func<ICameraFrame, IVideoFrame> handOff,
+        Action<FrameBudget>? onBudget
     )
     {
         ClaimSource();
-        return _channel.Reader.ReadAllAsync().AsVideoFrameSourceNode(id, handOff);
+        return _channel.Reader.ReadAllAsync().AsVideoFrameSourceNode(id, handOff, onBudget);
     }
 
     /// <summary>

@@ -33,6 +33,14 @@ public sealed class CameraFrameBudgetTests
             Assert.Equal(3, graph.FrameBudgetFor(source.Output).Frames);
         });
 
+    [Fact]
+    public Task TheRecordersSession_NeedsItsGraphsBudgetAndTheBridgesFrame() =>
+        WithEncoder(encoder =>
+        {
+            Assert.Equal(4, RecorderPipeline.CameraBufferCount(Gate(), encoder, new NullVideoSink()));
+            Assert.Equal(4, RecorderPipeline.CameraBufferCount(Gate(), encoder, preview: null));
+        });
+
     /// <summary>
     /// <c>examples/FrameFlow.Examples.Camera.Multicast</c>: the camera source, a pixel format
     /// conversion, and a sink that presents to three panes. The sink declares nothing, and it

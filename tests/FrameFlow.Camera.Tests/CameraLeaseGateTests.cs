@@ -1,3 +1,4 @@
+using FrameFlow.Graph;
 using FrameFlow.Camera.Internal;
 using FrameFlow.Camera.Tests.Fakes;
 using FrameFlow.Media;
@@ -128,6 +129,76 @@ public sealed class CameraLeaseGateTests
 
         Assert.All(leases, l => Assert.Equal(0, l.RefCount));
         Assert.Equal(0, gate.Outstanding);
+    }
+
+    [Fact]
+    public void ABudgetOverTheLimit_CopiesEveryFrame_AndLogsTheShortfallOnce()
+    {
+        var logger = new RecordingLogger();
+        var gate = new CameraLeaseGate(limit: 2, logger, "camera");
+
+        gate.ApplyBudget(FrameBudget.Of(3));
+        gate.ApplyBudget(FrameBudget.Of(3));
+        var first = gate.HandOff(new FakeCameraFrame(Pixel));
+        var second = gate.HandOff(new FakeCameraFrame(Pixel));
+
+        Assert.True(gate.CopiesEveryFrame);
+        Assert.IsType<CpuVideoFrame>(first);
+        Assert.IsType<CpuVideoFrame>(second);
+        Assert.Equal(0, gate.Outstanding);
+        Assert.Equal(1, logger.Informations);
+        first.Dispose();
+        second.Dispose();
+    }
+
+    [Fact]
+    public void ABudgetThatFits_HandsOverLeases()
+    {
+        var logger = new RecordingLogger();
+        var gate = new CameraLeaseGate(limit: 3, logger, "camera");
+
+        gate.ApplyBudget(FrameBudget.Of(3));
+        var frame = gate.HandOff(new FakeCameraFrame(Pixel));
+
+        Assert.False(gate.CopiesEveryFrame);
+        Assert.IsType<CameraVideoFrame>(frame);
+        Assert.Equal(0, logger.Informations);
+        frame.Dispose();
+    }
+
+    [Fact]
+    public async Task ThePushSource_IsToldItsGraphsBudget_BeforeTheRun()
+    {
+        // A BufferCount of 3 less a bridge of 1 leaves the graph 2. The sink declares nothing, so
+        // the budget is unbounded and every frame is a copy.
+        using var bridge = new CameraFramePushBridge(capacity: 1);
+        var (source, gate) = CameraPushSource.GuardedSource(
+            bridge,
+            bufferCount: 3,
+            capacity: 1,
+            new RecordingLogger(),
+            "camera"
+        );
+        var received = new TaskCompletionSource<IVideoFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var graph = new FrameFlow.Graph.Graph();
+        graph.Pipeline(source).To(new SinkNode<IVideoFrame>("sink", (frame, _) =>
+        {
+            received.TrySetResult(frame.AddRef());
+            return ValueTask.CompletedTask;
+        }));
+
+        var run = graph.RunAsync(CancellationToken.None);
+        var lease = new FakeCameraFrame(Pixel);
+        Assert.True(bridge.Push(lease));
+        lease.Dispose();
+        var only = await received.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        bridge.Dispose();
+        await run.WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.True(gate.CopiesEveryFrame);
+        Assert.IsType<CpuVideoFrame>(only);
+        Assert.Equal(0, lease.RefCount);
+        only.Dispose();
     }
 
     /// <summary>Counts information-level entries.</summary>

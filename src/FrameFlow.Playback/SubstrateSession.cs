@@ -187,12 +187,6 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     private readonly FrameFlow.Media.HardwareDecodeCapabilities? _hwCapabilities;
     private readonly bool _yieldHardwareFrames;
 
-    /// <summary>
-    /// The hardware frames the player's own path holds at once (#384): the pacer's ring, the
-    /// presenter's slot, and one frame in flight between the decoder and the ring.
-    /// </summary>
-    internal const int HeldHardwareFrames = ClockSelectVideoSink.DefaultCapacity + 2;
-
     public SubstrateSession(
         IVideoSink? videoSink,
         IAudioSink? audioSink,
@@ -476,20 +470,28 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 // VideoDecoderOptions.PacketQueueCapacity knob is available if a future,
                 // separately-validated tuning pass wants a tighter no-audio queue.
                 //
-                // A decoder that yields hardware frames sizes its pool for what the player's
-                // path holds, and waits at that budget (ADR-0081).
+                // A decoder that yields hardware frames sizes its pool for what the video path
+                // can hold, which is computed before it opens (ADR-0081).
+                var videoBudget = _yieldHardwareFrames
+                    ? VideoFrameBudget(_videoConfigurator, _videoSink!)
+                    : null;
                 var videoFactory = DecoderFactories.CreateVideo(
                     new HardwareDecodeOptions { Mode = _hwMode },
                     _hwCapabilities,
                     _loggerFactory,
-                    _yieldHardwareFrames
-                        ? new VideoDecoderOptions { HeldHardwareFrames = HeldHardwareFrames }
-                        : null
+                    videoBudget is null
+                        ? null
+                        : new VideoDecoderOptions { HeldHardwareFrames = videoBudget.Frames ?? 0 }
                 );
                 videoDecoder = videoFactory(demux) as VideoDecoder;
                 if (videoDecoder is not null)
                 {
                     videoDecoder.YieldHardwareFrames = _yieldHardwareFrames;
+
+                    // A path that holds without bound over a fixed pool is refused here, at load,
+                    // rather than when its first run starts.
+                    if (videoBudget is not null)
+                        videoDecoder.CheckFrameBudget(videoBudget);
 
                     // Full-queue send policy (ADR-0060). Drop-newest is only safe
                     // when audio shares the single demux pump (so a slow video

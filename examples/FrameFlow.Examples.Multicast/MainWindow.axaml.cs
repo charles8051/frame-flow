@@ -390,7 +390,10 @@ public partial class MainWindow : Window
                                     )
                                     .ConfigureAwait(false);
                             }
-                        }
+                        },
+                        // Each of the three panes keeps up to two frames: GPU presenters and CPU
+                        // views alike hold a slot and the frame they are drawing (ADR-0081).
+                        maxHeldFrames: 3 * 2
                     )
                 )
                 .ConfigureVideo(chain =>
@@ -412,7 +415,8 @@ public partial class MainWindow : Window
                                 {
                                     Interlocked.Increment(ref _broadcastFrameCount);
                                     return ValueTask.FromResult<IVideoFrame?>(item);
-                                }
+                                },
+                                holding: FrameFlow.Graph.Holding.InFlight
                             )
                         );
 

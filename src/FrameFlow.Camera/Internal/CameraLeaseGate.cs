@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Graph;
 using FrameFlow.Media;
 using Microsoft.Extensions.Logging;
 using Periphery.Camera;
@@ -18,6 +19,7 @@ internal sealed partial class CameraLeaseGate
     private readonly string _source;
     private CameraLeaseState _state;
     private long _framesCopied;
+    private bool _shortfallReported;
 
     public CameraLeaseGate(int limit, ILogger logger, string source)
     {
@@ -51,6 +53,43 @@ internal sealed partial class CameraLeaseGate
 
     /// <summary>Frames handed to the graph as copies.</summary>
     public long FramesCopied => Interlocked.Read(ref _framesCopied);
+
+    /// <summary>Whether the graph's budget has the source copy every frame.</summary>
+    public bool CopiesEveryFrame
+    {
+        get
+        {
+            lock (_gate)
+                return _state.CopiesEveryFrame;
+        }
+    }
+
+    /// <summary>
+    /// Takes the graph's camera budget before a run (ADR-0081, decision 4). A graph that can
+    /// hold more camera frames than the session's BufferCount leaves it gets a copy of every
+    /// frame, and the shortfall is logged once.
+    /// </summary>
+    public void ApplyBudget(FrameBudget budget)
+    {
+        ArgumentNullException.ThrowIfNull(budget);
+        bool report;
+        int limit;
+        lock (_gate)
+        {
+            limit = _state.Limit;
+            bool copyAll = CameraLeaseBudget.CopiesEveryFrame(budget.Frames, limit);
+            _state = _state with { CopiesEveryFrame = copyAll };
+            report = copyAll && !_shortfallReported;
+            _shortfallReported |= copyAll;
+        }
+
+        if (!report)
+            return;
+        if (budget.Frames is { } frames)
+            LogShortfall(_logger, _source, frames, limit, frames - limit);
+        else
+            LogUnbounded(_logger, _source, budget.UnboundedHolder!);
+    }
 
     /// <summary>
     /// Takes the caller's reference on <paramref name="frame"/> and returns what the graph gets:
@@ -94,4 +133,25 @@ internal sealed partial class CameraLeaseGate
             + "CameraSessionOptions.BufferCount to keep them zero-copy."
     )]
     private static partial void LogCopying(ILogger logger, string source, int limit);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Camera source {Source}: the graph can hold {Frames} camera frames, more than the "
+            + "{Limit} the session's BufferCount leaves it, so every frame is copied into CPU "
+            + "memory. Raise CameraSessionOptions.BufferCount by {Shortfall} to keep them zero-copy."
+    )]
+    private static partial void LogShortfall(
+        ILogger logger,
+        string source,
+        int frames,
+        int limit,
+        int shortfall
+    );
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Camera source {Source}: '{Holder}' declares no bound on the frames it holds, so "
+            + "every frame is copied into CPU memory. Declare its Holding to keep them zero-copy."
+    )]
+    private static partial void LogUnbounded(ILogger logger, string source, string holder);
 }
