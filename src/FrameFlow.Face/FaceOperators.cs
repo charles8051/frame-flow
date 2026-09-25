@@ -16,7 +16,7 @@ public static class FaceOperators
 {
     /// <summary>
     /// Builds a 1→1 detection operator from a detection delegate. Each
-    /// upstream <see cref="VideoFrameRef"/> becomes a
+    /// upstream <see cref="IVideoFrame"/> becomes a
     /// <see cref="DetectedFaceFrameRef"/> carrying both the frame and the
     /// faces found in it.
     /// </summary>
@@ -27,21 +27,21 @@ public static class FaceOperators
     /// <see cref="BlazeFaceDetector.Detect(IVideoFrame)"/>, which can be
     /// passed directly as a method group).
     /// </param>
-    public static OperatorNode<VideoFrameRef, DetectedFaceFrameRef> DetectWith(
+    public static OperatorNode<IVideoFrame, DetectedFaceFrameRef> DetectWith(
         string id,
         Func<IVideoFrame, IReadOnlyList<FaceDetection>> detect)
     {
         ArgumentNullException.ThrowIfNull(id);
         ArgumentNullException.ThrowIfNull(detect);
 
-        return new OperatorNode<VideoFrameRef, DetectedFaceFrameRef>(
+        return new OperatorNode<IVideoFrame, DetectedFaceFrameRef>(
             id,
             (input, ct) =>
             {
-                var faces = detect(input.Frame);
-                // AddRef the input's frame so the output wrapper owns its
-                // own ref; the substrate disposes `input` after this returns.
-                var videoCopy = (VideoFrameRef)input.AddRef();
+                var faces = detect(input);
+                // AddRef the input's frame so the output item holds its
+                // own ref; the substrate releases `input` after this returns.
+                var videoCopy = input.AddRef();
                 return ValueTask.FromResult<DetectedFaceFrameRef?>(
                     new DetectedFaceFrameRef(videoCopy, faces));
             });

@@ -622,8 +622,8 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// <remarks>
     /// Enqueue into the ring, blocking (async) only while the ring is full so the
     /// decoder is held to ~real-time. No clock wait happens here, so the graph's
-    /// sink pump releases its <c>VideoFrameRef</c> wrapper as soon as this
-    /// returns — no decode lease is held inside the graph across a clock wait.
+    /// sink pump releases its reference to the frame as soon as this returns —
+    /// no decode lease is held inside the graph across a clock wait.
     /// </remarks>
     public async ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
     {

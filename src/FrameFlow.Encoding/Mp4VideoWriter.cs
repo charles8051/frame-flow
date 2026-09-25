@@ -82,13 +82,13 @@ public sealed class Mp4VideoWriter : IAsyncDisposable
     /// Encodes and writes one frame. Takes ownership of <paramref name="frame"/>
     /// and disposes it after reading its pixels.
     /// </summary>
-    public async ValueTask WriteAsync(VideoFrameRef frame, CancellationToken ct = default)
+    public async ValueTask WriteAsync(IVideoFrame frame, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(frame);
         try
         {
-            await WriteCoreAsync(frame.Frame, ct).ConfigureAwait(false);
+            await WriteCoreAsync(frame, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -166,22 +166,22 @@ public sealed class Mp4VideoWriter : IAsyncDisposable
 
     /// <summary>
     /// Exposes this writer as a graph <see cref="SinkNode{T}"/> consuming
-    /// <see cref="VideoFrameRef"/>. The substrate owns frame disposal; the
+    /// <see cref="IVideoFrame"/>. The substrate owns frame disposal; the
     /// consumer must call <see cref="CompleteAsync"/> after the graph's
     /// <c>RunAsync</c> drains, since the substrate has no per-sink end-of-stream
     /// hook to trigger the encoder flush and MP4 trailer.
     /// </summary>
     /// <param name="id">Node id for graph diagnostics.</param>
-    public SinkNode<VideoFrameRef> AsSinkNode(string id = "mp4-writer")
+    public SinkNode<IVideoFrame> AsSinkNode(string id = "mp4-writer")
     {
         ArgumentNullException.ThrowIfNull(id);
-        return new SinkNode<VideoFrameRef>(
+        return new SinkNode<IVideoFrame>(
             id,
             async (item, ct) =>
             {
-                // Read the frame's pixels and encode; the substrate disposes
-                // the wrapper after this body returns (do not dispose here).
-                await WriteCoreAsync(item.Frame, ct).ConfigureAwait(false);
+                // Read the frame's pixels and encode; the substrate releases
+                // the frame after this body returns (do not dispose here).
+                await WriteCoreAsync(item, ct).ConfigureAwait(false);
             }
         );
     }
@@ -193,7 +193,7 @@ public sealed class Mp4VideoWriter : IAsyncDisposable
     /// </summary>
     public static async Task<string> RecordAsync(
         string path,
-        IAsyncEnumerable<VideoFrameRef> frames,
+        IAsyncEnumerable<IVideoFrame> frames,
         H264EncoderOptions? options = null,
         ILoggerFactory? loggerFactory = null,
         CancellationToken ct = default
@@ -201,7 +201,7 @@ public sealed class Mp4VideoWriter : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(frames);
         await using var writer = Create(path, options, loggerFactory);
-        await foreach (VideoFrameRef frame in frames.WithCancellation(ct).ConfigureAwait(false))
+        await foreach (IVideoFrame frame in frames.WithCancellation(ct).ConfigureAwait(false))
         {
             await writer.WriteAsync(frame, ct).ConfigureAwait(false);
         }

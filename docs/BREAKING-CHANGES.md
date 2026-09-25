@@ -103,6 +103,39 @@ its clone is tightly packed even when the source's rows are padded.
 `SampleData` let any holder write to shared storage or free it. The spans the callback receives
 cannot outlive the call. ADR-0080 decision 5, #378, #379.
 
+### 4. Graph items are the frames themselves: `VideoFrameRef` and `PcmAudioBufferRef` are gone
+
+**A compile error.**
+
+`IVideoFrame` and `IAudioBuffer` now extend `IRefCounted`, so a frame or a buffer is the graph item
+itself. Video chains are `GraphChain<IVideoFrame>` and audio chains are
+`GraphChain<PcmAudioBuffer>`. `VideoFrameRef`, `PcmAudioBufferRef` and their `Detach` are deleted.
+
+| Before | After |
+|---|---|
+| `GraphChain<VideoFrameRef>`, `SourceNode<VideoFrameRef>`, `OperatorNode<VideoFrameRef, …>` | `GraphChain<IVideoFrame>`, `SourceNode<IVideoFrame>`, `OperatorNode<IVideoFrame, …>` |
+| `GraphChain<PcmAudioBufferRef>` and friends | `GraphChain<PcmAudioBuffer>` and friends |
+| `new VideoFrameRef(frame)` | `frame` |
+| `item.Frame`, `item.Buffer` | `item` |
+| `(VideoFrameRef)item.AddRef()` | `item.AddRef()`, which returns the same instance |
+| `ref.Detach()` to hand a frame on | return the input from an operator; take `AddRef()` to keep one |
+
+The configurator hooks change with them: `ConfigureVideo` and `ConfigureAudio` on the player
+builders, and `configureVideo` / `configureAudio` on `PlaybackController.Create`, take and return
+`GraphChain<IVideoFrame>` and `GraphChain<PcmAudioBuffer>`.
+
+**Who hits this.** Anyone who writes a configurator, builds a graph over decoded frames or audio,
+or implements an operator or sink node over them.
+
+**Two rules replace the wrapper's.** To forward the input from an operator, return it; returning
+`input.AddRef()` leaks a reference per item, because `AddRef` returns the same instance. To keep an
+item past a node body, call `AddRef()` and dispose that reference when done. `DetectedVideoFrameRef`
+and `DetectedFaceFrameRef` keep their names and count their own references the same way.
+
+**Why.** The wrappers existed to give frames a refcount the graph could see, and cost an allocation
+per frame. Frames now count references themselves (ADR-0080), so the frame can be the item.
+ADR-0080 decision 6, #42.
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be

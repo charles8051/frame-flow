@@ -1,5 +1,7 @@
+using System.Buffers;
 using FrameFlow.Graph;
 using FrameFlow.Media;
+using GraphRunner = FrameFlow.Graph.Graph;
 
 namespace FrameFlow.Video.Tests;
 
@@ -9,10 +11,9 @@ namespace FrameFlow.Video.Tests;
 /// </summary>
 /// <remarks>
 /// No FFmpeg and no GPU. The two branches that can be decided without hardware are the two worth
-/// pinning: a CPU frame is forwarded untouched, with ownership moving out of the input wrapper
-/// rather than being shared, and a GPU frame from a stack this readback cannot serve is refused
-/// rather than mishandled. The readback itself needs a
-/// hwaccel-bound decoder and belongs to the integration suite.
+/// pinning: a CPU frame is forwarded by returning it, so its one reference moves downstream, and
+/// a GPU frame from a stack this readback cannot serve is refused rather than mishandled. The
+/// readback itself needs a hwaccel-bound decoder and belongs to the integration suite.
 /// </remarks>
 public sealed class ToCpuOperatorTests
 {
@@ -24,33 +25,42 @@ public sealed class ToCpuOperatorTests
         using var frame = MakeCpuFrame();
         var node = VideoOperators.ToCpu("readback");
 
-        var output = await Invoke(node, frame);
+        var output = await node.Body(frame, CancellationToken.None);
 
-        Assert.NotNull(output);
-        Assert.Same(frame, output!.Frame);
-        Assert.Equal(FrameMemoryDomain.Cpu, output.Frame.MemoryDomain);
+        Assert.Same(frame, output);
+        Assert.Equal(FrameMemoryDomain.Cpu, output!.MemoryDomain);
     }
 
     [Fact]
-    public async Task CpuFrame_OwnershipMovesOutOfTheInputWrapper()
+    public async Task CpuFrame_ThroughAGraph_ReachesTheSink_AndIsReleasedOnce()
     {
-        // The substrate disposes the input wrapper when the operator returns, and a decoder's
-        // CpuVideoFrame cannot be shared by ref counting (#41). So the frame has to leave the
-        // input wrapper, or the dispose takes the pixel buffer back while the output still points
-        // at it. An emptied input wrapper is what says that happened.
-        using var frame = MakeCpuFrame();
-        var node = VideoOperators.ToCpu("readback");
-        var input = new VideoFrameRef(frame);
+        // Returning the input is a pass-through: the substrate moves the frame's one reference
+        // downstream rather than releasing it. The sink can read it, and the storage goes back
+        // exactly once, after the sink.
+        var pool = new ReturnCountingPool();
+        var frame = MakeCpuFrame(pool: pool);
+        int pulls = 0;
+        var source = new SourceNode<IVideoFrame>(
+            "source",
+            _ => ValueTask.FromResult<IVideoFrame?>(pulls++ == 0 ? frame : null)
+        );
+        bool readable = false;
+        var sink = new SinkNode<IVideoFrame>(
+            "sink",
+            (item, _) =>
+            {
+                readable = item.AsCpu() is not null;
+                return ValueTask.CompletedTask;
+            }
+        );
 
-        var output = await node.Body(input, CancellationToken.None);
+        var graph = new GraphRunner();
+        graph.Pipeline(source).Then(VideoOperators.ToCpu("readback")).To(sink);
+        await graph.RunAsync().WaitAsync(TimeSpan.FromSeconds(15));
 
-        Assert.Throws<ObjectDisposedException>(() => input.Frame);
-        Assert.Same(frame, output!.Frame);
-
-        // And the now-empty wrapper's dispose is the no-op Detach promises: the frame below is
-        // still usable afterwards.
-        input.Dispose();
-        Assert.NotNull(output.Frame.AsCpu());
+        Assert.True(readable);
+        Assert.Equal(1, pool.Returns);
+        Assert.Null(frame.AsCpu());
     }
 
     [Fact]
@@ -62,7 +72,7 @@ public sealed class ToCpuOperatorTests
         var node = VideoOperators.ToCpu("readback");
 
         var ex = await Assert.ThrowsAsync<NotSupportedException>(
-            async () => await Invoke(node, foreign)
+            async () => await node.Body(foreign, CancellationToken.None)
         );
 
         Assert.Contains("readback", ex.Message, StringComparison.Ordinal);
@@ -78,25 +88,30 @@ public sealed class ToCpuOperatorTests
         Assert.ThrowsAny<ArgumentException>(() => VideoOperators.ToCpu(id!));
     }
 
-    private static async Task<VideoFrameRef?> Invoke(
-        OperatorNode<VideoFrameRef, VideoFrameRef> node,
-        IVideoFrame frame
-    )
-    {
-        using var input = new VideoFrameRef(frame);
-        return await node.Body(input, CancellationToken.None);
-    }
-
-    private static CpuVideoFrame MakeCpuFrame(int width = 8, int height = 8) =>
+    private static CpuVideoFrame MakeCpuFrame(ArrayPool<byte>? pool = null) =>
         CpuVideoFrame.Create(
             PixelFormat.Bgra32,
-            width,
-            height,
+            8,
+            8,
             TimeSpan.Zero,
             TimeSpan.FromMilliseconds(33),
             0,
-            static (planes, _) => planes.Y.Clear()
+            static (planes, _) => planes.Y.Clear(),
+            pool
         );
+
+    /// <summary>Hands out fresh arrays and counts how many come back.</summary>
+    private sealed class ReturnCountingPool : ArrayPool<byte>
+    {
+        private int _returns;
+
+        public int Returns => Volatile.Read(ref _returns);
+
+        public override byte[] Rent(int minimumLength) => new byte[minimumLength];
+
+        public override void Return(byte[] array, bool clearArray = false) =>
+            Interlocked.Increment(ref _returns);
+    }
 
     /// <summary>A GPU-domain frame that is not a <c>GpuVideoFrame</c>.</summary>
     private sealed class ForeignGpuFrame : IVideoFrame

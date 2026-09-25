@@ -36,7 +36,7 @@ namespace FrameFlow.Media;
 /// <b>Dataflow contract (ADR-0066).</b> The dataflow facet is
 /// <see cref="PresentAsync"/>; the adapter
 /// (<c>FrameFlow.Media.SinkAdapters.AsSinkNode</c>) wraps each
-/// <see cref="IAudioSink"/> as a substrate <c>SinkNode&lt;PcmAudioBufferRef&gt;</c>
+/// <see cref="IAudioSink"/> as a substrate <c>SinkNode&lt;PcmAudioBuffer&gt;</c>
 /// whose body invokes <see cref="PresentAsync"/>.
 /// </para>
 /// <para>
@@ -84,7 +84,7 @@ public interface IAudioSink : IAsyncDisposable
     /// Presents one decoded PCM audio buffer. The sink takes ownership
     /// of <paramref name="buffer"/> and is responsible for disposing it
     /// after presentation. The substrate invokes this exactly once per
-    /// buffer from a <c>SinkNode&lt;PcmAudioBufferRef&gt;</c> body.
+    /// buffer from a <c>SinkNode&lt;PcmAudioBuffer&gt;</c> body.
     /// </summary>
     /// <param name="buffer">The buffer to present. Ownership transfers to the sink.</param>
     /// <param name="ct">Cancellation token observed during async work.</param>

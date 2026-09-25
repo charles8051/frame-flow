@@ -18,15 +18,15 @@ public sealed class YoloOperatorsTests
 
         // 3 synthetic frames; stub detector emits N detections where
         // N = frame's PTS in seconds (deterministic, easy to assert).
-        var source = new SourceNode<VideoFrameRef>(
+        var source = new SourceNode<IVideoFrame>(
             "src",
             (ct) =>
             {
                 if (emitted >= 3)
-                    return ValueTask.FromResult<VideoFrameRef?>(null);
+                    return ValueTask.FromResult<IVideoFrame?>(null);
                 var frame = MakeFrame(ptsSeconds: emitted);
                 emitted++;
-                return ValueTask.FromResult<VideoFrameRef?>(new VideoFrameRef(frame));
+                return ValueTask.FromResult<IVideoFrame?>(frame);
             }
         );
 
@@ -54,7 +54,7 @@ public sealed class YoloOperatorsTests
             (item, ct) =>
             {
                 lock (captured)
-                    captured.Add(((int)item.Video.Frame.Pts.TotalSeconds, item.Detections.Count));
+                    captured.Add(((int)item.Video.Pts.TotalSeconds, item.Detections.Count));
                 return ValueTask.CompletedTask;
             }
         );
@@ -76,16 +76,16 @@ public sealed class YoloOperatorsTests
         var live = 0;
 
         var emitted = 0;
-        var source = new SourceNode<VideoFrameRef>(
+        var source = new SourceNode<IVideoFrame>(
             "src",
             (ct) =>
             {
                 if (emitted >= 2)
-                    return ValueTask.FromResult<VideoFrameRef?>(null);
+                    return ValueTask.FromResult<IVideoFrame?>(null);
                 emitted++;
                 Interlocked.Increment(ref live);
                 var frame = MakeFrameTracked(() => Interlocked.Decrement(ref live));
-                return ValueTask.FromResult<VideoFrameRef?>(new VideoFrameRef(frame));
+                return ValueTask.FromResult<IVideoFrame?>(frame);
             }
         );
 

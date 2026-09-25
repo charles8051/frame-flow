@@ -296,12 +296,12 @@ public partial class MainWindow : Window
                         )
                     );
                     var afterCount = afterConvert.Then(
-                        new OperatorNode<VideoFrameRef, VideoFrameRef>(
+                        new OperatorNode<IVideoFrame, IVideoFrame>(
                             "broadcast-count",
                             (item, ct) =>
                             {
                                 Interlocked.Increment(ref _broadcastFrameCount);
-                                return ValueTask.FromResult<VideoFrameRef?>(item);
+                                return ValueTask.FromResult<IVideoFrame?>(item);
                             }
                         )
                     );

@@ -1,4 +1,5 @@
 using FrameFlow.Graph;
+using FrameFlow.Media.Tests.Doubles;
 
 namespace FrameFlow.Media.Tests;
 
@@ -21,15 +22,15 @@ public sealed class SinkAdaptersTests
         });
 
         var emitted = 0;
-        var source = new SourceNode<VideoFrameRef>(
+        var source = new SourceNode<IVideoFrame>(
             "src",
             (ct) =>
             {
                 if (emitted >= 3)
-                    return ValueTask.FromResult<VideoFrameRef?>(null);
+                    return ValueTask.FromResult<IVideoFrame?>(null);
                 var frame = new RefCountedTestFrame(ptsSeconds: emitted);
                 emitted++;
-                return ValueTask.FromResult<VideoFrameRef?>(new VideoFrameRef(frame));
+                return ValueTask.FromResult<IVideoFrame?>(frame);
             }
         );
 
@@ -61,19 +62,19 @@ public sealed class SinkAdaptersTests
         });
 
         var emitted = 0;
-        var source = new SourceNode<VideoFrameRef>(
+        var source = new SourceNode<IVideoFrame>(
             "src",
             (ct) =>
             {
                 if (emitted >= 5)
-                    return ValueTask.FromResult<VideoFrameRef?>(null);
+                    return ValueTask.FromResult<IVideoFrame?>(null);
                 emitted++;
                 Interlocked.Increment(ref live);
                 var frame = new RefCountedTestFrame(
                     ptsSeconds: 0,
                     onLastDispose: () => Interlocked.Decrement(ref live)
                 );
-                return ValueTask.FromResult<VideoFrameRef?>(new VideoFrameRef(frame));
+                return ValueTask.FromResult<IVideoFrame?>(frame);
             }
         );
 
@@ -82,6 +83,82 @@ public sealed class SinkAdaptersTests
         await graph.RunAsync();
 
         Assert.Equal(0, Volatile.Read(ref live));
+    }
+
+    [Fact]
+    public async Task IVideoSink_AsSinkNode_TheSinkHoldsAReference_ThatOutlivesTheBody()
+    {
+        // A presenter keeps a frame past PresentAsync (a latest-wins slot, a pacing ring). The
+        // substrate releases its own reference when the sink body returns, so the adapter has
+        // to give the sink one of its own, or the frame is freed under the presenter.
+        var live = 0;
+        var held = new List<IVideoFrame>();
+        var fake = new FakeVideoSink(held.Add);
+
+        var emitted = 0;
+        var source = new SourceNode<IVideoFrame>(
+            "src",
+            _ =>
+            {
+                if (emitted >= 3)
+                    return ValueTask.FromResult<IVideoFrame?>(null);
+                emitted++;
+                Interlocked.Increment(ref live);
+                return ValueTask.FromResult<IVideoFrame?>(
+                    new RefCountedTestFrame(0, onLastDispose: () => Interlocked.Decrement(ref live))
+                );
+            }
+        );
+
+        var graph = new Graph.Graph();
+        graph.Pipeline(source).To(fake.AsSinkNode("v"));
+        await graph.RunAsync();
+
+        Assert.Equal(3, Volatile.Read(ref live));
+
+        foreach (var frame in held)
+            frame.Dispose();
+        Assert.Equal(0, Volatile.Read(ref live));
+    }
+
+    [Fact]
+    public async Task IAudioSink_AsSinkNode_TheSinkHoldsAReference_ThatOutlivesTheBody()
+    {
+        var pool = new CountingArrayPool<short>();
+        var held = new List<IAudioBuffer>();
+        var fake = new FakeAudioSink(held.Add);
+
+        var emitted = 0;
+        var source = new SourceNode<PcmAudioBuffer>(
+            "src",
+            _ =>
+            {
+                if (emitted >= 3)
+                    return ValueTask.FromResult<PcmAudioBuffer?>(null);
+                emitted++;
+                return ValueTask.FromResult<PcmAudioBuffer?>(
+                    PcmAudioBuffer.Create(
+                        4,
+                        48_000,
+                        2,
+                        TimeSpan.Zero,
+                        0,
+                        static (span, _) => span.Length,
+                        pool
+                    )
+                );
+            }
+        );
+
+        var graph = new Graph.Graph();
+        graph.Pipeline(source).To(fake.AsSinkNode("a"));
+        await graph.RunAsync();
+
+        Assert.Equal(0, pool.Returns);
+
+        foreach (var buffer in held)
+            buffer.Dispose();
+        Assert.Equal(3, pool.Returns);
     }
 
     [Fact]
@@ -101,6 +178,25 @@ public sealed class SinkAdaptersTests
     }
 
     // ─── Fakes ──────────────────────────────────────────────────────
+
+    private sealed class FakeAudioSink(Action<IAudioBuffer> onPresent) : IAudioSink
+    {
+        public ValueTask PresentAsync(IAudioBuffer buffer, CancellationToken ct)
+        {
+            onPresent(buffer);
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask ActivateAsync(CancellationToken cancellationToken = default) => default;
+
+        public ValueTask PauseAsync(CancellationToken cancellationToken = default) => default;
+
+        public ValueTask ResumeAsync(CancellationToken cancellationToken = default) => default;
+
+        public ValueTask DeactivateAsync(CancellationToken cancellationToken = default) => default;
+
+        public ValueTask DisposeAsync() => default;
+    }
 
     private sealed class FakeVideoSink : IVideoSink
     {

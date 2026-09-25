@@ -443,12 +443,6 @@ FrameFlow.Media.PcmAudioBuffer.SampleFormat.get -> FrameFlow.Graph.AudioSampleFo
 FrameFlow.Media.PcmAudioBuffer.SampleRate.get -> int
 FrameFlow.Media.PcmAudioBuffer.Samples.get -> System.ReadOnlyMemory<short>
 FrameFlow.Media.PcmAudioBuffer.Timestamp.get -> System.TimeSpan
-FrameFlow.Media.PcmAudioBufferRef
-FrameFlow.Media.PcmAudioBufferRef.AddRef() -> FrameFlow.Graph.IRefCounted!
-FrameFlow.Media.PcmAudioBufferRef.Buffer.get -> FrameFlow.Media.PcmAudioBuffer!
-FrameFlow.Media.PcmAudioBufferRef.Detach() -> FrameFlow.Media.PcmAudioBuffer?
-FrameFlow.Media.PcmAudioBufferRef.Dispose() -> void
-FrameFlow.Media.PcmAudioBufferRef.PcmAudioBufferRef(FrameFlow.Media.PcmAudioBuffer! buffer) -> void
 FrameFlow.Media.PcmAudioFill<TState>
 FrameFlow.Media.PixelFormat
 FrameFlow.Media.PixelFormat.Bgra32 = 0 -> FrameFlow.Media.PixelFormat
@@ -516,15 +510,6 @@ FrameFlow.Media.VideoFormatInfo.VideoFormatInfo(int Width, int Height, FrameFlow
 FrameFlow.Media.VideoFormatInfo.Width.get -> int
 FrameFlow.Media.VideoFormatInfo.Width.init -> void
 FrameFlow.Media.VideoFrameExtensions
-FrameFlow.Media.VideoFrameRef
-FrameFlow.Media.VideoFrameRef.AddRef() -> FrameFlow.Graph.IRefCounted!
-FrameFlow.Media.VideoFrameRef.Detach() -> FrameFlow.Media.IVideoFrame?
-FrameFlow.Media.VideoFrameRef.Dispose() -> void
-FrameFlow.Media.VideoFrameRef.Frame.get -> FrameFlow.Media.IVideoFrame!
-FrameFlow.Media.VideoFrameRef.Height.get -> int
-FrameFlow.Media.VideoFrameRef.Timestamp.get -> System.TimeSpan
-FrameFlow.Media.VideoFrameRef.VideoFrameRef(FrameFlow.Media.IVideoFrame! frame) -> void
-FrameFlow.Media.VideoFrameRef.Width.get -> int
 FrameFlow.Media.VideoStreamInfo
 FrameFlow.Media.VideoStreamInfo.CodecName.get -> string!
 FrameFlow.Media.VideoStreamInfo.CodecName.init -> void
@@ -558,6 +543,8 @@ static FrameFlow.Media.HighResolutionTimeProvider.IsSupported.get -> bool
 static FrameFlow.Media.HighResolutionTimeProvider.Preferred.get -> System.TimeProvider!
 static FrameFlow.Media.MediaSource.FromFile(string! path) -> FrameFlow.Media.MediaSource!
 static FrameFlow.Media.PcmAudioBuffer.Create<TState>(int capacity, int sampleRate, int channels, System.TimeSpan presentationTime, TState state, FrameFlow.Media.PcmAudioFill<TState>! fill, System.Buffers.ArrayPool<short>? pool = null) -> FrameFlow.Media.PcmAudioBuffer!
+static FrameFlow.Media.SinkAdapters.AsSinkNode(this FrameFlow.Media.IAudioSink! sink, string! id = "audio-sink") -> FrameFlow.Graph.SinkNode<FrameFlow.Media.PcmAudioBuffer!>!
+static FrameFlow.Media.SinkAdapters.AsSinkNode(this FrameFlow.Media.IVideoSink! sink, string! id = "video-sink") -> FrameFlow.Graph.SinkNode<FrameFlow.Media.IVideoFrame!>!
 static readonly FrameFlow.Media.MediaSource.MaximumStillDwell -> System.TimeSpan
 static readonly FrameFlow.Media.MediaSource.MinimumStillDwell -> System.TimeSpan
 static FrameFlow.Media.MediaSource.FromStill(string! path, System.TimeSpan dwell) -> FrameFlow.Media.MediaSource!
@@ -568,8 +555,6 @@ static FrameFlow.Media.Result.Ok() -> FrameFlow.Media.Result
 static FrameFlow.Media.Result<T>.Fail(FrameFlow.Media.ErrorCategory category, string! message, System.Exception? inner = null) -> FrameFlow.Media.Result<T>
 static FrameFlow.Media.Result<T>.Fail(FrameFlow.Media.PlaybackError! error) -> FrameFlow.Media.Result<T>
 static FrameFlow.Media.Result<T>.Ok(T value) -> FrameFlow.Media.Result<T>
-static FrameFlow.Media.SinkAdapters.AsSinkNode(this FrameFlow.Media.IAudioSink! sink, string! id = "audio-sink") -> FrameFlow.Graph.SinkNode<FrameFlow.Media.PcmAudioBufferRef!>!
-static FrameFlow.Media.SinkAdapters.AsSinkNode(this FrameFlow.Media.IVideoSink! sink, string! id = "video-sink") -> FrameFlow.Graph.SinkNode<FrameFlow.Media.VideoFrameRef!>!
 static FrameFlow.Media.VideoFrameExtensions.CloneCpu(this FrameFlow.Media.IVideoFrame! frame) -> FrameFlow.Media.CpuVideoFrame!
 static readonly FrameFlow.Media.AudioClockInterpolation.DefaultMaxExtrapolation -> System.TimeSpan
 static readonly FrameFlow.Media.AudioClockRateLimit.DefaultSlack -> System.TimeSpan

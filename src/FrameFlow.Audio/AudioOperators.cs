@@ -17,7 +17,7 @@ public static class AudioOperators
 {
     /// <summary>
     /// Builds a 1→1 operator node that resamples each upstream
-    /// <see cref="PcmAudioBufferRef"/> to <paramref name="targetSampleRate"/>
+    /// <see cref="PcmAudioBuffer"/> to <paramref name="targetSampleRate"/>
     /// Hz / <paramref name="targetChannels"/> channels.
     /// </summary>
     /// <remarks>
@@ -37,7 +37,7 @@ public static class AudioOperators
     /// cleanup is guaranteed by the finalizer.
     /// </para>
     /// </remarks>
-    public static OperatorNode<PcmAudioBufferRef, PcmAudioBufferRef> Resample(
+    public static OperatorNode<PcmAudioBuffer, PcmAudioBuffer> Resample(
         string id,
         int targetSampleRate,
         int targetChannels
@@ -51,12 +51,12 @@ public static class AudioOperators
         var resampler = AudioResampler.Create(targetSampleRate, targetChannels);
 #pragma warning restore CA2000
 
-        return new OperatorNode<PcmAudioBufferRef, PcmAudioBufferRef>(
+        return new OperatorNode<PcmAudioBuffer, PcmAudioBuffer>(
             id,
             (input, ct) =>
             {
-                var output = resampler.Process(input.Buffer);
-                return ValueTask.FromResult<PcmAudioBufferRef?>(new PcmAudioBufferRef(output));
+                var output = resampler.Process(input);
+                return ValueTask.FromResult<PcmAudioBuffer?>(output);
             }
         );
     }

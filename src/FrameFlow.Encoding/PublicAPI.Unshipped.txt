@@ -65,14 +65,14 @@ FrameFlow.Encoding.IMuxer.WriteAsync(FrameFlow.Encoding.EncodedPacket! packet, S
 FrameFlow.Encoding.IVideoEncoder
 FrameFlow.Encoding.IVideoEncoder.IsOpen.get -> bool
 FrameFlow.Encoding.Mp4VideoWriter
-FrameFlow.Encoding.Mp4VideoWriter.AsSinkNode(string! id = "mp4-writer") -> FrameFlow.Graph.SinkNode<FrameFlow.Media.VideoFrameRef!>!
+FrameFlow.Encoding.Mp4VideoWriter.AsSinkNode(string! id = "mp4-writer") -> FrameFlow.Graph.SinkNode<FrameFlow.Media.IVideoFrame!>!
 FrameFlow.Encoding.Mp4VideoWriter.CompleteAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 FrameFlow.Encoding.Mp4VideoWriter.DisposeAsync() -> System.Threading.Tasks.ValueTask
 FrameFlow.Encoding.Mp4VideoWriter.EncoderInfo.get -> FrameFlow.Encoding.EncoderInfo
-FrameFlow.Encoding.Mp4VideoWriter.WriteAsync(FrameFlow.Media.VideoFrameRef! frame, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Encoding.Mp4VideoWriter.WriteAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 FrameFlow.Encoding.Muxer
 static FrameFlow.Encoding.Encoder.H264(FrameFlow.Encoding.H264EncoderOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Encoding.IVideoEncoder!
 static FrameFlow.Encoding.H264EncoderOptions.DefaultEncoderPreference.get -> System.Collections.Generic.IReadOnlyList<string!>!
 static FrameFlow.Encoding.Mp4VideoWriter.Create(string! path, FrameFlow.Encoding.H264EncoderOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Encoding.Mp4VideoWriter!
-static FrameFlow.Encoding.Mp4VideoWriter.RecordAsync(string! path, System.Collections.Generic.IAsyncEnumerable<FrameFlow.Media.VideoFrameRef!>! frames, FrameFlow.Encoding.H264EncoderOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string!>!
+static FrameFlow.Encoding.Mp4VideoWriter.RecordAsync(string! path, System.Collections.Generic.IAsyncEnumerable<FrameFlow.Media.IVideoFrame!>! frames, FrameFlow.Encoding.H264EncoderOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string!>!
 static FrameFlow.Encoding.Muxer.Mp4(string! path, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Encoding.IMuxer!

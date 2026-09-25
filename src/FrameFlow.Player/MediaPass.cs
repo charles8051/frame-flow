@@ -46,8 +46,8 @@ public sealed class MediaPass : IAsyncDisposable
     private readonly AudioDecoder? _audioDecoder;
     private readonly IVideoSink? _videoSink;
     private readonly IAudioSink? _audioSink;
-    private readonly Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? _videoConfigurator;
-    private readonly Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? _audioConfigurator;
+    private readonly Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? _videoConfigurator;
+    private readonly Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? _audioConfigurator;
     private readonly ILogger _logger;
 
     private int _started;
@@ -72,8 +72,8 @@ public sealed class MediaPass : IAsyncDisposable
         AudioDecoder? audioDecoder,
         IVideoSink? videoSink,
         IAudioSink? audioSink,
-        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? videoConfigurator,
-        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? audioConfigurator,
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? videoConfigurator,
+        Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator,
         ILogger? logger = null,
         IPlaybackClock? clock = null
     )

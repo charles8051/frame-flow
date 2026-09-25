@@ -76,12 +76,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     private readonly SessionCallbacks _callbacks;
     private readonly HardwareDecodeMode _hwMode;
     private readonly Func<
-        GraphChain<VideoFrameRef>,
-        GraphChain<VideoFrameRef>
+        GraphChain<IVideoFrame>,
+        GraphChain<IVideoFrame>
     >? _videoConfigurator;
     private readonly Func<
-        GraphChain<PcmAudioBufferRef>,
-        GraphChain<PcmAudioBufferRef>
+        GraphChain<PcmAudioBuffer>,
+        GraphChain<PcmAudioBuffer>
     >? _audioConfigurator;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger _logger;
@@ -128,8 +128,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     // Gates start CLOSED so frames don't drain before PlayAsync. The
     // first PlayAsync opens them; PauseAsync closes them; subsequent
     // PlayAsync re-opens them.
-    private readonly PausableGate<VideoFrameRef> _videoGate = new(initiallyOpen: false);
-    private readonly PausableGate<PcmAudioBufferRef> _audioGate = new(initiallyOpen: false);
+    private readonly PausableGate<IVideoFrame> _videoGate = new(initiallyOpen: false);
+    private readonly PausableGate<PcmAudioBuffer> _audioGate = new(initiallyOpen: false);
 
     // ── Presenter-side select-by-clock pacing (ADR-0057 Stage 2). ──
     // Replaces the in-graph PaceUntil operator. Built once in
@@ -195,8 +195,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         HardwareDecodeMode hwMode = HardwareDecodeMode.Auto,
         FrameFlow.Media.HardwareDecodeCapabilities? hardwareDecodeCapabilities = null,
         ILoggerFactory? loggerFactory = null,
-        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? videoConfigurator = null,
-        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? audioConfigurator = null,
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? videoConfigurator = null,
+        Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator = null,
         bool yieldHardwareFrames = false
     )
     {
@@ -1439,7 +1439,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // choppiness + lockstep-drop coupling, perf survey §A1). For the
         // <b>single-sink</b> path the pacer is now <see cref="ClockSelectVideoSink"/>
         // (_videoPacer): frames arrive at decode rate, the graph sink-pump
-        // releases each VideoFrameRef immediately (no held lease), and the
+        // releases its reference to each frame immediately (no held lease), and the
         // decorator selects the frame due "now" on the clock at delivery time,
         // dropping late ones. So no clock wait happens inside the graph.
         //

@@ -15,7 +15,7 @@ namespace FrameFlow.Camera;
 /// <see cref="CameraSession.CaptureAsync"/> into a bounded
 /// <see cref="CameraFramePushBridge"/> (capacity-1 <c>DropOldest</c> by default
 /// = LatestOnly, so the camera is never blocked by a slow graph), exposed as a
-/// <c>SourceNode&lt;VideoFrameRef&gt;</c> via <see cref="Source"/>.
+/// <c>SourceNode&lt;IVideoFrame&gt;</c> via <see cref="Source"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -38,14 +38,14 @@ public sealed class CameraPushSource : IAsyncDisposable
 {
     private readonly Task _pumpTask;
 
-    private CameraPushSource(Task pumpTask, SourceNode<VideoFrameRef> source)
+    private CameraPushSource(Task pumpTask, SourceNode<IVideoFrame> source)
     {
         _pumpTask = pumpTask;
         Source = source;
     }
 
     /// <summary>The graph source node fed by the camera capture pump.</summary>
-    public SourceNode<VideoFrameRef> Source { get; }
+    public SourceNode<IVideoFrame> Source { get; }
 
     internal static CameraPushSource Start(
         CameraSession session,
@@ -73,7 +73,7 @@ public sealed class CameraPushSource : IAsyncDisposable
             lf.CreateLogger<CameraSessionPushPump>()
         );
         Task pumpTask = Task.Run(() => pump.RunAsync(ct), ct);
-        SourceNode<VideoFrameRef> source = bridge.AsVideoFrameSourceNode(id);
+        SourceNode<IVideoFrame> source = bridge.AsVideoFrameSourceNode(id);
         return new CameraPushSource(pumpTask, source);
     }
 
@@ -106,7 +106,7 @@ public static class CameraSessionSourceExtensions
 {
     /// <summary>
     /// Starts a background pump that streams this session's frames into a graph
-    /// as a <c>SourceNode&lt;VideoFrameRef&gt;</c> with LatestOnly semantics
+    /// as a <c>SourceNode&lt;IVideoFrame&gt;</c> with LatestOnly semantics
     /// (capacity-<paramref name="capacity"/> <c>DropOldest</c>). The returned
     /// <see cref="CameraPushSource"/> owns the pump; dispose it after
     /// <c>graph.RunAsync</c> completes. Cancelling <paramref name="ct"/> tears

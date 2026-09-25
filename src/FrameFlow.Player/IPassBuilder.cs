@@ -60,14 +60,14 @@ public interface IPassBuilder
     /// terminates it. This is where an inference or analysis operator goes.
     /// </summary>
     /// <remarks>Replaces any previously-configured video transform.</remarks>
-    IPassBuilder ConfigureVideo(Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>> configure);
+    IPassBuilder ConfigureVideo(Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>> configure);
 
     /// <summary>
     /// Inserts a consumer-controlled transform between the decoded audio source and the registered
     /// <see cref="IAudioSink"/>. Replaces any previously-configured audio transform.
     /// </summary>
     IPassBuilder ConfigureAudio(
-        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>> configure
+        Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>> configure
     );
 
     /// <summary>

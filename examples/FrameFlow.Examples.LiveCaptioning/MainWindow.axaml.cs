@@ -95,7 +95,7 @@ public partial class MainWindow : Window
     // Per-playback resources.
     private IMediaTransport? _player;
     private OpenAlAudioSink? _audioSink;
-    private Channel<PcmAudioBufferRef>? _pcmBridge;
+    private Channel<PcmAudioBuffer>? _pcmBridge;
     private Graph.Graph? _captionGraph;
     private CaptionTimeline? _captionTimeline;
     private Task? _captionGraphTask;
@@ -153,7 +153,6 @@ public partial class MainWindow : Window
     // its sink (fed an AddRef'd GpuVideoFrame per picture by the fan-out). Null in CPU mode.
     private CompositionInteropVideoView? _gpuView;
     private CompositionInteropVideoSink? _gpuSink;
-    private bool _warnedNonGpuFrame;
 
     public MainWindow()
     {
@@ -313,7 +312,7 @@ public partial class MainWindow : Window
         // ── Audio side: bridge to the Whisper graph ──
         //
         // The substrate has no FramePipeline<T> / PipelineBridge —
-        // we bridge via a bounded Channel<PcmAudioBufferRef>. The
+        // we bridge via a bounded Channel<PcmAudioBuffer>. The
         // audio configurator AddRefs each PCM buffer into the channel;
         // a separate FrameFlow.Graph.Graph below consumes from the channel
         // and runs Resample → Whisper → SplitOnPunctuation →
@@ -322,14 +321,16 @@ public partial class MainWindow : Window
         // DropOldest semantics: ASR back-pressure can't stall the
         // OpenAL audio path; under load, the oldest queued buffer
         // gets dropped before the newest. Whisper may miss buffers
-        // but the speakers don't stutter.
-        var pcmBridge = Channel.CreateBounded<PcmAudioBufferRef>(
+        // but the speakers don't stutter. A dropped buffer holds the
+        // bridge's reference, so the drop releases it.
+        var pcmBridge = Channel.CreateBounded<PcmAudioBuffer>(
             new BoundedChannelOptions(32)
             {
                 FullMode = BoundedChannelFullMode.DropOldest,
                 SingleReader = true,
                 SingleWriter = false,
-            }
+            },
+            static dropped => dropped.Dispose()
         );
         _pcmBridge = pcmBridge;
 
@@ -356,7 +357,7 @@ public partial class MainWindow : Window
         var captionPumpCt = _captionPumpCts.Token;
 
         var captionGraph = new FrameFlow.Graph.Graph();
-        var captionSource = new SourceNode<PcmAudioBufferRef>(
+        var captionSource = new SourceNode<PcmAudioBuffer>(
             "whisper-channel-source",
             async (ct) =>
             {
@@ -451,10 +452,9 @@ public partial class MainWindow : Window
             //
             // ConfigureAudio: tap each decoded audio buffer for the
             // Whisper bridge before it reaches the OpenAL sink. The
-            // 1→1 operator AddRefs the buffer (PcmAudioBuffer supports
-            // refcounting, unlike Media.CpuVideoFrame) and pushes the
-            // AddRef'd ref into the bridge; the original passes through
-            // unchanged to OpenAL.
+            // 1→1 operator AddRefs the buffer and pushes that reference
+            // into the bridge; the original passes through unchanged to
+            // OpenAL.
             //
             // ConfigureVideo: the chain forks to the detection branch and rejoins, and returns
             // its trunk open. The builder terminates it at the view's sink, so frames arrive
@@ -483,16 +483,24 @@ public partial class MainWindow : Window
                     if (yoloDetector is null)
                         return head;
 
-                    // The detection branch is a LatestWins(1) cloner edge: its drop-oldest IS the
+                    // The detection branch opens on a LatestWins(1) edge: its drop-oldest IS the
                     // skip-while-busy behaviour, so a frame arriving while inference is still
                     // running is dropped by the edge rather than by a flag in a sink body. The
-                    // join then pairs each frame with the newest detection at or before its PTS.
+                    // branch shares the trunk's frame by reference (ADR-0080). The join then
+                    // pairs each frame with the newest detection at or before its PTS.
                     //
-                    // head is the trunk, so it keeps the incoming ref and the branch clones.
-                    var detections = head
-                        .Branch(
-                            EdgeOptions.LatestWins(1).WithCloner<VideoFrameRef>(CloneForInference)
-                        )
+                    // YOLO preprocesses on the CPU, so the branch reads a GPU picture back in its
+                    // own node. The substrate releases the GPU frame when that node returns,
+                    // before inference starts: holding it across the whole Detect would pin a
+                    // second hwframe-pool slice, where the display branch already holds one, and
+                    // ADR-0057 ties one extra held lease to pool exhaustion. The edge into the
+                    // detector blocks at one frame, so the readback runs at most a frame ahead
+                    // of inference rather than on every decoded picture.
+                    var branch = head.Branch(EdgeOptions.LatestWins(1));
+                    if (_useGpu)
+                        branch = branch.Then(GpuFramesOnly());
+                    var detections = branch
+                        .Then(VideoOperators.ToCpu("inference-readback"))
                         .Then(CreateDetectOperator(yoloDetector));
 
                     return head.Join(
@@ -554,60 +562,38 @@ public partial class MainWindow : Window
     );
 
     /// <summary>
-    /// Per-branch cloner for the inference edge. A GPU picture is refcountable,
-    /// so the branch takes its own ref; a one-shot CPU frame (decoder or
-    /// converter output) has to be deep-copied instead, per ADR-0054. Handles
-    /// the <c>--gpu</c> fallback where hardware decode did not engage and the
-    /// decoder yielded CPU frames after all.
+    /// In <c>--gpu</c> mode the terminal sink presents nothing unless the decoder
+    /// actually yielded a <see cref="GpuVideoFrame"/>, so the detection branch
+    /// skips the software-fallback path for the same reason: detections over a
+    /// view that never draws are worse than none. A dropped frame is released by the substrate; a kept one is forwarded by
+    /// returning it.
     /// </summary>
-    private static VideoFrameRef CloneForInference(VideoFrameRef frame) =>
-        frame.Frame is GpuVideoFrame
-            ? (VideoFrameRef)frame.AddRef()
-            : new VideoFrameRef(frame.Frame.CloneCpu());
+    private static OperatorNode<IVideoFrame, IVideoFrame> GpuFramesOnly() =>
+        new(
+            "gpu-frames-only",
+            (frame, _) => ValueTask.FromResult<IVideoFrame?>(frame is GpuVideoFrame ? frame : null)
+        );
 
     /// <summary>
-    /// The detection branch's operator: one YOLO pass per frame the
-    /// LatestWins(1) edge lets through, emitting detections stamped with that
-    /// frame's PTS. Holding the pump for the duration of the inference is what
-    /// makes the upstream edge drop frames, which is the intended
-    /// one-at-a-time behaviour.
+    /// The detection branch's operator: one YOLO pass per CPU frame the
+    /// branch lets through, emitting detections stamped with that frame's PTS.
+    /// Holding the pump for the duration of the inference fills the blocking
+    /// edge ahead of it, which is what makes the LatestWins(1) edge at the
+    /// head of the branch drop frames: the intended one-at-a-time behaviour.
     /// </summary>
-    private OperatorNode<VideoFrameRef, RefBox<DetectionSet>> CreateDetectOperator(
+    private OperatorNode<IVideoFrame, RefBox<DetectionSet>> CreateDetectOperator(
         Yolov8Detector detector
     )
     {
-        return new OperatorNode<VideoFrameRef, RefBox<DetectionSet>>(
+        return new OperatorNode<IVideoFrame, RefBox<DetectionSet>>(
             "yolo-detect",
             async (item, ct) =>
             {
                 try
                 {
-                    // In --gpu mode the terminal sink presents nothing unless the
-                    // decoder actually yielded a GpuVideoFrame. Skip inference on
-                    // the software-fallback path for the same reason: detections
-                    // over a view that never draws are worse than none, and
-                    // before this branch existed the sink's guard sat ahead of
-                    // both present and inference. The sink logs the one warning.
-                    if (_useGpu && item.Frame is not GpuVideoFrame)
-                        return null;
-
-                    // YOLO preprocesses on the CPU, so a GPU picture reads back
-                    // first. ADR-0038 Phase B removes this round-trip.
-                    //
-                    // Detach and release the GPU frame as soon as the readback
-                    // has its copy: holding it across the whole Detect would pin
-                    // a second hwframe-pool slice for the duration, where the
-                    // display branch already holds one. ADR-0057 ties one extra
-                    // held lease to pool exhaustion.
-                    if (item.Frame is GpuVideoFrame)
-                    {
-                        CpuVideoFrame cpu;
-                        using (var gpu = (GpuVideoFrame)item.Detach()!)
-                            cpu = gpu.ReadbackToCpuBgra32();
-                        using (cpu)
-                            return await DetectAsync(detector, cpu, ct).ConfigureAwait(false);
-                    }
-                    return await DetectAsync(detector, item.Frame, ct).ConfigureAwait(false);
+                    // The readback node ahead of this one has already brought a GPU
+                    // picture to the CPU. ADR-0038 Phase B removes that round-trip.
+                    return await DetectAsync(detector, item, ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -656,7 +642,7 @@ public partial class MainWindow : Window
     /// rather than leaving the last ones drawn over frames they do not
     /// describe.
     /// </remarks>
-    private SyncJoinNode<VideoFrameRef, RefBox<DetectionSet>, VideoFrameRef>
+    private SyncJoinNode<IVideoFrame, RefBox<DetectionSet>, IVideoFrame>
         CreateDetectionJoin()
     {
         return new(
@@ -667,14 +653,14 @@ public partial class MainWindow : Window
                 // ahead of the display by whatever the pacer buffers, so posting at this point
                 // would draw the boxes over a picture that has not been shown yet. The sink's
                 // FramePresented tells us when it has.
-                _detections[frame.Frame.Pts] = detected?.Value;
+                _detections[frame.Pts] = detected?.Value;
 
                 // Pass-through: the substrate forwards this same ref downstream rather than
                 // disposing and re-wrapping.
-                return ValueTask.FromResult<VideoFrameRef?>(frame);
+                return ValueTask.FromResult<IVideoFrame?>(frame);
             },
-            new SyncJoinKeys<VideoFrameRef, RefBox<DetectionSet>>(
-                f => f.Frame.Pts,
+            new SyncJoinKeys<IVideoFrame, RefBox<DetectionSet>>(
+                f => f.Pts,
                 s => (s.Value.Pts, s.Value.Pts)
             ),
             SyncMatch.MostRecentAtOrBefore,
@@ -771,31 +757,30 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// 1→1 audio operator that taps each decoded PCM buffer for the
-    /// Whisper graph. Wraps the buffer in a fresh AddRef'd
-    /// <see cref="PcmAudioBufferRef"/> and writes it to the bridge
-    /// channel; the original buffer ref continues downstream to the
-    /// OpenAL sink. The bridge channel's DropOldest policy means
+    /// Whisper graph. Takes a reference on the buffer and writes it to
+    /// the bridge channel; the original reference continues downstream
+    /// to the OpenAL sink. The bridge channel's DropOldest policy means
     /// Whisper-side back-pressure can't stall the OpenAL audio path.
     /// </summary>
-    private static OperatorNode<PcmAudioBufferRef, PcmAudioBufferRef> CreateWhisperTapOperator(
-        Channel<PcmAudioBufferRef> bridge
+    private static OperatorNode<PcmAudioBuffer, PcmAudioBuffer> CreateWhisperTapOperator(
+        Channel<PcmAudioBuffer> bridge
     )
     {
-        return new OperatorNode<PcmAudioBufferRef, PcmAudioBufferRef>(
+        return new OperatorNode<PcmAudioBuffer, PcmAudioBuffer>(
             "whisper-tap",
             (item, ct) =>
             {
-                // AddRef the underlying buffer, wrap it in a new
-                // PcmAudioBufferRef, and write to the bridge channel
-                // (non-blocking via DropOldest policy).
-                var tap = new PcmAudioBufferRef((PcmAudioBuffer)item.Buffer.AddRef());
-                if (!bridge.Writer.TryWrite(tap))
+                // Take a reference for the bridge and write the buffer to
+                // it (non-blocking via DropOldest policy). The item itself
+                // passes through to OpenAL.
+                item.AddRef();
+                if (!bridge.Writer.TryWrite(item))
                 {
-                    // Channel writer closed (teardown race) — dispose
-                    // the AddRef so it doesn't leak.
-                    tap.Dispose();
+                    // Channel writer closed (teardown race) — release the
+                    // bridge's reference so it doesn't leak.
+                    item.Dispose();
                 }
-                return ValueTask.FromResult<PcmAudioBufferRef?>(item);
+                return ValueTask.FromResult<PcmAudioBuffer?>(item);
             }
         );
     }

@@ -44,12 +44,12 @@ FrameFlow.Face.BlazeFacePreprocessor.Layout.get -> FrameFlow.Face.BlazeFaceInput
 FrameFlow.Face.BlazeFacePreprocessor.Preprocess(FrameFlow.Media.IVideoFrame! frame, FrameFlow.Face.FaceRoi roi, System.Span<float> destination) -> void
 FrameFlow.Face.DetectedFaceFrameRef
 FrameFlow.Face.DetectedFaceFrameRef.AddRef() -> FrameFlow.Graph.IRefCounted!
-FrameFlow.Face.DetectedFaceFrameRef.DetectedFaceFrameRef(FrameFlow.Media.VideoFrameRef! video, System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceDetection>! faces) -> void
+FrameFlow.Face.DetectedFaceFrameRef.DetectedFaceFrameRef(FrameFlow.Media.IVideoFrame! video, System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceDetection>! faces) -> void
 FrameFlow.Face.DetectedFaceFrameRef.Dispose() -> void
 FrameFlow.Face.DetectedFaceFrameRef.Faces.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceDetection>!
 FrameFlow.Face.DetectedFaceFrameRef.Height.get -> int
 FrameFlow.Face.DetectedFaceFrameRef.Timestamp.get -> System.TimeSpan
-FrameFlow.Face.DetectedFaceFrameRef.Video.get -> FrameFlow.Media.VideoFrameRef!
+FrameFlow.Face.DetectedFaceFrameRef.Video.get -> FrameFlow.Media.IVideoFrame!
 FrameFlow.Face.DetectedFaceFrameRef.Width.get -> int
 FrameFlow.Face.FaceDetection
 FrameFlow.Face.FaceDetection.Confidence.get -> float
@@ -137,6 +137,6 @@ static FrameFlow.Face.BlazeFaceModelDescriptor.FromSession(FrameFlow.Inference.I
 static FrameFlow.Face.BlazeFaceModelDescriptor.Front128.get -> FrameFlow.Face.BlazeFaceModelDescriptor!
 static FrameFlow.Face.BlazeFaceModelDescriptor.Front128Nhwc.get -> FrameFlow.Face.BlazeFaceModelDescriptor!
 static FrameFlow.Face.BlazeFaceModelDescriptor.Front128Options.get -> FrameFlow.Face.SsdAnchorOptions!
-static FrameFlow.Face.FaceOperators.DetectWith(string! id, System.Func<FrameFlow.Media.IVideoFrame!, System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceDetection>!>! detect) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.VideoFrameRef!, FrameFlow.Face.DetectedFaceFrameRef!>!
+static FrameFlow.Face.FaceOperators.DetectWith(string! id, System.Func<FrameFlow.Media.IVideoFrame!, System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceDetection>!>! detect) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.IVideoFrame!, FrameFlow.Face.DetectedFaceFrameRef!>!
 static FrameFlow.Face.FaceRoi.Full(FrameFlow.Media.IVideoFrame! frame) -> FrameFlow.Face.FaceRoi
 static FrameFlow.Face.SsdAnchorGenerator.Generate(FrameFlow.Face.SsdAnchorOptions! options) -> System.Collections.Generic.IReadOnlyList<FrameFlow.Face.SsdAnchor>!

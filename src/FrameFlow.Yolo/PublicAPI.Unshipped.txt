@@ -4,12 +4,12 @@ const FrameFlow.Yolo.Yolov8ModelDownloader.DefaultModelFileName = "yolov8n.onnx"
 FrameFlow.Yolo.CocoClasses
 FrameFlow.Yolo.DetectedVideoFrameRef
 FrameFlow.Yolo.DetectedVideoFrameRef.AddRef() -> FrameFlow.Graph.IRefCounted!
-FrameFlow.Yolo.DetectedVideoFrameRef.DetectedVideoFrameRef(FrameFlow.Media.VideoFrameRef! video, System.Collections.Generic.IReadOnlyList<FrameFlow.Yolo.Detection>! detections) -> void
+FrameFlow.Yolo.DetectedVideoFrameRef.DetectedVideoFrameRef(FrameFlow.Media.IVideoFrame! video, System.Collections.Generic.IReadOnlyList<FrameFlow.Yolo.Detection>! detections) -> void
 FrameFlow.Yolo.DetectedVideoFrameRef.Detections.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Yolo.Detection>!
 FrameFlow.Yolo.DetectedVideoFrameRef.Dispose() -> void
 FrameFlow.Yolo.DetectedVideoFrameRef.Height.get -> int
 FrameFlow.Yolo.DetectedVideoFrameRef.Timestamp.get -> System.TimeSpan
-FrameFlow.Yolo.DetectedVideoFrameRef.Video.get -> FrameFlow.Media.VideoFrameRef!
+FrameFlow.Yolo.DetectedVideoFrameRef.Video.get -> FrameFlow.Media.IVideoFrame!
 FrameFlow.Yolo.DetectedVideoFrameRef.Width.get -> int
 FrameFlow.Yolo.Detection
 FrameFlow.Yolo.Detection.ClassId.get -> int
@@ -69,7 +69,7 @@ static FrameFlow.Yolo.YoloModelDescriptor.AnchorsFor(int inputSize) -> int
 static FrameFlow.Yolo.YoloModelDescriptor.CocoDefault.get -> FrameFlow.Yolo.YoloModelDescriptor!
 static FrameFlow.Yolo.YoloModelDescriptor.FromSession(FrameFlow.Inference.IInferenceSession! session) -> FrameFlow.Yolo.YoloModelDescriptor!
 static FrameFlow.Yolo.YoloModelDescriptor.TryDescribe(FrameFlow.Inference.IInferenceSession! session, out FrameFlow.Yolo.YoloModelDescriptor? descriptor, out string? error) -> bool
-static FrameFlow.Yolo.YoloOperators.DetectWith(string! id, System.Func<FrameFlow.Media.IVideoFrame!, System.Collections.Generic.IReadOnlyList<FrameFlow.Yolo.Detection>!>! detect) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.VideoFrameRef!, FrameFlow.Yolo.DetectedVideoFrameRef!>!
+static FrameFlow.Yolo.YoloOperators.DetectWith(string! id, System.Func<FrameFlow.Media.IVideoFrame!, System.Collections.Generic.IReadOnlyList<FrameFlow.Yolo.Detection>!>! detect) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.IVideoFrame!, FrameFlow.Yolo.DetectedVideoFrameRef!>!
 static FrameFlow.Yolo.Yolov8Detector.Create(FrameFlow.Inference.IInferenceSession! session, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Yolo.YoloModelDescriptor? descriptor = null, System.Collections.Generic.IReadOnlyCollection<int>? classFilter = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null) -> FrameFlow.Yolo.Yolov8Detector!
 static FrameFlow.Yolo.Yolov8Detector.CreateAsync(FrameFlow.Inference.IInferenceSessionFactory! factory, string? overrideModelPath = null, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken), Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Yolo.YoloModelDescriptor? descriptor = null, System.Collections.Generic.IReadOnlyCollection<int>? classFilter = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null) -> System.Threading.Tasks.Task<FrameFlow.Yolo.Yolov8Detector!>!
 static FrameFlow.Yolo.Yolov8Detector.CreateAsync(System.Func<string!, FrameFlow.Inference.IInferenceSession!>! sessionFactory, string? overrideModelPath = null, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken), Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Yolo.YoloModelDescriptor? descriptor = null, System.Collections.Generic.IReadOnlyCollection<int>? classFilter = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null) -> System.Threading.Tasks.Task<FrameFlow.Yolo.Yolov8Detector!>!

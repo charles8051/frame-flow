@@ -199,7 +199,7 @@ public sealed class SingleSourceAsAQueueOfOneTests : IClassFixture<FfmpegBootstr
 
         public int BackwardStepsWithoutAReset => Volatile.Read(ref _backwardSteps);
 
-        public GraphChain<VideoFrameRef> Configure(GraphChain<VideoFrameRef> chain)
+        public GraphChain<IVideoFrame> Configure(GraphChain<IVideoFrame> chain)
         {
             Interlocked.Increment(ref _chains);
             chain.Graph.BeforeEachRun(() =>
@@ -210,17 +210,17 @@ public sealed class SingleSourceAsAQueueOfOneTests : IClassFixture<FfmpegBootstr
             });
 
             return chain.Then(
-                new OperatorNode<VideoFrameRef, VideoFrameRef>(
+                new OperatorNode<IVideoFrame, IVideoFrame>(
                     "watch-timestamps",
                     (frame, _) =>
                     {
                         // The pump is single-threaded, and the registered action runs before it
                         // starts.
-                        if (frame.Frame.Pts < _last && !_reset)
+                        if (frame.Pts < _last && !_reset)
                             Interlocked.Increment(ref _backwardSteps);
                         _reset = false;
-                        _last = frame.Frame.Pts;
-                        return ValueTask.FromResult<VideoFrameRef?>(frame);
+                        _last = frame.Pts;
+                        return ValueTask.FromResult<IVideoFrame?>(frame);
                     }
                 )
             );

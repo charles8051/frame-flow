@@ -72,11 +72,10 @@ public sealed record SyncJoinKeys<TPrimary, TSecondary>(
 /// <b>Returning an input forwards it.</b> A body may return
 /// <paramref name="primary"/> or <paramref name="secondary"/> as its output;
 /// the substrate detects that and forwards the same ref downstream rather than
-/// releasing it. Return the input itself rather than its <c>AddRef()</c>: for
-/// a type whose <c>AddRef</c> returns the same instance (ADR-0080), that too
-/// counts as a pass-through and the extra ref leaks. (Until #42 removes them,
-/// the frame and audio wrappers return a new wrapper, which counts as a fresh
-/// output.) Any other return value must be freshly built, or be an
+/// releasing it. Return the input itself rather than its <c>AddRef()</c>:
+/// <c>AddRef</c> returns the same instance (ADR-0080), so that too counts as a
+/// pass-through and the extra ref leaks. Any other return value must be
+/// freshly built, or be an
 /// object the body holds apart from its inputs and has <c>AddRef</c>'d, because
 /// both inputs are released once the body returns.
 /// </para>
@@ -443,7 +442,11 @@ internal sealed class SecondaryWindow<T>
                 };
 
                 if (hit)
-                    return (T)e.Item.AddRef();
+                {
+                    // AddRef returns the same instance (ADR-0080, decision 1).
+                    e.Item.AddRef();
+                    return e.Item;
+                }
 
                 // Within: an earlier entry may still cover t, so keep scanning.
                 // MostRecentAtOrBefore: everything earlier is staler still.

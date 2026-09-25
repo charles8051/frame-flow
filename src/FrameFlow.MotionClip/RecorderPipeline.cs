@@ -46,13 +46,13 @@ internal static class RecorderPipeline
     /// progress, drop the next motion event" becomes "queue it."
     /// </summary>
     public static FrameFlow.Graph.Graph BuildGraph(
-        SourceNode<VideoFrameRef> source,
+        SourceNode<IVideoFrame> source,
         RecordingGate gate,
         ClipEncoderSink encoderSink,
         IVideoSink? preview = null
     )
     {
-        OperatorNode<VideoFrameRef, VideoFrameRef> resizeConvert =
+        OperatorNode<IVideoFrame, IVideoFrame> resizeConvert =
             VideoOperators.ResizeAndConvert(
                 "resize-convert",
                 DisplayWidth,
@@ -60,11 +60,11 @@ internal static class RecorderPipeline
                 PixelFormat.Bgra32
             );
 
-        OperatorNode<VideoFrameRef, ClipSegment> gateNode = gate.Build();
+        OperatorNode<IVideoFrame, ClipSegment> gateNode = gate.Build();
         SinkNode<ClipSegment> encoderNode = encoderSink.Build();
 
         var graph = new FrameFlow.Graph.Graph();
-        GraphChain<VideoFrameRef> display = graph.Pipeline(source).Then(resizeConvert);
+        GraphChain<IVideoFrame> display = graph.Pipeline(source).Then(resizeConvert);
 
         // The preview is a declared branch, so the gate stays the trunk and takes
         // the incoming ref no matter which edge is wired first; only the preview
@@ -75,8 +75,8 @@ internal static class RecorderPipeline
                 .Branch(
                     EdgeOptions
                         .LatestWins()
-                        .WithCloner<VideoFrameRef>(
-                            input => new VideoFrameRef(input.Frame.CloneCpu())
+                        .WithCloner<IVideoFrame>(
+                            input => input.CloneCpu()
                         )
                 )
                 .To(preview.AsSinkNode("preview-sink"));

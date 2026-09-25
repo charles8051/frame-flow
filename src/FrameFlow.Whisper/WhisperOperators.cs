@@ -11,7 +11,7 @@ namespace FrameFlow.Whisper;
 /// <summary>
 /// Substrate operator form of the old <c>WhisperPipelineExtensions.TranscribeWithWhisper</c>.
 /// Wraps Whisper.net inference as a 1→N <see cref="MultiOperatorNode{TIn, TOut}"/>:
-/// each upstream <see cref="PcmAudioBufferRef"/> contributes samples to a
+/// each upstream <see cref="PcmAudioBuffer"/> contributes samples to a
 /// rolling window; each completed window runs one Whisper inference call
 /// and yields a <see cref="CaptionRef"/> per non-empty segment.
 /// </summary>
@@ -78,7 +78,7 @@ public static class WhisperOperators
     /// <exception cref="ArgumentNullException">Required arg is null.</exception>
     /// <exception cref="ArgumentException">Model path is empty or whitespace.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Sample rate / channel count is non-positive.</exception>
-    public static MultiOperatorNode<PcmAudioBufferRef, CaptionRef> TranscribeWithWhisper(
+    public static MultiOperatorNode<PcmAudioBuffer, CaptionRef> TranscribeWithWhisper(
         string id,
         string modelPath,
         WhisperOptions? options = null
@@ -100,10 +100,10 @@ public static class WhisperOperators
         var windowBuffer = new List<float>(windowSamples + 4096);
         TimeSpan? windowStartPts = null;
 
-        return new MultiOperatorNode<PcmAudioBufferRef, CaptionRef>(id, TranscribeImpl);
+        return new MultiOperatorNode<PcmAudioBuffer, CaptionRef>(id, TranscribeImpl);
 
         async IAsyncEnumerable<CaptionRef> TranscribeImpl(
-            PcmAudioBufferRef input,
+            PcmAudioBuffer input,
             [EnumeratorCancellation] CancellationToken ct
         )
         {
@@ -118,7 +118,7 @@ public static class WhisperOperators
 #pragma warning restore CA2000
             }
 
-            var buffer = input.Buffer;
+            var buffer = input;
             if (buffer.SampleCount == 0)
                 yield break;
 

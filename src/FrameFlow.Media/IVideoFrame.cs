@@ -22,16 +22,16 @@ namespace FrameFlow.Media;
 /// </para>
 /// <para>
 /// <b>Graph binding.</b> <see cref="IVideoFrame"/> extends
-/// <see cref="Graph.IFrame"/> so video frames flow through the graph
-/// runtime (<c>FramePipeline&lt;IVideoFrame&gt;</c>) without a wrapper
-/// layer. The runtime requires Width, Height, Timestamp, and IDisposable;
+/// <see cref="Graph.IFrame"/> and <see cref="IRefCounted"/>, so a video
+/// chain is a <c>GraphChain&lt;IVideoFrame&gt;</c> and the frame itself is
+/// the graph item (ADR-0080, decision 6). The runtime requires Width, Height, Timestamp, and IDisposable;
 /// FrameFlow's domain-natural name for the timestamp is
 /// <see cref="Pts"/>, so <see cref="IFrame.Timestamp"/> is
 /// provided here as a default-interface alias for Pts. Existing
 /// IVideoFrame implementations remain source-compatible.
 /// </para>
 /// </remarks>
-public interface IVideoFrame : IFrame
+public interface IVideoFrame : IFrame, IRefCounted
 {
     // ── Metadata (always available, zero cost) ────────
 
@@ -63,7 +63,10 @@ public interface IVideoFrame : IFrame
     /// Increments the reference count and returns the same frame for fluent usage.
     /// </summary>
     /// <returns>This frame instance.</returns>
-    IVideoFrame AddRef();
+    new IVideoFrame AddRef();
+
+    /// <summary>The graph's view of <see cref="AddRef"/>: the same call, the same instance.</summary>
+    IRefCounted IRefCounted.AddRef() => AddRef();
 
     // ── Domain access ─────────────────────────────────
 

@@ -39,16 +39,16 @@ FrameFlow.Player.IMediaPlayer.SkipToNextAsync(System.Threading.CancellationToken
 FrameFlow.Player.IMediaPlayer.SourceTransitioned.get -> System.IObservable<FrameFlow.Playback.PlaylistTransition!>!
 FrameFlow.Player.IPassBuilder
 FrameFlow.Player.IPassBuilder.BuildAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Player.MediaPass!>!
-FrameFlow.Player.IPassBuilder.ConfigureAudio(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>>! configure) -> FrameFlow.Player.IPassBuilder!
-FrameFlow.Player.IPassBuilder.ConfigureVideo(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>>! configure) -> FrameFlow.Player.IPassBuilder!
+FrameFlow.Player.IPassBuilder.ConfigureAudio(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBuffer!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBuffer!>>! configure) -> FrameFlow.Player.IPassBuilder!
+FrameFlow.Player.IPassBuilder.ConfigureVideo(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.IVideoFrame!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.IVideoFrame!>>! configure) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithAudioSink(FrameFlow.Media.IAudioSink! sink) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithHardwareDecode(FrameFlow.Media.HardwareDecodeMode mode) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithLogger(Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithVideoSink(FrameFlow.Media.IVideoSink! sink) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPlayerBuilder
 FrameFlow.Player.IPlayerBuilder.BuildPlayerAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Player.IMediaPlayer!>!
-FrameFlow.Player.IPlayerBuilder.ConfigureAudio(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBufferRef!>>! configure) -> FrameFlow.Player.IPlayerBuilder!
-FrameFlow.Player.IPlayerBuilder.ConfigureVideo(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.VideoFrameRef!>>! configure) -> FrameFlow.Player.IPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.ConfigureAudio(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBuffer!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBuffer!>>! configure) -> FrameFlow.Player.IPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.ConfigureVideo(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.IVideoFrame!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.IVideoFrame!>>! configure) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithAudioActivation(bool activateAudioSink = true) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithAudioSink(FrameFlow.Media.IAudioSink! sink) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithClock(FrameFlow.Playback.IPlaybackClock! clock) -> FrameFlow.Player.IPlayerBuilder!

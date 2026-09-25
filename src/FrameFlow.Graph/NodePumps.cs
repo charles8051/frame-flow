@@ -572,17 +572,20 @@ internal static class NodePumps
                 else if (edge.Cloner is { } clone)
                     branchItems[i] = clone(item);
                 else
-                    branchItems[i] = (T)item.AddRef();
+                {
+                    // AddRef returns the same instance (ADR-0080, decision 1), so the branch
+                    // takes the item it already holds.
+                    item.AddRef();
+                    branchItems[i] = item;
+                }
             }
         }
         catch
         {
             // No branch has been written yet: ForwardAsync still owns the
             // incoming ref plus every per-branch ref it produced. Dispose
-            // them all. For AddRef-returns-this types (RefBox) the AddRef'd
-            // slots ARE `item`, so disposing each balances its increment;
-            // for new-wrapper types (VideoFrameRef) they dispose
-            // independently.
+            // them all. An AddRef'd slot IS `item`, so disposing each
+            // balances its increment.
             for (int j = 0; j < branchItems.Length; j++)
                 branchItems[j]?.Dispose();
 

@@ -32,11 +32,11 @@ public sealed class DecoderSourceAdaptersTests
         graph
             .Pipeline(decoder.AsSourceNode("video-source"))
             .To(
-                new SinkNode<VideoFrameRef>(
+                new SinkNode<IVideoFrame>(
                     "video-sink",
                     (item, _) =>
                     {
-                        capturedPts.Add(item.Frame.Pts);
+                        capturedPts.Add(item.Pts);
                         return ValueTask.CompletedTask;
                     }
                 )
@@ -61,7 +61,7 @@ public sealed class DecoderSourceAdaptersTests
         graph
             .Pipeline(decoder.AsSourceNode("video-source"))
             .To(
-                new SinkNode<VideoFrameRef>(
+                new SinkNode<IVideoFrame>(
                     "video-sink",
                     (_, _) =>
                     {

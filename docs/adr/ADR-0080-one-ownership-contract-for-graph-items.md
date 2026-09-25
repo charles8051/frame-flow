@@ -344,6 +344,13 @@ may pass another pool. The audio fill returns how many samples it wrote, because
 that only while converting. The CPU frame lays out up to three planes from its format, and
 `CloneCpu` copies each. The decoder's internal buffer pool went with the public constructors.
 
+**2026-09-25, graph items are the frames themselves (#42).** Decision 6 is implemented. The pumps
+now call `AddRef` and keep the item they hold, at the fork and at the join's match, as decision 1
+allows once every item returns itself. The sink adapters take a reference for the sink rather than
+detaching one. Migrating MotionClip's clip encoder surfaced an over-release present since #393: its
+writer released the segment's own frame references, and the segment released them again. The
+encoder now hands the writer a reference of its own.
+
 **2026-09-25, the sink frame pool (#382).** The second open question is decided: the pool is
 deleted. `PooledCpuVideoFrame` went with it, so decision 4's merge becomes giving
 `Media.CpuVideoFrame` planes (#379), and decision 5 has no `WriteData` left to remove.

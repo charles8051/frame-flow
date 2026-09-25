@@ -160,7 +160,7 @@ internal sealed class PlaylistRun : IAsyncDisposable
     public static PlaylistRun Create(
         IMediaSource[] items,
         RepeatMode repeat,
-        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? configureVideo = null,
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? configureVideo = null,
         IPlaybackClock? clock = null,
         bool asSingleSource = false
     )

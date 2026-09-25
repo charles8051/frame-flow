@@ -28,8 +28,8 @@ internal sealed class PassBuilder : IPassBuilder
     private readonly IMediaSource _source;
     private IVideoSink? _videoSink;
     private IAudioSink? _audioSink;
-    private Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>? _videoConfigurator;
-    private Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>? _audioConfigurator;
+    private Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? _videoConfigurator;
+    private Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? _audioConfigurator;
     private HardwareDecodeMode _hwMode = HardwareDecodeMode.Auto;
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private VideoDecoderOptions? _videoDecoderOptions;
@@ -53,7 +53,7 @@ internal sealed class PassBuilder : IPassBuilder
     }
 
     public IPassBuilder ConfigureVideo(
-        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>> configure
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>> configure
     )
     {
         ArgumentNullException.ThrowIfNull(configure);
@@ -62,7 +62,7 @@ internal sealed class PassBuilder : IPassBuilder
     }
 
     public IPassBuilder ConfigureAudio(
-        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>> configure
+        Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>> configure
     )
     {
         ArgumentNullException.ThrowIfNull(configure);

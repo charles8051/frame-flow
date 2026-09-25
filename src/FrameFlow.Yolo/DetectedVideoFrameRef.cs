@@ -9,8 +9,7 @@ namespace FrameFlow.Yolo;
 /// <summary>
 /// A video frame paired with its YOLOv8 detection results. Implements
 /// <see cref="IRefCounted"/> so it can ride the substrate; the
-/// inner <see cref="VideoFrameRef"/> owns the underlying frame's ref,
-/// the detection list is an immutable value piggy-backed for the ride.
+/// detection list is an immutable value piggy-backed for the ride.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -22,23 +21,28 @@ namespace FrameFlow.Yolo;
 /// have both halves.
 /// </para>
 /// <para>
-/// <b>Ref ownership.</b> Each wrapper owns exactly one ref on the
-/// underlying frame (via the contained <see cref="VideoFrameRef"/>).
-/// <see cref="AddRef"/> bumps the underlying refcount and returns a
-/// new wrapper with its own <see cref="VideoFrameRef"/> copy;
-/// <see cref="Dispose"/> releases the wrapper's ref by disposing
-/// the inner <see cref="VideoFrameRef"/>.
+/// <b>Ref ownership.</b> The item counts its own references by the shared
+/// rule (<see cref="RefCounting"/>, ADR-0080): <see cref="AddRef"/> returns
+/// this same instance, and every holder shares it. It holds one reference on
+/// <see cref="Video"/>, taken by whoever built it, and releases that
+/// reference on its own final release.
 /// </para>
 /// </remarks>
 public sealed class DetectedVideoFrameRef : IRefCounted, IFrame
 {
-    /// <summary>The underlying video frame, refcount-owned by this wrapper.</summary>
-    public VideoFrameRef Video { get; }
+    private int _refCount = 1;
+
+    /// <summary>The underlying video frame. This item holds one reference on it.</summary>
+    public IVideoFrame Video { get; }
 
     /// <summary>Detection results for this frame. Empty when nothing was detected above the model's threshold.</summary>
     public IReadOnlyList<Detection> Detections { get; }
 
-    public DetectedVideoFrameRef(VideoFrameRef video, IReadOnlyList<Detection> detections)
+    /// <summary>
+    /// Pairs <paramref name="video"/> with its results. Takes over one reference on
+    /// <paramref name="video"/>, which the item releases on its final release.
+    /// </summary>
+    public DetectedVideoFrameRef(IVideoFrame video, IReadOnlyList<Detection> detections)
     {
         ArgumentNullException.ThrowIfNull(video);
         ArgumentNullException.ThrowIfNull(detections);
@@ -46,20 +50,27 @@ public sealed class DetectedVideoFrameRef : IRefCounted, IFrame
         Detections = detections;
     }
 
-    /// <summary>The frame's width. Throws once the item is disposed.</summary>
+    /// <summary>The frame's width.</summary>
     public int Width => Video.Width;
 
-    /// <summary>The frame's height. Throws once the item is disposed.</summary>
+    /// <summary>The frame's height.</summary>
     public int Height => Video.Height;
 
-    /// <summary>The frame's presentation time. Throws once the item is disposed.</summary>
+    /// <summary>The frame's presentation time.</summary>
     public TimeSpan Timestamp => Video.Timestamp;
 
+    /// <inheritdoc />
+    /// <exception cref="ObjectDisposedException">The item has already been released.</exception>
     public IRefCounted AddRef()
     {
-        var videoCopy = (VideoFrameRef)Video.AddRef();
-        return new DetectedVideoFrameRef(videoCopy, Detections);
+        RefCounting.AddRef(ref _refCount, this);
+        return this;
     }
 
-    public void Dispose() => Video.Dispose();
+    /// <summary>Releases one reference; the final release releases the frame.</summary>
+    public void Dispose()
+    {
+        if (RefCounting.Release(ref _refCount, this))
+            Video.Dispose();
+    }
 }

@@ -164,24 +164,24 @@ public sealed class ClipEncoderSink : IAsyncDisposable
 
         IReadOnlyList<IVideoFrame> frames = segment.Frames;
         int frameCount = frames.Count;
-        var refs = new List<VideoFrameRef>(frameCount);
-        foreach (IVideoFrame f in frames)
-            refs.Add(new VideoFrameRef(f));
 
         LogEncodeStarted(_logger, path, frameCount, segment.Reason.ToString(), null);
         try
         {
             await using var writer = Mp4VideoWriter.Create(path, encoderOptions);
-            int wrote = 0;
-            foreach (VideoFrameRef r in refs)
-            {
-                await writer.WriteAsync(r, ct).ConfigureAwait(false);
-                wrote++;
-                // Periodic progress trace so a hang/slow encode lands a
-                // clear waypoint in the log instead of going dark.
-                if (wrote % 120 == 0)
-                    LogEncodeProgress(_logger, wrote, frameCount, null);
-            }
+            int wrote = await WriteFramesAsync(
+                    frames,
+                    writer.WriteAsync,
+                    written =>
+                    {
+                        // Periodic progress trace so a hang/slow encode lands a
+                        // clear waypoint in the log instead of going dark.
+                        if (written % 120 == 0)
+                            LogEncodeProgress(_logger, written, frameCount, null);
+                    },
+                    ct
+                )
+                .ConfigureAwait(false);
             LogEncodeWritesDone(_logger, wrote, null);
             await writer.CompleteAsync(ct).ConfigureAwait(false);
             LogEncodeMuxerCompleted(_logger, null);
@@ -194,14 +194,28 @@ public sealed class ClipEncoderSink : IAsyncDisposable
             LogClipSaveFailed(_logger, path, ex);
             throw;
         }
-        finally
+    }
+
+    /// <summary>
+    /// Writes each frame through <paramref name="write"/>, handing every call a reference of its
+    /// own. The writer releases what it is given, as <see cref="Mp4VideoWriter.WriteAsync"/>
+    /// does, and the segment keeps its own references until its final release. Returns how many
+    /// frames were written; <paramref name="onWritten"/> sees the running count.
+    /// </summary>
+    internal static async Task<int> WriteFramesAsync(
+        IReadOnlyList<IVideoFrame> frames,
+        Func<IVideoFrame, CancellationToken, ValueTask> write,
+        Action<int> onWritten,
+        CancellationToken ct
+    )
+    {
+        int wrote = 0;
+        foreach (IVideoFrame frame in frames)
         {
-            // VideoFrameRef.Dispose is idempotent; the writer disposes each
-            // ref it consumes, so this sweep cleans up any tail that wasn't
-            // written on the error path and is a no-op for the rest.
-            foreach (VideoFrameRef r in refs)
-                r.Dispose();
+            await write(frame.AddRef(), ct).ConfigureAwait(false);
+            onWritten(++wrote);
         }
+        return wrote;
     }
 
     public async ValueTask DisposeAsync()

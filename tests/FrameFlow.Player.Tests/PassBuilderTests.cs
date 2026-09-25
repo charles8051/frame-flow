@@ -48,7 +48,7 @@ public sealed class PassBuilderTests
         var builder = FrameFlowPass.Create("any.mp4");
         Assert.Throws<ArgumentNullException>(() =>
             builder.ConfigureVideo(
-                (Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>>)null!
+                (Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>)null!
             )
         );
     }
@@ -59,7 +59,7 @@ public sealed class PassBuilderTests
         var builder = FrameFlowPass.Create("any.mp4");
         Assert.Throws<ArgumentNullException>(() =>
             builder.ConfigureAudio(
-                (Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>>)null!
+                (Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>)null!
             )
         );
     }

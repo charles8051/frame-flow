@@ -102,7 +102,7 @@ public interface IPlayerBuilder
     /// </param>
     /// <remarks>Replaces any previously-configured video transform.</remarks>
     IPlayerBuilder ConfigureVideo(
-        Func<GraphChain<VideoFrameRef>, GraphChain<VideoFrameRef>> configure
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>> configure
     );
 
     /// <summary>
@@ -111,7 +111,7 @@ public interface IPlayerBuilder
     /// </summary>
     /// <remarks>Replaces any previously-configured audio transform.</remarks>
     IPlayerBuilder ConfigureAudio(
-        Func<GraphChain<PcmAudioBufferRef>, GraphChain<PcmAudioBufferRef>> configure
+        Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>> configure
     );
 
     /// <summary>
