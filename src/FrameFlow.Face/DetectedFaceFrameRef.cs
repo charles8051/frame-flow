@@ -20,7 +20,7 @@ namespace FrameFlow.Face;
 /// <see cref="Dispose"/> releases the wrapper's ref by disposing the
 /// inner <see cref="VideoFrameRef"/>.
 /// </remarks>
-public sealed class DetectedFaceFrameRef : IRefCounted
+public sealed class DetectedFaceFrameRef : IRefCounted, IFrame
 {
     /// <summary>The underlying video frame, refcount-owned by this wrapper.</summary>
     public VideoFrameRef Video { get; }
@@ -35,6 +35,15 @@ public sealed class DetectedFaceFrameRef : IRefCounted
         Video = video;
         Faces = faces;
     }
+
+    /// <summary>The frame's width. Throws once the item is disposed.</summary>
+    public int Width => Video.Width;
+
+    /// <summary>The frame's height. Throws once the item is disposed.</summary>
+    public int Height => Video.Height;
+
+    /// <summary>The frame's presentation time. Throws once the item is disposed.</summary>
+    public TimeSpan Timestamp => Video.Timestamp;
 
     public IRefCounted AddRef()
     {

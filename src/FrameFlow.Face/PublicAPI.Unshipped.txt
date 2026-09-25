@@ -47,7 +47,10 @@ FrameFlow.Face.DetectedFaceFrameRef.AddRef() -> FrameFlow.Graph.IRefCounted!
 FrameFlow.Face.DetectedFaceFrameRef.DetectedFaceFrameRef(FrameFlow.Media.VideoFrameRef! video, System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceDetection>! faces) -> void
 FrameFlow.Face.DetectedFaceFrameRef.Dispose() -> void
 FrameFlow.Face.DetectedFaceFrameRef.Faces.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceDetection>!
+FrameFlow.Face.DetectedFaceFrameRef.Height.get -> int
+FrameFlow.Face.DetectedFaceFrameRef.Timestamp.get -> System.TimeSpan
 FrameFlow.Face.DetectedFaceFrameRef.Video.get -> FrameFlow.Media.VideoFrameRef!
+FrameFlow.Face.DetectedFaceFrameRef.Width.get -> int
 FrameFlow.Face.FaceDetection
 FrameFlow.Face.FaceDetection.Confidence.get -> float
 FrameFlow.Face.FaceDetection.Confidence.init -> void

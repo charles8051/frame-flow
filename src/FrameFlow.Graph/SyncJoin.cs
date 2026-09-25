@@ -191,6 +191,12 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     /// dropping policy.
     /// </para>
     /// <para>
+    /// <b>Required for a frame secondary.</b> When <c>TSecondary</c> is an <see cref="IFrame"/>,
+    /// the constructor refuses a <see langword="null"/> lead (ADR-0080, decision 8): each
+    /// retained frame keeps its storage alive, and hardware or camera storage comes from a
+    /// fixed pool.
+    /// </para>
+    /// <para>
     /// A held secondary is admitted by the join's secondary reader once the primary comes
     /// within the lead of it. Set the lead well above the primary's item interval, so an entry
     /// becomes admissible several primary items before it can match. With a lead of about one
@@ -242,6 +248,19 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
         ArgumentOutOfRangeException.ThrowIfLessThan(window, TimeSpan.Zero);
         if (maxLead is { } lead)
             ArgumentOutOfRangeException.ThrowIfLessThan(lead, TimeSpan.Zero, nameof(maxLead));
+
+        // ADR-0080 decision 8: a retained frame pins its storage, and without a lead the join
+        // keeps every secondary that arrives ahead of the primary (#90).
+        if (maxLead is null && typeof(IFrame).IsAssignableFrom(typeof(TSecondary)))
+        {
+            throw new ArgumentException(
+                $"Join '{id}' has a frame secondary ({typeof(TSecondary).Name}) and no lead bound. "
+                    + "Without one it keeps every secondary that arrives ahead of the primary, and "
+                    + "each keeps its frame's storage alive. Set maxLead above the furthest the "
+                    + "secondary can run ahead.",
+                nameof(maxLead)
+            );
+        }
 
         Id = id;
         Body = body;

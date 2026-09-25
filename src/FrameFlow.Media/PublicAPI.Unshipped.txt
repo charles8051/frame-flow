@@ -524,7 +524,10 @@ FrameFlow.Media.VideoFrameRef.AddRef() -> FrameFlow.Graph.IRefCounted!
 FrameFlow.Media.VideoFrameRef.Detach() -> FrameFlow.Media.IVideoFrame?
 FrameFlow.Media.VideoFrameRef.Dispose() -> void
 FrameFlow.Media.VideoFrameRef.Frame.get -> FrameFlow.Media.IVideoFrame!
+FrameFlow.Media.VideoFrameRef.Height.get -> int
+FrameFlow.Media.VideoFrameRef.Timestamp.get -> System.TimeSpan
 FrameFlow.Media.VideoFrameRef.VideoFrameRef(FrameFlow.Media.IVideoFrame! frame) -> void
+FrameFlow.Media.VideoFrameRef.Width.get -> int
 FrameFlow.Media.VideoStreamInfo
 FrameFlow.Media.VideoStreamInfo.CodecName.get -> string!
 FrameFlow.Media.VideoStreamInfo.CodecName.init -> void

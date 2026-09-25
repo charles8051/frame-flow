@@ -11,6 +11,29 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## Unreleased — since `v0.11.0`
+
+### 1. A join with a frame secondary must set `maxLead`
+
+**A runtime error at construction, not a compile error.**
+
+`SyncJoinNode` now throws `ArgumentException` (parameter `maxLead`) when its secondary type is an
+`IFrame` and no lead bound is given. `VideoFrameRef`, `DetectedVideoFrameRef` and
+`DetectedFaceFrameRef` implement `IFrame` for this, and `CameraFrameAdapter` already did.
+
+**Who hits this.** Anyone joining frames as the secondary without a lead. No join in this
+repository does; the one in-tree join retains a `RefBox<DetectionSet>`. A join over
+`Media.CpuVideoFrame` secondaries threw at its first match anyway (#91), so the case this breaks is
+a join over frames that already counted references, such as `GpuVideoFrame`.
+
+**What to write instead.** Pass `maxLead`, above the furthest the secondary can run ahead of the
+primary. The lead's documentation on `SyncJoinNode.MaxLead` covers choosing it and the one shape
+where holding the secondary edge can deadlock.
+
+**Why.** Every retained frame keeps its storage alive, and a hardware decode slice or a camera
+buffer comes from a fixed pool. Without a lead, a join retains every secondary that arrives ahead of
+the primary (#90). ADR-0080 decision 8.
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be
