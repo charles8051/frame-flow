@@ -1,8 +1,6 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-using System.Buffers;
-
 namespace FrameFlow.Media;
 
 /// <summary>
@@ -14,10 +12,8 @@ public static class VideoFrameExtensions
 {
     /// <summary>
     /// Returns a fresh, independently-disposable CPU copy of
-    /// <paramref name="frame"/>. Pixel data is copied into a new
-    /// <see cref="IMemoryOwner{T}"/> rented from
-    /// <see cref="MemoryPool{T}.Shared"/>; metadata (PTS, duration,
-    /// format) is preserved.
+    /// <paramref name="frame"/>. Every plane is copied; metadata (PTS,
+    /// duration, format) is preserved.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -28,20 +24,11 @@ public static class VideoFrameExtensions
     /// the source frame's buffer and pool.
     /// </para>
     /// <para>
-    /// <b>Cost.</b> Allocates one buffer rental + a single memcpy of the
-    /// pixel plane. For the multicast / live-captioning scenarios this
-    /// is the price of fan-out to <c>N</c> branches at independent
-    /// rates; the alternative would be plumbing a frame pool into
-    /// every operator on the hot path.
-    /// </para>
-    /// <para>
-    /// <b>Packed formats only today.</b> The clone reads
-    /// <see cref="IVideoFrame.AsCpu"/>'s <c>PlaneY</c> as the entire
-    /// pixel payload — correct for BGRA32 / RGBA32 (and the broadcast
-    /// examples that <c>ConvertPixelFormat(Bgra32)</c> before
-    /// branching). Planar YUV inputs would clone only the Y plane.
-    /// When a planar use case appears, extend the helper to copy
-    /// PlaneU / PlaneV as well.
+    /// <b>Layout.</b> The clone is tightly packed, the layout
+    /// <see cref="CpuVideoFrame.Create{TState}"/> gives its format. A source
+    /// whose rows carry padding is copied row by row, so the clone's
+    /// strides can be smaller than the source's. NV12's interleaved chroma
+    /// is read from and written to <c>PlaneU</c>.
     /// </para>
     /// </remarks>
     /// <param name="frame">Source frame; not modified, not disposed.</param>
@@ -49,7 +36,8 @@ public static class VideoFrameExtensions
     /// <exception cref="ArgumentNullException"><paramref name="frame"/> is null.</exception>
     /// <exception cref="InvalidOperationException">
     /// <paramref name="frame"/> exposes no CPU view (i.e. <see cref="IVideoFrame.AsCpu"/>
-    /// returned <see langword="null"/>). GPU-only frames need a readback first.
+    /// returned <see langword="null"/>), or a plane of that view is too short for the
+    /// frame's size and format. GPU-only frames need a readback first.
     /// </exception>
     public static CpuVideoFrame CloneCpu(this IVideoFrame frame)
     {
@@ -62,22 +50,54 @@ public static class VideoFrameExtensions
                     + "read back to CPU before cloning."
             );
 
-        // PlaneY holds the full packed payload for BGRA32 / RGBA32.
-        // Stride may include padding; copying the entire span (including
-        // padding bytes) keeps the new frame byte-identical and the
-        // clone's stride matches the source's.
-        var srcPlane = cpu.PlaneY.Span;
-        var owner = MemoryPool<byte>.Shared.Rent(srcPlane.Length);
-        srcPlane.CopyTo(owner.Memory.Span);
-
-        return new CpuVideoFrame(
-            pixelData: owner,
-            width: frame.Width,
-            height: frame.Height,
-            stride: cpu.StrideY,
-            format: frame.Format,
-            presentationTime: frame.Pts,
-            duration: frame.Duration
+        return CpuVideoFrame.Create(
+            frame.Format,
+            frame.Width,
+            frame.Height,
+            frame.Pts,
+            frame.Duration,
+            cpu,
+            static (planes, source) =>
+            {
+                CopyPlane(source.PlaneY.Span, source.StrideY, planes.Y, planes.StrideY, "Y");
+                CopyPlane(source.PlaneU.Span, source.StrideU, planes.U, planes.StrideU, "U");
+                CopyPlane(source.PlaneV.Span, source.StrideV, planes.V, planes.StrideV, "V");
+            }
         );
+    }
+
+    private static void CopyPlane(
+        ReadOnlySpan<byte> source,
+        int sourceStride,
+        Span<byte> destination,
+        int destinationStride,
+        string plane
+    )
+    {
+        if (destination.IsEmpty)
+            return;
+
+        int rows = destination.Length / destinationStride;
+        long needed = ((long)(rows - 1) * sourceStride) + destinationStride;
+        if (sourceStride < destinationStride || source.Length < needed)
+        {
+            throw new InvalidOperationException(
+                $"CloneCpu: the source's {plane} plane has {source.Length} bytes at stride "
+                    + $"{sourceStride}, too few for {rows} rows of {destinationStride} bytes."
+            );
+        }
+
+        if (sourceStride == destinationStride)
+        {
+            source[..destination.Length].CopyTo(destination);
+            return;
+        }
+
+        for (int row = 0; row < rows; row++)
+        {
+            source
+                .Slice(row * sourceStride, destinationStride)
+                .CopyTo(destination.Slice(row * destinationStride, destinationStride));
+        }
     }
 }

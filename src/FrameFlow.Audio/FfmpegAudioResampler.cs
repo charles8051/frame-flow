@@ -1,7 +1,6 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-using System.Buffers;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
 
@@ -62,38 +61,32 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
             (int)((delay + inputFramesPerChannel) * (double)TargetSampleRate / _sourceSampleRate)
             + 256;
 
-        var owner = MemoryPool<short>.Shared.Rent(maxOutputFramesPerChannel * TargetChannels);
-        int actualOutputFramesPerChannel;
-        try
-        {
-            actualOutputFramesPerChannel = RunSwrConvert(
-                swrPtr,
-                input.Samples.Span,
-                inputFramesPerChannel,
-                owner.Memory.Span,
-                maxOutputFramesPerChannel
-            );
-        }
-        catch
-        {
-            owner.Dispose();
-            throw;
-        }
-
-        if (actualOutputFramesPerChannel < 0)
-        {
-            owner.Dispose();
-            throw new InvalidOperationException(
-                $"swr_convert returned error {actualOutputFramesPerChannel}."
-            );
-        }
-
-        return new PcmAudioBuffer(
-            sampleData: owner,
-            sampleCount: actualOutputFramesPerChannel * TargetChannels,
-            sampleRate: TargetSampleRate,
-            channels: TargetChannels,
-            presentationTime: input.PresentationTime
+        // A failure throws out of the fill, and the factory returns the storage.
+        return PcmAudioBuffer.Create(
+            maxOutputFramesPerChannel * TargetChannels,
+            TargetSampleRate,
+            TargetChannels,
+            input.PresentationTime,
+            (
+                Swr: swrPtr,
+                Input: input,
+                InputFrames: inputFramesPerChannel,
+                MaxOutput: maxOutputFramesPerChannel,
+                Channels: TargetChannels
+            ),
+            static (samples, s) =>
+            {
+                int frames = RunSwrConvert(
+                    s.Swr,
+                    s.Input.Samples.Span,
+                    s.InputFrames,
+                    samples,
+                    s.MaxOutput
+                );
+                if (frames < 0)
+                    throw new InvalidOperationException($"swr_convert returned error {frames}.");
+                return frames * s.Channels;
+            }
         );
     }
 
@@ -115,36 +108,25 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
         if (maxOutputFramesPerChannel <= 0)
             return null;
 
-        var owner = MemoryPool<short>.Shared.Rent(maxOutputFramesPerChannel * TargetChannels);
-        int actualOutputFramesPerChannel;
-        try
-        {
-            // Flush by calling swr_convert with input=null and in_count=0.
-            actualOutputFramesPerChannel = RunSwrFlush(
-                swrPtr,
-                owner.Memory.Span,
-                maxOutputFramesPerChannel
-            );
-        }
-        catch
-        {
-            owner.Dispose();
-            throw;
-        }
+        // Flush by calling swr_convert with input=null and in_count=0. A negative
+        // return is treated as no output, as it always has been here.
+        var buffer = PcmAudioBuffer.Create(
+            maxOutputFramesPerChannel * TargetChannels,
+            TargetSampleRate,
+            TargetChannels,
+            finalPresentationTime,
+            (Swr: swrPtr, MaxOutput: maxOutputFramesPerChannel, Channels: TargetChannels),
+            static (samples, s) =>
+                Math.Max(0, RunSwrFlush(s.Swr, samples, s.MaxOutput)) * s.Channels
+        );
 
-        if (actualOutputFramesPerChannel <= 0)
+        if (buffer.SampleCount == 0)
         {
-            owner.Dispose();
+            buffer.Dispose();
             return null;
         }
 
-        return new PcmAudioBuffer(
-            sampleData: owner,
-            sampleCount: actualOutputFramesPerChannel * TargetChannels,
-            sampleRate: TargetSampleRate,
-            channels: TargetChannels,
-            presentationTime: finalPresentationTime
-        );
+        return buffer;
     }
 
     public void Reset()
@@ -261,15 +243,14 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
 
     private PcmAudioBuffer CreateEmpty(TimeSpan pts)
     {
-        // A zero-sample buffer still needs a real (empty) memory owner so
-        // Dispose works. Renting 1 slot is the cheapest safe choice.
-        var owner = MemoryPool<short>.Shared.Rent(1);
-        return new PcmAudioBuffer(
-            sampleData: owner,
-            sampleCount: 0,
-            sampleRate: TargetSampleRate,
-            channels: TargetChannels,
-            presentationTime: pts
+        // Capacity 0 rents the shared empty array, which nothing returns.
+        return PcmAudioBuffer.Create(
+            0,
+            TargetSampleRate,
+            TargetChannels,
+            pts,
+            0,
+            static (_, _) => 0
         );
     }
 

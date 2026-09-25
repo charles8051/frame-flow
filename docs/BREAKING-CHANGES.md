@@ -62,6 +62,47 @@ implementation deletes its `FramePool` member.
 never filled and its capacity bounded nothing. A slow sink applies backpressure through its edge,
 which does not take the next frame until `PresentAsync` returns. ADR-0080, #382.
 
+### 3. CPU frames and PCM buffers are made by a fill factory
+
+**A compile error.**
+
+The `CpuVideoFrame` and `PcmAudioBuffer` constructors are gone, and so are
+`CpuVideoFrame.PixelData` and `PcmAudioBuffer.SampleData`. Each type has one factory that rents
+storage, runs your callback over it once, and returns the published item:
+
+```csharp
+// Before
+var owner = MemoryPool<byte>.Shared.Rent(width * height * 4);
+Paint(owner.Memory.Span);
+var frame = new CpuVideoFrame(owner, width, height, width * 4, PixelFormat.Bgra32, pts, duration);
+
+// After
+var frame = CpuVideoFrame.Create(PixelFormat.Bgra32, width, height, pts, duration, state,
+    static (planes, state) => Paint(planes.Y, state));
+
+// Before
+var buffer = new PcmAudioBuffer(owner, sampleCount, sampleRate, channels, pts);
+
+// After: the callback returns how many samples it wrote, up to the capacity.
+var buffer = PcmAudioBuffer.Create(capacity, sampleRate, channels, pts, state,
+    static (samples, state) => Convert(samples, state));
+```
+
+To read pixels, use `AsCpu()` or `ToCpu()`; to read samples, use `Samples`.
+
+**Who hits this.** Anyone who constructs a CPU frame or PCM buffer, which includes test helpers,
+or reads `PixelData` or `SampleData`.
+
+**Also changed.** A CPU frame's layout now comes from its format: tightly packed rows, and up to
+three planes (`Yuv420P` uses three, `Nv12` puts its interleaved chroma in `PlaneU`). `AsCpu()`
+returns each plane at its exact length, where `PlaneY` used to be the whole rented buffer, which
+could run past the image. `CloneCpu` copies every plane, where it used to copy only `PlaneY`, and
+its clone is tightly packed even when the source's rows are padded.
+
+**Why.** A frame shared by count must not change after it is published, and `PixelData` and
+`SampleData` let any holder write to shared storage or free it. The spans the callback receives
+cannot outlive the call. ADR-0080 decision 5, #378, #379.
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be

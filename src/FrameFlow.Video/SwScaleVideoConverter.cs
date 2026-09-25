@@ -1,7 +1,6 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-using System.Buffers;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
 
@@ -67,35 +66,38 @@ internal sealed unsafe class SwScaleVideoConverter : IVideoConverter
 
         var cpuData = source.ToCpu();
 
-        // Output buffer is a single packed plane: 4 bpp for both
-        // Bgra32 and Rgba32. Stride = width * 4 with no padding —
-        // simpler than the FFmpeg natural alignment and avoids
-        // surprises for sinks that assume tight packing.
-        const int bytesPerPixel = 4;
-        int dstStride = dstWidth * bytesPerPixel;
-        long byteCount = (long)dstStride * dstHeight;
-        if (byteCount > int.MaxValue)
+        // The output is a single packed plane, 4 bpp for both Bgra32 and
+        // Rgba32, tightly packed: the factory's layout, which avoids
+        // surprises for sinks that assume tight packing. A failed scale
+        // throws out of the fill, and the factory returns the storage.
+        return CpuVideoFrame.Create(
+            dstFormat,
+            dstWidth,
+            dstHeight,
+            source.Pts,
+            source.Duration,
+            (Sws: _sws!.DangerousGetHandle(), Source: cpuData, SrcHeight: srcHeight),
+            static (planes, s) => ScaleInto(planes, s.Sws, s.Source, s.SrcHeight)
+        );
+    }
+
+    private static unsafe void ScaleInto(
+        CpuVideoFramePlanes planes,
+        nint sws,
+        CpuFrameData source,
+        int srcHeight
+    )
+    {
+        fixed (byte* dstData = planes.Y)
         {
-            throw new InvalidOperationException(
-                $"Output frame too large for a single buffer: {dstWidth}x{dstHeight} = {byteCount} bytes."
-            );
-        }
-
-        var outputBuffer = MemoryPool<byte>.Shared.Rent((int)byteCount);
-
-        try
-        {
-            using var dstPin = outputBuffer.Memory.Pin();
-            byte* dstData = (byte*)dstPin.Pointer;
-
             // Pin the source planes. For packed input (Bgra32, Rgba32)
             // PlaneU/PlaneV are empty and we just pin PlaneY. For YUV
             // we pin all three. Pinning empty ReadOnlyMemory yields a
             // null pointer, which is what swscale expects for "unused
             // plane."
-            using var pinY = cpuData.PlaneY.Pin();
-            using var pinU = cpuData.PlaneU.Pin();
-            using var pinV = cpuData.PlaneV.Pin();
+            using var pinY = source.PlaneY.Pin();
+            using var pinU = source.PlaneU.Pin();
+            using var pinV = source.PlaneV.Pin();
 
             byte** srcSlice = stackalloc byte*[4];
             srcSlice[0] = (byte*)pinY.Pointer;
@@ -104,9 +106,9 @@ internal sealed unsafe class SwScaleVideoConverter : IVideoConverter
             srcSlice[3] = null;
 
             int* srcStrides = stackalloc int[4];
-            srcStrides[0] = cpuData.StrideY;
-            srcStrides[1] = cpuData.StrideU;
-            srcStrides[2] = cpuData.StrideV;
+            srcStrides[0] = source.StrideY;
+            srcStrides[1] = source.StrideU;
+            srcStrides[2] = source.StrideV;
             srcStrides[3] = 0;
 
             // swscale wants 4 destination plane pointers / strides
@@ -120,13 +122,13 @@ internal sealed unsafe class SwScaleVideoConverter : IVideoConverter
             dstSlice[3] = null;
 
             int* dstStrides = stackalloc int[4];
-            dstStrides[0] = dstStride;
+            dstStrides[0] = planes.StrideY;
             dstStrides[1] = 0;
             dstStrides[2] = 0;
             dstStrides[3] = 0;
 
             int rowsWritten = FFSwScale.sws_scale(
-                _sws!.DangerousGetHandle(),
+                sws,
                 srcSlice,
                 srcStrides,
                 0,
@@ -138,26 +140,11 @@ internal sealed unsafe class SwScaleVideoConverter : IVideoConverter
             if (rowsWritten <= 0)
             {
                 throw new InvalidOperationException(
-                    $"sws_scale returned {rowsWritten} rows for a {srcWidth}x{srcHeight} → "
-                        + $"{dstWidth}x{dstHeight} conversion."
+                    $"sws_scale returned {rowsWritten} rows for a {source.Width}x{srcHeight} → "
+                        + $"{planes.Width}x{planes.Height} conversion."
                 );
             }
         }
-        catch
-        {
-            outputBuffer.Dispose();
-            throw;
-        }
-
-        return new CpuVideoFrame(
-            pixelData: outputBuffer,
-            width: dstWidth,
-            height: dstHeight,
-            stride: dstStride,
-            format: dstFormat,
-            presentationTime: source.Pts,
-            duration: source.Duration
-        );
     }
 
     public void Dispose()

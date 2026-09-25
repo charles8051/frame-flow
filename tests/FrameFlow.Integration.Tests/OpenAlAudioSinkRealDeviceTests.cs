@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Diagnostics;
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Media;
@@ -250,15 +249,21 @@ public sealed class OpenAlAudioSinkRealDeviceTests
     /// </summary>
     private static PcmAudioBuffer MakePcmBlock(int samples, int sampleRate, int channels)
     {
-        var owner = MemoryPool<short>.Shared.Rent(samples);
-        var span = owner.Memory.Span[..samples];
-
-        for (int i = 0; i < samples; i++)
-        {
-            double phase = (2.0 * Math.PI * 440.0 * (i / channels)) / sampleRate;
-            span[i] = (short)(Math.Sin(phase) * 8000);
-        }
-
-        return new PcmAudioBuffer(owner, samples, sampleRate, channels, TimeSpan.Zero);
+        return PcmAudioBuffer.Create(
+            samples,
+            sampleRate,
+            channels,
+            TimeSpan.Zero,
+            (Rate: sampleRate, Channels: channels),
+            static (span, p) =>
+            {
+                for (int i = 0; i < span.Length; i++)
+                {
+                    double phase = (2.0 * Math.PI * 440.0 * (i / p.Channels)) / p.Rate;
+                    span[i] = (short)(Math.Sin(phase) * 8000);
+                }
+                return span.Length;
+            }
+        );
     }
 }

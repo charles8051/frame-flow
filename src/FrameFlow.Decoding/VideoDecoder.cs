@@ -1,7 +1,6 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-using System.Buffers;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
@@ -59,7 +58,6 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     private readonly FrameHandle _frame;
     private readonly PacketHandle _packet;
     private SwsContextHandle? _swsCtx;
-    private readonly IFrameBufferPool _pool;
     private readonly ILogger _logger;
 
     // Hardware-decode state (ADR-0033). Null/Zero when running software-only.
@@ -236,7 +234,6 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// <param name="height">Frame height in pixels.</param>
     /// <param name="timeBaseNum">Numerator of the stream time base.</param>
     /// <param name="timeBaseDen">Denominator of the stream time base.</param>
-    /// <param name="pool">Buffer pool for managed pixel data. Not owned by the decoder.</param>
     /// <param name="packetQueueCapacity">
     /// Depth of the bounded packet queue (see
     /// <see cref="VideoDecoderOptions.PacketQueueCapacity"/>). Defaults to 512. Must be at least 1.
@@ -253,7 +250,6 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         int height,
         int timeBaseNum,
         int timeBaseDen,
-        IFrameBufferPool pool,
         int packetQueueCapacity = 512,
         ILogger? logger = null
     )
@@ -272,7 +268,6 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         _height = height;
         _timeBaseNum = timeBaseNum;
         _timeBaseDen = timeBaseDen;
-        _pool = pool;
         _logger = logger ?? NullLogger.Instance;
 
         _packetQueueCapacity = packetQueueCapacity;
@@ -310,33 +305,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             streamIndex,
             options: null,
             capabilities: null,
-            pool: new SharedMemoryFramePool(),
             videoOptions: videoOptions,
             logger: logger
-        );
-
-    /// <summary>
-    /// Creates and opens a <see cref="VideoDecoder"/> with an injectable frame
-    /// buffer pool. Defaults to software-only decode; for hardware-decode
-    /// selection use the overload that accepts
-    /// <see cref="HardwareDecodeOptions"/> (ADR-0033). Intended for tests and
-    /// internal factory code.
-    /// </summary>
-    internal static VideoDecoder Open(
-        nint formatContextPtr,
-        int streamIndex,
-        IFrameBufferPool pool,
-        VideoDecoderOptions? videoOptions = null,
-        ILogger? logger = null
-    ) =>
-        Open(
-            formatContextPtr,
-            streamIndex,
-            options: null,
-            capabilities: null,
-            pool,
-            videoOptions,
-            logger
         );
 
     /// <inheritdoc/>
@@ -1023,19 +993,45 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         if (_swsCtx is null || _swsCtx.IsInvalid)
             return null;
 
-        // Destination: BGRA32, stride = width * 4, no padding.
-        int dstWidth = srcWidth;
-        int dstHeight = srcHeight;
-        const int bytesPerPixel = 4; // BGRA32
-        int dstStride = dstWidth * bytesPerPixel;
-
-        IMemoryOwner<byte> buffer = _pool.RentVideoBuffer(dstWidth, dstHeight, bytesPerPixel);
+        TimeSpan presentationTime = ComputePresentationTime(pts);
 
         try
         {
-            using var pin = buffer.Memory.Pin();
-            byte* dstData = (byte*)pin.Pointer;
+            // Destination: BGRA32, tightly packed. The fill converts straight into the
+            // frame's storage; nothing writes to it after Create returns.
+            return CpuVideoFrame.Create(
+                PixelFormat.Bgra32,
+                srcWidth,
+                srcHeight,
+                presentationTime,
+                duration,
+                (SwsCtx: _swsCtx.DangerousGetHandle(), Source: framePtr),
+                static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source)
+            );
+        }
+        catch (ScaleFailedException ex)
+        {
+            // Count it. A conversion that fails for every frame of a stream
+            // otherwise reports nothing: the demuxer reads every packet, this
+            // returns null each time, and playback reaches Ended with zero
+            // frames and zero errors. That is how the four-plane bug below
+            // stayed invisible. The factory has already returned the storage.
+            Interlocked.Increment(ref _decodeErrors);
+            LogScaleFailed(_logger, srcWidth, srcHeight, srcFormat, ex.RowsWritten);
+            return null;
+        }
+    }
 
+    /// <summary>
+    /// Converts the decoded <c>AVFrame</c> at <paramref name="source"/> into the frame's
+    /// BGRA plane. Throws <see cref="ScaleFailedException"/> when swscale writes no rows.
+    /// </summary>
+    private static unsafe void ScaleInto(CpuVideoFramePlanes planes, nint swsCtx, nint source)
+    {
+        var accessor = new AvFrameAccessor(source);
+
+        fixed (byte* dstData = planes.Y)
+        {
             // sws_scale expects arrays of plane pointers and strides.
             // Source planes come from the AVFrame data array.
             //
@@ -1065,51 +1061,31 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             dstSlice[3] = null;
 
             int* dstStrides = stackalloc int[4];
-            dstStrides[0] = dstStride;
+            dstStrides[0] = planes.StrideY;
             dstStrides[1] = 0;
             dstStrides[2] = 0;
             dstStrides[3] = 0;
 
             int rowsWritten = FFSwScale.sws_scale(
-                _swsCtx.DangerousGetHandle(),
+                swsCtx,
                 srcSlice,
                 srcStrides,
                 0,
-                srcHeight,
+                accessor.Height,
                 dstSlice,
                 dstStrides
             );
 
             if (rowsWritten <= 0)
-            {
-                // Count it. A conversion that fails for every frame of a stream
-                // otherwise reports nothing: the demuxer reads every packet, this
-                // returns null each time, and playback reaches Ended with zero
-                // frames and zero errors. That is how the four-plane bug above
-                // stayed invisible.
-                Interlocked.Increment(ref _decodeErrors);
-                LogScaleFailed(_logger, srcWidth, srcHeight, srcFormat, rowsWritten);
-                buffer.Dispose();
-                return null;
-            }
+                throw new ScaleFailedException(rowsWritten);
         }
-        catch
-        {
-            buffer.Dispose();
-            throw;
-        }
+    }
 
-        TimeSpan presentationTime = ComputePresentationTime(pts);
-
-        return new CpuVideoFrame(
-            pixelData: buffer,
-            width: dstWidth,
-            height: dstHeight,
-            stride: dstStride,
-            format: PixelFormat.Bgra32,
-            presentationTime: presentationTime,
-            duration: duration
-        );
+    /// <summary>swscale wrote no rows. Carries its return value out of the fill callback.</summary>
+    private sealed class ScaleFailedException(int rowsWritten)
+        : Exception($"sws_scale returned {rowsWritten}.")
+    {
+        public int RowsWritten { get; } = rowsWritten;
     }
 
     /// <summary>

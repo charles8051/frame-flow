@@ -1,7 +1,6 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-using System.Buffers;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
 
@@ -66,43 +65,50 @@ internal static unsafe class GpuFrameReadback
         var accessor = new AvFrameAccessor(cpuPtr);
         int swFormat = accessor.Format;
 
-        const int bytesPerPixel = 4;
-        int dstStride = width * bytesPerPixel;
-        long byteCount = (long)dstStride * height;
-        if (byteCount > int.MaxValue)
+        nint swsCtx = FFSwScale.sws_getContext(
+            width,
+            height,
+            swFormat,
+            width,
+            height,
+            FFSwScale.AvPixFmtBgra,
+            FFSwScale.SwsBilinear,
+            srcFilter: nint.Zero,
+            dstFilter: nint.Zero,
+            param: nint.Zero
+        );
+        if (swsCtx == nint.Zero)
         {
             throw new InvalidOperationException(
-                $"Readback frame too large for a single buffer: {width}x{height}."
+                $"sws_getContext returned null for {width}x{height} fmt={swFormat} → Bgra32."
             );
         }
 
-        var outputBuffer = MemoryPool<byte>.Shared.Rent((int)byteCount);
-
-        nint swsCtx = nint.Zero;
         try
         {
-            swsCtx = FFSwScale.sws_getContext(
+            // A failed scale throws out of the fill, and the factory returns the storage.
+            return CpuVideoFrame.Create(
+                PixelFormat.Bgra32,
                 width,
                 height,
-                swFormat,
-                width,
-                height,
-                FFSwScale.AvPixFmtBgra,
-                FFSwScale.SwsBilinear,
-                srcFilter: nint.Zero,
-                dstFilter: nint.Zero,
-                param: nint.Zero
+                pts,
+                duration,
+                (SwsCtx: swsCtx, Source: cpuPtr),
+                static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source)
             );
-            if (swsCtx == nint.Zero)
-            {
-                throw new InvalidOperationException(
-                    $"sws_getContext returned null for {width}x{height} fmt={swFormat} → Bgra32."
-                );
-            }
+        }
+        finally
+        {
+            FFSwScale.sws_freeContext(swsCtx);
+        }
+    }
 
-            using var dstPin = outputBuffer.Memory.Pin();
-            byte* dstData = (byte*)dstPin.Pointer;
+    private static void ScaleInto(CpuVideoFramePlanes planes, nint swsCtx, nint source)
+    {
+        var accessor = new AvFrameAccessor(source);
 
+        fixed (byte* dstData = planes.Y)
+        {
             // All four planes, matching VideoDecoder.BuildManagedFrameFromCpu. No
             // four-plane format reaches here today: this converts a frame
             // transferred off the GPU, and the transfer formats are nv12 and p010.
@@ -123,7 +129,7 @@ internal static unsafe class GpuFrameReadback
             dstSlice[3] = null;
 
             int* dstStrides = stackalloc int[4];
-            dstStrides[0] = dstStride;
+            dstStrides[0] = planes.StrideY;
             dstStrides[1] = 0;
             dstStrides[2] = 0;
             dstStrides[3] = 0;
@@ -133,7 +139,7 @@ internal static unsafe class GpuFrameReadback
                 srcSlice,
                 srcStrides,
                 0,
-                height,
+                planes.Height,
                 dstSlice,
                 dstStrides
             );
@@ -141,29 +147,9 @@ internal static unsafe class GpuFrameReadback
             if (rows <= 0)
             {
                 throw new InvalidOperationException(
-                    $"sws_scale returned {rows} rows for {width}x{height} GPU readback."
+                    $"sws_scale returned {rows} rows for {planes.Width}x{planes.Height} GPU readback."
                 );
             }
         }
-        catch
-        {
-            outputBuffer.Dispose();
-            throw;
-        }
-        finally
-        {
-            if (swsCtx != nint.Zero)
-                FFSwScale.sws_freeContext(swsCtx);
-        }
-
-        return new CpuVideoFrame(
-            pixelData: outputBuffer,
-            width: width,
-            height: height,
-            stride: dstStride,
-            format: PixelFormat.Bgra32,
-            presentationTime: pts,
-            duration: duration
-        );
     }
 }

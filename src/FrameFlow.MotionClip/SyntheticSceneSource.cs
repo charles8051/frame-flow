@@ -1,7 +1,6 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-using System.Buffers;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 
@@ -61,12 +60,23 @@ internal static class SyntheticSceneSource
         );
     }
 
-    private static CpuVideoFrame RenderFrame(int w, int h, int i, int fps, bool moving)
+    private static CpuVideoFrame RenderFrame(int w, int h, int i, int fps, bool moving) =>
+        CpuVideoFrame.Create(
+            PixelFormat.Bgra32,
+            w,
+            h,
+            TimeSpan.FromSeconds(i / (double)fps),
+            TimeSpan.FromSeconds(1.0 / fps),
+            (Index: i, Fps: fps, Moving: moving),
+            static (planes, s) => Paint(planes, s.Index, s.Fps, s.Moving)
+        );
+
+    private static void Paint(CpuVideoFramePlanes planes, int i, int fps, bool moving)
     {
-        int stride = w * 4;
-        int size = stride * h;
-        IMemoryOwner<byte> owner = MemoryPool<byte>.Shared.Rent(size);
-        Span<byte> px = owner.Memory.Span;
+        int w = planes.Width;
+        int h = planes.Height;
+        int stride = planes.StrideY;
+        Span<byte> px = planes.Y;
 
         // Static gradient background.
         for (int y = 0; y < h; y++)
@@ -112,14 +122,5 @@ internal static class SyntheticSceneSource
             }
         }
 
-        return new CpuVideoFrame(
-            owner,
-            w,
-            h,
-            stride,
-            PixelFormat.Bgra32,
-            TimeSpan.FromSeconds(i / (double)fps),
-            TimeSpan.FromSeconds(1.0 / fps)
-        );
     }
 }

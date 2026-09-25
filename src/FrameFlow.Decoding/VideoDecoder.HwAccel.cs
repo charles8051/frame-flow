@@ -108,13 +108,12 @@ public sealed partial class VideoDecoder
             streamIndex,
             options,
             capabilities,
-            new SharedMemoryFramePool(),
             videoOptions,
             loggerFactory?.CreateLogger<VideoDecoder>()
         );
 
     /// <summary>
-    /// Internal overload with an injectable buffer pool. Used by tests and the
+    /// Internal overload taking a logger rather than a factory. Used by tests and the
     /// production factory.
     /// </summary>
     internal static VideoDecoder Open(
@@ -122,7 +121,6 @@ public sealed partial class VideoDecoder
         int streamIndex,
         HardwareDecodeOptions? options,
         HardwareDecodeCapabilities? capabilities,
-        IFrameBufferPool pool,
         VideoDecoderOptions? videoOptions = null,
         ILogger? logger = null
     )
@@ -259,7 +257,6 @@ public sealed partial class VideoDecoder
             height,
             timeBaseNum,
             timeBaseDen,
-            pool,
             packetQueueCapacity,
             logger
         );

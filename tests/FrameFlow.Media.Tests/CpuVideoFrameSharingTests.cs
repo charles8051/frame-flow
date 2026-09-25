@@ -1,5 +1,5 @@
-using System.Buffers;
 using FrameFlow.Graph;
+using FrameFlow.Media.Tests.Doubles;
 using Xunit;
 using GraphRunner = FrameFlow.Graph.Graph;
 
@@ -15,8 +15,8 @@ public sealed class CpuVideoFrameSharingTests
     [Fact]
     public async Task JoinWithACpuFrameSecondary_MatchesItForMoreThanOnePrimary()
     {
-        var owner = new CountingOwner(16);
-        var frame = new CpuVideoFrame(owner, 2, 2, 8, PixelFormat.Bgra32, TimeSpan.Zero);
+        var pool = new CountingArrayPool<byte>();
+        var frame = NewFrame(pool);
 
         var join = new SyncJoinNode<RefBox<int>, VideoFrameRef, RefBox<string>>(
             "join",
@@ -64,15 +64,15 @@ public sealed class CpuVideoFrameSharingTests
         await graph.RunAsync().WaitAsync(TimeSpan.FromSeconds(15));
 
         Assert.Equal(new[] { "10=frame", "20=frame" }, got);
-        Assert.Equal(1, owner.Disposals);
+        Assert.Equal(1, pool.Returns);
         Assert.Null(frame.AsCpu());
     }
 
     [Fact]
     public async Task FanOutWithoutACloner_GivesBothBranchesTheFrame_AndReleasesItOnce()
     {
-        var owner = new CountingOwner(16);
-        var frame = new CpuVideoFrame(owner, 2, 2, 8, PixelFormat.Bgra32, TimeSpan.Zero);
+        var pool = new CountingArrayPool<byte>();
+        var frame = NewFrame(pool);
 
         int pulls = 0;
         var source = new SourceNode<VideoFrameRef>(
@@ -91,7 +91,7 @@ public sealed class CpuVideoFrameSharingTests
 
         Assert.Equal(1, trunkReads);
         Assert.Equal(1, branchReads);
-        Assert.Equal(1, owner.Disposals);
+        Assert.Equal(1, pool.Returns);
         Assert.Null(frame.AsCpu());
     }
 
@@ -132,15 +132,15 @@ public sealed class CpuVideoFrameSharingTests
         }
     }
 
-    private sealed class CountingOwner(int length) : IMemoryOwner<byte>
-    {
-        private readonly byte[] _array = new byte[length];
-        private int _disposals;
-
-        public int Disposals => Volatile.Read(ref _disposals);
-
-        public Memory<byte> Memory => _array;
-
-        public void Dispose() => Interlocked.Increment(ref _disposals);
-    }
+    private static CpuVideoFrame NewFrame(CountingArrayPool<byte> pool) =>
+        CpuVideoFrame.Create(
+            PixelFormat.Bgra32,
+            2,
+            2,
+            TimeSpan.Zero,
+            TimeSpan.Zero,
+            0,
+            static (_, _) => { },
+            pool
+        );
 }

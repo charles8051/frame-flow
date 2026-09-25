@@ -70,18 +70,28 @@ FrameFlow.Media.CpuFrameData.Width.init -> void
 FrameFlow.Media.CpuVideoFrame
 FrameFlow.Media.CpuVideoFrame.AddRef() -> FrameFlow.Media.IVideoFrame!
 FrameFlow.Media.CpuVideoFrame.AsCpu() -> FrameFlow.Media.CpuFrameData?
-FrameFlow.Media.CpuVideoFrame.CpuVideoFrame(System.Buffers.IMemoryOwner<byte>! pixelData, int width, int height, int stride, FrameFlow.Media.PixelFormat format, System.TimeSpan presentationTime, System.TimeSpan duration = default(System.TimeSpan)) -> void
 FrameFlow.Media.CpuVideoFrame.Dispose() -> void
 FrameFlow.Media.CpuVideoFrame.Duration.get -> System.TimeSpan
 FrameFlow.Media.CpuVideoFrame.Format.get -> FrameFlow.Media.PixelFormat
 FrameFlow.Media.CpuVideoFrame.Height.get -> int
 FrameFlow.Media.CpuVideoFrame.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
-FrameFlow.Media.CpuVideoFrame.PixelData.get -> System.Buffers.IMemoryOwner<byte>!
 FrameFlow.Media.CpuVideoFrame.PresentationTime.get -> System.TimeSpan
 FrameFlow.Media.CpuVideoFrame.Pts.get -> System.TimeSpan
 FrameFlow.Media.CpuVideoFrame.Stride.get -> int
 FrameFlow.Media.CpuVideoFrame.ToCpu() -> FrameFlow.Media.CpuFrameData
 FrameFlow.Media.CpuVideoFrame.Width.get -> int
+FrameFlow.Media.CpuVideoFrameFill<TState>
+FrameFlow.Media.CpuVideoFramePlanes
+FrameFlow.Media.CpuVideoFramePlanes.CpuVideoFramePlanes() -> void
+FrameFlow.Media.CpuVideoFramePlanes.Format.get -> FrameFlow.Media.PixelFormat
+FrameFlow.Media.CpuVideoFramePlanes.Height.get -> int
+FrameFlow.Media.CpuVideoFramePlanes.StrideU.get -> int
+FrameFlow.Media.CpuVideoFramePlanes.StrideV.get -> int
+FrameFlow.Media.CpuVideoFramePlanes.StrideY.get -> int
+FrameFlow.Media.CpuVideoFramePlanes.U.get -> System.Span<byte>
+FrameFlow.Media.CpuVideoFramePlanes.V.get -> System.Span<byte>
+FrameFlow.Media.CpuVideoFramePlanes.Width.get -> int
+FrameFlow.Media.CpuVideoFramePlanes.Y.get -> System.Span<byte>
 FrameFlow.Media.DemuxPacket
 FrameFlow.Media.DemuxPacket.Data.get -> byte[]!
 FrameFlow.Media.DemuxPacket.DemuxPacket(int streamIndex, System.TimeSpan pts, bool hasPts, System.TimeSpan dts, bool hasDts, System.TimeSpan duration, byte[]! data, bool isKeyFrame) -> void
@@ -427,10 +437,8 @@ FrameFlow.Media.PcmAudioBuffer.Dispose() -> void
 FrameFlow.Media.PcmAudioBuffer.Duration.get -> System.TimeSpan
 FrameFlow.Media.PcmAudioBuffer.FrameCount.get -> int
 FrameFlow.Media.PcmAudioBuffer.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
-FrameFlow.Media.PcmAudioBuffer.PcmAudioBuffer(System.Buffers.IMemoryOwner<short>! sampleData, int sampleCount, int sampleRate, int channels, System.TimeSpan presentationTime) -> void
 FrameFlow.Media.PcmAudioBuffer.PresentationTime.get -> System.TimeSpan
 FrameFlow.Media.PcmAudioBuffer.SampleCount.get -> int
-FrameFlow.Media.PcmAudioBuffer.SampleData.get -> System.Buffers.IMemoryOwner<short>!
 FrameFlow.Media.PcmAudioBuffer.SampleFormat.get -> FrameFlow.Graph.AudioSampleFormat
 FrameFlow.Media.PcmAudioBuffer.SampleRate.get -> int
 FrameFlow.Media.PcmAudioBuffer.Samples.get -> System.ReadOnlyMemory<short>
@@ -441,6 +449,7 @@ FrameFlow.Media.PcmAudioBufferRef.Buffer.get -> FrameFlow.Media.PcmAudioBuffer!
 FrameFlow.Media.PcmAudioBufferRef.Detach() -> FrameFlow.Media.PcmAudioBuffer?
 FrameFlow.Media.PcmAudioBufferRef.Dispose() -> void
 FrameFlow.Media.PcmAudioBufferRef.PcmAudioBufferRef(FrameFlow.Media.PcmAudioBuffer! buffer) -> void
+FrameFlow.Media.PcmAudioFill<TState>
 FrameFlow.Media.PixelFormat
 FrameFlow.Media.PixelFormat.Bgra32 = 0 -> FrameFlow.Media.PixelFormat
 FrameFlow.Media.PixelFormat.Nv12 = 3 -> FrameFlow.Media.PixelFormat
@@ -535,6 +544,7 @@ static FrameFlow.Media.AudioClockInterpolation.Read(FrameFlow.Media.AudioClockAn
 static FrameFlow.Media.AudioClockRateAnchor.None.get -> FrameFlow.Media.AudioClockRateAnchor
 static FrameFlow.Media.AudioClockRateLimit.Apply(FrameFlow.Media.AudioClockRateAnchor anchor, System.TimeSpan raw, System.TimeSpan sessionElapsed, System.TimeSpan slack) -> (FrameFlow.Media.AudioClockRateAnchor Anchor, System.TimeSpan Position)
 static FrameFlow.Media.AudioClockState.Initial.get -> FrameFlow.Media.AudioClockState
+static FrameFlow.Media.CpuVideoFrame.Create<TState>(FrameFlow.Media.PixelFormat format, int width, int height, System.TimeSpan presentationTime, System.TimeSpan duration, TState state, FrameFlow.Media.CpuVideoFrameFill<TState>! fill, System.Buffers.ArrayPool<byte>? pool = null) -> FrameFlow.Media.CpuVideoFrame!
 static FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.Empty.get -> FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot!
 static FrameFlow.Media.Diagnostics.CpuFrameMetrics.HighWaterBytes.get -> long
 static FrameFlow.Media.Diagnostics.CpuFrameMetrics.OutstandingBytes.get -> long
@@ -547,6 +557,7 @@ static FrameFlow.Media.HardwareDecodeCapabilities.Empty.get -> FrameFlow.Media.H
 static FrameFlow.Media.HighResolutionTimeProvider.IsSupported.get -> bool
 static FrameFlow.Media.HighResolutionTimeProvider.Preferred.get -> System.TimeProvider!
 static FrameFlow.Media.MediaSource.FromFile(string! path) -> FrameFlow.Media.MediaSource!
+static FrameFlow.Media.PcmAudioBuffer.Create<TState>(int capacity, int sampleRate, int channels, System.TimeSpan presentationTime, TState state, FrameFlow.Media.PcmAudioFill<TState>! fill, System.Buffers.ArrayPool<short>? pool = null) -> FrameFlow.Media.PcmAudioBuffer!
 static readonly FrameFlow.Media.MediaSource.MaximumStillDwell -> System.TimeSpan
 static readonly FrameFlow.Media.MediaSource.MinimumStillDwell -> System.TimeSpan
 static FrameFlow.Media.MediaSource.FromStill(string! path, System.TimeSpan dwell) -> FrameFlow.Media.MediaSource!

@@ -6,6 +6,10 @@ Accepted — **amended 2026-05-12** for audio buffers (see [Amendment](#amendmen
 
 > **Amended 2026-09-24 by [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md).** Video frames are shared by reference count as audio buffers
 > already are: `Media.CpuVideoFrame` stops being one-shot, and published frames are immutable.
+>
+> **Amended 2026-09-25 (#378).** Frames and audio buffers rent their own storage from
+> `ArrayPool<T>.Shared` through a fill factory. `IFrameBufferPool` and `SharedMemoryFramePool`
+> below are deleted, and no public member exposes an `IMemoryOwner`.
 
 ## Context
 
