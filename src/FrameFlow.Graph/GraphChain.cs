@@ -89,8 +89,8 @@ public readonly struct GraphChain<T>
     /// <param name="config">
     /// Required rather than defaulted. An omitted config would be a capacity-1 blocking edge,
     /// which is the wrong shape for a branch and the mistake <see cref="ToSecondary"/> already
-    /// warns about: a slow branch would then hold the trunk back frame for frame. A branch off a
-    /// one-shot item type needs a cloner here, because its <c>AddRef</c> throws by design.
+    /// warns about: a slow branch would then hold the trunk back frame for frame. A branch off
+    /// an item type whose <c>AddRef</c> throws needs a cloner here.
     /// </param>
     /// <remarks>
     /// <para>
@@ -125,7 +125,7 @@ public readonly struct GraphChain<T>
 
     /// <summary>
     /// Declares a branch that takes its own ref rather than a clone. The item type's
-    /// <c>AddRef</c> has to work: a one-shot item needs the
+    /// <c>AddRef</c> has to work: an item type whose <c>AddRef</c> throws needs the
     /// <see cref="Branch(EdgeConfig{T})"/> overload and a cloner.
     /// </summary>
     /// <param name="options">

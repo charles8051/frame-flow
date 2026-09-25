@@ -23,6 +23,20 @@ public sealed class RefCountingRuleTests
     }
 
     [Fact]
+    public void CpuVideoFrame_FollowsTheRule()
+    {
+        RefCountConformance.AssertFollowsTheRule<CpuVideoFrame>(
+            () =>
+            {
+                var owner = new CountingOwner<byte>(16);
+                var frame = new CpuVideoFrame(owner, 2, 2, 8, PixelFormat.Bgra32, TimeSpan.Zero);
+                return (frame, () => owner.Disposals);
+            },
+            frame => frame.AddRef()
+        );
+    }
+
+    [Fact]
     public void PooledCpuVideoFrame_FollowsTheRule()
     {
         RefCountConformance.AssertFollowsTheRule<PooledCpuVideoFrame>(

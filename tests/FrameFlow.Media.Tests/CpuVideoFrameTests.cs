@@ -133,17 +133,28 @@ public sealed class CpuVideoFrameTests
     }
 
     [Fact]
-    public void Dispose_CalledTwice_ForwardsToPixelDataTwice()
+    public void Dispose_CalledTwice_ReturnsThePixelDataOnce()
     {
-        // CpuVideoFrame itself delegates directly to PixelData.Dispose().
-        // FakeMemoryOwner is safe to dispose multiple times, so both calls go through.
+        // The frame counts references (ADR-0080): the first Dispose is the final release,
+        // and the second is an over-release that frees nothing.
         var owner = FakeMemoryOwner<byte>.OfLength(1280);
         var frame = MakeFrame(owner: owner);
 
         frame.Dispose();
         frame.Dispose();
 
-        Assert.Equal(2, owner.DisposeCallCount);
+        Assert.Equal(1, owner.DisposeCallCount);
+    }
+
+    [Fact]
+    public void AfterTheFinalRelease_AsCpuIsNullAndToCpuThrows()
+    {
+        var frame = MakeFrame(owner: FakeMemoryOwner<byte>.OfLength(1280));
+
+        frame.Dispose();
+
+        Assert.Null(frame.AsCpu());
+        Assert.Throws<ObjectDisposedException>(() => frame.ToCpu());
     }
 
     // -----------------------------------------------------------------------

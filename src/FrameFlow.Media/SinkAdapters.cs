@@ -47,14 +47,11 @@ namespace FrameFlow.Media;
 /// contract (ADR-0044) is "the sink takes ownership of the item and
 /// is responsible for disposing it after presenting." The adapter
 /// <c>Detach</c>es the inner payload from the wrapper and hands it to
-/// the sink. That transfers ownership without invoking
-/// <see cref="IVideoFrame.AddRef"/> (which one-shot decoder frames
-/// and converter outputs reject), and the substrate's subsequent
-/// wrapper-dispose becomes a no-op because the wrapper's slot is
-/// null. The sink therefore owns the only outstanding reference and
-/// disposes it as it always has. Works uniformly for one-shot
-/// <c>CpuVideoFrame</c> (decoder output), pooled
-/// <c>PooledCpuVideoFrame</c>, and <c>GpuVideoFrame</c>.
+/// the sink. That transfers the wrapper's reference without taking
+/// another, and the substrate's subsequent wrapper-dispose becomes a
+/// no-op because the wrapper's slot is null. The sink therefore owns
+/// that reference and disposes it as it always has, for every frame
+/// type.
 /// </para>
 /// </remarks>
 public static class SinkAdapters

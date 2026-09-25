@@ -70,7 +70,7 @@ public sealed class InputPort<T> : IPort, IWireableInput
 /// connections — each branch either gets a fresh ref via <c>AddRef</c>
 /// (the default), or an explicitly-cloned item when the branch supplied
 /// a cloner via <see cref="EdgeOptionsExtensions.WithCloner{T}"/>
-/// (per ADR-0054, for one-shot frame types whose <c>AddRef</c> throws).
+/// (per ADR-0054, for an item type whose <c>AddRef</c> throws).
 /// </summary>
 public sealed class OutputPort<T> : IPort
     where T : class, IRefCounted
@@ -103,8 +103,7 @@ public sealed class OutputPort<T> : IPort
 /// <param name="Cloner">
 /// When non-<see langword="null"/>, the fan-out invokes <c>Cloner(item)</c>
 /// to produce the per-branch item instead of calling <c>item.AddRef()</c>.
-/// Required for one-shot frame types (e.g. converter outputs) where
-/// <c>AddRef</c> throws by design.
+/// Required for an item type whose <c>AddRef</c> throws.
 /// </param>
 /// <param name="Inherit">
 /// Whether this edge is the trunk of a chain-built fork, and so takes the incoming ref rather

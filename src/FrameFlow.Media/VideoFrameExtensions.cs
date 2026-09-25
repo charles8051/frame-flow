@@ -22,14 +22,10 @@ public static class VideoFrameExtensions
     /// <remarks>
     /// <para>
     /// The standard "give me another reference to this frame" primitive
-    /// is <see cref="IVideoFrame.AddRef"/>. That works for pooled frame
-    /// types (e.g. <c>Playback.CpuVideoFrame</c>), but the decoder's
-    /// <see cref="CpuVideoFrame"/> and converter outputs from
-    /// <c>FrameFlow.Video.VideoPipelineExtensions.ConvertPixelFormat</c>
-    /// are intentionally one-shot — they throw <see cref="NotSupportedException"/>
-    /// from <see cref="IVideoFrame.AddRef"/>. This helper is the
-    /// "any frame, any source" answer: a deep CPU clone that the
-    /// caller (typically a <c>Broadcast</c> branch) owns end-to-end.
+    /// is <see cref="IVideoFrame.AddRef"/>, which every frame type supports
+    /// (ADR-0080). This helper is for a caller that wants a private copy
+    /// instead: a deep CPU clone that it owns end-to-end, independent of
+    /// the source frame's buffer and pool.
     /// </para>
     /// <para>
     /// <b>Cost.</b> Allocates one buffer rental + a single memcpy of the

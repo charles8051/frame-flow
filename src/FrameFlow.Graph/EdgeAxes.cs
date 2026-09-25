@@ -75,8 +75,7 @@ public sealed record EdgeOptions(
 /// <para>
 /// The cloner exists so that a multi-consumer fan-out from an output
 /// whose item type doesn't support <see cref="IRefCounted.AddRef"/>
-/// (most notably converter outputs producing one-shot
-/// <c>Media.CpuVideoFrame</c>) can still be expressed as ordinary
+/// can still be expressed as ordinary
 /// multi-<see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeOptions?)"/>
 /// calls. The substrate's fan-out path uses the cloner instead of
 /// <c>AddRef</c> for that specific branch; branches without a cloner
@@ -112,8 +111,7 @@ public static class EdgeOptionsExtensions
     /// </summary>
     /// <remarks>
     /// Use when the upstream output flows items whose
-    /// <see cref="IRefCounted.AddRef"/> throws (one-shot frame types,
-    /// notably converter outputs). The cloner produces an independent
+    /// <see cref="IRefCounted.AddRef"/> throws. The cloner produces an independent
     /// item for the branch — typically a deep CPU copy. The substrate
     /// applies the cloner only on this specific branch; siblings
     /// without a cloner continue to use <c>AddRef</c>.

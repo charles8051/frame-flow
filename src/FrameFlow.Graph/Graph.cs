@@ -110,8 +110,8 @@ public sealed class Graph
     /// given options. Both ports' owners are automatically added to
     /// the graph if not already present. This overload uses the
     /// substrate's default fan-out semantics — siblings get a fresh
-    /// ref via <c>AddRef</c>. For one-shot frame types whose
-    /// <c>AddRef</c> throws, use the
+    /// ref via <c>AddRef</c>. For an item type whose <c>AddRef</c>
+    /// throws, use the
     /// <see cref="Connect{T}(OutputPort{T}, InputPort{T}, EdgeConfig{T})"/>
     /// overload with an explicit cloner (ADR-0054).
     /// </summary>
@@ -128,8 +128,8 @@ public sealed class Graph
     /// <see cref="EdgeConfig{T}"/> that may carry a per-branch cloner
     /// (per ADR-0054). When the config's cloner is non-<see langword="null"/>,
     /// fan-out invokes the cloner instead of <c>AddRef</c> for this
-    /// specific branch — required for one-shot frame types (e.g.
-    /// converter outputs) and useful when a branch wants an
+    /// specific branch — required for an item type whose <c>AddRef</c>
+    /// throws, and useful when a branch wants an
     /// independent deep copy regardless. Sibling branches without a
     /// cloner continue to use <c>AddRef</c>.
     /// </summary>

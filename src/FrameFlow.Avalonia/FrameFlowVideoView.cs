@@ -75,10 +75,10 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     // and the view kept drawing whatever was there before, for as long as that item lasted
     // (#287).
     //
-    // Pixels rather than the frame itself, because a decoder-produced frame is one-shot:
-    // Media.CpuVideoFrame.AddRef throws, and its buffer goes back to the pool when the present
-    // call returns. So the copy has to happen now, on the producer thread where every other
-    // copy happens, and the UI thread only blits it into the bitmap it just allocated.
+    // Pixels rather than the frame itself. The view has never held a frame past the present
+    // call, whose buffer goes back to the pool when it returns, so the copy happens now, on
+    // the producer thread where every other copy happens, and the UI thread only blits it into
+    // the bitmap it just allocated.
     //
     // Held under _lock and accounted exactly once like every other frame: presented when the
     // blit reaches the swap, dropped when a newer frame supersedes it or a detach strands it.
@@ -523,9 +523,8 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     /// producer thread.
     /// </summary>
     /// <remarks>
-    /// The copy is here rather than in the posted callback because a decoder-produced frame is
-    /// one-shot: its buffer returns to the pool when the present call ends, and
-    /// <see cref="IVideoFrame.AddRef"/> throws on it, so there is nothing to hold on to. The
+    /// The copy is here rather than in the posted callback because the view does not hold the
+    /// frame past the present call, and its buffer returns to the pool when that call ends. The
     /// array is reused across resizes and only grows.
     /// </remarks>
     private void StagePixelsLocked(CpuFrameData data, TimeSpan pts, SinkBinding binding)
