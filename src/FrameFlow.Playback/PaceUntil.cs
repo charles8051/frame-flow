@@ -144,7 +144,7 @@ public static partial class PaceUntil
                 return item;
             },
             // One item, however long the clock takes to reach it.
-            holding: Holding.InFlight
+            holding: FrameHolding.InFlight
         );
     }
 

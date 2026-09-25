@@ -194,7 +194,7 @@ the same way. Software decode, readback and VideoToolbox are unaffected.
 their own nodes in `ConfigureVideo`. Every sink and node in this repository declares.
 
 **What to write instead.** Give each node `holding:`, the most frames it keeps at once counting the
-call. A node that emits a new frame and releases its input is `Holding.Boundary`, and the path
+call. A node that emits a new frame and releases its input is `FrameHolding.Boundary`, and the path
 stops counting there. Give each sink `MaxHeldFrames`, the most it keeps after `PresentAsync`
 returns.
 

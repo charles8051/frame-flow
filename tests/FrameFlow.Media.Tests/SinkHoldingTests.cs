@@ -14,7 +14,7 @@ public sealed class SinkHoldingTests
         IVideoSink sink = new UndeclaredSink();
 
         Assert.Null(sink.MaxHeldFrames);
-        Assert.Same(Holding.Unbounded, sink.AsSinkNode().Holding);
+        Assert.Same(FrameHolding.Unbounded, sink.AsSinkNode().Holding);
     }
 
     [Fact]

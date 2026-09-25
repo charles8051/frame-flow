@@ -46,6 +46,6 @@ public static class FaceOperators
                     new DetectedFaceFrameRef(videoCopy, faces));
             },
             // The output carries the input frame itself.
-            holding: Holding.InFlight);
+            holding: FrameHolding.InFlight);
     }
 }

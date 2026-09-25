@@ -257,12 +257,12 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
 
     // The primary is held for the call. The secondary is held in the window, plus the one the
     // reader holds while the window is full; only a count limit bounds that (ADR-0081).
-    Holding IDeclaresHolding.HoldingAt(IPort input) =>
+    FrameHolding IDeclaresHolding.HoldingAt(IPort input) =>
         ReferenceEquals(input, Secondary)
             ? MaxRetained is { } limit
-                ? Holding.AtMost(limit + 1)
-                : Holding.Unbounded
-            : Holding.InFlight;
+                ? FrameHolding.AtMost(limit + 1)
+                : FrameHolding.Unbounded
+            : FrameHolding.InFlight;
     public OutputPort<TOut> Output { get; }
 
     /// <summary>Secondaries currently held by the window. Diagnostics and tests.</summary>

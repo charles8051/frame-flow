@@ -30,9 +30,9 @@ public sealed class HoldingTests
     [Fact]
     public void TheGateAndThePaceNode_HoldOneItemForAsLongAsTheyWait()
     {
-        Assert.Same(Holding.InFlight, new PausableGate<RefBox<int>>().AsOperator("gate").Holding);
+        Assert.Same(FrameHolding.InFlight, new PausableGate<RefBox<int>>().AsOperator("gate").Holding);
         Assert.Same(
-            Holding.InFlight,
+            FrameHolding.InFlight,
             PaceUntil.Create<RefBox<int>>("pace", new StoppedClock(), _ => TimeSpan.Zero).Holding
         );
     }

@@ -85,7 +85,7 @@ public sealed class ClipEncoderSink : IAsyncDisposable
             id,
             async (segment, ct) => await EnqueueAsync(segment, ct).ConfigureAwait(false),
             // The queue, the segment the worker is encoding, and one waiting to be queued.
-            holding: Holding.AtMost(_options.QueueCapacity + 2)
+            holding: FrameHolding.AtMost(_options.QueueCapacity + 2)
         );
 
     /// <summary>

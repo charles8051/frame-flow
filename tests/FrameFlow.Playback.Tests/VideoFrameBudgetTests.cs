@@ -69,7 +69,7 @@ public sealed class VideoFrameBudgetTests
                     new OperatorNode<IVideoFrame, IVideoFrame>(
                         "gpu-frames-only",
                         (frame, _) => ValueTask.FromResult<IVideoFrame?>(frame),
-                        holding: declared ? Holding.InFlight : null
+                        holding: declared ? FrameHolding.InFlight : null
                     )
                 )
                 .Then(VideoOperators.ToCpu("inference-readback"))
@@ -77,7 +77,7 @@ public sealed class VideoFrameBudgetTests
                     new OperatorNode<IVideoFrame, RefBox<TimeSpan>>(
                         "yolo-detect",
                         (frame, _) => ValueTask.FromResult<RefBox<TimeSpan>?>(RefBox.Of(frame.Pts)),
-                        holding: Holding.Boundary
+                        holding: FrameHolding.Boundary
                     )
                 );
 

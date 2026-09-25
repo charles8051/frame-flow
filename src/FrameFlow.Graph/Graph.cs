@@ -165,7 +165,7 @@ public sealed class Graph
     /// </summary>
     /// <remarks>
     /// It counts the item the source's pump is writing, each edge's capacity and what each node
-    /// declares (<see cref="Holding"/>), up to the first storage boundary on each path. A
+    /// declares (<see cref="FrameHolding"/>), up to the first storage boundary on each path. A
     /// fixed-pool source sizes its pool from it.
     /// </remarks>
     public FrameBudget FrameBudgetFor<T>(OutputPort<T> source)

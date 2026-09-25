@@ -16,7 +16,7 @@ public sealed class FrameBudgetTests
     {
         var graph = new GraphRunner();
         var source = Source();
-        graph.Pipeline(source).Then(Op("op", Holding.InFlight)).To(Sink("sink", Holding.AtMost(3)));
+        graph.Pipeline(source).Then(Op("op", FrameHolding.InFlight)).To(Sink("sink", FrameHolding.AtMost(3)));
 
         // Pump 1, edge 1, op 1, edge 1, sink 3.
         Assert.Equal(7, graph.FrameBudgetFor(source.Output).Frames);
@@ -27,7 +27,7 @@ public sealed class FrameBudgetTests
     {
         var graph = new GraphRunner();
         var source = Source();
-        graph.Pipeline(source).Then(Op("convert", Holding.Boundary)).To(Sink("sink", holding: null));
+        graph.Pipeline(source).Then(Op("convert", FrameHolding.Boundary)).To(Sink("sink", holding: null));
 
         // Past the boundary the frames are new ones, so even an unbounded sink does not count.
         Assert.Equal(3, graph.FrameBudgetFor(source.Output).Frames);
@@ -38,7 +38,7 @@ public sealed class FrameBudgetTests
     {
         var graph = new GraphRunner();
         var source = Source();
-        graph.Pipeline(source).Then(Op("mystery", holding: null)).To(Sink("sink", Holding.AtMost(1)));
+        graph.Pipeline(source).Then(Op("mystery", holding: null)).To(Sink("sink", FrameHolding.AtMost(1)));
 
         var budget = graph.FrameBudgetFor(source.Output);
 
@@ -51,9 +51,9 @@ public sealed class FrameBudgetTests
     {
         var graph = new GraphRunner();
         var source = Source();
-        var head = graph.Pipeline(source).Then(Op("op", Holding.InFlight));
-        head.Branch(EdgeOptions.LatestWins(2)).To(Sink("preview", Holding.AtMost(2)));
-        head.To(Sink("record", Holding.InFlight));
+        var head = graph.Pipeline(source).Then(Op("op", FrameHolding.InFlight));
+        head.Branch(EdgeOptions.LatestWins(2)).To(Sink("preview", FrameHolding.AtMost(2)));
+        head.To(Sink("record", FrameHolding.InFlight));
 
         // Pump 1, edge 1, op 1; preview: edge 2, sink 2; record: edge 1, sink 1.
         Assert.Equal(9, graph.FrameBudgetFor(source.Output).Frames);
@@ -66,8 +66,8 @@ public sealed class FrameBudgetTests
         var source = Source();
         graph
             .Pipeline(source)
-            .Then(Op("gate", Holding.AtMost(5, forwardsStorage: true, framesPerOutputItem: 10)))
-            .To(Sink("encoder", Holding.AtMost(3)), EdgeOptions.Buffered(1));
+            .Then(Op("gate", FrameHolding.AtMost(5, forwardsStorage: true, framesPerOutputItem: 10)))
+            .To(Sink("encoder", FrameHolding.AtMost(3)), EdgeOptions.Buffered(1));
 
         // Pump 1, edge 1, gate 5; then the edge's one clip of 10 and the encoder's 3 clips of 10.
         Assert.Equal(47, graph.FrameBudgetFor(source.Output).Frames);
@@ -80,8 +80,8 @@ public sealed class FrameBudgetTests
         var source = Source();
         var head = graph.Pipeline(source);
         var join = Join(maxRetained: 4);
-        var branch = head.Branch(EdgeOptions.LatestWins(1)).Then(Op("detect", Holding.InFlight));
-        head.Join(branch, join, EdgeOptions.Default, EdgeOptions.LatestWins(1)).To(Sink("sink", Holding.InFlight));
+        var branch = head.Branch(EdgeOptions.LatestWins(1)).Then(Op("detect", FrameHolding.InFlight));
+        head.Join(branch, join, EdgeOptions.Default, EdgeOptions.LatestWins(1)).To(Sink("sink", FrameHolding.InFlight));
 
         // Pump 1. Trunk: edge 1, primary 1. Branch: edge 1, detect 1, edge 1, secondary 5.
         // Output: edge 1, sink 1.
@@ -100,7 +100,7 @@ public sealed class FrameBudgetTests
     {
         var graph = new GraphRunner();
         var source = Source();
-        var gather = Op("gather", Holding.AtMost(2, forwardsStorage: true, framesPerOutputItem: 10));
+        var gather = Op("gather", FrameHolding.AtMost(2, forwardsStorage: true, framesPerOutputItem: 10));
         var join = Join(maxRetained: 4);
         if (secondaryWiredFirst)
         {
@@ -113,7 +113,7 @@ public sealed class FrameBudgetTests
             graph.Connect(source.Output, join.Secondary);
         }
         graph.Connect(gather.Output, join.Primary);
-        graph.Pipeline(join.Output).To(Sink("sink", Holding.AtMost(3)));
+        graph.Pipeline(join.Output).To(Sink("sink", FrameHolding.AtMost(3)));
 
         // Pump 1. Gather: edge 1, holds 2. Primary: edge 10, holds 10. Secondary: edge 1, holds
         // 5. Output: edge 10, sink 3 items of 10.
@@ -139,7 +139,7 @@ public sealed class FrameBudgetTests
             }
         );
         var graph = new GraphRunner();
-        graph.Pipeline(source).To(Sink("sink", Holding.AtMost(2)));
+        graph.Pipeline(source).To(Sink("sink", FrameHolding.AtMost(2)));
 
         await graph.RunAsync(CancellationToken.None);
 
@@ -175,10 +175,10 @@ public sealed class FrameBudgetTests
     private static SourceNode<RefBox<int>> Source() =>
         new("source", _ => ValueTask.FromResult<RefBox<int>?>(null));
 
-    private static OperatorNode<RefBox<int>, RefBox<int>> Op(string id, Holding? holding) =>
+    private static OperatorNode<RefBox<int>, RefBox<int>> Op(string id, FrameHolding? holding) =>
         new(id, (item, _) => ValueTask.FromResult<RefBox<int>?>(item), holding: holding);
 
-    private static SinkNode<RefBox<int>> Sink(string id, Holding? holding) =>
+    private static SinkNode<RefBox<int>> Sink(string id, FrameHolding? holding) =>
         new(id, (_, _) => ValueTask.CompletedTask, holding: holding);
 
     private static SyncJoinNode<RefBox<int>, RefBox<int>, RefBox<int>> Join(int maxRetained) =>

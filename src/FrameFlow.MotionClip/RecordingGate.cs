@@ -123,7 +123,7 @@ public sealed class RecordingGate : IDisposable
             ProcessAsync,
             // The pre-roll while idle, the clip while building, and the frame in the call. A
             // segment carries the clip's frames themselves.
-            holding: Holding.AtMost(
+            holding: FrameHolding.AtMost(
                 Math.Max(_options.PreRollFrames, _options.MaxFramesPerClip) + 1,
                 forwardsStorage: true,
                 framesPerOutputItem: _options.MaxFramesPerClip

@@ -416,7 +416,7 @@ public partial class MainWindow : Window
                                     Interlocked.Increment(ref _broadcastFrameCount);
                                     return ValueTask.FromResult<IVideoFrame?>(item);
                                 },
-                                holding: FrameFlow.Graph.Holding.InFlight
+                                holding: FrameHolding.InFlight
                             )
                         );
 
