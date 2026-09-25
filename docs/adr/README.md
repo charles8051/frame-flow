@@ -264,9 +264,9 @@ land.
   `extra_hw_frames`, the camera sizes `BufferCount` or copies, and zero-copy is whatever fits. A
   per-source guard makes a breach loud and has the decoder wait instead of dropping. It lands
   in two phases: the guard and a pool sized for the player first, the declarations once #294 makes
-  hardware frames the default. Rejects
-  copy-out by default, the ownership record's first draft, because its opt-in rule is false for
-  the player's own presenter and its D3D11 copy depends on work gated on #231.
+  hardware frames the default. Rejects copy-out by default, the ownership record's first draft,
+  because its opt-in rule is false for the player's own presenter and its D3D11 copy depends on
+  work gated on #231.
 - [Declared pull: the master clock as a graph-visible dependency](declared-pull-clock.md) — the
   substrate models edges and nodes, and the master clock is neither, so no rule and no diagnostic
   can see which nodes depend on one. It set out to register clock readers on the `Graph`. Drafting
