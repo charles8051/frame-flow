@@ -169,6 +169,7 @@ FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.IsSecondaryHeld.get -> 
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Keys.get -> FrameFlow.Graph.SyncJoinKeys<TPrimary!, TSecondary!>!
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.MatchPolicy.get -> FrameFlow.Graph.SyncMatch
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.MaxLead.get -> System.TimeSpan?
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.MaxRetained.get -> int?
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.MaxStaleness.get -> System.TimeSpan
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
@@ -176,7 +177,7 @@ FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Primary.get -> FrameFlo
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.ResetWindow() -> void
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.RetainedCount.get -> int
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Secondary.get -> FrameFlow.Graph.InputPort<TSecondary!>!
-FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.SyncJoinNode(string! id, FrameFlow.Graph.SyncJoinOperator<TPrimary!, TSecondary!, TOut!>! body, FrameFlow.Graph.SyncJoinKeys<TPrimary!, TSecondary!>! keys, FrameFlow.Graph.SyncMatch matchPolicy, System.TimeSpan window, System.TimeSpan? maxStaleness = null, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, System.TimeSpan? maxLead = null) -> void
+FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.SyncJoinNode(string! id, FrameFlow.Graph.SyncJoinOperator<TPrimary!, TSecondary!, TOut!>! body, FrameFlow.Graph.SyncJoinKeys<TPrimary!, TSecondary!>! keys, FrameFlow.Graph.SyncMatch matchPolicy, System.TimeSpan window, System.TimeSpan? maxStaleness = null, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, System.TimeSpan? maxLead = null, int? maxRetained = null) -> void
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Window.get -> System.TimeSpan
 FrameFlow.Graph.SyncJoinOperator<TPrimary, TSecondary, TOut>
 FrameFlow.Graph.SyncMatch

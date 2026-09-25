@@ -284,6 +284,12 @@ camera guard (#385) have run; the rest has not.
 
 ## Revision history
 
+**2026-09-25, the join's count limit (#386).** `SyncJoinNode` gains `maxRetained`, as decision 1
+describes. At the limit it releases what can no longer match, judged against the highest primary
+time seen, then stops reading its secondary if the candidates still fill it. Under
+`MostRecentAtOrBefore` the newest at or before the primary is released too once it is older than
+`MaxStaleness`, since it can never match again. The limit sets `StopsReadingSecondary`.
+
 **2026-09-25, the camera guard (#385).** `AsPushVideoFrameSource` hands the graph at most the
 session's `BufferCount` less its bridge's capacity as zero-copy leases. A frame that arrives while
 the graph holds that many is copied into pooled CPU storage and its lease returned at once, and

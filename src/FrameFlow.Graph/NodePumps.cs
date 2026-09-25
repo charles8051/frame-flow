@@ -331,10 +331,21 @@ internal static class NodePumps
 
                             var (from, to) = node.Keys.SecondaryInterval(item);
 
-                            // Past MaxLead, stop reading the edge until the primary
-                            // catches up. The edge fills, and its overflow policy
-                            // decides what the producer does.
-                            while (retained.TryAdmit(item, from, to, node.MaxLead) is { } room)
+                            // Past MaxLead, or at MaxRetained with every entry still a
+                            // candidate, stop reading the edge until the primary catches
+                            // up. The edge fills, and its overflow policy decides what the
+                            // producer does.
+                            while (
+                                retained.TryAdmit(
+                                    item,
+                                    from,
+                                    to,
+                                    node.MaxLead,
+                                    node.MaxRetained,
+                                    node.MatchPolicy,
+                                    node.MaxStaleness
+                                ) is { } room
+                            )
                                 await room.WaitAsync(primaryEnded.Token).ConfigureAwait(false);
                         }
                         catch (OperationCanceledException) when (primaryEnded.IsCancellationRequested)

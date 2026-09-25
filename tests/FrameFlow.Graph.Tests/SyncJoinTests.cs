@@ -167,8 +167,19 @@ public sealed class SyncJoinTests
         SyncMatch policy,
         TimeSpan window,
         TimeSpan? maxStaleness = null,
-        TimeSpan? maxLead = null
-    ) => new("join", Record(), Keys, policy, window, maxStaleness, maxLead: maxLead);
+        TimeSpan? maxLead = null,
+        int? maxRetained = null
+    ) =>
+        new(
+            "join",
+            Record(),
+            Keys,
+            policy,
+            window,
+            maxStaleness,
+            maxLead: maxLead,
+            maxRetained: maxRetained
+        );
 
     /// <summary>
     /// Point spans every 50 ms from 0 to 1000 ms, tagged with their time.
@@ -1028,6 +1039,89 @@ public sealed class SyncJoinTests
             // edge holds its capacity, and the source can have pulled one more that it is still
             // trying to write.
             Assert.InRange(Volatile.Read(ref pulled.Value), 4, 3 + 1 + edgeCapacity + 1);
+
+            releaseFirstTick.TrySetResult();
+            await run.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        catch
+        {
+            await StopAsync(run, cts);
+            throw;
+        }
+
+        Assert.Equal(expected, got);
+        Assert.False(join.IsSecondaryHeld);
+        Assert.Equal(0, join.RetainedCount);
+        Assert.All(spans, x => Assert.Equal(0, x.RefCount));
+        Assert.All(ticks, x => Assert.Equal(0, x.RefCount));
+    }
+
+    /// <summary>
+    /// A count limit holds the secondary edge once the window holds that many secondaries that
+    /// can still match, and every span still reaches the primary it belongs to (ADR-0081).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same shape as the lead test above, with a limit of 2 and no lead. Before the first
+    /// tick every span is a candidate, so the window stops at 2. After it, each tick makes the
+    /// span before it unmatchable, which is released to admit the next.
+    /// </para>
+    /// <para>
+    /// The ticks stop one span short of the last, so before every tick the reader is parked on
+    /// the limit with the tick's own span already admitted. That parked state is the barrier.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task MaxRetained_HoldsTheSecondaryEdgeAndLosesNothing()
+    {
+        const int edgeCapacity = 2;
+        var join = Join(SyncMatch.MostRecentAtOrBefore, window: Ms(10_000), maxRetained: 2);
+
+        var spans = SpansEvery50Ms();
+        var matched = spans[..^1];
+        var ticks = matched.Select(s => RefBox.Of(new Tick(s.Value.From))).ToArray();
+        var expected = matched.Select(s => $"{s.Value.From.TotalMilliseconds:0}={s.Value.Tag}").ToArray();
+        var pulled = new StrongBox<int>();
+
+        var got = new List<string>();
+        var gatedAtFirstTick = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstTick = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int t = 0;
+        var primary = new SourceNode<RefBox<Tick>>(
+            "primary",
+            async ct =>
+            {
+                if (t == ticks.Length)
+                    return null;
+                // The previous tick is out, and the reader has parked on the limit again.
+                await SpinUntil(() => Collected(got) == t && join.IsSecondaryHeld, ct)
+                    .ConfigureAwait(false);
+                if (t == 0)
+                {
+                    gatedAtFirstTick.TrySetResult();
+                    await releaseFirstTick.Task.WaitAsync(ct).ConfigureAwait(false);
+                }
+                return ticks[t++];
+            }
+        );
+
+        var graph = new GraphRunner();
+        graph.Pipeline(EmitCounting(spans, pulled)).ToSecondary(join, EdgeOptions.Buffered(edgeCapacity));
+        graph.Pipeline(primary).ToPrimary(join);
+        graph.Pipeline(join.Output).To(CollectInto(got));
+
+        using var cts = new CancellationTokenSource();
+        var run = graph.RunAsync(cts.Token);
+        try
+        {
+            await gatedAtFirstTick.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(2, join.RetainedCount);
+            Assert.True(join.IsSecondaryHeld);
+
+            // The producer waits rather than being discarded: the window's 2, the span the
+            // reader holds, the edge's capacity, and one the source may still be writing.
+            Assert.InRange(Volatile.Read(ref pulled.Value), 3, 2 + 1 + edgeCapacity + 1);
 
             releaseFirstTick.TrySetResult();
             await run.WaitAsync(TimeSpan.FromSeconds(15));

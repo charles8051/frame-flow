@@ -27,7 +27,7 @@ internal interface IHoldsItsSecondary
     /// <summary>The input the join stops reading while the secondary leads.</summary>
     IPort SecondaryInput { get; }
 
-    /// <summary>Whether a lead is set, so the join can stop reading at all.</summary>
+    /// <summary>Whether a lead or a count limit is set, so the join can stop reading at all.</summary>
     bool StopsReadingSecondary { get; }
 }
 
@@ -111,13 +111,14 @@ internal static class GraphTopology
     /// <para>
     /// The cycle needs four things at once. A port feeds the join's primary. A path leaves that
     /// same port and reaches the join's secondary. Every edge on that path blocks when full. And
-    /// the join has a lead, so it stops reading the secondary once the secondary runs ahead.
+    /// the join has a lead or a count limit, so it stops reading the secondary once the secondary
+    /// runs ahead or fills the limit.
     /// </para>
     /// <para>
     /// Then: the join stops reading, the full secondary edge blocks the branch, the blocked
     /// branch stalls the fork's write of every branch, and the primary that would release the
     /// lead never arrives. A dropping edge anywhere on the path breaks it, and so does leaving
-    /// the lead unset.
+    /// both the lead and the count limit unset.
     /// </para>
     /// <para>
     /// Conservative in one direction: a blocking fork-rejoin that a large enough lead would have
@@ -143,11 +144,11 @@ internal static class GraphTopology
             foreach (var shared in blockedIntoSecondary.Where(feedingPrimary.Contains))
             {
                 yield return
-                    $"'{node.Id}' sets a lead, and '{Name(shared)}' feeds both of its inputs "
-                    + "over a branch that blocks when full. The join stops reading the "
-                    + "secondary, the branch blocks, and the primary that would release it never "
-                    + "arrives. Give one edge on the branch a dropping policy, or leave the lead "
-                    + "unset.";
+                    $"'{node.Id}' sets a lead or a count limit, and '{Name(shared)}' feeds both "
+                    + "of its inputs over a branch that blocks when full. The join stops reading "
+                    + "the secondary, the branch blocks, and the primary that would release it "
+                    + "never arrives. Give one edge on the branch a dropping policy, or leave the "
+                    + "lead and the count limit unset.";
             }
         }
     }
