@@ -19,4 +19,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\FrameFlow.Camera\FrameFlow.Camera.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\RefCountConformance.cs" Link="Shared\RefCountConformance.cs" />
+  </ItemGroup>
 </Project>
