@@ -425,10 +425,22 @@ internal static class NodePumps
 
                 // Pass-through applies to either input: a body may return the
                 // primary, or the secondary, and the substrate then forwards
-                // that same ref instead of releasing it here.
-                if (!ReferenceEquals(match, result))
-                    match?.Dispose();
-                if (!ReferenceEquals(item, result))
+                // that same ref instead of releasing it here. Every other input
+                // ref is released, including the second of two refs on one
+                // instance: when a fork feeds the same item to both inputs, the
+                // primary and the match are one object, and only one of its two
+                // refs goes downstream (ADR-0080, decision 3).
+                bool forwarded = false;
+                if (match is not null)
+                {
+                    if (ReferenceEquals(match, result))
+                        forwarded = true;
+                    else
+                        match.Dispose();
+                }
+                if (!forwarded && ReferenceEquals(item, result))
+                    forwarded = true;
+                else
                     item.Dispose();
 
                 if (result is null)

@@ -72,8 +72,11 @@ public sealed record SyncJoinKeys<TPrimary, TSecondary>(
 /// <b>Returning an input forwards it.</b> A body may return
 /// <paramref name="primary"/> or <paramref name="secondary"/> as its output;
 /// the substrate detects that and forwards the same ref downstream rather than
-/// releasing it. Any other return value must be freshly built or
-/// <c>AddRef</c>'d, because both inputs are released once the body returns.
+/// releasing it. Return the input itself, never its <c>AddRef()</c>: that is
+/// the same instance (ADR-0080), so it too counts as a pass-through and the
+/// extra ref leaks. Any other return value must be freshly built, or be an
+/// object the body holds apart from its inputs and has <c>AddRef</c>'d, because
+/// both inputs are released once the body returns.
 /// </para>
 /// <para>
 /// <b>No match emits.</b> <paramref name="secondary"/> being
