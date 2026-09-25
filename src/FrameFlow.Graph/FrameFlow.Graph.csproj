@@ -20,4 +20,8 @@
     standalone package, package metadata can be added then.
   -->
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="FrameFlow.Graph.Tests" />
+  </ItemGroup>
+
 </Project>

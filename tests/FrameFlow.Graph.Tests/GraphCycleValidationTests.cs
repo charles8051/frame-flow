@@ -41,6 +41,24 @@ public sealed class GraphCycleValidationTests
     }
 
     [Fact]
+    public async Task ABlockingForkRejoinUnderACountLimit_IsRefused()
+    {
+        // A count limit stops reading the secondary as a lead does, so the same shape stalls.
+        var graph = new GraphRunner();
+        var head = graph.Pipeline(Source(3));
+        var join = JoinWithLead(maxLead: null, maxRetained: 2);
+
+        var branch = head.Branch(EdgeOptions.Buffered(4)).Then(Passthrough("detect"));
+        head.Join(branch, join, EdgeOptions.Default, EdgeOptions.Buffered(4)).To(Sink());
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => graph.RunAsync(CancellationToken.None)
+        );
+
+        Assert.Contains("count limit", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ATrunkThatPassesThroughAnOperator_IsStillTheSharedProducer()
     {
         // The port feeding the join's primary is the operator's output, not the fork. Searching
@@ -143,7 +161,8 @@ public sealed class GraphCycleValidationTests
         new("sink", (_, _) => ValueTask.CompletedTask);
 
     private static SyncJoinNode<RefBox<int>, RefBox<int>, RefBox<int>> JoinWithLead(
-        TimeSpan? maxLead
+        TimeSpan? maxLead,
+        int? maxRetained = null
     ) =>
         new(
             "join",
@@ -154,6 +173,7 @@ public sealed class GraphCycleValidationTests
             ),
             SyncMatch.MostRecentAtOrBefore,
             window: TimeSpan.FromSeconds(5),
-            maxLead: maxLead
+            maxLead: maxLead,
+            maxRetained: maxRetained
         );
 }

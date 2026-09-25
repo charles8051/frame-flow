@@ -210,6 +210,36 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     /// </remarks>
     public TimeSpan? MaxLead { get; }
 
+    /// <summary>
+    /// The most secondaries the window retains, or <see langword="null"/> for no count limit.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Window"/> and <see cref="MaxLead"/> are durations, and a duration does not
+    /// bound a count: a variable-frame-rate secondary can put any number of items into either.
+    /// A retained frame keeps its storage, and a fixed pool runs out of frames, not time
+    /// (ADR-0081, decision 1).
+    /// </para>
+    /// <para>
+    /// At the limit the join first releases every retained secondary that can no longer match.
+    /// Under <see cref="SyncMatch.MostRecentAtOrBefore"/> that is every secondary at or before
+    /// the primary except the newest, and the newest too once it is older than
+    /// <see cref="MaxStaleness"/>. Under <see cref="SyncMatch.Within"/> it is every interval that
+    /// ends at or before the primary. If what remains still fills the limit, the join stops
+    /// reading the secondary edge until the primary advances, as it does past
+    /// <see cref="MaxLead"/>, and the edge's overflow policy decides what upstream does.
+    /// </para>
+    /// <para>
+    /// A full limit costs match quality, not primaries. Each primary still matches against what
+    /// the window holds, and a newer secondary still on the edge is not seen until the primary
+    /// passes a retained one. Set the limit above the most secondaries that can match at once:
+    /// under <see cref="SyncMatch.Within"/>, the most overlapping intervals plus those within the
+    /// lead. <see cref="MaxLead"/>'s warning about a producer that feeds both sides applies here
+    /// too.
+    /// </para>
+    /// </remarks>
+    public int? MaxRetained { get; }
+
     public InputPort<TPrimary> Primary { get; }
     public InputPort<TSecondary> Secondary { get; }
 
@@ -220,9 +250,9 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     IPort IHoldsItsSecondary.PrimaryInput => Primary;
     IPort IHoldsItsSecondary.SecondaryInput => Secondary;
 
-    // Without a lead the join reads the secondary as fast as it arrives, so it can never be the
-    // half of a cycle that stops reading.
-    bool IHoldsItsSecondary.StopsReadingSecondary => MaxLead.HasValue;
+    // Without a lead or a count limit the join reads the secondary as fast as it arrives, so it
+    // can never be the half of a cycle that stops reading.
+    bool IHoldsItsSecondary.StopsReadingSecondary => MaxLead.HasValue || MaxRetained.HasValue;
     public OutputPort<TOut> Output { get; }
 
     /// <summary>Secondaries currently held by the window. Diagnostics and tests.</summary>
@@ -230,10 +260,11 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
 
     /// <summary>
     /// Whether the join is holding a secondary it has read but not admitted, because it leads
-    /// the primary by more than <see cref="MaxLead"/>. While this is true the join is not
-    /// reading the secondary edge. Diagnostics and tests.
+    /// the primary by more than <see cref="MaxLead"/>, or because the window holds
+    /// <see cref="MaxRetained"/> secondaries that can all still match. While this is true the
+    /// join is not reading the secondary edge. Diagnostics and tests.
     /// </summary>
-    public bool IsSecondaryHeld => _retained.HasLeadWaiter;
+    public bool IsSecondaryHeld => _retained.HasRoomWaiter;
 
     public SyncJoinNode(
         string id,
@@ -243,7 +274,8 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
         TimeSpan window,
         TimeSpan? maxStaleness = null,
         FailureResponse onError = FailureResponse.Propagate,
-        TimeSpan? maxLead = null
+        TimeSpan? maxLead = null,
+        int? maxRetained = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -252,6 +284,8 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
         ArgumentOutOfRangeException.ThrowIfLessThan(window, TimeSpan.Zero);
         if (maxLead is { } lead)
             ArgumentOutOfRangeException.ThrowIfLessThan(lead, TimeSpan.Zero, nameof(maxLead));
+        if (maxRetained is { } limit)
+            ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1, nameof(maxRetained));
 
         // ADR-0080 decision 8: a retained frame pins its storage, and without a lead the join
         // keeps every secondary that arrives ahead of the primary (#90).
@@ -273,6 +307,7 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
         Window = window;
         MaxStaleness = maxStaleness ?? TimeSpan.MaxValue;
         MaxLead = maxLead;
+        MaxRetained = maxRetained;
         OnError = onError;
         Primary = new InputPort<TPrimary>(this, "primary");
         Secondary = new InputPort<TSecondary>(this, "secondary");
@@ -346,9 +381,10 @@ internal sealed class SecondaryWindow<T>
     // _highWater, whose TimeSpan.MinValue floor is also a legal primary time.
     private bool _primarySeen;
 
-    // Set while the secondary reader is parked on the lead bound. Completed and cleared by
-    // anything that can make room: the primary advancing, or the window being cleared.
-    private TaskCompletionSource? _leadWaiter;
+    // Set while the secondary reader is parked on the lead bound or the count limit. Completed
+    // and cleared by anything that can make room: the primary advancing, or the window being
+    // cleared.
+    private TaskCompletionSource? _roomWaiter;
 
     public int Count
     {
@@ -359,36 +395,50 @@ internal sealed class SecondaryWindow<T>
         }
     }
 
-    public bool HasLeadWaiter
+    public bool HasRoomWaiter
     {
         get
         {
             lock (_gate)
-                return _leadWaiter is not null;
+                return _roomWaiter is not null;
         }
     }
 
     /// <summary>
     /// Takes ownership of <paramref name="item"/> and files it by
     /// <paramref name="from"/>, unless <paramref name="maxLead"/> is set and the
-    /// item leads by more than it. Entries usually arrive in order, so the
-    /// insertion point is found by scanning back from the end.
+    /// item leads by more than it, or <paramref name="maxRetained"/> is set and
+    /// the window holds that many entries that can still match. At the count
+    /// limit, entries that can no longer match are released first. Entries
+    /// usually arrive in order, so the insertion point is found by scanning back
+    /// from the end.
     /// </summary>
     /// <returns>
     /// <see langword="null"/> when the item was admitted. Otherwise the item is
     /// still the caller's, and the task completes when room may have opened; the
     /// caller tries again then.
     /// </returns>
-    public Task? TryAdmit(T item, TimeSpan from, TimeSpan to, TimeSpan? maxLead)
+    public Task? TryAdmit(
+        T item,
+        TimeSpan from,
+        TimeSpan to,
+        TimeSpan? maxLead,
+        int? maxRetained,
+        SyncMatch policy,
+        TimeSpan maxStaleness
+    )
     {
         lock (_gate)
         {
-            if (maxLead is { } lead && !HasRoom(from, lead))
+            if (
+                (maxLead is { } lead && !HasRoom(from, lead))
+                || (maxRetained is { } limit && !HasCountRoom(limit, policy, maxStaleness))
+            )
             {
-                _leadWaiter ??= new TaskCompletionSource(
+                _roomWaiter ??= new TaskCompletionSource(
                     TaskCreationOptions.RunContinuationsAsynchronously
                 );
-                return _leadWaiter.Task;
+                return _roomWaiter.Task;
             }
 
             int i = _entries.Count;
@@ -419,7 +469,7 @@ internal sealed class SecondaryWindow<T>
                 _primarySeen = true;
                 if (t > _highWater)
                     _highWater = t;
-                ReleaseLeadWaiter();
+                ReleaseRoomWaiter();
             }
 
             Evict(window);
@@ -468,7 +518,7 @@ internal sealed class SecondaryWindow<T>
             _entries.Clear();
             _highWater = TimeSpan.MinValue;
             _primarySeen = false;
-            ReleaseLeadWaiter();
+            ReleaseRoomWaiter();
         }
     }
 
@@ -491,11 +541,41 @@ internal sealed class SecondaryWindow<T>
         return reference > TimeSpan.MaxValue - lead || from <= reference + lead;
     }
 
-    // Caller holds _gate.
-    private void ReleaseLeadWaiter()
+    // Caller holds _gate. At the count limit, releases the entries no primary at or after the
+    // high-water mark can match, then says whether one more fits. Before any primary every entry
+    // is a candidate.
+    private bool HasCountRoom(int limit, SyncMatch policy, TimeSpan maxStaleness)
     {
-        _leadWaiter?.TrySetResult();
-        _leadWaiter = null;
+        if (_entries.Count < limit)
+            return true;
+        if (!_primarySeen)
+            return false;
+
+        var candidates = SecondaryCandidates.Mask(
+            _entries.ConvertAll(e => (e.From, e.To)),
+            _highWater,
+            policy,
+            maxStaleness
+        );
+        int keep = 0;
+        for (int i = 0; i < _entries.Count; i++)
+        {
+            if (!candidates[i])
+            {
+                _entries[i].Item.Dispose();
+                continue;
+            }
+            _entries[keep++] = _entries[i];
+        }
+        _entries.RemoveRange(keep, _entries.Count - keep);
+        return _entries.Count < limit;
+    }
+
+    // Caller holds _gate.
+    private void ReleaseRoomWaiter()
+    {
+        _roomWaiter?.TrySetResult();
+        _roomWaiter = null;
     }
 
     // Caller holds _gate.
@@ -532,5 +612,60 @@ internal sealed class SecondaryWindow<T>
         }
         if (keep < _entries.Count)
             _entries.RemoveRange(keep, _entries.Count - keep);
+    }
+}
+
+/// <summary>
+/// Which retained secondaries can still match (ADR-0081, decision 1). Between window resets the
+/// primary's time does not go backwards, so an entry that cannot match the primary now never
+/// will.
+/// </summary>
+internal static class SecondaryCandidates
+{
+    /// <summary>
+    /// For each entry of <paramref name="entries"/>, ordered by <c>From</c>, whether it can match
+    /// a primary at <paramref name="primary"/> or later under <paramref name="policy"/>.
+    /// </summary>
+    public static bool[] Mask(
+        IReadOnlyList<(TimeSpan From, TimeSpan To)> entries,
+        TimeSpan primary,
+        SyncMatch policy,
+        TimeSpan maxStaleness
+    )
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        var mask = new bool[entries.Count];
+        switch (policy)
+        {
+            case SyncMatch.Within:
+                // Half-open: an interval that ends at or before the primary contains no later
+                // time.
+                for (int i = 0; i < entries.Count; i++)
+                    mask[i] = entries[i].To > primary;
+                break;
+
+            case SyncMatch.MostRecentAtOrBefore:
+                // An entry ahead of the primary can match a later one. Of those at or before it,
+                // only the newest can match, now or later, and only while it is fresh enough.
+                int newest = -1;
+                for (int i = 0; i < entries.Count; i++)
+                {
+                    if (entries[i].From > primary)
+                        mask[i] = true;
+                    else
+                        newest = i;
+                }
+                if (newest >= 0)
+                {
+                    mask[newest] =
+                        maxStaleness == TimeSpan.MaxValue
+                        || primary - entries[newest].From <= maxStaleness;
+                }
+                break;
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(policy), policy, null);
+        }
+        return mask;
     }
 }
