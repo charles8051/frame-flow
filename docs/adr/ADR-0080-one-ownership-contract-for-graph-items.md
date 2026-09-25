@@ -289,9 +289,15 @@ examples to references.
 
 ## Open questions
 
-- Whether a FrameFlow-owned CPU frame pool, with exact size classes and an occupancy gauge,
-  replaces `MemoryPool<byte>.Shared`. A soak with a byte gauge decides; the rounding waste above is
-  the case for it.
+- **Decided (#381): no FrameFlow-owned CPU frame pool for now.** `MemoryPool<byte>.Shared` stays,
+  and `CpuFrameMetrics` on the `FrameFlow.Media` meter gauges the bytes live CPU frames hold,
+  counting each buffer's rented length so the pool's rounding shows. The frames a graph holds at
+  once are bounded by its edges and holders, so rounding costs a few frame sizes, not growth. The
+  common CPU frame is Bgra32, whose rented array is 1% larger than the frame at 1080p and 4K and
+  14% at 720p; NV12 at 1080p is 35%. The shared pool reuses returned arrays, which a review probe
+  confirmed on .NET 10. Revisit if the gauge's high-water sits far above frames in flight times
+  frame size, or if the planar CPU frame (#379) makes NV12 common. The soak this question called
+  for was not run: the examples it names need live sources, and this gauge is its instrument.
 - Whether `IVideoSink.FramePool` and `CpuFramePool` survive. `RentAsync` has no production caller,
   and the pool's frames are written after construction, which decision 5 forbids.
 

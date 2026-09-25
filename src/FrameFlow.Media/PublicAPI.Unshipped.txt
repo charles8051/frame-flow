@@ -116,6 +116,7 @@ FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.SampleRate.get -> int
 FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.SampleRate.init -> void
 FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.UnderrunCount.get -> long
 FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.UnderrunCount.init -> void
+FrameFlow.Media.Diagnostics.CpuFrameMetrics
 FrameFlow.Media.Diagnostics.PresentCadenceMetrics
 FrameFlow.Media.Diagnostics.PresenterRecoveryInfo
 FrameFlow.Media.Diagnostics.PresenterRecoveryInfo.ConfirmedOverSamples.get -> int
@@ -548,6 +549,9 @@ static FrameFlow.Media.AudioClockRateAnchor.None.get -> FrameFlow.Media.AudioClo
 static FrameFlow.Media.AudioClockRateLimit.Apply(FrameFlow.Media.AudioClockRateAnchor anchor, System.TimeSpan raw, System.TimeSpan sessionElapsed, System.TimeSpan slack) -> (FrameFlow.Media.AudioClockRateAnchor Anchor, System.TimeSpan Position)
 static FrameFlow.Media.AudioClockState.Initial.get -> FrameFlow.Media.AudioClockState
 static FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.Empty.get -> FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot!
+static FrameFlow.Media.Diagnostics.CpuFrameMetrics.HighWaterBytes.get -> long
+static FrameFlow.Media.Diagnostics.CpuFrameMetrics.OutstandingBytes.get -> long
+static FrameFlow.Media.Diagnostics.CpuFrameMetrics.OutstandingFrames.get -> int
 static FrameFlow.Media.Diagnostics.PresentCadenceMetrics.RecordPresent() -> void
 static FrameFlow.Media.Diagnostics.PresenterStallEvaluator.Create(System.TimeSpan stallTimeout, int recoverySamples = 4) -> FrameFlow.Media.Diagnostics.PresenterStallEvaluator
 static FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.Empty.get -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
