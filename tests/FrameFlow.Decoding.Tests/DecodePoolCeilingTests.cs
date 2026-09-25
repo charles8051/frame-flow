@@ -1,4 +1,5 @@
 using FrameFlow.Decoding.Diagnostics;
+using FrameFlow.Decoding.Internal;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
 
@@ -88,6 +89,20 @@ public sealed class DecodePoolCeilingTests(FfmpegBootstrapFixture fixture)
         Assert.Equal(before, DecodePoolMetrics.Capacity);
     }
 
+    // 27 is AV_CODEC_ID_H264.
+    [RequiresHardwareDecodeFact(codecId: 27, fixedPool: true)]
+    public async Task AHeldFrameAllowance_GrowsThePool_ByWhatItsSpareSurfacesDoNotCover()
+    {
+        const int held = 8;
+        var (defaultSize, backend, _) = await FirstFramePoolAsync(options: null);
+        var (grownSize, _, budget) = await FirstFramePoolAsync(
+            new VideoDecoderOptions { HeldHardwareFrames = held }
+        );
+
+        Assert.Equal(defaultSize + DecodePoolGuard.ExtraSurfacesFor(backend, held), grownSize);
+        Assert.Equal(held, budget);
+    }
+
     [RequiresFfmpegAndCorpusFact]
     public async Task ASoftwareDecoder_ReportsNoPool()
     {
@@ -117,6 +132,35 @@ public sealed class DecodePoolCeilingTests(FfmpegBootstrapFixture fixture)
                 Assert.Equal(before, DecodePoolMetrics.Capacity);
             }
         }
+    }
+
+    /// <summary>Opens a hardware decoder, decodes one frame, and reads the pool it made.</summary>
+    private async Task<(int PoolSize, HardwareDecodeBackendKind Backend, int Budget)> FirstFramePoolAsync(
+        VideoDecoderOptions? options
+    )
+    {
+        await using var demux = await OpenAsync();
+        await using var decoder = VideoDecoder.Open(
+            demux.FormatContextPtr,
+            demux.MediaInfo.VideoStreams[0].StreamIndex,
+            new HardwareDecodeOptions { Mode = HardwareDecodeMode.Required },
+            fixture.Capabilities,
+            loggerFactory: null,
+            videoOptions: options
+        );
+        decoder.YieldHardwareFrames = true;
+        await QueueAllAsync(demux, decoder);
+        await using var frames = decoder.DecodeAsync().GetAsyncEnumerator();
+        Assert.True(await frames.MoveNextAsync());
+        frames.Current.Dispose();
+
+        var diagnostics = decoder.GetDiagnostics();
+        Assert.True(diagnostics.HardwareBackend is not null, "the first frame came from software");
+        return (
+            diagnostics.HardwarePoolSize,
+            diagnostics.HardwareBackend.Value,
+            diagnostics.HardwareFrameBudget
+        );
     }
 
     private static async Task<DemuxSession> OpenAsync()

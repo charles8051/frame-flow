@@ -1,4 +1,5 @@
 using FrameFlow.Decoding;
+using FrameFlow.Decoding.Internal;
 using FrameFlow.Media;
 using FrameFlow.Native;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -243,7 +244,11 @@ internal sealed class RequiresHardwareDecodeFactAttribute : FactAttribute
     /// The FFmpeg <c>AVCodecID</c> the gated test decodes. <c>27</c> is
     /// <c>AV_CODEC_ID_H264</c>.
     /// </param>
-    public RequiresHardwareDecodeFactAttribute(int codecId)
+    /// <param name="fixedPool">
+    /// Also skip where every initialised backend's pool grows (VideoToolbox), which has no budget
+    /// to test.
+    /// </param>
+    public RequiresHardwareDecodeFactAttribute(int codecId, bool fixedPool = false)
     {
         if (!IntegrationTestEnvironment.HasFfmpegSharedLibraries)
         {
@@ -270,6 +275,17 @@ internal sealed class RequiresHardwareDecodeFactAttribute : FactAttribute
             Skip =
                 $"A hardware backend initialised, but no decoder for codec {codecId} "
                 + "advertises a hardware config for it on this machine.";
+            return;
+        }
+
+        if (
+            fixedPool
+            && capabilities
+                .Available.Where(b => b.Initialized)
+                .All(b => DecodePoolGuard.SpareSurfaces(b.Kind) is null)
+        )
+        {
+            Skip = "Every hardware backend here has a growable pool, which has no budget.";
         }
     }
 }

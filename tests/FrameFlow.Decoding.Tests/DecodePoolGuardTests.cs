@@ -26,6 +26,37 @@ public sealed class DecodePoolGuardTests
     }
 
     [Theory]
+    [InlineData(HardwareDecodeBackendKind.D3D11Va, 5, 2)]
+    [InlineData(HardwareDecodeBackendKind.D3D11Va, 3, 0)]
+    [InlineData(HardwareDecodeBackendKind.D3D11Va, 1, 0)]
+    [InlineData(HardwareDecodeBackendKind.D3D11Va, 0, 0)]
+    [InlineData(HardwareDecodeBackendKind.Dxva2, 8, 5)]
+    [InlineData(HardwareDecodeBackendKind.Cuda, 5, 5)]
+    [InlineData(HardwareDecodeBackendKind.VideoToolbox, 5, 0)]
+    public void TheExtraSurfaces_AreWhatTheSpareOnesDoNotCover(
+        HardwareDecodeBackendKind backend,
+        int held,
+        int extra
+    )
+    {
+        Assert.Equal(extra, DecodePoolGuard.ExtraSurfacesFor(backend, held));
+    }
+
+    [Theory]
+    [InlineData(HardwareDecodeBackendKind.D3D11Va, 5)]
+    [InlineData(HardwareDecodeBackendKind.D3D11Va, 8)]
+    [InlineData(HardwareDecodeBackendKind.Dxva2, 3)]
+    [InlineData(HardwareDecodeBackendKind.Cuda, 5)]
+    public void OpenedWithItsExtraSurfaces_AFixedPoolsBudgetIsWhatTheCallerHolds(
+        HardwareDecodeBackendKind backend,
+        int held
+    )
+    {
+        int extra = DecodePoolGuard.ExtraSurfacesFor(backend, held);
+        Assert.Equal(held, DecodePoolGuard.BudgetFor(backend, extra));
+    }
+
+    [Theory]
     [InlineData(HardwareDecodeBackendKind.D3D11Va, 0, 3)]
     [InlineData(HardwareDecodeBackendKind.D3D11Va, 2, 5)]
     [InlineData(HardwareDecodeBackendKind.D3D11Va, -4, 3)]

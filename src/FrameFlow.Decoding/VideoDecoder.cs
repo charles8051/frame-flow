@@ -74,6 +74,10 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     private DecodePoolGeneration? _pool;
     private int _hwPoolSize;
 
+    // The surfaces the decoder opened with beyond the pool's default (extra_hw_frames, #384).
+    // Set once by Open; part of every pool's budget.
+    private int _extraHwFrames;
+
     // Times the decoder waited at its pool budget before decoding (#383), counted as each wait
     // starts.
     private long _poolBudgetWaits;
@@ -611,8 +615,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 : new DecodePoolGeneration(
                     framesContext,
                     accessor.GetHwFramesPoolSize(),
-                    // Nothing sets extra_hw_frames yet, so the budget is the spare surfaces.
-                    DecodePoolGuard.BudgetFor(backend, extraHwFrames: 0),
+                    DecodePoolGuard.BudgetFor(backend, _extraHwFrames),
                     _logger,
                     backend.ToString()
                 )

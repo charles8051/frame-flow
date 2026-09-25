@@ -158,6 +158,8 @@ public sealed partial class VideoDecoder
                 ReadAheadCapacity.DefaultVideoReadAhead
             );
 
+        int heldHardwareFrames = videoOptions?.HeldHardwareFrames ?? 0;
+
         int timeBaseNum = stream.TimeBaseNum;
         int timeBaseDen = stream.TimeBaseDen;
 
@@ -180,6 +182,7 @@ public sealed partial class VideoDecoder
                 codecParPtr,
                 options,
                 capabilities,
+                heldHardwareFrames,
                 attempts,
                 logger
             );
@@ -267,6 +270,7 @@ public sealed partial class VideoDecoder
             decoder._hardwareBackend = (int)hwBinding.Backend;
             decoder._hwDeviceCtxRef = hwBinding.DeviceCtxRef; // ownership transfers
             decoder._hwPixelFormat = hwBinding.HwPixelFormat;
+            decoder._extraHwFrames = hwBinding.ExtraHwFrames;
             decoder._swFrame = swFrame;
         }
 
@@ -287,6 +291,7 @@ public sealed partial class VideoDecoder
         nint codecParPtr,
         HardwareDecodeOptions options,
         HardwareDecodeCapabilities capabilities,
+        int heldHardwareFrames,
         List<HardwareDecodeAttempt> attempts,
         ILogger logger
     )
@@ -302,7 +307,14 @@ public sealed partial class VideoDecoder
 
         foreach (var candidate in sorted)
         {
-            var binding = TryBindSingle(candidate, codec, codecParPtr, attempts, logger);
+            var binding = TryBindSingle(
+                candidate,
+                codec,
+                codecParPtr,
+                heldHardwareFrames,
+                attempts,
+                logger
+            );
             if (binding is not null)
                 return binding;
         }
@@ -451,13 +463,15 @@ public sealed partial class VideoDecoder
 
     /// <summary>
     /// Allocates a codec context, attaches the chosen hwaccel device context,
-    /// and opens it. Returns the binding on success, or <see langword="null"/>
-    /// and appends an <see cref="HardwareDecodeAttempt"/> on failure.
+    /// sizes its pool for <paramref name="heldHardwareFrames"/>, and opens it. Returns the
+    /// binding on success, or <see langword="null"/> and appends an
+    /// <see cref="HardwareDecodeAttempt"/> on failure.
     /// </summary>
     private static HwAccelBinding? TryBindSingle(
         HwAccelCandidate candidate,
         nint codec,
         nint codecParPtr,
+        int heldHardwareFrames,
         List<HardwareDecodeAttempt> attempts,
         ILogger logger
     )
@@ -465,6 +479,9 @@ public sealed partial class VideoDecoder
         nint deviceCtxRef = nint.Zero;
         nint deviceRefForCtx = nint.Zero;
         CodecContextHandle? codecCtx = null;
+        // What the pool's spare surfaces do not cover of the frames the caller holds (#384).
+        // FFmpeg adds it to a fixed pool's size and ignores it for a growable one.
+        int extraHwFrames = DecodePoolGuard.ExtraSurfacesFor(candidate.Kind, heldHardwareFrames);
 
         try
         {
@@ -529,6 +546,8 @@ public sealed partial class VideoDecoder
             {
                 ref AVCodecContext ctx = ref Unsafe.AsRef<AVCodecContext>((void*)ctxPtr);
                 ctx.hw_device_ctx = (AVBufferRef*)deviceRefForCtx;
+                if (extraHwFrames > 0)
+                    ctx.extra_hw_frames = extraHwFrames;
             }
 
             int rcOpen = FFAvCodec.avcodec_open2(ctxPtr, codec, nint.Zero);
@@ -551,7 +570,8 @@ public sealed partial class VideoDecoder
                 AvHwDeviceType: candidate.AvHwDeviceType,
                 HwPixelFormat: candidate.HwPixelFormat,
                 DeviceCtxRef: deviceCtxRef,
-                CodecCtx: codecCtx
+                CodecCtx: codecCtx,
+                ExtraHwFrames: extraHwFrames
             );
             deviceCtxRef = nint.Zero;
             deviceRefForCtx = nint.Zero;
@@ -679,15 +699,17 @@ public sealed partial class VideoDecoder
 
     /// <summary>
     /// Successful hwaccel bind: holds the device context ref (owned, must be
-    /// freed by the decoder on dispose), the chosen codec context, and the
-    /// hardware pixel format the decoder will produce.
+    /// freed by the decoder on dispose), the chosen codec context, the
+    /// hardware pixel format the decoder will produce, and the
+    /// <c>extra_hw_frames</c> it opened with.
     /// </summary>
     private sealed record HwAccelBinding(
         HardwareDecodeBackendKind Backend,
         int AvHwDeviceType,
         int HwPixelFormat,
         nint DeviceCtxRef,
-        CodecContextHandle CodecCtx
+        CodecContextHandle CodecCtx,
+        int ExtraHwFrames
     );
 }
 

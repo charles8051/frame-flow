@@ -189,6 +189,8 @@ internal sealed partial class DecodePoolGeneration
                 waiter?.OnPoolWait();
             }
 
+            // Read before WaitAsync arms the interval's timer, so a pause that begins or ends at
+            // any point in the interval, its arming included, moves the epoch past this snapshot.
             int epoch = waiter?.PoolWatchdogEpoch ?? 0;
             try
             {

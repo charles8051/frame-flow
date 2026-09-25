@@ -266,7 +266,8 @@ breach.
 
 ## Validation
 
-The #370 reproduction and the guard's tests (#383) have run; the rest has not.
+The #370 reproduction and the tests for the guard (#383) and the player's allowance (#384) have
+run; the rest has not.
 
 - The budget computation and the guard's transition are pure and get table tests over topologies
   from the tree: the player's D3D11 path, LiveCaptioning in GPU mode, Camera.Multicast and the
@@ -276,10 +277,17 @@ The #370 reproduction and the guard's tests (#383) have run; the rest has not.
   Done 2026-09-25 ([the reproduction](../investigations/2026-09-25-d3d11va-pool-exhaustion.md)): the decoder faults at 20 held frames on an H.264 clip and at 5 on an
   HEVC clip.
 - With `extra_hw_frames` set from the budget, the same hold no longer produces the log line.
+  Done for the player's allowance (#384): the HEVC clip holds 8 frames with no log line and no
+  fault.
 - A decoder parked at its budget exits when its source is cancelled. The test barriers on the
   source's own exit signal, not on a delay.
 
 ## Revision history
+
+**2026-09-25, the player's allowance (#384).** A decoder that yields hardware frames to the
+player opens with `extra_hw_frames` for 5 held frames (the ring's 3, the presenter slot's 1 and 1
+in flight) less the backend's spare count, so its budget is 5. `VideoDecoderOptions.HeldHardwareFrames`
+carries the count, and only the player sets it. This completes phase 1 for hardware decode.
 
 **2026-09-25, the guard (#383).** Decision 5 is implemented. The phase-1 budget is the pool
 model's spare surfaces (3 on D3D11VA and DXVA2) plus `extra_hw_frames`; a growable pool, or an

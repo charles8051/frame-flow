@@ -195,6 +195,8 @@ FrameFlow.Decoding.VideoDecoder.SetDiscardLevel(FrameFlow.Decoding.DecodeDiscard
 FrameFlow.Decoding.VideoDecoder.YieldHardwareFrames.get -> bool
 FrameFlow.Decoding.VideoDecoder.YieldHardwareFrames.set -> void
 FrameFlow.Decoding.VideoDecoderOptions
+FrameFlow.Decoding.VideoDecoderOptions.HeldHardwareFrames.get -> int
+FrameFlow.Decoding.VideoDecoderOptions.HeldHardwareFrames.init -> void
 FrameFlow.Decoding.VideoDecoderOptions.PacketQueueCapacity.get -> int?
 FrameFlow.Decoding.VideoDecoderOptions.PacketQueueCapacity.init -> void
 FrameFlow.Decoding.VideoDecoderOptions.VideoDecoderOptions() -> void
