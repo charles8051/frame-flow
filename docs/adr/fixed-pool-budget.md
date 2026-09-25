@@ -94,10 +94,23 @@ unbounded. `SyncJoinNode` gains a retained-count limit next to `Window` and `Max
 At the limit, the join first releases every retained secondary that can no longer match. Between
 window resets the primary's time does not go backwards, so under `MostRecentAtOrBefore` only the
 newest secondary at or before the primary can match now or later, and every older one is released.
-Under `Within`, a secondary whose interval ends at or before the primary is released. The join
-stops reading its secondary edge only when every retained secondary can still match, which means
-they all lie ahead of the primary: the case `MaxLead` already handles by pausing the secondary
-edge until the primary catches up. So the limit never strands the join behind stale frames.
+Under `Within`, a secondary whose interval ends at or before the primary is released. What
+remains are candidates: under `MostRecentAtOrBefore`, the newest secondary at or before the
+primary and any ahead of it; under `Within`, intervals that contain the primary's time or start
+after it.
+
+If the candidates alone reach the limit, the join stops reading its secondary edge until the
+primary advances past one of them. That is the back-pressure ADR-0073 gives `MaxLead`. The primary
+edge is never paused, and every candidate is released once the primary passes its end, so the join
+progresses whenever the primary does.
+
+It inherits `MaxLead`'s deadlock as well: if one branch feeds both inputs and blocks when full, the
+paused secondary edge stops that branch and the primary never arrives (ADR-0073, "Why opt-in rather
+than measured against `Window`"). A count limit therefore sets `IHoldsItsSecondary.StopsReadingSecondary`,
+so `GraphTopology.DeadlockedForkRejoins`, which already refuses that shape for a lead, refuses it
+for a count limit too. ADR-0073's rule for choosing a lead applies: set the limit above the most
+candidates the join can hold at once, which under `Within` is the most overlapping intervals plus
+those within the lead, or give the secondary edge a dropping policy.
 
 An item that carries frames, `ClipSegment`, declares frames, not items. An operator declares 1 for the call in
 flight, and an edge declares its capacity.
@@ -262,3 +275,8 @@ declarations when #294 makes hardware frames the default.
 **2026-09-24, second automated review.** A join at its count limit could stop reading while it
 held only secondaries that can no longer match, and stall. Decision 1 now releases those first and
 pauses the secondary edge only when every retained secondary lies ahead of the primary.
+
+**2026-09-24, third automated review.** Under `Within` an interval can contain the primary's time,
+so the candidates left at the limit are not all ahead of the primary. Decision 1 now says the pause
+waits on the primary advancing, inherits `MaxLead`'s fork-rejoin deadlock, and is refused by the
+same topology check.
