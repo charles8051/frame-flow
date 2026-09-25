@@ -1,292 +1,291 @@
-# One ownership contract for frames in every memory domain
+# One ownership contract for graph items
 
-**Status:** Proposed. Draft, pending number assignment at merge. Not implemented.
+**Status:** Proposed. Draft, pending number assignment at merge. Not implemented. Revised once
+after review; see [Revision history](#revision-history).
 
 **Date:** 2026-09-24
 
 **Supersedes on acceptance:** [ADR-0054](ADR-0054-fan-out-with-explicit-cloning.md) (fan-out with
 explicit cloning).
 
-**Amends:** [ADR-0012](ADR-0012-memory-management-for-decoded-frames.md),
-[ADR-0030](ADR-0030-unify-frame-contracts-with-crossbar.md),
-[ADR-0038](ADR-0038-memory-domain-pipeline-operators.md), and absorbs decisions 1, 2, 3 and 5 of
-[frame-pool ownership](frame-pool-ownership.md).
+**Amends:** ADR-0005 rule 3 and ADR-0009 (which thread frees), ADR-0012 (single ownership of
+video frames), ADR-0030 (the frame contract), ADR-0052 §3 (pre-roll by cloning), ADR-0066 (the
+`Detach`-based sink adapter), ADR-0073 decision 8 (`maxLead`), ADR-0078 decision 1 (the inherit
+marker).
 
-**Related:**
-- #41 (typed shareability), #42 (delete the pass-through wrappers), #91 (`SyncJoinNode` and
-  one-shot secondaries), #93 (`LatestWins(1)` copies every frame), #90 (a joined camera
-  exhausting a frame pool).
-- #232 and #233 (pooled hardware frames and the D3D11 copy-out pool), #279 (`ToCpu`), #289
-  (device accessors), #292 (GPU frame lifetime with no pacer), #293 (`MapToGpu`).
-- #367 (frames carry no colour range).
-- [ADR-0057](ADR-0057-pull-based-master-clock.md): the confirmed stall from holding a
-  decode-texture lease across a clock wait.
-- Periphery ADR-0035 §8b: the ref-counted camera frame contract this record adopts.
+**Not in this record:**
+- What a source with a fixed pool does with its frames: [fixed-pool budget](fixed-pool-budget.md).
+- Storage kinds and the D3D11 copy-out pool: [frame-pool ownership](frame-pool-ownership.md),
+  which stays provisional on #231.
+- Colour range and matrix on frames (#367): additive, no break needed.
+
+**Related:** #41, #42, #90, #91, #93, #369, #370.
 
 ## Context
 
-### One frame type is not ref-counted
+### Every item on the graph counts references, except one, and they count differently
 
-Every item that travels the graph is reference-counted except one.
+| Type | `AddRef` | A `Dispose` past zero |
+|---|---|---|
+| `PcmAudioBuffer` | Same instance | Clamps silently (`PcmAudioBuffer.cs:196`) |
+| `PooledCpuVideoFrame` (internal) | Same instance | Clamps silently (`:158-163`) |
+| `GpuVideoFrame` | Same instance | Clamps silently (`GpuVideoFrame.cs:381`) |
+| `RefBox<T>` | Same instance | Throws (`RefBox.cs:57`) |
+| `ClipSegment` | Same instance, and revives a released segment (`ClipSegment.cs:67-70`) | Ignored |
+| `EncodedPacket` | Same instance | Not checked; the count frees nothing (`EncodedPacket.cs:93-100`) |
+| `CameraFrameAdapter` | Same instance, forwards every `Dispose` to the lease | Per the lease |
+| `CameraVideoFrame` | Same instance, but its `Dispose` acts once per instance, so a shared frame dies under its second holder and leaks a lease (#369) | Ignored |
+| `VideoFrameRef`, `PcmAudioBufferRef`, `DetectedVideoFrameRef`, `DetectedFaceFrameRef` | A new wrapper per call | Forwards to the inner item |
+| `CaptionRef` | A new instance with its own count (`CaptionRef.cs:42`) | Not checked (`:48`) |
+| `Media.CpuVideoFrame` | **Throws `NotSupportedException`** (`CpuVideoFrame.cs:85`) | Disposes the buffer owner again |
 
-| Type | `AddRef` |
-|---|---|
-| `PcmAudioBuffer` | Counts, returns the same instance. Made ref-counted by ADR-0012's 2026-05-12 amendment, because audio fan-out had become routine. |
-| `PooledCpuVideoFrame` (internal) | Counts, returns the same instance. |
-| `GpuVideoFrame` | Counts, returns the same instance. Its doc calls this "the codebase-wide `AddRef` contract" (`src/FrameFlow.Decoding/GpuVideoFrame.cs:216`). |
-| `CameraVideoFrame` | Delegates to Periphery's lease, returns the same instance (`src/FrameFlow.Camera/CameraVideoFrame.cs:79`). |
-| `ITensor`, `CpuTensor<T>` | Counts (ADR-0030). |
-| `RefBox<T>` | Counts, returns the same instance. |
-| `VideoFrameRef`, `DetectedFaceFrameRef` | Forward to the inner frame and allocate a **new** wrapper per call (`VideoFrameRef.cs:81`, `DetectedFaceFrameRef.cs:39`). |
-| `Media.CpuVideoFrame` | **Throws `NotSupportedException`** (`src/FrameFlow.Media/CpuVideoFrame.cs:85`). |
+`ITensor` is `IDisposable`, not `IRefCounted` (`ITensor.cs:42`), and does not travel the graph.
 
-`Media.CpuVideoFrame` is produced by the decoder's CPU path (`VideoDecoder.cs:1104`), by
-`SwScaleVideoConverter` (`:152`) and so by every `ConvertPixelFormat`, `Resize` and
-`ResizeAndConvert` output, by `GpuFrameReadback` (`:159`), by `CloneCpu`
-(`VideoFrameExtensions.cs:77`) and by `SyntheticSceneSource` (`:115`). A camera or software-decode
-path passes through a converter before anything else happens to it, so this is the frame most
-graphs carry.
+`Media.CpuVideoFrame` is what the decoder's CPU path (`VideoDecoder.cs:1104`), every
+`VideoOperators` converter (`SwScaleVideoConverter.cs:152`), `GpuFrameReadback` (`:159`),
+`CloneCpu` (`VideoFrameExtensions.cs:77`) and `SyntheticSceneSource` (`:115`) produce. A camera
+or software-decode path passes through a converter first, so it is the frame most graphs carry.
 
-### What that one type costs
+### What the one-shot frame costs
 
-- **Fan-out copies.** ADR-0054 added a per-edge cloner (`EdgeConfig<T>.Cloner`,
-  `src/FrameFlow.Graph/EdgeAxes.cs:94`) so a one-shot frame can reach two branches.
-  `ForwardAsync` (`NodePumps.cs:512`) clones the whole frame per branch. `Cloner`, `WithCloner` and
-  `CloneCpu` appear 37 times in 15 files, including the MotionClip recorder and five examples.
+- **Fan-out copies.** ADR-0054's per-edge cloner (`EdgeConfig<T>.Cloner`, `EdgeAxes.cs:94`) copies
+  the whole frame per branch. `Cloner`, `WithCloner` and `CloneCpu` have 29 code references in 14
+  files across `src/` and `examples/`, or 37 in 16 files with `tests/`. LiveCaptioning is the one
+  example on `WithCloner`; four others call `CloneCpu` to feed preview panes.
 - **Joins throw.** `SyncJoinNode` calls `AddRef` on its retained secondary at a match, which throws
-  for a one-shot frame and kills the graph under `Propagate` (#91). Detections have to be wrapped
-  frame-free in a `RefBox` to be joined at all.
-- **`LatestWins` edges copy.** A `LatestWins(1)` branch deep-copies every frame and then drops most
-  of them (#93).
-- **Retaining nodes clone.** `PreRollBuffer` (`PreRollBuffer.cs:61`) and `RecordingGate`
-  (`:179`, `:193`, `:208`) clone every frame they keep.
-- **The interface promises what the type may not do.** `AddRef` is on `IVideoFrame`, and whether it
-  works is a runtime fact of the concrete type (#41).
-- **Two `AddRef` semantics.** Most types return the same instance; the wrappers allocate. The
-  comments in `ForwardAsync`'s failure path handle both.
-- **The wrappers are public.** `VideoFrameRef` and `PcmAudioBufferRef` exist to reshape
-  `IVideoFrame` and `PcmAudioBuffer` into `IRefCounted`, and they are in the signature of
-  `PlaybackController.Create`'s `configureVideo` and `configureAudio` (#42).
+  and kills the graph under `Propagate` (#91).
+- **`LatestWins` edges copy.** A `LatestWins(1)` branch copies every frame and drops most (#93).
+- **Retaining nodes clone.** `PreRollBuffer` (`:61`) and `RecordingGate` (`:179`, `:193`, `:208`)
+  clone every frame they keep.
+- **The interface promises what the type may not do** (#41), and **the wrappers are public**, in
+  `PlaybackController.Create`'s hooks and `IPlayerBuilder`/`IPassBuilder.ConfigureVideo` (#42).
 
-### Why one-shot was kept, and what that reason misses
+Estimated from frame sizes and rates, not measured, the copies that sharing would remove:
 
-ADR-0054 considered making converter outputs ref-counted and deferred it as "much larger scope;
-touches the frame-pool design across `FrameFlow.Media`, `FrameFlow.Decoding`, `FrameFlow.Video`."
-The code churn is real. The pool consequence is not: every one-shot producer rents from
-`MemoryPool<byte>.Shared` (`SwScaleVideoConverter.cs:84`, `SharedMemoryFramePool`,
-`VideoFrameExtensions.cs:74`), which grows on demand. Holding one of these frames longer costs
-memory. It never stalls a producer.
+| Example | Copies per frame | Rate |
+|---|---|---|
+| Multicast, Multicast.Dml | 3 × 8 MiB at 1080p | about 750 MB/s at 30 fps |
+| Camera.Multicast | 3 × 4 MiB at the 720p cap | about 380 MB/s |
+| LiveCaptioning, CPU mode | 8 MiB, about 78% then dropped (#93) | about 210 MB/s at 25 fps |
+| MotionClip | 2 × 2 MiB | about 126 MB/s |
 
-### Where holding a frame does stall: fixed pools
+### Why one-shot was kept, and what that reason missed
 
-Two sources hand out frames whose storage belongs to a fixed pool.
+ADR-0054 deferred ref-counted converter outputs as "much larger scope; touches the frame-pool
+design across `FrameFlow.Media`, `FrameFlow.Decoding`, `FrameFlow.Video`." The churn is real. A
+pool consequence is not: every one-shot producer rents from `MemoryPool<byte>.Shared`
+(`SwScaleVideoConverter.cs:84`, `SharedMemoryFramePool`, `VideoFrameExtensions.cs:74`), which
+grows. Holding one of these frames longer costs memory and never stalls a producer.
 
-- **Hardware decode slices.** A `GpuVideoFrame` pins one slice of the D3D11VA or DXVA2 decode
-  array until its last `Dispose`. [Frame-pool ownership](frame-pool-ownership.md) derives the
-  spare count from FFmpeg's pool sizing: as few as two or three slices for H.264 using its full
-  reference set. ADR-0057 records a confirmed stall from `PaceUntil` holding a frame across a clock
-  wait, and #292 records the same shape for any operator that holds a GPU frame on a pass with no
-  pacer.
-- **Camera leases.** Periphery's `LeasedCameraFrame` returns its buffer to a pool of
-  `BufferCount + QueueDepth + 1`, and active leases are never revoked. `CameraVideoFrame.AddRef`
-  delegates to the lease, so a FrameFlow node that retains camera frames drains Periphery's pool.
-  `SyncJoinNode`'s own documentation records the case: a live camera joined as the secondary of a
-  paused primary pins every frame it captures (#90).
+On .NET 10 the shared array pool keeps up to 32 arrays per size class in each of its partitions,
+one partition per core. A review probe on a 24-thread machine returned 200 arrays of 8 MiB, forced
+two compacting gen-2 collections, and got all 200 back. In every fan-out in the tree, sharing holds
+no more buffers than cloning does, so memory falls. What remains: the pool rounds up to a power of
+two (1080p NV12 is 35% over its 4 MiB class, 640x480 Bgra32 71% over 2 MiB), keeps its high-water
+mark until a gen-2 trim, is shared with the rest of the process, and has no gauge.
 
-Every fixed pool is protected today by consumers remembering not to hold. The camera path is safe
-mostly by accident, because its first converter copies into growable memory. `PreRollBuffer` is
-safe on purpose, by cloning.
+### The pools that do stall are a separate problem
 
-### Periphery already settled the contract
-
-Periphery.Camera (its ADR-0035 §8b) makes every frame ref-counted, including copies it owns
-outright, for interface uniformity. The library never revokes, relocates or mutates backing memory
-while any reference is live. It offers two escape valves: `AddRef` shares the frame and keeps the
-pool slot, and `Copy()` detaches an `OwnedCameraFrame` that pays bytes for pool independence.
-
-This record adopts that contract for FrameFlow, and decides the part Periphery leaves to its
-caller: which of the two a source with a fixed pool does by default.
+Hardware decode slices and camera leases come from fixed pools, and holding them longer can exhaust
+them (#90, #370). This record makes counting uniform and leaves what a fixed-pool source does to
+[fixed-pool budget](fixed-pool-budget.md). Periphery's camera frames already follow the counting
+contract below (Periphery ADR-0035 §8b), and Periphery leaves copying versus sharing to the holder.
 
 ## Decision
 
-### 1. `AddRef` always works and returns the same instance
+### 1. Counting
 
-Every `IRefCounted` implementation counts references on itself, returns `this`, and releases at
-zero. `AddRef` throws only after the final release, as `ObjectDisposedException`, which is a
-use-after-release bug in the caller. No type implements `AddRef` by throwing
-`NotSupportedException`. A composite item, a frame plus a payload such as `DetectedFaceFrameRef`,
-keeps its own count and releases the frame once, at zero.
+Every `IRefCounted` item keeps an atomic count on itself, updated with `Interlocked`. `AddRef`
+returns `this`. `AddRef` after the final release throws `ObjectDisposedException` and never
+revives the item. A composite item, a frame plus a payload such as `DetectedFaceFrameRef`, keeps its
+own count and releases the frame once, at zero. `ClipSegment`, `CaptionRef` and `EncodedPacket`
+change to match.
 
-### 2. One CPU frame type over ref-counted storage
+### 2. Disposing
 
-`Media.CpuVideoFrame` and `PooledCpuVideoFrame` become one type, and every current producer emits
-it. `CloneCpu` stays, as an explicit copy for a consumer that wants a private buffer. It stops
-being a fan-out mechanism.
+Each `Dispose` releases exactly one reference. A `Dispose` that acts once per instance, as
+`CameraVideoFrame`'s does, is a defect on any shareable item (#369). A wrapper forwards every call.
 
-### 3. Frames are immutable once published
+Releasing below zero calls `Debug.Fail` and increments an over-release counter. It never throws:
+the pumps dispose inside `catch` blocks, and `DrainUntilCompletedAsync` abandons the rest of its
+drain at the first exception (`NodePumps.cs:628-645`). This replaces the five behaviours in the
+table.
 
-A producer writes through a builder that owns writable memory. Publishing yields a read-only frame.
-`CpuFrameData` already exposes `ReadOnlyMemory<byte>`; the public, writable
-`CpuVideoFrame.PixelData` (an `IMemoryOwner<byte>`) goes. A search of `src/` and `examples/` found
-no write into a frame after it was published, so this states current practice. It is also the
-condition under which sharing by `AddRef` is safe.
+A counting bug now damages every branch rather than one. An extra `Dispose` while the count is two
+or more returns a buffer that other branches are still reading to any renter in the process,
+including native `sws_scale` and encoder pointers. The debug checks here and in decision 5 exist
+for that.
 
-### 4. A frame references storage, and storage carries its domain and pool model
+### 3. Forwarding an input
 
-A frame is metadata plus a reference to storage. The metadata is width, height, format, PTS,
-duration, and colour range and matrix. No frame carries colour today: `H264VideoEncoder`
-hard-codes limited range (`H264VideoEncoder.cs:205`) and a JPEG encoder would have to as well
-(#367).
+A body forwards an input by returning that same object. The pumps treat "the result is the input"
+as moving the reference (`NodePumps.cs:124`, `:425-428`), so a body that returns `input.AddRef()`
+leaks one reference per item. `SyncJoin`'s guidance that any other return value "must be freshly
+built or `AddRef`'d" (`SyncJoin.cs:72-77`) stays true for other values.
 
-Storage records its memory domain (CPU, D3D11 texture, CUDA, and so on), its origin, and its pool
-model: growable, or fixed with a spare count. This extends decision 1 of
-[frame-pool ownership](frame-pool-ownership.md), pool model as data per decoder backend, to every
-kind of storage.
+The join pump releases every input reference except the one it forwards. Today, when the primary
+and the secondary are the same instance (two branches of one source) and the body returns it,
+neither reference is released and one leaks. `ForwardAsync` (`:559`) and `AdvanceAndMatch` call
+`AddRef` and keep using the reference they already hold.
 
-### 5. Fixed-pool storage does not enter the graph by default
+### 4. The CPU frame counts, then becomes one type
 
-A source whose storage comes from a fixed pool copies each frame into growable storage before
-emitting it:
+`Media.CpuVideoFrame` counts references first, with its public surface unchanged. It then merges
+with `PooledCpuVideoFrame` into one CPU frame type that carries up to three planes.
+`PooledCpuVideoFrame` already has three strides; `Media.CpuVideoFrame` has one buffer, and
+`CloneCpu` copies only the Y plane (`VideoFrameExtensions.cs:40-48`). `CloneCpu` stays, as an
+explicit private copy that handles planar formats, and stops being a fan-out mechanism.
 
-- The camera source copies out of Periphery's lease, with the semantics of
-  `LeasedCameraFrame.Copy()`.
-- The D3D11 decoder copies out of its decode slice into a FrameFlow-owned texture pool, which is
-  decision 2 of [frame-pool ownership](frame-pool-ownership.md).
+### 5. Frames are immutable once published
 
-A consumer that releases every frame within one frame period may opt in to receiving the
-fixed-pool frame directly. A presenter is that consumer, and so is a converter placed directly
-after the source, which already copies into growable memory as part of converting. On the common
-camera path the copy is therefore the conversion that happens today, and on the D3D11 path it is
-the staging copy the presenter already makes (`D3D11Nv12SharedConverter`), moved to decode time.
+A storage object owns the memory. A `ref struct` builder exposes writable `Span` planes and is
+consumed by `Publish`, which returns the read-only frame. A `Span` cannot be stored on the heap, so
+no writable alias outlives the builder, and the builder throws if used after `Publish`. Every
+current producer fills its buffer synchronously, so the builder fits all of them, and the storage
+object replaces today's per-rent `IMemoryOwner` wrapper rather than adding an allocation.
 
-With this default, no node's retention can stall a producer, and memory held is bounded by each
-retaining node's own bound (decision 6).
+This removes `CpuVideoFrame.PixelData` and `PcmAudioBuffer.SampleData` (`:64`), both public
+`IMemoryOwner`s through which any holder can free shared storage, and the unused
+`PooledCpuVideoFrame.WriteData` (`:186`).
 
-### 6. Retention is declared
+A search of `src/` and `examples/` found no write into a published frame, so this states current
+practice. The API shape enforces it; the runtime does not, since `MemoryMarshal` and pinning can
+get around it. The `ReadOnlyMemory` views from `AsCpu()` are not covered by the count, so a
+use-after-release reads stale data only sometimes. Debug builds fill released CPU storage with a
+known pattern so it fails every time.
 
-A node that holds frames past its own call declares its bound as a count or a duration. The
-existing ones are edge capacities, `SyncJoinNode.Window`, `ClockSelectVideoSink`'s capacity and
-`PreRollBuffer`'s duration. `SyncJoinNode.MaxLead` is optional today, and `null` means a
-secondary arriving ahead of the primary is retained without limit; a join whose secondary is a
-frame must set it.
+### 6. Graph items are the frames themselves
 
-This is what makes the memory bound in decision 5 computable, and it is the input any budget
-would need.
+`IVideoFrame : IFrame, IRefCounted`, with `new IVideoFrame AddRef()` and a default
+`IRefCounted.AddRef()` bridge, the pattern `IVideoFrame` already uses for `Timestamp`
+(`IVideoFrame.cs:58`). `IAudioBuffer` follows the same shape. Video chains are
+`GraphChain<IVideoFrame>`. Audio chains are `GraphChain<PcmAudioBuffer>`, because Whisper, the
+resampler and the OpenAL sink all use the concrete type. `VideoFrameRef` and `PcmAudioBufferRef`
+are deleted (#42), and `CameraFrameAdapter` becomes redundant once #369 is fixed.
 
-### 7. Domain changes are explicit, and hardware storage kinds share one GPU frame type
+The three uses of `VideoFrameRef.Detach` are replaced:
 
-`ToCpu` (#279) and `MapToGpu` (#293) produce new frames, as ADR-0038 already requires.
-`GpuVideoFrame.ToCpu()` already throws and redirects to the explicit readback.
+- **Sink adapters** (`SinkAdapters.cs:79`, `:102`) hand the item itself to `PresentAsync`, and the
+  sink disposes it. ADR-0066's ownership rule is unchanged.
+- **`VideoOperators.ToCpu`** (`:181`) forwards a CPU frame by returning it (decision 3).
+- **LiveCaptioning's early release of a decode slice** (`MainWindow.axaml.cs:605`) becomes a
+  `ToCpu` node ahead of the detector, which releases the GPU frame when its body returns.
 
-A FrameFlow-owned texture (#232, decision 5 of frame-pool ownership) becomes a storage kind of the
-GPU frame type, not a second frame type. Consumers branch on storage kind through accessors
-(#289), not on the concrete class. `CompositionInteropVideoView.cs:790` tests
-`frame is GpuVideoFrame gpu && gpu.TryGetD3D11Texture(...)`, and it is the site that shows a black
-screen for any other GPU frame shape today.
+### 7. Fan-out is `AddRef`
 
-### 8. Graph items are the frames themselves
+`EdgeConfig<T>.Cloner` and `WithCloner` are removed. `EdgeConfig<T>` then holds only its options
+and is deleted. `ForwardAsync` keeps its inherit rule without the clone branch. ADR-0078 decision
+1's inherit marker only mattered when `AddRef` returned a fresh wrapper, so it and
+`GraphChainForkTests`' tagged-wrapper case go. ADR-0054 is superseded.
 
-`IVideoFrame` and `PcmAudioBuffer` implement `IRefCounted`. `VideoFrameRef` and
-`PcmAudioBufferRef` are deleted (#42). `GraphChain<VideoFrameRef>` becomes
-`GraphChain<IVideoFrame>` everywhere, including `PlaybackController.Create`'s hooks.
+### 8. A join whose secondary is a frame sets `MaxLead`
 
-### 9. Fan-out is `AddRef`
+Once #91 is fixed, a join no longer throws on a frame secondary. Without a lead bound it then
+retains every secondary that arrives ahead of the primary (#90, and `SyncJoin.cs:171`). ADR-0073
+decision 8 made `maxLead` optional; for frame secondaries it becomes required, checked when the
+join is constructed. No working graph breaks, since a frame secondary throws at its first match
+today.
 
-`EdgeConfig<T>.Cloner` and `WithCloner` are removed. `ForwardAsync` keeps its inherit-then-`AddRef`
-rule without the clone branch. ADR-0054 is superseded.
-
-## The fixed-pool default: the alternative this record rejects
-
-**Budgeted holding.** Let fixed-pool frames into the graph and copy out only when outstanding
-leases approach the pool's spare count. It keeps zero-copy whenever the graph holds little.
-
-Rejected, for three reasons:
-
-- The spare count moves. It depends on how many reference frames the stream is using, so a fixed
-  threshold is a guess unless the decoder reports live usage.
-- The decision arrives too late. Pressure is visible only once some node already holds the frame,
-  and copying a held frame means replacing it under that node, which decision 3 forbids. A budget
-  therefore has to decide at admission, from predicted retention, which means summing the bounds
-  of every retaining node downstream of the source.
-- Decision 6 makes that sum computable. Nothing computes it today.
-
-This is the question the review of this record is asked to test.
-
-## Other alternatives considered
+## Alternatives considered
 
 ### A. Make shareability visible in the type (#41)
 
-`TryAddRef`, or a narrower `IRefCountedFrame`. One-shot becomes a compile-time fact instead of a
-runtime throw, but it stays. Every fan-out, join and `LatestWins` site still branches on it, and
-the cloner machinery stays. Rejected.
+`TryAddRef`, or a narrower `IRefCountedFrame`. One-shot becomes a compile-time fact but stays, so
+every fan-out, join and `LatestWins` site still branches on it and the cloner stays. Rejected.
 
 ### B. Keep ADR-0054
 
-A full copy per branch per frame, and joins and `LatestWins` edges stay broken for the most common
-frame. Rejected.
+A full copy per branch per frame, with joins and `LatestWins` edges still broken for the most
+common frame. Rejected.
 
-### C. Native ref counting through `AVFrame` and `AVBufferRef`
+### C. Native counting through `AVFrame` and `AVBufferRef`
 
-It would give decoder frames zero-copy sharing. Converter outputs, camera frames and synthetic
-frames are not `AVFrame`s, so it cannot be the contract. It can be a storage kind later.
+It would give decoder frames zero-copy sharing, but converter outputs, camera frames and synthetic
+frames are not `AVFrame`s, so it cannot be the contract. It can back a storage kind later.
 
-### D. Larger fixed pools (`extra_hw_frames`)
+### D. Copy-on-write instead of immutability
 
-Alternative A of frame-pool ownership. A per-backend fallback, not a contract.
+A writer holding the only reference could write in place. Nothing writes into a published frame
+today, so nothing needs it. It stays compatible with decision 5 if a writer appears.
 
 ## Consequences
 
 ### Positive
 
-- #41, #91 and #93 close by construction. #42 lands. #232 becomes a storage kind. #292 applies only
-  to consumers that opt in to fixed-pool frames.
-- Fan-out stops copying. MotionClip's pre-roll and recording gate hold references instead of
-  clones.
-- FrameFlow and Periphery share one frame contract.
+- #41, #91 and #93 close by construction, #42 lands, and #369 is fixed along the way.
+- Fan-out, pre-roll and recording hold references instead of copies.
+- One counting rule and one disposing rule for every item.
 
 ### Negative
 
-- **A public break.** The `IVideoFrame` hierarchy, the wrappers, the type argument of every
-  `GraphChain` over video or audio, `PlaybackController.Create`'s hooks, `CpuVideoFrame`'s
-  constructor and `PixelData`, and `EdgeConfig<T>.Cloner`. The wrappers appear in 55 files across
-  `src/`, `examples/` and `tests/`.
-- **Large buffers stay out longer.** A held frame keeps its `MemoryPool<byte>.Shared` buffer. A
-  1080p Bgra32 frame is 8.3 MB, and `ArrayPool<T>.Shared` retains only a few arrays per size, so a
-  graph that holds many frames allocates fresh large arrays and leaves them to the large-object
-  heap. A dedicated growable frame-storage pool with metrics, which ADR-0012 anticipated, may be
-  needed. A soak decides.
-- **A copy where there was none.** A camera source whose first node is not a converter now copies:
-  1080p NV12 is 3.1 MB per frame, about 93 MB/s at 30 fps.
-
-### Neutral
-
-- `IVideoSink.FramePool` and `CpuFramePool` are untouched. `RentAsync` has no production caller
-  (frame-pool ownership's amendment), and this record does not need it.
-- `ITensor` already follows the contract (ADR-0030).
+- **A public break.** About 77 of the 2,112 entries across 12 projects' `PublicAPI.Unshipped.txt`:
+  43 typed with the wrappers, 14 on the `Detected*` types, 10 on `EdgeConfig`, `Cloner`, `Connect`
+  and `Branch`, 6 `AddRef` signatures, 2 on `CpuVideoFrame`'s constructor and `PixelData`, and
+  `PcmAudioBuffer.SampleData`. The surfaces most consumers touch are `PlaybackController.Create`,
+  `IPlayerBuilder`/`IPassBuilder.ConfigureVideo` and `ConfigureAudio`,
+  `Mp4VideoWriter.WriteAsync`/`RecordAsync`, the decoder and camera source adapters, and
+  `VideoOperators`/`AudioOperators`. Every `PublicAPI.Shipped.txt` is empty, so the analyzer will
+  not flag the removals; the break goes in `docs/BREAKING-CHANGES.md`, as ADR-0078's did.
+- **Tests that change.** `CpuVideoFrameTests` (`PixelData`, `Dispose_CalledTwice_ForwardsToPixelDataTwice`),
+  `VideoConverterTests`, 6 of 9 `ForwardAsyncFanOutTests`, the cloner cases in
+  `GraphChainForkTests`, `SinkAdaptersTests`, `ToCpuOperatorTests`, and five test fakes whose
+  `AddRef` throws.
+- **The final release runs on whichever thread drops the last reference.** That is already true of
+  `GpuVideoFrame`. It amends ADR-0009's rule that the allocating thread frees, and ADR-0005 rule 3:
+  a managed handle over a native resource may be shared by count, while the native pointer still
+  never escapes.
 
 ## Order of work
 
-1. The ownership core: storage, same-instance `AddRef`, immutable publish, one CPU frame type.
-   Tests are pure: reference counting and storage release against a fake storage. The #91 and #93
-   scenarios become tests that fail on the current tree for the right reason before the change.
-2. `IVideoFrame` and `PcmAudioBuffer` implement `IRefCounted`, and the wrappers are deleted (#42).
-   This is the public break.
-3. Delete `Cloner`, supersede ADR-0054, and move MotionClip and the examples to references.
-4. Declared retention, including a required `MaxLead` on joins whose secondary is a frame.
-5. Pool model on storage, and copy-out at fixed-pool sources: the camera source first, then D3D11
-   (#233, with #232 as a storage kind).
-6. Colour metadata on frames.
+**1a. Non-breaking.** `Media.CpuVideoFrame` counts references. The counting rule and the disposing
+rule land on every type, including #369 and `ClipSegment`, `CaptionRef` and `EncodedPacket`. The
+pumps get the forwarding fix. Joins with a frame secondary require `MaxLead`. This closes #91 and
+unblocks #93.
+
+Tests, pure and on fake storage, each shown to fail with the fix reverted:
+
+- One test run over every counted type: `AddRef` returns the same instance; N `AddRef`s and N+1
+  `Dispose`s release the storage once, on the last; `AddRef` after the final release throws and
+  does not revive; an extra `Dispose` never releases twice.
+- Every exit path of every pump ends balanced, barriered on `RunAsync` completing, never on a delay.
+- #91: a second primary matching a CPU-frame secondary (fails today at `SyncJoin.cs:404`).
+- #93: a `LatestWins(1)` branch with no cloner (fails today at `NodePumps.cs:559`).
+- A join whose primary and secondary are the same instance ends balanced.
+
+No multi-threaded stress test of the counter: it would test `Interlocked`, and it would flake.
+
+**1b. Breaking**, in one minor release with step 2: storage, the builder, the merged planar CPU
+type, and the removal of `PixelData`, `SampleData` and `WriteData`.
+
+**2. Graph items are frames.** `IVideoFrame` and `IAudioBuffer` implement `IRefCounted`, the
+wrappers and `Detach` go, and the sink adapters, `ToCpu` and LiveCaptioning change as decision 6
+describes. This is the riskiest step: it touches every dispose path in 55 files, and a mistake
+there fails silently.
+
+**3. Delete the cloner** and `EdgeConfig<T>`, supersede ADR-0054, and move MotionClip and the
+examples to references.
 
 ## Open questions
 
-- The fixed-pool default: decision 5, or budgeted holding.
-- Whether a dedicated storage pool replaces `MemoryPool<byte>.Shared` for large frames.
-- Whether the fixed-pool opt-in is declared by the consumer's type or by an edge option.
-- Whether `IVideoSink.FramePool` survives.
+- Whether a FrameFlow-owned CPU frame pool, with exact size classes and an occupancy gauge,
+  replaces `MemoryPool<byte>.Shared`. A soak with a byte gauge decides; the rounding waste above is
+  the case for it.
+- Whether `IVideoSink.FramePool` and `CpuFramePool` survive. `RentAsync` has no production caller,
+  and the pool's frames are written after construction, which decision 5 forbids.
 
 ## Validation
 
-None has run. Before step 5 lands, a soak on the camera and D3D11 paths reports memory and
-pool-occupancy numbers; `examples/FrameFlow.Examples.ZeroCopyInterop --soak` is the instrument
-frame-pool ownership already names. Every test added in step 1 is shown to fail with the fix
-reverted.
+None has run. Step 1a's tests are the gate for the counting and forwarding rules. Before step 1b,
+a soak on the Multicast and camera examples reports memory with a byte gauge, before and after.
+
+## Revision history
+
+**2026-09-24, first review.** Four independent reviews and the automated panel on #368 read the
+first draft. That draft also decided storage kinds, a copy-out default for fixed-pool sources, an
+opt-in for consumers that release within a frame period, and colour metadata. The reviews found
+the opt-in contradicted by the player's own presenter path (`ClockSelectVideoSink` holds three
+frames, without a time limit while paused), the D3D11 half dependent on work frame-pool ownership
+gates on #231, and the storage abstraction read by nothing the draft decided. Those parts moved to
+[fixed-pool budget](fixed-pool-budget.md) and frame-pool ownership. The reviews also added the
+disposing rule, the forwarding rule, the `MaxLead` requirement and the split of step 1; corrected
+the inventory, the counts and the memory analysis; and found #369.
