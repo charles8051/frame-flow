@@ -138,19 +138,30 @@ explicit private copy that handles planar formats, and stops being a fan-out mec
 
 ### 5. Frames are immutable once published
 
-A storage object owns the memory. A `ref struct` builder exposes writable `Span` planes and is
-consumed by `Publish`, which returns the read-only frame. A `Span` cannot be stored on the heap, so
-no writable alias outlives the builder, and the builder throws if used after `Publish`. Every
-current producer fills its buffer synchronously, so the builder fits all of them, and the storage
-object replaces today's per-rent `IMemoryOwner` wrapper rather than adding an allocation.
+A frame is created by one call that rents storage, runs a fill callback over writable `Span`
+planes, and returns the read-only frame:
+
+```csharp
+var frame = CpuVideoFrame.Create(format, width, height, pts, state,
+    static (planes, state) => { /* write planes.Y, planes.U, planes.V */ });
+```
+
+The spans exist only inside the callback. They cannot be stored on the heap, the callback cannot
+return them, and no builder object exists for a caller to hold across publication, so no writable
+alias outlives the fill. A `static` lambda with an explicit state argument allocates nothing. Every
+current producer fills its buffer synchronously, including through a pointer for `sws_scale`
+(`fixed` inside the callback), so the shape fits all of them. The storage object replaces today's
+per-rent `IMemoryOwner` wrapper rather than adding an allocation. `PcmAudioBuffer` gets the same
+factory.
 
 This removes `CpuVideoFrame.PixelData` and `PcmAudioBuffer.SampleData` (`:64`), both public
 `IMemoryOwner`s through which any holder can free shared storage, and the unused
 `PooledCpuVideoFrame.WriteData` (`:186`).
 
 A search of `src/` and `examples/` found no write into a published frame, so this states current
-practice. The API shape enforces it; the runtime does not, since `MemoryMarshal` and pinning can
-get around it. The `ReadOnlyMemory` views from `AsCpu()` are not covered by the count, so a
+practice. The compiler enforces the callback's scope for safe code. A producer that keeps a pointer
+past the callback, through `fixed`, `MemoryMarshal` or pinning, can still write after publication;
+not doing so is the producer's obligation, and the runtime does not check it. The `ReadOnlyMemory` views from `AsCpu()` are not covered by the count, so a
 use-after-release reads stale data only sometimes. Debug builds fill released CPU storage with a
 known pattern so it fails every time.
 
@@ -183,8 +194,15 @@ and is deleted. `ForwardAsync` keeps its inherit rule without the clone branch. 
 Once #91 is fixed, a join no longer throws on a frame secondary. Without a lead bound it then
 retains every secondary that arrives ahead of the primary (#90, and `SyncJoin.cs:171`). ADR-0073
 decision 8 made `maxLead` optional; for frame secondaries it becomes required, checked when the
-join is constructed. No working graph breaks, since a frame secondary throws at its first match
-today.
+join is constructed.
+
+That is a compatibility break for a join whose secondary is a frame type that already counts, such
+as `GpuVideoFrame`: it works today without `MaxLead` and will fail at construction. No in-tree join
+has that shape; the one `SyncJoinNode` in the tree, in LiveCaptioning, joins a
+`RefBox<DetectionSet>`. The break is intended. Such a join retains every secondary ahead of the
+primary, and for `GpuVideoFrame` each one pins a decode slice (#90, #370). A join over
+`Media.CpuVideoFrame` secondaries throws at its first match today, so it has no working form to
+break.
 
 ## Alternatives considered
 
@@ -254,7 +272,7 @@ Tests, pure and on fake storage, each shown to fail with the fix reverted:
 
 No multi-threaded stress test of the counter: it would test `Interlocked`, and it would flake.
 
-**1b. Breaking**, in one minor release with step 2: storage, the builder, the merged planar CPU
+**1b. Breaking**, in one minor release with step 2: storage, the fill factory, the merged planar CPU
 type, and the removal of `PixelData`, `SampleData` and `WriteData`.
 
 **2. Graph items are frames.** `IVideoFrame` and `IAudioBuffer` implement `IRefCounted`, the
@@ -289,3 +307,10 @@ gates on #231, and the storage abstraction read by nothing the draft decided. Th
 [fixed-pool budget](fixed-pool-budget.md) and frame-pool ownership. The reviews also added the
 disposing rule, the forwarding rule, the `MaxLead` requirement and the split of step 1; corrected
 the inventory, the counts and the memory analysis; and found #369.
+
+**2026-09-24, second automated review.** A `ref struct` builder consumed by `Publish` did not stop
+writes through a `Span` obtained before `Publish`, which stays usable in the same scope. Decision 5
+now creates a frame with one call and a fill callback, so the spans never outlive the fill, and says
+plainly that a producer keeping a pointer past it is on its own. Decision 8 now names the
+compatibility break for joins over already-counted frame secondaries, which the first revision
+denied.
