@@ -14,6 +14,13 @@ namespace FrameFlow.Camera.Tests.Fakes;
 internal sealed class FakeCameraFrame : ICameraFrame
 {
     private int _refCount = 1;
+    private readonly byte[] _pixels;
+
+    public FakeCameraFrame()
+        : this([]) { }
+
+    /// <summary>A 1x1 BGRA frame over <paramref name="pixels"/>, for a test that copies it.</summary>
+    public FakeCameraFrame(byte[] pixels) => _pixels = pixels;
 
     /// <summary>Current refcount. <c>1</c> at construction. Tests assert balance off this.</summary>
     public int RefCount => Volatile.Read(ref _refCount);
@@ -24,10 +31,10 @@ internal sealed class FakeCameraFrame : ICameraFrame
     public CameraPixelFormat PixelFormat => CameraPixelFormat.Bgra32;
     public int PlaneCount => 1;
     public bool IsContiguous => true;
-    public ReadOnlyMemory<byte> ContiguousBuffer => ReadOnlyMemory<byte>.Empty;
+    public ReadOnlyMemory<byte> ContiguousBuffer => _pixels;
 
     public CameraPlane GetPlane(int index) =>
-        new(Buffer: ReadOnlyMemory<byte>.Empty, Stride: 0, Width: 1, Height: 1);
+        new(Buffer: _pixels, Stride: _pixels.Length, Width: 1, Height: 1);
 
     public ICameraFrame AddRef()
     {

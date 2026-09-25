@@ -45,7 +45,7 @@ namespace FrameFlow.Camera;
 /// <para>
 /// <b>Single source.</b> Each bridge backs at most one source node.
 /// Calling <see cref="AsSourceNode"/> or
-/// <see cref="AsVideoFrameSourceNode"/> a second time throws — two
+/// <see cref="AsVideoFrameSourceNode(string)"/> a second time throws — two
 /// source nodes sharing the same reader would race on items.
 /// </para>
 /// <para>
@@ -161,6 +161,19 @@ public sealed class CameraFramePushBridge : IDisposable
     {
         ClaimSource();
         return _channel.Reader.ReadAllAsync().AsVideoFrameSourceNode(id);
+    }
+
+    /// <summary>
+    /// As <see cref="AsVideoFrameSourceNode(string)"/>, with <paramref name="handOff"/> deciding
+    /// what the graph gets for each frame. It takes the bridge's ref.
+    /// </summary>
+    internal SourceNode<IVideoFrame> AsVideoFrameSourceNode(
+        string id,
+        Func<ICameraFrame, IVideoFrame> handOff
+    )
+    {
+        ClaimSource();
+        return _channel.Reader.ReadAllAsync().AsVideoFrameSourceNode(id, handOff);
     }
 
     /// <summary>

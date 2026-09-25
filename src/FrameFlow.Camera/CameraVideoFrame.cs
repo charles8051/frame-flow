@@ -47,12 +47,21 @@ public sealed class CameraVideoFrame : IVideoFrame
 {
     private ICameraFrame? _inner;
     private int _refCount = 1;
+    private readonly Action? _onReleased;
 
     /// <summary>Constructs an adapter that adopts one ref on <paramref name="inner"/>.</summary>
     public CameraVideoFrame(ICameraFrame inner)
+        : this(inner, onReleased: null) { }
+
+    /// <summary>
+    /// Constructs an adapter that adopts one ref on <paramref name="inner"/>, and runs
+    /// <paramref name="onReleased"/> once its final release has returned the lease.
+    /// </summary>
+    internal CameraVideoFrame(ICameraFrame inner, Action? onReleased)
     {
         ArgumentNullException.ThrowIfNull(inner);
         _inner = inner;
+        _onReleased = onReleased;
     }
 
     /// <inheritdoc />
@@ -106,7 +115,14 @@ public sealed class CameraVideoFrame : IVideoFrame
 
         // The final release gives the lease back to the camera's pool.
         var frame = Interlocked.Exchange(ref _inner, null);
-        frame?.Dispose();
+        try
+        {
+            frame?.Dispose();
+        }
+        finally
+        {
+            _onReleased?.Invoke();
+        }
     }
 
     private ICameraFrame Inner =>

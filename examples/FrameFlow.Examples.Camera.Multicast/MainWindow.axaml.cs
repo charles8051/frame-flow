@@ -38,7 +38,7 @@ namespace FrameFlow.Examples.Camera.Multicast;
 /// push path in tree lets the bridge's lifecycle (channel completion,
 /// drain on dispose, single-source enforcement) be exercised against a
 /// real camera. The pull-style adapter
-/// (<see cref="CameraSourceAdapters.AsVideoFrameSourceNode"/>) is still
+/// (<see cref="CameraSourceAdapters.AsVideoFrameSourceNode{T}(IAsyncEnumerable{T}, string)"/>) is still
 /// covered transitively because the bridge wraps it internally.
 /// </para>
 /// <para>
