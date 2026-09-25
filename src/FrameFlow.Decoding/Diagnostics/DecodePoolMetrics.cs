@@ -6,20 +6,17 @@ using System.Diagnostics.Metrics;
 namespace FrameFlow.Decoding.Diagnostics;
 
 /// <summary>
-/// Process-wide telemetry for <b>hardware decode-texture pool occupancy</b> —
-/// the count of live <see cref="GpuVideoFrame"/> leases, each of which pins one
-/// slice of FFmpeg's (small, default-sized) hwframe pool.
+/// Process-wide telemetry for <b>hardware decode-texture pool occupancy</b>:
+/// how many <see cref="GpuVideoFrame"/> leases are live, each pinning one
+/// slice of a decoder's fixed hwframe pool, and how many slices those pools hold.
 /// </summary>
 /// <remarks>
 /// <para>
-/// This is the <i>direct</i> measure of the mechanism the perf survey (§A1)
-/// blamed for playback choppiness: a pacing path that holds a decoded frame across
-/// a clock wait keeps its decode-texture slice pinned, so under load the
-/// outstanding-lease count climbs toward the pool ceiling and the decoder
-/// stalls waiting for a slice to return. A pacing change that <i>drops</i> late
-/// frames returns their slices at once, so the count stays low. Making the
-/// occupancy observable lets a pacing change be A/B'd on the cause, not just the
-/// symptom — the telemetry gap the survey flagged.
+/// A pacing path that holds decoded frames keeps their slices pinned, so under load the
+/// outstanding count climbs toward the pool's size. When a pool runs out, FFmpeg 9.0 fails the
+/// decode call and the decoder faults (#370, reproduced in
+/// <c>docs/investigations/2026-09-25-d3d11va-pool-exhaustion.md</c>). A pacing change that
+/// <i>drops</i> late frames returns their slices at once, so the count stays low.
 /// </para>
 /// <para>
 /// A lease is acquired exactly once per pinned pool surface — in
@@ -28,6 +25,14 @@ namespace FrameFlow.Decoding.Diagnostics;
 /// ref-count drop (<c>av_frame_free</c>). <c>AddRef</c> shares the same surface
 /// and is deliberately <b>not</b> counted, so the gauge reflects distinct
 /// pinned slices, not consumer references.
+/// </para>
+/// <para>
+/// <b>Both gauges sum across decoders.</b> The outstanding count covers every decoder in the
+/// process, so the capacity is the sum of the pool sizes of every live hardware decoder, each
+/// read from its first hardware frame (<see cref="VideoDecoderDiagnosticsSnapshot.HardwarePoolSize"/>
+/// carries one decoder's). A process running one player reads them as one pool; with several
+/// players or a playlist's preroll, one pool can be exhausted while the sums look comfortable,
+/// and a decoder's own snapshot is the place to look.
 /// </para>
 /// <para>
 /// Scrape with <c>dotnet-counters</c> via the <c>FrameFlow.Decoding</c> meter.
@@ -39,6 +44,7 @@ public static class DecodePoolMetrics
 
     private static int _outstanding; // live decode-texture leases (pinned pool slices)
     private static int _highWater;   // peak outstanding since process start
+    private static int _capacity;    // summed pool sizes of live hardware decoders
 
     static DecodePoolMetrics()
     {
@@ -46,7 +52,7 @@ public static class DecodePoolMetrics
             "frameflow.decoding.gpu_frames_outstanding",
             () => Volatile.Read(ref _outstanding),
             unit: "{frames}",
-            description: "Live hardware decode-texture leases (pinned hwframe-pool slices). Climbs toward the pool ceiling under the held-lease decoder stall."
+            description: "Live hardware decode-texture leases (pinned hwframe-pool slices), summed across decoders. A pool that runs out fails the decode."
         );
         Meter.CreateObservableGauge(
             "frameflow.decoding.gpu_frames_outstanding_max",
@@ -54,7 +60,21 @@ public static class DecodePoolMetrics
             unit: "{frames}",
             description: "Peak outstanding hardware decode-texture leases since process start."
         );
+        Meter.CreateObservableGauge(
+            "frameflow.decoding.gpu_pool_capacity",
+            () => Volatile.Read(ref _capacity),
+            unit: "{frames}",
+            description: "Surfaces in the hwframe pools of live hardware decoders, summed across decoders as the outstanding gauge is. Zero when nothing decodes on hardware."
+        );
     }
+
+    /// <summary>Live decode-texture leases right now, summed across decoders.</summary>
+    public static int Outstanding => Volatile.Read(ref _outstanding);
+
+    /// <summary>
+    /// Surfaces in the pools of live hardware decoders right now, summed across decoders.
+    /// </summary>
+    public static int Capacity => Volatile.Read(ref _capacity);
 
     /// <summary>
     /// Records that one hwframe-pool slice was pinned (a <see cref="GpuVideoFrame"/>
@@ -79,4 +99,10 @@ public static class DecodePoolMetrics
     /// <see cref="GpuVideoFrame"/>'s final release ran <c>av_frame_free</c>).
     /// </summary>
     public static void OnLeaseReleased() => Interlocked.Decrement(ref _outstanding);
+
+    /// <summary>
+    /// Adjusts the summed capacity when a decoder learns its pool size, when that size changes,
+    /// and, with the negated size, when the decoder is disposed.
+    /// </summary>
+    internal static void OnPoolCapacityChanged(int delta) => Interlocked.Add(ref _capacity, delta);
 }

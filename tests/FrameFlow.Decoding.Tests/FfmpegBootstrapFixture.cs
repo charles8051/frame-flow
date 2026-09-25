@@ -21,6 +21,7 @@ public sealed class FfmpegBootstrapFixture : IDisposable
     // calls av_hwdevice_ctx_create which is not thread-safe).
     private static readonly object _gate = new();
     private static bool? _cachedIsBootstrapped;
+    private static HardwareDecodeCapabilities _cachedCapabilities = HardwareDecodeCapabilities.Empty;
 
     /// <summary>
     /// <see langword="true"/> when FFmpeg was successfully bootstrapped.
@@ -28,12 +29,32 @@ public sealed class FfmpegBootstrapFixture : IDisposable
     /// </summary>
     public bool IsBootstrapped { get; }
 
+    /// <summary>
+    /// The hardware-decode backends the bootstrap's probe found, or
+    /// <see cref="HardwareDecodeCapabilities.Empty"/> when it did not run.
+    /// </summary>
+    public HardwareDecodeCapabilities Capabilities => ReadCapabilities();
+
     public FfmpegBootstrapFixture()
     {
         lock (_gate)
         {
             _cachedIsBootstrapped ??= TryBootstrap();
             IsBootstrapped = _cachedIsBootstrapped.Value;
+        }
+    }
+
+    /// <summary>
+    /// Bootstraps if nothing has yet, and returns what the probe found. Shared by the fixture
+    /// and by <see cref="RequiresHardwareDecodeFactAttribute"/>, so the two cannot race the
+    /// probe against each other.
+    /// </summary>
+    internal static HardwareDecodeCapabilities ReadCapabilities()
+    {
+        lock (_gate)
+        {
+            _cachedIsBootstrapped ??= TryBootstrap();
+            return _cachedCapabilities;
         }
     }
 
@@ -47,7 +68,10 @@ public sealed class FfmpegBootstrapFixture : IDisposable
         {
             var options = new FrameFlowNativeOptions { CustomFfmpegPath = libraryDir };
             var bootstrapper = new FrameFlowBootstrapper(options, NullLoggerFactory.Instance);
-            return bootstrapper.Initialize().IsSuccess;
+            var result = bootstrapper.Initialize();
+            if (result.IsSuccess)
+                _cachedCapabilities = result.Capabilities;
+            return result.IsSuccess;
         }
         catch
         {

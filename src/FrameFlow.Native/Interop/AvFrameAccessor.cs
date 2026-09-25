@@ -230,6 +230,23 @@ internal readonly unsafe ref struct AvFrameAccessor
     }
 
     /// <summary>
+    /// The number of surfaces in this hardware frame's pool:
+    /// <c>hw_frames_ctx → AVHWFramesContext.initial_pool_size</c>. Zero when the frame has no
+    /// frames context (a software frame). Read from the live field rather than re-derived, so
+    /// it includes <c>extra_hw_frames</c> and the per-thread surfaces FFmpeg adds.
+    /// </summary>
+    internal int GetHwFramesPoolSize()
+    {
+        ref AVFrame f = ref Unsafe.AsRef<AVFrame>((void*)_ptr);
+        var framesCtxRef = f.hw_frames_ctx;
+        if (framesCtxRef is null)
+            return 0;
+
+        var framesCtx = (AVHWFramesContext*)framesCtxRef->data;
+        return framesCtx is null ? 0 : framesCtx->initial_pool_size;
+    }
+
+    /// <summary>
     /// Returns the <c>extended_data</c> pointer for use with <c>swr_convert</c>.
     /// For planar audio, each element of the pointed array is a pointer to a channel plane.
     /// For packed formats, <c>extended_data[0]</c> equals <c>data[0]</c>.

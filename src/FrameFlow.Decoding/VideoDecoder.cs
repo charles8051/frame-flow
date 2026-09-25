@@ -68,6 +68,10 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     private FrameHandle? _swFrame;
     private int _hwPixelFormat = -1;
 
+    // Surfaces in the hwframe pool, from the latest hardware frame (#229). Zero until one
+    // arrives. Written by the decode worker and on dispose, both under _codecSync.
+    private int _hwPoolSize;
+
     // ADR-0038: when true, hwaccel-active decoders yield GpuVideoFrame
     // (cloned AVFrame*) instead of doing the internal readback path.
     // Stored as int + Volatile so the decode worker reads a consistent
@@ -446,6 +450,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 // here. Tracked before the frame is built, because BuildGpuFrame stamps
                 // HardwareBackend onto the frame.
                 TrackHardwareEngagement(onHardware, framePtr);
+                if (onHardware)
+                    TrackPoolSize(new AvFrameAccessor(framePtr).GetHwFramesPoolSize());
 
                 // Lateness recovery, cheapest rung. Skipping the copy costs a picture and
                 // nothing else: the frame was decoded, so the codec's reference state is
@@ -519,6 +525,20 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             );
 
         _hardwareBackend = next;
+    }
+
+    /// <summary>
+    /// Records the pool size a hardware frame reports and moves the process-wide capacity by
+    /// the change. The pool is created in <c>get_format</c>, so the first hardware frame is the
+    /// earliest point it is known, and a renegotiation can replace it with one of another size.
+    /// </summary>
+    private void TrackPoolSize(int poolSize)
+    {
+        if (poolSize == _hwPoolSize)
+            return;
+
+        DecodePoolMetrics.OnPoolCapacityChanged(poolSize - _hwPoolSize);
+        Volatile.Write(ref _hwPoolSize, poolSize);
     }
 
     /// <summary>
@@ -733,7 +753,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             DecodeErrors: Interlocked.Read(ref _decodeErrors),
             HardwareBackend: HardwareBackend,
             PacketsDroppedForBackpressure: Interlocked.Read(ref _packetsDroppedForBackpressure),
-            PacketsDroppedToGopResync: Interlocked.Read(ref _packetsDroppedToGopResync)
+            PacketsDroppedToGopResync: Interlocked.Read(ref _packetsDroppedToGopResync),
+            HardwarePoolSize: Volatile.Read(ref _hwPoolSize)
         );
 
     /// <inheritdoc/>
@@ -1214,6 +1235,11 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             {
                 FFAvUtil.av_buffer_unref(ref _hwDeviceCtxRef);
             }
+
+            // The pool goes with the codec context, so its surfaces leave the summed capacity.
+            // Frames still held downstream keep their own references and are counted as
+            // outstanding until they are released.
+            TrackPoolSize(0);
         }
 
         return ValueTask.CompletedTask;
