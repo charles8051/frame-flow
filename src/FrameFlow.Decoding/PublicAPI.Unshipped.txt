@@ -83,11 +83,13 @@ FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.FramesDecoded.get
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.FramesDecoded.init -> void
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareBackend.get -> FrameFlow.Media.HardwareDecodeBackendKind?
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwareBackend.init -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwarePoolSize.get -> int
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.HardwarePoolSize.init -> void
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedForBackpressure.get -> long
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedForBackpressure.init -> void
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedToGopResync.get -> long
 FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.PacketsDroppedToGopResync.init -> void
-FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.VideoDecoderDiagnosticsSnapshot(long FramesDecoded, long DecodeErrors, FrameFlow.Media.HardwareDecodeBackendKind? HardwareBackend, long PacketsDroppedForBackpressure = 0, long PacketsDroppedToGopResync = 0) -> void
+FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.VideoDecoderDiagnosticsSnapshot(long FramesDecoded, long DecodeErrors, FrameFlow.Media.HardwareDecodeBackendKind? HardwareBackend, long PacketsDroppedForBackpressure = 0, long PacketsDroppedToGopResync = 0, int HardwarePoolSize = 0) -> void
 FrameFlow.Decoding.FrameFlowDecodingOptions
 FrameFlow.Decoding.FrameFlowDecodingOptions.AudioDecoderFactory.get -> System.Func<FrameFlow.Decoding.IDemuxSession!, FrameFlow.Decoding.IAudioDecoder?>?
 FrameFlow.Decoding.FrameFlowDecodingOptions.AudioDecoderFactory.set -> void
@@ -199,8 +201,10 @@ static FrameFlow.Decoding.DecoderSourceAdapters.AsSourceNode(this FrameFlow.Deco
 static FrameFlow.Decoding.DecoderSourceAdapters.AsSourceNode(this FrameFlow.Decoding.IVideoDecoder! decoder, string! id = "video-decoder") -> FrameFlow.Graph.SourceNode<FrameFlow.Media.IVideoFrame!>!
 static FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot.Empty.get -> FrameFlow.Decoding.Diagnostics.AudioDecoderDiagnosticsSnapshot!
 static FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot.Empty.get -> FrameFlow.Decoding.Diagnostics.DecodedMediaStreamDiagnosticsSnapshot!
+static FrameFlow.Decoding.Diagnostics.DecodePoolMetrics.Capacity.get -> int
 static FrameFlow.Decoding.Diagnostics.DecodePoolMetrics.OnLeaseAcquired() -> void
 static FrameFlow.Decoding.Diagnostics.DecodePoolMetrics.OnLeaseReleased() -> void
+static FrameFlow.Decoding.Diagnostics.DecodePoolMetrics.Outstanding.get -> int
 static FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot.Empty.get -> FrameFlow.Decoding.Diagnostics.DemuxSessionDiagnosticsSnapshot!
 static FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot.Empty.get -> FrameFlow.Decoding.Diagnostics.VideoDecoderDiagnosticsSnapshot!
 static FrameFlow.Decoding.FrameFlowDecodingServiceCollectionExtensions.AddFrameFlowDecoding(this FrameFlow.Media.IFrameFlowBuilder! builder) -> FrameFlow.Media.IFrameFlowBuilder!

@@ -151,6 +151,44 @@ internal sealed class RequiresFfmpegAndCorpusFactAttribute : FactAttribute
 }
 
 /// <summary>
+/// As <see cref="RequiresFfmpegAndCorpusFactAttribute"/>, and skipped unless a decoder for
+/// <c>codecId</c> advertises a hardware config for a backend that initialised here. Hardware
+/// support is per codec, so the gate asks about the codec, not just the device.
+/// </summary>
+internal sealed class RequiresHardwareDecodeFactAttribute : FactAttribute
+{
+    /// <param name="codecId">The FFmpeg <c>AVCodecID</c>; <c>27</c> is H.264, <c>173</c> HEVC.</param>
+    public RequiresHardwareDecodeFactAttribute(int codecId)
+    {
+        if (!TestEnvironment.HasFfmpegSharedLibraries)
+        {
+            Skip = "FFmpeg shared libraries not available.";
+            return;
+        }
+
+        if (!TestEnvironment.HasCorpusFiles)
+        {
+            Skip = "Test corpus not generated. Run scripts/generate-test-corpus.cs first.";
+            return;
+        }
+
+        var capabilities = FfmpegBootstrapFixture.ReadCapabilities();
+        if (!capabilities.Available.Any(b => b.Initialized))
+        {
+            Skip = "No hardware decode backend initialised on this machine.";
+            return;
+        }
+
+        if (!VideoDecoder.HasHardwareCandidate(codecId, capabilities))
+        {
+            Skip =
+                $"A hardware backend initialised, but no decoder for codec {codecId} "
+                + "advertises a hardware config for it on this machine.";
+        }
+    }
+}
+
+/// <summary>
 /// As <see cref="RequiresFfmpegAndCorpusFactAttribute"/>, plus a named corpus file
 /// that the default corpus does not contain.
 /// </summary>
