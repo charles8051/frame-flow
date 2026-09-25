@@ -264,7 +264,7 @@ breach.
 
 ## Validation
 
-None has run.
+The #370 reproduction has run; the rest has not.
 
 - The budget computation and the guard's transition are pure and get table tests over topologies
   from the tree: the player's D3D11 path, LiveCaptioning in GPU mode, Camera.Multicast and the
