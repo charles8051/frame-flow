@@ -63,8 +63,8 @@ internal sealed class CapturingVideoSink : IVideoSink
         }
         finally
         {
-            // Sink owns the frame per IVideoSink contract; return the pool
-            // slot immediately so the worker's RentAsync doesn't backpressure.
+            // The sink owns the frame per the IVideoSink contract. The pixels are
+            // copied, so release it now.
             frame.Dispose();
         }
 

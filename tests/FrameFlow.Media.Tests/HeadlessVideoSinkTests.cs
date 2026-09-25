@@ -91,8 +91,8 @@ public sealed class HeadlessVideoSinkTests
     public async Task PresentCost_HoldsTheFrameForTheWholeCost()
     {
         // The ordering the sink exists for. If the frame were disposed first and the cost paid
-        // after, the pool slot would free immediately and the cost would create no backpressure
-        // — which measures nothing.
+        // after, the frame would be released immediately and the cost would create no
+        // backpressure — which measures nothing.
         var time = new FakeTimeProvider();
         await using var sink = NewSink(presentCost: TimeSpan.FromMilliseconds(10), time: time);
 
