@@ -58,7 +58,12 @@ public static class SinkAdapters
         ArgumentNullException.ThrowIfNull(sink);
         ArgumentNullException.ThrowIfNull(id);
 
-        return new SinkNode<IVideoFrame>(id, (frame, ct) => sink.PresentAsync(frame.AddRef(), ct));
+        return new SinkNode<IVideoFrame>(
+            id,
+            (frame, ct) => sink.PresentAsync(frame.AddRef(), ct),
+            // The frame in the call, and what the sink keeps after it.
+            holding: sink.MaxHeldFrames is { } kept ? Holding.AtMost(kept + 1) : Holding.Unbounded
+        );
     }
 
     /// <summary>

@@ -93,6 +93,8 @@ public sealed class PausableGate<T>
                 // releases.
                 await _gate.WaitAsync(ct).ConfigureAwait(false);
                 return item;
-            }
+            },
+            // One item, however long the gate stays shut.
+            holding: Holding.InFlight
         );
 }

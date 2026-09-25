@@ -6,6 +6,7 @@ FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramePresented -> System.
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramesAccepted.get -> long
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramesSuperseded.get -> long
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
+FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.MaxHeldFrames.get -> int?
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Avalonia.Windows.CompositionInteropVideoView

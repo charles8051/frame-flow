@@ -28,5 +28,9 @@ public sealed class NullVideoSink : IVideoSink
         ValueTask.CompletedTask;
 
     /// <inheritdoc />
+    /// <remarks>Every frame is released in the call.</remarks>
+    public int? MaxHeldFrames => 0;
+
+    /// <inheritdoc />
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

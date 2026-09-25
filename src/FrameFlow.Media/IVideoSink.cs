@@ -102,4 +102,16 @@ public interface IVideoSink : IAsyncDisposable
     /// the default.
     /// </remarks>
     VideoSinkDiagnosticsSnapshot GetDiagnostics() => VideoSinkDiagnosticsSnapshot.Empty;
+
+    /// <summary>
+    /// The most frames the sink keeps after <see cref="PresentAsync"/> returns, counting frames
+    /// on their way to the display, or <see langword="null"/> when nothing bounds it (ADR-0081).
+    /// </summary>
+    /// <remarks>
+    /// A frame from a fixed pool, a hardware decoder's surface or a camera's buffer, stays out
+    /// of the pool while the sink keeps it, and the pool is sized from this count. The default
+    /// is <see langword="null"/>, so a sink that does not say is treated as holding without
+    /// bound.
+    /// </remarks>
+    int? MaxHeldFrames => null;
 }

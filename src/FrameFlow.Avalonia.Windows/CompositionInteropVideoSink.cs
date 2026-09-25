@@ -137,6 +137,10 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) => default;
 
     /// <inheritdoc/>
+    /// <remarks>The frame slot, and the frame the view is presenting on the UI thread.</remarks>
+    public int? MaxHeldFrames => 2;
+
+    /// <inheritdoc/>
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
     {
         // Delivery-cadence telemetry (perf survey §A1 A/B): one record per frame

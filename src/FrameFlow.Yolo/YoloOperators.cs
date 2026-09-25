@@ -48,7 +48,9 @@ public static class YoloOperators
                 return ValueTask.FromResult<DetectedVideoFrameRef?>(
                     new DetectedVideoFrameRef(videoCopy, detections)
                 );
-            }
+            },
+            // The output carries the input frame itself.
+            holding: Holding.InFlight
         );
     }
 }

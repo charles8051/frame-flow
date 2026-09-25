@@ -237,6 +237,10 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     /// </remarks>
     public VideoSinkDiagnosticsSnapshot GetDiagnostics() => _telemetry.Snapshot();
 
+    /// <inheritdoc />
+    /// <remarks>The frame slot, and the frame the SDL thread is rendering.</remarks>
+    public int? MaxHeldFrames => 2;
+
     /// <summary>
     /// Sets the SDL window title. Must be called on the SDL thread.
     /// </summary>

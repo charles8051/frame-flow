@@ -284,6 +284,22 @@ camera guard (#385) have run; the rest has not.
 
 ## Revision history
 
+**2026-09-25, the declarations (#386).** Decisions 1 and 2 are implemented as data.
+
+- **`Holding`.** It carries the most input items a node holds at once, counting the call. `null`
+  means unbounded. `ForwardsStorage` is false for a storage boundary. `OperatorNode`,
+  `MultiOperatorNode` and `SinkNode` take one, and a node given none is unbounded.
+- **The join.** It declares for each input: 1 for its primary, and its count limit plus the item
+  the reader holds for its secondary.
+- **Items that carry frames.** A node counts items, not frames. A node that gathers frames into one
+  item, such as `RecordingGate` building a `ClipSegment`, declares `FramesPerOutputItem`, so the
+  budget can turn the items downstream of it back into frames.
+- **Sinks.** `IVideoSink.MaxHeldFrames` counts what a sink keeps after `PresentAsync` returns. It
+  defaults to `null`, and `AsSinkNode` adds the call.
+- **The pacer.** `ClockSelectVideoSink` declares its ring, the frame on its way to the inner sink,
+  and what the inner sink keeps.
+- **Operators.** `ToCpu` forwards a CPU frame as itself, so it declares that it forwards.
+
 **2026-09-25, the join's count limit (#386).** `SyncJoinNode` gains `maxRetained`, as decision 1
 describes. At the limit it releases what can no longer match, judged against the highest primary
 time seen, then stops reading its secondary if the candidates still fill it. Under
