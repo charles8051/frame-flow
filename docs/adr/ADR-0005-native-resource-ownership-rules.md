@@ -4,6 +4,10 @@
 
 Accepted
 
+> **Amended 2026-09-24 by [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md).** Rule 3 is about native pointers. A managed handle over a
+> native resource, such as `GpuVideoFrame` over its `AVFrame`, may be shared by reference count;
+> the pointer itself still never escapes.
+
 ## Context
 
 FFmpeg interop depends on explicit ownership and disposal of native resources such as:

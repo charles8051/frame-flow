@@ -4,6 +4,10 @@
 
 Accepted
 
+> **Amended 2026-09-24 by [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md).** A shared item's final release runs on whichever thread drops
+> the last reference, not necessarily the thread that allocated it. `GpuVideoFrame` already works
+> this way.
+
 ## Context
 
 The playback pipeline is built around three concurrent worker loops described in ARCHITECTURE.md:

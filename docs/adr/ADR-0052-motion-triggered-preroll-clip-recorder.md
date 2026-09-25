@@ -40,6 +40,9 @@ in the spike's `README.md` and `SyntheticSceneSource`.
   semantically correct for "pixels moved"
 - ADR-0051 (model acquisition) — informs the decision not to use YOLO
 
+> **Amended 2026-09-24 by [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md).** Once frames are shared by count, §3's pre-roll holds references
+> rather than `CloneCpu` copies (#380).
+
 ## Context
 
 Every existing example is a *consumer* of media: it plays, transcribes, or

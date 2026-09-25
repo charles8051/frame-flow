@@ -5,6 +5,9 @@ by Crossbar ADR-0010 (consumer-function unification) and
 Crossbar ADR-0012 (explicit conversions over implicit capability
 negotiation).
 
+> **Amended 2026-09-24 by [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md).** `AddRef` works on every frame type and returns the same
+> instance, and `IVideoFrame` implements `IRefCounted` directly.
+
 > **Update 2026-05-15 / 16.** The Crossbar substrate this ADR
 > unified onto no longer exposes `IFrameSink<TFrame>` or
 > `SupportedMemoryDomains`. The substrate's single sink concept is

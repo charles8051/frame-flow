@@ -4,6 +4,9 @@
 
 Accepted — **amended 2026-05-12** for audio buffers (see [Amendment](#amendment-2026-05-12-audio-buffers-are-refcounted) below).
 
+> **Amended 2026-09-24 by [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md).** Video frames are shared by reference count as audio buffers
+> already are: `Media.CpuVideoFrame` stops being one-shot, and published frames are immutable.
+
 ## Context
 
 FrameFlow's decoded media contracts carry pixel and audio data across subsystem boundaries:

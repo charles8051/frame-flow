@@ -1,12 +1,12 @@
-# One ownership contract for graph items
+# ADR-0080: One ownership contract for graph items
 
-**Status:** Proposed. Draft, pending number assignment at merge. Not implemented. Revised once
-after review; see [Revision history](#revision-history).
+**Status:** Accepted (2026-09-24), ahead of its implementation, which #372 tracks. Proposed and
+revised the same day; see [Revision history](#revision-history). Not implemented.
 
 **Date:** 2026-09-24
 
-**Supersedes on acceptance:** [ADR-0054](ADR-0054-fan-out-with-explicit-cloning.md) (fan-out with
-explicit cloning).
+**Supersedes:** [ADR-0054](ADR-0054-fan-out-with-explicit-cloning.md) (fan-out with explicit
+cloning).
 
 **Amends:** ADR-0005 rule 3 and ADR-0009 (which thread frees), ADR-0012 (single ownership of
 video frames), ADR-0030 (the frame contract), ADR-0052 §3 (pre-roll by cloning), ADR-0066 (the
@@ -14,12 +14,12 @@ video frames), ADR-0030 (the frame contract), ADR-0052 §3 (pre-roll by cloning)
 marker).
 
 **Not in this record:**
-- What a source with a fixed pool does with its frames: [fixed-pool budget](fixed-pool-budget.md).
+- What a source with a fixed pool does with its frames: [ADR-0081](ADR-0081-fixed-pool-budget.md).
 - Storage kinds and the D3D11 copy-out pool: [frame-pool ownership](frame-pool-ownership.md),
   which stays provisional on #231.
 - Colour range and matrix on frames (#367): additive, no break needed.
 
-**Related:** #41, #42, #90, #91, #93, #369, #370.
+**Related:** #41, #42, #90, #91, #93, #369, #370. Tracked in #372.
 
 ## Context
 
@@ -88,7 +88,7 @@ mark until a gen-2 trim, is shared with the rest of the process, and has no gaug
 
 Hardware decode slices and camera leases come from fixed pools, and holding them longer can exhaust
 them (#90, #370). This record makes counting uniform and leaves what a fixed-pool source does to
-[fixed-pool budget](fixed-pool-budget.md). Periphery's camera frames already follow the counting
+[ADR-0081](ADR-0081-fixed-pool-budget.md). Periphery's camera frames already follow the counting
 contract below (Periphery ADR-0035 §8b), and Periphery leaves copying versus sharing to the holder.
 
 ## Decision
@@ -307,7 +307,7 @@ opt-in for consumers that release within a frame period, and colour metadata. Th
 the opt-in contradicted by the player's own presenter path (`ClockSelectVideoSink` holds three
 frames, without a time limit while paused), the D3D11 half dependent on work frame-pool ownership
 gates on #231, and the storage abstraction read by nothing the draft decided. Those parts moved to
-[fixed-pool budget](fixed-pool-budget.md) and frame-pool ownership. The reviews also added the
+[ADR-0081](ADR-0081-fixed-pool-budget.md) and frame-pool ownership. The reviews also added the
 disposing rule, the forwarding rule, the `MaxLead` requirement and the split of step 1; corrected
 the inventory, the counts and the memory analysis; and found #369.
 

@@ -3,6 +3,9 @@
 **Status:** Accepted (2026-09-16). Proposed 2026-09-09; numbered and accepted once the
 implementation landed. Implemented, with one of its two migrations shipped and measured.
 
+> **Amended 2026-09-24.** [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md) makes `maxLead` required when the secondary is a frame (#377).
+> [ADR-0081](ADR-0081-fixed-pool-budget.md) adds a retained-count limit next to `Window` and `maxLead` (#386).
+
 ### What exists
 
 | | |
