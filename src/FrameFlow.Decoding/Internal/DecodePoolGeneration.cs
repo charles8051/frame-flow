@@ -189,10 +189,13 @@ internal sealed partial class DecodePoolGeneration
                 waiter?.OnPoolWait();
             }
 
+            // WaitAsync arms the interval's timer. The epoch is read after it, so the read marks
+            // the moment the interval started.
+            var interval = released.WaitAsync(watchdog, clock, cancellationToken);
             int epoch = waiter?.PoolWatchdogEpoch ?? 0;
             try
             {
-                await released.WaitAsync(watchdog, clock, cancellationToken).ConfigureAwait(false);
+                await interval.ConfigureAwait(false);
             }
             catch (TimeoutException)
             {
