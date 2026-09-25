@@ -251,8 +251,8 @@ land.
   converter, and the rest disagree on what an extra `Dispose` does. The one-shot frame is why
   fan-out clones (ADR-0054), joins throw (#91) and `LatestWins` edges copy (#93). Decides one
   counting rule (atomic, same instance, no revival), one disposing rule (exactly one reference per
-  call, never a throw), how a body forwards an input, immutable frames behind a `ref struct`
-  builder, and graph items that are the frames themselves (#42). Keeping a frame one-shot never
+  call, never a throw), how a body forwards an input, immutable frames written only inside a
+  fill callback, and graph items that are the frames themselves (#42). Keeping a frame one-shot never
   protected a pool, because those frames rent from a growable one. Supersedes ADR-0054. The
   first draft also decided a fixed-pool policy and storage kinds; review moved those to
   [fixed-pool budget](fixed-pool-budget.md) and frame-pool ownership.
