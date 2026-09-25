@@ -72,6 +72,10 @@ FrameFlow.Graph.GraphChain<T>.To(FrameFlow.Graph.SinkNode<T!>! sink, FrameFlow.G
 FrameFlow.Graph.GraphChain<T>.ToPrimary<TSecondary, TOut>(FrameFlow.Graph.SyncJoinNode<T!, TSecondary!, TOut!>! join, FrameFlow.Graph.EdgeOptions? options = null) -> void
 FrameFlow.Graph.GraphChain<T>.ToSecondary<TPrimary, TOut>(FrameFlow.Graph.SyncJoinNode<TPrimary!, T!, TOut!>! join, FrameFlow.Graph.EdgeOptions? options = null) -> void
 FrameFlow.Graph.GraphChainExtensions
+FrameFlow.Graph.Holding
+FrameFlow.Graph.Holding.ForwardsStorage.get -> bool
+FrameFlow.Graph.Holding.FramesPerOutputItem.get -> int?
+FrameFlow.Graph.Holding.MaxHeld.get -> int?
 FrameFlow.Graph.IAudioBuffer
 FrameFlow.Graph.IAudioBuffer.AddRef() -> FrameFlow.Graph.IAudioBuffer!
 FrameFlow.Graph.IAudioBuffer.ChannelCount.get -> int
@@ -113,18 +117,20 @@ FrameFlow.Graph.ITensor.Shape.get -> FrameFlow.Graph.TensorShape
 FrameFlow.Graph.MultiOperator<TIn, TOut>
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Body.get -> FrameFlow.Graph.MultiOperator<TIn!, TOut!>!
+FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Holding.get -> FrameFlow.Graph.Holding!
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Id.get -> string!
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Input.get -> FrameFlow.Graph.InputPort<TIn!>!
-FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.MultiOperatorNode(string! id, FrameFlow.Graph.MultiOperator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate) -> void
+FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.MultiOperatorNode(string! id, FrameFlow.Graph.MultiOperator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, FrameFlow.Graph.Holding? holding = null) -> void
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
 FrameFlow.Graph.Operator<TIn, TOut>
 FrameFlow.Graph.OperatorNode<TIn, TOut>
 FrameFlow.Graph.OperatorNode<TIn, TOut>.Body.get -> FrameFlow.Graph.Operator<TIn!, TOut!>!
+FrameFlow.Graph.OperatorNode<TIn, TOut>.Holding.get -> FrameFlow.Graph.Holding!
 FrameFlow.Graph.OperatorNode<TIn, TOut>.Id.get -> string!
 FrameFlow.Graph.OperatorNode<TIn, TOut>.Input.get -> FrameFlow.Graph.InputPort<TIn!>!
 FrameFlow.Graph.OperatorNode<TIn, TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
-FrameFlow.Graph.OperatorNode<TIn, TOut>.OperatorNode(string! id, FrameFlow.Graph.Operator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate) -> void
+FrameFlow.Graph.OperatorNode<TIn, TOut>.OperatorNode(string! id, FrameFlow.Graph.Operator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, FrameFlow.Graph.Holding? holding = null) -> void
 FrameFlow.Graph.OperatorNode<TIn, TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
 FrameFlow.Graph.OutputPort<T>
 FrameFlow.Graph.OutputPort<T>.Name.get -> string!
@@ -145,10 +151,11 @@ FrameFlow.Graph.RefBox<T>.Value.get -> T
 FrameFlow.Graph.RefCounting
 FrameFlow.Graph.SinkNode<TIn>
 FrameFlow.Graph.SinkNode<TIn>.Body.get -> FrameFlow.Graph.Consumer<TIn!>!
+FrameFlow.Graph.SinkNode<TIn>.Holding.get -> FrameFlow.Graph.Holding!
 FrameFlow.Graph.SinkNode<TIn>.Id.get -> string!
 FrameFlow.Graph.SinkNode<TIn>.Input.get -> FrameFlow.Graph.InputPort<TIn!>!
 FrameFlow.Graph.SinkNode<TIn>.OnError.get -> FrameFlow.Graph.FailureResponse
-FrameFlow.Graph.SinkNode<TIn>.SinkNode(string! id, FrameFlow.Graph.Consumer<TIn!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate) -> void
+FrameFlow.Graph.SinkNode<TIn>.SinkNode(string! id, FrameFlow.Graph.Consumer<TIn!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, FrameFlow.Graph.Holding? holding = null) -> void
 FrameFlow.Graph.SourceNode<TOut>
 FrameFlow.Graph.SourceNode<TOut>.Body.get -> FrameFlow.Graph.Producer<TOut!>!
 FrameFlow.Graph.SourceNode<TOut>.Cleanup.get -> System.Func<System.Threading.Tasks.ValueTask>?
@@ -207,6 +214,10 @@ static FrameFlow.Graph.EdgeOptions.Default.get -> FrameFlow.Graph.EdgeOptions!
 static FrameFlow.Graph.EdgeOptions.LatestWins(int capacity = 1) -> FrameFlow.Graph.EdgeOptions!
 static FrameFlow.Graph.GraphChainExtensions.Pipeline<T>(this FrameFlow.Graph.Graph! graph, FrameFlow.Graph.OutputPort<T!>! from) -> FrameFlow.Graph.GraphChain<T!>
 static FrameFlow.Graph.GraphChainExtensions.Pipeline<T>(this FrameFlow.Graph.Graph! graph, FrameFlow.Graph.SourceNode<T!>! source) -> FrameFlow.Graph.GraphChain<T!>
+static FrameFlow.Graph.Holding.AtMost(int maxHeld, bool forwardsStorage = true, int? framesPerOutputItem = null) -> FrameFlow.Graph.Holding!
+static FrameFlow.Graph.Holding.Boundary.get -> FrameFlow.Graph.Holding!
+static FrameFlow.Graph.Holding.InFlight.get -> FrameFlow.Graph.Holding!
+static FrameFlow.Graph.Holding.Unbounded.get -> FrameFlow.Graph.Holding!
 static FrameFlow.Graph.RefBox.Of<T>(T value, System.Action<T>? onLastRelease = null) -> FrameFlow.Graph.RefBox<T>!
 static FrameFlow.Graph.RefCounting.AddRef(ref int count, object! owner) -> void
 static FrameFlow.Graph.RefCounting.OverReleases.get -> long

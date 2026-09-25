@@ -182,7 +182,8 @@ public sealed class Mp4VideoWriter : IAsyncDisposable
                 // Read the frame's pixels and encode; the substrate releases
                 // the frame after this body returns (do not dispose here).
                 await WriteCoreAsync(item, ct).ConfigureAwait(false);
-            }
+            },
+            holding: Holding.InFlight
         );
     }
 

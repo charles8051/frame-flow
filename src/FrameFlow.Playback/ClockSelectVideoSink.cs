@@ -543,6 +543,14 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// <inheritdoc/>
     public VideoSinkDiagnosticsSnapshot GetDiagnostics() => _inner.GetDiagnostics();
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The ring, the frame the delivery loop has taken out of it for the inner sink, and what
+    /// the inner sink keeps. Paused, the ring stays full for as long as the pause lasts, which a
+    /// count does not mind.
+    /// </remarks>
+    public int? MaxHeldFrames => _inner.MaxHeldFrames is { } inner ? _capacity + 1 + inner : null;
+
     /// <summary>Total frames delivered to the inner sink (selected as due).</summary>
     public int Presented => Volatile.Read(ref _presented);
 

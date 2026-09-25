@@ -42,6 +42,7 @@ FrameFlow.Sdl.SdlVideoSink.DestroyResources() -> void
 FrameFlow.Sdl.SdlVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
 FrameFlow.Sdl.SdlVideoSink.DroppedFrameCount.get -> int
 FrameFlow.Sdl.SdlVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
+FrameFlow.Sdl.SdlVideoSink.MaxHeldFrames.get -> int?
 FrameFlow.Sdl.SdlVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Sdl.SdlVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Sdl.SdlVideoSink.RenderedFrameCount.get -> int

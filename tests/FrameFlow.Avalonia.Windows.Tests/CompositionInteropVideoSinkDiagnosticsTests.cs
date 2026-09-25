@@ -19,6 +19,12 @@ namespace FrameFlow.Avalonia.Windows.Tests;
 public sealed class CompositionInteropVideoSinkDiagnosticsTests
 {
     [Fact]
+    public void MaxHeldFrames_IsTheSlotAndTheFrameBeingPresented()
+    {
+        Assert.Equal(2, new CompositionInteropVideoSink().MaxHeldFrames);
+    }
+
+    [Fact]
     public void GetDiagnostics_WithoutSource_ReturnsEmpty()
     {
         var sink = new CompositionInteropVideoSink();

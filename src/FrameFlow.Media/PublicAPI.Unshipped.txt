@@ -336,6 +336,7 @@ FrameFlow.Media.HeadlessVideoSink.AbandonedCount.get -> long
 FrameFlow.Media.HeadlessVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.HeadlessVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
 FrameFlow.Media.HeadlessVideoSink.HeadlessVideoSink(System.TimeSpan presentCost = default(System.TimeSpan), System.TimeProvider? timeProvider = null) -> void
+FrameFlow.Media.HeadlessVideoSink.MaxHeldFrames.get -> int?
 FrameFlow.Media.HeadlessVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.HeadlessVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.HeadlessVideoSink.PresentCost.get -> System.TimeSpan
@@ -372,6 +373,7 @@ FrameFlow.Media.IVideoFrame.Pts.get -> System.TimeSpan
 FrameFlow.Media.IVideoFrame.ToCpu() -> FrameFlow.Media.CpuFrameData
 FrameFlow.Media.IVideoSink
 FrameFlow.Media.IVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
+FrameFlow.Media.IVideoSink.MaxHeldFrames.get -> int?
 FrameFlow.Media.IVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.IVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.IVolumeControl
@@ -426,6 +428,7 @@ FrameFlow.Media.MediaSource.Uri.get -> System.Uri?
 FrameFlow.Media.MediaSource.Uri.init -> void
 FrameFlow.Media.NullVideoSink
 FrameFlow.Media.NullVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.NullVideoSink.MaxHeldFrames.get -> int?
 FrameFlow.Media.NullVideoSink.NullVideoSink() -> void
 FrameFlow.Media.NullVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.NullVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask

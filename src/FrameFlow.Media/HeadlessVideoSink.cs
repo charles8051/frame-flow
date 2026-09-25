@@ -150,6 +150,10 @@ public sealed class HeadlessVideoSink : IVideoSink
     public VideoSinkDiagnosticsSnapshot GetDiagnostics() => _telemetry.Snapshot();
 
     /// <inheritdoc />
+    /// <remarks>Every frame is released before the call returns.</remarks>
+    public int? MaxHeldFrames => 0;
+
+    /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
         if (_disposed)

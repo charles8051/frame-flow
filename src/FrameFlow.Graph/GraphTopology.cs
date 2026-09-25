@@ -31,6 +31,16 @@ internal interface IHoldsItsSecondary
     bool StopsReadingSecondary { get; }
 }
 
+/// <summary>
+/// A node that declares what it holds of each input (ADR-0081). A node that is not one holds
+/// without bound.
+/// </summary>
+internal interface IDeclaresHolding
+{
+    /// <summary>What the node holds of items arriving at <paramref name="input"/>.</summary>
+    Holding HoldingAt(IPort input);
+}
+
 /// <summary>An input port that knows whether an edge has been wired into it.</summary>
 internal interface IWireableInput : IPort
 {

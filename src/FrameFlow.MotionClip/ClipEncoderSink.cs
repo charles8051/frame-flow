@@ -83,7 +83,9 @@ public sealed class ClipEncoderSink : IAsyncDisposable
     public SinkNode<ClipSegment> Build(string id = "clip-encoder") =>
         new(
             id,
-            async (segment, ct) => await EnqueueAsync(segment, ct).ConfigureAwait(false)
+            async (segment, ct) => await EnqueueAsync(segment, ct).ConfigureAwait(false),
+            // The queue, the segment the worker is encoding, and one waiting to be queued.
+            holding: Holding.AtMost(_options.QueueCapacity + 2)
         );
 
     /// <summary>

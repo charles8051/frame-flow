@@ -267,6 +267,14 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     public VideoSinkDiagnosticsSnapshot GetDiagnostics() => _telemetry.Snapshot();
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The frame slot, and a frame taken by <see cref="RenderPendingFrame"/>, which its caller
+    /// holds while it renders and the slot fills again. A bound view copies the frame out and
+    /// releases it in the call.
+    /// </remarks>
+    public int? MaxHeldFrames => 2;
+
+    /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
         _disposed = true;

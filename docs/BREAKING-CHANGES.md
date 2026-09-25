@@ -163,6 +163,22 @@ long-held frame from a fixed pool, such as a camera lease (ADR-0081).
 every branch: about 750 MB/s across three 1080p presenters at 30 fps, estimated from frame sizes.
 Frames count references now, so a branch can share the frame. ADR-0080 decision 7, #380, #93.
 
+### 6. The node constructors take a new optional parameter
+
+**A binary break, not a compile error.** Source that constructs these nodes compiles unchanged.
+
+`OperatorNode`, `MultiOperatorNode` and `SinkNode` take `Holding? holding = null`, and
+`SyncJoinNode` takes `int? maxRetained = null`. A parameter with a default still changes the
+constructor's signature. An assembly compiled against `v0.11.0` that constructs one of these nodes
+throws `MissingMethodException` against this release until it is rebuilt.
+
+**Who hits this.** A library built against `v0.11.0` and loaded with this release without being
+rebuilt. An application that builds from source does not.
+
+**What to write instead.** Rebuild. A node that carries video frames should also pass `holding`,
+the most frames it keeps at once. A node that passes none counts as holding without bound, and a
+pool cannot be sized for a path through it (ADR-0081).
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be

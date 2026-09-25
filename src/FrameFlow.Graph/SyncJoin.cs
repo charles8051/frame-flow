@@ -139,7 +139,8 @@ public delegate ValueTask<TOut?> SyncJoinOperator<in TPrimary, in TSecondary, TO
 public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     : IPumpableNode,
         IRequiresEveryInput,
-        IHoldsItsSecondary
+        IHoldsItsSecondary,
+        IDeclaresHolding
     where TPrimary : class, IRefCounted
     where TSecondary : class, IRefCounted
     where TOut : class, IRefCounted
@@ -253,6 +254,15 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     // Without a lead or a count limit the join reads the secondary as fast as it arrives, so it
     // can never be the half of a cycle that stops reading.
     bool IHoldsItsSecondary.StopsReadingSecondary => MaxLead.HasValue || MaxRetained.HasValue;
+
+    // The primary is held for the call. The secondary is held in the window, plus the one the
+    // reader holds while the window is full; only a count limit bounds that (ADR-0081).
+    Holding IDeclaresHolding.HoldingAt(IPort input) =>
+        ReferenceEquals(input, Secondary)
+            ? MaxRetained is { } limit
+                ? Holding.AtMost(limit + 1)
+                : Holding.Unbounded
+            : Holding.InFlight;
     public OutputPort<TOut> Output { get; }
 
     /// <summary>Secondaries currently held by the window. Diagnostics and tests.</summary>

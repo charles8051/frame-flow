@@ -44,6 +44,8 @@ public static class FaceOperators
                 var videoCopy = input.AddRef();
                 return ValueTask.FromResult<DetectedFaceFrameRef?>(
                     new DetectedFaceFrameRef(videoCopy, faces));
-            });
+            },
+            // The output carries the input frame itself.
+            holding: Holding.InFlight);
     }
 }

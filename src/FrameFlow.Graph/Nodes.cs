@@ -92,7 +92,7 @@ public sealed class SourceNode<TOut> : IPumpableNode
 /// outputs. The operator function may return null to drop the input
 /// without producing an output.
 /// </summary>
-public sealed class OperatorNode<TIn, TOut> : IPumpableNode
+public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding
     where TIn : class, IRefCounted
     where TOut : class, IRefCounted
 {
@@ -102,10 +102,17 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode
     public InputPort<TIn> Input { get; }
     public OutputPort<TOut> Output { get; }
 
+    /// <summary>
+    /// What the node holds of its input, and whether its output can share the input's storage
+    /// (ADR-0081). <see cref="Holding.Unbounded"/> when the constructor was given none.
+    /// </summary>
+    public Holding Holding { get; }
+
     public OperatorNode(
         string id,
         Operator<TIn, TOut> body,
-        FailureResponse onError = FailureResponse.Propagate
+        FailureResponse onError = FailureResponse.Propagate,
+        Holding? holding = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -113,9 +120,12 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode
         Id = id;
         Body = body;
         OnError = onError;
+        Holding = holding ?? Holding.Unbounded;
         Input = new InputPort<TIn>(this, "input");
         Output = new OutputPort<TOut>(this, "output");
     }
+
+    Holding IDeclaresHolding.HoldingAt(IPort input) => Holding;
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpOperatorAsync(this, graphCts);
@@ -131,7 +141,7 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode
 /// historic Channel-bridge boilerplate consumers had to write for
 /// 1→N expansion.
 /// </summary>
-public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode
+public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding
     where TIn : class, IRefCounted
     where TOut : class, IRefCounted
 {
@@ -141,10 +151,17 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode
     public InputPort<TIn> Input { get; }
     public OutputPort<TOut> Output { get; }
 
+    /// <summary>
+    /// What the node holds of its input, and whether its output can share the input's storage
+    /// (ADR-0081). <see cref="Holding.Unbounded"/> when the constructor was given none.
+    /// </summary>
+    public Holding Holding { get; }
+
     public MultiOperatorNode(
         string id,
         MultiOperator<TIn, TOut> body,
-        FailureResponse onError = FailureResponse.Propagate
+        FailureResponse onError = FailureResponse.Propagate,
+        Holding? holding = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -152,9 +169,12 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode
         Id = id;
         Body = body;
         OnError = onError;
+        Holding = holding ?? Holding.Unbounded;
         Input = new InputPort<TIn>(this, "input");
         Output = new OutputPort<TOut>(this, "output");
     }
+
+    Holding IDeclaresHolding.HoldingAt(IPort input) => Holding;
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpMultiOperatorAsync(this, graphCts);
@@ -165,7 +185,7 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode
 // ─────────────────────────────────────────────────────────────────
 
 /// <summary>A sink node: receives items, produces side effects, no output.</summary>
-public sealed class SinkNode<TIn> : IPumpableNode
+public sealed class SinkNode<TIn> : IPumpableNode, IDeclaresHolding
     where TIn : class, IRefCounted
 {
     public string Id { get; }
@@ -173,10 +193,17 @@ public sealed class SinkNode<TIn> : IPumpableNode
     public Consumer<TIn> Body { get; }
     public InputPort<TIn> Input { get; }
 
+    /// <summary>
+    /// What the node holds of its input, counting what the body keeps after it returns
+    /// (ADR-0081). <see cref="Holding.Unbounded"/> when the constructor was given none.
+    /// </summary>
+    public Holding Holding { get; }
+
     public SinkNode(
         string id,
         Consumer<TIn> body,
-        FailureResponse onError = FailureResponse.Propagate
+        FailureResponse onError = FailureResponse.Propagate,
+        Holding? holding = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -184,8 +211,11 @@ public sealed class SinkNode<TIn> : IPumpableNode
         Id = id;
         Body = body;
         OnError = onError;
+        Holding = holding ?? Holding.Unbounded;
         Input = new InputPort<TIn>(this, "input");
     }
+
+    Holding IDeclaresHolding.HoldingAt(IPort input) => Holding;
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpSinkAsync(this, graphCts);

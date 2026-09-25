@@ -180,7 +180,9 @@ public static class VideoOperators
                 return ValueTask.FromResult<IVideoFrame?>(
                     gpu.ReadbackToCpuBgra32()
                 );
-            }
+            },
+            // A CPU frame is forwarded as itself, so this is not a storage boundary for it.
+            holding: Holding.InFlight
         );
     }
 
@@ -203,7 +205,9 @@ public static class VideoOperators
                 // VideoConverter.Process returns a fresh frame the
                 // caller owns one ref on. Wrap and forward.
                 return ValueTask.FromResult<IVideoFrame?>(output);
-            }
+            },
+            // Every output is a new frame, even at the input's size and format.
+            holding: Holding.Boundary
         );
     }
 }

@@ -63,7 +63,9 @@ public static class CameraFrameSinkAdapters
                 // dispose their own ref independently.
                 var sinkRef = adapter.Inner.AddRef();
                 await sink.PresentAsync(sinkRef, ct).ConfigureAwait(false);
-            }
+            },
+            // ICameraFrameSink says nothing about how many frames it keeps.
+            holding: Holding.Unbounded
         );
     }
 }
