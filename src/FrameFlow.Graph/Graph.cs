@@ -44,7 +44,6 @@ public sealed class Graph
 
     // Output ports a chain has forked with Branch. The next edge such a port takes that is not
     // itself a branch is the trunk, and inherits the incoming ref.
-    private readonly HashSet<IPort> _forkedPorts = new();
 
 
     // Per-edge reset actions, run at the top of every RunAsync BEFORE the
@@ -108,56 +107,14 @@ public sealed class Graph
     /// <summary>
     /// Connects an output port to an input port via an edge with the
     /// given options. Both ports' owners are automatically added to
-    /// the graph if not already present. This overload uses the
-    /// substrate's default fan-out semantics — siblings get a fresh
-    /// ref via <c>AddRef</c>. For an item type whose <c>AddRef</c>
-    /// throws, use the
-    /// <see cref="Connect{T}(OutputPort{T}, InputPort{T}, EdgeConfig{T})"/>
-    /// overload with an explicit cloner (ADR-0054).
+    /// the graph if not already present. An output port with more than
+    /// one edge fans out, and every branch shares the item by
+    /// <c>AddRef</c> (ADR-0080).
     /// </summary>
     public Graph Connect<T>(
         OutputPort<T> from,
         InputPort<T> to,
         EdgeOptions? options = null
-    )
-        where T : class, IRefCounted =>
-        Connect(from, to, new EdgeConfig<T>(options ?? EdgeOptions.Default, Cloner: null));
-
-    /// <summary>
-    /// Connects an output port to an input port using a typed
-    /// <see cref="EdgeConfig{T}"/> that may carry a per-branch cloner
-    /// (per ADR-0054). When the config's cloner is non-<see langword="null"/>,
-    /// fan-out invokes the cloner instead of <c>AddRef</c> for this
-    /// specific branch — required for an item type whose <c>AddRef</c>
-    /// throws, and useful when a branch wants an
-    /// independent deep copy regardless. Sibling branches without a
-    /// cloner continue to use <c>AddRef</c>.
-    /// </summary>
-    public Graph Connect<T>(
-        OutputPort<T> from,
-        InputPort<T> to,
-        EdgeConfig<T> config
-    )
-        where T : class, IRefCounted => Connect(from, to, config, inherit: false);
-
-    /// <summary>
-    /// Records that a chain forked this port with <see cref="GraphChain{T}.Branch(EdgeConfig{T})"/>, so the
-    /// next edge it takes that is not a branch is the fork's trunk.
-    /// </summary>
-    internal void DeclareFork(IPort head)
-    {
-        ArgumentNullException.ThrowIfNull(head);
-        _forkedPorts.Add(head);
-    }
-
-    /// <summary>Whether <see cref="DeclareFork"/> has been called for this port.</summary>
-    internal bool IsForked(IPort head) => _forkedPorts.Contains(head);
-
-    internal Graph Connect<T>(
-        OutputPort<T> from,
-        InputPort<T> to,
-        EdgeConfig<T> config,
-        bool inherit
     )
         where T : class, IRefCounted
     {
@@ -175,9 +132,8 @@ public sealed class Graph
         }
         to.IsConnected = true;
 
-        var opts = config.Options ?? EdgeOptions.Default;
-        var cloner = config.Cloner;
-        _edges.Add(new EdgeSpec(from, to, inherit, Blocks: opts.Overflow == Overflow.Block));
+        var opts = options ?? EdgeOptions.Default;
+        _edges.Add(new EdgeSpec(from, to, Blocks: opts.Overflow == Overflow.Block));
         // Reset clears the prior run's edge state so RunAsync can be called again.
         // For a fan-out output port (multiple edges share one `from`), each edge
         // registers a Clear(); they all run before any wire-up Add(), so clearing
@@ -190,7 +146,7 @@ public sealed class Graph
         _wireUps.Add(() =>
         {
             var channel = CreateChannel<T>(opts);
-            from.Writers.Add(new OutputEdge<T>(channel.Writer, cloner, inherit));
+            from.Writers.Add(new OutputEdge<T>(channel.Writer));
             to.Reader = channel.Reader;
         });
         return this;

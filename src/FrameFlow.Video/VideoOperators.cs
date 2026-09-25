@@ -37,18 +37,13 @@ namespace FrameFlow.Video;
 /// Every edge is still a real port-to-port connection; the chain
 /// names them in order instead of one call per edge. For a fan-out,
 /// declare the second consumer with
-/// <see cref="GraphChain{T}.Branch(EdgeConfig{T})"/>.
+/// <see cref="GraphChain{T}.Branch(EdgeOptions)"/>.
 /// </para>
 /// <para>
-/// <b>Frame ownership.</b> Each operator wraps its output frame in
-/// a fresh <see cref="IVideoFrame"/>. The substrate disposes the
-/// input wrapper after the operator returns (releasing the input's
-/// ref on the underlying frame); the output wrapper flows downstream
-/// and is eventually disposed by the sink (releasing the output
-/// frame's ref). Refcount discipline is identical to the old
-/// substrate, just enforced uniformly by the wrapper + the
-/// always-refcount substrate protocol instead of operator-author
-/// discipline.
+/// <b>Frame ownership.</b> Each operator returns a new frame, or
+/// forwards its input by returning it. The substrate releases the
+/// input after the operator returns; the output flows downstream and
+/// is released by whatever holds it last (ADR-0080).
 /// </para>
 /// </remarks>
 public static class VideoOperators

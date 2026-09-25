@@ -267,14 +267,14 @@ public partial class MainWindow : Window
                 .WithVideoSink(
                     new DelegatingVideoSink(async (frame, ct) =>
                     {
-                        // Each pane gets an independently-disposable clone, so they can dispose
-                        // on their own cadence.
+                        // Each pane takes its own reference to the one frame (ADR-0080) and
+                        // releases it on its own cadence.
                         using (frame)
                         {
                             await Task.WhenAll(
-                                    pane1.PresentAsync(frame.CloneCpu(), ct).AsTask(),
-                                    pane2.PresentAsync(frame.CloneCpu(), ct).AsTask(),
-                                    pane3.PresentAsync(frame.CloneCpu(), ct).AsTask()
+                                    pane1.PresentAsync(frame.AddRef(), ct).AsTask(),
+                                    pane2.PresentAsync(frame.AddRef(), ct).AsTask(),
+                                    pane3.PresentAsync(frame.AddRef(), ct).AsTask()
                                 )
                                 .ConfigureAwait(false);
                         }
@@ -282,13 +282,9 @@ public partial class MainWindow : Window
                 )
                 .ConfigureVideo(chain =>
                 {
-                    // chain: source. Add convert → clone-and-fan-out
-                    // operators that hand a fresh deep-clone to each
-                    // pane. Decoder + converter outputs are one-shot
-                    // frames so we can't use the substrate's
-                    // StorageNode (which AddRefs); the clone operator
-                    // is the analog of the old
-                    // Broadcast(duplicate: frame => frame.CloneCpu()).
+                    // chain: source. Add a convert; the video sink above
+                    // fans the converted frame out to the panes by
+                    // reference.
                     var afterConvert = chain.Then(
                         VideoOperators.ConvertPixelFormat(
                             "broadcast-convert",

@@ -5,109 +5,29 @@ using GraphRunner = FrameFlow.Graph.Graph;
 namespace FrameFlow.Graph.Tests;
 
 /// <summary>
-/// A fork and a rejoin expressed as a chain: who takes the incoming ref, and what the graph
-/// refuses.
+/// A fork and a rejoin expressed as a chain, and what the chain refuses. Every consumer of a
+/// forked port shares the item by <c>AddRef</c> (ADR-0080).
 /// </summary>
-/// <remarks>
-/// <para>
-/// The ownership question is the point. <c>ForwardAsync</c> hands the incoming ref to one edge
-/// and gives the rest a clone or an <c>AddRef</c>, and before <c>Branch</c> the recipient was
-/// whichever cloner-less edge happened to be wired first. <c>Branch</c> wires the branch before
-/// the trunk, so the scan alone would hand a one-shot item's ref to the branch and throw on its
-/// <c>AddRef</c>. These tests pin that the trunk keeps it.
-/// </para>
-/// <para>
-/// <see cref="OneShot"/> is the type that makes the difference observable: its <c>AddRef</c>
-/// throws, the one kind of item that still needs a cloner (#380 removes cloners).
-/// </para>
-/// </remarks>
 public sealed class GraphChainForkTests
 {
     [Fact]
-    public async Task TheTrunkTakesTheIncomingRef_EvenThoughTheBranchIsWiredFirst()
+    public async Task AForkOfBranchesOnly_RunsAndReleasesEveryItem()
     {
         var graph = new GraphRunner();
-        var source = OneShotSource(3);
-        var trunkSeen = new List<int>();
-        var branchSeen = new List<int>();
-
-        var head = graph.Pipeline(source);
-        var branch = head.Branch(
-            EdgeOptions.Buffered(4).WithCloner<OneShot>(item => new OneShot(item.Value))
-        );
-        branch.To(Collect(branchSeen, "branch"));
-        head.To(Collect(trunkSeen, "trunk"));
-
-        await graph.RunAsync(CancellationToken.None);
-
-        // Both consumers saw every item, and nothing threw: the trunk inherited, so no AddRef
-        // was ever attempted on a one-shot item.
-        Assert.Equal([1, 2, 3], trunkSeen);
-        Assert.Equal([1, 2, 3], branchSeen);
-    }
-
-    [Fact]
-    public async Task WithoutBranch_TheSameWiringHandsTheRefToTheFirstEdge()
-    {
-        // The control for the test above. Wired through Connect, the first cloner-less edge
-        // inherits, which is ADR-0054's rule and is unchanged by this feature.
-        var graph = new GraphRunner();
-        var source = OneShotSource(2);
-        var first = new List<int>();
-        var second = new List<int>();
-
-        var trunk = Collect(first, "first");
-        var other = Collect(second, "second");
-        graph.Connect(source.Output, trunk.Input);
-        graph.Connect(
-            source.Output,
-            other.Input,
-            EdgeOptions.Buffered(4).WithCloner<OneShot>(item => new OneShot(item.Value))
-        );
-
-        await graph.RunAsync(CancellationToken.None);
-
-        Assert.Equal([1, 2], first);
-        Assert.Equal([1, 2], second);
-    }
-
-    [Fact]
-    public async Task AForkOfBranchesOnly_HasNoTrunkAndStillRuns()
-    {
-        var graph = new GraphRunner();
-        var source = OneShotSource(2);
+        var emitted = new List<RefBox<int>>();
+        var source = CountedSource(2, emitted);
         var left = new List<int>();
         var right = new List<int>();
 
         var head = graph.Pipeline(source);
-        head.Branch(EdgeOptions.Buffered(4).WithCloner<OneShot>(i => new OneShot(i.Value)))
-            .To(Collect(left, "left"));
-        head.Branch(EdgeOptions.Buffered(4).WithCloner<OneShot>(i => new OneShot(i.Value)))
-            .To(Collect(right, "right"));
+        head.Branch(EdgeOptions.Buffered(4)).To(Collect(left, "left"));
+        head.Branch(EdgeOptions.Buffered(4)).To(Collect(right, "right"));
 
         await graph.RunAsync(CancellationToken.None);
 
         Assert.Equal([1, 2], left);
         Assert.Equal([1, 2], right);
-    }
-
-    [Fact]
-    public async Task TwoTrunksOnOnePort_AreRefused()
-    {
-        var graph = new GraphRunner();
-        var source = OneShotSource(1);
-        var head = graph.Pipeline(source);
-
-        head.Branch(EdgeOptions.Buffered(4).WithCloner<OneShot>(i => new OneShot(i.Value)))
-            .To(Collect([], "branch"));
-        head.To(Collect([], "trunk-one"));
-        head.To(Collect([], "trunk-two"));
-
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => graph.RunAsync(CancellationToken.None)
-        );
-
-        Assert.Contains("2 trunk edges", ex.Message, StringComparison.Ordinal);
+        Assert.All(emitted, item => Assert.Equal(0, item.RefCount));
     }
 
     [Fact]
@@ -118,10 +38,7 @@ public sealed class GraphChainForkTests
         var joined = new List<int>();
 
         var head = graph.Pipeline(source);
-        var detections = head.Branch(
-                EdgeOptions.LatestWins(1).WithCloner<RefBox<int>>(i => (RefBox<int>)i.AddRef())
-            )
-            .Then(Double("double"));
+        var detections = head.Branch(EdgeOptions.LatestWins(1)).Then(Double("double"));
 
         head.Join(detections, PairingJoin(), EdgeOptions.Default, EdgeOptions.Buffered(4))
             .To(
@@ -182,15 +99,14 @@ public sealed class GraphChainForkTests
     }
 
     [Fact]
-    public void ABranchWithADefaultConfig_IsRejected()
+    public void ABranchWithoutOptions_IsRejected()
     {
-        // A default EdgeConfig carries no options, and Connect reads that as EdgeOptions.Default:
-        // the capacity-1 blocking edge this overload exists to stop a caller getting by accident.
+        // Connect would read missing options as EdgeOptions.Default: the capacity-1 blocking
+        // edge that makes a slow branch hold the trunk back frame for frame.
         var graph = new GraphRunner();
         var head = graph.Pipeline(CountedSource(1));
 
-        var ex = Assert.Throws<ArgumentException>(() => head.Branch(default(EdgeConfig<RefBox<int>>)));
-        Assert.Contains("explicit edge options", ex.Message, StringComparison.Ordinal);
+        Assert.Throws<ArgumentNullException>(() => head.Branch(null!));
     }
 
     [Fact]
@@ -220,36 +136,23 @@ public sealed class GraphChainForkTests
 
     // ─── Helpers ────────────────────────────────────────────────────
 
-    /// <summary>An item whose <c>AddRef</c> throws, like a converter's one-shot frame.</summary>
-    private sealed class OneShot(int value) : IRefCounted
-    {
-        public int Value => value;
-
-        public IRefCounted AddRef() =>
-            throw new InvalidOperationException("one-shot item: AddRef is not supported");
-
-        public void Dispose() { }
-    }
-
-    private static SourceNode<OneShot> OneShotSource(int count)
-    {
-        int next = 0;
-        return new SourceNode<OneShot>(
-            "source",
-            _ => ValueTask.FromResult(next < count ? new OneShot(++next) : null)
-        );
-    }
-
-    private static SourceNode<RefBox<int>> CountedSource(int count)
+    private static SourceNode<RefBox<int>> CountedSource(int count, List<RefBox<int>>? emitted = null)
     {
         int next = 0;
         return new SourceNode<RefBox<int>>(
             "source",
-            _ => ValueTask.FromResult(next < count ? RefBox.Of(++next) : null)
+            _ =>
+            {
+                if (next >= count)
+                    return ValueTask.FromResult<RefBox<int>?>(null);
+                var item = RefBox.Of(++next);
+                emitted?.Add(item);
+                return ValueTask.FromResult<RefBox<int>?>(item);
+            }
         );
     }
 
-    private static SinkNode<OneShot> Collect(List<int> into, string id) =>
+    private static SinkNode<RefBox<int>> Collect(List<int> into, string id) =>
         new(
             id,
             (item, _) =>

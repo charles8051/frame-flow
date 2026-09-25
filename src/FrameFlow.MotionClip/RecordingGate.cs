@@ -30,8 +30,8 @@ namespace FrameFlow.MotionClip;
 /// <para>
 /// <b>No preview coupling.</b> The gate is preview-agnostic. Live preview is
 /// a sibling consumer of the upstream display-resolution stream — wired in
-/// <see cref="RecorderPipeline.BuildGraph"/> as a fan-out branch with an
-/// explicit <see cref="VideoFrameExtensions.CloneCpu"/> cloner (ADR-0054).
+/// <see cref="RecorderPipeline.BuildGraph"/> as a fan-out branch that shares
+/// each frame by reference (ADR-0080).
 /// Slow UI rendering can't back-pressure the gate's pump because the two
 /// branches run on independent pumps with independent edge policy.
 /// </para>
@@ -46,7 +46,7 @@ public sealed class RecordingGate : IDisposable
     private readonly TimeProvider _clock;
 
     // The pure gate state (§5.3): phase + post-roll-remaining + frame-count, threaded as an
-    // immutable value through GateCore.Advance. The frame list, the clone, and the trigger
+    // immutable value through GateCore.Advance. The frame list, the held frames, and the trigger
     // timestamp below are the shell's — the messy edges the core deliberately doesn't model.
     private GateState _gate = GateState.Initial;
     private List<IVideoFrame>? _clip;
@@ -176,7 +176,7 @@ public sealed class RecordingGate : IDisposable
     private ClipSegment? ContinueOnFrame(IVideoFrame frame, GateState next)
     {
         if (next.Phase == GatePhase.Building)
-            _clip!.Add(frame.CloneCpu());
+            _clip!.Add(frame.AddRef());
         else
             _preRoll.Add(frame);
 
@@ -190,7 +190,7 @@ public sealed class RecordingGate : IDisposable
     /// </summary>
     private ClipSegment EmitOnBuildFrame(IVideoFrame frame, ClipDecision decision)
     {
-        _clip!.Add(frame.CloneCpu());
+        _clip!.Add(frame.AddRef());
         SetState(decision.State); // Idle
         return EmitSegment(decision.Reason!.Value);
     }
@@ -205,7 +205,7 @@ public sealed class RecordingGate : IDisposable
         IReadOnlyList<IVideoFrame> snapshot = _preRoll.SnapshotAndClear();
         _clip = new List<IVideoFrame>(snapshot.Count + _options.PostRollFrames);
         _clip.AddRange(snapshot);
-        _clip.Add(trigger.CloneCpu());
+        _clip.Add(trigger.AddRef());
         _preRollAtTrigger = snapshot.Count;
         _triggeredAt = _clock.GetUtcNow().UtcDateTime;
         SetState(next);

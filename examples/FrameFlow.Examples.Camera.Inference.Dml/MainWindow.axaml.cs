@@ -293,13 +293,14 @@ public partial class MainWindow : Window
                 {
                     Interlocked.Increment(ref _frameCount);
 
-                    // CloneCpu so the pane owns/disposes its frame independently
-                    // of the graph's IVideoFrame. PresentAsync returns
-                    // immediately (queue-of-one), so this sink never blocks on
-                    // inference — slow models drop frames, they don't stall.
+                    // The pane takes its own reference to the converted frame
+                    // (ADR-0080); the converter has already released the camera
+                    // lease. PresentAsync returns immediately (queue-of-one), so
+                    // this sink never blocks on inference — slow models drop
+                    // frames, they don't stall.
                     if (_activePane is not { } pane)
                         return;
-                    await pane.PresentAsync(item.CloneCpu(), frameCt).ConfigureAwait(false);
+                    await pane.PresentAsync(item.AddRef(), frameCt).ConfigureAwait(false);
                 }));
 
         Dispatcher.UIThread.Post(() => StatusText.Text = $"Capturing from {_cameraLabel}.");

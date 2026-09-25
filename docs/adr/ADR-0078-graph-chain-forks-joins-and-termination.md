@@ -11,7 +11,8 @@ inherit marker and `Validate` are in the tree, and `docs/BREAKING-CHANGES.md` ca
 
 > **Amended 2026-09-24 by [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md).** Decision 1's inherit marker mattered only when `AddRef`
 > returned a fresh wrapper. Once every item returns itself and the cloner is gone (#380), it
-> distinguishes nothing.
+> distinguishes nothing. #380 removed it, with `Branch(EdgeConfig<T>)` and `Validate`'s rule against
+> two trunks on one port; `Branch(EdgeOptions)` remains.
 
 This record decides that a fork and a join are expressible in `GraphChain<T>`, that a chain-built
 fork names its inheritor instead of leaving it to wiring order, and that a configurator has

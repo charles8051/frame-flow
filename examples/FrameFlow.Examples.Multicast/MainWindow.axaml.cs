@@ -36,7 +36,7 @@ namespace FrameFlow.Examples.Multicast;
 /// the shared decode-texture slice is pinned by ref counting until the
 /// last pane releases it. Windows-only (the presenter is D3D11-based);
 /// falls back to the CPU panes with a warning elsewhere. This is the GPU
-/// analog of the CPU path's per-pane <c>CloneCpu</c> fan-out below.
+/// counterpart of the CPU path's per-pane <c>AddRef</c> fan-out below.
 /// </para>
 /// <para>
 /// <b>One sink, fanned out inside it.</b> The configurator returns its chain open and the
@@ -89,7 +89,7 @@ public partial class MainWindow : Window
     /// When true (and on Windows), swap the three heterogeneous CPU panes
     /// for three zero-copy composition-interop presenters and fan ONE
     /// D3D11VA decode out to all of them via <see cref="GpuVideoFrame.AddRef"/>
-    /// — the GPU analog of the CPU multicast's per-pane <c>CloneCpu</c>.
+    /// — the same fan-out the CPU multicast does, over a GPU frame.
     /// Set by the <c>--gpu</c> CLI flag.
     /// </summary>
     public bool UseGpu { get; set; }
@@ -381,12 +381,12 @@ public partial class MainWindow : Window
                                     return;
                                 }
 
-                                // CPU panes each get an independently-disposable clone, so they
-                                // can dispose on their own cadence.
+                                // Each CPU pane takes its own reference to the one frame
+                                // (ADR-0080) and releases it on its own cadence.
                                 await Task.WhenAll(
-                                        pane1.PresentAsync(frame.CloneCpu(), ct).AsTask(),
-                                        pane2.PresentAsync(frame.CloneCpu(), ct).AsTask(),
-                                        pane3.PresentAsync(frame.CloneCpu(), ct).AsTask()
+                                        pane1.PresentAsync(frame.AddRef(), ct).AsTask(),
+                                        pane2.PresentAsync(frame.AddRef(), ct).AsTask(),
+                                        pane3.PresentAsync(frame.AddRef(), ct).AsTask()
                                     )
                                     .ConfigureAwait(false);
                             }
@@ -419,13 +419,9 @@ public partial class MainWindow : Window
                         return counted; // the builder terminates it at the fan-out sink
                     }
 
-                    // chain: source. Add convert → clone-and-fan-out
-                    // operators that hand a fresh deep-clone to each
-                    // pane. Decoder + converter outputs are one-shot
-                    // frames so we can't use the substrate's
-                    // StorageNode (which AddRefs); the clone operator
-                    // is the analog of the old
-                    // Broadcast(duplicate: frame => frame.CloneCpu()).
+                    // chain: source. Add a convert; the video sink above
+                    // fans the converted frame out to the panes by
+                    // reference.
                     var afterConvert = chain.Then(
                         VideoOperators.ConvertPixelFormat(
                             "broadcast-convert",

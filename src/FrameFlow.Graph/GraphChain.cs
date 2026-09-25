@@ -18,9 +18,8 @@ namespace FrameFlow.Graph;
 /// terminates by wiring into a sink and returns void.
 /// </para>
 /// <para>
-/// A fan-out is <see cref="Branch(EdgeConfig{T})"/>: it declares a second consumer of
-/// the same output with its own edge config, and keeps the chain it was called on as
-/// the trunk. <see cref="Join{TSecondary, TOut}(GraphChain{TSecondary}, SyncJoinNode{T, TSecondary, TOut}, EdgeOptions, EdgeOptions)"/>
+/// A fan-out is <see cref="Branch(EdgeOptions)"/>: it declares a second consumer of
+/// the same output with its own edge options, and the chain it was called on carries on. <see cref="Join{TSecondary, TOut}(GraphChain{TSecondary}, SyncJoinNode{T, TSecondary, TOut}, EdgeOptions, EdgeOptions)"/>
 /// pairs two chains back together. What the chain cannot reach is an input wired from
 /// somewhere other than a chain head — for that, take <see cref="Output"/> and
 /// <see cref="Graph"/> and call
@@ -33,29 +32,26 @@ public readonly struct GraphChain<T>
     private readonly Graph _graph;
     private readonly OutputPort<T> _head;
 
-    // Set by Branch: the config this chain's next hop uses, and the fact that the next hop is a
-    // branch rather than the fork's trunk. A chain that was not produced by Branch carries
-    // neither, so nothing about a linear chain changes.
-    private readonly EdgeConfig<T>? _pending;
-    private readonly bool _isBranch;
+    // Set by Branch: the options this chain's next hop uses. A chain that was not produced by
+    // Branch carries none, so nothing about a linear chain changes.
+    private readonly EdgeOptions? _pending;
 
     internal GraphChain(Graph graph, OutputPort<T> head)
-        : this(graph, head, pending: null, isBranch: false) { }
+        : this(graph, head, pending: null) { }
 
-    private GraphChain(Graph graph, OutputPort<T> head, EdgeConfig<T>? pending, bool isBranch)
+    private GraphChain(Graph graph, OutputPort<T> head, EdgeOptions? pending)
     {
         _graph = graph;
         _head = head;
         _pending = pending;
-        _isBranch = isBranch;
     }
 
     /// <summary>
-    /// The edge this chain's next hop takes, and whether that edge is the fork's trunk. A branch
-    /// uses the config <see cref="Branch(EdgeConfig{T})"/> was given; anything else uses the options passed at
-    /// the call site. The trunk is the first non-branch edge to leave a forked port.
+    /// The options this chain's next hop takes. A branch uses the options
+    /// <see cref="Branch(EdgeOptions)"/> was given; anything else uses the options passed at the
+    /// call site.
     /// </summary>
-    private (EdgeConfig<T> Config, bool Inherit) NextEdge(EdgeOptions? options)
+    private EdgeOptions? NextEdge(EdgeOptions? options)
     {
         // A branch's first hop is already configured, by Branch. Options passed here as well
         // would have to be either ignored or preferred, and both are silent: the caller reads
@@ -72,70 +68,26 @@ public readonly struct GraphChain<T>
                 );
             }
 
-            return (pending, Inherit: false);
+            return pending;
         }
 
-        return (
-            new EdgeConfig<T>(options ?? EdgeOptions.Default, Cloner: null),
-            _graph.IsForked(_head)
-        );
+        return options;
     }
 
     /// <summary>
     /// Declares a branch off this chain: a second consumer of the same output, wired with its
-    /// own edge config. The chain <see cref="Branch(EdgeConfig{T})"/> was called on stays the trunk and takes
-    /// the incoming ref; the branch clones or <c>AddRef</c>s according to its config.
-    /// </summary>
-    /// <param name="config">
-    /// Required rather than defaulted. An omitted config would be a capacity-1 blocking edge,
-    /// which is the wrong shape for a branch and the mistake <see cref="ToSecondary"/> already
-    /// warns about: a slow branch would then hold the trunk back frame for frame. A branch off
-    /// an item type whose <c>AddRef</c> throws needs a cloner here.
-    /// </param>
-    /// <remarks>
-    /// <para>
-    /// Declare the branch before wiring the trunk's next hop. The trunk is whichever edge leaves
-    /// this port next without being a branch, so a trunk wired first is an ordinary fan-out and
-    /// falls back to ADR-0054's rule, where the first cloner-less edge inherits.
-    /// </para>
-    /// <para>
-    /// A fan-out made only of branches has no trunk. That is the all-cloner case, where every
-    /// consumer holds an independent item and the incoming ref is released after the clones are
-    /// made.
-    /// </para>
-    /// </remarks>
-    public GraphChain<T> Branch(EdgeConfig<T> config)
-    {
-        // A default-constructed config carries no options, and Connect would read that as
-        // EdgeOptions.Default: a capacity-1 blocking edge, which is the shape this overload
-        // requires a config in order to avoid. Reject it rather than silently supply it.
-        if (config.Options is null)
-        {
-            throw new ArgumentException(
-                "A branch needs explicit edge options. A default EdgeConfig would give the "
-                    + "branch a capacity-1 blocking edge, which holds the trunk back frame for "
-                    + "frame.",
-                nameof(config)
-            );
-        }
-
-        _graph.DeclareFork(_head);
-        return new GraphChain<T>(_graph, _head, config, isBranch: true);
-    }
-
-    /// <summary>
-    /// Declares a branch that takes its own ref rather than a clone. The item type's
-    /// <c>AddRef</c> has to work: an item type whose <c>AddRef</c> throws needs the
-    /// <see cref="Branch(EdgeConfig{T})"/> overload and a cloner.
+    /// own edge options. Every consumer of the output shares the item by <c>AddRef</c>
+    /// (ADR-0080), so it does not matter which one is called the trunk.
     /// </summary>
     /// <param name="options">
-    /// Required, for the reason on the other overload: a defaulted edge would be capacity-1 and
-    /// blocking, so a slow branch would hold the trunk back frame for frame.
+    /// Required rather than defaulted. An omitted config would be a capacity-1 blocking edge,
+    /// which is the wrong shape for a branch and the mistake <see cref="ToSecondary"/> already
+    /// warns about: a slow branch would then hold the trunk back frame for frame.
     /// </param>
     public GraphChain<T> Branch(EdgeOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return Branch(new EdgeConfig<T>(options, Cloner: null));
+        return new GraphChain<T>(_graph, _head, options);
     }
 
     /// <summary>
@@ -143,7 +95,7 @@ public readonly struct GraphChain<T>
     /// the chain over the join's output. This chain is the primary, which sets the join's firing
     /// cadence.
     /// </summary>
-    /// <param name="secondary">The chain to pair onto this one, usually a <see cref="Branch(EdgeConfig{T})"/>.</param>
+    /// <param name="secondary">The chain to pair onto this one, usually a <see cref="Branch(EdgeOptions)"/>.</param>
     /// <param name="join">The join node.</param>
     /// <param name="primaryOptions">The primary edge's options.</param>
     /// <param name="secondaryOptions">
@@ -195,8 +147,7 @@ public readonly struct GraphChain<T>
     )
         where TOut : class, IRefCounted
     {
-        var (config, inherit) = NextEdge(options);
-        _graph.Connect(_head, next.Input, config, inherit);
+        _graph.Connect(_head, next.Input, NextEdge(options));
         return new GraphChain<TOut>(_graph, next.Output);
     }
 
@@ -207,8 +158,7 @@ public readonly struct GraphChain<T>
     )
         where TOut : class, IRefCounted
     {
-        var (config, inherit) = NextEdge(options);
-        _graph.Connect(_head, next.Input, config, inherit);
+        _graph.Connect(_head, next.Input, NextEdge(options));
         return new GraphChain<TOut>(_graph, next.Output);
     }
 
@@ -216,8 +166,7 @@ public readonly struct GraphChain<T>
     public void To(SinkNode<T> sink, EdgeOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(sink);
-        var (config, inherit) = NextEdge(options);
-        _graph.Connect(_head, sink.Input, config, inherit);
+        _graph.Connect(_head, sink.Input, NextEdge(options));
     }
 
     /// <summary>
@@ -232,8 +181,7 @@ public readonly struct GraphChain<T>
         where TOut : class, IRefCounted
     {
         ArgumentNullException.ThrowIfNull(join);
-        var (config, inherit) = NextEdge(options);
-        _graph.Connect(_head, join.Primary, config, inherit);
+        _graph.Connect(_head, join.Primary, NextEdge(options));
     }
 
     /// <summary>
@@ -261,8 +209,7 @@ public readonly struct GraphChain<T>
         where TOut : class, IRefCounted
     {
         ArgumentNullException.ThrowIfNull(join);
-        var (config, inherit) = NextEdge(options);
-        _graph.Connect(_head, join.Secondary, config, inherit);
+        _graph.Connect(_head, join.Secondary, NextEdge(options));
     }
 }
 

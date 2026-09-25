@@ -9,12 +9,11 @@ namespace FrameFlow.Graph;
 /// </summary>
 /// <param name="From">The output port the edge leaves.</param>
 /// <param name="To">The input port the edge enters.</param>
-/// <param name="Inherit">Whether the edge takes the incoming ref rather than a clone or an AddRef.</param>
 /// <param name="Blocks">
 /// Whether a full edge makes its producer wait rather than dropping. A dropping edge anywhere on
 /// a path is what keeps a fork-rejoin from deadlocking.
 /// </param>
-internal readonly record struct EdgeSpec(IPort From, IPort To, bool Inherit, bool Blocks);
+internal readonly record struct EdgeSpec(IPort From, IPort To, bool Blocks);
 
 /// <summary>
 /// A join whose secondary it can stop reading, which is what makes a fork-rejoin able to
@@ -35,7 +34,7 @@ internal interface IHoldsItsSecondary
 /// <summary>An input port that knows whether an edge has been wired into it.</summary>
 internal interface IWireableInput : IPort
 {
-    /// <summary>Whether <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeConfig{T})"/> has attached an edge.</summary>
+    /// <summary>Whether <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeOptions?)"/> has attached an edge.</summary>
     bool IsWired { get; }
 }
 
@@ -64,13 +63,6 @@ internal interface IRequiresEveryInput
 /// capacity-1 channel, and the run hangs instead of faulting. Measured by disabling this check,
 /// which makes the test for an unwired secondary stop terminating rather than fail.
 /// </para>
-/// <para>
-/// The fork rule is about ownership: two edges leaving one port both claiming the incoming ref
-/// is a double release. It is not reachable through
-/// <see cref="Graph.Connect{T}(OutputPort{T}, InputPort{T}, EdgeConfig{T})"/>, which never marks
-/// an edge, and is reachable by wiring a chain's trunk twice after
-/// <see cref="GraphChain{T}.Branch(EdgeConfig{T})"/>.
-/// </para>
 /// </remarks>
 internal static class GraphTopology
 {
@@ -87,17 +79,6 @@ internal static class GraphTopology
         ArgumentNullException.ThrowIfNull(edges);
 
         var errors = new List<string>();
-
-        foreach (var group in edges.Where(e => e.Inherit).GroupBy(e => e.From))
-        {
-            if (group.Count() > 1)
-            {
-                errors.Add(
-                    $"Output port '{Name(group.Key)}' has {group.Count()} trunk edges. A forked "
-                        + "port has one trunk, and the rest are branches that clone or AddRef."
-                );
-            }
-        }
 
         errors.AddRange(DeadlockedForkRejoins(nodes, edges));
 

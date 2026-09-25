@@ -344,6 +344,12 @@ may pass another pool. The audio fill returns how many samples it wrote, because
 that only while converting. The CPU frame lays out up to three planes from its format, and
 `CloneCpu` copies each. The decoder's internal buffer pool went with the public constructors.
 
+**2026-09-25, fan-out is `AddRef` (#380).** Decision 7 is implemented. `ForwardAsync` takes a
+reference for every branch before writing any, so a branch read at once cannot release the last
+reference while another is still to be written. MotionClip's pre-roll ring and gate, and the four
+examples that copied frames for preview panes, hold references. The two camera examples convert
+before they fan out, so their panes hold converter output and pin no camera lease.
+
 **2026-09-25, graph items are the frames themselves (#42).** Decision 6 is implemented. The pumps
 now call `AddRef` and keep the item they hold, at the fork and at the join's match, as decision 1
 allows once every item returns itself. The sink adapters take a reference for the sink rather than

@@ -6,19 +6,20 @@ using FrameFlow.Media;
 namespace FrameFlow.MotionClip;
 
 /// <summary>
-/// A bounded ring of recent frames kept alive <em>outside</em> the pipeline's
-/// pool-rental lifecycle, so a triggering event can look backward in time
-/// (ADR-0052 §3). Frames are stored as un-pooled <see cref="VideoFrameExtensions.CloneCpu"/>
-/// copies; the oldest is evicted and disposed when the ring is full.
+/// A bounded ring of recent frames kept alive past the node that saw them, so a
+/// triggering event can look backward in time (ADR-0052 §3). The ring holds a
+/// reference on each frame (ADR-0080); the oldest is evicted and released when the
+/// ring is full.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Memory budget.</b> The ring holds at most <c>capacityFrames</c> full
-/// display-resolution BGRA32 copies. At 640×480 that is ~1.2&#160;MB each;
+/// <b>Memory budget.</b> The ring keeps at most <c>capacityFrames</c> full
+/// display-resolution BGRA32 frames alive. At 640×480 that is ~1.2&#160;MB each;
 /// at 720p ~3.5&#160;MB; at 1080p ~8&#160;MB. A 2&#160;s ring at 30&#160;fps is
-/// 60 frames — ≈74&#160;MB at 640×480, ≈210&#160;MB at 720p. These copies are
-/// invisible to the display pool's accounting, so the ring's capacity is the
-/// only governor — hence the hard cap enforced here.
+/// 60 frames — ≈74&#160;MB at 640×480, ≈210&#160;MB at 720p. The ring's capacity
+/// is the only governor — hence the hard cap enforced here. The recorder converts
+/// every frame before the gate (<see cref="RecorderPipeline"/>), so these are CPU
+/// frames, and holding them pins no decoder or camera pool (ADR-0081).
 /// </para>
 /// <para>Thread-safety: guarded by a lock so the recorder's snapshot can race
 /// the producer's add safely.</para>
@@ -51,22 +52,22 @@ internal sealed class PreRollBuffer : IDisposable
     }
 
     /// <summary>
-    /// Clones <paramref name="frame"/> into the ring (the clone outlives the
-    /// pipeline frame), evicting and disposing the oldest if at capacity. The
-    /// source frame is neither retained nor disposed.
+    /// Takes a reference on <paramref name="frame"/> and keeps it in the ring,
+    /// evicting and releasing the oldest if at capacity. The caller's own
+    /// reference is untouched.
     /// </summary>
     public void Add(IVideoFrame frame)
     {
         ArgumentNullException.ThrowIfNull(frame);
-        IVideoFrame clone = frame.CloneCpu();
+        IVideoFrame held = frame.AddRef();
         lock (_gate)
         {
             if (_disposed)
             {
-                clone.Dispose();
+                held.Dispose();
                 return;
             }
-            _ring.Enqueue(clone);
+            _ring.Enqueue(held);
             while (_ring.Count > _capacityFrames)
                 _ring.Dequeue().Dispose();
         }

@@ -15,8 +15,8 @@ namespace FrameFlow.MotionClip;
 /// while the encoder is still writing the previous one (was the
 /// "Motion detected while saving — event dropped" case in the monolithic
 /// recorder). When a live <see cref="IVideoSink"/> preview is supplied,
-/// it is wired as a sibling consumer of the display-resolution stream via
-/// a fan-out edge with an explicit <c>CloneCpu</c> cloner — see ADR-0054.
+/// it is wired as a sibling consumer of the display-resolution stream, and
+/// the two share each frame by reference (ADR-0080).
 /// Used identically by the headless (<c>Program</c>) and windowed
 /// (<c>MainWindow</c>) hosts and by the camera tracker
 /// (<see cref="CameraTracking"/>) so every path runs the same topology.
@@ -35,11 +35,8 @@ internal static class RecorderPipeline
     /// Builds the graph. When <paramref name="preview"/> is non-<see langword="null"/>,
     /// the display-resolution stream fans out to two sibling consumers:
     /// the gate (which drives motion detection and clip assembly) and the
-    /// preview sink (which renders frames to the UI). The preview branch
-    /// carries an explicit cloner so the substrate hands the sink an
-    /// independent <see cref="VideoFrameExtensions.CloneCpu"/> per frame. That
-    /// copy was required while converter outputs could not be shared (ADR-0054);
-    /// they count references now (ADR-0080), and #380 removes the cloner. The
+    /// preview sink (which renders frames to the UI). Both hold the same
+    /// frame by reference (ADR-0080). The
     /// preview edge is <see cref="EdgeOptions.LatestWins(int)"/> so a slow
     /// UI drops frames rather than back-pressuring motion detection. The
     /// gate-to-encoder edge stays <c>Buffered(cap=1)</c> so "save in
@@ -66,21 +63,9 @@ internal static class RecorderPipeline
         var graph = new FrameFlow.Graph.Graph();
         GraphChain<IVideoFrame> display = graph.Pipeline(source).Then(resizeConvert);
 
-        // The preview is a declared branch, so the gate stays the trunk and takes
-        // the incoming ref no matter which edge is wired first; only the preview
-        // pays the CloneCpu cost.
+        // The preview branches off the display stream and shares its frames.
         if (preview is not null)
-        {
-            display
-                .Branch(
-                    EdgeOptions
-                        .LatestWins()
-                        .WithCloner<IVideoFrame>(
-                            input => input.CloneCpu()
-                        )
-                )
-                .To(preview.AsSinkNode("preview-sink"));
-        }
+            display.Branch(EdgeOptions.LatestWins()).To(preview.AsSinkNode("preview-sink"));
 
         display.Then(gateNode).To(encoderNode, EdgeOptions.Buffered(capacity: 1));
         return graph;
