@@ -325,6 +325,10 @@ internal static class NodePumps
 
                         try
                         {
+                            // The constructor refuses a frame-typed secondary without a lead;
+                            // this catches a frame arriving through a broader declared type.
+                            node.ThrowIfFrameWithoutLead(item);
+
                             var (from, to) = node.Keys.SecondaryInterval(item);
 
                             // Past MaxLead, stop reading the edge until the primary
@@ -344,8 +348,8 @@ internal static class NodePumps
                         }
                         catch (Exception ex)
                         {
-                            // The key selector threw. The window never took
-                            // ownership, so this ref is still ours.
+                            // The key selector or the frame check threw. The window
+                            // never took ownership, so this ref is still ours.
                             item.Dispose();
                             if (node.OnError == FailureResponse.Propagate)
                             {

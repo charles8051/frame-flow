@@ -276,6 +276,24 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     }
 
     /// <summary>
+    /// Refuses a frame that reaches a join with no lead bound through a secondary type broader
+    /// than the frame's own, which the constructor's type check cannot see (ADR-0080, decision 8).
+    /// Called on each secondary before it is admitted.
+    /// </summary>
+    internal void ThrowIfFrameWithoutLead(TSecondary item)
+    {
+        if (MaxLead is null && item is IFrame)
+        {
+            throw new InvalidOperationException(
+                $"Join '{Id}' received a frame secondary ({item.GetType().Name}) and has no lead "
+                    + "bound, so it would keep every frame that arrives ahead of the primary. "
+                    + "Set maxLead, or declare the secondary as the frame type so the constructor "
+                    + "checks it."
+            );
+        }
+    }
+
+    /// <summary>
     /// Drops every retained secondary. Called on the seek path: the window is
     /// pre-seek state and nothing in it correlates to post-seek primaries.
     /// </summary>

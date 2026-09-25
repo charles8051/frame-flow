@@ -34,6 +34,47 @@ public sealed class SyncJoinFrameSecondaryTests
         Assert.Null(join.MaxLead);
     }
 
+    [Fact]
+    public async Task FrameArrivingThroughABroaderSecondaryType_WithoutALead_FaultsAndIsNotKept()
+    {
+        var frame = new CountedFrameItem();
+        var join = NewJoin<IRefCounted>(maxLead: null);
+
+        // Never EOSes on its own, so the secondary is read while the primary is live, and
+        // only the fault can end the run.
+        var primary = new SourceNode<RefBox<int>>(
+            "endless-primary",
+            async ct =>
+            {
+                await new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+                    .Task.WaitAsync(ct)
+                    .ConfigureAwait(false);
+                return null;
+            }
+        );
+        int emitted = 0;
+        var secondary = new SourceNode<IRefCounted>(
+            "secondary",
+            _ => ValueTask.FromResult<IRefCounted?>(emitted++ == 0 ? frame : null)
+        );
+
+        var graph = new Graph();
+        graph.Pipeline(secondary).ToSecondary(join, EdgeOptions.Buffered(4));
+        graph.Pipeline(primary).ToPrimary(join);
+        graph.Pipeline(join.Output).To(new SinkNode<RefBox<int>>("sink", (item, _) =>
+        {
+            item.Dispose();
+            return ValueTask.CompletedTask;
+        }));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => graph.RunAsync().WaitAsync(TimeSpan.FromSeconds(15))
+        );
+
+        Assert.Contains("'join'", ex.Message);
+        Assert.Equal(0, frame.RefCount);
+    }
+
     private static SyncJoinNode<RefBox<int>, TSecondary, RefBox<int>> NewJoin<TSecondary>(
         TimeSpan? maxLead
     )
@@ -49,6 +90,24 @@ public sealed class SyncJoinFrameSecondaryTests
             window: TimeSpan.FromSeconds(1),
             maxLead: maxLead
         );
+
+    private sealed class CountedFrameItem : IFrame, IRefCounted
+    {
+        private int _count = 1;
+
+        public int RefCount => Volatile.Read(ref _count);
+        public int Width => 1;
+        public int Height => 1;
+        public TimeSpan Timestamp => TimeSpan.Zero;
+
+        public IRefCounted AddRef()
+        {
+            RefCounting.AddRef(ref _count, this);
+            return this;
+        }
+
+        public void Dispose() => RefCounting.Release(ref _count, this);
+    }
 
     private sealed class FrameItem : IFrame, IRefCounted
     {
