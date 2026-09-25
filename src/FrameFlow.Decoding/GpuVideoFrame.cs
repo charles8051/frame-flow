@@ -5,6 +5,7 @@ using FrameFlow.Media;
 using FrameFlow.Native.Interop;
 using FrameFlow.Graph;
 using FrameFlow.Decoding.Diagnostics;
+using FrameFlow.Decoding.Internal;
 
 namespace FrameFlow.Decoding;
 
@@ -63,6 +64,10 @@ public sealed class GpuVideoFrame : IVideoFrame
     // creating owner; AddRef bumps it, Dispose decrements it, and the wrapped
     // AVFrame is freed only at zero. The shared rule: Graph.RefCounting.
     private int _refCount = 1;
+
+    // The pool this frame's surface belongs to, held until the final release so the pool's
+    // surfaces stay in DecodePoolMetrics.Capacity while this frame pins one of them (#229).
+    private DecodePoolGeneration? _pool;
 
     /// <inheritdoc/>
     public int Width { get; }
@@ -153,6 +158,10 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// <param name="pts">Presentation timestamp.</param>
     /// <param name="duration">Frame duration.</param>
     /// <param name="backend">
+    /// <param name="pool">
+    /// The pool the frame's surface belongs to, which the frame holds until its final release, or
+    /// <see langword="null"/> when the caller does not track pools.
+    /// </param>
     /// The hardware backend that produced the frame, so consumers can
     /// interpret the device handle (e.g. D3D11VA → <c>ID3D11Texture2D</c>).
     /// </param>
@@ -168,14 +177,18 @@ public sealed class GpuVideoFrame : IVideoFrame
         PixelFormat softwareFormat,
         TimeSpan pts,
         TimeSpan duration,
-        HardwareDecodeBackendKind backend
+        HardwareDecodeBackendKind backend,
+        DecodePoolGeneration? pool = null
     )
     {
         nint cloned = FFAvUtil.av_frame_clone(sourceAvFrame);
         if (cloned == nint.Zero)
             return null;
 
-        return FromOwnedAvFrame(cloned, width, height, softwareFormat, pts, duration, backend);
+        var frame = FromOwnedAvFrame(cloned, width, height, softwareFormat, pts, duration, backend);
+        pool?.Retain();
+        frame._pool = pool;
+        return frame;
     }
 
     /// <summary>
@@ -367,5 +380,7 @@ public sealed class GpuVideoFrame : IVideoFrame
         _handle = null;
         // The pinned hwframe-pool slice is returned (perf survey §A1 telemetry).
         DecodePoolMetrics.OnLeaseReleased();
+        _pool?.Release();
+        _pool = null;
     }
 }

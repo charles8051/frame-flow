@@ -52,6 +52,42 @@ public sealed class DecodePoolCeilingTests(FfmpegBootstrapFixture fixture)
         }
     }
 
+    // 27 is AV_CODEC_ID_H264.
+    [RequiresHardwareDecodeFact(codecId: 27)]
+    public async Task APoolHeldByAFrame_StaysInTheCapacity_AfterItsDecoderIsDisposed()
+    {
+        // The frame keeps the pool alive, and its lease stays in the outstanding count, so the
+        // pool's surfaces must stay in the capacity too, or the two gauges disagree.
+        int before = DecodePoolMetrics.Capacity;
+        var demux = await OpenAsync();
+        GpuVideoFrame held;
+        int poolSize;
+        await using (demux)
+        {
+            var decoder = VideoDecoder.Open(
+                demux.FormatContextPtr,
+                demux.MediaInfo.VideoStreams[0].StreamIndex,
+                new HardwareDecodeOptions { Mode = HardwareDecodeMode.Required },
+                fixture.Capabilities,
+                loggerFactory: null
+            );
+            decoder.YieldHardwareFrames = true;
+            await using (decoder)
+            {
+                await QueueAllAsync(demux, decoder);
+                await using var frames = decoder.DecodeAsync().GetAsyncEnumerator();
+                Assert.True(await frames.MoveNextAsync());
+                held = Assert.IsType<GpuVideoFrame>(frames.Current);
+                poolSize = decoder.GetDiagnostics().HardwarePoolSize;
+            }
+        }
+
+        Assert.Equal(before + poolSize, DecodePoolMetrics.Capacity);
+
+        held.Dispose();
+        Assert.Equal(before, DecodePoolMetrics.Capacity);
+    }
+
     [RequiresFfmpegAndCorpusFact]
     public async Task ASoftwareDecoder_ReportsNoPool()
     {

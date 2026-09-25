@@ -230,6 +230,18 @@ internal readonly unsafe ref struct AvFrameAccessor
     }
 
     /// <summary>
+    /// The address of this hardware frame's <c>AVHWFramesContext</c>, which identifies its pool:
+    /// every frame from one pool reports the same value, and a renegotiated pool a different
+    /// one. Zero for a software frame.
+    /// </summary>
+    internal nint GetHwFramesContextPointer()
+    {
+        ref AVFrame f = ref Unsafe.AsRef<AVFrame>((void*)_ptr);
+        var framesCtxRef = f.hw_frames_ctx;
+        return framesCtxRef is null ? nint.Zero : (nint)framesCtxRef->data;
+    }
+
+    /// <summary>
     /// The number of surfaces in this hardware frame's pool:
     /// <c>hw_frames_ctx → AVHWFramesContext.initial_pool_size</c>. Zero when the frame has no
     /// frames context (a software frame). Read from the live field rather than re-derived, so

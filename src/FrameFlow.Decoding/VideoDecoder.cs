@@ -68,8 +68,10 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     private FrameHandle? _swFrame;
     private int _hwPixelFormat = -1;
 
-    // Surfaces in the hwframe pool, from the latest hardware frame (#229). Zero until one
-    // arrives. Written by the decode worker and on dispose, both under _codecSync.
+    // The hwframe pool the latest frame came from (#229), or null before the first hardware
+    // frame and after a switch to software. Its size is mirrored in _hwPoolSize for the
+    // snapshot. Written by the decode worker and on dispose, both under _codecSync.
+    private DecodePoolGeneration? _pool;
     private int _hwPoolSize;
 
     // ADR-0038: when true, hwaccel-active decoders yield GpuVideoFrame
@@ -450,8 +452,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 // here. Tracked before the frame is built, because BuildGpuFrame stamps
                 // HardwareBackend onto the frame.
                 TrackHardwareEngagement(onHardware, framePtr);
-                if (onHardware)
-                    TrackPoolSize(new AvFrameAccessor(framePtr).GetHwFramesPoolSize());
+                TrackPool(onHardware, framePtr);
 
                 // Lateness recovery, cheapest rung. Skipping the copy costs a picture and
                 // nothing else: the frame was decoded, so the codec's reference state is
@@ -528,17 +529,33 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     }
 
     /// <summary>
-    /// Records the pool size a hardware frame reports and moves the process-wide capacity by
-    /// the change. The pool is created in <c>get_format</c>, so the first hardware frame is the
-    /// earliest point it is known, and a renegotiation can replace it with one of another size.
+    /// Follows the pool the decoded frame came from. The pool is created in <c>get_format</c>,
+    /// so the first hardware frame is the earliest point it is known; a renegotiation can
+    /// replace it with another, or with software decode, which has none.
     /// </summary>
-    private void TrackPoolSize(int poolSize)
+    private void TrackPool(bool onHardware, nint framePtr)
     {
-        if (poolSize == _hwPoolSize)
+        var accessor = new AvFrameAccessor(framePtr);
+        nint framesContext = onHardware ? accessor.GetHwFramesContextPointer() : nint.Zero;
+        if (framesContext == (_pool?.FramesContext ?? nint.Zero))
             return;
 
-        DecodePoolMetrics.OnPoolCapacityChanged(poolSize - _hwPoolSize);
-        Volatile.Write(ref _hwPoolSize, poolSize);
+        SetPool(
+            framesContext == nint.Zero
+                ? null
+                : new DecodePoolGeneration(framesContext, accessor.GetHwFramesPoolSize())
+        );
+    }
+
+    /// <summary>
+    /// Lets go of the current pool and adopts <paramref name="pool"/>. A released pool stays in
+    /// the capacity until the frames built from it are released too.
+    /// </summary>
+    private void SetPool(DecodePoolGeneration? pool)
+    {
+        _pool?.Release();
+        _pool = pool;
+        Volatile.Write(ref _hwPoolSize, pool?.Size ?? 0);
     }
 
     /// <summary>
@@ -920,7 +937,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             softwareFormat: PixelFormat.Nv12,
             pts: pts,
             duration: accessor.ComputeDuration(_timeBaseNum, _timeBaseDen),
-            backend: HardwareBackend ?? HardwareDecodeBackendKind.Other
+            backend: HardwareBackend ?? HardwareDecodeBackendKind.Other,
+            pool: _pool
         );
 
         if (managed is null)
@@ -1236,10 +1254,9 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 FFAvUtil.av_buffer_unref(ref _hwDeviceCtxRef);
             }
 
-            // The pool goes with the codec context, so its surfaces leave the summed capacity.
-            // Frames still held downstream keep their own references and are counted as
-            // outstanding until they are released.
-            TrackPoolSize(0);
+            // The decoder lets go of its pool. Frames still held downstream keep it alive, and
+            // its surfaces stay in the capacity until the last of them is released.
+            SetPool(null);
         }
 
         return ValueTask.CompletedTask;

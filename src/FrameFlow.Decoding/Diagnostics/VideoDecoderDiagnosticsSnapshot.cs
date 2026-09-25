@@ -62,8 +62,9 @@ namespace FrameFlow.Decoding.Diagnostics;
 /// See <c>GopShedGate</c>.
 /// </param>
 /// <param name="HardwarePoolSize">
-/// The number of surfaces in this decoder's hwframe pool, read from the first hardware frame
-/// (<c>AVHWFramesContext.initial_pool_size</c>), or zero when nothing has decoded on hardware.
+/// The number of surfaces in this decoder's current hwframe pool, read from the first frame that
+/// came from it (<c>AVHWFramesContext.initial_pool_size</c>), or zero before the first hardware
+/// frame and after a switch to software decode.
 /// It is the ceiling for the frames this decoder can have live at once, counting the ones it
 /// keeps as references, so it is larger than what consumers can hold. FFmpeg creates the pool in
 /// <c>get_format</c>, which runs on the first decoded frame, so it is not known when

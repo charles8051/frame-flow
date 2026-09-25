@@ -28,9 +28,11 @@ namespace FrameFlow.Decoding.Diagnostics;
 /// </para>
 /// <para>
 /// <b>Both gauges sum across decoders.</b> The outstanding count covers every decoder in the
-/// process, so the capacity is the sum of the pool sizes of every live hardware decoder, each
-/// read from its first hardware frame (<see cref="VideoDecoderDiagnosticsSnapshot.HardwarePoolSize"/>
-/// carries one decoder's). A process running one player reads them as one pool; with several
+/// process, so the capacity is the sum of the sizes of every live hardware pool, each read from
+/// the first frame that came from it (<see cref="VideoDecoderDiagnosticsSnapshot.HardwarePoolSize"/>
+/// carries one decoder's current pool). A pool is live while its decoder or any frame built from
+/// it holds it, so a disposed decoder's pool stays counted until its last frame is released,
+/// exactly as that frame stays in the outstanding count. A process running one player reads them as one pool; with several
 /// players or a playlist's preroll, one pool can be exhausted while the sums look comfortable,
 /// and a decoder's own snapshot is the place to look.
 /// </para>
@@ -64,7 +66,7 @@ public static class DecodePoolMetrics
             "frameflow.decoding.gpu_pool_capacity",
             () => Volatile.Read(ref _capacity),
             unit: "{frames}",
-            description: "Surfaces in the hwframe pools of live hardware decoders, summed across decoders as the outstanding gauge is. Zero when nothing decodes on hardware."
+            description: "Surfaces in live hwframe pools (held by a decoder or by a frame from them), summed across decoders as the outstanding gauge is. Zero when nothing decodes on hardware."
         );
     }
 
@@ -72,7 +74,8 @@ public static class DecodePoolMetrics
     public static int Outstanding => Volatile.Read(ref _outstanding);
 
     /// <summary>
-    /// Surfaces in the pools of live hardware decoders right now, summed across decoders.
+    /// Surfaces in live hardware pools right now, summed across decoders. A pool is live while
+    /// its decoder or any frame built from it holds it.
     /// </summary>
     public static int Capacity => Volatile.Read(ref _capacity);
 
@@ -101,8 +104,8 @@ public static class DecodePoolMetrics
     public static void OnLeaseReleased() => Interlocked.Decrement(ref _outstanding);
 
     /// <summary>
-    /// Adjusts the summed capacity when a decoder learns its pool size, when that size changes,
-    /// and, with the negated size, when the decoder is disposed.
+    /// Adds a pool's surfaces when it is first seen, and removes them, with the negated size,
+    /// when nothing holds it any more.
     /// </summary>
     internal static void OnPoolCapacityChanged(int delta) => Interlocked.Add(ref _capacity, delta);
 }
