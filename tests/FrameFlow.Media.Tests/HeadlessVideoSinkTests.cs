@@ -23,7 +23,7 @@ public sealed class HeadlessVideoSinkTests
     private static HeadlessVideoSink NewSink(
         TimeSpan presentCost = default,
         TimeProvider? time = null
-    ) => new(new TrackingPool(), presentCost, time);
+    ) => new(presentCost, time);
 
     // ── Counting ──────────────────────────────────────────────────────────────────────────
 
@@ -91,8 +91,8 @@ public sealed class HeadlessVideoSinkTests
     public async Task PresentCost_HoldsTheFrameForTheWholeCost()
     {
         // The ordering the sink exists for. If the frame were disposed first and the cost paid
-        // after, the pool slot would free immediately and the cost would create no backpressure
-        // — which measures nothing.
+        // after, the frame would be released immediately and the cost would create no
+        // backpressure — which measures nothing.
         var time = new FakeTimeProvider();
         await using var sink = NewSink(presentCost: TimeSpan.FromMilliseconds(10), time: time);
 
@@ -167,31 +167,8 @@ public sealed class HeadlessVideoSinkTests
     public void NegativeCost_IsRejected()
     {
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => new HeadlessVideoSink(new TrackingPool(), TimeSpan.FromMilliseconds(-1))
+            () => new HeadlessVideoSink(TimeSpan.FromMilliseconds(-1))
         );
-    }
-
-    // ── Pool ownership ────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public void PoolIsRequired()
-    {
-        Assert.Throws<ArgumentNullException>(() => new HeadlessVideoSink(null!));
-    }
-
-    [Fact]
-    public async Task PoolIsNeverDisposedBySink()
-    {
-        // The sink does not own the pool, so it cannot tear one down under a present still
-        // waiting out PresentCost.
-        var pool = new TrackingPool();
-
-        await using (var sink = new HeadlessVideoSink(pool))
-        {
-            Assert.Same(pool, sink.FramePool);
-        }
-
-        Assert.False(pool.Disposed);
     }
 
     // ── Disposal ──────────────────────────────────────────────────────────────────────────
@@ -241,23 +218,5 @@ public sealed class HeadlessVideoSinkTests
         public CpuFrameData? AsCpu() => null;
 
         public CpuFrameData ToCpu() => throw new NotSupportedException();
-    }
-
-    private sealed class TrackingPool : IFramePool
-    {
-        public bool Disposed { get; private set; }
-
-        public FrameMemoryDomain MemoryDomain => FrameMemoryDomain.Cpu;
-
-        public ValueTask<IVideoFrame> RentAsync(
-            int width,
-            int height,
-            PixelFormat format,
-            CancellationToken ct
-        ) => new(new StubFrame(TimeSpan.Zero));
-
-        public void Return(IVideoFrame frame) { }
-
-        public void Dispose() => Disposed = true;
     }
 }

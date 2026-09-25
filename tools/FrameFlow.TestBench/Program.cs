@@ -5,7 +5,6 @@ using FrameFlow.Media;
 // and fail to resolve. The alias pins it to the real one.
 using DesktopLifetime = global::Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime;
 using FrameFlow.Native;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.TestBench;
 
@@ -95,10 +94,7 @@ internal static class Program
         List<BenchCommand>? scripted
     )
     {
-        // A bounded pool on purpose: it is what makes the decoder block once frames are
-        // in flight, so a --present-cost propagates back as real backpressure.
-        using var pool = new CpuFramePool(NullLogger<CpuFramePool>.Instance, options.PoolCapacity);
-        var sink = new HeadlessVideoSink(pool, options.PresentCost);
+        var sink = new HeadlessVideoSink(options.PresentCost);
 
         using var ctrlC = CancelOnCtrlC();
         try

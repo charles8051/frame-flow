@@ -9,7 +9,7 @@ namespace FrameFlow.Media;
 /// <remarks>
 /// <para>
 /// This struct does <strong>not</strong> own the underlying memory — it is a view
-/// into buffers managed by an <see cref="IFramePool"/> or a decode allocator.
+/// into a buffer owned by the <see cref="IVideoFrame"/> it came from.
 /// Callers must not retain references beyond the lifetime of the owning
 /// <see cref="IVideoFrame"/>.
 /// </para>

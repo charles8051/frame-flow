@@ -38,14 +38,6 @@ internal sealed record BenchOptions
     /// <summary>Synthetic per-frame present cost for the headless sink.</summary>
     internal TimeSpan PresentCost { get; init; }
 
-    /// <summary>Frame pool capacity. Bounded on purpose — see the remarks.</summary>
-    /// <remarks>
-    /// A bounded pool is what makes the decoder block once frames are in flight, so a
-    /// synthetic present cost propagates back as real backpressure instead of billing
-    /// wall-clock time while the decoder runs unimpeded.
-    /// </remarks>
-    internal int PoolCapacity { get; init; } = 3;
-
     /// <summary>Also write the session to this file.</summary>
     internal string? LogFile { get; init; }
 
@@ -168,14 +160,6 @@ internal sealed record BenchOptions
                             );
                         options = options with { PresentCost = cost };
                         break;
-                    case "--pool-capacity":
-                        var capacityText = Next(argument)!;
-                        if (!int.TryParse(capacityText, out var capacity) || capacity < 1)
-                            throw new BadUsage(
-                                $"--pool-capacity needs a positive integer, got '{capacityText}'"
-                            );
-                        options = options with { PoolCapacity = capacity };
-                        break;
                     case "--help" or "-h":
                         return new ParseOutcome(null, HelpText, IsHelp: true);
                     default:
@@ -229,7 +213,6 @@ internal sealed record BenchOptions
           --settle-window <dur>    recovery: how long a rung runs before it is judged
           --relax-after <dur>      recovery: how long recovery holds before a rung is returned
           --present-cost <dur>   synthetic per-frame cost for the headless sink
-          --pool-capacity <n>    frame pool slots (default 3)
           --log-file <file>      also write the session to this file
           -h, --help             this
 

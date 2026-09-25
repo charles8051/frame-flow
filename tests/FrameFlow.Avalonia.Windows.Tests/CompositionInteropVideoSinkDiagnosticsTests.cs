@@ -2,7 +2,6 @@ using FrameFlow.Avalonia.Windows;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Media.Diagnostics;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Avalonia.Windows.Tests;
 
@@ -19,13 +18,10 @@ namespace FrameFlow.Avalonia.Windows.Tests;
 /// </remarks>
 public sealed class CompositionInteropVideoSinkDiagnosticsTests
 {
-    private static CpuFramePool NewPool() => new(NullLogger<CpuFramePool>.Instance);
-
     [Fact]
     public void GetDiagnostics_WithoutSource_ReturnsEmpty()
     {
-        using var pool = NewPool();
-        var sink = new CompositionInteropVideoSink(pool);
+        var sink = new CompositionInteropVideoSink();
 
         Assert.Equal(VideoSinkDiagnosticsSnapshot.Empty, sink.GetDiagnostics());
     }
@@ -33,8 +29,7 @@ public sealed class CompositionInteropVideoSinkDiagnosticsTests
     [Fact]
     public void GetDiagnostics_WithSource_ReturnsTheViewSuppliedSnapshot()
     {
-        using var pool = NewPool();
-        var sink = new CompositionInteropVideoSink(pool);
+        var sink = new CompositionInteropVideoSink();
         var expected = new VideoSinkDiagnosticsSnapshot(
             FramesPresented: 120,
             FramesDropped: 3,
@@ -50,8 +45,7 @@ public sealed class CompositionInteropVideoSinkDiagnosticsTests
     [Fact]
     public void GetDiagnostics_ReflectsLiveSourceChanges()
     {
-        using var pool = NewPool();
-        var sink = new CompositionInteropVideoSink(pool);
+        var sink = new CompositionInteropVideoSink();
         long presented = 0;
         sink.DiagnosticsSource = () => new VideoSinkDiagnosticsSnapshot(presented, 0, null, null);
 
@@ -65,8 +59,7 @@ public sealed class CompositionInteropVideoSinkDiagnosticsTests
     [Fact]
     public async Task FramesSuperseded_StartsAtZero()
     {
-        using var pool = NewPool();
-        var sink = new CompositionInteropVideoSink(pool);
+        var sink = new CompositionInteropVideoSink();
 
         await sink.PresentAsync(new StubFrame(), CancellationToken.None);
 
@@ -76,8 +69,7 @@ public sealed class CompositionInteropVideoSinkDiagnosticsTests
     [Fact]
     public async Task FramesSuperseded_CountsFramesReplacedBeforeTheRenderTickTookThem()
     {
-        using var pool = NewPool();
-        var sink = new CompositionInteropVideoSink(pool);
+        var sink = new CompositionInteropVideoSink();
         var first = new StubFrame();
 
         await sink.PresentAsync(first, CancellationToken.None);
@@ -92,8 +84,7 @@ public sealed class CompositionInteropVideoSinkDiagnosticsTests
     [Fact]
     public async Task FramesSuperseded_DoesNotCountFramesTheRenderTickConsumed()
     {
-        using var pool = NewPool();
-        var sink = new CompositionInteropVideoSink(pool);
+        var sink = new CompositionInteropVideoSink();
 
         for (int i = 0; i < 5; i++)
         {
@@ -113,8 +104,7 @@ public sealed class CompositionInteropVideoSinkDiagnosticsTests
     [Fact]
     public async Task EveryAcceptedFrameIsPresentedSupersededOrStillPending()
     {
-        using var pool = NewPool();
-        var sink = new CompositionInteropVideoSink(pool);
+        var sink = new CompositionInteropVideoSink();
 
         // Feed 10, take every 4th: a render tick slower than the feed, the 1080p60 shape.
         const int fed = 10;

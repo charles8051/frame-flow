@@ -36,31 +36,6 @@ public sealed class RefCountingRuleTests
         );
     }
 
-    [Fact]
-    public void PooledCpuVideoFrame_FollowsTheRule()
-    {
-        RefCountConformance.AssertFollowsTheRule<PooledCpuVideoFrame>(
-            () =>
-            {
-                int returns = 0;
-                var frame = new PooledCpuVideoFrame(
-                    _ => returns++,
-                    new byte[16],
-                    width: 2,
-                    height: 2,
-                    strideY: 8,
-                    strideU: 0,
-                    strideV: 0,
-                    PixelFormat.Bgra32,
-                    TimeSpan.Zero,
-                    TimeSpan.Zero
-                );
-                return (frame, () => returns);
-            },
-            frame => frame.AddRef()
-        );
-    }
-
     private sealed class CountingOwner<T>(int length) : IMemoryOwner<T>
     {
         private readonly T[] _array = new T[length];

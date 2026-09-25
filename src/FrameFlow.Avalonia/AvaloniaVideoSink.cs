@@ -28,7 +28,7 @@ namespace FrameFlow.Avalonia;
 /// </para>
 /// <para>
 /// Frames are accessed via <see cref="IVideoFrame.AsCpu()"/> for pixel data.
-/// After rendering, frames are disposed (returning them to the pool).
+/// After rendering, frames are disposed.
 /// When a new frame overwrites a pending frame that hasn't been rendered yet,
 /// the old frame is disposed (dropped).
 /// </para>
@@ -60,9 +60,6 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     /// before the UI thread swapped them in.
     /// </summary>
     public int DroppedFrameCount => (int)_telemetry.DroppedCount;
-
-    /// <inheritdoc />
-    public IFramePool FramePool { get; }
 
     /// <summary>
     /// Raised on the presenting (graph) thread once <see cref="PresentAsync"/> has installed
@@ -156,12 +153,9 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     /// <summary>
     /// Initializes an Avalonia video sink.
     /// </summary>
-    /// <param name="framePool">The frame pool that produces frames for this sink.</param>
     /// <param name="logger">Optional logger for diagnostics.</param>
-    public AvaloniaVideoSink(IFramePool framePool, ILogger<AvaloniaVideoSink>? logger = null)
+    public AvaloniaVideoSink(ILogger<AvaloniaVideoSink>? logger = null)
     {
-        ArgumentNullException.ThrowIfNull(framePool);
-        FramePool = framePool;
         _telemetry = new VideoSinkTelemetry(Meters, _slot);
         _logger = logger ?? NullLogger<AvaloniaVideoSink>.Instance;
         LogSinkCreated(_logger);
@@ -172,12 +166,9 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     /// environments without a display. <see cref="PresentAsync"/> accepts and
     /// stores frames normally; <see cref="RenderPendingFrame"/> disposes them.
     /// </summary>
-    /// <param name="framePool">The frame pool for backpressure and frame lifecycle.</param>
     /// <param name="logger">Optional logger.</param>
-    public static AvaloniaVideoSink CreateHeadless(
-        IFramePool framePool,
-        ILogger<AvaloniaVideoSink>? logger = null
-    ) => new(framePool, logger);
+    public static AvaloniaVideoSink CreateHeadless(ILogger<AvaloniaVideoSink>? logger = null) =>
+        new(logger);
 
     /// <inheritdoc />
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)

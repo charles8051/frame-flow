@@ -19,12 +19,8 @@ namespace FrameFlow.Sdl;
 /// from any thread, and <see cref="RenderPendingFrame"/> consumes it on the SDL thread.
 /// </para>
 /// <para>
-/// Works with <see cref="IVideoFrame"/> and owns its <see cref="IFramePool"/>, which
-/// provides backpressure when all frames are in-flight.
-/// </para>
-/// <para>
 /// Frames are accessed via <see cref="IVideoFrame.AsCpu()"/> for pixel data.
-/// After rendering, frames are disposed (returning them to the pool).
+/// After rendering, frames are disposed.
 /// When a new frame overwrites a pending frame that hasn't been rendered yet,
 /// the old frame is disposed (dropped).
 /// </para>
@@ -62,15 +58,11 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     /// <summary>Gets the total number of frames dropped because the SDL thread lagged.</summary>
     public int DroppedFrameCount => (int)_telemetry.DroppedCount;
 
-    /// <inheritdoc />
-    public IFramePool FramePool { get; }
-
     /// <summary>
     /// Initializes an SDL2 video sink and creates the SDL window and renderer.
     /// Must be called on the SDL thread — the same thread that called <c>SDL_Init</c>.
     /// </summary>
     /// <param name="sdl">The SDL2 API instance. The sink does not own this instance.</param>
-    /// <param name="framePool">The frame pool that produces frames for this sink.</param>
     /// <param name="title">Window title displayed in the title bar.</param>
     /// <param name="width">Initial window width in pixels.</param>
     /// <param name="height">Initial window height in pixels.</param>
@@ -80,7 +72,6 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     /// </exception>
     public SdlVideoSink(
         SdlApi sdl,
-        IFramePool framePool,
         string title,
         int width,
         int height,
@@ -88,10 +79,8 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     )
     {
         ArgumentNullException.ThrowIfNull(sdl);
-        ArgumentNullException.ThrowIfNull(framePool);
 
         _sdl = sdl;
-        FramePool = framePool;
         _telemetry = new VideoSinkTelemetry(Meters, _slot);
         _logger = logger ?? NullLogger<SdlVideoSink>.Instance;
         _sdlThreadId = Environment.CurrentManagedThreadId;
@@ -125,10 +114,9 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     /// <summary>
     /// Private constructor for headless/test mode — no SDL resources are created.
     /// </summary>
-    private SdlVideoSink(IFramePool framePool, ILogger<SdlVideoSink>? logger)
+    private SdlVideoSink(ILogger<SdlVideoSink>? logger)
     {
         _sdl = null;
-        FramePool = framePool;
         _telemetry = new VideoSinkTelemetry(Meters, _slot);
         _logger = logger ?? NullLogger<SdlVideoSink>.Instance;
         _sdlThreadId = Environment.CurrentManagedThreadId;
@@ -139,12 +127,8 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     /// without a display. All SDL calls are skipped; <see cref="PresentAsync"/> accepts
     /// and disposes frames normally via <see cref="RenderPendingFrame"/>.
     /// </summary>
-    /// <param name="framePool">The frame pool for backpressure and frame lifecycle.</param>
     /// <param name="logger">Optional logger.</param>
-    public static SdlVideoSink CreateHeadless(
-        IFramePool framePool,
-        ILogger<SdlVideoSink>? logger = null
-    ) => new(framePool, logger);
+    public static SdlVideoSink CreateHeadless(ILogger<SdlVideoSink>? logger = null) => new(logger);
 
     /// <inheritdoc />
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)

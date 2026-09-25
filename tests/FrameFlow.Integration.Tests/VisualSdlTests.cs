@@ -2,7 +2,6 @@ using FrameFlow.Integration.Tests.Harness;
 using FrameFlow.Media;
 using FrameFlow.Playback;
 using FrameFlow.Sdl;
-using Microsoft.Extensions.Logging.Abstractions;
 using SilkSdl = Silk.NET.SDL.Sdl;
 
 namespace FrameFlow.Integration.Tests;
@@ -100,8 +99,7 @@ public sealed class VisualSdlTests : IClassFixture<FfmpegBootstrapFixture>
             if (initResult < 0)
                 throw new SdlException("SDL_Init", sdl.GetErrorS());
 
-            var framePool = new CpuFramePool(NullLogger<CpuFramePool>.Instance, capacity: 3);
-            var sdlSink = new SdlVideoSink(sdl, framePool, "FrameFlow Visual Next Test", 640, 480);
+            var sdlSink = new SdlVideoSink(sdl, "FrameFlow Visual Next Test", 640, 480);
 
             try
             {
@@ -144,7 +142,6 @@ public sealed class VisualSdlTests : IClassFixture<FfmpegBootstrapFixture>
             {
                 sdlSink.DestroyResources();
                 sdlSink.DisposeAsync().AsTask().GetAwaiter().GetResult();
-                framePool.Dispose();
             }
         }
         finally

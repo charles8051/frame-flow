@@ -7,7 +7,6 @@ using FrameFlow.Playback; // IPlaybackController — this example drives the sta
 using FrameFlow.Sdl;
 using FrameFlow.Sdl.Bootstrap;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Silk.NET.SDL;
 
 // ──────────────────────────────────────────────────────────────────────
@@ -59,15 +58,10 @@ static int SdlMain(string[] args)
     // ── Construct sinks directly (no DI) ─────────────────────────────
     // The substrate controller doesn't need a DI container: sinks
     // construct directly and PlaybackController.Create takes them as
-    // parameters. The frame pool for the video sink is
-    // disposed when the sink itself disposes.
-#pragma warning disable CA2000 // framePool ownership transfers to videoSink; videoSink lifetime owned by main + finally
-    var framePool = new FrameFlow.Media.CpuFramePool(
-        NullLogger<FrameFlow.Media.CpuFramePool>.Instance
-    );
+    // parameters.
+#pragma warning disable CA2000 // videoSink lifetime owned by main + finally
     var videoSink = new SdlVideoSink(
         sdl,
-        framePool,
         WindowTitle.Default,
         WindowTitle.InitialWidth,
         WindowTitle.InitialHeight,

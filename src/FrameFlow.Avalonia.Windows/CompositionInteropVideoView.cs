@@ -54,7 +54,6 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     private ILogger _logger = NullLogger.Instance;
 
     private CompositionInteropVideoSink? _sink;
-    private CpuFramePool? _ownedPool;
     private bool _sinkOwned;
 
     private Compositor? _compositor;
@@ -290,7 +289,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     }
 
     /// <summary>
-    /// Ensures a view-owned sink exists (with its own <see cref="CpuFramePool"/>) and
+    /// Ensures a view-owned sink exists and
     /// returns it as the <see cref="IVideoSink"/> to hand to the player. The view disposes
     /// the owned sink on detach / <see cref="DisposeAsync"/>.
     /// </summary>
@@ -299,10 +298,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         if (_sink is not null)
             return _sink;
 
-        var pool = new CpuFramePool(_loggerFactory.CreateLogger<CpuFramePool>());
-        _ownedPool = pool;
         _sink = new CompositionInteropVideoSink(
-            pool,
             _loggerFactory.CreateLogger<CompositionInteropVideoSink>()
         );
         WireDiagnostics(_sink);
@@ -1400,9 +1396,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         }
 
         var sink = _sink;
-        var pool = _ownedPool;
         _sink = null;
-        _ownedPool = null;
         _sinkOwned = false;
 
         if (sink is not null)
@@ -1413,6 +1407,5 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             else
                 t.AsTask().GetAwaiter().GetResult();
         }
-        pool?.Dispose();
     }
 }

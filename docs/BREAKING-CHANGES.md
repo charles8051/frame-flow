@@ -34,6 +34,34 @@ where holding the secondary edge can deadlock.
 buffer comes from a fixed pool. Without a lead, a join retains every secondary that arrives ahead of
 the primary (#90). ADR-0080 decision 8.
 
+### 2. Video sinks no longer have a frame pool
+
+**A compile error.**
+
+`IVideoSink.FramePool`, `IFramePool`, `CpuFramePool` and the internal `PooledCpuVideoFrame` are
+deleted. The sink constructors lose their pool parameter:
+
+| Before | After |
+|---|---|
+| `new AvaloniaVideoSink(pool, logger)` | `new AvaloniaVideoSink(logger)` |
+| `AvaloniaVideoSink.CreateHeadless(pool)` | `AvaloniaVideoSink.CreateHeadless()` |
+| `new CompositionInteropVideoSink(pool, logger)` | `new CompositionInteropVideoSink(logger)` |
+| `new SdlVideoSink(sdl, pool, title, w, h)` | `new SdlVideoSink(sdl, title, w, h)` |
+| `SdlVideoSink.CreateHeadless(pool)` | `SdlVideoSink.CreateHeadless()` |
+| `new HeadlessVideoSink(pool, cost)` | `new HeadlessVideoSink(cost)` |
+
+`AddFrameFlowAvaloniaVideoSink` and `AddFrameFlowSdlVideoSink` no longer register an `IFramePool`.
+
+**Who hits this.** Anyone who constructs a sink directly, implements `IVideoSink`, or resolves
+`IFramePool` from the container.
+
+**What to write instead.** Drop the pool argument and delete the pool. An `IVideoSink`
+implementation deletes its `FramePool` member.
+
+**Why.** Nothing rented from the pool. Each decoder allocates its own frames, so the pool's slots
+never filled and its capacity bounded nothing. A slow sink applies backpressure through its edge,
+which does not take the next frame until `PresentAsync` returns. ADR-0080, #382.
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be

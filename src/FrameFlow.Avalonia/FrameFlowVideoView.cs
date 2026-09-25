@@ -92,11 +92,10 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
 
     private AvaloniaVideoSink? _sink;
 
-    // True when the sink (and its pool) was created by the view via EnsureSink
+    // True when the sink was created by the view via EnsureSink
     // and must be disposed when the view detaches. False when the user assigned
     // a sink externally — in that case the caller owns disposal.
     private bool _sinkIsOwned;
-    private CpuFramePool? _ownedPool;
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private int _renderedFrameCount;
 
@@ -172,7 +171,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     }
 
     /// <summary>
-    /// Gets or sets the logger factory used by the view and any sink/pool it
+    /// Gets or sets the logger factory used by the view and any sink it
     /// owns. Defaults to <see cref="NullLoggerFactory"/>. Assign before the
     /// view attaches (or before calling <see cref="EnsureSink"/>) for the
     /// factory to apply to the owned sink.
@@ -200,9 +199,9 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
 
     /// <summary>
     /// Ensures the view has a video sink ready to receive frames. If <see cref="Sink"/>
-    /// is already set, this is a no-op. Otherwise, a <see cref="CpuFramePool"/> and
-    /// an <see cref="AvaloniaVideoSink"/> are constructed using <see cref="LoggerFactory"/>;
-    /// both are owned by the view and disposed when it detaches from the visual tree.
+    /// is already set, this is a no-op. Otherwise, an <see cref="AvaloniaVideoSink"/> is
+    /// constructed using <see cref="LoggerFactory"/>; it is owned by the view and disposed
+    /// when it detaches from the visual tree.
     /// </summary>
     /// <returns>The view's current <see cref="AvaloniaVideoSink"/> instance.</returns>
     /// <remarks>
@@ -214,9 +213,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
         if (_sink is not null)
             return _sink;
 
-        var pool = new CpuFramePool(_loggerFactory.CreateLogger<CpuFramePool>());
-        var sink = new AvaloniaVideoSink(pool, _loggerFactory.CreateLogger<AvaloniaVideoSink>());
-        _ownedPool = pool;
+        var sink = new AvaloniaVideoSink(_loggerFactory.CreateLogger<AvaloniaVideoSink>());
         _sink = sink;
         _sinkIsOwned = true;
         BeginBinding(sink);
@@ -263,15 +260,13 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             return;
 
         var sink = _sink;
-        var pool = _ownedPool;
         EndBinding();
         _sink = null;
-        _ownedPool = null;
         _sinkIsOwned = false;
 
         // AvaloniaVideoSink.DisposeAsync returns a completed ValueTask.
         // Guard with IsCompleted so the analyzer accepts the synchronous
-        // GetResult call. CpuFramePool is plain IDisposable.
+        // GetResult call.
         if (sink is not null)
         {
             var disposeTask = sink.DisposeAsync();
@@ -280,7 +275,6 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             else
                 disposeTask.AsTask().GetAwaiter().GetResult();
         }
-        pool?.Dispose();
     }
 
     /// <summary>
@@ -306,7 +300,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     /// holds for its whole body — is what makes detach safe against a callback already
     /// running. Clearing <c>FrameArrived</c> alone would not: the delegate can already be on
     /// the producer's stack, and it would go on copying into buffers this view is about to
-    /// drop while the caller disposes the sink's frame pool underneath it.
+    /// drop.
     /// </remarks>
     private void EndBinding()
     {

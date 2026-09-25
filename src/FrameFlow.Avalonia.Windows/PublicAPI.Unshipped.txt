@@ -1,8 +1,7 @@
 #nullable enable
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink
-FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.CompositionInteropVideoSink(FrameFlow.Media.IFramePool! framePool, Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.Windows.CompositionInteropVideoSink!>? logger = null) -> void
+FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.CompositionInteropVideoSink(Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.Windows.CompositionInteropVideoSink!>? logger = null) -> void
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
-FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramePool.get -> FrameFlow.Media.IFramePool!
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramePresented -> System.EventHandler<FrameFlow.Media.FramePresentedInfo>?
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramesAccepted.get -> long
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramesSuperseded.get -> long

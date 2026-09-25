@@ -3,7 +3,6 @@ using FrameFlow.Integration.Tests.Harness;
 using FrameFlow.Media;
 using FrameFlow.Playback;
 using FrameFlow.Sdl;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Integration.Tests;
 
@@ -44,8 +43,7 @@ public sealed class SdlPauseResumeRegressionTests : IClassFixture<FfmpegBootstra
             .LoadExpectations()
             .First(e => e.Filename == corpusFile);
 
-        var framePool = new CpuFramePool(NullLogger<CpuFramePool>.Instance, capacity: 3);
-        var sdlSink = SdlVideoSink.CreateHeadless(framePool);
+        var sdlSink = SdlVideoSink.CreateHeadless();
 
         using var pumpCts = new CancellationTokenSource();
         var pumpTask = Task.Run(() => SdlPumpLoopAsync(sdlSink, pumpCts.Token));
@@ -164,7 +162,6 @@ public sealed class SdlPauseResumeRegressionTests : IClassFixture<FfmpegBootstra
             catch (TimeoutException) { }
 
             await sdlSink.DisposeAsync();
-            framePool.Dispose();
         }
     }
 
@@ -175,8 +172,7 @@ public sealed class SdlPauseResumeRegressionTests : IClassFixture<FfmpegBootstra
         var filePath = IntegrationTestEnvironment.GetCorpusFile(corpusFile);
         Assert.True(filePath is not null, $"Corpus file {corpusFile} not found.");
 
-        var framePool = new CpuFramePool(NullLogger<CpuFramePool>.Instance, capacity: 3);
-        var sdlSink = SdlVideoSink.CreateHeadless(framePool);
+        var sdlSink = SdlVideoSink.CreateHeadless();
 
         using var pumpCts = new CancellationTokenSource();
         var pumpTask = Task.Run(() => SdlPumpLoopAsync(sdlSink, pumpCts.Token));
@@ -277,7 +273,6 @@ public sealed class SdlPauseResumeRegressionTests : IClassFixture<FfmpegBootstra
             catch (TimeoutException) { }
 
             await sdlSink.DisposeAsync();
-            framePool.Dispose();
         }
     }
 

@@ -1,11 +1,14 @@
 # ADR-0025: Video Sink and Frame Pool Architecture
 
-**Status:** Accepted; type identities superseded by [ADR-0030](ADR-0030-unify-frame-contracts-with-crossbar.md)
+**Status:** Accepted; type identities superseded by [ADR-0030](ADR-0030-unify-frame-contracts-with-crossbar.md); the sink-owned pool withdrawn by [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md)
 **Date:** 2026-04-07
 **Supersedes:** ADR-0016 (Avalonia presenter frame delivery strategy)
 **Related:** ADR-0003 (audio-master sync), ADR-0005 (native resource ownership), ADR-0012 (memory management for decoded frames), ADR-0015 (GPU-resident frame pipeline extensibility, superseded by ADR-0030), ADR-0018 (SDL presenter and audio adapter), ADR-0022 (long-lived workers with pause gate), ADR-0024 (playback controller), ADR-0030 (unify frame contracts with Crossbar)
 
 ## Status note
+
+> **The sink-owned pool is withdrawn (2026-09-25, ADR-0080, #382).** See wave 3 below. The
+> paragraphs that say the pool model still holds predate it.
 
 The *architecture* this ADR established — pool-rented frames with
 refcount, sink-owned `IFramePool`, sink-provides-pool inversion for
@@ -33,6 +36,16 @@ Two waves of superseding changes apply to the *type identities*:
 The frame-pool inversion + sink-owns-pool model still holds across
 both waves. Method signatures changed; the architectural shape did
 not.
+
+**Wave 3 — ADR-0080 (2026-09-25).** The sink-owned pool is deleted:
+`IVideoSink.FramePool`, `IFramePool`, `CpuFramePool` and
+`PooledCpuVideoFrame` are gone, and no sink takes a pool (#382). No
+decoder ever rented from a sink's pool. `RentAsync` had no production
+caller, and each decoder allocated its own frames. A slow sink applies
+backpressure through its edge, which does not take the next frame until
+`PresentAsync` returns. The zero-copy path this ADR aimed at runs on
+`GpuVideoFrame` over the decoder's own hardware pool (ADR-0038), whose
+budget [ADR-0081](ADR-0081-fixed-pool-budget.md) sets.
 ## Context
 
 ### The current frame delivery model

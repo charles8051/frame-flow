@@ -1,10 +1,9 @@
 #nullable enable
 FrameFlow.Avalonia.AvaloniaObservableExtensions
 FrameFlow.Avalonia.AvaloniaVideoSink
-FrameFlow.Avalonia.AvaloniaVideoSink.AvaloniaVideoSink(FrameFlow.Media.IFramePool! framePool, Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.AvaloniaVideoSink!>? logger = null) -> void
+FrameFlow.Avalonia.AvaloniaVideoSink.AvaloniaVideoSink(Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.AvaloniaVideoSink!>? logger = null) -> void
 FrameFlow.Avalonia.AvaloniaVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
 FrameFlow.Avalonia.AvaloniaVideoSink.DroppedFrameCount.get -> int
-FrameFlow.Avalonia.AvaloniaVideoSink.FramePool.get -> FrameFlow.Media.IFramePool!
 FrameFlow.Avalonia.AvaloniaVideoSink.FramePresented -> System.EventHandler<FrameFlow.Media.FramePresentedInfo>?
 FrameFlow.Avalonia.AvaloniaVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
 FrameFlow.Avalonia.AvaloniaVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
@@ -82,7 +81,7 @@ FrameFlow.Avalonia.IVideoSurface.Control.get -> Avalonia.Controls.Control!
 FrameFlow.Avalonia.IVideoSurface.PrefersHardwareFrames.get -> bool
 override FrameFlow.Avalonia.FrameFlowVideoView.Render(Avalonia.Media.DrawingContext! context) -> void
 static FrameFlow.Avalonia.AvaloniaObservableExtensions.ObserveOnUiThread<T>(this System.IObservable<T>! source) -> System.IObservable<T>!
-static FrameFlow.Avalonia.AvaloniaVideoSink.CreateHeadless(FrameFlow.Media.IFramePool! framePool, Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.AvaloniaVideoSink!>? logger = null) -> FrameFlow.Avalonia.AvaloniaVideoSink!
+static FrameFlow.Avalonia.AvaloniaVideoSink.CreateHeadless(Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.AvaloniaVideoSink!>? logger = null) -> FrameFlow.Avalonia.AvaloniaVideoSink!
 static FrameFlow.Avalonia.FrameFlowAvaloniaBuilderExtensions.WithAvaloniaVideoView(this FrameFlow.Player.IPassBuilder! builder, FrameFlow.Avalonia.FrameFlowVideoView! view) -> FrameFlow.Player.IPassBuilder!
 static FrameFlow.Avalonia.FrameFlowAvaloniaBuilderExtensions.WithAvaloniaVideoView(this FrameFlow.Player.IPlayerBuilder! builder, FrameFlow.Avalonia.FrameFlowVideoView! view) -> FrameFlow.Player.IPlayerBuilder!
 static FrameFlow.Avalonia.FrameFlowAvaloniaServiceCollectionExtensions.AddFrameFlowAvaloniaVideoSink(this FrameFlow.Media.IFrameFlowBuilder! builder) -> FrameFlow.Media.IFrameFlowBuilder!

@@ -25,7 +25,7 @@ namespace FrameFlow.Decoding;
 /// device-side buffer (for D3D11VA, a slice of the decoder's
 /// decode-texture array) is reference-counted by FFmpeg. On top of that
 /// the <see cref="GpuVideoFrame"/> carries its own atomic object-level
-/// ref count — exactly like <c>PooledCpuVideoFrame</c> /
+/// ref count — exactly like <c>CpuVideoFrame</c> /
 /// <c>PcmAudioBuffer</c>. <see cref="AddRef"/> hands the <i>same</i>
 /// instance to an additional consumer and bumps the count; each
 /// <see cref="Dispose"/> decrements it; only the final release calls
@@ -61,7 +61,7 @@ public sealed class GpuVideoFrame : IVideoFrame
 
     // Atomic object-level ref count (ADR-0038 fan-out). Starts at 1 for the
     // creating owner; AddRef bumps it, Dispose decrements it, and the wrapped
-    // AVFrame is freed only at zero. Canonical pattern: PooledCpuVideoFrame.
+    // AVFrame is freed only at zero. The shared rule: Graph.RefCounting.
     private int _refCount = 1;
 
     /// <inheritdoc/>

@@ -3,7 +3,6 @@
 
 using FrameFlow.Graph;
 using FrameFlow.Media;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Avalonia.Windows.Tests;
 
@@ -36,7 +35,7 @@ namespace FrameFlow.Avalonia.Windows.Tests;
 public sealed class CompositionInteropVideoSinkFramePresentedTests
 {
     private static CompositionInteropVideoSink NewSink() =>
-        new(new CpuFramePool(NullLogger<CpuFramePool>.Instance));
+        new();
 
     private static TimeSpan Pts(int n) => TimeSpan.FromMilliseconds(n * 16);
 

@@ -3,7 +3,6 @@ using FrameFlow.Integration.Tests.Harness;
 using FrameFlow.Media;
 using FrameFlow.Playback;
 using FrameFlow.Sdl;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Integration.Tests;
 
@@ -46,8 +45,7 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
         var filePath = IntegrationTestEnvironment.GetCorpusFile(CorpusFile);
         Assert.True(filePath is not null, $"Corpus file {CorpusFile} not found.");
 
-        var framePool = new CpuFramePool(NullLogger<CpuFramePool>.Instance, capacity: 3);
-        var sdlSink = SdlVideoSink.CreateHeadless(framePool);
+        var sdlSink = SdlVideoSink.CreateHeadless();
 
         using var pumpCts = new CancellationTokenSource();
         var pumpTask = Task.Run(() => SdlPumpLoopAsync(sdlSink, pumpCts.Token));
@@ -94,7 +92,6 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
             catch (TimeoutException) { }
 
             await sdlSink.DisposeAsync();
-            framePool.Dispose();
         }
     }
 
@@ -104,8 +101,7 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
         var filePath = IntegrationTestEnvironment.GetCorpusFile(CorpusFile);
         Assert.True(filePath is not null, $"Corpus file {CorpusFile} not found.");
 
-        var framePool = new CpuFramePool(NullLogger<CpuFramePool>.Instance, capacity: 2);
-        var sdlSink = SdlVideoSink.CreateHeadless(framePool);
+        var sdlSink = SdlVideoSink.CreateHeadless();
 
         using var pumpCts = new CancellationTokenSource();
         var pumpTask = Task.Run(() => SdlPumpLoopAsync(sdlSink, pumpCts.Token));
@@ -137,7 +133,6 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
             catch (TimeoutException) { }
 
             await sdlSink.DisposeAsync();
-            framePool.Dispose();
         }
     }
 
@@ -149,8 +144,7 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
         var filePath = IntegrationTestEnvironment.GetCorpusFile(CorpusFile);
         Assert.True(filePath is not null, $"Corpus file {CorpusFile} not found.");
 
-        var framePool = new CpuFramePool(NullLogger<CpuFramePool>.Instance, capacity: 3);
-        var avaloniaSink = AvaloniaVideoSink.CreateHeadless(framePool);
+        var avaloniaSink = AvaloniaVideoSink.CreateHeadless();
 
         using var pumpCts = new CancellationTokenSource();
         var pumpTask = Task.Run(() => AvaloniaPumpLoopAsync(avaloniaSink, 16, pumpCts.Token));
@@ -202,7 +196,6 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
             catch (TimeoutException) { }
 
             await avaloniaSink.DisposeAsync();
-            framePool.Dispose();
         }
     }
 
@@ -212,8 +205,7 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
         var filePath = IntegrationTestEnvironment.GetCorpusFile(CorpusFile);
         Assert.True(filePath is not null, $"Corpus file {CorpusFile} not found.");
 
-        var framePool = new CpuFramePool(NullLogger<CpuFramePool>.Instance, capacity: 3);
-        var avaloniaSink = AvaloniaVideoSink.CreateHeadless(framePool);
+        var avaloniaSink = AvaloniaVideoSink.CreateHeadless();
 
         using var pumpCts = new CancellationTokenSource();
         // Deliberately slow pump (50ms) to force frame drops.
@@ -253,7 +245,6 @@ public sealed class SinkSpecificTests : IClassFixture<FfmpegBootstrapFixture>
             catch (TimeoutException) { }
 
             await avaloniaSink.DisposeAsync();
-            framePool.Dispose();
         }
     }
 

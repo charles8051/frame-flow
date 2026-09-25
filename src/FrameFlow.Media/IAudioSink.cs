@@ -21,9 +21,8 @@ namespace FrameFlow.Media;
 /// A sink is one dataflow method plus whatever resources its medium
 /// requires. Audio output is a device: it has a transport (activate /
 /// pause / resume / deactivate) and may publish a sample-counter clock
-/// via <see cref="IClockSource"/>. Video output is a surface: it owns a
-/// frame pool and has a format that can change mid-stream, so
-/// <see cref="IVideoSink"/> carries <c>FramePool</c> and
+/// via <see cref="IClockSource"/>. Video output is a surface with a
+/// format that can change mid-stream, so <see cref="IVideoSink"/> carries
 /// <c>OnFormatChangedAsync</c> instead. The differing members are the
 /// media, not an accident. There is no shared base interface —
 /// <see cref="PresentAsync"/> and

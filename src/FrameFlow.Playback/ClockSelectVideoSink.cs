@@ -537,9 +537,6 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     }
 
     /// <inheritdoc/>
-    public IFramePool FramePool => _inner.FramePool;
-
-    /// <inheritdoc/>
     public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) =>
         _inner.OnFormatChangedAsync(format, ct);
 

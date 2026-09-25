@@ -116,8 +116,6 @@ public sealed class VideoFormatAnnouncementTests : IClassFixture<FfmpegBootstrap
         private readonly List<string> _log = [];
         private readonly List<VideoFormatInfo> _announcements = [];
 
-        public IFramePool FramePool => null!;
-
         public IReadOnlyList<VideoFormatInfo> Announcements
         {
             get

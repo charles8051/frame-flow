@@ -108,8 +108,6 @@ public sealed class LatenessRecoveryFaultTests : IClassFixture<FfmpegBootstrapFi
             TaskCreationOptions.RunContinuationsAsynchronously
         );
 
-        public IFramePool FramePool => null!;
-
         public void Release() => _released.TrySetResult();
 
         public async ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)

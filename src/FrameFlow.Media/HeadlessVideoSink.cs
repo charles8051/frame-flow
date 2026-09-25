@@ -15,7 +15,7 @@ namespace FrameFlow.Media;
 /// <b>Why not <see cref="NullVideoSink"/>.</b> That one disposes each frame on arrival and
 /// counts nothing, so a headless run measures demux, decode, and clock and is silent about the
 /// output stage. Worse, it is silent in the flattering direction: presenting costs nothing and
-/// frees its pool slot instantly, so the pipeline runs faster than any real presenter would let
+/// releases the frame instantly, so the pipeline runs faster than any real presenter would let
 /// it and the numbers come back better than the machine can actually do.
 /// <see cref="NullVideoSink"/> is still the right answer when output genuinely does not matter;
 /// this is the right answer when the run is a measurement.
@@ -23,8 +23,9 @@ namespace FrameFlow.Media;
 /// <para>
 /// <b>The frame is held for the whole cost.</b> <see cref="PresentAsync"/> waits out
 /// <see cref="PresentCost"/> before disposing the frame, not after. That ordering is the point:
-/// the pool slot stays occupied for the duration, so the cost propagates back through
-/// <see cref="FramePool"/> as real backpressure the way a slow presenter's would. Disposing
+/// the frame stays held for the duration, and the sink's edge does not take the next one
+/// until <see cref="PresentAsync"/> returns, so the cost propagates back through the graph as
+/// real backpressure the way a slow presenter's would. Disposing
 /// first and then sleeping would charge wall-clock time while letting the decoder run
 /// unimpeded, which measures nothing.
 /// </para>
@@ -41,14 +42,6 @@ namespace FrameFlow.Media;
 /// shows up upstream as <c>VideoFramesDroppedForSync</c> on the pipeline snapshot, because the
 /// pacing chain is what gives up. A script asserting on this sink's own drop count will always
 /// see zero, and should watch the sync counter instead.
-/// </para>
-/// <para>
-/// <b>It does not own the pool.</b> <see cref="FramePool"/> is supplied, never created here,
-/// which is what <c>AvaloniaVideoSink</c> and <c>SdlVideoSink</c> also do. A sink that could
-/// dispose a pool out from under a present still waiting on
-/// <see cref="PresentCost"/> would be relying on that pool to tolerate a return after
-/// disposal. <see cref="CpuFramePool"/> does tolerate it, with a warning; an arbitrary
-/// <see cref="IFramePool"/> need not. Not owning it removes the question.
 /// </para>
 /// </remarks>
 public sealed class HeadlessVideoSink : IVideoSink
@@ -67,13 +60,6 @@ public sealed class HeadlessVideoSink : IVideoSink
     /// <summary>
     /// Initializes a counting headless sink.
     /// </summary>
-    /// <param name="framePool">
-    /// The pool the decoder rents from, owned by the caller and never disposed here. Use a
-    /// bounded pool such as <see cref="CpuFramePool"/> rather than an unbounded one, so the
-    /// decoder blocks when frames are in flight exactly as it would behind a real sink —
-    /// <see cref="NullVideoSink"/>'s unbounded pool is another way a headless run comes back
-    /// faster than the machine can actually go.
-    /// </param>
     /// <param name="presentCost">
     /// How long to pretend presenting a frame takes. <see cref="TimeSpan.Zero"/> (the default)
     /// charges nothing and makes this a counting sink only.
@@ -84,23 +70,14 @@ public sealed class HeadlessVideoSink : IVideoSink
     /// deterministic under test.
     /// </param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="presentCost"/> is negative.</exception>
-    public HeadlessVideoSink(
-        IFramePool framePool,
-        TimeSpan presentCost = default,
-        TimeProvider? timeProvider = null
-    )
+    public HeadlessVideoSink(TimeSpan presentCost = default, TimeProvider? timeProvider = null)
     {
-        ArgumentNullException.ThrowIfNull(framePool);
         ArgumentOutOfRangeException.ThrowIfLessThan(presentCost, TimeSpan.Zero);
 
-        FramePool = framePool;
         PresentCost = presentCost;
         _time = timeProvider ?? HighResolutionTimeProvider.Preferred;
         _telemetry = new VideoSinkTelemetry(Meters);
     }
-
-    /// <inheritdoc />
-    public IFramePool FramePool { get; }
 
     /// <summary>How long each <see cref="PresentAsync"/> pretends presenting takes.</summary>
     public TimeSpan PresentCost { get; }
@@ -123,8 +100,8 @@ public sealed class HeadlessVideoSink : IVideoSink
 
     /// <inheritdoc />
     /// <remarks>
-    /// Charges <see cref="PresentCost"/> before disposing the frame, so the pool slot is held
-    /// for the duration. Counts the frame only once the cost is paid: a frame abandoned to
+    /// Charges <see cref="PresentCost"/> before disposing the frame, so the frame is held for
+    /// the duration. Counts the frame only once the cost is paid: a frame abandoned to
     /// cancellation did not present, and saying otherwise is the one lie this sink exists to
     /// avoid.
     /// </remarks>
@@ -165,7 +142,7 @@ public sealed class HeadlessVideoSink : IVideoSink
     public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(format);
-        // Nothing to reconfigure: there is no surface, and the pool sizes frames per rent.
+        // Nothing to reconfigure: there is no surface.
         return ValueTask.CompletedTask;
     }
 
@@ -180,8 +157,8 @@ public sealed class HeadlessVideoSink : IVideoSink
 
         _disposed = true;
 
-        // Nothing to tear down: the pool belongs to the caller and a present still waiting on
-        // PresentCost holds nothing this sink owns.
+        // Nothing to tear down: a present still waiting on PresentCost holds only its frame,
+        // which it disposes itself.
         return ValueTask.CompletedTask;
     }
 }

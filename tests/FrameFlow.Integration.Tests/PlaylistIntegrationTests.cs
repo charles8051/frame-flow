@@ -433,8 +433,6 @@ public sealed class PlaylistIntegrationTests : IClassFixture<FfmpegBootstrapFixt
         public int PresentCount => Volatile.Read(ref _presentCount);
         public int DisposeCount => Volatile.Read(ref _disposeCount);
 
-        public IFramePool FramePool => null!;
-
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {
             Interlocked.Increment(ref _presentCount);
@@ -483,8 +481,6 @@ public sealed class PlaylistIntegrationTests : IClassFixture<FfmpegBootstrapFixt
                     return _arrivals.ToArray();
             }
         }
-
-        public IFramePool FramePool => null!;
 
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {

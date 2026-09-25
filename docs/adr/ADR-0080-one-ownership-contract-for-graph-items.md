@@ -298,8 +298,11 @@ examples to references.
   confirmed on .NET 10. Revisit if the gauge's high-water sits far above frames in flight times
   frame size, or if the planar CPU frame (#379) makes NV12 common. The soak this question called
   for was not run: the examples it names need live sources, and this gauge is its instrument.
-- Whether `IVideoSink.FramePool` and `CpuFramePool` survive. `RentAsync` has no production caller,
-  and the pool's frames are written after construction, which decision 5 forbids.
+- **Decided (#382): the sink frame pool is deleted.** `IVideoSink.FramePool`, `IFramePool`,
+  `CpuFramePool` and `PooledCpuVideoFrame` are gone, and the sinks no longer take a pool. `RentAsync`
+  had no production caller, and the pool's frames were written after construction, which decision 5
+  forbids. Backpressure on a sink comes from its edge, which does not take the next frame until
+  `PresentAsync` returns.
 
 ## Validation
 
@@ -333,3 +336,7 @@ callback throws: it returns the storage and rethrows the original exception.
 exercises the over-release path on purpose. The check now counts every over-release and breaks
 into an attached debugger in a debug build. `FrameFlow.Graph.RefCounting` holds the rule, and
 every counted item routes through it.
+
+**2026-09-25, the sink frame pool (#382).** The second open question is decided: the pool is
+deleted. `PooledCpuVideoFrame` went with it, so decision 4's merge becomes giving
+`Media.CpuVideoFrame` planes (#379), and decision 5 has no `WriteData` left to remove.
