@@ -29,6 +29,7 @@ namespace FrameFlow.Media;
 public sealed class CpuVideoFrame : IVideoFrame
 {
     private int _refCount = 1;
+    private readonly int _bytes;
 
     /// <summary>Pooled pixel buffer, returned to its pool on the frame's final release.</summary>
     public IMemoryOwner<byte> PixelData { get; }
@@ -70,6 +71,8 @@ public sealed class CpuVideoFrame : IVideoFrame
     )
     {
         PixelData = pixelData;
+        _bytes = pixelData.Memory.Length;
+        Diagnostics.CpuFrameMetrics.OnFrameCreated(_bytes);
         Width = width;
         Height = height;
         Stride = stride;
@@ -115,7 +118,17 @@ public sealed class CpuVideoFrame : IVideoFrame
     /// <inheritdoc />
     public void Dispose()
     {
-        if (RefCounting.Release(ref _refCount, this))
+        if (!RefCounting.Release(ref _refCount, this))
+            return;
+
+        try
+        {
             PixelData.Dispose();
+        }
+        finally
+        {
+            // The frame is released whether or not its buffer owner's Dispose throws.
+            Diagnostics.CpuFrameMetrics.OnFrameReleased(_bytes);
+        }
     }
 }
