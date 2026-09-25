@@ -130,9 +130,9 @@ DComp defect**. A green headless run is not evidence that the presenter is fine 
 is what `--presenter gpu` is for, and it needs Windows and a display.
 
 `--present-cost <duration>` gives each frame a synthetic cost so a headless run is not
-optimistically fast. The frame is held for the whole cost, so the pool slot stays
-occupied and the cost propagates back as real backpressure rather than billing
-wall-clock time while the decoder runs unimpeded.
+optimistically fast. The frame is held for the whole cost, and the sink takes no
+other frame until it returns, so the cost propagates back as real backpressure rather
+than billing wall-clock time while the decoder runs unimpeded.
 
 Where the loss shows up is the part worth knowing before reading the numbers. The
 headless sink never reports a drop of its own — with no render tick there is nothing to
@@ -158,7 +158,6 @@ meaning.
 | `--presenter <kind>` | `headless` (default), `cpu`, or `gpu` |
 | `--no-audio` | build no audio sink; `volume` and `mute` then fail |
 | `--present-cost <dur>` | synthetic per-frame cost for the headless sink |
-| `--pool-capacity <n>` | frame pool slots, default 3 |
 | `--log-file <file>` | also write the session to this file |
 
 `--log-file` is a copy on disk rather than the only way to see anything. That is the

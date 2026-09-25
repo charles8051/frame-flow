@@ -1013,7 +1013,6 @@ public sealed class ClockSelectVideoSinkTests
             return signal.Task;
         }
 
-        public IFramePool FramePool => null!;
         public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) => default;
         public VideoSinkDiagnosticsSnapshot GetDiagnostics() => VideoSinkDiagnosticsSnapshot.Empty;
         public ValueTask DisposeAsync()

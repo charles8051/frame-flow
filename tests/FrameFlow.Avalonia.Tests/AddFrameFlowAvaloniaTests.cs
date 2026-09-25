@@ -85,19 +85,6 @@ public sealed class AddFrameFlowAvaloniaTests
     }
 
     [Fact]
-    public void AddFrameFlowAvaloniaVideoSink_RegistersIFramePool()
-    {
-        var services = new ServiceCollection();
-        AddNullLogging(services);
-        services.AddFrameFlow().AddFrameFlowAvaloniaVideoSink();
-
-        var provider = services.BuildServiceProvider();
-        var pool = provider.GetService<IFramePool>();
-
-        Assert.NotNull(pool);
-    }
-
-    [Fact]
     public void AddFrameFlowAvaloniaVideoSink_CalledTwice_RegistrationIsIdempotent()
     {
         // Parity with AddFrameFlowOpenAlTests — TryAddSingleton means a
@@ -141,8 +128,6 @@ public sealed class AddFrameFlowAvaloniaTests
             frame.Dispose();
             return ValueTask.CompletedTask;
         }
-
-        public IFramePool FramePool => null!;
 
         public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) =>
             ValueTask.CompletedTask;

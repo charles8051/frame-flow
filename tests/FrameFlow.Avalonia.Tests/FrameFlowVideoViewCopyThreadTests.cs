@@ -3,7 +3,6 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using FrameFlow.Graph;
 using FrameFlow.Media;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Avalonia.Tests;
 
@@ -280,7 +279,7 @@ public sealed class FrameFlowVideoViewCopyThreadTests
     /// <c>FrameFlowPlayerView</c> and the DI extensions produce.
     /// </summary>
     private static AvaloniaVideoSink NewSink() =>
-        new(new CpuFramePool(NullLogger<CpuFramePool>.Instance));
+        new();
 
     private static (FrameFlowVideoView View, AvaloniaVideoSink Sink) NewAttachedView()
     {

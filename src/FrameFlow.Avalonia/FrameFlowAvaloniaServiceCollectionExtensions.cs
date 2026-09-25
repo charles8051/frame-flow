@@ -6,7 +6,6 @@ using FrameFlow.Playback;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Avalonia;
 
@@ -18,8 +17,7 @@ public static class FrameFlowAvaloniaServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the Avalonia video sink as the <see cref="IVideoSink"/>
-    /// implementation for the DI-hosted FrameFlow application, along with
-    /// <see cref="CpuFramePool"/> as <see cref="IFramePool"/>.
+    /// implementation for the DI-hosted FrameFlow application.
     /// </summary>
     /// <param name="builder">
     /// The <see cref="IFrameFlowBuilder"/> returned from
@@ -44,9 +42,6 @@ public static class FrameFlowAvaloniaServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        // Register the frame pool the sink needs.
-        builder.Services.TryAddSingleton<IFramePool, CpuFramePool>();
-
         // Registered as singleton — bound to a specific Avalonia visual surface.
         // TryAdd ensures a consumer can substitute a different IVideoSink.
         builder.Services.TryAddSingleton<IVideoSink, AvaloniaVideoSink>();
@@ -70,8 +65,8 @@ public static class FrameFlowAvaloniaServiceCollectionExtensions
     /// <param name="logger">Optional logger for sink diagnostics.</param>
     /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
     /// <remarks>
-    /// The sink and its <see cref="CpuFramePool"/> are constructed eagerly and
-    /// registered as singletons against their DI interfaces. The view's
+    /// The sink is constructed eagerly and registered as a singleton
+    /// <see cref="IVideoSink"/>. The view's
     /// <see cref="FrameFlowVideoView.Sink"/> property is set before the method
     /// returns, so frames presented via the playback pipeline reach the UI from
     /// the first play onward.
@@ -95,11 +90,9 @@ public static class FrameFlowAvaloniaServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(view);
 
-        var framePool = new CpuFramePool(NullLogger<CpuFramePool>.Instance);
-        var sink = new AvaloniaVideoSink(framePool, logger);
+        var sink = new AvaloniaVideoSink(logger);
         view.Sink = sink;
 
-        builder.Services.TryAddSingleton<IFramePool>(framePool);
         builder.Services.TryAddSingleton<IVideoSink>(sink);
 
         return builder;

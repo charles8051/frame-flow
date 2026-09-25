@@ -5,8 +5,7 @@ namespace FrameFlow.Integration.Tests.Harness.Capture;
 /// <summary>
 /// One <see cref="IVideoFrame"/>'s worth of pixel data retained by
 /// <see cref="CapturingVideoSink"/>. The pixel bytes are a heap copy
-/// owned by the capture record so they survive the pool frame's
-/// return to <see cref="CpuFramePool"/>.
+/// owned by the capture record so they survive the frame's release.
 /// </summary>
 /// <param name="Pts">Frame presentation timestamp.</param>
 /// <param name="Duration">Nominal frame duration (1 / fps).</param>

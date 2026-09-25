@@ -12,9 +12,8 @@ namespace FrameFlow.Media;
 /// <para>
 /// <b>Why this interface is not symmetric with <see cref="IAudioSink"/>.</b>
 /// A sink is one dataflow method plus whatever resources its medium
-/// requires. Video output is a surface: it owns a frame pool and has a
-/// format that can change mid-stream, so it carries
-/// <see cref="FramePool"/> and <see cref="OnFormatChangedAsync"/>.
+/// requires. Video output is a surface with a format that can change
+/// mid-stream, so it carries <see cref="OnFormatChangedAsync"/>.
 /// Audio output is a device: it has a transport (activate / pause /
 /// resume / deactivate) and may publish a sample-counter clock, so
 /// <see cref="IAudioSink"/> carries those instead. The differing
@@ -30,8 +29,8 @@ namespace FrameFlow.Media;
 /// (<c>FrameFlow.Media.SinkAdapters.AsSinkNode</c>) wraps each
 /// <see cref="IVideoSink"/> as a substrate <c>SinkNode&lt;VideoFrameRef&gt;</c>
 /// whose body invokes <see cref="PresentAsync"/>. The lifecycle/resource
-/// facet is everything else on this interface (<see cref="FramePool"/>,
-/// <see cref="OnFormatChangedAsync"/>,
+/// facet is everything else on this interface
+/// (<see cref="OnFormatChangedAsync"/>,
 /// <see cref="IAsyncDisposable.DisposeAsync"/>, diagnostics).
 /// </para>
 /// <para>
@@ -43,7 +42,6 @@ namespace FrameFlow.Media;
 /// handle should fail loudly from <see cref="PresentAsync"/>.
 /// </para>
 /// <para>
-/// A sink owns an <see cref="IFramePool"/> whose frames the decoder fills.
 /// The playback pipeline calls <see cref="PresentAsync"/> to deliver frames
 /// and <see cref="OnFormatChangedAsync"/> when the stream format changes
 /// (e.g. resolution or pixel format switch).
@@ -82,12 +80,6 @@ public interface IVideoSink : IAsyncDisposable
     /// <param name="frame">The frame to present. Ownership transfers to the sink.</param>
     /// <param name="ct">Cancellation token observed during async work (rare).</param>
     ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct);
-
-    /// <summary>
-    /// The frame pool that produces frames for this sink.
-    /// The decoder rents from this pool and the sink returns frames after presentation.
-    /// </summary>
-    IFramePool FramePool { get; }
 
     /// <summary>
     /// Called when the video stream format changes (resolution, pixel format).

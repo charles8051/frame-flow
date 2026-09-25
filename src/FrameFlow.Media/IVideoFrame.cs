@@ -11,10 +11,10 @@ namespace FrameFlow.Media;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Frames are ref-counted. The initial rent from an <see cref="IFramePool"/>
-/// starts at ref count 1. Each <see cref="AddRef"/> call increments the count;
+/// Frames are ref-counted (ADR-0080). A new frame starts at ref count 1. Each
+/// <see cref="AddRef"/> call increments the count and returns the same instance;
 /// each <see cref="IDisposable.Dispose"/> call decrements it. When the count
-/// reaches zero the frame is returned to its pool.
+/// reaches zero the frame releases its storage.
 /// </para>
 /// <para>
 /// V1 frames are always CPU-resident (<see cref="FrameMemoryDomain.Cpu"/>).

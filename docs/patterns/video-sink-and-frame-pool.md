@@ -1,5 +1,9 @@
 # Video Sink & Frame Pool — CPU-First Presentation Architecture
 
+> **The frame pool described here no longer exists.** `IVideoSink.FramePool`, `IFramePool` and
+> `CpuFramePool` were deleted by ADR-0080 (#382). A sink applies backpressure through its graph
+> edge. The rest of this page is history.
+
 > **⚠ Historical design reference (pre-Crossbar redesign, 2026-05-15).**
 > The architecture below predates Crossbar's substrate consolidation
 > (Crossbar ADR-0010 consumer-function unification, Crossbar

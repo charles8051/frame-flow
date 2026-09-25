@@ -31,23 +31,15 @@ namespace FrameFlow.Avalonia.Windows;
 public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSource
 {
     private readonly ILogger _logger;
-    private readonly IFramePool _framePool;
     private readonly LatestWinsFrameSlot _slot = new();
     private bool _disposed;
     private long _framesAccepted;
 
-    /// <summary>
-    /// Creates a sink bound to <paramref name="framePool"/> (the pool the decoder rents
-    /// from for any CPU frames; GPU frames are independently owned clones and do not use it).
-    /// </summary>
-    public CompositionInteropVideoSink(IFramePool framePool, ILogger<CompositionInteropVideoSink>? logger = null)
+    /// <summary>Creates a sink.</summary>
+    public CompositionInteropVideoSink(ILogger<CompositionInteropVideoSink>? logger = null)
     {
-        _framePool = framePool ?? throw new ArgumentNullException(nameof(framePool));
         _logger = logger ?? NullLogger<CompositionInteropVideoSink>.Instance;
     }
-
-    /// <inheritdoc/>
-    public IFramePool FramePool => _framePool;
 
     /// <summary>
     /// Total frames the sink has accepted from the decoder. The stall watchdog reads this as the

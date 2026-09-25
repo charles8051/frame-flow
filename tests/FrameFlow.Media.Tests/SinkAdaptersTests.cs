@@ -111,7 +111,6 @@ public sealed class SinkAdaptersTests
             _onPresent = onPresent;
         }
 
-        public IFramePool FramePool => null!; // not exercised
         public IReadOnlyList<FrameMemoryDomain> SupportedMemoryDomains =>
             [FrameMemoryDomain.Cpu];
 

@@ -386,8 +386,6 @@ public sealed class MediaPassIntegrationTests
             _onPresent = onPresent;
         }
 
-        public IFramePool FramePool => null!;
-
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {
             _onPresent(frame);

@@ -67,12 +67,6 @@ FrameFlow.Media.CpuFrameData.StrideY.get -> int
 FrameFlow.Media.CpuFrameData.StrideY.init -> void
 FrameFlow.Media.CpuFrameData.Width.get -> int
 FrameFlow.Media.CpuFrameData.Width.init -> void
-FrameFlow.Media.CpuFramePool
-FrameFlow.Media.CpuFramePool.CpuFramePool(Microsoft.Extensions.Logging.ILogger<FrameFlow.Media.CpuFramePool!>! logger, int capacity = 3) -> void
-FrameFlow.Media.CpuFramePool.Dispose() -> void
-FrameFlow.Media.CpuFramePool.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
-FrameFlow.Media.CpuFramePool.RentAsync(int width, int height, FrameFlow.Media.PixelFormat format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask<FrameFlow.Media.IVideoFrame!>
-FrameFlow.Media.CpuFramePool.Return(FrameFlow.Media.IVideoFrame! frame) -> void
 FrameFlow.Media.CpuVideoFrame
 FrameFlow.Media.CpuVideoFrame.AddRef() -> FrameFlow.Media.IVideoFrame!
 FrameFlow.Media.CpuVideoFrame.AsCpu() -> FrameFlow.Media.CpuFrameData?
@@ -330,9 +324,8 @@ FrameFlow.Media.HardwareDecodeOptions.PreferredBackends.set -> void
 FrameFlow.Media.HeadlessVideoSink
 FrameFlow.Media.HeadlessVideoSink.AbandonedCount.get -> long
 FrameFlow.Media.HeadlessVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
-FrameFlow.Media.HeadlessVideoSink.FramePool.get -> FrameFlow.Media.IFramePool!
 FrameFlow.Media.HeadlessVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
-FrameFlow.Media.HeadlessVideoSink.HeadlessVideoSink(FrameFlow.Media.IFramePool! framePool, System.TimeSpan presentCost = default(System.TimeSpan), System.TimeProvider? timeProvider = null) -> void
+FrameFlow.Media.HeadlessVideoSink.HeadlessVideoSink(System.TimeSpan presentCost = default(System.TimeSpan), System.TimeProvider? timeProvider = null) -> void
 FrameFlow.Media.HeadlessVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.HeadlessVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.HeadlessVideoSink.PresentCost.get -> System.TimeSpan
@@ -350,10 +343,6 @@ FrameFlow.Media.IFrameFlowBootstrapper.Initialize() -> FrameFlow.Media.FrameFlow
 FrameFlow.Media.IFrameFlowBootstrapper.IsInitialized.get -> bool
 FrameFlow.Media.IFrameFlowBuilder
 FrameFlow.Media.IFrameFlowBuilder.Services.get -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
-FrameFlow.Media.IFramePool
-FrameFlow.Media.IFramePool.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
-FrameFlow.Media.IFramePool.RentAsync(int width, int height, FrameFlow.Media.PixelFormat format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask<FrameFlow.Media.IVideoFrame!>
-FrameFlow.Media.IFramePool.Return(FrameFlow.Media.IVideoFrame! frame) -> void
 FrameFlow.Media.IFramePresentedSource
 FrameFlow.Media.IFramePresentedSource.FramePresented -> System.EventHandler<FrameFlow.Media.FramePresentedInfo>?
 FrameFlow.Media.IMediaSource
@@ -372,7 +361,6 @@ FrameFlow.Media.IVideoFrame.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomai
 FrameFlow.Media.IVideoFrame.Pts.get -> System.TimeSpan
 FrameFlow.Media.IVideoFrame.ToCpu() -> FrameFlow.Media.CpuFrameData
 FrameFlow.Media.IVideoSink
-FrameFlow.Media.IVideoSink.FramePool.get -> FrameFlow.Media.IFramePool!
 FrameFlow.Media.IVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
 FrameFlow.Media.IVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.IVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
@@ -428,7 +416,6 @@ FrameFlow.Media.MediaSource.Uri.get -> System.Uri?
 FrameFlow.Media.MediaSource.Uri.init -> void
 FrameFlow.Media.NullVideoSink
 FrameFlow.Media.NullVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
-FrameFlow.Media.NullVideoSink.FramePool.get -> FrameFlow.Media.IFramePool!
 FrameFlow.Media.NullVideoSink.NullVideoSink() -> void
 FrameFlow.Media.NullVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.NullVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask

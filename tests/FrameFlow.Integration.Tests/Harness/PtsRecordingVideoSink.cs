@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using FrameFlow.Media;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Integration.Tests.Harness;
 
@@ -27,9 +26,6 @@ internal sealed class PtsRecordingVideoSink : IVideoSink
 
     /// <summary>Every frame's PTS, in delivery order.</summary>
     public IReadOnlyList<TimeSpan> PresentedPts => _presented.ToArray();
-
-    public IFramePool FramePool { get; } =
-        new CpuFramePool(NullLogger<CpuFramePool>.Instance, capacity: 8);
 
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
     {

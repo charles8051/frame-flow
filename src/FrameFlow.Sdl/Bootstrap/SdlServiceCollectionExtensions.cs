@@ -76,8 +76,7 @@ public static class SdlServiceCollectionExtensions
     /// service collection — both as <see cref="IVideoSink"/> (for the
     /// playback pipeline) and as the concrete <see cref="SdlVideoSink"/>
     /// (for callers that need to invoke <see cref="SdlVideoSink.RenderPendingFrame"/>
-    /// from the SDL render loop). The sink's <see cref="SdlVideoSink.FramePool"/>
-    /// is also registered as <see cref="IFramePool"/>.
+    /// from the SDL render loop).
     /// </summary>
     /// <param name="builder">
     /// The <see cref="IFrameFlowBuilder"/> returned from
@@ -107,7 +106,6 @@ public static class SdlServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(sink);
 
-        builder.Services.TryAddSingleton<IFramePool>(sink.FramePool);
         builder.Services.TryAddSingleton<IVideoSink>(sink);
         // Also register the concrete type so the SDL event loop can
         // resolve it for RenderPendingFrame() calls without an
@@ -118,8 +116,7 @@ public static class SdlServiceCollectionExtensions
 
     /// <summary>
     /// Convenience overload that constructs an <see cref="SdlVideoSink"/>
-    /// against a freshly-allocated <see cref="CpuFramePool"/> and registers
-    /// both with the service collection. Outputs the sink so the caller
+    /// and registers it with the service collection. Outputs the sink so the caller
     /// can pass it to <see cref="SdlEventLoop.Run"/> (or invoke
     /// <see cref="SdlVideoSink.RenderPendingFrame"/> directly).
     /// </summary>
@@ -160,8 +157,7 @@ public static class SdlServiceCollectionExtensions
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(width, 0);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(height, 0);
 
-        var framePool = new CpuFramePool(NullLogger<CpuFramePool>.Instance);
-        sink = new SdlVideoSink(sdl, framePool, windowTitle, width, height, logger);
+        sink = new SdlVideoSink(sdl, windowTitle, width, height, logger);
         return AddFrameFlowSdlVideoSink(builder, sink);
     }
 }

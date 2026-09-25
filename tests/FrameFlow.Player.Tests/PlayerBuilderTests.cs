@@ -175,8 +175,6 @@ public sealed class PlayerBuilderTests
             return ValueTask.CompletedTask;
         }
 
-        public IFramePool FramePool => null!;
-
         public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) =>
             ValueTask.CompletedTask;
 

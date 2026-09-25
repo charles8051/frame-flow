@@ -550,8 +550,6 @@ public sealed class PlaybackControllerIntegrationTests : IClassFixture<FfmpegBoo
             _onPresent = onPresent;
         }
 
-        public IFramePool FramePool => null!;
-
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {
             // Capture PTS before dispose so seek tests can inspect

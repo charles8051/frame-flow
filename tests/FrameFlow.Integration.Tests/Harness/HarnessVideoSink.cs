@@ -3,22 +3,18 @@ using System.Diagnostics;
 using FrameFlow.Media;
 using FrameFlow.Media.Diagnostics;
 using FrameFlow.Playback;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Integration.Tests.Harness;
 
 /// <summary>
 /// Instrumented <see cref="IVideoSink"/> for integration tests.
-/// Faithfully exercises backpressure via <see cref="CpuFramePool"/> and tracks
-/// frame counts, PTS monotonicity, dropped frames, and wall-clock timestamps.
+/// Tracks frame counts, PTS monotonicity, dropped frames, and wall-clock timestamps.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Uses the same split-thread pattern as <c>SdlVideoSink</c>:
 /// <see cref="PresentAsync"/> stores a frame via <see cref="Interlocked.Exchange{T}(ref T, T)"/>
 /// on the pipeline thread, and a background pump task consumes it at ~16 ms intervals.
-/// Without the pump, <see cref="CpuFramePool"/>'s semaphore (capacity 3) blocks after
-/// three frames and the pipeline deadlocks.
 /// </para>
 /// </remarks>
 internal sealed class HarnessVideoSink : IVideoSink
@@ -38,14 +34,6 @@ internal sealed class HarnessVideoSink : IVideoSink
     private long _firstPtsTicks = -1;
     private long _lastPtsTicks;
     private int _isPtsMonotonic = 1; // 1 = true, 0 = false
-
-    /// <summary>
-    /// The frame pool providing backpressure for this sink.
-    /// Uses a real <see cref="CpuFramePool"/> with capacity 3 so integration
-    /// tests exercise the same semaphore-based flow control as production.
-    /// </summary>
-    public IFramePool FramePool { get; } =
-        new CpuFramePool(NullLogger<CpuFramePool>.Instance, capacity: 3);
 
     /// <inheritdoc />
 
@@ -206,9 +194,6 @@ internal sealed class HarnessVideoSink : IVideoSink
         // Dispose any residual pending frame.
         var residual = Interlocked.Exchange(ref _pendingFrame, null);
         residual?.Dispose();
-
-        // Dispose the frame pool.
-        FramePool.Dispose();
 
         _pumpCts.Dispose();
     }

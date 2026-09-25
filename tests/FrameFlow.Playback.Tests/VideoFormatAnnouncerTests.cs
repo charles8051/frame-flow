@@ -221,8 +221,6 @@ public sealed class VideoFormatAnnouncerTests
         /// <summary>Announcements and frames in the order the sink saw them.</summary>
         public IReadOnlyList<string> Log => _log;
 
-        public IFramePool FramePool => null!;
-
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {
             _presents.Add($"{frame.Width}x{frame.Height}");

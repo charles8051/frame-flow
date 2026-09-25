@@ -273,8 +273,6 @@ internal sealed class PresentCountingVideoSink : IVideoSink
 
     public int Presented => Volatile.Read(ref _presented);
 
-    public IFramePool FramePool => null!;
-
     /// <summary>Completes once at least <paramref name="count"/> frames have been presented.</summary>
     public Task WhenPresented(int count)
     {

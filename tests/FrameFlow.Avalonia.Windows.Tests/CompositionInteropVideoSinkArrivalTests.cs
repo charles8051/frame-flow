@@ -1,7 +1,6 @@
 using FrameFlow.Avalonia.Windows;
 using FrameFlow.Graph;
 using FrameFlow.Media;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Avalonia.Windows.Tests;
 
@@ -24,7 +23,7 @@ namespace FrameFlow.Avalonia.Windows.Tests;
 public sealed class CompositionInteropVideoSinkArrivalTests
 {
     private static CompositionInteropVideoSink NewSink() =>
-        new(new CpuFramePool(NullLogger<CpuFramePool>.Instance));
+        new();
 
     [Fact]
     public async Task PresentAsync_RaisesFrameArrived()

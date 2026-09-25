@@ -21,16 +21,11 @@ namespace FrameFlow.Examples.Common;
 /// it disposes the frame, or hands it to something that will.
 /// </para>
 /// </remarks>
-public sealed class DelegatingVideoSink(
-    Func<IVideoFrame, CancellationToken, ValueTask> present,
-    IFramePool? framePool = null
-) : IVideoSink
+public sealed class DelegatingVideoSink(Func<IVideoFrame, CancellationToken, ValueTask> present)
+    : IVideoSink
 {
     private readonly Func<IVideoFrame, CancellationToken, ValueTask> _present =
         present ?? throw new ArgumentNullException(nameof(present));
-
-    /// <inheritdoc />
-    public IFramePool FramePool { get; } = framePool ?? new NullVideoSink().FramePool;
 
     /// <inheritdoc />
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct) => _present(frame, ct);
