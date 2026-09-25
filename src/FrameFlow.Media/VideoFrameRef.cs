@@ -49,7 +49,7 @@ namespace FrameFlow.Media;
 /// its pool.</item>
 /// </list>
 /// </remarks>
-public sealed class VideoFrameRef : IRefCounted
+public sealed class VideoFrameRef : IRefCounted, IFrame
 {
     private IVideoFrame? _frame;
 
@@ -77,6 +77,20 @@ public sealed class VideoFrameRef : IRefCounted
         ArgumentNullException.ThrowIfNull(frame);
         _frame = frame;
     }
+
+    /// <summary>The wrapped frame's width. Throws once the wrapper is disposed.</summary>
+    /// <remarks>
+    /// <see cref="IFrame"/> lets the graph tell that this item carries a frame, which is how
+    /// <see cref="SyncJoinNode{TPrimary, TSecondary, TOut}"/> knows to require a lead bound
+    /// (ADR-0080, decision 8).
+    /// </remarks>
+    public int Width => Frame.Width;
+
+    /// <summary>The wrapped frame's height. Throws once the wrapper is disposed.</summary>
+    public int Height => Frame.Height;
+
+    /// <summary>The wrapped frame's presentation time. Throws once the wrapper is disposed.</summary>
+    public TimeSpan Timestamp => Frame.Pts;
 
     public IRefCounted AddRef()
     {

@@ -30,7 +30,7 @@ namespace FrameFlow.Yolo;
 /// the inner <see cref="VideoFrameRef"/>.
 /// </para>
 /// </remarks>
-public sealed class DetectedVideoFrameRef : IRefCounted
+public sealed class DetectedVideoFrameRef : IRefCounted, IFrame
 {
     /// <summary>The underlying video frame, refcount-owned by this wrapper.</summary>
     public VideoFrameRef Video { get; }
@@ -45,6 +45,15 @@ public sealed class DetectedVideoFrameRef : IRefCounted
         Video = video;
         Detections = detections;
     }
+
+    /// <summary>The frame's width. Throws once the item is disposed.</summary>
+    public int Width => Video.Width;
+
+    /// <summary>The frame's height. Throws once the item is disposed.</summary>
+    public int Height => Video.Height;
+
+    /// <summary>The frame's presentation time. Throws once the item is disposed.</summary>
+    public TimeSpan Timestamp => Video.Timestamp;
 
     public IRefCounted AddRef()
     {

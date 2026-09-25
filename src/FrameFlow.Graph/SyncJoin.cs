@@ -191,6 +191,12 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     /// dropping policy.
     /// </para>
     /// <para>
+    /// <b>Required for a frame secondary.</b> When <c>TSecondary</c> is an <see cref="IFrame"/>,
+    /// the constructor refuses a <see langword="null"/> lead (ADR-0080, decision 8): each
+    /// retained frame keeps its storage alive, and hardware or camera storage comes from a
+    /// fixed pool.
+    /// </para>
+    /// <para>
     /// A held secondary is admitted by the join's secondary reader once the primary comes
     /// within the lead of it. Set the lead well above the primary's item interval, so an entry
     /// becomes admissible several primary items before it can match. With a lead of about one
@@ -243,6 +249,19 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
         if (maxLead is { } lead)
             ArgumentOutOfRangeException.ThrowIfLessThan(lead, TimeSpan.Zero, nameof(maxLead));
 
+        // ADR-0080 decision 8: a retained frame pins its storage, and without a lead the join
+        // keeps every secondary that arrives ahead of the primary (#90).
+        if (maxLead is null && typeof(IFrame).IsAssignableFrom(typeof(TSecondary)))
+        {
+            throw new ArgumentException(
+                $"Join '{id}' has a frame secondary ({typeof(TSecondary).Name}) and no lead bound. "
+                    + "Without one it keeps every secondary that arrives ahead of the primary, and "
+                    + "each keeps its frame's storage alive. Set maxLead above the furthest the "
+                    + "secondary can run ahead.",
+                nameof(maxLead)
+            );
+        }
+
         Id = id;
         Body = body;
         Keys = keys;
@@ -254,6 +273,24 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
         Primary = new InputPort<TPrimary>(this, "primary");
         Secondary = new InputPort<TSecondary>(this, "secondary");
         Output = new OutputPort<TOut>(this, "output");
+    }
+
+    /// <summary>
+    /// Refuses a frame that reaches a join with no lead bound through a secondary type broader
+    /// than the frame's own, which the constructor's type check cannot see (ADR-0080, decision 8).
+    /// Called on each secondary before it is admitted.
+    /// </summary>
+    internal void ThrowIfFrameWithoutLead(TSecondary item)
+    {
+        if (MaxLead is null && item is IFrame)
+        {
+            throw new InvalidOperationException(
+                $"Join '{Id}' received a frame secondary ({item.GetType().Name}) and has no lead "
+                    + "bound, so it would keep every frame that arrives ahead of the primary. "
+                    + "Set maxLead, or declare the secondary as the frame type so the constructor "
+                    + "checks it."
+            );
+        }
     }
 
     /// <summary>

@@ -7,7 +7,10 @@ FrameFlow.Yolo.DetectedVideoFrameRef.AddRef() -> FrameFlow.Graph.IRefCounted!
 FrameFlow.Yolo.DetectedVideoFrameRef.DetectedVideoFrameRef(FrameFlow.Media.VideoFrameRef! video, System.Collections.Generic.IReadOnlyList<FrameFlow.Yolo.Detection>! detections) -> void
 FrameFlow.Yolo.DetectedVideoFrameRef.Detections.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Yolo.Detection>!
 FrameFlow.Yolo.DetectedVideoFrameRef.Dispose() -> void
+FrameFlow.Yolo.DetectedVideoFrameRef.Height.get -> int
+FrameFlow.Yolo.DetectedVideoFrameRef.Timestamp.get -> System.TimeSpan
 FrameFlow.Yolo.DetectedVideoFrameRef.Video.get -> FrameFlow.Media.VideoFrameRef!
+FrameFlow.Yolo.DetectedVideoFrameRef.Width.get -> int
 FrameFlow.Yolo.Detection
 FrameFlow.Yolo.Detection.ClassId.get -> int
 FrameFlow.Yolo.Detection.ClassId.init -> void
