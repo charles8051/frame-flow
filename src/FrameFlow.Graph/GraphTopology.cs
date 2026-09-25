@@ -13,7 +13,8 @@ namespace FrameFlow.Graph;
 /// Whether a full edge makes its producer wait rather than dropping. A dropping edge anywhere on
 /// a path is what keeps a fork-rejoin from deadlocking.
 /// </param>
-internal readonly record struct EdgeSpec(IPort From, IPort To, bool Blocks);
+/// <param name="Capacity">How many items the edge holds, which a frame budget counts.</param>
+internal readonly record struct EdgeSpec(IPort From, IPort To, bool Blocks, int Capacity = 1);
 
 /// <summary>
 /// A join whose secondary it can stop reading, which is what makes a fork-rejoin able to
@@ -39,6 +40,21 @@ internal interface IDeclaresHolding
 {
     /// <summary>What the node holds of items arriving at <paramref name="input"/>.</summary>
     Holding HoldingAt(IPort input);
+}
+
+/// <summary>
+/// A source that is told its frame budget before each run (ADR-0081, decision 4).
+/// </summary>
+internal interface IBudgetedSource
+{
+    /// <summary>The port whose items the budget counts.</summary>
+    IPort BudgetedOutput { get; }
+
+    /// <summary>Whether the source wants its budget at all.</summary>
+    bool WantsBudget { get; }
+
+    /// <summary>Hands the source its budget. May throw to refuse the run.</summary>
+    void ApplyBudget(FrameBudget budget);
 }
 
 /// <summary>An input port that knows whether an edge has been wired into it.</summary>

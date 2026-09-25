@@ -51,6 +51,9 @@ FrameFlow.Graph.EdgeOptions.Overflow.init -> void
 FrameFlow.Graph.FailureResponse
 FrameFlow.Graph.FailureResponse.Discard = 1 -> FrameFlow.Graph.FailureResponse
 FrameFlow.Graph.FailureResponse.Propagate = 0 -> FrameFlow.Graph.FailureResponse
+FrameFlow.Graph.FrameBudget
+FrameFlow.Graph.FrameBudget.Frames.get -> int?
+FrameFlow.Graph.FrameBudget.UnboundedHolder.get -> string?
 FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Graph.FrameMemoryDomain.Cpu = 0 -> FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Graph.FrameMemoryDomain.Gpu = 1 -> FrameFlow.Graph.FrameMemoryDomain
@@ -58,6 +61,7 @@ FrameFlow.Graph.Graph
 FrameFlow.Graph.Graph.Add<T>(T node) -> T
 FrameFlow.Graph.Graph.BeforeEachRun(System.Action! beforeRun) -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.Graph.Connect<T>(FrameFlow.Graph.OutputPort<T!>! from, FrameFlow.Graph.InputPort<T!>! to, FrameFlow.Graph.EdgeOptions? options = null) -> FrameFlow.Graph.Graph!
+FrameFlow.Graph.Graph.FrameBudgetFor<T>(FrameFlow.Graph.OutputPort<T!>! source) -> FrameFlow.Graph.FrameBudget!
 FrameFlow.Graph.Graph.Graph() -> void
 FrameFlow.Graph.Graph.RunAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
 FrameFlow.Graph.GraphChain<T>
@@ -160,9 +164,10 @@ FrameFlow.Graph.SourceNode<TOut>
 FrameFlow.Graph.SourceNode<TOut>.Body.get -> FrameFlow.Graph.Producer<TOut!>!
 FrameFlow.Graph.SourceNode<TOut>.Cleanup.get -> System.Func<System.Threading.Tasks.ValueTask>?
 FrameFlow.Graph.SourceNode<TOut>.Id.get -> string!
+FrameFlow.Graph.SourceNode<TOut>.OnBudget.get -> System.Action<FrameFlow.Graph.FrameBudget!>?
 FrameFlow.Graph.SourceNode<TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
 FrameFlow.Graph.SourceNode<TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
-FrameFlow.Graph.SourceNode<TOut>.SourceNode(string! id, FrameFlow.Graph.Producer<TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, System.Func<System.Threading.Tasks.ValueTask>? cleanup = null) -> void
+FrameFlow.Graph.SourceNode<TOut>.SourceNode(string! id, FrameFlow.Graph.Producer<TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, System.Func<System.Threading.Tasks.ValueTask>? cleanup = null, System.Action<FrameFlow.Graph.FrameBudget!>? onBudget = null) -> void
 FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>
 FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.PrimaryTime.get -> System.Func<TPrimary!, System.TimeSpan>!
 FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.PrimaryTime.init -> void
@@ -212,6 +217,8 @@ static FrameFlow.Graph.DTypeExtensions.ClrType(this FrameFlow.Graph.DType dtype)
 static FrameFlow.Graph.EdgeOptions.Buffered(int capacity) -> FrameFlow.Graph.EdgeOptions!
 static FrameFlow.Graph.EdgeOptions.Default.get -> FrameFlow.Graph.EdgeOptions!
 static FrameFlow.Graph.EdgeOptions.LatestWins(int capacity = 1) -> FrameFlow.Graph.EdgeOptions!
+static FrameFlow.Graph.FrameBudget.Of(int frames) -> FrameFlow.Graph.FrameBudget!
+static FrameFlow.Graph.FrameBudget.Unbounded(string! holder) -> FrameFlow.Graph.FrameBudget!
 static FrameFlow.Graph.GraphChainExtensions.Pipeline<T>(this FrameFlow.Graph.Graph! graph, FrameFlow.Graph.OutputPort<T!>! from) -> FrameFlow.Graph.GraphChain<T!>
 static FrameFlow.Graph.GraphChainExtensions.Pipeline<T>(this FrameFlow.Graph.Graph! graph, FrameFlow.Graph.SourceNode<T!>! source) -> FrameFlow.Graph.GraphChain<T!>
 static FrameFlow.Graph.Holding.AtMost(int maxHeld, bool forwardsStorage = true, int? framesPerOutputItem = null) -> FrameFlow.Graph.Holding!

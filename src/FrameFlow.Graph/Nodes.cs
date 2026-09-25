@@ -44,7 +44,7 @@ internal interface IPumpableNode : INode
 /// A source node: produces items via a <see cref="Producer{TOut}"/>
 /// function until it returns null (end of stream).
 /// </summary>
-public sealed class SourceNode<TOut> : IPumpableNode
+public sealed class SourceNode<TOut> : IPumpableNode, IBudgetedSource
     where TOut : class, IRefCounted
 {
     public string Id { get; }
@@ -63,11 +63,20 @@ public sealed class SourceNode<TOut> : IPumpableNode
     /// </summary>
     public Func<ValueTask>? Cleanup { get; }
 
+    /// <summary>
+    /// Called with this source's <see cref="FrameBudget"/> each time a graph containing it
+    /// starts a run, before any pump (ADR-0081, decision 4). A source whose items come from a
+    /// fixed pool sizes the pool from it, copies when the pool cannot hold it, or throws to
+    /// refuse the run.
+    /// </summary>
+    public Action<FrameBudget>? OnBudget { get; }
+
     public SourceNode(
         string id,
         Producer<TOut> body,
         FailureResponse onError = FailureResponse.Propagate,
-        Func<ValueTask>? cleanup = null
+        Func<ValueTask>? cleanup = null,
+        Action<FrameBudget>? onBudget = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -76,8 +85,15 @@ public sealed class SourceNode<TOut> : IPumpableNode
         Body = body;
         OnError = onError;
         Cleanup = cleanup;
+        OnBudget = onBudget;
         Output = new OutputPort<TOut>(this, "output");
     }
+
+    IPort IBudgetedSource.BudgetedOutput => Output;
+
+    bool IBudgetedSource.WantsBudget => OnBudget is not null;
+
+    void IBudgetedSource.ApplyBudget(FrameBudget budget) => OnBudget?.Invoke(budget);
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpSourceAsync(this, graphCts);

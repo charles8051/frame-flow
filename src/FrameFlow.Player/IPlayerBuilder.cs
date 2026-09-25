@@ -100,6 +100,14 @@ public interface IPlayerBuilder
     /// <see cref="GraphChain{T}.To"/> inside the configurator — the builder calls it on the
     /// returned chain after attaching the sink.
     /// </param>
+    /// <remarks>
+    /// The configurator runs once for each graph the player builds: for each item, after each
+    /// seek, and, when the player sizes a hardware decoder's pool, once more before the decoder
+    /// opens. Build new nodes on each call, wired the same way each time: the player sizes the
+    /// pool from one call's graph and runs another's. A node instance is wired into one graph
+    /// only, so a configurator that attaches the same node twice fails with its input already
+    /// connected.
+    /// </remarks>
     /// <remarks>Replaces any previously-configured video transform.</remarks>
     IPlayerBuilder ConfigureVideo(
         Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>> configure
@@ -109,6 +117,12 @@ public interface IPlayerBuilder
     /// Inserts a consumer-controlled transform between the decoded audio source and the registered
     /// <see cref="IAudioSink"/>.
     /// </summary>
+    /// <remarks>
+    /// The configurator runs once for each graph the player builds: for each item, and after
+    /// each seek. Build new nodes on each call, wired the same way each time. A node instance is
+    /// wired into one graph only, so a configurator that attaches the same node twice fails with
+    /// its input already connected.
+    /// </remarks>
     /// <remarks>Replaces any previously-configured audio transform.</remarks>
     IPlayerBuilder ConfigureAudio(
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>> configure

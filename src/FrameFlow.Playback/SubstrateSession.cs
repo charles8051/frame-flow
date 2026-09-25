@@ -1486,11 +1486,13 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             // to run here behind an in-graph PaceUntil, which is the carve-out ADR-0057 took and
             // the chain contract removes: a consumer that needs extra sinks wires them on Branch
             // edges and returns its trunk open.
-            var chain = graph.Pipeline(_videoDecoder!.AsSourceNode("video-source"))
-                .Then(_videoGate.AsOperator("video-gate"));
-            if (_videoConfigurator is not null)
-                chain = _videoConfigurator(chain);
-            chain.To((_videoPacer ?? (IVideoSink)_videoSink!).AsSinkNode("video-sink"));
+            WireVideo(
+                graph,
+                _videoDecoder!.AsSourceNode("video-source"),
+                _videoGate.AsOperator("video-gate"),
+                _videoConfigurator,
+                (_videoPacer ?? (IVideoSink)_videoSink!).AsSinkNode("video-sink")
+            );
         }
 
         if (hasAudio)
@@ -1506,6 +1508,72 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         }
 
         return graph;
+    }
+
+    /// <summary>
+    /// The video path's one shape: source, then the pause gate, then the consumer's
+    /// configurator, then the sink. <see cref="BuildGraph"/> and
+    /// <see cref="VideoFrameBudget"/> both wire it here, so the budget is computed on the path
+    /// that runs.
+    /// </summary>
+    private static void WireVideo(
+        FrameFlow.Graph.Graph graph,
+        SourceNode<IVideoFrame> source,
+        OperatorNode<IVideoFrame, IVideoFrame> gate,
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? configurator,
+        SinkNode<IVideoFrame> sink
+    )
+    {
+        var chain = graph.Pipeline(source).Then(gate);
+        if (configurator is not null)
+            chain = configurator(chain);
+        chain.To(sink);
+    }
+
+    /// <summary>
+    /// The frame budget of a session's video path over <paramref name="sink"/> (ADR-0081,
+    /// decision 3): the most decoded frames the path can hold at once, or the node that leaves
+    /// it unbounded.
+    /// </summary>
+    /// <remarks>
+    /// Computed on a copy of the path with a stand-in source and the pacer's declaration, so it
+    /// is known before the decoder opens and can size the decoder's pool. The configurator runs
+    /// once more to build the copy, as it does for every graph a seek rebuilds, and its contract
+    /// is to wire the same path each time.
+    /// </remarks>
+    internal static FrameBudget VideoFrameBudget(
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? configurator,
+        IVideoSink sink
+    )
+    {
+        ArgumentNullException.ThrowIfNull(sink);
+        var graph = new FrameFlow.Graph.Graph();
+        var source = new SourceNode<IVideoFrame>("video-source", static _ => default);
+        WireVideo(
+            graph,
+            source,
+            new PausableGate<IVideoFrame>().AsOperator("video-gate"),
+            configurator,
+            new PacerDeclaration(sink).AsSinkNode("video-sink")
+        );
+        return graph.FrameBudgetFor(source.Output);
+    }
+
+    /// <summary>
+    /// Stands in for the pacer the session will build over a sink, for a budget computed before
+    /// the pacer exists. It declares what the pacer will, and presents nothing.
+    /// </summary>
+    private sealed class PacerDeclaration(IVideoSink inner) : IVideoSink
+    {
+        public int? MaxHeldFrames => ClockSelectVideoSink.MaxHeldFramesOver(inner);
+
+        public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct) =>
+            throw new InvalidOperationException("A budget's stand-in sink is never run.");
+
+        public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) =>
+            ValueTask.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     /// <summary>
