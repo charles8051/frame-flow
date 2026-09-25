@@ -58,11 +58,13 @@ internal static class FrameBudgets
     /// <para>
     /// Edges and nodes count items. After a node that gathers frames into one item, such as a
     /// clip, each item counts the frames that node says it carries
-    /// (<see cref="Holding.FramesPerOutputItem"/>).
+    /// (<see cref="Holding.FramesPerOutputItem"/>). A node reached by paths that carry different
+    /// numbers of frames per item, such as a join, is taken to emit the largest, whatever order
+    /// the paths were wired in.
     /// </para>
     /// <para>
-    /// A node reached by two paths is counted once for each of its inputs, which is what a join
-    /// fed from both sides of one fork holds.
+    /// Each input port is counted once, which is what a join fed from both sides of one fork
+    /// holds: its primary's and its secondary's.
     /// </para>
     /// </remarks>
     public static FrameBudget For(IPort source, IReadOnlyList<EdgeSpec> edges)
@@ -70,44 +72,58 @@ internal static class FrameBudgets
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(edges);
 
-        long total = 1; // the item the source's pump holds while it writes
-        var pending = new Queue<(IPort Output, int FramesPerItem)>();
-        var outputsSeen = new HashSet<IPort> { source };
-        var inputsCounted = new HashSet<IPort>();
-        pending.Enqueue((source, 1));
+        // First the frames each reached port carries per item, raised to the largest over every
+        // path into it. An input port has one edge, so it carries what that edge's output does.
+        var outputs = new Dictionary<IPort, int> { [source] = 1 };
+        var inputs = new Dictionary<IPort, int>();
+        var pending = new Queue<IPort>();
+        pending.Enqueue(source);
 
         while (pending.Count > 0)
         {
-            var (output, framesPerItem) = pending.Dequeue();
+            var output = pending.Dequeue();
+            int framesPerItem = outputs[output];
             foreach (var edge in edges)
             {
                 if (edge.From != output)
                     continue;
-
-                total += (long)edge.Capacity * framesPerItem;
-                if (!inputsCounted.Add(edge.To))
+                if (inputs.TryGetValue(edge.To, out int seen) && seen >= framesPerItem)
                     continue;
+                inputs[edge.To] = framesPerItem;
 
-                var node = edge.To.Owner;
-                var holding = node is IDeclaresHolding declares
-                    ? declares.HoldingAt(edge.To)
-                    : Holding.Unbounded;
-                if (holding.MaxHeld is not { } held)
-                    return FrameBudget.Unbounded(node.Id);
-
-                total += (long)held * framesPerItem;
+                var holding = HoldingAt(edge.To);
+                if (holding.MaxHeld is null)
+                    return FrameBudget.Unbounded(edge.To.Owner.Id);
                 if (!holding.ForwardsStorage)
                     continue;
 
                 int next = holding.FramesPerOutputItem ?? framesPerItem;
                 foreach (var onward in edges)
                 {
-                    if (onward.From.Owner == node && outputsSeen.Add(onward.From))
-                        pending.Enqueue((onward.From, next));
+                    if (onward.From.Owner != edge.To.Owner)
+                        continue;
+                    if (outputs.TryGetValue(onward.From, out int current) && current >= next)
+                        continue;
+                    outputs[onward.From] = next;
+                    pending.Enqueue(onward.From);
                 }
             }
         }
 
+        // Then the sum: the item the source's pump holds while it writes, each reached edge, and
+        // each reached input.
+        long total = 1;
+        foreach (var edge in edges)
+        {
+            if (outputs.TryGetValue(edge.From, out int framesPerItem))
+                total += (long)edge.Capacity * framesPerItem;
+        }
+        foreach (var (input, framesPerItem) in inputs)
+            total += (long)HoldingAt(input).MaxHeld!.Value * framesPerItem;
+
         return FrameBudget.Of((int)Math.Min(total, int.MaxValue));
     }
+
+    private static Holding HoldingAt(IPort input) =>
+        input.Owner is IDeclaresHolding declares ? declares.HoldingAt(input) : Holding.Unbounded;
 }

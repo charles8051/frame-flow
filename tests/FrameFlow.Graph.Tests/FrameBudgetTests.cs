@@ -88,6 +88,38 @@ public sealed class FrameBudgetTests
         Assert.Equal(13, graph.FrameBudgetFor(source.Output).Frames);
     }
 
+    /// <summary>
+    /// A join whose primary carries gathered items of 10 frames and whose secondary carries
+    /// single frames. Its output can be either, so everything after it counts 10 per item,
+    /// whichever input was wired first.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AJoinReachedWithDifferentFramesPerItem_CountsTheLargest(bool secondaryWiredFirst)
+    {
+        var graph = new GraphRunner();
+        var source = Source();
+        var gather = Op("gather", Holding.AtMost(2, forwardsStorage: true, framesPerOutputItem: 10));
+        var join = Join(maxRetained: 4);
+        if (secondaryWiredFirst)
+        {
+            graph.Connect(source.Output, join.Secondary);
+            graph.Connect(source.Output, gather.Input);
+        }
+        else
+        {
+            graph.Connect(source.Output, gather.Input);
+            graph.Connect(source.Output, join.Secondary);
+        }
+        graph.Connect(gather.Output, join.Primary);
+        graph.Pipeline(join.Output).To(Sink("sink", Holding.AtMost(3)));
+
+        // Pump 1. Gather: edge 1, holds 2. Primary: edge 10, holds 10. Secondary: edge 1, holds
+        // 5. Output: edge 10, sink 3 items of 10.
+        Assert.Equal(70, graph.FrameBudgetFor(source.Output).Frames);
+    }
+
     [Fact]
     public async Task ASourceWithAHook_IsToldItsBudgetBeforeAnyPump()
     {
