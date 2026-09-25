@@ -133,7 +133,14 @@ public sealed class Graph
         to.IsConnected = true;
 
         var opts = options ?? EdgeOptions.Default;
-        _edges.Add(new EdgeSpec(from, to, Blocks: opts.Overflow == Overflow.Block));
+        _edges.Add(
+            new EdgeSpec(
+                from,
+                to,
+                Blocks: opts.Overflow == Overflow.Block,
+                Capacity: Math.Max(1, opts.Capacity)
+            )
+        );
         // Reset clears the prior run's edge state so RunAsync can be called again.
         // For a fan-out output port (multiple edges share one `from`), each edge
         // registers a Clear(); they all run before any wire-up Add(), so clearing
@@ -150,6 +157,22 @@ public sealed class Graph
             to.Reader = channel.Reader;
         });
         return this;
+    }
+
+    /// <summary>
+    /// The most items of <paramref name="source"/>'s output this graph, as wired so far, can
+    /// hold at once, or the node that leaves it unbounded (ADR-0081, decision 3).
+    /// </summary>
+    /// <remarks>
+    /// It counts the item the source's pump is writing, each edge's capacity and what each node
+    /// declares (<see cref="Holding"/>), up to the first storage boundary on each path. A
+    /// fixed-pool source sizes its pool from it.
+    /// </remarks>
+    public FrameBudget FrameBudgetFor<T>(OutputPort<T> source)
+        where T : class, IRefCounted
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return FrameBudgets.For(source, _edges);
     }
 
     /// <summary>
@@ -196,6 +219,14 @@ public sealed class Graph
                 "This graph is not wired correctly:" + Environment.NewLine + "  "
                     + string.Join(Environment.NewLine + "  ", errors)
             );
+        }
+
+        // Each fixed-pool source learns what this graph can hold of its frames before anything
+        // runs, and may refuse the run (ADR-0081, decision 4).
+        foreach (var node in _nodes)
+        {
+            if (node is IBudgetedSource { WantsBudget: true } budgeted)
+                budgeted.ApplyBudget(FrameBudgets.For(budgeted.BudgetedOutput, _edges));
         }
 
         foreach (var beforeRun in _beforeRun)

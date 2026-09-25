@@ -284,6 +284,30 @@ camera guard (#385) have run; the rest has not.
 
 ## Revision history
 
+**2026-09-25, the budget computed (#387, first part).** Decision 3 is implemented.
+
+- **`Graph.FrameBudgetFor(source)`** sums the item the source's pump is writing, every edge's
+  capacity, and each input's declared holding, up to the first storage boundary on each path. It
+  names the first undeclared holder when the path is unbounded.
+- **Gathered frames.** After a node that gathers frames into one item, each item counts the frames
+  that node declares.
+- **Source hook.** `SourceNode.OnBudget` hands a source its budget before each run, and may throw to
+  refuse the run.
+- **The player's probe.** `SubstrateSession.VideoFrameBudget` wires the player's video path with a
+  stand-in source, so the budget is known before the decoder opens.
+
+The sums for the four topologies the issue names:
+
+| Topology | Budget |
+|---|---|
+| The player's D3D11 path | 11 |
+| LiveCaptioning in GPU mode | 19 |
+| Camera.Multicast | 3 |
+| The MotionClip recorder | 3 |
+
+The player's 11 exceeds phase 1's allowance of 5, which left out the two edges, the gate and the
+source pump. Applying the budget is the second part.
+
 **2026-09-25, the declarations (#386).** Decisions 1 and 2 are implemented as data.
 
 - **`Holding`.** It carries the most input items a node holds at once, counting the call. `null`

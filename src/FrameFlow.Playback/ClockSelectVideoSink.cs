@@ -549,7 +549,14 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// the inner sink keeps. Paused, the ring stays full for as long as the pause lasts, which a
     /// count does not mind.
     /// </remarks>
-    public int? MaxHeldFrames => _inner.MaxHeldFrames is { } inner ? _capacity + 1 + inner : null;
+    public int? MaxHeldFrames => MaxHeldFramesOver(_inner, _capacity);
+
+    /// <summary>
+    /// What a pacer of <paramref name="capacity"/> over <paramref name="inner"/> declares, for a
+    /// caller that needs the count before the pacer exists.
+    /// </summary>
+    internal static int? MaxHeldFramesOver(IVideoSink inner, int capacity = DefaultCapacity) =>
+        inner.MaxHeldFrames is { } kept ? capacity + 1 + kept : null;
 
     /// <summary>Total frames delivered to the inner sink (selected as due).</summary>
     public int Presented => Volatile.Read(ref _presented);
