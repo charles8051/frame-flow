@@ -41,6 +41,26 @@ public sealed class CpuFrameMetricsTests
         Assert.Equal(bytesBefore, CpuFrameMetrics.OutstandingBytes);
     }
 
+    [Fact]
+    public void AFrameWhoseBufferOwnerThrowsOnDispose_IsStillCountedOut()
+    {
+        long bytesBefore = CpuFrameMetrics.OutstandingBytes;
+        int framesBefore = CpuFrameMetrics.OutstandingFrames;
+        var frame = new CpuVideoFrame(new ThrowingOwner(500), 5, 25, 20, PixelFormat.Bgra32, TimeSpan.Zero);
+
+        Assert.Throws<InvalidOperationException>(() => frame.Dispose());
+
+        Assert.Equal(bytesBefore, CpuFrameMetrics.OutstandingBytes);
+        Assert.Equal(framesBefore, CpuFrameMetrics.OutstandingFrames);
+    }
+
+    private sealed class ThrowingOwner(int length) : IMemoryOwner<byte>
+    {
+        public Memory<byte> Memory { get; } = new byte[length];
+
+        public void Dispose() => throw new InvalidOperationException("owner failed");
+    }
+
     private sealed class Owner(int length) : IMemoryOwner<byte>
     {
         public Memory<byte> Memory { get; } = new byte[length];

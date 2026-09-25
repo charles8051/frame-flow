@@ -121,7 +121,14 @@ public sealed class CpuVideoFrame : IVideoFrame
         if (!RefCounting.Release(ref _refCount, this))
             return;
 
-        PixelData.Dispose();
-        Diagnostics.CpuFrameMetrics.OnFrameReleased(_bytes);
+        try
+        {
+            PixelData.Dispose();
+        }
+        finally
+        {
+            // The frame is released whether or not its buffer owner's Dispose throws.
+            Diagnostics.CpuFrameMetrics.OnFrameReleased(_bytes);
+        }
     }
 }
