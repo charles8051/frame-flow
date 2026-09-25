@@ -100,7 +100,8 @@ public sealed class CpuVideoFrame : IVideoFrame
     /// <returns>The frame, holding one reference.</returns>
     /// <remarks>
     /// If <paramref name="fill"/> throws, the storage goes back to <paramref name="pool"/> and
-    /// the exception propagates unchanged. No frame is created.
+    /// the exception propagates unchanged, even when the pool's <c>Return</c> throws too. No
+    /// frame is created.
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="fill"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A dimension is negative, or the frame does not fit in one array.</exception>
@@ -128,7 +129,7 @@ public sealed class CpuVideoFrame : IVideoFrame
         }
         catch
         {
-            ReturnStorage(pool, storage);
+            ReturnStorageAfterFailure(pool, storage);
             throw;
         }
 
@@ -200,8 +201,22 @@ public sealed class CpuVideoFrame : IVideoFrame
 #if DEBUG
         storage.AsSpan().Fill(ReleasedFill);
 #endif
-        // Rent(0) hands out the shared empty array, which belongs to no pool.
-        if (storage.Length > 0)
-            pool.Return(storage);
+        pool.Return(storage);
+    }
+
+    /// <summary>
+    /// Returns the storage on a failure path. The failure's own exception is the one the caller
+    /// sees; a pool that also throws from <c>Return</c> leaves the array to the garbage collector.
+    /// </summary>
+    private static void ReturnStorageAfterFailure(ArrayPool<byte> pool, byte[] storage)
+    {
+        try
+        {
+            ReturnStorage(pool, storage);
+        }
+        catch (Exception)
+        {
+            // Deliberately dropped: rethrowing here would replace the exception being reported.
+        }
     }
 }

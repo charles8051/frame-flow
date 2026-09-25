@@ -160,8 +160,8 @@ public sealed class PcmAudioBuffer : IAudioBuffer
     /// <returns>The buffer, holding one reference.</returns>
     /// <remarks>
     /// If <paramref name="fill"/> throws, the storage goes back to
-    /// <paramref name="pool"/> and the exception propagates unchanged. No
-    /// buffer is created.
+    /// <paramref name="pool"/> and the exception propagates unchanged, even
+    /// when the pool's <c>Return</c> throws too. No buffer is created.
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="fill"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="capacity"/> is negative.</exception>
@@ -191,13 +191,13 @@ public sealed class PcmAudioBuffer : IAudioBuffer
         }
         catch
         {
-            ReturnStorage(pool, storage);
+            ReturnStorageAfterFailure(pool, storage);
             throw;
         }
 
         if ((uint)written > (uint)capacity)
         {
-            ReturnStorage(pool, storage);
+            ReturnStorageAfterFailure(pool, storage);
             throw new InvalidOperationException(
                 $"The fill callback reported {written} samples for a capacity of {capacity}."
             );
@@ -240,8 +240,22 @@ public sealed class PcmAudioBuffer : IAudioBuffer
 #if DEBUG
         storage.AsSpan().Fill(ReleasedFill);
 #endif
-        // Rent(0) hands out the shared empty array, which belongs to no pool.
-        if (storage.Length > 0)
-            pool.Return(storage);
+        pool.Return(storage);
+    }
+
+    /// <summary>
+    /// Returns the storage on a failure path. The failure's own exception is the one the caller
+    /// sees; a pool that also throws from <c>Return</c> leaves the array to the garbage collector.
+    /// </summary>
+    private static void ReturnStorageAfterFailure(ArrayPool<short> pool, short[] storage)
+    {
+        try
+        {
+            ReturnStorage(pool, storage);
+        }
+        catch (Exception)
+        {
+            // Deliberately dropped: rethrowing here would replace the exception being reported.
+        }
     }
 }

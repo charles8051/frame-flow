@@ -243,7 +243,7 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
 
     private PcmAudioBuffer CreateEmpty(TimeSpan pts)
     {
-        // Capacity 0 rents the shared empty array, which nothing returns.
+        // A zero-sample buffer: capacity 0, and a fill that writes nothing.
         return PcmAudioBuffer.Create(
             0,
             TargetSampleRate,

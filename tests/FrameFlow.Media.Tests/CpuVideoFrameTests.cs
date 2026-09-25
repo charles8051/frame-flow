@@ -233,6 +233,39 @@ public sealed class CpuVideoFrameTests
         Assert.Equal(1, pool.Returns);
     }
 
+    [Fact]
+    public void AFillThatThrows_StillPropagatesItsException_WhenThePoolThrowsOnReturn()
+    {
+        var pool = new CountingArrayPool<byte> { ThrowOnReturn = true };
+        var thrown = new FormatException("fill failed");
+
+        var caught = Assert.Throws<FormatException>(() =>
+            CpuVideoFrame.Create(
+                PixelFormat.Bgra32,
+                2,
+                2,
+                TimeSpan.Zero,
+                TimeSpan.Zero,
+                thrown,
+                static (_, ex) => throw ex,
+                pool
+            )
+        );
+
+        Assert.Same(thrown, caught);
+    }
+
+    [Fact]
+    public void AZeroSizedFrame_ReturnsItsArrayToThePool()
+    {
+        var pool = new CountingArrayPool<byte>();
+        var frame = Bgra(width: 0, height: 0, pool: pool);
+
+        frame.Dispose();
+
+        Assert.Equal(1, pool.Returns);
+    }
+
 #if DEBUG
     [Fact]
     public void ReleasedStorage_ReadsAsTheReleaseFill_ThroughAViewKeptPastTheRelease()

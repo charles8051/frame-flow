@@ -73,7 +73,7 @@ public sealed class PcmAudioBlockTests
     }
 
     [Fact]
-    public void ZeroCapacity_IsValid_AndReturnsNothingToThePool()
+    public void ZeroCapacity_IsValid_AndItsArrayGoesBackToThePool()
     {
         var pool = new CountingArrayPool<short>();
         var block = Ramp(capacity: 0, written: 0, pool: pool);
@@ -81,7 +81,17 @@ public sealed class PcmAudioBlockTests
         block.Dispose();
 
         Assert.Equal(0, block.SampleCount);
-        Assert.Equal(0, pool.Returns);
+        Assert.Equal(1, pool.Returns);
+    }
+
+    [Fact]
+    public void ZeroCapacity_FromTheSharedPool_ReleasesCleanly()
+    {
+        var block = Ramp(capacity: 0, written: 0);
+
+        var ex = Record.Exception(block.Dispose);
+
+        Assert.Null(ex);
     }
 
     [Theory]
@@ -134,6 +144,31 @@ public sealed class PcmAudioBlockTests
         Assert.Same(thrown, caught);
         Assert.Equal(1, pool.Rents);
         Assert.Equal(1, pool.Returns);
+    }
+
+    [Fact]
+    public void AFillThatThrows_StillPropagatesItsException_WhenThePoolThrowsOnReturn()
+    {
+        var pool = new CountingArrayPool<short> { ThrowOnReturn = true };
+        var thrown = new FormatException("fill failed");
+
+        var caught = Assert.Throws<FormatException>(() =>
+            PcmAudioBuffer.Create(4, 48_000, 2, TimeSpan.Zero, thrown, static (_, ex) => throw ex, pool)
+        );
+
+        Assert.Same(thrown, caught);
+    }
+
+    [Fact]
+    public void AnOutOfRangeCount_StillReportsItself_WhenThePoolThrowsOnReturn()
+    {
+        var pool = new CountingArrayPool<short> { ThrowOnReturn = true };
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            PcmAudioBuffer.Create(4, 48_000, 2, TimeSpan.Zero, 5, static (_, n) => n, pool)
+        );
+
+        Assert.Contains("capacity of 4", ex.Message);
     }
 
 #if DEBUG
