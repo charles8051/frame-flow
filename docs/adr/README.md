@@ -246,6 +246,16 @@ land.
   presenter's converter already performs per frame, and leaves ADR-0025's sink-owned pool
   alone. Paired with the [video lookahead](../feature-specs/video-lookahead/spec.md) spec,
   which is the only thing that would spend the depth.
+- [One ownership contract for graph items](frame-ownership.md) — every graph item counts
+  references except `Media.CpuVideoFrame`, the output of the decoder's CPU path and of every
+  converter, and the rest disagree on what an extra `Dispose` does. The one-shot frame is why
+  fan-out clones (ADR-0054), joins throw (#91) and `LatestWins` edges copy (#93). Decides one
+  counting rule (atomic, same instance, no revival), one disposing rule (exactly one reference per
+  call, never a throw), how a body forwards an input, immutable frames written only inside a
+  fill callback, and graph items that are the frames themselves (#42). Keeping a frame one-shot never
+  protected a pool, because those frames rent from a growable one. Supersedes ADR-0054. The
+  first draft also decided a fixed-pool policy and storage kinds; review moved those to
+  [fixed-pool budget](fixed-pool-budget.md) and frame-pool ownership.
 - [Declared pull: the master clock as a graph-visible dependency](declared-pull-clock.md) — the
   substrate models edges and nodes, and the master clock is neither, so no rule and no diagnostic
   can see which nodes depend on one. It set out to register clock readers on the `Graph`. Drafting
