@@ -9,17 +9,21 @@ namespace FrameFlow.Graph;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Ownership.</b> The substrate has called <c>AddRef</c> on the
-/// input before invoking the operator; the substrate will
-/// <c>Dispose</c> the ref after the operator returns or throws. The
+/// <b>Ownership.</b> The substrate holds one ref on the input across the
+/// call and releases it after the operator returns or throws. The
 /// operator must NOT dispose the input directly.
 /// </para>
 /// <para>
 /// <b>Output ownership.</b> When the operator returns a non-null
-/// output, the substrate takes ownership of that ref. If the output
-/// is reference-equal to the input (a pass-through), the substrate
-/// detects this and forwards the input ref directly without a
-/// dispose-then-dispose cycle.
+/// output, the substrate takes ownership of that ref. To forward the
+/// input, return the input itself: the substrate sees the same object
+/// and moves its ref downstream instead of releasing it. That is right for
+/// every item type. Do not return <c>input.AddRef()</c> instead: for a type
+/// whose <c>AddRef</c> returns the same instance (ADR-0080), the substrate
+/// still sees a pass-through and moves one ref, and the extra one leaks on
+/// every item. Until #42 removes them, <c>VideoFrameRef</c>,
+/// <c>PcmAudioBufferRef</c> and the detection composites return a new
+/// wrapper instead, which the substrate treats as a fresh output.
 /// </para>
 /// <para>
 /// <b>Retaining the input across invocations.</b> If the operator
@@ -50,11 +54,17 @@ public delegate ValueTask<TOut?> Operator<in TIn, TOut>(
 /// the old substrate's <c>Transform</c> was strictly 1→1.
 /// </para>
 /// <para>
-/// <b>Ownership.</b> The substrate calls <c>AddRef</c> on the input
-/// before invoking the operator and disposes the ref after the
-/// iterator completes (or throws). Each yielded output transfers its
-/// ref to the substrate; the substrate forwards each downstream and
-/// disposes when it lands at a sink.
+/// <b>Ownership.</b> The substrate holds one ref on the input across the
+/// iteration and releases it after the iterator completes (or throws),
+/// whatever was yielded. Each yielded output transfers its ref to the
+/// substrate; the substrate forwards each downstream and disposes when it
+/// lands at a sink.
+/// </para>
+/// <para>
+/// <b>Forwarding the input.</b> Unlike <see cref="Operator{TIn, TOut}"/>, a
+/// multi-operator does not move the input's ref: it is released after the
+/// iteration regardless. To emit the input, yield <c>input.AddRef()</c>,
+/// once per time it is emitted.
 /// </para>
 /// <para>
 /// Yielding zero outputs (the operator's iterator completes without
