@@ -11,6 +11,6 @@ public sealed class FaceHoldingTests
     {
         var node = FaceOperators.DetectWith("faces", _ => []);
 
-        Assert.Same(Holding.InFlight, node.Holding);
+        Assert.Same(FrameHolding.InFlight, node.Holding);
     }
 }

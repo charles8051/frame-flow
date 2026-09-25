@@ -65,7 +65,7 @@ public static class CameraFrameSinkAdapters
                 await sink.PresentAsync(sinkRef, ct).ConfigureAwait(false);
             },
             // ICameraFrameSink says nothing about how many frames it keeps.
-            holding: Holding.Unbounded
+            holding: FrameHolding.Unbounded
         );
     }
 }

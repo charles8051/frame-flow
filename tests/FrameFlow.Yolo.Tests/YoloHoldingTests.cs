@@ -11,6 +11,6 @@ public sealed class YoloHoldingTests
     {
         var node = YoloOperators.DetectWith("detect", _ => []);
 
-        Assert.Same(Holding.InFlight, node.Holding);
+        Assert.Same(FrameHolding.InFlight, node.Holding);
     }
 }

@@ -95,6 +95,6 @@ public sealed class PausableGate<T>
                 return item;
             },
             // One item, however long the gate stays shut.
-            holding: Holding.InFlight
+            holding: FrameHolding.InFlight
         );
 }

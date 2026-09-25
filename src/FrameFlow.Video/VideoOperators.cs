@@ -182,7 +182,7 @@ public static class VideoOperators
                 );
             },
             // A CPU frame is forwarded as itself, so this is not a storage boundary for it.
-            holding: Holding.InFlight
+            holding: FrameHolding.InFlight
         );
     }
 
@@ -207,7 +207,7 @@ public static class VideoOperators
                 return ValueTask.FromResult<IVideoFrame?>(output);
             },
             // Every output is a new frame, even at the input's size and format.
-            holding: Holding.Boundary
+            holding: FrameHolding.Boundary
         );
     }
 }

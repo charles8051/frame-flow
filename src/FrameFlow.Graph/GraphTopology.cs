@@ -39,7 +39,7 @@ internal interface IHoldsItsSecondary
 internal interface IDeclaresHolding
 {
     /// <summary>What the node holds of items arriving at <paramref name="input"/>.</summary>
-    Holding HoldingAt(IPort input);
+    FrameHolding HoldingAt(IPort input);
 }
 
 /// <summary>

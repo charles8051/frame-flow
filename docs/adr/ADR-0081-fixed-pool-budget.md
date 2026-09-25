@@ -284,6 +284,11 @@ the four topologies (#387) have run. Measuring the budget's VRAM cost on the pla
 
 ## Revision history
 
+**2026-09-25, the declaration type renamed (#409).** `Holding` is now `FrameHolding`. Inside an
+Avalonia control, where a window's code-behind builds its configurators, `Holding` resolved to the
+control's `InputElement.Holding` event. The nodes' `Holding` property and `holding` parameter keep
+their names. The entries below use the old name.
+
 **2026-09-25, the budget applied (#387, second part).** Decision 4 is implemented, and phase 2 is
 complete.
 

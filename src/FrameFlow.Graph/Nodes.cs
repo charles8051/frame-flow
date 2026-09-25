@@ -120,15 +120,15 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding
 
     /// <summary>
     /// What the node holds of its input, and whether its output can share the input's storage
-    /// (ADR-0081). <see cref="Holding.Unbounded"/> when the constructor was given none.
+    /// (ADR-0081). <see cref="FrameHolding.Unbounded"/> when the constructor was given none.
     /// </summary>
-    public Holding Holding { get; }
+    public FrameHolding Holding { get; }
 
     public OperatorNode(
         string id,
         Operator<TIn, TOut> body,
         FailureResponse onError = FailureResponse.Propagate,
-        Holding? holding = null
+        FrameHolding? holding = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -136,12 +136,12 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding
         Id = id;
         Body = body;
         OnError = onError;
-        Holding = holding ?? Holding.Unbounded;
+        Holding = holding ?? FrameHolding.Unbounded;
         Input = new InputPort<TIn>(this, "input");
         Output = new OutputPort<TOut>(this, "output");
     }
 
-    Holding IDeclaresHolding.HoldingAt(IPort input) => Holding;
+    FrameHolding IDeclaresHolding.HoldingAt(IPort input) => Holding;
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpOperatorAsync(this, graphCts);
@@ -169,15 +169,15 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHoldi
 
     /// <summary>
     /// What the node holds of its input, and whether its output can share the input's storage
-    /// (ADR-0081). <see cref="Holding.Unbounded"/> when the constructor was given none.
+    /// (ADR-0081). <see cref="FrameHolding.Unbounded"/> when the constructor was given none.
     /// </summary>
-    public Holding Holding { get; }
+    public FrameHolding Holding { get; }
 
     public MultiOperatorNode(
         string id,
         MultiOperator<TIn, TOut> body,
         FailureResponse onError = FailureResponse.Propagate,
-        Holding? holding = null
+        FrameHolding? holding = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -185,12 +185,12 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHoldi
         Id = id;
         Body = body;
         OnError = onError;
-        Holding = holding ?? Holding.Unbounded;
+        Holding = holding ?? FrameHolding.Unbounded;
         Input = new InputPort<TIn>(this, "input");
         Output = new OutputPort<TOut>(this, "output");
     }
 
-    Holding IDeclaresHolding.HoldingAt(IPort input) => Holding;
+    FrameHolding IDeclaresHolding.HoldingAt(IPort input) => Holding;
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpMultiOperatorAsync(this, graphCts);
@@ -211,15 +211,15 @@ public sealed class SinkNode<TIn> : IPumpableNode, IDeclaresHolding
 
     /// <summary>
     /// What the node holds of its input, counting what the body keeps after it returns
-    /// (ADR-0081). <see cref="Holding.Unbounded"/> when the constructor was given none.
+    /// (ADR-0081). <see cref="FrameHolding.Unbounded"/> when the constructor was given none.
     /// </summary>
-    public Holding Holding { get; }
+    public FrameHolding Holding { get; }
 
     public SinkNode(
         string id,
         Consumer<TIn> body,
         FailureResponse onError = FailureResponse.Propagate,
-        Holding? holding = null
+        FrameHolding? holding = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -227,11 +227,11 @@ public sealed class SinkNode<TIn> : IPumpableNode, IDeclaresHolding
         Id = id;
         Body = body;
         OnError = onError;
-        Holding = holding ?? Holding.Unbounded;
+        Holding = holding ?? FrameHolding.Unbounded;
         Input = new InputPort<TIn>(this, "input");
     }
 
-    Holding IDeclaresHolding.HoldingAt(IPort input) => Holding;
+    FrameHolding IDeclaresHolding.HoldingAt(IPort input) => Holding;
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpSinkAsync(this, graphCts);

@@ -19,9 +19,9 @@ namespace FrameFlow.Graph;
 /// for a path through it.
 /// </para>
 /// </remarks>
-public sealed record Holding
+public sealed record FrameHolding
 {
-    private Holding(int? maxHeld, bool forwardsStorage, int? framesPerOutputItem)
+    private FrameHolding(int? maxHeld, bool forwardsStorage, int? framesPerOutputItem)
     {
         MaxHeld = maxHeld;
         ForwardsStorage = forwardsStorage;
@@ -48,15 +48,15 @@ public sealed record Holding
     public int? FramesPerOutputItem { get; }
 
     /// <summary>Nothing bounds what the node holds. The default for a node that declares nothing.</summary>
-    public static Holding Unbounded { get; } = new(null, forwardsStorage: true, framesPerOutputItem: null);
+    public static FrameHolding Unbounded { get; } = new(null, forwardsStorage: true, framesPerOutputItem: null);
 
     /// <summary>Holds only the item its call is working on, and can forward it.</summary>
-    public static Holding InFlight { get; } = new(1, forwardsStorage: true, framesPerOutputItem: null);
+    public static FrameHolding InFlight { get; } = new(1, forwardsStorage: true, framesPerOutputItem: null);
 
     /// <summary>
     /// Holds only the item its call is working on, and emits a new frame: a storage boundary.
     /// </summary>
-    public static Holding Boundary { get; } = new(1, forwardsStorage: false, framesPerOutputItem: null);
+    public static FrameHolding Boundary { get; } = new(1, forwardsStorage: false, framesPerOutputItem: null);
 
     /// <summary>Holds at most <paramref name="maxHeld"/> input items at once.</summary>
     /// <param name="maxHeld">The most input items held at once, counting the one in the call.</param>
@@ -68,7 +68,7 @@ public sealed record Holding
     /// <exception cref="ArgumentOutOfRangeException">
     /// <paramref name="maxHeld"/> or <paramref name="framesPerOutputItem"/> is below 1.
     /// </exception>
-    public static Holding AtMost(
+    public static FrameHolding AtMost(
         int maxHeld,
         bool forwardsStorage = true,
         int? framesPerOutputItem = null
@@ -77,6 +77,6 @@ public sealed record Holding
         ArgumentOutOfRangeException.ThrowIfLessThan(maxHeld, 1);
         if (framesPerOutputItem is { } frames)
             ArgumentOutOfRangeException.ThrowIfLessThan(frames, 1, nameof(framesPerOutputItem));
-        return new Holding(maxHeld, forwardsStorage, framesPerOutputItem);
+        return new FrameHolding(maxHeld, forwardsStorage, framesPerOutputItem);
     }
 }

@@ -50,7 +50,7 @@ public static class YoloOperators
                 );
             },
             // The output carries the input frame itself.
-            holding: Holding.InFlight
+            holding: FrameHolding.InFlight
         );
     }
 }

@@ -58,7 +58,7 @@ internal static class FrameBudgets
     /// <para>
     /// Edges and nodes count items. After a node that gathers frames into one item, such as a
     /// clip, each item counts the frames that node says it carries
-    /// (<see cref="Holding.FramesPerOutputItem"/>). A node reached by paths that carry different
+    /// (<see cref="FrameHolding.FramesPerOutputItem"/>). A node reached by paths that carry different
     /// numbers of frames per item, such as a join, is taken to emit the largest, whatever order
     /// the paths were wired in.
     /// </para>
@@ -124,6 +124,6 @@ internal static class FrameBudgets
         return FrameBudget.Of((int)Math.Min(total, int.MaxValue));
     }
 
-    private static Holding HoldingAt(IPort input) =>
-        input.Owner is IDeclaresHolding declares ? declares.HoldingAt(input) : Holding.Unbounded;
+    private static FrameHolding HoldingAt(IPort input) =>
+        input.Owner is IDeclaresHolding declares ? declares.HoldingAt(input) : FrameHolding.Unbounded;
 }

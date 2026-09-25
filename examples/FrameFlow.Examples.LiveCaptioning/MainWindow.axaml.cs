@@ -572,7 +572,7 @@ public partial class MainWindow : Window
         new(
             "gpu-frames-only",
             (frame, _) => ValueTask.FromResult<IVideoFrame?>(frame is GpuVideoFrame ? frame : null),
-            holding: FrameFlow.Graph.Holding.InFlight
+            holding: FrameHolding.InFlight
         );
 
     /// <summary>
@@ -610,7 +610,7 @@ public partial class MainWindow : Window
                 }
             },
             // It holds the frame for the inference and emits detections, not frames.
-            holding: FrameFlow.Graph.Holding.Boundary
+            holding: FrameHolding.Boundary
         );
 
         static async ValueTask<RefBox<DetectionSet>?> DetectAsync(
