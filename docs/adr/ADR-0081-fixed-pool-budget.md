@@ -3,6 +3,12 @@
 **Status:** Accepted (2026-09-24), ahead of its implementation, which #373 tracks. Proposed and
 revised the same day; see [Revision history](#revision-history). Not implemented.
 
+> **Amended 2026-09-25.** #370 is reproduced ([the reproduction](../investigations/2026-09-25-d3d11va-pool-exhaustion.md)). An exhausted
+> pool fails `avcodec_send_packet`, so the decode enumeration throws and the player faults; it does
+> not drop pictures silently. The *What exhaustion does* paragraph below records the source reading
+> that predicted a drop. The decisions are unchanged: the guard now replaces a fatal error with
+> back-pressure.
+
 **Date:** 2026-09-24
 
 **Depends on:** [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md), for same-instance
@@ -258,18 +264,24 @@ breach.
 
 ## Validation
 
-None has run.
+The #370 reproduction has run; the rest has not.
 
 - The budget computation and the guard's transition are pure and get table tests over topologies
   from the tree: the player's D3D11 path, LiveCaptioning in GPU mode, Camera.Multicast and the
   MotionClip recorder, each with its expected per-source sum.
 - #370's mechanism is reproduced before decision 5's decoder wait is built: hold frames until the
   pool-exhausted log line appears, then compare the rest of the GOP against a software decode.
+  Done 2026-09-25 ([the reproduction](../investigations/2026-09-25-d3d11va-pool-exhaustion.md)): the decoder faults at 20 held frames on an H.264 clip and at 5 on an
+  HEVC clip.
 - With `extra_hw_frames` set from the budget, the same hold no longer produces the log line.
 - A decoder parked at its budget exits when its source is cancelled. The test barriers on the
   source's own exit signal, not on a delay.
 
 ## Revision history
+
+**2026-09-25, #370 reproduced.** Exhaustion fails the decode call rather than dropping the
+picture, and HEVC's spare count on the test clip equals what the player's own path holds. See the
+amendment under Status and [the reproduction](../investigations/2026-09-25-d3d11va-pool-exhaustion.md).
 
 **2026-09-24, first automated review (#371).** Four findings. A duration bound does not bound a
 count on a variable-frame-rate source, so decision 1 now requires a count cap next to any duration

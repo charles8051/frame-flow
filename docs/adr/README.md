@@ -446,7 +446,7 @@ which #372 and #373 track.
   [ADR-0081](ADR-0081-fixed-pool-budget.md) and frame-pool ownership.
 - [Fixed-pool frames are budgeted when the graph is built](ADR-0081-fixed-pool-budget.md) — hardware
   decode slices and camera leases come from fixed pools, and in FFmpeg 9.0 an exhausted D3D11VA
-  pool drops pictures silently rather than stalling (#370), which is still today's behaviour. It
+  pool fails the decode call, so the player faults (#370, reproduced). It
   decides that every holder declares a count, nodes declare whether they forward their input's
   storage, and each fixed-pool source sums the counts to its first storage boundary when the graph
   is built. The decoder is to size its pool with `extra_hw_frames`, the camera to size
