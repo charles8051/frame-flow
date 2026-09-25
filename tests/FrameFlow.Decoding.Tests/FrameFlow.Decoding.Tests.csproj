@@ -25,4 +25,7 @@
          decoded frames coming through IDecodedMediaStream. -->
     <ProjectReference Include="..\..\src\FrameFlow.Video\FrameFlow.Video.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\RefCountConformance.cs" Link="Shared\RefCountConformance.cs" />
+  </ItemGroup>
 </Project>

@@ -159,49 +159,18 @@ public sealed class PcmAudioBuffer : IAudioBuffer
     /// </exception>
     public IAudioBuffer AddRef()
     {
-        // CAS loop — increment if and only if the buffer is still live.
-        // Spin is unbounded but in practice converges immediately because
-        // AddRef contention is rare (typically a tap operator's Observe
-        // callback racing with the downstream operator's pull).
-        while (true)
-        {
-            int current = Volatile.Read(ref _refCount);
-            if (current <= 0)
-            {
-                throw new ObjectDisposedException(
-                    nameof(PcmAudioBuffer),
-                    "Cannot AddRef on a disposed buffer."
-                );
-            }
-            if (Interlocked.CompareExchange(ref _refCount, current + 1, current) == current)
-            {
-                return this;
-            }
-        }
+        RefCounting.AddRef(ref _refCount, this);
+        return this;
     }
 
     /// <summary>
     /// Releases one reference. Returns the pooled sample buffer to its
-    /// pool when the last reference releases. Calling
-    /// <see cref="Dispose"/> more times than <see cref="AddRef"/> is
-    /// a no-op (the count clamps at zero) so the pre-refcount
-    /// "single Dispose" callers keep working.
+    /// pool when the last reference releases. A release past zero frees
+    /// nothing and is counted as an over-release (<see cref="RefCounting"/>).
     /// </summary>
     public void Dispose()
     {
-        int newCount = Interlocked.Decrement(ref _refCount);
-        if (newCount > 0)
-            return;
-
-        if (newCount < 0)
-        {
-            // Over-dispose — clamp back to zero. Defends against legacy
-            // call sites that pre-date refcounting and might dispose
-            // an already-released buffer.
-            Interlocked.Increment(ref _refCount);
-            return;
-        }
-
-        SampleData.Dispose();
+        if (RefCounting.Release(ref _refCount, this))
+            SampleData.Dispose();
     }
 }

@@ -15,9 +15,9 @@ namespace FrameFlow.Whisper;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Each wrapper owns one logical "reference" to the caption. <c>AddRef</c>
-/// returns a new wrapper that points at the same caption. The caption
-/// value is small and immutable; the new wrappers don't copy it.
+/// The wrapper counts its own references and <c>AddRef</c> returns the same
+/// instance (ADR-0080, decision 1). The caption value is small and immutable,
+/// so every holder shares it.
 /// </para>
 /// <para>
 /// Pattern parallels <c>RefBox&lt;Caption&gt;</c> but exists as its
@@ -41,13 +41,15 @@ public sealed class CaptionRef : IRefCounted
 
     public IRefCounted AddRef()
     {
-        Interlocked.Increment(ref _refCount);
-        return new CaptionRef(Value);
+        RefCounting.AddRef(ref _refCount, this);
+        return this;
     }
 
     public void Dispose()
     {
-        Interlocked.Decrement(ref _refCount);
-        // Caption is a value record with no resources; nothing else to do.
+        // Caption is a value record with no resources, so the final release frees
+        // nothing. The count still matters: it makes AddRef after the final release
+        // fail, and an over-release visible.
+        RefCounting.Release(ref _refCount, this);
     }
 }

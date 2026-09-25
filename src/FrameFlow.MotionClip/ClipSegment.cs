@@ -66,14 +66,14 @@ public sealed class ClipSegment : IRefCounted
     /// <inheritdoc/>
     public IRefCounted AddRef()
     {
-        Interlocked.Increment(ref _refCount);
+        RefCounting.AddRef(ref _refCount, this);
         return this;
     }
 
     /// <inheritdoc/>
     public void Dispose()
     {
-        if (Interlocked.Decrement(ref _refCount) != 0)
+        if (!RefCounting.Release(ref _refCount, this))
             return;
 
         List<IVideoFrame>? toDispose = Interlocked.Exchange(ref _frames, null);

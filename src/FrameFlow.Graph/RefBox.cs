@@ -39,31 +39,14 @@ public sealed class RefBox<T> : IRefCounted
 
     public IRefCounted AddRef()
     {
-        var newCount = Interlocked.Increment(ref _refCount);
-        if (newCount <= 1)
-        {
-            throw new ObjectDisposedException(
-                nameof(RefBox<T>),
-                "AddRef called after the last reference was disposed."
-            );
-        }
+        RefCounting.AddRef(ref _refCount, this);
         return this;
     }
 
     public void Dispose()
     {
-        var newCount = Interlocked.Decrement(ref _refCount);
-        if (newCount < 0)
-        {
-            throw new ObjectDisposedException(
-                nameof(RefBox<T>),
-                "Dispose called more times than AddRef + construction."
-            );
-        }
-        if (newCount == 0)
-        {
+        if (RefCounting.Release(ref _refCount, this))
             _onLastRelease?.Invoke(Value);
-        }
     }
 }
 

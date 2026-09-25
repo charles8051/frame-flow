@@ -103,6 +103,10 @@ FrameFlow.Graph.IFrame.Width.get -> int
 FrameFlow.Graph.INode
 FrameFlow.Graph.INode.Id.get -> string!
 FrameFlow.Graph.INode.OnError.get -> FrameFlow.Graph.FailureResponse
+FrameFlow.Graph.InputPort<T>
+FrameFlow.Graph.InputPort<T>.InputPort(FrameFlow.Graph.INode! owner, string! name) -> void
+FrameFlow.Graph.InputPort<T>.Name.get -> string!
+FrameFlow.Graph.InputPort<T>.Owner.get -> FrameFlow.Graph.INode!
 FrameFlow.Graph.IPort
 FrameFlow.Graph.IPort.Name.get -> string!
 FrameFlow.Graph.IPort.Owner.get -> FrameFlow.Graph.INode!
@@ -116,10 +120,6 @@ FrameFlow.Graph.ITensor.ByteCount.get -> long
 FrameFlow.Graph.ITensor.Dtype.get -> FrameFlow.Graph.DType
 FrameFlow.Graph.ITensor.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Graph.ITensor.Shape.get -> FrameFlow.Graph.TensorShape
-FrameFlow.Graph.InputPort<T>
-FrameFlow.Graph.InputPort<T>.InputPort(FrameFlow.Graph.INode! owner, string! name) -> void
-FrameFlow.Graph.InputPort<T>.Name.get -> string!
-FrameFlow.Graph.InputPort<T>.Owner.get -> FrameFlow.Graph.INode!
 FrameFlow.Graph.MultiOperator<TIn, TOut>
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Body.get -> FrameFlow.Graph.MultiOperator<TIn!, TOut!>!
@@ -152,6 +152,7 @@ FrameFlow.Graph.RefBox<T>.Dispose() -> void
 FrameFlow.Graph.RefBox<T>.RefBox(T value, System.Action<T>? onLastRelease = null) -> void
 FrameFlow.Graph.RefBox<T>.RefCount.get -> int
 FrameFlow.Graph.RefBox<T>.Value.get -> T
+FrameFlow.Graph.RefCounting
 FrameFlow.Graph.SinkNode<TIn>
 FrameFlow.Graph.SinkNode<TIn>.Body.get -> FrameFlow.Graph.Consumer<TIn!>!
 FrameFlow.Graph.SinkNode<TIn>.Id.get -> string!
@@ -198,8 +199,8 @@ FrameFlow.Graph.TensorShape.ElementCount.get -> long
 FrameFlow.Graph.TensorShape.Equals(FrameFlow.Graph.TensorShape other) -> bool
 FrameFlow.Graph.TensorShape.Rank.get -> int
 FrameFlow.Graph.TensorShape.TensorShape() -> void
-FrameFlow.Graph.TensorShape.TensorShape(System.Collections.Immutable.ImmutableArray<int> dims) -> void
 FrameFlow.Graph.TensorShape.TensorShape(params int[]! dims) -> void
+FrameFlow.Graph.TensorShape.TensorShape(System.Collections.Immutable.ImmutableArray<int> dims) -> void
 FrameFlow.Graph.TensorShape.this[int index].get -> int
 override FrameFlow.Graph.CpuTensor<T>.ToString() -> string!
 override FrameFlow.Graph.TensorShape.Equals(object? obj) -> bool
@@ -217,5 +218,8 @@ static FrameFlow.Graph.EdgeOptionsExtensions.WithCloner<T>(this FrameFlow.Graph.
 static FrameFlow.Graph.GraphChainExtensions.Pipeline<T>(this FrameFlow.Graph.Graph! graph, FrameFlow.Graph.OutputPort<T!>! from) -> FrameFlow.Graph.GraphChain<T!>
 static FrameFlow.Graph.GraphChainExtensions.Pipeline<T>(this FrameFlow.Graph.Graph! graph, FrameFlow.Graph.SourceNode<T!>! source) -> FrameFlow.Graph.GraphChain<T!>
 static FrameFlow.Graph.RefBox.Of<T>(T value, System.Action<T>? onLastRelease = null) -> FrameFlow.Graph.RefBox<T>!
+static FrameFlow.Graph.RefCounting.AddRef(ref int count, object! owner) -> void
+static FrameFlow.Graph.RefCounting.OverReleases.get -> long
+static FrameFlow.Graph.RefCounting.Release(ref int count, object! owner) -> bool
 static FrameFlow.Graph.TensorShape.operator !=(FrameFlow.Graph.TensorShape left, FrameFlow.Graph.TensorShape right) -> bool
 static FrameFlow.Graph.TensorShape.operator ==(FrameFlow.Graph.TensorShape left, FrameFlow.Graph.TensorShape right) -> bool

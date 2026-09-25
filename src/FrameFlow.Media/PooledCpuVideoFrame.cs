@@ -103,23 +103,8 @@ internal sealed class PooledCpuVideoFrame : IVideoFrame
     /// <inheritdoc />
     public IVideoFrame AddRef()
     {
-        // Spin until we either increment or discover the frame is already disposed.
-        while (true)
-        {
-            int current = Volatile.Read(ref _refCount);
-            if (current <= 0)
-            {
-                throw new ObjectDisposedException(
-                    nameof(PooledCpuVideoFrame),
-                    "Cannot AddRef on a disposed frame."
-                );
-            }
-
-            if (Interlocked.CompareExchange(ref _refCount, current + 1, current) == current)
-            {
-                return this;
-            }
-        }
+        RefCounting.AddRef(ref _refCount, this);
+        return this;
     }
 
     /// <inheritdoc />
@@ -150,19 +135,10 @@ internal sealed class PooledCpuVideoFrame : IVideoFrame
     /// <inheritdoc />
     public void Dispose()
     {
-        int newCount = Interlocked.Decrement(ref _refCount);
-
-        if (newCount > 0)
+        if (!RefCounting.Release(ref _refCount, this))
             return;
 
-        if (newCount < 0)
-        {
-            // Already fully disposed — restore to 0 and bail.
-            Interlocked.Increment(ref _refCount);
-            return;
-        }
-
-        // newCount == 0 — we are the final release.
+        // The final release.
         var buf = Interlocked.Exchange(ref _buffer, null);
         if (buf is not null)
         {

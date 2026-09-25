@@ -30,4 +30,7 @@
     <Using Include="Xunit" />
     <Using Include="FrameFlow.MotionClip" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\RefCountConformance.cs" Link="Shared\RefCountConformance.cs" />
+  </ItemGroup>
 </Project>

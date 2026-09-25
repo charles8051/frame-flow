@@ -225,22 +225,8 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// </exception>
     public IVideoFrame AddRef()
     {
-        // Spin until we either increment or discover the frame is disposed.
-        // Mirrors PooledCpuVideoFrame / PcmAudioBuffer.
-        while (true)
-        {
-            int current = Volatile.Read(ref _refCount);
-            if (current <= 0)
-            {
-                throw new ObjectDisposedException(
-                    nameof(GpuVideoFrame),
-                    "Cannot AddRef a GPU frame whose ref count has reached zero."
-                );
-            }
-
-            if (Interlocked.CompareExchange(ref _refCount, current + 1, current) == current)
-                return this;
-        }
+        RefCounting.AddRef(ref _refCount, this);
+        return this;
     }
 
     /// <inheritdoc/>
@@ -368,25 +354,15 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// (count &#8594; 0) frees the wrapped <c>AVFrame</c> via
     /// <c>av_frame_free</c>, which unrefs the device buffer and returns the
     /// decode-texture slice to the decoder's hwframe pool. Disposes past
-    /// zero are no-ops (idempotent), matching the rest of the refcounted
-    /// frame / buffer types.
+    /// zero frees nothing and is counted as an over-release
+    /// (<see cref="RefCounting"/>).
     /// </remarks>
     public void Dispose()
     {
-        int newCount = Interlocked.Decrement(ref _refCount);
-
-        if (newCount > 0)
+        if (!RefCounting.Release(ref _refCount, this))
             return;
 
-        if (newCount < 0)
-        {
-            // Over-dispose — restore to zero and bail (idempotent).
-            Interlocked.Increment(ref _refCount);
-            return;
-        }
-
-        // newCount == 0 — final release. av_frame_free unrefs the device
-        // buffer / decode-texture slice.
+        // The final release. av_frame_free unrefs the device buffer / decode-texture slice.
         _handle?.Dispose();
         _handle = null;
         // The pinned hwframe-pool slice is returned (perf survey §A1 telemetry).
