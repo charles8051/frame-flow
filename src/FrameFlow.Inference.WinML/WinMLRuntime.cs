@@ -18,8 +18,8 @@ internal static class WinMLRuntime
     /// <summary>The path of the runtime loaded.</summary>
     /// <exception cref="PlatformNotSupportedException">The process is neither x64 nor Arm64.</exception>
     /// <exception cref="DllNotFoundException">
-    /// No runtime could be found, or the one that loaded is older than Windows ML's: Windows' own
-    /// copy, or another inference package's.
+    /// No runtime could be found, the one that loaded is older than Windows ML's (Windows' own copy,
+    /// or another inference package's), or another onnxruntime.dll was loaded first.
     /// </exception>
     public static string EnsureLoaded() => Loaded.Value;
 
@@ -103,6 +103,18 @@ internal static class WinMLRuntime
 
         if (Refusal(NativeVersion(handle), path, Environment.SystemDirectory) is { } refusal)
             throw new DllNotFoundException(refusal);
+
+        // ONNX Runtime's imports resolve by name, and Windows answers a name with the module of that
+        // name loaded first. If that is not this one, another onnxruntime.dll is already in the process.
+        nint byName = GetModuleHandleW("onnxruntime.dll");
+        if (byName != 0 && byName != handle)
+        {
+            throw new DllNotFoundException(
+                $"Another onnxruntime.dll ({ModulePath(byName)}) was loaded in this process before Windows ML's ({path}), "
+                    + "and ONNX Runtime's calls would reach it. An app references one of FrameFlow.Inference.Dml, .Cuda "
+                    + "and .WinML, and loads no other ONNX Runtime.");
+        }
+
         return path;
     }
 
@@ -123,4 +135,7 @@ internal static class WinMLRuntime
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern int GetModuleFileNameW(nint module, [Out] char[] fileName, int size);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern nint GetModuleHandleW(string moduleName);
 }
