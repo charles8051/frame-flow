@@ -120,6 +120,23 @@ internal static partial class FFAvUtil
     );
 
     /// <summary>
+    /// Allocates an <c>AVHWDeviceContext</c> of <paramref name="type"/> for the caller to fill in
+    /// and pass to <see cref="av_hwdevice_ctx_init"/>. Returns an <c>AVBufferRef*</c>, or
+    /// <see cref="nint.Zero"/> on OOM. Release with <see cref="av_buffer_unref"/>.
+    /// </summary>
+    [LibraryImport("avutil")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial nint av_hwdevice_ctx_alloc(int type);
+
+    /// <summary>
+    /// Finishes a device context from <see cref="av_hwdevice_ctx_alloc"/> once its
+    /// backend-specific <c>hwctx</c> is filled in. 0 on success; negative AVERROR on failure.
+    /// </summary>
+    [LibraryImport("avutil")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial int av_hwdevice_ctx_init(nint deviceCtxRef);
+
+    /// <summary>
     /// Increments the reference count of <paramref name="buf"/> and returns a new
     /// <c>AVBufferRef*</c> aliasing the same buffer. Returns <see cref="nint.Zero"/>
     /// on OOM.

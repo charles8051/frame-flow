@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Decoding;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Native;
@@ -181,6 +182,18 @@ public interface IPlayerBuilder
     /// sink reports <c>PrefersHardwareFrames</c>.
     /// </summary>
     IPlayerBuilder WithHardwareFrames(bool yieldHardwareFrames = true);
+
+    /// <summary>
+    /// A device every playlist item's video decoder borrows instead of creating its own, so the
+    /// device outlives the items and anything built on it, such as an inference session on
+    /// <see cref="HardwareDevice.TryGetD3D12Device"/>, survives a change of item. The decoder
+    /// tries only the device's backend.
+    /// </summary>
+    /// <remarks>
+    /// The caller owns <paramref name="device"/> and disposes it after the player and after
+    /// anything built on it. The player never disposes it.
+    /// </remarks>
+    IPlayerBuilder WithHardwareDevice(HardwareDevice device);
 
     /// <summary>
     /// Controls whether <see cref="IAudioSink.ActivateAsync"/> is called before the built player

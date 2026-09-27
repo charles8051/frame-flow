@@ -186,6 +186,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     // Null reaches the decoder, which resolves it to the process probe (#181).
     private readonly FrameFlow.Media.HardwareDecodeCapabilities? _hwCapabilities;
     private readonly bool _yieldHardwareFrames;
+    // Borrowed by this item's decoder; owned above the player, so it outlives the item.
+    private readonly HardwareDevice? _hardwareDevice;
 
     public SubstrateSession(
         IVideoSink? videoSink,
@@ -197,7 +199,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         ILoggerFactory? loggerFactory = null,
         Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? videoConfigurator = null,
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator = null,
-        bool yieldHardwareFrames = false
+        bool yieldHardwareFrames = false,
+        HardwareDevice? hardwareDevice = null
     )
     {
         ArgumentNullException.ThrowIfNull(clock);
@@ -208,6 +211,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         _hwMode = hwMode;
         _hwCapabilities = hardwareDecodeCapabilities;
         _yieldHardwareFrames = yieldHardwareFrames;
+        _hardwareDevice = hardwareDevice;
         _callbacks = callbacks;
         _videoConfigurator = videoConfigurator;
         _audioConfigurator = audioConfigurator;
@@ -479,9 +483,13 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                     new HardwareDecodeOptions { Mode = _hwMode },
                     _hwCapabilities,
                     _loggerFactory,
-                    videoBudget is null
+                    videoBudget is null && _hardwareDevice is null
                         ? null
-                        : new VideoDecoderOptions { HeldHardwareFrames = videoBudget.Frames ?? 0 }
+                        : new VideoDecoderOptions
+                        {
+                            HeldHardwareFrames = videoBudget?.Frames ?? 0,
+                            Device = _hardwareDevice,
+                        }
                 );
                 videoDecoder = videoFactory(demux) as VideoDecoder;
                 if (videoDecoder is not null)

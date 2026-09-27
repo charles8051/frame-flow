@@ -82,6 +82,13 @@ each playlist item opens its own decoder. That is the shape that crashes. The ow
 the device discussion is the first thing to try: FrameFlow creates the device and lends it to
 FFmpeg with `av_hwdevice_ctx_alloc`. That changes which teardown releases what. It is untested.
 
+**Follow-up, 2026-09-27 (#428):** tested, and it holds. With the decoder borrowing a
+`HardwareDevice`, whether FFmpeg created the device (`owned-ffmpeg-` modes) or the probe lent its
+own (`owned-ours-`), the crashing shape exits cleanly three runs of three, with and without the full
+chain, while the same modes on the decoder's own device crash three of three. Freeing a decoder's
+last frame then tears down its frames context but not the device context, which goes last. The
+table is in [the borrowed-device record](../adr/borrowed-hardware-device.md).
+
 ### 5. The shader's parity is the DirectML spike's
 
 The shader is the same code, so the tensor differences are the same: p99 12.6/255, on colour edges.

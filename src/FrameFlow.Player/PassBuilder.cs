@@ -33,6 +33,7 @@ internal sealed class PassBuilder : IPassBuilder
     private HardwareDecodeMode _hwMode = HardwareDecodeMode.Auto;
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private VideoDecoderOptions? _videoDecoderOptions;
+    private HardwareDevice? _hardwareDevice;
     private AudioDecoderOptions? _audioDecoderOptions;
     private IPlaybackClock? _clock;
 
@@ -76,11 +77,28 @@ internal sealed class PassBuilder : IPassBuilder
         return this;
     }
 
+    public IPassBuilder WithHardwareDevice(HardwareDevice device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        _hardwareDevice = device;
+        return this;
+    }
+
     public IPassBuilder WithLogger(ILoggerFactory? loggerFactory)
     {
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
         return this;
     }
+
+    private static VideoDecoderOptions? WithDevice(VideoDecoderOptions? options, HardwareDevice? device) =>
+        device is null
+            ? options
+            : new VideoDecoderOptions
+            {
+                PacketQueueCapacity = options?.PacketQueueCapacity,
+                HeldHardwareFrames = options?.HeldHardwareFrames ?? 0,
+                Device = device,
+            };
 
     /// <summary>
     /// Decoder options for <see cref="BuildAsync"/>. Internal: tests shrink the packet queues so a
@@ -242,7 +260,7 @@ internal sealed class PassBuilder : IPassBuilder
                         new HardwareDecodeOptions { Mode = _hwMode },
                         bootstrapResult.Capabilities,
                         _loggerFactory,
-                        _videoDecoderOptions
+                        WithDevice(_videoDecoderOptions, _hardwareDevice)
                     )(demux) as VideoDecoder;
             }
             else

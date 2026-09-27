@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Decoding;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 using Microsoft.Extensions.Logging;
@@ -39,6 +40,9 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
     /// It also says who owns <paramref name="coordinator"/>: a coordinator built for the controller
     /// is disposed with this factory, and one a player handed in is the player's.
     /// </param>
+    /// <param name="hardwareDevice">
+    /// A device every item's video decoder borrows. Owned by the caller; the items only borrow it.
+    /// </param>
     public PlaylistSessionFactory(
         PlaylistCoordinator coordinator,
         IVideoSink? videoSink = null,
@@ -50,7 +54,8 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator = null,
         bool yieldHardwareFrames = false,
         LatenessRecoveryOptions? latenessRecovery = null,
-        bool loadsSource = false
+        bool loadsSource = false,
+        HardwareDevice? hardwareDevice = null
     )
     {
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
@@ -67,7 +72,8 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
             videoConfigurator,
             audioConfigurator,
             yieldHardwareFrames,
-            latenessRecovery
+            latenessRecovery,
+            hardwareDevice
         );
     }
 

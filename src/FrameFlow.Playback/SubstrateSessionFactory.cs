@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Decoding;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 using Microsoft.Extensions.Logging;
@@ -37,6 +38,7 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         GraphChain<PcmAudioBuffer>
     >? _audioConfigurator;
     private readonly bool _yieldHardwareFrames;
+    private readonly HardwareDevice? _hardwareDevice;
 
     private readonly LatenessRecoveryOptions? _latenessRecovery;
 
@@ -59,7 +61,8 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? videoConfigurator = null,
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator = null,
         bool yieldHardwareFrames = false,
-        LatenessRecoveryOptions? latenessRecovery = null
+        LatenessRecoveryOptions? latenessRecovery = null,
+        HardwareDevice? hardwareDevice = null
     )
     {
         // Checked here rather than in the worker: this runs on the caller's thread,
@@ -75,6 +78,7 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         _videoConfigurator = videoConfigurator;
         _audioConfigurator = audioConfigurator;
         _yieldHardwareFrames = yieldHardwareFrames;
+        _hardwareDevice = hardwareDevice;
     }
 
     public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks) =>
@@ -97,7 +101,8 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
             _loggerFactory,
             _videoConfigurator,
             _audioConfigurator,
-            _yieldHardwareFrames
+            _yieldHardwareFrames,
+            _hardwareDevice
         )
         {
             LatenessRecovery = _latenessRecovery,

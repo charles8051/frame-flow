@@ -35,6 +35,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
     private LatenessRecoveryOptions? _latenessRecovery;
     private TimeProvider? _timeProvider;
     private bool _yieldHardwareFrames;
+    private HardwareDevice? _hardwareDevice;
     private bool _activateAudioSink = true;
 
     public IPlayerBuilder WithMedia(string path)
@@ -144,6 +145,13 @@ internal sealed class PlayerBuilder : IPlayerBuilder
         return this;
     }
 
+    public IPlayerBuilder WithHardwareDevice(HardwareDevice device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        _hardwareDevice = device;
+        return this;
+    }
+
     public IPlayerBuilder WithAudioActivation(bool activateAudioSink = true)
     {
         _activateAudioSink = activateAudioSink;
@@ -199,6 +207,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
             clock: _clock,
             latenessRecovery: _latenessRecovery,
             timeProvider: _timeProvider,
+            hardwareDevice: _hardwareDevice,
             cancellationToken: cancellationToken
         );
     }

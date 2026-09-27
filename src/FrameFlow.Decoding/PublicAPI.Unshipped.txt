@@ -242,3 +242,11 @@ static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.RecordColorConvert(long
 static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.RecordHardwareTransfer(long elapsedTicks) -> void
 static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Reset() -> void
 static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Snapshot() -> FrameFlow.Decoding.Diagnostics.DecodeStageSnapshot!
+FrameFlow.Decoding.HardwareDevice
+FrameFlow.Decoding.HardwareDevice.Backend.get -> FrameFlow.Media.HardwareDecodeBackendKind
+FrameFlow.Decoding.HardwareDevice.Dispose() -> void
+FrameFlow.Decoding.HardwareDevice.TryGetD3D12Device(out nint device) -> bool
+FrameFlow.Decoding.VideoDecoderOptions.Device.get -> FrameFlow.Decoding.HardwareDevice?
+FrameFlow.Decoding.VideoDecoderOptions.Device.init -> void
+static FrameFlow.Decoding.HardwareDevice.Create(FrameFlow.Media.HardwareDecodeBackendKind backend, string? device = null) -> FrameFlow.Decoding.HardwareDevice!
+static FrameFlow.Decoding.HardwareDevice.FromD3D12Device(nint d3d12Device) -> FrameFlow.Decoding.HardwareDevice!

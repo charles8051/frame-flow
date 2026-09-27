@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Decoding;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 using Microsoft.Extensions.Logging;
@@ -76,6 +77,13 @@ public interface IPassBuilder
     /// has no equivalent of the player's <c>WithHardwareFrames</c>.
     /// </summary>
     IPassBuilder WithHardwareDecode(HardwareDecodeMode mode);
+
+    /// <summary>
+    /// A device the pass's video decoder borrows instead of creating its own, so the device
+    /// outlives the pass and anything built on it survives it. The decoder tries only the
+    /// device's backend. The caller owns <paramref name="device"/> and disposes it after the pass.
+    /// </summary>
+    IPassBuilder WithHardwareDevice(HardwareDevice device);
 
     /// <summary>
     /// Supplies the <see cref="ILoggerFactory"/> the pass should use. When unset, logging is

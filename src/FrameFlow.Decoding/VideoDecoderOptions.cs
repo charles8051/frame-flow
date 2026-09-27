@@ -76,4 +76,12 @@ public sealed class VideoDecoderOptions
             _heldHardwareFrames = value;
         }
     }
+
+    /// <summary>
+    /// A device the decoder borrows instead of creating its own. The decoder tries only that
+    /// device's backend, and the device outlives the decoder. Null, the default, lets the decoder
+    /// create a device as the hardware-decode options choose. Unused when hardware decode is
+    /// <see cref="FrameFlow.Media.HardwareDecodeMode.Disabled"/>.
+    /// </summary>
+    public HardwareDevice? Device { get; init; }
 }
