@@ -22,7 +22,8 @@ public sealed record ImageToTensorOptions
             throw new ArgumentOutOfRangeException(nameof(height), height, "The height must be positive.");
         }
 
-        if (3L * width * height > Array.MaxLength)
+        // Two positive ints fit in a long; a third factor might not.
+        if ((long)width * height > Array.MaxLength / 3)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(height), height, $"A {width}x{height} tensor has more floats than an array can hold.");

@@ -247,6 +247,14 @@ public sealed class ImageToTensorTests
             () => ImageToTensor.Write(new byte[10], 4, 4, 16, true, RotatedRect.FromBounds(0, 0, 4, 4), options, tensor, ImageToTensorPath.Auto));
     }
 
+    [Fact]
+    public void Options_RefuseATensorNoArrayCanHold()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ImageToTensorOptions(int.MaxValue, int.MaxValue));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ImageToTensorOptions(Array.MaxLength / 3 + 1, 1));
+        Assert.Equal(3 * 640 * 640, new ImageToTensorOptions(640, 640).ElementCount);
+    }
+
     private static CpuVideoFrame Frame(
         PixelFormat format,
         int width,
