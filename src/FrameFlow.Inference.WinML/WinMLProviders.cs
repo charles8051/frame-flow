@@ -26,12 +26,17 @@ public static class WinMLProviders
     /// </summary>
     /// <remarks>
     /// The vendor catalog needs Windows 11 24H2 (build 26100) or later. Below that, nothing is
-    /// registered and sessions keep the CPU and DirectML providers.
+    /// registered and sessions keep the CPU and DirectML providers. A registration that fails is not
+    /// kept: the next call tries again.
     /// </remarks>
     public static Task<IReadOnlyList<string>> RegisterInstalledAsync()
     {
         lock (Gate)
-            return _registration ??= RegisterAsync(install: false, progress: null);
+        {
+            if (_registration is null || _registration.IsFaulted || _registration.IsCanceled)
+                _registration = RegisterAsync(install: false, progress: null);
+            return _registration;
+        }
     }
 
     /// <summary>

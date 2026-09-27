@@ -47,6 +47,20 @@ public sealed class WinMLSessionTests
         Assert.Equal([Path.Combine("app", "onnxruntime.dll"), Path.Combine("app", "runtimes", rid, "native", "onnxruntime.dll")], candidates);
     }
 
+    [Theory]
+    [InlineData(System.Runtime.InteropServices.Architecture.X86)]
+    [InlineData(System.Runtime.InteropServices.Architecture.Arm)]
+    public void AnArchitectureThePackageShipsNoRuntimeFor_HasNowhereToLook(System.Runtime.InteropServices.Architecture architecture) =>
+        Assert.Empty(WinMLRuntime.Candidates("app", architecture));
+
+    [Theory]
+    [InlineData(@"C:\Windows\System32\onnxruntime.dll", true)]
+    [InlineData(@"c:\windows\system32\ONNXRUNTIME.DLL", true)]
+    [InlineData(@"C:\app\onnxruntime.dll", false)]
+    [InlineData(@"C:\Windows\System32\sub\onnxruntime.dll", false)]
+    public void WindowsOwnCopy_IsTheOneInTheSystemDirectory(string path, bool expected) =>
+        Assert.Equal(expected, WinMLRuntime.IsSystemCopy(path, @"C:\Windows\System32"));
+
     /// <summary>
     /// This project builds without a runtime identifier, so the runtime is under runtimes/; the
     /// package loaded it there rather than the one Windows carries.
@@ -54,9 +68,8 @@ public sealed class WinMLSessionTests
     [WindowsFact]
     public void ThePackagesOwnRuntime_IsTheOneLoaded()
     {
-        string? loaded = WinMLRuntime.EnsureLoaded();
+        string loaded = WinMLRuntime.EnsureLoaded();
 
-        Assert.NotNull(loaded);
         Assert.StartsWith(AppContext.BaseDirectory, loaded);
     }
 
