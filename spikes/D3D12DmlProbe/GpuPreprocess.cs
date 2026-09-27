@@ -77,7 +77,11 @@ internal sealed class GpuPreprocess : IDisposable
     private readonly ID3D12Resource _upload;
     private ulong _fenceValue;
 
-    public GpuPreprocess(ID3D12Device device, ID3D12CommandQueue queue, int size)
+    /// <param name="shareable">
+    /// Create the tensor buffer on a shared heap, so another API (CUDA) can import it through an
+    /// NT handle.
+    /// </param>
+    public GpuPreprocess(ID3D12Device device, ID3D12CommandQueue queue, int size, bool shareable = false)
     {
         _device = device;
         _queue = queue;
@@ -104,7 +108,7 @@ internal sealed class GpuPreprocess : IDisposable
         TensorBytes = 3L * size * size * sizeof(float);
         Tensor = device.CreateCommittedResource(
             new HeapProperties(HeapType.Default),
-            HeapFlags.None,
+            shareable ? HeapFlags.Shared : HeapFlags.None,
             ResourceDescription.Buffer((ulong)TensorBytes, ResourceFlags.AllowUnorderedAccess),
             ResourceStates.UnorderedAccess);
         _readback = device.CreateCommittedResource(
