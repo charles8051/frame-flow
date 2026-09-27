@@ -78,9 +78,10 @@ Showing that the two paths agree on detections needs footage with objects in it.
 
 ## What building it takes
 
-- **A D3D12 accessor on `GpuVideoFrame`.** The spike reads the internal `AVFrame*` by reflection.
+- **A D3D12 accessor on `GpuVideoFrame`.** The spike read the internal `AVFrame*` by reflection.
   The accessor needs the texture, the subresource and the fence with its value. It has the same
-  shape as #289's CUDA pointer.
+  shape as #289's CUDA pointer. Done since: `GpuVideoFrame.TryGetD3D12Texture`, which the spikes
+  now use.
 - **A DirectML session on a caller's device and queue, with a D3D12 input.** `DmlInferenceSession`
   lets ORT create its device today. Building it on the decoder's device is what makes the binding
   valid.

@@ -51,10 +51,12 @@ output tensor.
    `SwScaleVideoConverter.Process`, which threw on a `GpuVideoFrame`, so turning the decoder flag
    on made a graph unrunnable rather than faster.
 
-2. **A GPU frame can surface its backend handle.** (#289) `TryGetD3D11Texture` is the only
-   accessor. `Cuda` is a supported decode backend and `CudaInferenceSession` documents a
-   device-pointer binding with no PCIe staging, naming FFmpeg's NVDEC output as the kind of thing
-   that supplies one. Both ends are built; nothing joins them.
+2. **A GPU frame can surface its backend handle.** (#289) Met for D3D12:
+   `TryGetD3D12Texture` gives a D3D12VA frame's texture and the fence, with its value, that the
+   decoder signals once the frame is written. That is what both inference spikes read by
+   reflection (#420, #421). Still open for CUDA: `Cuda` is a supported decode backend and
+   `CudaInferenceSession` documents a device-pointer binding with no PCIe staging, naming FFmpeg's
+   NVDEC output as the kind of thing that supplies one, and nothing joins them.
 
 3. **An operator can consume a `GpuVideoFrame`, and survives one that is not.** (#290) The
    decoder chooses per frame — `ReceiveFrame` branches on `YieldHardwareFrames && onHardware`, and

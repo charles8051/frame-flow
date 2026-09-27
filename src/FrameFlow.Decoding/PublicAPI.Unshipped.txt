@@ -116,6 +116,7 @@ FrameFlow.Decoding.GpuVideoFrame.Pts.get -> System.TimeSpan
 FrameFlow.Decoding.GpuVideoFrame.ReadbackToCpuBgra32() -> FrameFlow.Media.CpuVideoFrame!
 FrameFlow.Decoding.GpuVideoFrame.ToCpu() -> FrameFlow.Media.CpuFrameData
 FrameFlow.Decoding.GpuVideoFrame.TryGetD3D11Texture(out nint texture, out int subresourceIndex, out nint device) -> bool
+FrameFlow.Decoding.GpuVideoFrame.TryGetD3D12Texture(out nint texture, out int subresourceIndex, out nint fence, out ulong fenceValue) -> bool
 FrameFlow.Decoding.GpuVideoFrame.Width.get -> int
 FrameFlow.Decoding.HardwareDecodeAttempt
 FrameFlow.Decoding.HardwareDecodeAttempt.Backend.get -> FrameFlow.Media.HardwareDecodeBackendKind

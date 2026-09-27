@@ -362,6 +362,67 @@ public sealed class GpuVideoFrame : IVideoFrame
         return texture != nint.Zero;
     }
 
+    /// <summary>
+    /// Surfaces the Direct3D 12 texture a D3D12VA frame was decoded into, and the fence that
+    /// says when it is written, for a consumer that reads the frame on the GPU: a compute
+    /// shader, or an inference session on the same device (#289). Only valid when
+    /// <see cref="Backend"/> is <see cref="HardwareDecodeBackendKind.D3D12Va"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The decoder writes the frame on its own queue and signals <paramref name="fence"/> to
+    /// <paramref name="fenceValue"/> when it is done. A consumer on another queue waits for it
+    /// on the GPU with <c>ID3D12CommandQueue::Wait(fence, fenceValue)</c> before reading the
+    /// texture.
+    /// </para>
+    /// <para>
+    /// The device is the texture's, through <c>ID3D12DeviceChild::GetDevice</c>. D3D12 has one
+    /// device per adapter per process, so it is also the device any other component creates on
+    /// that adapter. Holding a reference to it past the decoder's last frame crashes the process
+    /// when a TensorRT-RTX session is loaded (#422).
+    /// </para>
+    /// </remarks>
+    /// <param name="texture">
+    /// On success, a native <c>ID3D12Resource*</c> (NV12, or P010 for 10-bit). The caller must
+    /// not release it: the frame owns it until the frame is disposed. AddRef it to keep it longer.
+    /// </param>
+    /// <param name="subresourceIndex">
+    /// On success, the subresource the frame occupies: 0, since FrameFlow's D3D12VA pool gives
+    /// each frame its own texture (ADR-0081, 2026-09-27 revision).
+    /// </param>
+    /// <param name="fence">
+    /// On success, a native <c>ID3D12Fence*</c>, owned by the frame like <paramref name="texture"/>.
+    /// </param>
+    /// <param name="fenceValue">On success, the value <paramref name="fence"/> reaches once the frame is written.</param>
+    /// <returns>
+    /// <see langword="true"/> when a D3D12 texture was surfaced; <see langword="false"/> for
+    /// non-D3D12VA frames or a disposed frame.
+    /// </returns>
+    public unsafe bool TryGetD3D12Texture(out nint texture, out int subresourceIndex, out nint fence, out ulong fenceValue)
+    {
+        texture = nint.Zero;
+        subresourceIndex = 0;
+        fence = nint.Zero;
+        fenceValue = 0;
+
+        if (Backend != HardwareDecodeBackendKind.D3D12Va)
+            return false;
+
+        var h = _handle;
+        if (h is null || h.IsInvalid)
+            return false;
+
+        var frame = new AvFrameAccessor(h.DangerousGetHandle()).GetD3D12Frame();
+        if (frame is null)
+            return false;
+
+        texture = frame->texture;
+        subresourceIndex = frame->subresource_index;
+        fence = frame->sync_ctx.fence;
+        fenceValue = frame->sync_ctx.fence_value;
+        return texture != nint.Zero && fence != nint.Zero;
+    }
+
     /// <inheritdoc/>
     /// <remarks>
     /// Decrements the object-level ref count. Only the final release
