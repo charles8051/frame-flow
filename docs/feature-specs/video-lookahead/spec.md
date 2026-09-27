@@ -61,13 +61,12 @@ Today the lead is 3 frames, because `SubstrateSession` never passes a capacity t
 
 ## Open questions
 
-- **Does a lead help an overlay at all without a presented-PTS signal?** An operator that
-  finishes early still posts its result when the graph runs it, not when the frame reaches the
-  screen, so a deeper lead moves overlays further ahead of the picture rather than closer to
-  it. The competing fix now exists: `IFramePresentedSource` shipped in #240, and both Avalonia
-  sinks raise the PTS of the frame that reached the screen. If keying an overlay off that
-  matches or beats a deeper ring, this surface serves throughput cases only, and requirement 1
-  waits. #231 measures it.
+- **Does a lead help an overlay at all without a presented-PTS signal?** Answered 2026-09-27
+  (#231, [measurement](../../investigations/2026-09-27-lookahead-overlay.md)): no. Keyed off
+  `FramePresented`, an overlay at the shipping depth of 3 shows each frame's own result on 93 to 98%
+  of frames, and depths 12 and 24 do not improve that. Drawn from what the branch posted, it leads
+  the picture by the ring depth plus two frames, 83 ms at depth 3 and 433 ms at depth 24 at 60 fps.
+  This surface serves throughput consumers only, requirement 1 waits, and none is named.
 - **Which consumers want it.** LiveCaptioning is the candidate, and it can only use a lead
   once its fork and join terminate in an open chain (#218).
 - **The default budget, and whether it is per player or process-wide.** Nothing in `src/`
