@@ -51,6 +51,7 @@ Names, sizes and log lines below are FFmpeg 7.1. Every number here is version-sp
 | VideoToolbox | No fixed pool. Frames are retained `CVPixelBuffer`s from the decompression session. | Memory, allocated as used |
 | Software decode | Ordinary refcounted buffers, no decode-side ceiling | Memory |
 | Vulkan (FFmpeg 9.0) | No fixed pool. `vulkan_pool_alloc` (`hwcontext_vulkan.c`) creates an image for every request, and `ff_vk_frame_params` (`vulkan_decode.c`) sets no initial size, so `extra_hw_frames` is ignored. A released frame stays in the pool until the decoder closes. Measured in #414. | Memory, allocated as used and kept at its high-water mark |
+| D3D12VA (FFmpeg 9.0) | No fixed pool. `d3d12va_pool_alloc` (`hwcontext_d3d12va.c`) creates a texture for every request. Its fixed texture-array mode needs `AV_D3D12VA_FRAME_FLAG_TEXTURE_ARRAY` and an `initial_pool_size`, and `ff_d3d12va_common_frame_params` (`d3d12va_decode.c`) sets neither, so `extra_hw_frames` is ignored. A released frame stays in the pool until the decoder closes. Measured in #415. | Memory, allocated as used and kept at its high-water mark |
 | VAAPI, NVDEC | Not yet checked | Unknown |
 
 FFmpeg sizes the D3D11VA pool in `dxva2.c` (`ff_dxva2_common_frame_params`) and `decode.c`:
@@ -96,8 +97,8 @@ being paid once per frame by the presenter.
    The decoder's own pool stays at FFmpeg's default size and never has more than one slice
    held downstream.
 
-3. **Growable pools hold the decoder's frames directly.** No copy on VideoToolbox, Vulkan or the
-   software path.
+3. **Growable pools hold the decoder's frames directly.** No copy on VideoToolbox, Vulkan,
+   D3D12VA or the software path.
 
 4. **This is a decode-side pool, and ADR-0025's inversion still governs the sink side.**
    ~~`CpuFramePool` is a sink-owned pool whose `RentAsync` blocks, which is the backpressure
@@ -154,7 +155,7 @@ GPU path exists to avoid. Rejected.
 ## Consequences
 
 - Copy-out is per backend. D3D11 first, then VAAPI and CUDA once their pool models are known.
-  Vulkan's pool grows, so it needs none (#414).
+  Vulkan's and D3D12VA's pools grow, so they need none (#414, #415).
 - Every component that pattern-matches `GpuVideoFrame` inherits the second hardware shape
   from Decision 5, including the inference readback in the LiveCaptioning example
   (`MainWindow.axaml.cs:594`).

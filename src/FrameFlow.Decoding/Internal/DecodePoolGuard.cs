@@ -67,13 +67,17 @@ internal static class DecodePoolGuard
     /// reference leaves three for consumers (frame-pool ownership). VideoToolbox and software
     /// decode grow. So does Vulkan: FFmpeg creates an image for each request with no ceiling,
     /// and ignores <c>extra_hw_frames</c> because its decoder sets no initial pool size (#414).
-    /// The other backends are uncharacterised (#230) and treated as fixed with no known spare.
+    /// So does D3D12VA: FFmpeg creates a texture for each request, and uses a fixed texture
+    /// array only when the caller asks for one, which FrameFlow does not (#415). The other
+    /// backends are uncharacterised (#230) and treated as fixed with no known spare.
     /// </remarks>
     public static int? SpareSurfaces(HardwareDecodeBackendKind backend) =>
         backend switch
         {
             HardwareDecodeBackendKind.D3D11Va or HardwareDecodeBackendKind.Dxva2 => 3,
-            HardwareDecodeBackendKind.VideoToolbox or HardwareDecodeBackendKind.Vulkan => null,
+            HardwareDecodeBackendKind.VideoToolbox
+                or HardwareDecodeBackendKind.Vulkan
+                or HardwareDecodeBackendKind.D3D12Va => null,
             _ => 0,
         };
 
