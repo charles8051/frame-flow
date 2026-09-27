@@ -162,7 +162,7 @@ See [ADR-0069](docs/adr/ADR-0069-one-error-model-across-the-playback-stack.md).
 - OpenAL audio output on all three platforms, doubling as the master clock
 - Avalonia and SDL presenters
 - camera capture and an H.264 to MP4 encoder
-- optional DirectML and CUDA inference: YOLO detection, Whisper captioning
+- optional DirectML, CUDA and Windows ML inference: YOLO detection, Whisper captioning
 
 11 runnable example apps under `examples/` exercise these against real files
 and live camera and multicast sources.
@@ -178,7 +178,7 @@ and live camera and multicast sources.
 | Camera / video | `FrameFlow.Camera`, `FrameFlow.Video` |
 | Audio | `FrameFlow.Audio`, `FrameFlow.Audio.OpenAL` |
 | Presenters | `FrameFlow.Avalonia`, `FrameFlow.Avalonia.Windows`, `FrameFlow.Sdl` |
-| Inference | `FrameFlow.Inference.Abstractions`, `.Ort`, `.Cuda`, `.Dml`, `.D3D12`, `FrameFlow.Yolo`, `FrameFlow.Face`, `FrameFlow.Whisper` |
+| Inference | `FrameFlow.Inference.Abstractions`, `.Ort`, `.Cuda`, `.Dml`, `.WinML`, `.D3D12`, `FrameFlow.Yolo`, `FrameFlow.Face`, `FrameFlow.Whisper` |
 
 `FrameFlow.Native.Runtime` carries the FFmpeg binaries. The libraries do not
 reference it — add it yourself, or supply the natives another way.

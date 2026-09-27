@@ -160,3 +160,43 @@ session built on the decoder's device takes the buffer through `CreateGPUAllocat
 - **The wait has no GPU-level test.** Telling a queue blocked on the fence from one that has not
   run yet needs a clock, which ADR-0072 keeps out of tests. The pure plan of which waits a run
   makes is tested, and a cross-queue run is checked end to end.
+
+## Decision 5: Windows ML is its own execution-provider package, choosing by policy unless told
+
+**Date:** 2026-09-27
+**Status:** Accepted
+**Issue:** #423
+
+### Context
+
+The 2026-09-09 investigation found Windows ML reaches vendor providers DirectML cannot, TensorRT-RTX
+at about 1.9 times DirectML's speed on yolov8n, and that a session can inherit
+`OrtInferenceSessionBase` unchanged. It left open how the session chooses a provider: Windows ML's
+selection policy or an explicit device. Both reached the same steady-state speed.
+
+### Decision
+
+- `FrameFlow.Inference.WinML` holds `WinMLInferenceSession`, targeting
+  `net10.0-windows10.0.18362.0` with `Microsoft.Windows.AI.MachineLearning`, self-contained. Like
+  the DirectML and CUDA packages, it brings its own `onnxruntime.dll`, so an app picks one.
+- The constructors choose by `WinMLDevicePolicy`, `PreferGpu` by default, which follows the
+  providers Windows installs. `OnProvider(model, name, adapterLuid)` names one, and its adapter, for
+  a predictable choice and for matching a decoder's device.
+- `WinMLProviders.RegisterInstalledAsync` registers what is installed, once per process, and
+  downloads nothing. `InstallAndRegisterAsync` installs system-wide and is separate, because it
+  changes the machine and is not transactional. `CreateAsync` registers, then opens on the thread
+  pool, since a TensorRT-RTX session builds its engine as it opens.
+- The package loads its own runtime by path before any ONNX Runtime call. Windows carries an older
+  `onnxruntime.dll` in System32, and an app built without a runtime identifier otherwise loads that
+  one, which the managed runtime refuses by crashing the process.
+- `ExecutionProvider.WindowsML` joins the enum so a session factory can register it.
+
+### Consequences
+
+- **Host input only, for now.** A device input needs TensorRT-RTX's CUDA import (#421); with the
+  borrowed device (#445) the teardown hazard that blocked it is gone.
+- **Below Windows 11 24H2 it adds nothing.** The vendor catalog needs build 26100; below that the
+  package offers CPU and DirectML, which `FrameFlow.Inference.Dml` already does.
+- **First-open cost is unmeasured under the compile API.** ORT's `OrtModelCompilationOptions` may
+  amortise the engine build; that is still open.
+
