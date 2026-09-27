@@ -1,6 +1,7 @@
 # GPU-resident inference
 
-**Status:** Draft. Requirements 1 and 7 are met; the rest are open. Tracked by #288; every
+**Status:** Draft. Requirements 1 and 7 are met, 2 is met for D3D12, and 4 is decided; the rest
+are open. Tracked by #288; every
 requirement below names the issue that carries it. Living document, rewritten as the feature
 changes.
 
@@ -12,8 +13,9 @@ operators and the `GpuVideoFrame` contract, and its 2026-09-18 amendment says wh
 are not in the tree. [ADR-0057](../../adr/ADR-0057-pull-based-master-clock.md) records the
 held-lease coupling this feature has to answer for a path with no pacer.
 [ADR-0079](../../adr/ADR-0079-the-pass-and-the-player.md) defers the pass-side option on a
-trigger this feature fires. No `adr.md` here yet: the two decisions that would fill it (#291,
-#292) are open, and an append-only record is the wrong place to think out loud.
+trigger this feature fires. This feature's own decisions are in [adr.md](adr.md): where
+preprocessing runs (decision 1, #291) and the shape of the frame's backend handles (decision 2,
+#289).
 
 ## What
 
@@ -54,9 +56,9 @@ output tensor.
 2. **A GPU frame can surface its backend handle.** (#289) Met for D3D12:
    `TryGetD3D12Texture` gives a D3D12VA frame's texture and the fence, with its value, that the
    decoder signals once the frame is written. That is what both inference spikes read by
-   reflection (#420, #421). Still open for CUDA: `Cuda` is a supported decode backend and
-   `CudaInferenceSession` documents a device-pointer binding with no PCIe staging, naming FFmpeg's
-   NVDEC output as the kind of thing that supplies one, and nothing joins them.
+   reflection (#420, #421). The CUDA device pointer of an NVDEC frame is deferred until a path
+   decodes with CUDA directly ([decision 2](adr.md)): TensorRT-RTX gets CUDA memory from a
+   D3D12VA frame by importing the preprocessed buffer.
 
 3. **An operator can consume a `GpuVideoFrame`, and survives one that is not.** (#290) The
    decoder chooses per frame — `ReceiveFrame` branches on `YieldHardwareFrames && onHardware`, and
@@ -66,11 +68,11 @@ output tensor.
    event to react to: it is a per-frame type test, and the CPU branch is a correctness requirement
    rather than a fallback.
 
-4. **Preprocessing happens where the pixels are.** (#291) Resize, BGRA-to-RGB normalize and
-   HWC-to-CHW transpose run on the device for a GPU-resident frame. Whether that is a per-backend
-   kernel, work folded into the model graph, or something else is open. That it must move is not:
-   a GPU-resident frame has no CPU pixels to preprocess, and downloading them is the cost this
-   feature removes. The CPU branch is `ImageToTensor` (#363).
+4. **Preprocessing happens where the pixels are.** (#291) Decided ([decision 1](adr.md)): one
+   D3D12 compute shader, the device side of `ImageToTensor` and configured by the same
+   `ImageToTensorOptions`, reads the D3D12VA texture after a GPU wait on the frame's fence and
+   writes the model input into a D3D12 buffer. DirectML reads the buffer directly; TensorRT-RTX
+   reads it through a CUDA import. CPU frames keep the CPU `ImageToTensor`.
 
 5. **A GPU frame's lifetime is bounded on a path with no pacer.** (#292) Each live
    `GpuVideoFrame` pins a slice of a default-sized hwframe pool. ADR-0057 records the resulting
