@@ -271,6 +271,7 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
             hardwareDevice: device
         );
 
+        var framesAfterEachLoad = new List<int>();
         try
         {
             var source = PlaybackHarness.ResolveCorpusPath("test-video-h264-yuv420p.mp4");
@@ -282,6 +283,7 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
                 Assert.True(played.IsSuccess, $"PlayAsync {load} failed: {played.Error?.Message}");
                 var unloaded = await controller.UnloadAsync();
                 Assert.True(unloaded.IsSuccess, $"UnloadAsync {load} failed: {unloaded.Error?.Message}");
+                framesAfterEachLoad.Add(videoSink.Seen.Count);
             }
         }
         finally
@@ -290,10 +292,11 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
             await controller.DisposeAsync();
         }
 
-        var seen = videoSink.Seen.ToArray();
-        Assert.NotEmpty(seen);
-        Assert.All(seen, s => Assert.Equal(device.ContextPointer, s.Device));
-        Assert.Equal(2, seen.Select(s => s.Pool).Distinct().Count());
+        // Both loads decoded on the device. Each load's decoder was closed before the next opened,
+        // so their pools' addresses may repeat and are not compared.
+        Assert.True(framesAfterEachLoad[0] > 0, "the first load presented no hardware frames");
+        Assert.True(framesAfterEachLoad[1] > framesAfterEachLoad[0], "the second load presented no hardware frames");
+        Assert.All(videoSink.Seen, s => Assert.Equal(device.ContextPointer, s.Device));
     }
 
     /// <summary>The first backend the probe initialised that FFmpeg can make a device for here.</summary>

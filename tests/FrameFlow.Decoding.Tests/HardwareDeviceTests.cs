@@ -51,21 +51,40 @@ public sealed class HardwareDeviceTests(FfmpegBootstrapFixture fixture)
         using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D12Va);
         Assert.True(device.TryGetD3D12Device(out nint before));
 
-        var pools = new List<nint>();
+        // One decoder after another, each closed with its frames before the next opens.
         for (int i = 0; i < 2; i++)
         {
             await using var demux = await OpenAsync(H264);
             await using var decoder = Open(demux, device, HardwareDecodeMode.Required);
             using var frame = await FirstFrameAsync(demux, decoder);
             Assert.Equal(device.ContextPointer, frame.HwDeviceContext);
-            pools.Add(frame.HwFramesContext);
         }
 
-        // Each decoder had its own pool on the one device, and the device is still there.
-        Assert.Equal(2, pools.Distinct().Count());
+        // The device is still the one it was.
         Assert.True(device.TryGetD3D12Device(out nint after));
         Assert.Equal(before, after);
         Assert.Equal(Identity(before), QueryIdentity(after, IidDevice));
+    }
+
+    /// <summary>
+    /// Two decoders open at once on one device each get a pool of their own. Both frames stay
+    /// alive while the pools are compared, so neither address can have been reused.
+    /// </summary>
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D12Va, H264)]
+    public async Task DecodersSharingADevice_EachHaveTheirOwnPool()
+    {
+        using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D12Va);
+
+        await using var firstDemux = await OpenAsync(H264);
+        await using var first = Open(firstDemux, device, HardwareDecodeMode.Required);
+        using var firstFrame = await FirstFrameAsync(firstDemux, first);
+        await using var secondDemux = await OpenAsync(H264);
+        await using var second = Open(secondDemux, device, HardwareDecodeMode.Required);
+        using var secondFrame = await FirstFrameAsync(secondDemux, second);
+
+        Assert.Equal(device.ContextPointer, firstFrame.HwDeviceContext);
+        Assert.Equal(device.ContextPointer, secondFrame.HwDeviceContext);
+        Assert.NotEqual(firstFrame.HwFramesContext, secondFrame.HwFramesContext);
     }
 
     [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D12Va, H264)]
