@@ -139,7 +139,7 @@ public sealed class NoConsumerStreamDiscardTests : IClassFixture<FfmpegBootstrap
     /// decoder behind a small bounded queue, the demux pump blocks once the
     /// queue fills and never reaches EOF — exactly what froze video in the
     /// field (just triggered in milliseconds instead of ~10 s by shrinking the
-    /// queue from its 512 default).
+    /// queue from its 128 default).
     /// </summary>
     [RequiresFfmpegAndCorpusFact]
     public async Task RunDemuxPumpAsync_AudioDecoderUndrained_BlocksOnceBoundedQueueFills()
@@ -156,7 +156,7 @@ public sealed class NoConsumerStreamDiscardTests : IClassFixture<FfmpegBootstrap
         var audioStreamIndex = demux.MediaInfo.AudioStreams[0].StreamIndex;
 
         // Tiny queue so the pump backpressures after a handful of audio packets
-        // instead of buffering ~512 (~10 s) first. Same mechanism, faster.
+        // instead of buffering 128 (~2.7 s) first. Same mechanism, faster.
         const int tinyQueue = 8;
         await using var audioDecoder = new AudioDecoder(
             demux.FormatContextPtr,

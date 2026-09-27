@@ -20,7 +20,7 @@ public sealed class AudioDecoderOptions
     /// The demux pump writes cloned packets into this queue and backpressures
     /// (blocks <see cref="AudioDecoder.SendPacketAsync"/>) once it is full, so
     /// the depth bounds how far the pump may read ahead of the audio consumer.
-    /// Defaults to 512 (~10 s of typical AAC at 44.1 kHz). Must be at least 1.
+    /// Defaults to 128, about 2.7 s of AAC at 48 kHz. Must be at least 1.
     /// </summary>
     /// <remarks>
     /// Lowering this is primarily useful for tests that need to observe the
