@@ -12,30 +12,11 @@ namespace D3D12DmlProbe;
 /// <param name="FenceValue">The value the fence reaches when the frame is ready.</param>
 internal readonly record struct D3D12FrameHandles(nint Texture, int Subresource, nint Fence, ulong FenceValue)
 {
-    private static readonly PropertyInfo NativeAvFrame = typeof(GpuVideoFrame).GetProperty(
-        "NativeAvFrame", BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new MissingMemberException(nameof(GpuVideoFrame), "NativeAvFrame");
-
-    /// <summary>
-    /// Reads the frame's D3D12 handles. <c>GpuVideoFrame</c> has no public D3D12 accessor (only
-    /// <c>TryGetD3D11Texture</c>), so the spike reaches the internal <c>AVFrame*</c> by reflection.
-    /// </summary>
-    /// <remarks>
-    /// FFmpeg 9 layout, x64: <c>AVFrame.data[0]</c> is at offset 0 and points to
-    /// <c>AVD3D12VAFrame { ID3D12Resource *texture; int subresource_index;
-    /// AVD3D12VASyncContext { ID3D12Fence *fence; HANDLE event; uint64_t fence_value; } sync_ctx;
-    /// AVD3D12VAFrameFlags flags; }</c>, so texture 0, subresource 8, fence 16, fence_value 32.
-    /// </remarks>
-    public static unsafe D3D12FrameHandles Read(GpuVideoFrame frame)
-    {
-        nint avFrame = (nint)NativeAvFrame.GetValue(frame)!;
-        byte* d3d12Frame = *(byte**)avFrame;
-        return new D3D12FrameHandles(
-            *(nint*)d3d12Frame,
-            *(int*)(d3d12Frame + 8),
-            *(nint*)(d3d12Frame + 16),
-            *(ulong*)(d3d12Frame + 32));
-    }
+    /// <summary>Reads the frame's D3D12 handles through <see cref="GpuVideoFrame.TryGetD3D12Texture"/>.</summary>
+    public static D3D12FrameHandles Read(GpuVideoFrame frame) =>
+        frame.TryGetD3D12Texture(out nint texture, out int subresource, out nint fence, out ulong fenceValue)
+            ? new D3D12FrameHandles(texture, subresource, fence, fenceValue)
+            : throw new InvalidOperationException($"A {frame.Backend} frame has no D3D12 texture.");
 }
 
 /// <summary>

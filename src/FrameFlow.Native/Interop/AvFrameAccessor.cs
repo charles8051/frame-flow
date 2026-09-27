@@ -197,6 +197,14 @@ internal readonly unsafe ref struct AvFrameAccessor
     }
 
     /// <summary>
+    /// For a D3D12VA hardware frame, the <c>AVD3D12VAFrame</c> that <c>data[0]</c> points to:
+    /// the texture, its subresource, and the fence with the value it reaches once the frame is
+    /// written. Null when the frame has no plane 0. The caller has checked the frame is D3D12VA;
+    /// for any other backend <c>data[0]</c> is something else.
+    /// </summary>
+    internal AVD3D12VAFrame* GetD3D12Frame() => (AVD3D12VAFrame*)GetDataPointer(0);
+
+    /// <summary>
     /// For a D3D11VA hardware frame, walks <c>hw_frames_ctx → device_ctx → hwctx
     /// (AVD3D11VADeviceContext) → device</c> and returns the underlying
     /// <c>ID3D11Device*</c> as a raw pointer. This is the decode device the frame's
