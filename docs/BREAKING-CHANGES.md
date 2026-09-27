@@ -201,6 +201,23 @@ returns.
 **Why.** An exhausted fixed pool fails the decode (#370). A pool sized from declarations does not
 run out, and a holder with no declaration could hold any number of frames.
 
+### 8. A face ROI with no area is refused
+
+**A runtime error, not a compile error.**
+
+`BlazeFaceDetector.Detect(frame, roi)` and `BlazeFacePreprocessor.Preprocess` throw
+`ArgumentException` for a `FaceRoi` whose width or height is zero, negative or not finite. They
+used to sample it: a zero-width ROI repeated one column across the model input, and a negative one
+mirrored it.
+
+**Who hits this.** A caller that derives the ROI from a tracked box and can produce an empty one,
+for example by clamping a box that has left the frame. `FaceRoi.Full` is unaffected.
+
+**What to write instead.** Skip detection for an empty ROI; it holds no face.
+
+**Why.** Both preprocessors now call `ImageToTensor` (#363), which needs a crop it can invert to
+map results back to the frame.
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be

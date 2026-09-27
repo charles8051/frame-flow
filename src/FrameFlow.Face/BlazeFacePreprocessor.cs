@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Inference;
 using FrameFlow.Media;
 
 namespace FrameFlow.Face;
@@ -32,9 +33,15 @@ namespace FrameFlow.Face;
 /// resize; face detection tolerates modest aspect distortion, and the
 /// ROI is typically close to square.
 /// </para>
+/// <para>
+/// The pixel work is <see cref="ImageToTensor"/>'s: the ROI, stretched,
+/// nearest-neighbour, <c>[-1, 1]</c>, RGB, in the model's layout.
+/// </para>
 /// </remarks>
 public sealed class BlazeFacePreprocessor
 {
+    private readonly ImageToTensorOptions _options;
+
     /// <summary>Model input image side length in pixels.</summary>
     public int InputSize { get; }
 
@@ -54,99 +61,30 @@ public sealed class BlazeFacePreprocessor
         }
         InputSize = inputSize;
         Layout = layout;
+        _options = new ImageToTensorOptions(inputSize, inputSize)
+        {
+            Sampling = ImageSampling.Nearest,
+            Normalization = TensorNormalization.MinusOneToOne,
+            Layout = layout == BlazeFaceInputLayout.Nhwc ? TensorLayout.Nhwc : TensorLayout.Nchw,
+        };
     }
 
     /// <summary>
     /// Crops <paramref name="roi"/> from <paramref name="frame"/>, resizes
     /// it to the model input, normalizes to <c>[-1,1]</c>, and writes the
-    /// CHW tensor into <paramref name="destination"/> (≥
+    /// tensor into <paramref name="destination"/> (≥
     /// <see cref="InputElementCount"/> elements). The <paramref name="roi"/>
     /// is returned to the caller to hand to the postprocessor unchanged.
+    /// A ROI that spills past the frame's edge samples the edge pixel.
     /// </summary>
+    /// <exception cref="ArgumentException">The ROI has no area.</exception>
+    /// <exception cref="NotSupportedException">The frame is not Bgra32 or Rgba32.</exception>
+    /// <exception cref="InvalidOperationException">The frame is not on the CPU.</exception>
     public void Preprocess(IVideoFrame frame, FaceRoi roi, Span<float> destination)
     {
         ArgumentNullException.ThrowIfNull(frame);
 
-        if (destination.Length < InputElementCount)
-        {
-            throw new ArgumentException(
-                $"Destination span has {destination.Length} elements; BlazeFace input requires at "
-                    + $"least {InputElementCount}.",
-                nameof(destination));
-        }
-
-        if (frame.Format is not (PixelFormat.Bgra32 or PixelFormat.Rgba32))
-        {
-            throw new NotSupportedException(
-                $"BlazeFace preprocessor expects Bgra32 or Rgba32 input frames; got {frame.Format}.");
-        }
-
-        var cpu = frame.AsCpu()
-            ?? throw new InvalidOperationException(
-                "BlazeFace preprocessor expects CPU-resident frames; AsCpu() returned null.");
-
-        CropResizeAndNormalize(
-            sourceBytes: cpu.PlaneY.Span,
-            sourceWidth: frame.Width,
-            sourceHeight: frame.Height,
-            sourceStride: cpu.StrideY,
-            isBgra: frame.Format == PixelFormat.Bgra32,
-            roi: roi,
-            destination: destination);
+        ImageToTensor.Write(
+            frame, RotatedRect.FromBounds(roi.X, roi.Y, roi.Width, roi.Height), _options, destination);
     }
-
-    /// <summary>
-    /// Inline ROI-crop + stretched resize + BGRA/RGBA → RGB normalization
-    /// to <c>[-1,1]</c> + HWC → CHW transpose. Sample coordinates are
-    /// clamped to the frame, so a ROI that spills past the edge (common
-    /// when a person box hugs the border) samples the edge pixel instead
-    /// of reading out of bounds.
-    /// </summary>
-    private void CropResizeAndNormalize(
-        ReadOnlySpan<byte> sourceBytes,
-        int sourceWidth,
-        int sourceHeight,
-        int sourceStride,
-        bool isBgra,
-        FaceRoi roi,
-        Span<float> destination)
-    {
-        int size = InputSize;
-        int channelStride = size * size;
-        bool chw = Layout == BlazeFaceInputLayout.Nchw;
-        // CHW: R plane | G plane | B plane. HWC: interleaved R,G,B per pixel.
-        int rOffset = 0;
-        int gOffset = chw ? channelStride : 1;
-        int bOffset = chw ? channelStride * 2 : 2;
-        int pixelStep = chw ? 1 : 3;
-
-        int rByte = isBgra ? 2 : 0;
-        int gByte = 1;
-        int bByte = isBgra ? 0 : 2;
-
-        for (int dy = 0; dy < size; dy++)
-        {
-            // Map destination row to a source y inside the ROI, then clamp.
-            float srcYf = roi.Y + (dy + 0.5f) / size * roi.Height;
-            int sy = Clamp((int)srcYf, 0, sourceHeight - 1);
-            int srcRowOffset = sy * sourceStride;
-
-            for (int dx = 0; dx < size; dx++)
-            {
-                float srcXf = roi.X + (dx + 0.5f) / size * roi.Width;
-                int sx = Clamp((int)srcXf, 0, sourceWidth - 1);
-                int srcPixelOffset = srcRowOffset + sx * 4;
-
-                int baseIndex = (dy * size + dx) * pixelStep;
-                destination[rOffset + baseIndex] = Normalize(sourceBytes[srcPixelOffset + rByte]);
-                destination[gOffset + baseIndex] = Normalize(sourceBytes[srcPixelOffset + gByte]);
-                destination[bOffset + baseIndex] = Normalize(sourceBytes[srcPixelOffset + bByte]);
-            }
-        }
-    }
-
-    /// <summary><c>byte [0,255] → [-1, 1]</c>.</summary>
-    private static float Normalize(byte value) => value / 127.5f - 1.0f;
-
-    private static int Clamp(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
 }

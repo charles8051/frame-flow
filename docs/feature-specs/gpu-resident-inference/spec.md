@@ -120,14 +120,20 @@ output tensor.
 
 - **What the CPU-only path costs after requirement 4.** Every consumer shares one
   `Yolov8Preprocessor`. If preprocessing splits by memory domain, the CPU branch has to stay at
-  least as fast as it is now, and vectorising that loop is worth doing on its own merits whatever
-  this feature decides.
+  least as fast as it is now. Since #363 the CPU branch is `ImageToTensor`, shared by the YOLO and
+  BlazeFace preprocessors and vectorised for an unrotated crop. On a random 1080p frame in a
+  Release build, one consumer, the YOLO preprocess is 0.39 ms p50 against 1.15 ms for the loop it
+  replaced.
 
 - **How much of the 5.3 ms is the example's own overhead.** The Multicast.Dml example clones each
   frame to three panes with `CloneCpu()`, so the CPU legs compete with two extra full-frame copies.
   The decoder-thread legs are less affected. A single-consumer pass would show lower preprocess,
   sws and postprocess figures, and re-measuring on one is the cheap way to tighten the estimate
-  before committing to requirement 4's shape.
+  before committing to requirement 4's shape. The build configuration may matter more: the
+  measurement does not record one, and the replaced loop takes 5.2 ms p50 on a 1080p frame in a
+  Debug build against 1.15 ms in Release. If the 5.3 ms was a Debug build, the managed stages
+  (preprocess and postprocess) are overstated and the stage ranking above changes. Re-measuring in
+  Release settles it.
 
 - **Where the inference ADR citations point.** `DmlInferenceSession` attributes its deferral to
   "ADR-0022", and `CudaInferenceSession` and ADR-0050 cite "ADR-0049 §3" for the `IInferenceSession`
