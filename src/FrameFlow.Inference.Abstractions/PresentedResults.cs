@@ -36,6 +36,11 @@ public sealed class PresentedResults<TResult> : IDisposable
     private readonly List<InferenceResult<TResult>> _pending = [];
     private readonly List<TimeSpan> _timestamps = [];
     private InferenceResult<TResult>? _current;
+
+    // Which timeline the waiting results and the current one came from. A result earlier than the
+    // last starts a new one; the waiting results are always from the newest.
+    private int _timeline;
+    private int _currentTimeline;
     private bool _disposed;
 
     /// <summary>Follows the frames <paramref name="source"/> presents.</summary>
@@ -79,6 +84,7 @@ public sealed class PresentedResults<TResult> : IDisposable
             {
                 _pending.Clear();
                 _timestamps.Clear();
+                _timeline++;
             }
 
             _pending.Add(result);
@@ -117,6 +123,14 @@ public sealed class PresentedResults<TResult> : IDisposable
                 // stream, the picture went back past it.
                 if (_current is not null && presented.PresentationTime < _current.Timestamp)
                 {
+                    // What waits from the cleared result's timeline would show it again when the
+                    // picture gets back there; what the branch has posted since is for the new one.
+                    if (_currentTimeline == _timeline)
+                    {
+                        _pending.Clear();
+                        _timestamps.Clear();
+                    }
+
                     _current = null;
                     cleared = true;
                 }
@@ -143,6 +157,7 @@ public sealed class PresentedResults<TResult> : IDisposable
         if (ReferenceEquals(result, _current))
             return null;
         _current = result;
+        _currentTimeline = _timeline;
         return result;
     }
 }

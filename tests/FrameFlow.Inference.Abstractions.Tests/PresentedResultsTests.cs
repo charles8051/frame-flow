@@ -106,6 +106,39 @@ public sealed class PresentedResultsTests
     }
 
     [Fact]
+    public void AClearedResult_DoesNotShowAgainWhenThePictureReturnsToIt()
+    {
+        var presenter = new FakePresenter();
+        using var onScreen = new PresentedResults<string>(presenter);
+        onScreen.Post(Result("a", 0));
+        onScreen.Post(Result("b", 80));
+        presenter.Present(80);
+        presenter.Present(20);
+
+        // No result has arrived for the new position; "b" belongs to the timeline that was cleared.
+        presenter.Present(80);
+
+        Assert.Null(onScreen.Current);
+    }
+
+    [Fact]
+    public void AClear_KeepsWhatTheBranchPostedForTheNewPosition()
+    {
+        var presenter = new FakePresenter();
+        using var onScreen = new PresentedResults<string>(presenter);
+        onScreen.Post(Result("b", 80));
+        presenter.Present(80);
+
+        // The branch runs ahead: its first result after a seek back arrives before the picture does.
+        onScreen.Post(Result("after the seek", 40));
+        presenter.Present(20);
+        Assert.Null(onScreen.Current);
+
+        presenter.Present(40);
+        Assert.Equal("after the seek", onScreen.Current?.Result);
+    }
+
+    [Fact]
     public void AFrameBeforeEveryResultWithNothingShowing_ClearsNothing()
     {
         var presenter = new FakePresenter();
