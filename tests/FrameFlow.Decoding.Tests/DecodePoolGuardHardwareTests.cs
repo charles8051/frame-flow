@@ -46,8 +46,7 @@ public sealed class DecodePoolGuardHardwareTests(FfmpegBootstrapFixture fixture)
     /// A Vulkan pool grows (#414), so the allowance that sizes a fixed pool sets no budget, and a
     /// caller holding every frame is never parked.
     /// </summary>
-    // 27 is AV_CODEC_ID_H264.
-    [RequiresHardwareDecodeBackendFact(codecId: 27, HardwareDecodeBackendKind.Vulkan)]
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.Vulkan, Fixture)]
     public async Task AVulkanDecoder_HoldsEveryFrame_WithoutABudget()
     {
         int expected = await CountSoftwareFramesAsync(Fixture);
@@ -84,11 +83,7 @@ public sealed class DecodePoolGuardHardwareTests(FfmpegBootstrapFixture fixture)
         );
         await consumer.WaitAsync(FailureBound);
 
-        Assert.True(
-            decoder.HardwareBackend == HardwareDecodeBackendKind.Vulkan,
-            "The Vulkan device opened but decoded in software. A device without "
-                + "VK_KHR_video_decode_queue does this (#74), and passes the gate."
-        );
+        Assert.Equal(HardwareDecodeBackendKind.Vulkan, decoder.HardwareBackend);
         Assert.Equal(expected, held.Count);
         Assert.Equal(0, decoder.GetDiagnostics().HardwareFrameBudget);
         while (held.TryDequeue(out var frame))

@@ -1,5 +1,6 @@
 using FrameFlow.Decoding.Internal;
 using FrameFlow.Media;
+using FrameFlow.Native.Interop;
 namespace FrameFlow.Decoding.Tests;
 
 /// <summary>
@@ -207,18 +208,21 @@ internal sealed class RequiresHardwareDecodeFactAttribute : FactAttribute
 
 /// <summary>
 /// As <see cref="RequiresHardwareDecodeFactAttribute"/>, for one backend: skipped unless
-/// <c>backend</c> initialised here and a decoder for <c>codecId</c> advertises a config for it.
+/// <c>backend</c> decodes the first frame of <c>clip</c> on hardware here.
 /// </summary>
 /// <remarks>
-/// A device that initialises can still refuse to decode. A Vulkan device without
-/// <c>VK_KHR_video_decode_queue</c> passes this gate and decodes in software (#74), so a test
-/// behind it checks that the backend engaged.
+/// The gate decodes rather than asking whether a config exists, because a device that
+/// initialises can still decode in software. A Vulkan device without
+/// <c>VK_KHR_video_decode_queue</c> opens, advertises a config and falls back (#74). The answer
+/// is cached for each backend and clip.
 /// </remarks>
 internal sealed class RequiresHardwareDecodeBackendFactAttribute : FactAttribute
 {
-    /// <param name="codecId">The FFmpeg <c>AVCodecID</c>; <c>27</c> is H.264, <c>172</c> HEVC.</param>
+    private static readonly Dictionary<(HardwareDecodeBackendKind, string), string?> Probes = [];
+
     /// <param name="backend">The backend the test decodes on.</param>
-    public RequiresHardwareDecodeBackendFactAttribute(int codecId, HardwareDecodeBackendKind backend)
+    /// <param name="clip">The corpus file the test decodes.</param>
+    public RequiresHardwareDecodeBackendFactAttribute(HardwareDecodeBackendKind backend, string clip)
     {
         if (!TestEnvironment.HasFfmpegSharedLibraries)
         {
@@ -232,6 +236,23 @@ internal sealed class RequiresHardwareDecodeBackendFactAttribute : FactAttribute
             return;
         }
 
+        lock (Probes)
+        {
+            if (!Probes.TryGetValue((backend, clip), out var reason))
+            {
+                reason = WhyItCannotDecode(backend, clip);
+                Probes[(backend, clip)] = reason;
+            }
+            Skip = reason;
+        }
+    }
+
+    /// <summary>Why <paramref name="backend"/> does not decode <paramref name="clip"/>, or null.</summary>
+    private static string? WhyItCannotDecode(HardwareDecodeBackendKind backend, string clip)
+    {
+        if (TestEnvironment.GetCorpusFile(clip) is not { } file)
+            return $"Corpus file '{clip}' not present.";
+
         var only = new HardwareDecodeCapabilities(
             FfmpegBootstrapFixture
                 .ReadCapabilities()
@@ -239,17 +260,73 @@ internal sealed class RequiresHardwareDecodeBackendFactAttribute : FactAttribute
                 .ToList()
         );
         if (only.Available.Count == 0)
+            return $"No {backend} device initialised on this machine.";
+
+        return Task.Run(async () =>
+            {
+                await using var demux = (DemuxSession)
+                    await new DemuxSessionFactory().OpenAsync(MediaSource.FromFile(file));
+                int stream = demux.MediaInfo.VideoStreams[0].StreamIndex;
+                VideoDecoder decoder;
+                try
+                {
+                    decoder = VideoDecoder.Open(
+                        demux.FormatContextPtr,
+                        stream,
+                        new HardwareDecodeOptions
+                        {
+                            Mode = HardwareDecodeMode.Required,
+                            PreferredBackends = [backend],
+                        },
+                        only,
+                        loggerFactory: null
+                    );
+                }
+                catch (HardwareDecodeUnavailableException)
+                {
+                    return $"No decoder for {clip} could be bound to {backend} here.";
+                }
+
+                await using (decoder)
+                {
+                    await QueueAllAsync(demux, stream, decoder);
+                    await using var frames = decoder.DecodeAsync().GetAsyncEnumerator();
+                    if (!await frames.MoveNextAsync())
+                        return $"{backend} decoded no frame from {clip}.";
+                    frames.Current.Dispose();
+                    return decoder.HardwareBackend == backend
+                        ? null
+                        : $"A {backend} device opened but decoded {clip} in software, as a "
+                            + "device without a decode queue does (#74).";
+                }
+            })
+            .GetAwaiter()
+            .GetResult();
+    }
+
+    private static async Task QueueAllAsync(DemuxSession demux, int stream, VideoDecoder decoder)
+    {
+        nint read = FFAvCodec.av_packet_alloc();
+        try
         {
-            Skip = $"No {backend} device initialised on this machine.";
-            return;
+            while (FFAvFormat.av_read_frame(demux.FormatContextPtr, read) >= 0)
+            {
+                if (new AvPacketAccessor(read).StreamIndex == stream)
+                {
+                    nint clone = FFAvCodec.av_packet_alloc();
+                    FFAvCodec.av_packet_ref(clone, read);
+                    await decoder.SendPacketAsync(clone);
+                }
+
+                FFAvCodec.av_packet_unref(read);
+            }
+        }
+        finally
+        {
+            FFAvCodec.av_packet_free(ref read);
         }
 
-        if (!VideoDecoder.HasHardwareCandidate(codecId, only))
-        {
-            Skip =
-                $"A {backend} device initialised, but no decoder for codec {codecId} "
-                + $"advertises a {backend} config.";
-        }
+        decoder.CompletePacketQueue();
     }
 }
 
