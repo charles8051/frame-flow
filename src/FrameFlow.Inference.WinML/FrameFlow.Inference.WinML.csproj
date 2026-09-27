@@ -6,6 +6,7 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PackageTags>onnx;onnxruntime;inference;windows-ml;tensorrt;openvino;gpu;npu;windows;machine-learning;dotnet</PackageTags>
   </PropertyGroup>
 

@@ -17,7 +17,10 @@ internal static class WinMLRuntime
 
     /// <summary>The path of the runtime loaded.</summary>
     /// <exception cref="PlatformNotSupportedException">The process is neither x64 nor Arm64.</exception>
-    /// <exception cref="DllNotFoundException">No runtime but the one Windows carries could be found.</exception>
+    /// <exception cref="DllNotFoundException">
+    /// No runtime could be found, or the one that loaded is older than Windows ML's: Windows' own
+    /// copy, or another inference package's.
+    /// </exception>
     public static string EnsureLoaded() => Loaded.Value;
 
     /// <summary>
@@ -45,6 +48,30 @@ internal static class WinMLRuntime
             Path.GetFullPath(systemDirectory).TrimEnd(Path.DirectorySeparatorChar),
             StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>The oldest ONNX Runtime this package runs on: what Windows ML 2.3 ships.</summary>
+    internal const int MinimumMinor = 27;
+
+    /// <summary>
+    /// Why the runtime at <paramref name="path"/>, reporting <paramref name="version"/>, cannot be
+    /// used, or null when it can. Pure.
+    /// </summary>
+    internal static string? Refusal(string version, string path, string systemDirectory)
+    {
+        string[] parts = version.Split('.');
+        if (parts.Length >= 2
+            && int.TryParse(parts[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int major)
+            && int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int minor)
+            && (major > 1 || (major == 1 && minor >= MinimumMinor)))
+        {
+            return null;
+        }
+
+        string why = IsSystemCopy(path, systemDirectory)
+            ? "That is Windows' own copy: build the app for a Windows runtime identifier, or publish the package's runtimes folder beside it."
+            : "Another inference package's runtime likely replaced Windows ML's: an app references one of FrameFlow.Inference.Dml, .Cuda and .WinML.";
+        return $"The onnxruntime.dll that loaded ({path}) is ONNX Runtime {version}, and Windows ML needs 1.{MinimumMinor} or later. {why}";
+    }
+
     private static string Load()
     {
         var architecture = RuntimeInformation.ProcessArchitecture;
@@ -55,33 +82,36 @@ internal static class WinMLRuntime
                 $"Windows ML ships ONNX Runtime for x64 and Arm64 processes; this one is {architecture}.");
         }
 
-        foreach (string candidate in candidates)
+        // Beside the app first; loaded by path, the module is the one a later load by name finds.
+        // Elsewhere, as ONNX Runtime's own import would find it: a single-file app extracts it, for one.
+        string? path = candidates.FirstOrDefault(File.Exists);
+        nint handle;
+        if (path is not null)
         {
-            if (File.Exists(candidate))
-            {
-                // Loaded by path, the module is the one a later load by name finds.
-                NativeLibrary.Load(candidate);
-                return candidate;
-            }
+            handle = NativeLibrary.Load(path);
         }
-
-        // Elsewhere, as ONNX Runtime's own import would find it: a single-file app extracts it, for
-        // one. Only Windows' copy is refused.
-        if (NativeLibrary.TryLoad("onnxruntime", typeof(OrtEnv).Assembly, searchPath: null, out nint handle))
+        else if (NativeLibrary.TryLoad("onnxruntime", typeof(OrtEnv).Assembly, searchPath: null, out handle))
         {
-            string path = ModulePath(handle);
-            if (!IsSystemCopy(path, Environment.SystemDirectory))
-                return path;
-
+            path = ModulePath(handle);
+        }
+        else
+        {
             throw new DllNotFoundException(
-                $"Windows ML's onnxruntime.dll was not found, and the only one that loads is Windows' own ({path}), "
-                    + "which this package's managed runtime cannot use. Build the app for a Windows runtime identifier, "
-                    + "or publish the package's runtimes folder beside it.");
+                $"Windows ML's onnxruntime.dll was not found beside the app or under {candidates[^1]}. Build the app for a "
+                    + "Windows runtime identifier, or publish the package's runtimes folder beside it.");
         }
 
-        throw new DllNotFoundException(
-            $"Windows ML's onnxruntime.dll was not found beside the app or under {candidates[^1]}. Build the app for a "
-                + "Windows runtime identifier, or publish the package's runtimes folder beside it.");
+        if (Refusal(NativeVersion(handle), path, Environment.SystemDirectory) is { } refusal)
+            throw new DllNotFoundException(refusal);
+        return path;
+    }
+
+    /// <summary>The version the runtime reports: <c>OrtGetApiBase()->GetVersionString()</c>.</summary>
+    private static unsafe string NativeVersion(nint module)
+    {
+        var getApiBase = (delegate* unmanaged<nint*>)NativeLibrary.GetExport(module, "OrtGetApiBase");
+        var getVersion = (delegate* unmanaged<nint>)getApiBase()[1];
+        return Marshal.PtrToStringUTF8(getVersion()) ?? "";
     }
 
     private static string ModulePath(nint module)

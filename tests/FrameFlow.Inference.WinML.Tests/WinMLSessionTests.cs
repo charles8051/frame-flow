@@ -61,6 +61,28 @@ public sealed class WinMLSessionTests
     public void WindowsOwnCopy_IsTheOneInTheSystemDirectory(string path, bool expected) =>
         Assert.Equal(expected, WinMLRuntime.IsSystemCopy(path, @"C:\Windows\System32"));
 
+    [Theory]
+    [InlineData("1.27.1")]
+    [InlineData("1.30.0")]
+    [InlineData("2.0.0")]
+    public void ARuntimeAtLeastWindowsMLs_IsAccepted(string version) =>
+        Assert.Null(WinMLRuntime.Refusal(version, @"C:\app\onnxruntime.dll", @"C:\Windows\System32"));
+
+    [Theory]
+    [InlineData("1.24.4", @"C:\app\onnxruntime.dll", "Another inference package")]
+    [InlineData("1.26.0", @"C:\app\runtimes\win-x64\native\onnxruntime.dll", "Another inference package")]
+    [InlineData("1.17.1", @"C:\Windows\System32\onnxruntime.dll", "Windows' own copy")]
+    [InlineData("garbage", @"C:\app\onnxruntime.dll", "Another inference package")]
+    public void AnOlderRuntime_IsRefusedWithItsLikelyCause(string version, string path, string cause)
+    {
+        string? refusal = WinMLRuntime.Refusal(version, path, @"C:\Windows\System32");
+
+        Assert.NotNull(refusal);
+        Assert.Contains(path, refusal);
+        Assert.Contains(version, refusal);
+        Assert.Contains(cause, refusal);
+    }
+
     /// <summary>
     /// This project builds without a runtime identifier, so the runtime is under runtimes/; the
     /// package loaded it there rather than the one Windows carries.
