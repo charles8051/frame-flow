@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using FrameFlow.Graph;
+using FrameFlow.Inference;
 using FrameFlow.Media;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -32,7 +33,7 @@ namespace FrameFlow.Face;
 /// seam runs a single instance over the <c>PRESENT</c> candidate crops.
 /// </para>
 /// </remarks>
-public sealed partial class BlazeFaceDetector : IDisposable
+public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOnlyList<FaceDetection>>
 {
     private readonly FrameFlow.Inference.IInferenceSession _session;
     private readonly BlazeFaceModelDescriptor _descriptor;
@@ -284,6 +285,23 @@ public sealed partial class BlazeFaceDetector : IDisposable
 
     /// <summary>Wall-clock ms of the postprocess (decode + NMS) stage of the most recent detect. CPU work.</summary>
     public double LastPostprocessMs => Volatile.Read(ref _lastPostprocessMs);
+
+    // The detector as an IImageModel, for InferenceOperators.Infer: the whole frame, and the
+    // postprocessor's decode of the box and score outputs.
+    IInferenceSession IImageModel<IReadOnlyList<FaceDetection>>.Session => _session;
+
+    string IImageModel<IReadOnlyList<FaceDetection>>.InputName => _inputName;
+
+    ImageToTensorOptions IImageModel<IReadOnlyList<FaceDetection>>.Input => _preprocessor.Options;
+
+    RotatedRect IImageModel<IReadOnlyList<FaceDetection>>.CropFor(IVideoFrame frame) => RotatedRect.Whole(frame);
+
+    IReadOnlyList<FaceDetection> IImageModel<IReadOnlyList<FaceDetection>>.Decode(
+        IReadOnlyDictionary<string, ICpuTensor> outputs, TensorTransform transform, IVideoFrame frame) =>
+        _postprocessor.Decode(
+            System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(outputs[_boxName].Bytes.Span),
+            System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(outputs[_scoreName].Bytes.Span),
+            FaceRoi.Full(frame));
 
     public void Dispose()
     {

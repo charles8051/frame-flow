@@ -1,5 +1,6 @@
 #nullable enable
 FrameFlow.Inference.D3D12.D3D12ImageToTensor
+FrameFlow.Inference.D3D12.D3D12ImageToTensor.CanWrite(FrameFlow.Media.IVideoFrame! frame) -> bool
 FrameFlow.Inference.D3D12.D3D12ImageToTensor.CompletionFence.get -> nint
 FrameFlow.Inference.D3D12.D3D12ImageToTensor.CompletionValue.get -> ulong
 FrameFlow.Inference.D3D12.D3D12ImageToTensor.D3D12ImageToTensor(nint device, nint commandQueue, FrameFlow.Inference.ImageToTensorOptions! options) -> void

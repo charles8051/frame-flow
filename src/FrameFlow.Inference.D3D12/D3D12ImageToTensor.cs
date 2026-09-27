@@ -44,7 +44,7 @@ namespace FrameFlow.Inference.D3D12;
 /// session loaded, it has to be disposed before the decoder's last frame is freed (#422).
 /// </para>
 /// </remarks>
-public sealed unsafe class D3D12ImageToTensor : IDisposable
+public sealed unsafe class D3D12ImageToTensor : IDisposable, IDeviceImageToTensor
 {
     private const int InFlight = 3;
 
@@ -158,6 +158,28 @@ public sealed unsafe class D3D12ImageToTensor : IDisposable
         CompletionValue);
 
     private ID3D12Resource TensorResource { get; }
+
+    int IDeviceImageToTensor.MaxHeldFrames => InFlight;
+
+    /// <summary>
+    /// True when <paramref name="frame"/> is a D3D12VA frame on this stage's device, which
+    /// <see cref="Write(GpuVideoFrame, RotatedRect)"/> reads.
+    /// </summary>
+    public bool CanWrite(IVideoFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        if (_disposed || frame is not GpuVideoFrame gpu || !gpu.TryGetD3D12Texture(out nint texture, out _, out _, out _))
+            return false;
+
+        using var resource = Borrow<ID3D12Resource>(texture);
+        using var device = resource.GetDevice<ID3D12Device>();
+        return Identity(device.NativePointer) == Identity(_device.NativePointer);
+    }
+
+    TensorTransform IDeviceImageToTensor.Write(IVideoFrame frame, RotatedRect crop) =>
+        frame is GpuVideoFrame gpu
+            ? Write(gpu, crop)
+            : throw new ArgumentException($"A {frame.GetType().Name} is not a D3D12VA frame.", nameof(frame));
 
     /// <summary>
     /// Writes <paramref name="crop"/> of <paramref name="frame"/> into <see cref="Tensor"/>. It
@@ -326,6 +348,14 @@ public sealed unsafe class D3D12ImageToTensor : IDisposable
     }
 
     /// <summary>A wrapper that owns its own reference to a borrowed COM pointer.</summary>
+    private static nint Identity(nint unknown)
+    {
+        var iid = new Guid("00000000-0000-0000-c000-000000000046");
+        Marshal.ThrowExceptionForHR(Marshal.QueryInterface(unknown, in iid, out nint identity));
+        Marshal.Release(identity);
+        return identity;
+    }
+
     private static T Borrow<T>(nint pointer) where T : SharpGen.Runtime.ComObject
     {
         Marshal.AddRef(pointer);

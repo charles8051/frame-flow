@@ -78,6 +78,43 @@ queue. See [ADR-0079](docs/adr/ADR-0079-the-pass-and-the-player.md).
 `IPlaybackController` state machine. Use it only when that state machine is what
 you are building around.
 
+### Running a model on the video
+
+```csharp
+using FrameFlow.Inference;
+using FrameFlow.Inference.Dml;
+using FrameFlow.Yolo;
+
+var factory = InferenceSessionFactoryBuilder.Create(
+    ExecutionProvider.DirectML,
+    new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+    {
+        [ExecutionProvider.DirectML] = path => new DmlInferenceSession(path),
+        [ExecutionProvider.Cpu] = path => new CpuInferenceSession(path),
+    });
+using var detector = await Yolov8Detector.CreateAsync(factory);
+
+// Results arrive before their frame is on screen; this hands each on when it is.
+using var onScreen = new PresentedResults<IReadOnlyList<Detection>>(videoSink);
+onScreen.Presented += (_, result) => overlay.Show(result.Result);
+
+await using var player = await FrameFlowPlayer.Create()
+    .WithMedia(path)
+    .WithVideoSink(videoSink)
+    .ConfigureVideo(chain => chain.Infer("yolo", detector, onScreen.Post))
+    .BuildPlayerAsync();
+```
+
+`Infer` runs the model on a branch that keeps only the newest frame while a run is in progress,
+so a slow model drops frames instead of delaying the picture. `Yolov8Detector` and
+`BlazeFaceDetector` are `IImageModel`s; another model implements the same interface.
+
+A frame in system memory is prepared on the CPU. To keep a D3D12VA frame on the GPU, give the
+player a `HardwareDevice`, build a `DmlInferenceSession.OnDevice` and a `D3D12ImageToTensor` on
+its `TryGetD3D12Device`, and pass the stage to `Infer`: the frame is then written into the model's
+input and bound in place. No presenter shows D3D12VA frames yet (#429), and a pass cannot yield
+hardware frames (#277), so that route serves a player whose sink does not display.
+
 ### Generic Host and DI
 
 `services.AddFrameFlow()` registers the engine's *environment* pieces: the

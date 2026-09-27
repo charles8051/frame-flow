@@ -60,7 +60,9 @@ output tensor.
    decodes with CUDA directly ([decision 2](adr.md)): TensorRT-RTX gets CUDA memory from a
    D3D12VA frame by importing the preprocessed buffer.
 
-3. **An operator can consume a `GpuVideoFrame`, and survives one that is not.** (#290) The
+3. **An operator can consume a `GpuVideoFrame`, and survives one that is not.** (#290) Built as
+   `InferenceOperators.Infer` (#436): it chooses a route per frame, the device stage for a frame it
+   reads and `ImageToTensor` for a frame in system memory, and refuses a GPU frame with neither. The
    decoder chooses per frame — `ReceiveFrame` branches on `YieldHardwareFrames && onHardware`, and
    `TrackHardwareEngagement` documents that FFmpeg re-runs `get_format` on a coded-format or
    dimension change and can decide differently. So the operator's own input type varies within a
@@ -103,7 +105,7 @@ output tensor.
 | `FrameFlow.Video` | The `ToCpu` node factory; `MapToGpu` later (#293) |
 | `FrameFlow.Yolo` | The preprocessor splits by memory domain; `Yolov8Detector` stops assuming a CPU tensor |
 | `FrameFlow.Inference.Cuda` | The `OrtValue` device-binding path gets its first caller |
-| `FrameFlow.Inference.Abstractions` | `DeviceTensor` and `IDeviceInputSession` ([decision 4](adr.md)) |
+| `FrameFlow.Inference.Abstractions` | `DeviceTensor` and `IDeviceInputSession` ([decision 4](adr.md)); `IImageModel`, `IDeviceImageToTensor`, `InferenceOperators.Infer` and `PresentedResults` (#436) |
 | `FrameFlow.Inference.Dml` | `DmlInferenceSession.OnDevice` runs on the caller's device and binds a `DeviceTensor` in place (#427) |
 | `FrameFlow.Player` | `WithHardwareDevice` on both builders (#428); `WithHardwareFrames` on `IPassBuilder`, and the test that asserts its absence |
 | `FrameFlow.Graph` | Only if the in-flight bound for requirement 5 belongs at the edge rather than in the operator contract |
