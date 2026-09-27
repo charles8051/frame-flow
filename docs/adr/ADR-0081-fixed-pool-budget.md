@@ -284,6 +284,15 @@ the four topologies (#387) have run. Measuring the budget's VRAM cost on the pla
 
 ## Revision history
 
+**2026-09-27, D3D12VA's pool grows (#415).** FFmpeg's D3D12VA allocator creates a texture per
+frame. Its fixed texture-array mode is opt-in, through `AV_D3D12VA_FRAME_FLAG_TEXTURE_ARRAY` and an
+`initial_pool_size`, and neither FFmpeg's decoder nor FrameFlow sets it. On an RTX 3080 Ti a
+D3D12VA decoder held all 600 frames of a 1080p60 H.264 clip at once without an error, and
+`extra_hw_frames` left `initial_pool_size` at 0. H.264, HEVC and VP9 decode on it there.
+`DecodePoolGuard.SpareSurfaces` returns null for it, as for VideoToolbox and Vulkan. Before, it
+counted as a fixed pool with no spare: the guard parked the decoder at its held-frame allowance,
+and a path with an undeclared holder was refused.
+
 **2026-09-27, Vulkan's pool model (#414).** FFmpeg's Vulkan pool grows: `vulkan_pool_alloc` creates
 an image for every request with no ceiling, and the Vulkan decoder sets no initial pool size, so
 `extra_hw_frames` has no effect on it. A Vulkan decoder held all 600 frames of a 1080p clip with no

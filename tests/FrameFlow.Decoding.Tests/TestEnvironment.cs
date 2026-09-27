@@ -162,8 +162,8 @@ internal sealed class RequiresHardwareDecodeFactAttribute : FactAttribute
 {
     /// <param name="codecId">The FFmpeg <c>AVCodecID</c>; <c>27</c> is H.264, <c>172</c> HEVC.</param>
     /// <param name="fixedPool">
-    /// Also skip where every initialised backend's pool grows (VideoToolbox), which has no budget
-    /// to test.
+    /// Also skip where every initialised backend's pool grows (VideoToolbox, Vulkan, D3D12VA),
+    /// which has no budget to test.
     /// </param>
     public RequiresHardwareDecodeFactAttribute(int codecId, bool fixedPool = false)
     {

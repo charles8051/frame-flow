@@ -22,6 +22,7 @@ public sealed class DecodePoolGuardTests
     [Theory]
     [InlineData(HardwareDecodeBackendKind.VideoToolbox)]
     [InlineData(HardwareDecodeBackendKind.Vulkan)]
+    [InlineData(HardwareDecodeBackendKind.D3D12Va)]
     public void AGrowablePool_HasNoSpareCount(HardwareDecodeBackendKind backend)
     {
         Assert.Null(DecodePoolGuard.SpareSurfaces(backend));
@@ -36,6 +37,7 @@ public sealed class DecodePoolGuardTests
     [InlineData(HardwareDecodeBackendKind.Cuda, 5, 5)]
     [InlineData(HardwareDecodeBackendKind.VideoToolbox, 5, 0)]
     [InlineData(HardwareDecodeBackendKind.Vulkan, 5, 0)]
+    [InlineData(HardwareDecodeBackendKind.D3D12Va, 11, 0)]
     public void TheExtraSurfaces_AreWhatTheSpareOnesDoNotCover(
         HardwareDecodeBackendKind backend,
         int held,
@@ -71,6 +73,7 @@ public sealed class DecodePoolGuardTests
     [InlineData(null, 0, true, null, "NoPool")]
     [InlineData(HardwareDecodeBackendKind.VideoToolbox, 0, true, null, "NoPool")]
     [InlineData(HardwareDecodeBackendKind.Vulkan, 0, true, null, "NoPool")]
+    [InlineData(HardwareDecodeBackendKind.D3D12Va, 0, true, null, "NoPool")]
     public void AGraphsBudget_IsJudgedAgainstThePoolTheDecoderOpened(
         HardwareDecodeBackendKind? backend,
         int extra,
@@ -93,6 +96,7 @@ public sealed class DecodePoolGuardTests
     [InlineData(HardwareDecodeBackendKind.Cuda, 5, 5)]
     [InlineData(HardwareDecodeBackendKind.VideoToolbox, 5, 0)]
     [InlineData(HardwareDecodeBackendKind.Vulkan, 5, 0)]
+    [InlineData(HardwareDecodeBackendKind.D3D12Va, 5, 0)]
     public void TheBudget_IsTheSpareSurfacesPlusTheExtraOnes(
         HardwareDecodeBackendKind backend,
         int extra,

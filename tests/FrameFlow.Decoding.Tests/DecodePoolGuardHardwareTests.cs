@@ -47,48 +47,16 @@ public sealed class DecodePoolGuardHardwareTests(FfmpegBootstrapFixture fixture)
     /// caller holding every frame is never parked.
     /// </summary>
     [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.Vulkan, Fixture)]
-    public async Task AVulkanDecoder_HoldsEveryFrame_WithoutABudget()
-    {
-        int expected = await CountSoftwareFramesAsync(Fixture);
-        await using var demux = await OpenAsync(Fixture);
-        await using var decoder = VideoDecoder.Open(
-            demux.FormatContextPtr,
-            demux.MediaInfo.VideoStreams[0].StreamIndex,
-            new HardwareDecodeOptions
-            {
-                Mode = HardwareDecodeMode.Required,
-                PreferredBackends = [HardwareDecodeBackendKind.Vulkan],
-            },
-            fixture.Capabilities,
-            loggerFactory: null,
-            // The player's phase-1 allowance. A fixed pool is guarded at this many.
-            videoOptions: new VideoDecoderOptions { HeldHardwareFrames = 5 }
-        );
-        Assert.Equal(HardwareDecodeBackendKind.Vulkan, decoder.HardwareBackend);
-        decoder.YieldHardwareFrames = true;
-        await QueueAllAsync(demux, decoder);
+    public Task AVulkanDecoder_HoldsEveryFrame_WithoutABudget() =>
+        HoldEveryFrameOnAGrowablePoolAsync(HardwareDecodeBackendKind.Vulkan);
 
-        var held = new ConcurrentQueue<IVideoFrame>();
-        var consumer = Task.Run(async () =>
-        {
-            await foreach (var frame in decoder.DecodeAsync())
-                held.Enqueue(frame);
-        });
-
-        await SpinUntil(() => decoder.GetDiagnostics().PoolBudgetWaits > 0 || consumer.IsCompleted);
-        var diagnostics = decoder.GetDiagnostics();
-        Assert.True(
-            diagnostics.PoolBudgetWaits == 0,
-            $"The decoder parked at a budget of {diagnostics.HardwareFrameBudget} with {held.Count} frames held."
-        );
-        await consumer.WaitAsync(FailureBound);
-
-        Assert.Equal(HardwareDecodeBackendKind.Vulkan, decoder.HardwareBackend);
-        Assert.Equal(expected, held.Count);
-        Assert.Equal(0, decoder.GetDiagnostics().HardwareFrameBudget);
-        while (held.TryDequeue(out var frame))
-            frame.Dispose();
-    }
+    /// <summary>
+    /// A D3D12VA pool grows too (#415): FFmpeg creates a texture per frame unless the caller asks
+    /// for a texture array.
+    /// </summary>
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D12Va, Fixture)]
+    public Task AD3D12VaDecoder_HoldsEveryFrame_WithoutABudget() =>
+        HoldEveryFrameOnAGrowablePoolAsync(HardwareDecodeBackendKind.D3D12Va);
 
     /// <summary>
     /// A graph whose path holds hardware frames without bound is refused before it runs, and
@@ -113,6 +81,64 @@ public sealed class DecodePoolGuardHardwareTests(FfmpegBootstrapFixture fixture)
         );
 
         Assert.Contains("keeps-everything", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Opens <paramref name="backend"/> with a held-frame allowance and holds every frame of the
+    /// clip. The clip has more frames than FFmpeg's fixed D3D11VA pool for H.264 would hold even
+    /// with that allowance (20 slices plus 11), and a growable pool takes no budget from it.
+    /// </summary>
+    private async Task HoldEveryFrameOnAGrowablePoolAsync(HardwareDecodeBackendKind backend)
+    {
+        int expected = await CountSoftwareFramesAsync(Fixture);
+        await using var demux = await OpenAsync(Fixture);
+        await using var decoder = VideoDecoder.Open(
+            demux.FormatContextPtr,
+            demux.MediaInfo.VideoStreams[0].StreamIndex,
+            new HardwareDecodeOptions
+            {
+                Mode = HardwareDecodeMode.Required,
+                PreferredBackends = [backend],
+            },
+            fixture.Capabilities,
+            loggerFactory: null,
+            // The player's budget over its D3D11 path (#411). A fixed pool is guarded at this many.
+            videoOptions: new VideoDecoderOptions { HeldHardwareFrames = 11 }
+        );
+        Assert.Equal(backend, decoder.HardwareBackend);
+        decoder.YieldHardwareFrames = true;
+        await QueueAllAsync(demux, decoder);
+
+        var held = new ConcurrentQueue<IVideoFrame>();
+        try
+        {
+            var consumer = Task.Run(async () =>
+            {
+                await foreach (var frame in decoder.DecodeAsync())
+                    held.Enqueue(frame);
+            });
+
+            await SpinUntil(() => decoder.GetDiagnostics().PoolBudgetWaits > 0 || consumer.IsCompleted);
+            var parked = decoder.GetDiagnostics();
+            Assert.True(
+                parked.PoolBudgetWaits == 0,
+                $"The decoder parked at a budget of {parked.HardwareFrameBudget} with {held.Count} frames held."
+            );
+            await consumer.WaitAsync(FailureBound);
+
+            var diagnostics = decoder.GetDiagnostics();
+            Assert.Equal(backend, diagnostics.HardwareBackend);
+            Assert.Equal(expected, held.Count);
+            Assert.All(held, frame => Assert.IsType<GpuVideoFrame>(frame));
+            Assert.Equal(expected, diagnostics.HardwareFramesOutstanding);
+            Assert.Equal(0, diagnostics.HardwareFrameBudget);
+            Assert.Equal(0, diagnostics.DecodeErrors);
+        }
+        finally
+        {
+            while (held.TryDequeue(out var frame))
+                frame.Dispose();
+        }
     }
 
     /// <summary>

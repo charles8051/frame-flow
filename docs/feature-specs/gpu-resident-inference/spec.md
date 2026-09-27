@@ -75,7 +75,8 @@ output tensor.
    stall as confirmed, and the player's two answers — moving the wait into `ClockSelectVideoSink`,
    and the `_readbackEveryN` shedding rung the playback layer sets — are both unavailable to a
    `MediaPass`. An operator holding a frame across a model run is the same shape as the pacing hold
-   that caused it.
+   that caused it. D3D12VA is the exception: its pool grows, so on that backend a held frame costs
+   memory rather than a slice of a fixed pool (ADR-0081, 2026-09-27 revisions).
 
 6. **A pass can ask for hardware frames.** (#277) `IPassBuilder.WithHardwareFrames`, one option
    and one assignment in `PassBuilder.BuildAsync`. It lands with requirement 3, not before: a flag
