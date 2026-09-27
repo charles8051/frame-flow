@@ -72,8 +72,10 @@ result the wall time it was posted and the wall time its frame was shown.
 Two limits:
 
 - **Presentation is the pacer's hand-off, not a display swap.** A real presenter raises
-  `FramePresented` after composition, which is later. That moves both rules by the same amount, so
-  it does not change which is better.
+  `FramePresented` after composition, which is later, and by then the branch may have posted more.
+  The keyed rule selects by the presented frame's timestamp, so more results can only let more
+  frames show their own. The posted rule shows the newest, so more results can only put it further
+  ahead. Measured at display time, the gap between the rules would be at least as wide as here.
 - **One model and one machine.** yolov8n on DirectML finishes well inside a frame here. A model
   slower than a frame would leave more frames without their own result under both rules; a deeper
   ring would not change that either, since the branch drops frames while a run is in progress.

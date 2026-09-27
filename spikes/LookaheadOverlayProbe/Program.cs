@@ -79,6 +79,11 @@ if (!played.IsSuccess)
 
 var final = await ended.Task.WaitAsync(TimeSpan.FromMinutes(5));
 clock.Stop();
+if (final == PlaybackState.Error)
+{
+    Console.WriteLine($"{label}: playback ended in an error after {presented.Count} frames; no measurement.");
+    return 1;
+}
 
 double Ms(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;
 double P(IReadOnlyList<double> values, double q) =>
