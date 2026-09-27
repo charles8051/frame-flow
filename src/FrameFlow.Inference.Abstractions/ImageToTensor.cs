@@ -105,7 +105,7 @@ public static class ImageToTensor
     /// </summary>
     internal static void Validate(RotatedRect crop, ImageToTensorOptions options)
     {
-        ArgumentNullException.ThrowIfNull(options);
+        ValidateOptions(options);
 
         if (!float.IsFinite(crop.CenterX) || !float.IsFinite(crop.CenterY) || !float.IsFinite(crop.Rotation)
             || !float.IsFinite(crop.Width) || !float.IsFinite(crop.Height)
@@ -114,9 +114,16 @@ public static class ImageToTensor
             throw new ArgumentException(
                 $"The crop must be finite with a positive width and height; got {crop}.", nameof(crop));
         }
+    }
+
+    /// <summary>Refuses options that name an undefined mode. A device-side stage checks them when it is built.</summary>
+    internal static void ValidateOptions(ImageToTensorOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
 
         if (!Enum.IsDefined(options.Fit) || !Enum.IsDefined(options.Sampling)
-            || !Enum.IsDefined(options.Layout) || !Enum.IsDefined(options.ChannelOrder))
+            || !Enum.IsDefined(options.Layout) || !Enum.IsDefined(options.ChannelOrder)
+            || !Enum.IsDefined(options.YuvMatrix) || !Enum.IsDefined(options.YuvRange))
         {
             throw new ArgumentException($"The options name an undefined mode: {options}.", nameof(options));
         }

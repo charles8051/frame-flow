@@ -248,8 +248,8 @@ internal sealed class DeviceAndQueue : IDisposable
 
     public ID3D12CommandQueue Queue { get; }
 
-    public D3D12ImageToTensor Stage(ImageToTensorOptions options, YuvMatrix matrix = YuvMatrix.Bt601, YuvRange range = YuvRange.Limited) =>
-        new(Device.NativePointer, Queue.NativePointer, options, matrix, range);
+    public D3D12ImageToTensor Stage(ImageToTensorOptions options) =>
+        new(Device.NativePointer, Queue.NativePointer, options);
 
     public void Dispose()
     {

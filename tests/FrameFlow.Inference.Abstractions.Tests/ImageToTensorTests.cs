@@ -255,6 +255,16 @@ public sealed class ImageToTensorTests
         Assert.Equal(3 * 640 * 640, new ImageToTensorOptions(640, 640).ElementCount);
     }
 
+    [Fact]
+    public void Options_DefaultToBt601Limited_AndRefuseAnUndefinedYuvMode()
+    {
+        var options = new ImageToTensorOptions(4, 4);
+
+        Assert.Equal((YuvMatrix.Bt601, YuvRange.Limited), (options.YuvMatrix, options.YuvRange));
+        Assert.Throws<ArgumentException>(() => ImageToTensor.ValidateOptions(options with { YuvMatrix = (YuvMatrix)7 }));
+        Assert.Throws<ArgumentException>(() => ImageToTensor.ValidateOptions(options with { YuvRange = (YuvRange)7 }));
+    }
+
     private static CpuVideoFrame Frame(
         PixelFormat format,
         int width,

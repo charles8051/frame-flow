@@ -38,6 +38,10 @@ FrameFlow.Inference.ImageToTensorOptions.PadValue.init -> void
 FrameFlow.Inference.ImageToTensorOptions.Sampling.get -> FrameFlow.Inference.ImageSampling
 FrameFlow.Inference.ImageToTensorOptions.Sampling.init -> void
 FrameFlow.Inference.ImageToTensorOptions.Width.get -> int
+FrameFlow.Inference.ImageToTensorOptions.YuvMatrix.get -> FrameFlow.Inference.YuvMatrix
+FrameFlow.Inference.ImageToTensorOptions.YuvMatrix.init -> void
+FrameFlow.Inference.ImageToTensorOptions.YuvRange.get -> FrameFlow.Inference.YuvRange
+FrameFlow.Inference.ImageToTensorOptions.YuvRange.init -> void
 FrameFlow.Inference.InferenceSessionFactoryBuilder
 FrameFlow.Inference.InferenceSessionPhase
 FrameFlow.Inference.InferenceSessionPhase.OpeningSession = 1 -> FrameFlow.Inference.InferenceSessionPhase
@@ -83,6 +87,12 @@ FrameFlow.Inference.TensorTransform.TensorTransform() -> void
 FrameFlow.Inference.TensorTransform.TensorTransform(System.Numerics.Matrix3x2 TensorToFrame) -> void
 FrameFlow.Inference.TensorTransform.ToFrame(float u, float v) -> (float X, float Y)
 FrameFlow.Inference.TensorTransform.ToTensor(float x, float y) -> (float U, float V)
+FrameFlow.Inference.YuvMatrix
+FrameFlow.Inference.YuvMatrix.Bt601 = 0 -> FrameFlow.Inference.YuvMatrix
+FrameFlow.Inference.YuvMatrix.Bt709 = 1 -> FrameFlow.Inference.YuvMatrix
+FrameFlow.Inference.YuvRange
+FrameFlow.Inference.YuvRange.Full = 1 -> FrameFlow.Inference.YuvRange
+FrameFlow.Inference.YuvRange.Limited = 0 -> FrameFlow.Inference.YuvRange
 static FrameFlow.Inference.ImageToTensor.Write(FrameFlow.Media.IVideoFrame! frame, FrameFlow.Inference.RotatedRect crop, FrameFlow.Inference.ImageToTensorOptions! options, System.Span<float> destination) -> FrameFlow.Inference.TensorTransform
 static FrameFlow.Inference.InferenceSessionFactoryBuilder.Create(FrameFlow.Inference.ExecutionProvider preferred, System.Collections.Generic.IReadOnlyDictionary<FrameFlow.Inference.ExecutionProvider, System.Func<string!, FrameFlow.Inference.IInferenceSession!>!>! providers, System.Collections.Generic.IReadOnlyList<FrameFlow.Inference.ExecutionProvider>? fallbackOrder = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Inference.IInferenceSessionFactory!
 static FrameFlow.Inference.RotatedRect.FromBounds(float x, float y, float width, float height) -> FrameFlow.Inference.RotatedRect

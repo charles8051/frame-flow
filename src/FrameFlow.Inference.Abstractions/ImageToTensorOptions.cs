@@ -60,6 +60,19 @@ public sealed record ImageToTensorOptions
     /// </summary>
     public byte PadValue { get; init; }
 
+    /// <summary>
+    /// The matrix a YUV frame's samples are converted to RGB with. Defaults to
+    /// <see cref="YuvMatrix.Bt601"/>. Read by stages that take YUV frames; <see cref="ImageToTensor"/>
+    /// takes RGB frames and does not use it.
+    /// </summary>
+    public YuvMatrix YuvMatrix { get; init; } = YuvMatrix.Bt601;
+
+    /// <summary>
+    /// The range a YUV frame's samples cover. Defaults to <see cref="YuvRange.Limited"/>. Read by
+    /// stages that take YUV frames; <see cref="ImageToTensor"/> takes RGB frames and does not use it.
+    /// </summary>
+    public YuvRange YuvRange { get; init; } = YuvRange.Limited;
+
     /// <summary>The number of floats the tensor holds: <c>3 · Width · Height</c>.</summary>
     public int ElementCount => 3 * Width * Height;
 }

@@ -25,4 +25,11 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\FrameFlow.Inference.D3D12\FrameFlow.Inference.D3D12.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- The package under test is Windows-only. The pure tests still run on every OS. -->
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>windows</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>

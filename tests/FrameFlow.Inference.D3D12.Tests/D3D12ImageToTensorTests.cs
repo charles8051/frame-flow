@@ -22,11 +22,11 @@ public sealed class D3D12ImageToTensorTests
     /// that never place a sample exactly on a pixel boundary, where float rounding could pick
     /// either neighbour.
     /// </summary>
-    private static readonly Dictionary<string, (ImageToTensorOptions Options, RotatedRect Crop, YuvMatrix Matrix, YuvRange Range)> Configurations = new()
+    private static readonly Dictionary<string, (ImageToTensorOptions Options, RotatedRect Crop)> Configurations = new()
     {
         ["stretch, nearest, NCHW RGB, BT.601 limited"] = (
             new ImageToTensorOptions(64, 48) { Sampling = ImageSampling.Nearest },
-            RotatedRect.FromBounds(0, 0, 320, 240), YuvMatrix.Bt601, YuvRange.Limited),
+            RotatedRect.FromBounds(0, 0, 320, 240)),
         ["letterbox, bilinear, NHWC BGR, mean/std, pad"] = (
             new ImageToTensorOptions(64, 64)
             {
@@ -36,13 +36,18 @@ public sealed class D3D12ImageToTensorTests
                 Normalization = TensorNormalization.MeanStd((0.485f, 0.456f, 0.406f), (0.229f, 0.224f, 0.225f)),
                 PadValue = 114,
             },
-            RotatedRect.FromBounds(0, 0, 320, 240), YuvMatrix.Bt601, YuvRange.Limited),
+            RotatedRect.FromBounds(0, 0, 320, 240)),
         ["rotated crop, bilinear, [-1, 1], BT.709 full"] = (
-            new ImageToTensorOptions(48, 48) { Normalization = TensorNormalization.MinusOneToOne },
-            new RotatedRect(160, 120, 150, 100, 0.3f), YuvMatrix.Bt709, YuvRange.Full),
+            new ImageToTensorOptions(48, 48)
+            {
+                Normalization = TensorNormalization.MinusOneToOne,
+                YuvMatrix = YuvMatrix.Bt709,
+                YuvRange = YuvRange.Full,
+            },
+            new RotatedRect(160, 120, 150, 100, 0.3f)),
         ["crop past the edges, nearest"] = (
             new ImageToTensorOptions(48, 36) { Sampling = ImageSampling.Nearest },
-            RotatedRect.FromBounds(-20, -10, 120, 90), YuvMatrix.Bt601, YuvRange.Limited),
+            RotatedRect.FromBounds(-20, -10, 120, 90)),
     };
 
     [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
@@ -52,14 +57,14 @@ public sealed class D3D12ImageToTensorTests
         try
         {
             using var gpu = new DeviceAndQueue((GpuVideoFrame)frames[0]);
-            foreach (var (name, (options, crop, matrix, range)) in Configurations)
+            foreach (var (name, (options, crop)) in Configurations)
             {
-                using var stage = gpu.Stage(options, matrix, range);
+                using var stage = gpu.Stage(options);
                 foreach (var frame in frames.Cast<GpuVideoFrame>())
                 {
                     stage.Write(frame, crop);
                     float[] written = stage.ReadBack();
-                    float[] expected = Reference(Nv12Image.Read(frame), Constants(options, crop, matrix, range, frame), options.ElementCount);
+                    float[] expected = Reference(Nv12Image.Read(frame), Constants(options, crop, frame), options.ElementCount);
                     AssertClose(expected, written, 1e-3f, name);
                 }
             }
@@ -123,7 +128,7 @@ public sealed class D3D12ImageToTensorTests
         var options = new ImageToTensorOptions(64, 48) { Sampling = ImageSampling.Nearest };
         var crop = RotatedRect.FromBounds(0, 0, 320, 240);
         var last = (GpuVideoFrame)frames[^1];
-        var expected = Reference(Nv12Image.Read(last), Constants(options, crop, YuvMatrix.Bt601, YuvRange.Limited, last), options.ElementCount);
+        var expected = Reference(Nv12Image.Read(last), Constants(options, crop, last), options.ElementCount);
 
         using var gpu = new DeviceAndQueue((GpuVideoFrame)frames[0]);
         using var stage = gpu.Stage(options);
@@ -161,10 +166,10 @@ public sealed class D3D12ImageToTensorTests
     }
 
     private static KernelConstants Constants(
-        ImageToTensorOptions options, RotatedRect crop, YuvMatrix matrix, YuvRange range, IVideoFrame frame) =>
+        ImageToTensorOptions options, RotatedRect crop, IVideoFrame frame) =>
         KernelConstants.Create(
             ImageToTensorPlan.Create(crop, options.Width, options.Height, options.Fit),
-            options, matrix, range, YuvSamples.Nv12, frame.Width, frame.Height);
+            options, YuvSamples.Nv12, frame.Width, frame.Height);
 
     /// <summary>
     /// The shader's arithmetic on the CPU, from the frame's NV12 samples and the same constants.

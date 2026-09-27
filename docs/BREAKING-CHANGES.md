@@ -218,6 +218,31 @@ for example by clamping a box that has left the frame. `FaceRoi.Full` is unaffec
 **Why.** Both preprocessors now call `ImageToTensor` (#363), which needs a crop it can invert to
 map results back to the frame.
 
+### 9. `FrameFlow.Inference.Dml` is marked Windows-only
+
+**A build warning, CA1416, not a runtime change.**
+
+The assembly carries `[SupportedOSPlatform("windows")]`. A call into it from code the analyzer
+considers reachable on other platforms now warns, and fails a build that treats warnings as errors.
+
+**Who hits this.** A project that targets plain `net10.0` and calls `DmlInferenceSession` or
+`DmlProbe` without a Windows check. Both DirectML examples in this repository did.
+
+**What to write instead.** Mark the project Windows-only, as the examples now do:
+
+```xml
+<ItemGroup>
+  <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+    <_Parameter1>windows</_Parameter1>
+  </AssemblyAttribute>
+</ItemGroup>
+```
+
+Or guard the call with `OperatingSystem.IsWindows()`.
+
+**Why.** DirectML exists only on Windows. A Linux or macOS app compiled cleanly and failed only
+when it ran; the warning moves that to the build (#440).
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be

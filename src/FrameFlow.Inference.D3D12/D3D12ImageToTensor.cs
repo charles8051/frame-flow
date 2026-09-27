@@ -54,8 +54,6 @@ public sealed unsafe class D3D12ImageToTensor : IDisposable
     private readonly ID3D12Fence _fence;
     private readonly Slot[] _slots = new Slot[InFlight];
     private readonly ManualResetEvent _completed = new(false);
-    private readonly YuvMatrix _matrix;
-    private readonly YuvRange _range;
     private ID3D12Resource? _readback;
     private int _next;
     private bool _disposed;
@@ -63,29 +61,22 @@ public sealed unsafe class D3D12ImageToTensor : IDisposable
     /// <summary>Builds the stage on <paramref name="device"/> and <paramref name="commandQueue"/>.</summary>
     /// <param name="device">An <c>ID3D12Device*</c>: the device the frames are decoded on.</param>
     /// <param name="commandQueue">An <c>ID3D12CommandQueue*</c> of type compute or direct on that device.</param>
-    /// <param name="options">The tensor and how to fill it.</param>
-    /// <param name="matrix">The YUV to RGB matrix. Defaults to BT.601, as the CPU path assumes.</param>
-    /// <param name="range">The frames' YUV range. Defaults to limited.</param>
+    /// <param name="options">
+    /// The tensor and how to fill it, including the frames' <see cref="ImageToTensorOptions.YuvMatrix"/> and
+    /// <see cref="ImageToTensorOptions.YuvRange"/>.
+    /// </param>
     public D3D12ImageToTensor(
         nint device,
         nint commandQueue,
-        ImageToTensorOptions options,
-        YuvMatrix matrix = YuvMatrix.Bt601,
-        YuvRange range = YuvRange.Limited)
+        ImageToTensorOptions options)
     {
-        ArgumentNullException.ThrowIfNull(options);
+        ImageToTensor.ValidateOptions(options);
         if (device == 0)
             throw new ArgumentNullException(nameof(device));
         if (commandQueue == 0)
             throw new ArgumentNullException(nameof(commandQueue));
-        if (!Enum.IsDefined(matrix))
-            throw new ArgumentOutOfRangeException(nameof(matrix), matrix, "Undefined YUV matrix.");
-        if (!Enum.IsDefined(range))
-            throw new ArgumentOutOfRangeException(nameof(range), range, "Undefined YUV range.");
 
         Options = options;
-        _matrix = matrix;
-        _range = range;
         _device = Borrow<ID3D12Device>(device);
         _queue = Borrow<ID3D12CommandQueue>(commandQueue);
         var listType = _queue.GetDescription().Type;
@@ -177,7 +168,7 @@ public sealed unsafe class D3D12ImageToTensor : IDisposable
         };
 
         var plan = ImageToTensorPlan.Create(crop, Options.Width, Options.Height, Options.Fit);
-        var constants = KernelConstants.Create(plan, Options, _matrix, _range, samples, frame.Width, frame.Height);
+        var constants = KernelConstants.Create(plan, Options, samples, frame.Width, frame.Height);
 
         int index = _next;
         _next = (_next + 1) % InFlight;

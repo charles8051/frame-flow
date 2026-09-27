@@ -6,7 +6,8 @@ namespace FrameFlow.Inference.D3D12.Tests;
 
 /// <summary>
 /// The shader's constant block: its layout against the HLSL <c>cbuffer</c>, and the values the
-/// plan, the options and the YUV conversion put in it. Pure; no GPU.
+/// plan and the options put in it, and which YUV conversion it carries. The conversion's own
+/// arithmetic is pinned by <c>YuvToRgbTests</c>. Pure; no GPU.
 /// </summary>
 public sealed class KernelConstantsTests
 {
@@ -22,61 +23,24 @@ public sealed class KernelConstantsTests
         Assert.Equal(144, Offset(nameof(KernelConstants.RedFromCr)));
     }
 
-    [Theory]
-    [InlineData(YuvMatrix.Bt601, 1.402f, 0.344136f, 0.714136f, 1.772f)]
-    [InlineData(YuvMatrix.Bt709, 1.5748f, 0.187324f, 0.468124f, 1.8556f)]
-    public void TheMatrix_HasItsStandardsCoefficients(
-        YuvMatrix matrix, float redFromCr, float greenFromCb, float greenFromCr, float blueFromCb)
+    [Fact]
+    public void TheColourBlock_TakesTheOptionsMatrixAndRange()
     {
-        var k = Create(new ImageToTensorOptions(8, 8), matrix, YuvRange.Limited);
+        var k = Create(new ImageToTensorOptions(8, 8) { YuvMatrix = YuvMatrix.Bt709, YuvRange = YuvRange.Full });
 
-        Assert.Equal(redFromCr, k.RedFromCr, 1e-5f);
-        Assert.Equal(greenFromCb, k.GreenFromCb, 1e-5f);
-        Assert.Equal(greenFromCr, k.GreenFromCr, 1e-5f);
-        Assert.Equal(blueFromCb, k.BlueFromCb, 1e-5f);
+        // BT.709's red-from-Cr, and full range's untouched luma. BT.601 limited would give 1.402 and 16/255.
+        Assert.Equal(1.5748f, k.RedFromCr, 1e-5f);
+        Assert.Equal(0f, k.YOffset);
     }
 
     [Fact]
-    public void LimitedRange_StretchesLumaFrom16To235AndChromaFrom16To240()
+    public void TheColourBlock_ReadsP010AtTenBits()
     {
-        var k = Create(new ImageToTensorOptions(8, 8), YuvMatrix.Bt601, YuvRange.Limited);
-
-        Assert.Equal(0f, (16f / 255 - k.YOffset) * k.YScale, 1e-6f);
-        Assert.Equal(1f, (235f / 255 - k.YOffset) * k.YScale, 1e-6f);
-        Assert.Equal(-0.5f, (16f / 255 - k.COffset) * k.CScale, 1e-6f);
-        Assert.Equal(0.5f, (240f / 255 - k.COffset) * k.CScale, 1e-6f);
-    }
-
-    [Fact]
-    public void P010LimitedRange_StretchesLumaFrom64To940AndChromaFrom64To960()
-    {
-        var k = Create(new ImageToTensorOptions(8, 8), YuvMatrix.Bt601, YuvRange.Limited, YuvSamples.P010);
+        var k = Create(new ImageToTensorOptions(8, 8), YuvSamples.P010);
 
         Assert.Equal(0f, (P010(64) - k.YOffset) * k.YScale, 1e-5f);
         Assert.Equal(1f, (P010(940) - k.YOffset) * k.YScale, 1e-5f);
-        Assert.Equal(-0.5f, (P010(64) - k.COffset) * k.CScale, 1e-5f);
         Assert.Equal(0.5f, (P010(960) - k.COffset) * k.CScale, 1e-5f);
-    }
-
-    [Fact]
-    public void P010FullRange_SpansTheTenBitCodes()
-    {
-        var k = Create(new ImageToTensorOptions(8, 8), YuvMatrix.Bt601, YuvRange.Full, YuvSamples.P010);
-
-        Assert.Equal(0f, (P010(0) - k.YOffset) * k.YScale, 1e-5f);
-        Assert.Equal(1f, (P010(1023) - k.YOffset) * k.YScale, 1e-5f);
-        Assert.Equal(0f, (P010(512) - k.COffset) * k.CScale, 1e-5f);
-    }
-
-    [Fact]
-    public void FullRange_TakesSamplesAsTheyAre()
-    {
-        var k = Create(new ImageToTensorOptions(8, 8), YuvMatrix.Bt709, YuvRange.Full);
-
-        Assert.Equal(0f, k.YOffset);
-        Assert.Equal(1f, k.YScale);
-        Assert.Equal(128f / 255, k.COffset);
-        Assert.Equal(1f, k.CScale);
     }
 
     [Fact]
@@ -93,7 +57,7 @@ public sealed class KernelConstantsTests
         };
         var plan = ImageToTensorPlan.Create(new RotatedRect(100, 50, 80, 60, 0.3f), 64, 32, ImageFit.Letterbox);
 
-        var k = KernelConstants.Create(plan, options, YuvMatrix.Bt601, YuvRange.Limited, YuvSamples.Nv12, 320, 240);
+        var k = KernelConstants.Create(plan, options, YuvSamples.Nv12, 320, 240);
 
         Assert.Equal(((float)plan.A, (float)plan.B, (float)plan.C), (k.A, k.B, k.C));
         Assert.Equal(((float)plan.D, (float)plan.E, (float)plan.F), (k.D, k.E, k.F));
@@ -113,17 +77,16 @@ public sealed class KernelConstantsTests
     [Fact]
     public void TheDefaults_AreRgbNchwBilinear()
     {
-        var k = Create(new ImageToTensorOptions(8, 8), YuvMatrix.Bt601, YuvRange.Limited);
+        var k = Create(new ImageToTensorOptions(8, 8));
 
         Assert.Equal((0u, 1u, 2u), (k.RedIndex, k.GreenIndex, k.BlueIndex));
         Assert.Equal((1u, 0u), (k.Bilinear, k.Nhwc));
     }
 
-    private static KernelConstants Create(
-        ImageToTensorOptions options, YuvMatrix matrix, YuvRange range, YuvSamples samples = YuvSamples.Nv12) =>
+    private static KernelConstants Create(ImageToTensorOptions options, YuvSamples samples = YuvSamples.Nv12) =>
         KernelConstants.Create(
             ImageToTensorPlan.Create(RotatedRect.FromBounds(0, 0, 8, 8), options.Width, options.Height, options.Fit),
-            options, matrix, range, samples, 8, 8);
+            options, samples, 8, 8);
 
     private static int Offset(string field) => (int)Marshal.OffsetOf<KernelConstants>(field);
 
