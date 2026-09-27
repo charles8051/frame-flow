@@ -72,7 +72,8 @@ output tensor.
    D3D12 compute shader, the device side of `ImageToTensor` and configured by the same
    `ImageToTensorOptions`, reads the D3D12VA texture after a GPU wait on the frame's fence and
    writes the model input into a D3D12 buffer. DirectML reads the buffer directly; TensorRT-RTX
-   reads it through a CUDA import. CPU frames keep the CPU `ImageToTensor`.
+   reads it through a CUDA import. CPU frames keep the CPU `ImageToTensor`. Built in
+   `FrameFlow.Inference.D3D12` as `D3D12ImageToTensor` (#425).
 
 5. **A GPU frame's lifetime is bounded on a path with no pacer.** (#292) Each live
    `GpuVideoFrame` pins a slice of a default-sized hwframe pool. ADR-0057 records the resulting

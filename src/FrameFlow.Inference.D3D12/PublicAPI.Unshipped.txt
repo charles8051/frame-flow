@@ -1,0 +1,17 @@
+#nullable enable
+FrameFlow.Inference.D3D12.D3D12ImageToTensor
+FrameFlow.Inference.D3D12.D3D12ImageToTensor.CompletionFence.get -> nint
+FrameFlow.Inference.D3D12.D3D12ImageToTensor.CompletionValue.get -> ulong
+FrameFlow.Inference.D3D12.D3D12ImageToTensor.D3D12ImageToTensor(nint device, nint commandQueue, FrameFlow.Inference.ImageToTensorOptions! options, FrameFlow.Inference.D3D12.YuvMatrix matrix = FrameFlow.Inference.D3D12.YuvMatrix.Bt601, FrameFlow.Inference.D3D12.YuvRange range = FrameFlow.Inference.D3D12.YuvRange.Limited) -> void
+FrameFlow.Inference.D3D12.D3D12ImageToTensor.Dispose() -> void
+FrameFlow.Inference.D3D12.D3D12ImageToTensor.Options.get -> FrameFlow.Inference.ImageToTensorOptions!
+FrameFlow.Inference.D3D12.D3D12ImageToTensor.Tensor.get -> nint
+FrameFlow.Inference.D3D12.D3D12ImageToTensor.TensorBytes.get -> long
+FrameFlow.Inference.D3D12.D3D12ImageToTensor.WaitForCompletion() -> void
+FrameFlow.Inference.D3D12.D3D12ImageToTensor.Write(FrameFlow.Decoding.GpuVideoFrame! frame, FrameFlow.Inference.RotatedRect crop) -> FrameFlow.Inference.TensorTransform
+FrameFlow.Inference.D3D12.YuvMatrix
+FrameFlow.Inference.D3D12.YuvMatrix.Bt601 = 0 -> FrameFlow.Inference.D3D12.YuvMatrix
+FrameFlow.Inference.D3D12.YuvMatrix.Bt709 = 1 -> FrameFlow.Inference.D3D12.YuvMatrix
+FrameFlow.Inference.D3D12.YuvRange
+FrameFlow.Inference.D3D12.YuvRange.Full = 1 -> FrameFlow.Inference.D3D12.YuvRange
+FrameFlow.Inference.D3D12.YuvRange.Limited = 0 -> FrameFlow.Inference.D3D12.YuvRange

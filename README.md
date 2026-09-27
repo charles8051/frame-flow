@@ -141,7 +141,7 @@ and live camera and multicast sources.
 | Camera / video | `FrameFlow.Camera`, `FrameFlow.Video` |
 | Audio | `FrameFlow.Audio`, `FrameFlow.Audio.OpenAL` |
 | Presenters | `FrameFlow.Avalonia`, `FrameFlow.Avalonia.Windows`, `FrameFlow.Sdl` |
-| Inference | `FrameFlow.Inference.Abstractions`, `.Ort`, `.Cuda`, `.Dml`, `FrameFlow.Yolo`, `FrameFlow.Face`, `FrameFlow.Whisper` |
+| Inference | `FrameFlow.Inference.Abstractions`, `.Ort`, `.Cuda`, `.Dml`, `.D3D12`, `FrameFlow.Yolo`, `FrameFlow.Face`, `FrameFlow.Whisper` |
 
 `FrameFlow.Native.Runtime` carries the FFmpeg binaries. The libraries do not
 reference it — add it yourself, or supply the natives another way.

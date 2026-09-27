@@ -30,3 +30,7 @@ using System.Runtime.CompilerServices;
 // the grant is wider than that one caller needs (#279).
 [assembly: InternalsVisibleTo("FrameFlow.Video")]
 [assembly: InternalsVisibleTo("FrameFlow.Video.Tests")]
+
+// The device-side image-to-tensor tests read a D3D12VA frame's NV12 samples on the CPU, through the
+// frame's AVFrame, to compute the exact tensor the shader should write.
+[assembly: InternalsVisibleTo("FrameFlow.Inference.D3D12.Tests")]
