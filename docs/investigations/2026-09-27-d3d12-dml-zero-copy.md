@@ -32,8 +32,9 @@ upload inside the model run.
 ### 1. There is one device, so nothing is shared across devices
 
 `D3D12CreateDevice` on the decoder's adapter returns the device FFmpeg decoded on: the same
-`ID3D12Device` pointer. D3D12 devices are one per adapter per process. The session needs to be
-built on that device. No shared handles, no second device, and no cross-API fence are involved.
+`ID3D12Device` pointer. By default D3D12 devices are one per adapter per process; a device
+created through `ID3D12DeviceFactory` is the exception. The session needs to be built on the
+decoder's device, which the texture's `GetDevice` gives directly. No shared handles, no second device, and no cross-API fence are involved.
 
 ### 2. ORT accepts our device and our queue
 

@@ -352,14 +352,33 @@ public sealed class GpuVideoFrame : IVideoFrame
             return false;
 
         var h = _handle;
-        if (h is null || h.IsInvalid)
+        if (h is null)
             return false;
 
-        var accessor = new AvFrameAccessor(h.DangerousGetHandle());
-        texture = (nint)accessor.GetDataPointer(0);
-        subresourceIndex = (int)(nint)accessor.GetDataPointer(1);
-        device = accessor.GetD3D11DevicePointer();
-        return texture != nint.Zero;
+        bool held = false;
+        try
+        {
+            // Hold the handle across the read: a concurrent final Dispose would otherwise free
+            // the AVFrame between the check and the dereference.
+            h.DangerousAddRef(ref held);
+            if (h.IsInvalid)
+                return false;
+
+            var accessor = new AvFrameAccessor(h.DangerousGetHandle());
+            texture = (nint)accessor.GetDataPointer(0);
+            subresourceIndex = (int)(nint)accessor.GetDataPointer(1);
+            device = accessor.GetD3D11DevicePointer();
+            return texture != nint.Zero;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+        finally
+        {
+            if (held)
+                h.DangerousRelease();
+        }
     }
 
     /// <summary>
@@ -376,10 +395,15 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// texture.
     /// </para>
     /// <para>
-    /// The device is the texture's, through <c>ID3D12DeviceChild::GetDevice</c>. D3D12 has one
-    /// device per adapter per process, so it is also the device any other component creates on
-    /// that adapter. Holding a reference to it past the decoder's last frame crashes the process
-    /// when a TensorRT-RTX session is loaded (#422).
+    /// The texture and fence belong to the decoder's device. Build GPU work that reads them on
+    /// that device, from <c>ID3D12DeviceChild::GetDevice</c> on the texture. A device created on
+    /// the same adapter is by default the same device, but one created through
+    /// <c>ID3D12DeviceFactory</c> is not. Holding a reference to the device past the decoder's
+    /// last frame crashes the process when a TensorRT-RTX session is loaded (#422).
+    /// </para>
+    /// <para>
+    /// The pointers are borrowed: the caller keeps the frame alive, and does not dispose it on
+    /// another thread, while it uses them.
     /// </para>
     /// </remarks>
     /// <param name="texture">
@@ -409,18 +433,36 @@ public sealed class GpuVideoFrame : IVideoFrame
             return false;
 
         var h = _handle;
-        if (h is null || h.IsInvalid)
+        if (h is null)
             return false;
 
-        var frame = new AvFrameAccessor(h.DangerousGetHandle()).GetD3D12Frame();
-        if (frame is null)
-            return false;
+        bool held = false;
+        try
+        {
+            // Hold the handle across the read, as TryGetD3D11Texture does.
+            h.DangerousAddRef(ref held);
+            if (h.IsInvalid)
+                return false;
 
-        texture = frame->texture;
-        subresourceIndex = frame->subresource_index;
-        fence = frame->sync_ctx.fence;
-        fenceValue = frame->sync_ctx.fence_value;
-        return texture != nint.Zero && fence != nint.Zero;
+            var frame = new AvFrameAccessor(h.DangerousGetHandle()).GetD3D12Frame();
+            if (frame is null)
+                return false;
+
+            texture = frame->texture;
+            subresourceIndex = frame->subresource_index;
+            fence = frame->sync_ctx.fence;
+            fenceValue = frame->sync_ctx.fence_value;
+            return texture != nint.Zero && fence != nint.Zero;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+        finally
+        {
+            if (held)
+                h.DangerousRelease();
+        }
     }
 
     /// <inheritdoc/>
