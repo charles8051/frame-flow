@@ -180,10 +180,16 @@ var catalog = ExecutionProviderCatalog.GetDefault();
 foreach (var provider in await catalog.RegisterCertifiedAsync())
     Console.WriteLine($"        registered {provider.Name} ({provider.ReadyState})");
 var env = OrtEnv.Instance();
-var tensorRt = env.GetEpDevices().FirstOrDefault(d => d.EpName.Contains("TensorRT", StringComparison.OrdinalIgnoreCase));
+// The provider on the decoder's adapter: ORT's hardware-device metadata carries the adapter LUID.
+string adapterLuid = device.AdapterLuid.ToString(CultureInfo.InvariantCulture);
+var tensorRt = env.GetEpDevices().FirstOrDefault(d =>
+    d.EpName.Contains("TensorRT", StringComparison.OrdinalIgnoreCase)
+    && d.HardwareDevice.Metadata.Entries.TryGetValue("LUID", out var luid)
+    && luid == adapterLuid);
 if (tensorRt is null)
 {
-    Report(false, "D  no TensorRT-RTX provider is registered; installing one is EnsureAndRegisterCertifiedAsync's job, not this spike's");
+    Report(false, $"D  no TensorRT-RTX provider on the decoder's adapter (LUID {adapterLuid}); "
+        + "installing one is EnsureAndRegisterCertifiedAsync's job, not this spike's");
     return 1;
 }
 
@@ -197,9 +203,13 @@ open.Stop();
 string inputName = session.InputNames[0];
 string outputName = session.OutputNames[0];
 var inputMemory = session.GetMemoryInfosForInputs()[0];
-Report(true,
-    $"D  ORT {env.GetVersionString()} {tensorRt.EpName} session in {open.Elapsed.TotalSeconds:F1}s; "
-    + $"input memory '{inputMemory.Name}', device id {inputMemory.Id}");
+// The input has to live on the CUDA device that imported the buffer.
+Report(inputMemory.Id == cudaDevice,
+    $"D  ORT {env.GetVersionString()} {tensorRt.EpName} session on the decoder's adapter (LUID {adapterLuid}) "
+    + $"in {open.Elapsed.TotalSeconds:F1}s; input memory '{inputMemory.Name}' on CUDA device {inputMemory.Id}, "
+    + $"the buffer on {cudaDevice}");
+if (inputMemory.Id != cudaDevice)
+    return 1;
 
 // E. The CUDA pointer bound as the input, in the memory the provider asks for.
 long[] shape = [1, 3, Size, Size];

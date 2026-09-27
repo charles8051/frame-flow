@@ -44,8 +44,11 @@ the tensor read back through D3D12 byte for byte. Only the CUDA driver API is us
 
 ### 2. ORT reads the imported memory in place
 
-`InferenceSession.GetMemoryInfosForInputs()` gives the memory the TensorRT-RTX session wants its
-input in: `TensorRTRTX`, device 0. An `OrtValue` over the CUDA pointer in that memory is the model
+The TensorRT-RTX provider is chosen on the decoder's adapter. ORT's hardware-device metadata
+carries the adapter's LUID (`LUID=88584`, the D3D12 adapter's 0x15A08), so the spike selects the
+provider device by it, not by taking the first one. `InferenceSession.GetMemoryInfosForInputs()`
+then gives the memory the session wants its input in: `TensorRTRTX` on CUDA device 0, the device
+that imported the buffer. An `OrtValue` over the CUDA pointer in that memory is the model
 input. As a check, the CPU path's tensor went through both routes: uploaded into the D3D12 buffer
 and read through CUDA, and handed to ORT to upload itself. The outputs were identical, a maximum
 difference of 0.
