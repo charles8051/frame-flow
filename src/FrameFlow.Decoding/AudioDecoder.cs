@@ -81,6 +81,9 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
     private readonly int _packetQueueCapacity;
     private Channel<(nint packetPtr, bool isFlush)> _packetQueue;
 
+    /// <summary>The packet queue's depth, as resolved from the options.</summary>
+    internal int PacketQueueCapacity => _packetQueueCapacity;
+
     // ADR-0055 follow-up: PTS synthesis is a pure fold (AudioPtsSynthesis); this is the
     // threaded accumulator value (cumulative output samples), reset on Flush.
     private PtsSynthesisState _ptsSynthesis = PtsSynthesisState.Initial;
@@ -149,9 +152,11 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
     )
     {
         _logger = logger ?? NullLogger.Instance;
-        _targetSampleRate = options?.TargetSampleRate ?? 48_000;
+        // No options means the documented defaults, not a second set of literals here (#221).
+        options ??= new AudioDecoderOptions();
+        _targetSampleRate = options.TargetSampleRate;
 
-        _packetQueueCapacity = options?.PacketQueueCapacity ?? 512;
+        _packetQueueCapacity = options.PacketQueueCapacity;
         if (_packetQueueCapacity < 1)
             throw new ArgumentOutOfRangeException(
                 nameof(options),
