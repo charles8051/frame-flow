@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    FrameFlow.Inference.D3D12: the device side of ImageToTensor. A D3D12VA frame becomes a model's
+    input tensor in a D3D12 buffer, on the GPU, with no download (decision 1 in
+    docs/feature-specs/gpu-resident-inference/adr.md, #425). Direct3D 12 through Vortice makes it
+    Windows-only at runtime, though the assembly is platform-neutral, as FrameFlow.Avalonia.Windows
+    is. The buffer is bound per execution provider by the provider's package.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PackageTags>$(PackageTags);inference;tensor;direct3d;d3d12;windows;gpu</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FrameFlow.Inference.Abstractions\FrameFlow.Inference.Abstractions.csproj" />
+    <ProjectReference Include="..\FrameFlow.Decoding\FrameFlow.Decoding.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Vortice.Direct3D12" Version="3.*" />
+    <!-- Runtime HLSL compile (D3DCompile, in-box on Windows), as FrameFlow.Avalonia.Windows does. -->
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.*" />
+  </ItemGroup>
+</Project>

@@ -75,15 +75,7 @@ public static class ImageToTensor
         Span<float> destination,
         ImageToTensorPath path)
     {
-        ArgumentNullException.ThrowIfNull(options);
-
-        if (!float.IsFinite(crop.CenterX) || !float.IsFinite(crop.CenterY) || !float.IsFinite(crop.Rotation)
-            || !float.IsFinite(crop.Width) || !float.IsFinite(crop.Height)
-            || crop.Width <= 0 || crop.Height <= 0)
-        {
-            throw new ArgumentException(
-                $"The crop must be finite with a positive width and height; got {crop}.", nameof(crop));
-        }
+        Validate(crop, options);
 
         if (destination.Length < options.ElementCount)
         {
@@ -91,12 +83,6 @@ public static class ImageToTensor
                 $"The destination holds {destination.Length} floats; a {options.Width}x{options.Height} "
                     + $"tensor needs {options.ElementCount}.",
                 nameof(destination));
-        }
-
-        if (!Enum.IsDefined(options.Fit) || !Enum.IsDefined(options.Sampling)
-            || !Enum.IsDefined(options.Layout) || !Enum.IsDefined(options.ChannelOrder))
-        {
-            throw new ArgumentException($"The options name an undefined mode: {options}.", nameof(options));
         }
 
         // The kernel reads without bounds checks, so the image has to be what it says it is.
@@ -111,5 +97,28 @@ public static class ImageToTensor
         var plan = ImageToTensorPlan.Create(crop, options.Width, options.Height, options.Fit);
         ImageToTensorKernel.Run(pixels, width, height, stride, bgra, plan, options, destination, path);
         return plan.Transform;
+    }
+
+    /// <summary>
+    /// Refuses a crop that is not finite or has no area, and options that name an undefined mode.
+    /// Shared with the device-side stage, which takes the same crop and options.
+    /// </summary>
+    internal static void Validate(RotatedRect crop, ImageToTensorOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (!float.IsFinite(crop.CenterX) || !float.IsFinite(crop.CenterY) || !float.IsFinite(crop.Rotation)
+            || !float.IsFinite(crop.Width) || !float.IsFinite(crop.Height)
+            || crop.Width <= 0 || crop.Height <= 0)
+        {
+            throw new ArgumentException(
+                $"The crop must be finite with a positive width and height; got {crop}.", nameof(crop));
+        }
+
+        if (!Enum.IsDefined(options.Fit) || !Enum.IsDefined(options.Sampling)
+            || !Enum.IsDefined(options.Layout) || !Enum.IsDefined(options.ChannelOrder))
+        {
+            throw new ArgumentException($"The options name an undefined mode: {options}.", nameof(options));
+        }
     }
 }

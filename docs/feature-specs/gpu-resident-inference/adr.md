@@ -89,3 +89,33 @@ to feed `CudaInferenceSession`'s device-pointer binding.
 ### Consequences
 
 #289 narrows to the CUDA pointer and drops in priority until a CUDA decode path is planned.
+
+## Decision 3: the device-side stage is its own Windows-only package
+
+**Date:** 2026-09-27
+**Status:** Accepted
+**Issue:** #425
+
+### Context
+
+Decision 1's shader needs Direct3D 12. `FrameFlow.Inference.Abstractions` has no native dependency
+and every execution-provider package references it. The shader's output is bound by the DirectML
+package and, through a CUDA import, by the Windows ML package (#423), so it belongs to neither.
+
+### Decision
+
+`FrameFlow.Inference.D3D12` holds `D3D12ImageToTensor`. It is `net10.0` with Vortice, and so
+Windows-only at runtime, as `FrameFlow.Avalonia.Windows` is. It compiles its shader at runtime with
+the in-box D3DCompiler, as that package does. It reads `ImageToTensorPlan` from
+`FrameFlow.Inference.Abstractions` through `InternalsVisibleTo`, so both stages compute the same
+plan and return the same `TensorTransform`.
+
+### Consequences
+
+- **The API takes native pointers.** A device and queue come in as `ID3D12Device*` and
+  `ID3D12CommandQueue*`, and the tensor and completion fence go out the same way, matching
+  `TryGetD3D12Texture`. A consumer is not tied to Vortice's version.
+- **Its tensor buffer is on a shared heap.** A CUDA consumer can import it with no copy.
+- **The stage holds device references.** With a TensorRT-RTX session loaded, it has to be
+  disposed before the decoder's last frame is freed (#422).
+
