@@ -65,14 +65,15 @@ internal static class DecodePoolGuard
     /// FFmpeg sizes a D3D11VA or DXVA2 pool as one working surface, the codec's reference
     /// maximum, three more working surfaces and <c>extra_hw_frames</c>, so a stream using every
     /// reference leaves three for consumers (frame-pool ownership). VideoToolbox and software
-    /// decode grow. The other backends are uncharacterised (#230) and treated as fixed with no
-    /// known spare.
+    /// decode grow. So does Vulkan: FFmpeg creates an image for each request with no ceiling,
+    /// and ignores <c>extra_hw_frames</c> because its decoder sets no initial pool size (#414).
+    /// The other backends are uncharacterised (#230) and treated as fixed with no known spare.
     /// </remarks>
     public static int? SpareSurfaces(HardwareDecodeBackendKind backend) =>
         backend switch
         {
             HardwareDecodeBackendKind.D3D11Va or HardwareDecodeBackendKind.Dxva2 => 3,
-            HardwareDecodeBackendKind.VideoToolbox => null,
+            HardwareDecodeBackendKind.VideoToolbox or HardwareDecodeBackendKind.Vulkan => null,
             _ => 0,
         };
 

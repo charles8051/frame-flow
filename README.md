@@ -207,7 +207,8 @@ FRAMEFLOW_VISUAL_TESTS=1 dotnet test ./tests/FrameFlow.Integration.Tests --nolog
 
 The other directories under `docs/` are project history. `ROADMAP.md` and
 `phases/` record how the project got here, `investigations/` holds dated bug
-and perf write-ups, and `archive/` holds superseded material.
+and perf write-ups, `explorations/` holds design surveys that precede a decision, and
+`archive/` holds superseded material.
 
 ## Contributing
 

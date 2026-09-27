@@ -43,6 +43,54 @@ public sealed class DecodePoolGuardHardwareTests(FfmpegBootstrapFixture fixture)
     }
 
     /// <summary>
+    /// A Vulkan pool grows (#414), so the allowance that sizes a fixed pool sets no budget, and a
+    /// caller holding every frame is never parked.
+    /// </summary>
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.Vulkan, Fixture)]
+    public async Task AVulkanDecoder_HoldsEveryFrame_WithoutABudget()
+    {
+        int expected = await CountSoftwareFramesAsync(Fixture);
+        await using var demux = await OpenAsync(Fixture);
+        await using var decoder = VideoDecoder.Open(
+            demux.FormatContextPtr,
+            demux.MediaInfo.VideoStreams[0].StreamIndex,
+            new HardwareDecodeOptions
+            {
+                Mode = HardwareDecodeMode.Required,
+                PreferredBackends = [HardwareDecodeBackendKind.Vulkan],
+            },
+            fixture.Capabilities,
+            loggerFactory: null,
+            // The player's phase-1 allowance. A fixed pool is guarded at this many.
+            videoOptions: new VideoDecoderOptions { HeldHardwareFrames = 5 }
+        );
+        Assert.Equal(HardwareDecodeBackendKind.Vulkan, decoder.HardwareBackend);
+        decoder.YieldHardwareFrames = true;
+        await QueueAllAsync(demux, decoder);
+
+        var held = new ConcurrentQueue<IVideoFrame>();
+        var consumer = Task.Run(async () =>
+        {
+            await foreach (var frame in decoder.DecodeAsync())
+                held.Enqueue(frame);
+        });
+
+        await SpinUntil(() => decoder.GetDiagnostics().PoolBudgetWaits > 0 || consumer.IsCompleted);
+        var diagnostics = decoder.GetDiagnostics();
+        Assert.True(
+            diagnostics.PoolBudgetWaits == 0,
+            $"The decoder parked at a budget of {diagnostics.HardwareFrameBudget} with {held.Count} frames held."
+        );
+        await consumer.WaitAsync(FailureBound);
+
+        Assert.Equal(HardwareDecodeBackendKind.Vulkan, decoder.HardwareBackend);
+        Assert.Equal(expected, held.Count);
+        Assert.Equal(0, decoder.GetDiagnostics().HardwareFrameBudget);
+        while (held.TryDequeue(out var frame))
+            frame.Dispose();
+    }
+
+    /// <summary>
     /// A graph whose path holds hardware frames without bound is refused before it runs, and
     /// names the holder (ADR-0081, decision 4). No pool size could cover it.
     /// </summary>

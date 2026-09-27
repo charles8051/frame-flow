@@ -257,7 +257,7 @@ breach.
 
 ## Open questions
 
-- Spare counts for VAAPI, NVDEC and Vulkan.
+- Spare counts for VAAPI and NVDEC. Vulkan's pool grows, so it has none (#414).
 - Whether operators declare explicitly or default to 1.
 - ~~The watchdog interval.~~ 10 s, set in #383, long enough that a slow consumer is not reported.
   Pause does not cancel the decode pump, so a paused player's decoder can sit at its budget; the
@@ -283,6 +283,14 @@ the four topologies (#387) have run. Measuring the budget's VRAM cost on the pla
   source's own exit signal, not on a delay.
 
 ## Revision history
+
+**2026-09-27, Vulkan's pool model (#414).** FFmpeg's Vulkan pool grows: `vulkan_pool_alloc` creates
+an image for every request with no ceiling, and the Vulkan decoder sets no initial pool size, so
+`extra_hw_frames` has no effect on it. A Vulkan decoder held all 600 frames of a 1080p clip with no
+fault, at one NV12 surface of VRAM each ([the characterisation](../investigations/2026-09-27-vulkan-decode-characterisation.md)).
+`DecodePoolGuard.SpareSurfaces` returns null for Vulkan, as for VideoToolbox. Its decoder is
+unguarded and a graph's budget does not apply to it. Until now it opened with an `extra_hw_frames`
+FFmpeg ignored, and the guard parked it at that count.
 
 **2026-09-25, the declaration type renamed (#409).** `Holding` is now `FrameHolding`. Inside an
 Avalonia control, where a window's code-behind builds its configurators, `Holding` resolved to the
