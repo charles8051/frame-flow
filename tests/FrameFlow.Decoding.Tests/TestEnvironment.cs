@@ -1,4 +1,5 @@
 using FrameFlow.Decoding.Internal;
+using FrameFlow.Media;
 namespace FrameFlow.Decoding.Tests;
 
 /// <summary>
@@ -200,6 +201,54 @@ internal sealed class RequiresHardwareDecodeFactAttribute : FactAttribute
         )
         {
             Skip = "Every hardware backend here has a growable pool, which has no budget.";
+        }
+    }
+}
+
+/// <summary>
+/// As <see cref="RequiresHardwareDecodeFactAttribute"/>, for one backend: skipped unless
+/// <c>backend</c> initialised here and a decoder for <c>codecId</c> advertises a config for it.
+/// </summary>
+/// <remarks>
+/// A device that initialises can still refuse to decode. A Vulkan device without
+/// <c>VK_KHR_video_decode_queue</c> passes this gate and decodes in software (#74), so a test
+/// behind it checks that the backend engaged.
+/// </remarks>
+internal sealed class RequiresHardwareDecodeBackendFactAttribute : FactAttribute
+{
+    /// <param name="codecId">The FFmpeg <c>AVCodecID</c>; <c>27</c> is H.264, <c>172</c> HEVC.</param>
+    /// <param name="backend">The backend the test decodes on.</param>
+    public RequiresHardwareDecodeBackendFactAttribute(int codecId, HardwareDecodeBackendKind backend)
+    {
+        if (!TestEnvironment.HasFfmpegSharedLibraries)
+        {
+            Skip = "FFmpeg shared libraries not available.";
+            return;
+        }
+
+        if (!TestEnvironment.HasCorpusFiles)
+        {
+            Skip = "Test corpus not generated. Run scripts/generate-test-corpus.cs first.";
+            return;
+        }
+
+        var only = new HardwareDecodeCapabilities(
+            FfmpegBootstrapFixture
+                .ReadCapabilities()
+                .Available.Where(b => b.Kind == backend && b.Initialized)
+                .ToList()
+        );
+        if (only.Available.Count == 0)
+        {
+            Skip = $"No {backend} device initialised on this machine.";
+            return;
+        }
+
+        if (!VideoDecoder.HasHardwareCandidate(codecId, only))
+        {
+            Skip =
+                $"A {backend} device initialised, but no decoder for codec {codecId} "
+                + $"advertises a {backend} config.";
         }
     }
 }
