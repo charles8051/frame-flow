@@ -14,6 +14,30 @@ FrameFlow.Inference.IInferenceSessionFactory
 FrameFlow.Inference.IInferenceSessionFactory.ActiveProvider.get -> FrameFlow.Inference.ExecutionProvider?
 FrameFlow.Inference.IInferenceSessionFactory.Open(string! modelPath) -> FrameFlow.Inference.IInferenceSession!
 FrameFlow.Inference.IInferenceSessionFactory.Open(string! modelPath, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress) -> FrameFlow.Inference.IInferenceSession!
+FrameFlow.Inference.ImageFit
+FrameFlow.Inference.ImageFit.Letterbox = 1 -> FrameFlow.Inference.ImageFit
+FrameFlow.Inference.ImageFit.Stretch = 0 -> FrameFlow.Inference.ImageFit
+FrameFlow.Inference.ImageSampling
+FrameFlow.Inference.ImageSampling.Bilinear = 1 -> FrameFlow.Inference.ImageSampling
+FrameFlow.Inference.ImageSampling.Nearest = 0 -> FrameFlow.Inference.ImageSampling
+FrameFlow.Inference.ImageToTensor
+FrameFlow.Inference.ImageToTensorOptions
+FrameFlow.Inference.ImageToTensorOptions.ChannelOrder.get -> FrameFlow.Inference.TensorChannelOrder
+FrameFlow.Inference.ImageToTensorOptions.ChannelOrder.init -> void
+FrameFlow.Inference.ImageToTensorOptions.ElementCount.get -> int
+FrameFlow.Inference.ImageToTensorOptions.Fit.get -> FrameFlow.Inference.ImageFit
+FrameFlow.Inference.ImageToTensorOptions.Fit.init -> void
+FrameFlow.Inference.ImageToTensorOptions.Height.get -> int
+FrameFlow.Inference.ImageToTensorOptions.ImageToTensorOptions(int width, int height) -> void
+FrameFlow.Inference.ImageToTensorOptions.Layout.get -> FrameFlow.Inference.TensorLayout
+FrameFlow.Inference.ImageToTensorOptions.Layout.init -> void
+FrameFlow.Inference.ImageToTensorOptions.Normalization.get -> FrameFlow.Inference.TensorNormalization
+FrameFlow.Inference.ImageToTensorOptions.Normalization.init -> void
+FrameFlow.Inference.ImageToTensorOptions.PadValue.get -> byte
+FrameFlow.Inference.ImageToTensorOptions.PadValue.init -> void
+FrameFlow.Inference.ImageToTensorOptions.Sampling.get -> FrameFlow.Inference.ImageSampling
+FrameFlow.Inference.ImageToTensorOptions.Sampling.init -> void
+FrameFlow.Inference.ImageToTensorOptions.Width.get -> int
 FrameFlow.Inference.InferenceSessionFactoryBuilder
 FrameFlow.Inference.InferenceSessionPhase
 FrameFlow.Inference.InferenceSessionPhase.OpeningSession = 1 -> FrameFlow.Inference.InferenceSessionPhase
@@ -28,4 +52,42 @@ FrameFlow.Inference.InferenceSessionProgress.Phase.get -> FrameFlow.Inference.In
 FrameFlow.Inference.InferenceSessionProgress.Phase.init -> void
 FrameFlow.Inference.InferenceSessionProgress.Provider.get -> FrameFlow.Inference.ExecutionProvider?
 FrameFlow.Inference.InferenceSessionProgress.Provider.init -> void
+FrameFlow.Inference.RotatedRect
+FrameFlow.Inference.RotatedRect.CenterX.get -> float
+FrameFlow.Inference.RotatedRect.CenterX.init -> void
+FrameFlow.Inference.RotatedRect.CenterY.get -> float
+FrameFlow.Inference.RotatedRect.CenterY.init -> void
+FrameFlow.Inference.RotatedRect.Height.get -> float
+FrameFlow.Inference.RotatedRect.Height.init -> void
+FrameFlow.Inference.RotatedRect.RotatedRect() -> void
+FrameFlow.Inference.RotatedRect.RotatedRect(float CenterX, float CenterY, float Width, float Height, float Rotation = 0) -> void
+FrameFlow.Inference.RotatedRect.Rotation.get -> float
+FrameFlow.Inference.RotatedRect.Rotation.init -> void
+FrameFlow.Inference.RotatedRect.Width.get -> float
+FrameFlow.Inference.RotatedRect.Width.init -> void
+FrameFlow.Inference.TensorChannelOrder
+FrameFlow.Inference.TensorChannelOrder.Bgr = 1 -> FrameFlow.Inference.TensorChannelOrder
+FrameFlow.Inference.TensorChannelOrder.Rgb = 0 -> FrameFlow.Inference.TensorChannelOrder
+FrameFlow.Inference.TensorLayout
+FrameFlow.Inference.TensorLayout.Nchw = 0 -> FrameFlow.Inference.TensorLayout
+FrameFlow.Inference.TensorLayout.Nhwc = 1 -> FrameFlow.Inference.TensorLayout
+FrameFlow.Inference.TensorNormalization
+FrameFlow.Inference.TensorNormalization.Blue.get -> (float Scale, float Offset)
+FrameFlow.Inference.TensorNormalization.Green.get -> (float Scale, float Offset)
+FrameFlow.Inference.TensorNormalization.Red.get -> (float Scale, float Offset)
+FrameFlow.Inference.TensorNormalization.TensorNormalization() -> void
+FrameFlow.Inference.TensorTransform
+FrameFlow.Inference.TensorTransform.TensorToFrame.get -> System.Numerics.Matrix3x2
+FrameFlow.Inference.TensorTransform.TensorToFrame.init -> void
+FrameFlow.Inference.TensorTransform.TensorTransform() -> void
+FrameFlow.Inference.TensorTransform.TensorTransform(System.Numerics.Matrix3x2 TensorToFrame) -> void
+FrameFlow.Inference.TensorTransform.ToFrame(float u, float v) -> (float X, float Y)
+FrameFlow.Inference.TensorTransform.ToTensor(float x, float y) -> (float U, float V)
+static FrameFlow.Inference.ImageToTensor.Write(FrameFlow.Media.IVideoFrame! frame, FrameFlow.Inference.RotatedRect crop, FrameFlow.Inference.ImageToTensorOptions! options, System.Span<float> destination) -> FrameFlow.Inference.TensorTransform
 static FrameFlow.Inference.InferenceSessionFactoryBuilder.Create(FrameFlow.Inference.ExecutionProvider preferred, System.Collections.Generic.IReadOnlyDictionary<FrameFlow.Inference.ExecutionProvider, System.Func<string!, FrameFlow.Inference.IInferenceSession!>!>! providers, System.Collections.Generic.IReadOnlyList<FrameFlow.Inference.ExecutionProvider>? fallbackOrder = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Inference.IInferenceSessionFactory!
+static FrameFlow.Inference.RotatedRect.FromBounds(float x, float y, float width, float height) -> FrameFlow.Inference.RotatedRect
+static FrameFlow.Inference.RotatedRect.Whole(FrameFlow.Media.IVideoFrame! frame) -> FrameFlow.Inference.RotatedRect
+static FrameFlow.Inference.TensorNormalization.MeanStd((float R, float G, float B) mean, (float R, float G, float B) std) -> FrameFlow.Inference.TensorNormalization
+static FrameFlow.Inference.TensorNormalization.MinusOneToOne.get -> FrameFlow.Inference.TensorNormalization
+static FrameFlow.Inference.TensorNormalization.Range(float min, float max) -> FrameFlow.Inference.TensorNormalization
+static FrameFlow.Inference.TensorNormalization.ZeroToOne.get -> FrameFlow.Inference.TensorNormalization

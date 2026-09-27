@@ -17,10 +17,15 @@
     Host-memory binding only at the abstraction level — device-resident
     OrtValue escape hatches are EP-specific and live on the concrete
     session types (see CudaInferenceSession.Run(IReadOnlyDictionary&lt;string, OrtValue&gt;)).
+
+    ImageToTensor is the one frame-to-input-tensor stage every model's
+    preprocessor configures (#363): crop, fit, sample, normalize, lay out.
   -->
 
   <ItemGroup>
     <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />
+    <!-- FrameFlow.Media: ImageToTensor reads an IVideoFrame. -->
+    <ProjectReference Include="../FrameFlow.Media/FrameFlow.Media.csproj" />
   </ItemGroup>
 
   <ItemGroup>

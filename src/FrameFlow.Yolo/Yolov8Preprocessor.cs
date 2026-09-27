@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Inference;
 using FrameFlow.Media;
 
 namespace FrameFlow.Yolo;
@@ -12,6 +13,10 @@ namespace FrameFlow.Yolo;
 /// ready to feed the model.
 /// </summary>
 /// <remarks>
+/// <para>
+/// The pixel work is <see cref="ImageToTensor"/>'s: the whole frame,
+/// stretched, nearest-neighbour, <c>[0, 1]</c>, NCHW, RGB.
+/// </para>
 /// <para>
 /// V1 uses a simple stretched resize (no letterboxing), which slightly
 /// distorts non-square inputs. Letterboxing improves detection on
@@ -37,6 +42,8 @@ namespace FrameFlow.Yolo;
 /// </remarks>
 public sealed class Yolov8Preprocessor
 {
+    private readonly ImageToTensorOptions _options;
+
     /// <summary>Model input image side length in pixels (multiple of 32).</summary>
     public int InputSize { get; }
 
@@ -53,6 +60,11 @@ public sealed class Yolov8Preprocessor
                 nameof(inputSize));
         }
         InputSize = inputSize;
+        _options = new ImageToTensorOptions(inputSize, inputSize)
+        {
+            Sampling = ImageSampling.Nearest,
+            Normalization = TensorNormalization.ZeroToOne,
+        };
     }
 
     /// <summary>
@@ -65,6 +77,8 @@ public sealed class Yolov8Preprocessor
     /// to get source-space pixel coordinates. With stretched resize,
     /// scaleX = source.Width / S, scaleY = source.Height / S.
     /// </returns>
+    /// <exception cref="NotSupportedException">The frame is not Bgra32 or Rgba32.</exception>
+    /// <exception cref="InvalidOperationException">The frame is not on the CPU.</exception>
     public (float ScaleX, float ScaleY) Preprocess(
         IVideoFrame frame,
         Span<float> destination
@@ -72,82 +86,8 @@ public sealed class Yolov8Preprocessor
     {
         ArgumentNullException.ThrowIfNull(frame);
 
-        if (destination.Length < InputElementCount)
-        {
-            throw new ArgumentException(
-                $"Destination span has {destination.Length} elements; "
-                    + $"YOLOv8 input requires at least {InputElementCount}.",
-                nameof(destination)
-            );
-        }
-
-        if (frame.Format is not (PixelFormat.Bgra32 or PixelFormat.Rgba32))
-        {
-            throw new NotSupportedException(
-                $"Demo preprocessor expects Bgra32 or Rgba32 input frames; got {frame.Format}. "
-                    + "Configure the playback pipeline to deliver one of these pixel formats."
-            );
-        }
-
-        var cpu =
-            frame.AsCpu()
-            ?? throw new InvalidOperationException(
-                "Demo expects CPU-resident frames; AsCpu() returned null."
-            );
-
-        ResizeAndNormalize(
-            sourceBytes: cpu.PlaneY.Span,
-            sourceWidth: frame.Width,
-            sourceHeight: frame.Height,
-            sourceStride: cpu.StrideY,
-            isBgra: frame.Format == PixelFormat.Bgra32,
-            destination: destination
-        );
+        ImageToTensor.Write(frame, RotatedRect.Whole(frame), _options, destination);
 
         return ((float)frame.Width / InputSize, (float)frame.Height / InputSize);
-    }
-
-    /// <summary>
-    /// Inline stretched resize + BGRA/RGBA → RGB normalization + HWC → CHW transpose.
-    /// Writes <c>3 · S · S</c> floats into <paramref name="destination"/> in CHW order:
-    /// first S·S = R channel, then G, then B.
-    /// </summary>
-    private void ResizeAndNormalize(
-        ReadOnlySpan<byte> sourceBytes,
-        int sourceWidth,
-        int sourceHeight,
-        int sourceStride,
-        bool isBgra,
-        Span<float> destination
-    )
-    {
-        int size = InputSize;
-        int channelStride = size * size;
-        var rOffset = 0;
-        var gOffset = channelStride;
-        var bOffset = channelStride * 2;
-
-        // BGRA: B at byte 0, G at 1, R at 2.
-        // RGBA: R at byte 0, G at 1, B at 2.
-        var rByte = isBgra ? 2 : 0;
-        var gByte = 1;
-        var bByte = isBgra ? 0 : 2;
-
-        for (int dy = 0; dy < size; dy++)
-        {
-            int sy = (dy * sourceHeight) / size;
-            int srcRowOffset = sy * sourceStride;
-
-            for (int dx = 0; dx < size; dx++)
-            {
-                int sx = (dx * sourceWidth) / size;
-                int srcPixelOffset = srcRowOffset + sx * 4;
-
-                int destIndex = dy * size + dx;
-                destination[rOffset + destIndex] = sourceBytes[srcPixelOffset + rByte] / 255f;
-                destination[gOffset + destIndex] = sourceBytes[srcPixelOffset + gByte] / 255f;
-                destination[bOffset + destIndex] = sourceBytes[srcPixelOffset + bByte] / 255f;
-            }
-        }
     }
 }
