@@ -238,6 +238,21 @@ internal readonly unsafe ref struct AvFrameAccessor
     }
 
     /// <summary>
+    /// The address of the <c>AVHWDeviceContext</c> this hardware frame's pool was made on:
+    /// <c>hw_frames_ctx → device_ctx</c>. Decoders that borrowed one <c>HardwareDevice</c> all
+    /// report its context. Zero for a software frame.
+    /// </summary>
+    internal nint GetHwDeviceContextPointer()
+    {
+        ref AVFrame f = ref Unsafe.AsRef<AVFrame>((void*)_ptr);
+        var framesCtxRef = f.hw_frames_ctx;
+        if (framesCtxRef is null)
+            return nint.Zero;
+        var framesCtx = (AVHWFramesContext*)framesCtxRef->data;
+        return framesCtx is null ? nint.Zero : (nint)framesCtx->device_ctx;
+    }
+
+    /// <summary>
     /// The address of this hardware frame's <c>AVHWFramesContext</c>, which identifies its pool:
     /// every frame from one pool reports the same value, and a renegotiated pool a different
     /// one. Zero for a software frame.

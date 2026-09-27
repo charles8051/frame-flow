@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Decoding;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 using Microsoft.Extensions.Logging;
@@ -124,6 +125,11 @@ public static class PlaybackController
     /// Tuning for the lateness-recovery walk. <see langword="null"/> leaves
     /// the walk off, which is the default.
     /// </param>
+    /// <param name="hardwareDevice">
+    /// A device every item's video decoder borrows instead of creating its own, so it outlives the
+    /// items. Owned by the caller, who disposes it after the controller. Null lets each decoder
+    /// create its own.
+    /// </param>
     public static IPlaybackController Create(
         IVideoSink? videoSink = null,
         IAudioSink? audioSink = null,
@@ -136,7 +142,8 @@ public static class PlaybackController
         Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? configureVideo = null,
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? configureAudio = null,
         LatenessRecoveryOptions? latenessRecovery = null,
-        TimeProvider? timeProvider = null
+        TimeProvider? timeProvider = null,
+        HardwareDevice? hardwareDevice = null
     )
     {
         // One source at a time, as a queue of one on the playlist session. Each load makes the
@@ -154,7 +161,8 @@ public static class PlaybackController
                 configureAudio,
                 yieldHardwareFrames,
                 latenessRecovery,
-                loadsSource: true
+                loadsSource: true,
+                hardwareDevice: hardwareDevice
             ),
             initialRepeatMode,
             clock,
@@ -232,6 +240,11 @@ public static class PlaybackController
     /// Tuning for the lateness-recovery walk, applied to every item's chain.
     /// <see langword="null"/> leaves the walk off, which is the default.
     /// </param>
+    /// <param name="hardwareDevice">
+    /// A device every item's video decoder borrows instead of creating its own, so it outlives the
+    /// items. Owned by the caller, who disposes it after the controller. Null lets each decoder
+    /// create its own.
+    /// </param>
     internal static IPlaybackController CreatePlaylist(
         PlaylistCoordinator coordinator,
         IVideoSink? videoSink = null,
@@ -245,7 +258,8 @@ public static class PlaybackController
         Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? configureVideo = null,
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? configureAudio = null,
         LatenessRecoveryOptions? latenessRecovery = null,
-        TimeProvider? timeProvider = null
+        TimeProvider? timeProvider = null,
+        HardwareDevice? hardwareDevice = null
     )
     {
         ArgumentNullException.ThrowIfNull(coordinator);
@@ -261,7 +275,8 @@ public static class PlaybackController
                 configureVideo,
                 configureAudio,
                 yieldHardwareFrames,
-                latenessRecovery
+                latenessRecovery,
+                hardwareDevice: hardwareDevice
             ),
             initialRepeatMode,
             clock,

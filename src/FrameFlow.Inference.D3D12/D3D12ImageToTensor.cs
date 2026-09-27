@@ -38,8 +38,10 @@ namespace FrameFlow.Inference.D3D12;
 /// first. Not thread-safe.
 /// </para>
 /// <para>
-/// This object holds references to the frame's device. With a TensorRT-RTX session loaded,
-/// dispose it before the decoder's last frame is freed (#422).
+/// This object holds references to the frame's device. Build it on a
+/// <see cref="HardwareDevice"/> the decoders borrow, from <see cref="HardwareDevice.TryGetD3D12Device"/>,
+/// so the device outlives them. Built on a device taken from a frame instead, with a TensorRT-RTX
+/// session loaded, it has to be disposed before the decoder's last frame is freed (#422).
 /// </para>
 /// </remarks>
 public sealed unsafe class D3D12ImageToTensor : IDisposable

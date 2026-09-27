@@ -44,10 +44,24 @@ if (!boot.IsSuccess)
 // spike's pieces in turn; `nodecode-` uses a device of our own instead of decoding.
 // `-release-first` releases our device before the frames, `-release-after-frames` after them.
 // Only the modes that hold the decoder's device while its last frame is freed crash.
+// `owned-ffmpeg-` and `owned-ours-` decode on a FrameFlow HardwareDevice the decoder borrows
+// (#428): FFmpeg's own device held by FrameFlow, or a device of ours lent to FFmpeg. The device
+// outlives the decoder and is disposed last.
 if (Arg("--teardown-probe") is { } probeMode)
 {
-    List<IVideoFrame> probeFrames = probeMode.StartsWith("frames", StringComparison.Ordinal)
-        ? await DecodeAsync(clip, boot.Capabilities!, yieldHardware: true, frameCount)
+    HardwareDevice? ownedDevice = null;
+    ID3D12Device? lentDevice = null;
+    if (probeMode.StartsWith("owned-ffmpeg", StringComparison.Ordinal))
+    {
+        ownedDevice = HardwareDevice.Create(HardwareDecodeBackendKind.D3D12Va);
+    }
+    else if (probeMode.StartsWith("owned-ours", StringComparison.Ordinal))
+    {
+        Vortice.Direct3D12.D3D12.D3D12CreateDevice(null, Vortice.Direct3D.FeatureLevel.Level_11_0, out lentDevice).CheckError();
+        ownedDevice = HardwareDevice.FromD3D12Device(lentDevice!.NativePointer);
+    }
+    List<IVideoFrame> probeFrames = probeMode.StartsWith("frames", StringComparison.Ordinal) || ownedDevice is not null
+        ? await DecodeAsync(clip, boot.Capabilities!, yieldHardware: true, frameCount, ownedDevice)
         : [];
     ID3D12Device? probeDevice = null;
     ID3D12CommandQueue? probeQueue = null;
@@ -58,7 +72,7 @@ if (Arg("--teardown-probe") is { } probeMode)
     {
         Vortice.Direct3D12.D3D12.D3D12CreateDevice(null, Vortice.Direct3D.FeatureLevel.Level_11_0, out probeDevice).CheckError();
     }
-    else if (probeFrames.Count > 0 && probeMode != "frames")
+    else if (probeFrames.Count > 0 && probeMode != "frames" && probeMode != "owned-ffmpeg" && probeMode != "owned-ours")
     {
         var ph = D3D12FrameHandles.Read((GpuVideoFrame)probeFrames[0]);
         using (var pt = Borrow<ID3D12Resource>(ph.Texture))
@@ -133,6 +147,12 @@ if (Arg("--teardown-probe") is { } probeMode)
     probeSession.Dispose();
     probeQueue?.Dispose();
     probeDevice?.Dispose();
+    if (ownedDevice is not null)
+    {
+        Console.Error.WriteLine($"probe {probeMode}: disposing the owned device");
+        ownedDevice.Dispose();
+        lentDevice?.Dispose();
+    }
     Console.Error.WriteLine($"probe {probeMode}: done");
     return 0;
 }
@@ -320,7 +340,8 @@ string? Arg(string name)
     return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
 }
 
-static async Task<List<IVideoFrame>> DecodeAsync(string clip, HardwareDecodeCapabilities capabilities, bool yieldHardware, int max)
+static async Task<List<IVideoFrame>> DecodeAsync(
+    string clip, HardwareDecodeCapabilities capabilities, bool yieldHardware, int max, HardwareDevice? device = null)
 {
     await using var demux = (DemuxSession)await new DemuxSessionFactory().OpenAsync(MediaSource.FromFile(clip));
     int stream = demux.MediaInfo.VideoStreams[0].StreamIndex;
@@ -333,7 +354,8 @@ static async Task<List<IVideoFrame>> DecodeAsync(string clip, HardwareDecodeCapa
             PreferredBackends = [HardwareDecodeBackendKind.D3D12Va],
         },
         capabilities,
-        loggerFactory: null);
+        loggerFactory: null,
+        device is null ? null : new VideoDecoderOptions { Device = device });
     decoder.YieldHardwareFrames = yieldHardware;
 
     var frames = new List<IVideoFrame>();

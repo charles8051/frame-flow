@@ -103,6 +103,17 @@ public sealed class GpuVideoFrame : IVideoFrame
     public HardwareDecodeBackendKind Backend { get; }
 
     /// <summary>
+    /// The FFmpeg device context the frame's pool was made on: a borrowed
+    /// <see cref="HardwareDevice"/>'s own, or the one its decoder created. Zero once disposed.
+    /// </summary>
+    internal nint HwDeviceContext =>
+        NativeAvFrame is var frame and not 0 ? new AvFrameAccessor(frame).GetHwDeviceContextPointer() : 0;
+
+    /// <summary>The frame's pool: its <c>AVHWFramesContext</c>. Zero once disposed.</summary>
+    internal nint HwFramesContext =>
+        NativeAvFrame is var frame and not 0 ? new AvFrameAccessor(frame).GetHwFramesContextPointer() : 0;
+
+    /// <summary>
     /// Internal accessor for the wrapped <c>AVFrame*</c>. Used by the
     /// <c>FrameFlow.Video.ToCpu</c> operator (which has
     /// <see cref="System.Runtime.CompilerServices.InternalsVisibleToAttribute"/>

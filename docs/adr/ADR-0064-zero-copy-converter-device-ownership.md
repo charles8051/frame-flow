@@ -3,6 +3,11 @@
 > Drafted on branch `fix/warm-swap-presenter-device`; assigned ADR-0064 on merge
 > to `main` per this repository's "number-at-merge" rule.
 
+> **Amended 2026-09-27 by [a borrowed hardware device](borrowed-hardware-device.md).** Option (b),
+> one decode device shared across a playlist's items, is now available for the decode device as
+> `HardwareDevice`, for inference that reads decoded textures in place. The presenter keeps
+> Decision 2's own device.
+
 ## Status
 
 Accepted. Decision 1 (interim) **implemented** (2026-06-16). Decision 2 (durable —

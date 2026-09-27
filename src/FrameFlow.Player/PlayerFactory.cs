@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Decoding;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Native;
@@ -35,6 +36,7 @@ internal static class PlayerFactory
         IPlaybackClock? clock,
         LatenessRecoveryOptions? latenessRecovery,
         TimeProvider? timeProvider,
+        HardwareDevice? hardwareDevice,
         CancellationToken cancellationToken
     )
     {
@@ -66,7 +68,8 @@ internal static class PlayerFactory
             configureVideo: configureVideo,
             configureAudio: configureAudio,
             latenessRecovery: latenessRecovery,
-            timeProvider: timeProvider
+            timeProvider: timeProvider,
+            hardwareDevice: hardwareDevice
         );
 #pragma warning restore CA2000
 

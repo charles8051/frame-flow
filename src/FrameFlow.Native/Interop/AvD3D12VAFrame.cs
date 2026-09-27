@@ -43,3 +43,28 @@ internal struct AVD3D12VASyncContext
     /// <summary>The value <see cref="fence"/> reaches once the frame is written.</summary>
     public ulong fence_value;
 }
+
+/// <summary>
+/// FFmpeg's <c>AVD3D12VADeviceContext</c>: what <c>AVHWDeviceContext.hwctx</c> points to for a
+/// D3D12VA device. Mirrors <c>libavutil/hwcontext_d3d12va.h</c> from FFmpeg 9.0. A caller that
+/// lends FFmpeg its own device sets <see cref="device"/> before <c>av_hwdevice_ctx_init</c>, which
+/// fills in the rest; FFmpeg releases <see cref="device"/> when the context is freed.
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct AVD3D12VADeviceContext
+{
+    /// <summary><c>ID3D12Device*</c>.</summary>
+    public nint device;
+
+    /// <summary><c>ID3D12VideoDevice*</c>, queried from <see cref="device"/> by init when null.</summary>
+    public nint video_device;
+
+    /// <summary>The lock FFmpeg takes around the device; a default mutex when null at init.</summary>
+    public nint @lock;
+
+    /// <summary>The matching unlock.</summary>
+    public nint unlock;
+
+    /// <summary>The argument both are called with.</summary>
+    public nint lock_ctx;
+}

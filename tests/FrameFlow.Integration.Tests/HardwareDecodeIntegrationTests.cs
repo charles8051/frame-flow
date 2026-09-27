@@ -253,6 +253,93 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
         }
     }
 
+    /// <summary>
+    /// A player given a <see cref="HardwareDevice"/> decodes every source it loads on that device,
+    /// each through a decoder of its own (#428). Without one, each load's decoder makes its own
+    /// device, and anything built on the last one outlives it.
+    /// </summary>
+    // 27 is AV_CODEC_ID_H264.
+    [RequiresHardwareDecodeFact(codecId: 27)]
+    public async Task AnOwnedDevice_IsSharedByEverySourceThePlayerLoads()
+    {
+        using var device = CreateAnyDevice();
+        var videoSink = new DeviceRecordingSink();
+        var controller = PlaybackController.Create(
+            videoSink: videoSink,
+            hardwareDecodeMode: HardwareDecodeMode.Required,
+            yieldHardwareFrames: true,
+            hardwareDevice: device
+        );
+
+        var framesAfterEachLoad = new List<int>();
+        try
+        {
+            var source = PlaybackHarness.ResolveCorpusPath("test-video-h264-yuv420p.mp4");
+            for (int load = 0; load < 2; load++)
+            {
+                var (loaded, played) = await IntegrationTestHelper.RunToCompletionAsync(
+                    controller, MediaSource.FromFile(source));
+                Assert.True(loaded.IsSuccess, $"LoadAsync {load} failed: {loaded.Error?.Message}");
+                Assert.True(played.IsSuccess, $"PlayAsync {load} failed: {played.Error?.Message}");
+                var unloaded = await controller.UnloadAsync();
+                Assert.True(unloaded.IsSuccess, $"UnloadAsync {load} failed: {unloaded.Error?.Message}");
+                framesAfterEachLoad.Add(videoSink.Seen.Count);
+            }
+        }
+        finally
+        {
+            await IntegrationTestHelper.StabilizeForDisposeAsync(controller);
+            await controller.DisposeAsync();
+        }
+
+        // Both loads decoded on the device. Each load's decoder was closed before the next opened,
+        // so their pools' addresses may repeat and are not compared.
+        Assert.True(framesAfterEachLoad[0] > 0, "the first load presented no hardware frames");
+        Assert.True(framesAfterEachLoad[1] > framesAfterEachLoad[0], "the second load presented no hardware frames");
+        Assert.All(videoSink.Seen, s => Assert.Equal(device.ContextPointer, s.Device));
+    }
+
+    /// <summary>The first backend the probe initialised that FFmpeg can make a device for here.</summary>
+    private HardwareDevice CreateAnyDevice()
+    {
+        foreach (var backend in _fixture.Capabilities.Available.Where(b => b.Initialized).Select(b => b.Kind))
+        {
+            try
+            {
+                return HardwareDevice.Create(backend);
+            }
+            catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
+            {
+            }
+        }
+
+        throw new InvalidOperationException("No initialised backend would create a device.");
+    }
+
+    /// <summary>Records each hardware frame's device and pool, and keeps none.</summary>
+    private sealed class DeviceRecordingSink : IVideoSink
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<(nint Device, nint Pool)> Seen { get; } = new();
+
+        public int? MaxHeldFrames => 0;
+
+        public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
+        {
+            using (frame)
+            {
+                if (frame is GpuVideoFrame gpu)
+                    Seen.Enqueue((gpu.HwDeviceContext, gpu.HwFramesContext));
+            }
+
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) =>
+            ValueTask.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     private sealed class UndeclaredVideoSink : IVideoSink
     {
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)

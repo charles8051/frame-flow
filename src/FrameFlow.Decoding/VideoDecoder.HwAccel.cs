@@ -183,6 +183,7 @@ public sealed partial class VideoDecoder
                 options,
                 capabilities,
                 heldHardwareFrames,
+                videoOptions?.Device,
                 attempts,
                 logger
             );
@@ -292,18 +293,31 @@ public sealed partial class VideoDecoder
         HardwareDecodeOptions options,
         HardwareDecodeCapabilities capabilities,
         int heldHardwareFrames,
+        HardwareDevice? device,
         List<HardwareDecodeAttempt> attempts,
         ILogger logger
     )
     {
-        // Build the candidate list: (kind, avDeviceType, hwPixelFormat).
-        var candidates = EnumerateCandidates(codec, capabilities);
+        // Build the candidate list: (kind, avDeviceType, hwPixelFormat). A borrowed device fixes
+        // the backend, and it opened already, so the probe's view of the host does not apply.
+        var candidates = device is null
+            ? EnumerateCandidates(codec, capabilities)
+            : EnumerateCandidates(codec, capabilities: null, onlyDeviceType: device.AvHwDeviceType);
         if (candidates.Count == 0)
         {
+            if (device is not null)
+            {
+                attempts.Add(
+                    new HardwareDecodeAttempt(
+                        device.Backend,
+                        "the codec has no hardware configuration for the borrowed device's backend"
+                    )
+                );
+            }
             return null;
         }
 
-        var sorted = SortByPolicy(candidates, options.PreferredBackends);
+        var sorted = device is null ? SortByPolicy(candidates, options.PreferredBackends) : candidates;
 
         foreach (var candidate in sorted)
         {
@@ -312,6 +326,7 @@ public sealed partial class VideoDecoder
                 codec,
                 codecParPtr,
                 heldHardwareFrames,
+                device,
                 attempts,
                 logger
             );
@@ -356,15 +371,17 @@ public sealed partial class VideoDecoder
 
     private static List<HwAccelCandidate> EnumerateCandidates(
         nint codec,
-        HardwareDecodeCapabilities capabilities
+        HardwareDecodeCapabilities? capabilities,
+        int? onlyDeviceType = null
     )
     {
         // Build a lookup of which (kind) values have an initialised device on
         // this host. A backend listed in the bootstrap capabilities but with
         // Initialized=false is excluded — we already know the device wouldn't
-        // open even if the codec advertises it.
+        // open even if the codec advertises it. With onlyDeviceType, the one
+        // device type named is the only candidate, and the capabilities are unused.
         var initializedKinds = new HashSet<HardwareDecodeBackendKind>();
-        foreach (var backend in capabilities.Available)
+        foreach (var backend in capabilities?.Available ?? [])
         {
             if (backend.Initialized)
                 initializedKinds.Add(backend.Kind);
@@ -386,7 +403,10 @@ public sealed partial class VideoDecoder
                 continue;
 
             var kind = HardwareDecodeProbeBridge.ClassifyBackend(cfg.DeviceType);
-            if (!initializedKinds.Contains(kind))
+            bool usable = onlyDeviceType is { } only
+                ? cfg.DeviceType == only
+                : initializedKinds.Contains(kind);
+            if (!usable)
                 continue;
 
             result.Add(new HwAccelCandidate(kind, cfg.DeviceType, cfg.PixelFormat));
@@ -472,6 +492,7 @@ public sealed partial class VideoDecoder
         nint codec,
         nint codecParPtr,
         int heldHardwareFrames,
+        HardwareDevice? device,
         List<HardwareDecodeAttempt> attempts,
         ILogger logger
     )
@@ -485,13 +506,19 @@ public sealed partial class VideoDecoder
 
         try
         {
-            int rc = FFAvUtil.av_hwdevice_ctx_create(
-                out deviceCtxRef,
-                candidate.AvHwDeviceType,
-                device: null,
-                opts: nint.Zero,
-                flags: 0
-            );
+            // A borrowed device is shared: this decoder owns one reference, as it would own a
+            // device it created, and the device lives on after the decoder releases it.
+            int rc = 0;
+            if (device is not null)
+                deviceCtxRef = device.Borrow();
+            else
+                rc = FFAvUtil.av_hwdevice_ctx_create(
+                    out deviceCtxRef,
+                    candidate.AvHwDeviceType,
+                    device: null,
+                    opts: nint.Zero,
+                    flags: 0
+                );
             if (rc != 0 || deviceCtxRef == nint.Zero)
             {
                 attempts.Add(
@@ -739,5 +766,24 @@ internal static class HardwareDecodeProbeBridge
             FFAvUtil.AvHwDeviceTypeD3D12Va => HardwareDecodeBackendKind.D3D12Va,
             FFAvUtil.AvHwDeviceTypeOpenCl => HardwareDecodeBackendKind.OpenCl,
             _ => HardwareDecodeBackendKind.Other,
+        };
+
+    /// <summary>The <c>AVHWDeviceType</c> for <paramref name="kind"/>, or null for one FFmpeg has no device type for.</summary>
+    internal static int? AvDeviceTypeOf(HardwareDecodeBackendKind kind) =>
+        kind switch
+        {
+            HardwareDecodeBackendKind.Cuda => FFAvUtil.AvHwDeviceTypeCuda,
+            HardwareDecodeBackendKind.VaApi => FFAvUtil.AvHwDeviceTypeVaApi,
+            HardwareDecodeBackendKind.D3D11Va => FFAvUtil.AvHwDeviceTypeD3D11Va,
+            HardwareDecodeBackendKind.Dxva2 => FFAvUtil.AvHwDeviceTypeDxva2,
+            HardwareDecodeBackendKind.VideoToolbox => FFAvUtil.AvHwDeviceTypeVideoToolbox,
+            HardwareDecodeBackendKind.Qsv => FFAvUtil.AvHwDeviceTypeQsv,
+            HardwareDecodeBackendKind.MediaCodec => FFAvUtil.AvHwDeviceTypeMediaCodec,
+            HardwareDecodeBackendKind.Vulkan => FFAvUtil.AvHwDeviceTypeVulkan,
+            HardwareDecodeBackendKind.Drm => FFAvUtil.AvHwDeviceTypeDrm,
+            HardwareDecodeBackendKind.Vdpau => FFAvUtil.AvHwDeviceTypeVdpau,
+            HardwareDecodeBackendKind.D3D12Va => FFAvUtil.AvHwDeviceTypeD3D12Va,
+            HardwareDecodeBackendKind.OpenCl => FFAvUtil.AvHwDeviceTypeOpenCl,
+            _ => null,
         };
 }

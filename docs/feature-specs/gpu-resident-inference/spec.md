@@ -99,13 +99,13 @@ output tensor.
 
 | Layer | Change |
 | --- | --- |
-| `FrameFlow.Decoding` | Backend device accessors on `GpuVideoFrame`; whatever bounds in-flight leases; the `InternalsVisibleTo` grant to `FrameFlow.Video` finally has the consumer it was written for |
+| `FrameFlow.Decoding` | `HardwareDevice`, which decoders borrow so the device outlives them ([borrowed device](../../adr/borrowed-hardware-device.md), #428); backend device accessors on `GpuVideoFrame`; whatever bounds in-flight leases; the `InternalsVisibleTo` grant to `FrameFlow.Video` finally has the consumer it was written for |
 | `FrameFlow.Video` | The `ToCpu` node factory; `MapToGpu` later (#293) |
 | `FrameFlow.Yolo` | The preprocessor splits by memory domain; `Yolov8Detector` stops assuming a CPU tensor |
 | `FrameFlow.Inference.Cuda` | The `OrtValue` device-binding path gets its first caller |
 | `FrameFlow.Inference.Abstractions` | `DeviceTensor` and `IDeviceInputSession` ([decision 4](adr.md)) |
 | `FrameFlow.Inference.Dml` | `DmlInferenceSession.OnDevice` runs on the caller's device and binds a `DeviceTensor` in place (#427) |
-| `FrameFlow.Player` | `WithHardwareFrames` on `IPassBuilder`, and the test that asserts its absence |
+| `FrameFlow.Player` | `WithHardwareDevice` on both builders (#428); `WithHardwareFrames` on `IPassBuilder`, and the test that asserts its absence |
 | `FrameFlow.Graph` | Only if the in-flight bound for requirement 5 belongs at the edge rather than in the operator contract |
 | Tests | The hardware gate, and the end-to-end assertion that nothing was downloaded |
 
