@@ -139,7 +139,8 @@ Console.WriteLine(
 nint allocation = OrtDml.CreateAllocation(gpu.Tensor.NativePointer);
 long[] shape = [1, 3, size, size];
 using var dmlMemory = new OrtMemoryInfo("DML", OrtAllocatorType.DeviceAllocator, 0, OrtMemType.Default);
-using var gpuInput = OrtValue.CreateTensorValueWithData(dmlMemory, TensorElementType.Float, shape, allocation, gpu.TensorBytes);
+// Disposed before the allocation it wraps is freed, at the end.
+var gpuInput = OrtValue.CreateTensorValueWithData(dmlMemory, TensorElementType.Float, shape, allocation, gpu.TensorBytes);
 using var cpuInput = OrtValue.CreateTensorValueFromMemory(cpuTensor, shape);
 using var runOptions = new RunOptions();
 var postprocess = new Yolov8Postprocessor();
@@ -232,6 +233,7 @@ Console.WriteLine($"        GPU path: preprocess {P50(gpuPre):F2} ms (shader, wa
 Console.WriteLine($"        CPU path: download {readback.HardwareTransfer.P50Ms:F2} ms + NV12 to BGRA {readback.ColorConvert.P50Ms:F2} ms (in the decoder)  "
     + $"preprocess {P50(cpuPre):F2} ms (ImageToTensor)  run {P50(cpuRun):F2} ms (input uploaded by ORT)");
 
+gpuInput.Dispose();
 OrtDml.FreeAllocation(allocation);
 Marshal.Release(dmlDevice);
 foreach (var f in gpuFrames.Concat(cpuFrames))
