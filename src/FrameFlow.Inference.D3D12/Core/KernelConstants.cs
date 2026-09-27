@@ -48,47 +48,25 @@ internal struct KernelConstants
     // A letterbox bar's tensor value, per colour.
     public float PadRed, PadGreen, PadBlue, Unused3;
 
-    // Y' = (Y - YOffset) · YScale and C' = (C - COffset) · CScale, on the samples as the shader
-    // reads them (0 to 1), with the levels for the texture's bit depth.
+    // The YUV to RGB conversion, as YuvToRgb states it, on the samples as the shader reads them.
     public float YOffset, YScale, COffset, CScale;
-
-    // R = Y' + RedFromCr·Cr', G = Y' - GreenFromCb·Cb' - GreenFromCr·Cr', B = Y' + BlueFromCb·Cb'.
     public float RedFromCr, GreenFromCb, GreenFromCr, BlueFromCb;
 
     public static KernelConstants Create(
         in ImageToTensorPlan plan,
         ImageToTensorOptions options,
-        YuvMatrix matrix,
-        YuvRange range,
         YuvSamples samples,
         int frameWidth,
         int frameHeight)
     {
-        var (kr, kb) = matrix switch
-        {
-            YuvMatrix.Bt601 => (0.299, 0.114),
-            YuvMatrix.Bt709 => (0.2126, 0.0722),
-            _ => throw new ArgumentOutOfRangeException(nameof(matrix), matrix, "Undefined YUV matrix."),
-        };
-        double kg = 1 - kr - kb;
-        bool limited = range switch
-        {
-            YuvRange.Limited => true,
-            YuvRange.Full => false,
-            _ => throw new ArgumentOutOfRangeException(nameof(range), range, "Undefined YUV range."),
-        };
-
-        // A code's value as the shader reads it, and the bit depth the range's levels scale with:
-        // limited is 16 to 235 (chroma 16 to 240) at 8 bits and 64 to 940 (64 to 960) at 10.
-        var (unit, bits) = samples switch
+        // A code's value as the shader reads the texture's view, and the samples' bit depth.
+        var (codeValue, bitDepth) = samples switch
         {
             YuvSamples.Nv12 => (1.0 / 255, 8),
             YuvSamples.P010 => (64.0 / 65535, 10),
             _ => throw new ArgumentOutOfRangeException(nameof(samples), samples, "Undefined sample format."),
         };
-        double step = 1 << (bits - 8);
-        double max = (1 << bits) - 1;
-        double chromaZero = 1 << (bits - 1);
+        var colour = YuvToRgb.Create(options.YuvMatrix, options.YuvRange, bitDepth, codeValue);
 
         var normalization = options.Normalization;
         float pad = options.PadValue;
@@ -124,14 +102,14 @@ internal struct KernelConstants
             PadRed = pad * normalization.Red.Scale + normalization.Red.Offset,
             PadGreen = pad * normalization.Green.Scale + normalization.Green.Offset,
             PadBlue = pad * normalization.Blue.Scale + normalization.Blue.Offset,
-            YOffset = (float)(limited ? 16 * step * unit : 0),
-            YScale = (float)(1 / ((limited ? 219 * step : max) * unit)),
-            COffset = (float)(chromaZero * unit),
-            CScale = (float)(1 / ((limited ? 224 * step : max) * unit)),
-            RedFromCr = (float)(2 * (1 - kr)),
-            GreenFromCb = (float)(2 * kb * (1 - kb) / kg),
-            GreenFromCr = (float)(2 * kr * (1 - kr) / kg),
-            BlueFromCb = (float)(2 * (1 - kb)),
+            YOffset = (float)colour.YOffset,
+            YScale = (float)colour.YScale,
+            COffset = (float)colour.COffset,
+            CScale = (float)colour.CScale,
+            RedFromCr = (float)colour.RedFromCr,
+            GreenFromCb = (float)colour.GreenFromCb,
+            GreenFromCr = (float)colour.GreenFromCr,
+            BlueFromCb = (float)colour.BlueFromCb,
         };
     }
 }

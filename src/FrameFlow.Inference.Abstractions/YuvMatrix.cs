@@ -1,9 +1,9 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-namespace FrameFlow.Inference.D3D12;
+namespace FrameFlow.Inference;
 
-/// <summary>The matrix <see cref="D3D12ImageToTensor"/> converts a frame's YUV samples to RGB with.</summary>
+/// <summary>The matrix a stage that reads YUV frames converts their samples to RGB with.</summary>
 public enum YuvMatrix
 {
     /// <summary>

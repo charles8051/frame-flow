@@ -59,4 +59,11 @@
     <ProjectReference Include="..\FrameFlow.Examples.Common\FrameFlow.Examples.Common.csproj" />
     <Using Include="FrameFlow.Examples.Common" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- DirectML is Windows-only, so this example is too. -->
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>windows</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>
