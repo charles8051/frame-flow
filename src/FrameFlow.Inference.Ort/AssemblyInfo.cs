@@ -11,3 +11,6 @@ using System.Runtime.CompilerServices;
 // (which needs GPU/DML natives + a model). The transforms are pure; this
 // only widens their visibility for the test, not the public surface.
 [assembly: InternalsVisibleTo("FrameFlow.Inference.Abstractions.Tests")]
+
+// The DirectML session binds device buffers through the same shape and dtype conversions.
+[assembly: InternalsVisibleTo("FrameFlow.Inference.Dml")]

@@ -71,7 +71,8 @@ output tensor.
 4. **Preprocessing happens where the pixels are.** (#291) Decided ([decision 1](adr.md)): one
    D3D12 compute shader, the device side of `ImageToTensor` and configured by the same
    `ImageToTensorOptions`, reads the D3D12VA texture after a GPU wait on the frame's fence and
-   writes the model input into a D3D12 buffer. DirectML reads the buffer directly; TensorRT-RTX
+   writes the model input into a D3D12 buffer. DirectML reads the buffer directly, through
+   `DmlInferenceSession.OnDevice` and `IDeviceInputSession` ([decision 4](adr.md), #427); TensorRT-RTX
    reads it through a CUDA import. CPU frames keep the CPU `ImageToTensor`. Built in
    `FrameFlow.Inference.D3D12` as `D3D12ImageToTensor` (#425).
 
@@ -102,24 +103,18 @@ output tensor.
 | `FrameFlow.Video` | The `ToCpu` node factory; `MapToGpu` later (#293) |
 | `FrameFlow.Yolo` | The preprocessor splits by memory domain; `Yolov8Detector` stops assuming a CPU tensor |
 | `FrameFlow.Inference.Cuda` | The `OrtValue` device-binding path gets its first caller |
-| `FrameFlow.Inference.Dml` | No device-resident path exists — see *Open questions* |
+| `FrameFlow.Inference.Abstractions` | `DeviceTensor` and `IDeviceInputSession` ([decision 4](adr.md)) |
+| `FrameFlow.Inference.Dml` | `DmlInferenceSession.OnDevice` runs on the caller's device and binds a `DeviceTensor` in place (#427) |
 | `FrameFlow.Player` | `WithHardwareFrames` on `IPassBuilder`, and the test that asserts its absence |
 | `FrameFlow.Graph` | Only if the in-flight bound for requirement 5 belongs at the edge rather than in the operator contract |
 | Tests | The hardware gate, and the end-to-end assertion that nothing was downloaded |
 
 ## Open questions
 
-- **Which backend pairing goes first, and whether the measured one can go at all.** Zero-staging
-  inference exists on `CudaInferenceSession` only. `DmlInferenceSession` documents that it has no
-  device-resident escape hatch and stages host-to-device through D3D12 upload buffers. So an
-  end-to-end GPU-resident path today means CUDA decode into CUDA inference — while the measurement
-  above was taken on D3D11VA decode into DirectML, which is the pairing that cannot close without
-  D3D12 resource binding as well. Decoding with D3D12VA, which the decoder already supports as a
-  backend, would leave the frame as a D3D12 resource with a fence and remove the D3D11-to-D3D12
-  sharing step. The session would still need a D3D12 device of its own to bind it (#298).
-  Requirement 2 is written for the CUDA side because that is the side with a consumer. Whether the
-  DML side is in scope is the first thing to settle, because it decides whether the numbers above
-  describe a path this feature can deliver on that hardware.
+- **Which backend pairing goes first.** Settled: D3D12VA decode, `D3D12ImageToTensor`, and DirectML
+  on the decoder's device ([decisions 1](adr.md) and [4](adr.md)). The #420 spike measured it at
+  about 3.0 ms per 1080p frame against 9.2 ms on the CPU path. CUDA decode into CUDA inference waits
+  for a CUDA decode path ([decision 2](adr.md)).
 
 - **Whether the output tensor is worth moving too.** The model's output is 84 × 8400 floats,
   about 2.8 MB per frame, against 4.9 MB for the input. Postprocess is 0.8 ms of CPU work on it.

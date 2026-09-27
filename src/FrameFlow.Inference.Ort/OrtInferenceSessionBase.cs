@@ -137,10 +137,29 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         ArgumentNullException.ThrowIfNull(outputs);
 
         ValidateNames(inputs.Keys, InputNames, "input");
+        RunWithHostOutputs(inputs, outputs, bindDeviceInputs: null);
+    }
+
+    /// <summary>
+    /// Runs the model with <paramref name="hostInputs"/> bound from host memory, any inputs
+    /// <paramref name="bindDeviceInputs"/> binds itself, and <paramref name="outputs"/> written to
+    /// host memory. For a derived EP whose inputs can come from device memory; it validates its own
+    /// input names and owns the values it binds, which must outlive this call.
+    /// </summary>
+    protected void RunWithHostOutputs(
+        IReadOnlyDictionary<string, ICpuTensor> hostInputs,
+        IReadOnlyDictionary<string, ICpuTensor> outputs,
+        Action<OrtIoBinding>? bindDeviceInputs
+    )
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(hostInputs);
+        ArgumentNullException.ThrowIfNull(outputs);
+
         ValidateNames(outputs.Keys, OutputNames, "output");
 
         using var binding = _session.CreateIoBinding();
-        var capacity = inputs.Count + outputs.Count;
+        var capacity = hostInputs.Count + outputs.Count;
         var boundValues = new List<OrtValue>(capacity);
         var pins = new List<MemoryHandle>(capacity);
 
@@ -150,11 +169,12 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
             // the finally below disposes. The add happens inside BindPinned,
             // one frame down, and the analyzer does not follow it there.
 #pragma warning disable CA2000
-            foreach (var (name, tensor) in inputs)
+            foreach (var (name, tensor) in hostInputs)
             {
                 var value = BindCpuTensor(tensor, boundValues, pins);
                 binding.BindInput(name, value);
             }
+            bindDeviceInputs?.Invoke(binding);
             foreach (var (name, tensor) in outputs)
             {
                 var value = BindCpuTensor(tensor, boundValues, pins);
@@ -494,6 +514,14 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         // Disposing it here corrupts the instance for any subsequently-created session.
     }
 
+    /// <summary>
+    /// Releases what a derived EP holds beyond the session, once the session and its options are
+    /// disposed. The base holds nothing more.
+    /// </summary>
+    protected virtual void DisposeProviderResources()
+    {
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -507,6 +535,7 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         DisposeCpuMemoryInfo();
         _session.Dispose();
         _sessionOptions.Dispose();
+        DisposeProviderResources();
         // No-op for the current finalizer-free sealed EPs; present so a
         // future derived type that adds a finalizer need not re-implement
         // IDisposable (CA1816). Behaviorally inert today.
