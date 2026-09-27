@@ -85,6 +85,14 @@ public sealed class DeviceInputTests
             Assert.False(session.CanBind(tensor with { Kind = (DeviceTensorKind)99 }));
             Assert.False(session.CanBind(tensor with { Buffer = 0 }));
 
+            // A tensor the session can bind but the model cannot take is refused before binding.
+            using var anyOutput = new CpuTensorPool().Rent<float>(tensor.Shape);
+            var wrongShape = tensor with { Shape = new TensorShape(1, 3, Options.Height, Options.Width + 1) };
+            Assert.True(session.CanBind(wrongShape));
+            Assert.Throws<ArgumentException>(() => session.Run(
+                new Dictionary<string, DeviceTensor> { ["x"] = wrongShape },
+                new Dictionary<string, ICpuTensor> { ["y"] = anyOutput }));
+
             // A session on a device ONNX Runtime made binds nothing, and says so when asked to.
             using var ortOwned = new DmlInferenceSession(model);
             using var pool = new CpuTensorPool();

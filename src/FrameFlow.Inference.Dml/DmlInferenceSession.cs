@@ -197,6 +197,15 @@ public sealed class DmlInferenceSession : OrtInferenceSessionBase, IDeviceInputS
                         + "buffer on the session's device.",
                     nameof(inputs));
             }
+
+            // ORT would refuse a mismatch too, but only once the buffer is wrapped and bound.
+            string? mismatch = DeviceInputFit.Mismatch(
+                InputShapes[IndexOfInput(name)],
+                Session.InputMetadata[name].ElementDataType,
+                MapDType(tensor.Dtype),
+                tensor);
+            if (mismatch is not null)
+                throw new ArgumentException($"Input '{name}' does not fit the model: {mismatch}.", nameof(inputs));
         }
 
         // The stage that wrote a buffer may be on another queue; DirectML's work on this one starts
@@ -237,6 +246,17 @@ public sealed class DmlInferenceSession : OrtInferenceSessionBase, IDeviceInputS
             foreach (nint allocation in allocations)
                 OrtDmlApi.FreeAllocation(allocation);
         }
+    }
+
+    private int IndexOfInput(string name)
+    {
+        for (int i = 0; i < InputNames.Count; i++)
+        {
+            if (InputNames[i] == name)
+                return i;
+        }
+
+        throw new ArgumentException($"The model has no input '{name}'.", nameof(name));
     }
 
     /// <inheritdoc />
