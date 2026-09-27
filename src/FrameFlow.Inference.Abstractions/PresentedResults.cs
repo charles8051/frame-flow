@@ -19,7 +19,9 @@ namespace FrameFlow.Inference;
 /// </para>
 /// <para>
 /// A result earlier than the one before it means the timeline went back, by a seek or a loop, and
-/// the results still waiting are dropped.
+/// the results still waiting are dropped. A presented frame earlier than the result showing, with
+/// no result of its own, means the same on the presenting side: the result is cleared and
+/// <see cref="Cleared"/> is raised until one arrives for the new position.
 /// </para>
 /// <para>
 /// <see cref="Presented"/> is raised on whichever thread presented the frame, inside the present
@@ -50,6 +52,12 @@ public sealed class PresentedResults<TResult> : IDisposable
 
     /// <summary>Raised when the frame on screen brings a different result.</summary>
     public event EventHandler<InferenceResult<TResult>>? Presented;
+
+    /// <summary>
+    /// Raised when the frame on screen went back before the result showing and has none of its
+    /// own, so nothing should be shown until the next <see cref="Presented"/>.
+    /// </summary>
+    public event EventHandler? Cleared;
 
     /// <summary>The result for the frame on screen, or null before one arrives.</summary>
     public InferenceResult<TResult>? Current
@@ -99,24 +107,42 @@ public sealed class PresentedResults<TResult> : IDisposable
     private void OnFramePresented(object? sender, FramePresentedInfo presented)
     {
         InferenceResult<TResult>? changed = null;
+        bool cleared = false;
         lock (_gate)
         {
             int index = PresentedMatch.LatestAtOrBefore(_timestamps, presented.PresentationTime);
             if (index < 0)
-                return;
-
-            var result = _pending[index];
-            // Keep the matched result; everything before it has been shown or passed over.
-            _pending.RemoveRange(0, index);
-            _timestamps.RemoveRange(0, index);
-            if (!ReferenceEquals(result, _current))
             {
-                _current = result;
-                changed = result;
+                // Nothing at or before this frame. If what is showing is from later in the
+                // stream, the picture went back past it.
+                if (_current is not null && presented.PresentationTime < _current.Timestamp)
+                {
+                    _current = null;
+                    cleared = true;
+                }
+            }
+            else
+            {
+                changed = Match(index);
             }
         }
 
-        if (changed is not null)
+        if (cleared)
+            Cleared?.Invoke(this, EventArgs.Empty);
+        else if (changed is not null)
             Presented?.Invoke(this, changed);
+    }
+
+    /// <summary>Makes the result at <paramref name="index"/> current; returns it when it changed.</summary>
+    private InferenceResult<TResult>? Match(int index)
+    {
+        var result = _pending[index];
+        // Keep the matched result; everything before it has been shown or passed over.
+        _pending.RemoveRange(0, index);
+        _timestamps.RemoveRange(0, index);
+        if (ReferenceEquals(result, _current))
+            return null;
+        _current = result;
+        return result;
     }
 }

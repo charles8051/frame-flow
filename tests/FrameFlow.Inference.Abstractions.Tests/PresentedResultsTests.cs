@@ -82,6 +82,44 @@ public sealed class PresentedResultsTests
     }
 
     [Fact]
+    public void APictureThatGoesBackPastTheResultShowing_ClearsIt()
+    {
+        var presenter = new FakePresenter();
+        using var onScreen = new PresentedResults<string>(presenter);
+        int cleared = 0;
+        onScreen.Cleared += (_, _) => cleared++;
+        onScreen.Post(Result("a", 0));
+        onScreen.Post(Result("b", 80));
+        presenter.Present(80);
+
+        // A seek back to 20 ms: "b" is from later in the stream, and nothing is waiting for 20 ms.
+        presenter.Present(20);
+
+        Assert.Null(onScreen.Current);
+        Assert.Equal(1, cleared);
+
+        // The branch catches up with the new position.
+        onScreen.Post(Result("c", 40));
+        presenter.Present(40);
+        Assert.Equal("c", onScreen.Current?.Result);
+        Assert.Equal(1, cleared);
+    }
+
+    [Fact]
+    public void AFrameBeforeEveryResultWithNothingShowing_ClearsNothing()
+    {
+        var presenter = new FakePresenter();
+        using var onScreen = new PresentedResults<string>(presenter);
+        int cleared = 0;
+        onScreen.Cleared += (_, _) => cleared++;
+        onScreen.Post(Result("a", 80));
+
+        presenter.Present(40);
+
+        Assert.Equal(0, cleared);
+    }
+
+    [Fact]
     public void BeyondCapacity_TheOldestResultGoesFirst()
     {
         var presenter = new FakePresenter();

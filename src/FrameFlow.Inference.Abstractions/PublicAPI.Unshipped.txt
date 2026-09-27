@@ -149,6 +149,7 @@ FrameFlow.Inference.InferenceResult<TResult>.Result.get -> TResult
 FrameFlow.Inference.InferenceResult<TResult>.Timestamp.get -> System.TimeSpan
 FrameFlow.Inference.InferenceResult<TResult>.Width.get -> int
 FrameFlow.Inference.PresentedResults<TResult>
+FrameFlow.Inference.PresentedResults<TResult>.Cleared -> System.EventHandler?
 FrameFlow.Inference.PresentedResults<TResult>.Current.get -> FrameFlow.Inference.InferenceResult<TResult>?
 FrameFlow.Inference.PresentedResults<TResult>.Dispose() -> void
 FrameFlow.Inference.PresentedResults<TResult>.Post(FrameFlow.Inference.InferenceResult<TResult>! result) -> void
