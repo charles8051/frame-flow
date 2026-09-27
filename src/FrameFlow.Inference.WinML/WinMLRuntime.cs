@@ -41,12 +41,19 @@ internal static class WinMLRuntime
             : [Path.Combine(baseDirectory, "onnxruntime.dll"), Path.Combine(baseDirectory, "runtimes", rid, "native", "onnxruntime.dll")];
     }
 
-    /// <summary>True when <paramref name="path"/> is in <paramref name="systemDirectory"/>, where Windows keeps its own copy. Pure.</summary>
-    internal static bool IsSystemCopy(string path, string systemDirectory) =>
-        string.Equals(
-            Path.GetDirectoryName(Path.GetFullPath(path))?.TrimEnd(Path.DirectorySeparatorChar),
-            Path.GetFullPath(systemDirectory).TrimEnd(Path.DirectorySeparatorChar),
+    /// <summary>
+    /// True when <paramref name="path"/> is in <paramref name="systemDirectory"/>, where Windows keeps
+    /// its own copy. Both are absolute Windows paths, compared as text on any host. Pure.
+    /// </summary>
+    internal static bool IsSystemCopy(string path, string systemDirectory)
+    {
+        string file = path.Replace('/', '\\');
+        int slash = file.LastIndexOf('\\');
+        return slash >= 0 && string.Equals(
+            file[..slash].TrimEnd('\\'),
+            systemDirectory.Replace('/', '\\').TrimEnd('\\'),
             StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>The oldest ONNX Runtime this package runs on: what Windows ML 2.3 ships.</summary>
     internal const int MinimumMinor = 27;
