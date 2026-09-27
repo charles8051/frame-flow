@@ -1,9 +1,10 @@
 # GPU-resident inference
 
-**Status:** Draft. Nothing implemented. Tracked by #288; every requirement below names the issue
-that carries it. Living document, rewritten as the feature changes.
+**Status:** Draft. Requirements 1 and 7 are met; the rest are open. Tracked by #288; every
+requirement below names the issue that carries it. Living document, rewritten as the feature
+changes.
 
-**Date:** 2026-09-18
+**Date:** 2026-09-18. Measurements re-taken in a Release build 2026-09-26.
 
 **Decision record:**
 [ADR-0038](../../adr/ADR-0038-memory-domain-pipeline-operators.md) owns the memory-domain
@@ -20,24 +21,24 @@ Hardware decode leaves a frame on the GPU. An inference model runs on the GPU. T
 travels between them through system memory, twice.
 
 The path a frame takes now, and what each leg costs. Measured on an RTX 3080 Ti, D3D11VA decode,
-DirectML EP, 1080p H.264, four runs of ~1200 frames, p50 per frame:
+DirectML EP, 1080p H.264, Release build, two runs of ~1200 frames, p50 per frame:
 
 | leg | p50 | where |
 | --- | --- | --- |
-| `av_hwframe_transfer_data` downloads NV12 | 3.6 ms | `VideoDecoder.BuildManagedFrame` |
+| `av_hwframe_transfer_data` downloads NV12 | 4.5 ms | `VideoDecoder.BuildManagedFrame` |
 | `sws_scale` converts NV12 to BGRA | 2.2 ms | `VideoDecoder.BuildManagedFrameFromCpu` |
-| resize, normalize, HWC to CHW | 5.3 ms | `Yolov8Preprocessor.Preprocess`, scalar, no SIMD |
-| the model | 4.7 ms | the EP, including its host-to-device staging |
-| 80-class decode and NMS | 3.1 ms | `Yolov8Postprocessor` |
+| resize, normalize, HWC to CHW | 0.7 ms | `Yolov8Preprocessor.Preprocess`, through `ImageToTensor` (#363) |
+| the model | 6.5 ms | the EP, including its host-to-device staging |
+| 80-class decode and NMS | 0.8 ms | `Yolov8Postprocessor` |
 
-11.3 ms of the ~18.5 ms is spent moving and reshaping pixels the GPU already had. The model is
-4.7 ms.
+7.3 ms of the ~14.6 ms is spent moving and reshaping pixels the GPU already had. The model is
+6.5 ms.
 
-**The largest leg is the preprocessor, not the download.** That is the finding that shapes this
-feature. A GPU path that only skips the readback recovers 3.6 ms and leaves 5.3 ms untouched, so
-"stop downloading the frame" is necessary and nowhere near sufficient. Instrumentation is
-`DecodeStageMetrics` and the Multicast.Dml example's `--exit-after` (#282); the measurement
-carries a caveat recorded under *Open questions*.
+**The download and the conversion are the cost.** Together they are 6.7 ms of the 7.3 ms.
+Preprocessing was 1.1 to 1.5 ms before #363 vectorised it. The first version of this table put
+preprocessing at 5.3 ms and called it the largest leg; that was a Debug build (see *Open
+questions*). Instrumentation is `DecodeStageMetrics` and the Multicast.Dml example's
+`--exit-after` (#282).
 
 The end state: the decoder yields in the domain it decoded in, an operator preprocesses where the
 pixels already are, the session binds a device pointer, and the only thing crossing the bus is the
@@ -45,12 +46,10 @@ output tensor.
 
 ## Requirements
 
-1. **A GPU-yielded frame can reach a CPU operator.** (#279) Today it cannot: all three
-   `FrameFlow.Video` operators route through `SwScaleVideoConverter.Process`, which calls
-   `source.ToCpu()`, which throws on a `GpuVideoFrame`. The exception names a `pipeline.ToCpu()`
-   operator that ADR-0038 §4 specifies and the tree does not contain. Until a `ToCpu` node exists,
-   turning the decoder flag on makes a graph unrunnable rather than faster, so this is the first
-   requirement and not an optimisation.
+1. **A GPU-yielded frame can reach a CPU operator.** (#279) Met: `VideoOperators.ToCpu` is the
+   node ADR-0038 §4 specifies. Before it, all three `FrameFlow.Video` operators routed through
+   `SwScaleVideoConverter.Process`, which threw on a `GpuVideoFrame`, so turning the decoder flag
+   on made a graph unrunnable rather than faster.
 
 2. **A GPU frame can surface its backend handle.** (#289) `TryGetD3D11Texture` is the only
    accessor. `Cuda` is a supported decode backend and `CudaInferenceSession` documents a
@@ -67,8 +66,9 @@ output tensor.
 
 4. **Preprocessing happens where the pixels are.** (#291) Resize, BGRA-to-RGB normalize and
    HWC-to-CHW transpose run on the device for a GPU-resident frame. Whether that is a per-backend
-   kernel, work folded into the model graph, or something else is open; that it must move is not,
-   because it is the largest leg.
+   kernel, work folded into the model graph, or something else is open. That it must move is not:
+   a GPU-resident frame has no CPU pixels to preprocess, and downloading them is the cost this
+   feature removes. The CPU branch is `ImageToTensor` (#363).
 
 5. **A GPU frame's lifetime is bounded on a path with no pacer.** (#292) Each live
    `GpuVideoFrame` pins a slice of a default-sized hwframe pool. ADR-0057 records the resulting
@@ -83,10 +83,9 @@ output tensor.
    `PassBuilderTests.ThePassBuilderHasNoTransportOptions` currently asserts the option is absent
    and gives a reason, so this reverses a recorded decision rather than adding to one.
 
-7. **Every claim above fails honestly on a machine without a GPU.** (#295) There is no
-   hardware-conditional test gate. `HardwareDecodeIntegrationTests` asserts only that playback
-   completed, which passes identically when the software path served every frame. Nothing here is
-   verifiable until a gate exists, and CI has no GPU on either leg, so skipping loudly is the
+7. **Every claim above fails honestly on a machine without a GPU.** (#295) Met by #354:
+   `RequiresHardwareDecodeFact` skips, naming what is missing, unless the probe initialised a
+   backend for the codec under test. CI has no GPU on either leg, so skipping loudly there is the
    intended behaviour.
 
 ## Affected layers
@@ -109,12 +108,15 @@ output tensor.
   device-resident escape hatch and stages host-to-device through D3D12 upload buffers. So an
   end-to-end GPU-resident path today means CUDA decode into CUDA inference — while the measurement
   above was taken on D3D11VA decode into DirectML, which is the pairing that cannot close without
-  D3D12 resource binding as well. Requirement 2 is written for the CUDA side because that is the
-  side with a consumer. Whether the DML side is in scope is the first thing to settle, because it
-  decides whether the numbers above describe a path this feature can deliver on that hardware.
+  D3D12 resource binding as well. Decoding with D3D12VA, which the decoder already supports as a
+  backend, would leave the frame as a D3D12 resource with a fence and remove the D3D11-to-D3D12
+  sharing step. The session would still need a D3D12 device of its own to bind it (#298).
+  Requirement 2 is written for the CUDA side because that is the side with a consumer. Whether the
+  DML side is in scope is the first thing to settle, because it decides whether the numbers above
+  describe a path this feature can deliver on that hardware.
 
 - **Whether the output tensor is worth moving too.** The model's output is 84 × 8400 floats,
-  about 2.8 MB per frame, against 4.9 MB for the input. Postprocess is 3.1 ms of CPU work on it.
+  about 2.8 MB per frame, against 4.9 MB for the input. Postprocess is 0.8 ms of CPU work on it.
   If the input upload goes away and the output download does not, the round trip is halved rather
   than removed.
 
@@ -125,15 +127,16 @@ output tensor.
   Release build, one consumer, the YOLO preprocess is 0.39 ms p50 against 1.15 ms for the loop it
   replaced.
 
-- **How much of the 5.3 ms is the example's own overhead.** The Multicast.Dml example clones each
+- **How much of the table is the example's own overhead.** The Multicast.Dml example clones each
   frame to three panes with `CloneCpu()`, so the CPU legs compete with two extra full-frame copies.
-  The decoder-thread legs are less affected. A single-consumer pass would show lower preprocess,
-  sws and postprocess figures, and re-measuring on one is the cheap way to tighten the estimate
-  before committing to requirement 4's shape. The build configuration may matter more: the
-  measurement does not record one, and the replaced loop takes 5.2 ms p50 on a 1080p frame in a
-  Debug build against 1.15 ms in Release. If the 5.3 ms was a Debug build, the managed stages
-  (preprocess and postprocess) are overstated and the stage ranking above changes. Re-measuring in
-  Release settles it.
+  A single-consumer pass would show lower sws and preprocess figures.
+
+- **Why the model and the download are slower in Release.** The first version of the table was a
+  Debug build: re-running the commit before #363 in Debug reproduces it (download 3.6 to 3.7 ms,
+  conversion 2.2 to 2.3, preprocess 5.3, model 5.0 to 5.1, postprocess 3.0). In Release the managed
+  stages shrink about fourfold, but the model run and the download each come out about 1 ms slower
+  than in Debug, in all four Release runs. The cause is not known. More GPU contention once the CPU
+  stages stop spacing the frames out is one guess, and it is untested.
 
 - **Where the inference ADR citations point.** `DmlInferenceSession` attributes its deferral to
   "ADR-0022", and `CudaInferenceSession` and ADR-0050 cite "ADR-0049 §3" for the `IInferenceSession`

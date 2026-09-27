@@ -390,3 +390,13 @@ Both belong to the GPU-resident inference slice rather than here.
 
 Measurement instrumentation is `DecodeStageMetrics` and the Multicast.Dml example's `--exit-after`
 (#282). ADR-0079 defers the pass-side `WithHardwareFrames` option on a stated trigger (#277).
+
+## Amended 2026-09-26
+
+**The 2026-09-18 measurement was a Debug build.** Running the Multicast.Dml example in Debug at the
+commit before #363 reproduces its figures to within about 0.1 ms on every stage but the model. In Release, on the same
+GPU and clip, the download is 4.2 ms, the conversion 2.2 ms, `Yolov8Preprocessor` 1.1 to 1.5 ms
+(0.7 ms after #363 vectorised it) and the model 6.0 to 6.2 ms. The largest stage is the model, and the
+download and conversion are most of what a GPU-resident path would recover. The two decisions that
+amendment names still stand; the ordering argument for preprocessing does not. The GPU-resident
+inference spec carries the current table.
