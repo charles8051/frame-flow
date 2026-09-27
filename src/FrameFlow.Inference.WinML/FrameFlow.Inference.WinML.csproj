@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- The floor Microsoft.Windows.AI.MachineLearning supports for .NET, as the investigation found. -->
+    <TargetFramework>net10.0-windows10.0.18362.0</TargetFramework>
+    <!-- Lets the solution build on the Linux CI leg; the package runs only on Windows. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PackageTags>onnx;onnxruntime;inference;windows-ml;tensorrt;openvino;gpu;npu;windows;machine-learning;dotnet</PackageTags>
+  </PropertyGroup>
+
+  <!--
+    FrameFlow.Inference.WinML: ONNX Runtime through Windows ML, which reaches the vendor execution
+    providers Windows installs (TensorRT-RTX, OpenVINO, QNN and others) as well as the CPU and
+    DirectML ones it carries. Per ADR-0049 §3 it binds host memory through OrtInferenceSessionBase,
+    unchanged: the investigation (docs/investigations/2026-09-09-windows-ml-ep-selection.md) found
+    the managed runtime this package brings unifies with the one FrameFlow.Inference.Ort compiles
+    against.
+
+    It brings its own onnxruntime.dll, so it conflicts with FrameFlow.Inference.Dml and
+    FrameFlow.Inference.Cuda in one process: apps pick exactly one inference EP package at the
+    executable boundary. The vendor catalog needs Windows 11 24H2 (build 26100) or later; below
+    that, Windows ML offers only CPU and DirectML, which FrameFlow.Inference.Dml already does.
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="../FrameFlow.Inference.Ort/FrameFlow.Inference.Ort.csproj" />
+    <ProjectReference Include="../FrameFlow.Inference.Abstractions/FrameFlow.Inference.Abstractions.csproj" />
+    <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Self-contained Windows ML: the API, its ONNX Runtime (1.27.1 at 2.3.42) and the in-box
+      DirectML EP, about 41 MB. Not Microsoft.WindowsAppSDK, which would make the app depend on the
+      Windows App SDK runtime being installed.
+    -->
+    <PackageReference Include="Microsoft.Windows.AI.MachineLearning" Version="2.3.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
+  </ItemGroup>
+</Project>

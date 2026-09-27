@@ -36,4 +36,11 @@ public enum ExecutionProvider
     /// highest throughput for compatible models.
     /// </summary>
     Cuda,
+
+    /// <summary>
+    /// ONNX Runtime through Windows ML — <c>FrameFlow.Inference.WinML</c>. Reaches the vendor
+    /// providers Windows installs (TensorRT-RTX, OpenVINO, QNN) on Windows 11 24H2 or later, and
+    /// CPU and DirectML below that.
+    /// </summary>
+    WindowsML,
 }

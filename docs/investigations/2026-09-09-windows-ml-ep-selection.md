@@ -217,6 +217,10 @@ using the DirectML package directly.
 5. **Leave the `DmlInferenceSession` overrides alone**, with Secondary finding 3
    as the record that their performance justification is now known to be flat.
 
+**Follow-up, 2026-09-27 (#423):** built as `FrameFlow.Inference.WinML`. It chooses by policy by
+default and by name and adapter on request, which is recommendation 2 settled on design grounds; see
+[decision 5](../feature-specs/gpu-resident-inference/adr.md). Recommendations 3 and 4 are still open.
+
 ## Reproducing / re-checking this
 
 `spikes/WinMlProbe` is a throwaway console app, deliberately **not** in
