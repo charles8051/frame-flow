@@ -44,6 +44,9 @@ public sealed class Yolov8Preprocessor
 {
     private readonly ImageToTensorOptions _options;
 
+    /// <summary>The input tensor, and how a frame fills it.</summary>
+    internal ImageToTensorOptions Options => _options;
+
     /// <summary>Model input image side length in pixels (multiple of 32).</summary>
     public int InputSize { get; }
 

@@ -11,3 +11,7 @@ using System.Runtime.CompilerServices;
 // crop and options as the CPU stage, so the two map a tensor back to the frame identically.
 [assembly: InternalsVisibleTo("FrameFlow.Inference.D3D12")]
 [assembly: InternalsVisibleTo("FrameFlow.Inference.D3D12.Tests")]
+
+// The DirectML handoff tests drive one operator run at a time to compare each result with the
+// tensor the stage wrote.
+[assembly: InternalsVisibleTo("FrameFlow.Inference.Dml.Tests")]

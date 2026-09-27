@@ -42,6 +42,9 @@ public sealed class BlazeFacePreprocessor
 {
     private readonly ImageToTensorOptions _options;
 
+    /// <summary>The input tensor, and how a frame fills it.</summary>
+    internal ImageToTensorOptions Options => _options;
+
     /// <summary>Model input image side length in pixels.</summary>
     public int InputSize { get; }
 

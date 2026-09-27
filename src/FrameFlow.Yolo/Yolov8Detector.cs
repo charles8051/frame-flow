@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using FrameFlow.Graph;
+using FrameFlow.Inference;
 using FrameFlow.Media;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -40,7 +41,7 @@ namespace FrameFlow.Yolo;
 /// use. Multi-consumer workloads instantiate per-consumer detectors.
 /// </para>
 /// </remarks>
-public sealed partial class Yolov8Detector : IDisposable
+public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyList<Detection>>
 {
     private readonly FrameFlow.Inference.IInferenceSession _session;
     private readonly CpuTensorPool _pool;
@@ -390,6 +391,23 @@ public sealed partial class Yolov8Detector : IDisposable
     /// <see cref="double.NaN"/> before the first detection.
     /// </summary>
     public double LastPostprocessMs => Volatile.Read(ref _lastPostprocessMs);
+
+    // The detector as an IImageModel, for InferenceOperators.Infer: the whole frame, stretched to the
+    // model's input, and the postprocessor's decode of the one output.
+    IInferenceSession IImageModel<IReadOnlyList<Detection>>.Session => _session;
+
+    string IImageModel<IReadOnlyList<Detection>>.InputName => _session.InputNames[0];
+
+    ImageToTensorOptions IImageModel<IReadOnlyList<Detection>>.Input => _preprocessor.Options;
+
+    RotatedRect IImageModel<IReadOnlyList<Detection>>.CropFor(IVideoFrame frame) => RotatedRect.Whole(frame);
+
+    IReadOnlyList<Detection> IImageModel<IReadOnlyList<Detection>>.Decode(
+        IReadOnlyDictionary<string, ICpuTensor> outputs, TensorTransform transform, IVideoFrame frame) =>
+        _postprocessor.Decode(
+            System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(outputs[_session.OutputNames[0]].Bytes.Span),
+            (float)frame.Width / _preprocessor.InputSize,
+            (float)frame.Height / _preprocessor.InputSize);
 
     public void Dispose()
     {
