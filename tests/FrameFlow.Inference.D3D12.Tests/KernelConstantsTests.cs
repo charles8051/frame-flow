@@ -48,6 +48,27 @@ public sealed class KernelConstantsTests
     }
 
     [Fact]
+    public void P010LimitedRange_StretchesLumaFrom64To940AndChromaFrom64To960()
+    {
+        var k = Create(new ImageToTensorOptions(8, 8), YuvMatrix.Bt601, YuvRange.Limited, YuvSamples.P010);
+
+        Assert.Equal(0f, (P010(64) - k.YOffset) * k.YScale, 1e-5f);
+        Assert.Equal(1f, (P010(940) - k.YOffset) * k.YScale, 1e-5f);
+        Assert.Equal(-0.5f, (P010(64) - k.COffset) * k.CScale, 1e-5f);
+        Assert.Equal(0.5f, (P010(960) - k.COffset) * k.CScale, 1e-5f);
+    }
+
+    [Fact]
+    public void P010FullRange_SpansTheTenBitCodes()
+    {
+        var k = Create(new ImageToTensorOptions(8, 8), YuvMatrix.Bt601, YuvRange.Full, YuvSamples.P010);
+
+        Assert.Equal(0f, (P010(0) - k.YOffset) * k.YScale, 1e-5f);
+        Assert.Equal(1f, (P010(1023) - k.YOffset) * k.YScale, 1e-5f);
+        Assert.Equal(0f, (P010(512) - k.COffset) * k.CScale, 1e-5f);
+    }
+
+    [Fact]
     public void FullRange_TakesSamplesAsTheyAre()
     {
         var k = Create(new ImageToTensorOptions(8, 8), YuvMatrix.Bt709, YuvRange.Full);
@@ -72,7 +93,7 @@ public sealed class KernelConstantsTests
         };
         var plan = ImageToTensorPlan.Create(new RotatedRect(100, 50, 80, 60, 0.3f), 64, 32, ImageFit.Letterbox);
 
-        var k = KernelConstants.Create(plan, options, YuvMatrix.Bt601, YuvRange.Limited, 320, 240);
+        var k = KernelConstants.Create(plan, options, YuvMatrix.Bt601, YuvRange.Limited, YuvSamples.Nv12, 320, 240);
 
         Assert.Equal(((float)plan.A, (float)plan.B, (float)plan.C), (k.A, k.B, k.C));
         Assert.Equal(((float)plan.D, (float)plan.E, (float)plan.F), (k.D, k.E, k.F));
@@ -98,10 +119,14 @@ public sealed class KernelConstantsTests
         Assert.Equal((1u, 0u), (k.Bilinear, k.Nhwc));
     }
 
-    private static KernelConstants Create(ImageToTensorOptions options, YuvMatrix matrix, YuvRange range) =>
+    private static KernelConstants Create(
+        ImageToTensorOptions options, YuvMatrix matrix, YuvRange range, YuvSamples samples = YuvSamples.Nv12) =>
         KernelConstants.Create(
             ImageToTensorPlan.Create(RotatedRect.FromBounds(0, 0, 8, 8), options.Width, options.Height, options.Fit),
-            options, matrix, range, 8, 8);
+            options, matrix, range, samples, 8, 8);
 
     private static int Offset(string field) => (int)Marshal.OffsetOf<KernelConstants>(field);
+
+    /// <summary>A 10-bit code as the shader reads a P010 sample: shifted into the high bits, over 65535.</summary>
+    private static float P010(int code) => code * 64f / 65535;
 }

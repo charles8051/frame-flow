@@ -164,7 +164,7 @@ public sealed class D3D12ImageToTensorTests
         ImageToTensorOptions options, RotatedRect crop, YuvMatrix matrix, YuvRange range, IVideoFrame frame) =>
         KernelConstants.Create(
             ImageToTensorPlan.Create(crop, options.Width, options.Height, options.Fit),
-            options, matrix, range, frame.Width, frame.Height);
+            options, matrix, range, YuvSamples.Nv12, frame.Width, frame.Height);
 
     /// <summary>
     /// The shader's arithmetic on the CPU, from the frame's NV12 samples and the same constants.

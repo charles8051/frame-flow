@@ -169,15 +169,15 @@ public sealed unsafe class D3D12ImageToTensor : IDisposable
 
         using var texture = Borrow<ID3D12Resource>(textureHandle);
         using var frameFence = Borrow<ID3D12Fence>(fenceHandle);
-        var (lumaFormat, chromaFormat) = texture.Description.Format switch
+        var (lumaFormat, chromaFormat, samples) = texture.Description.Format switch
         {
-            Format.NV12 => (Format.R8_UNorm, Format.R8G8_UNorm),
-            Format.P010 => (Format.R16_UNorm, Format.R16G16_UNorm),
+            Format.NV12 => (Format.R8_UNorm, Format.R8G8_UNorm, YuvSamples.Nv12),
+            Format.P010 => (Format.R16_UNorm, Format.R16G16_UNorm, YuvSamples.P010),
             var other => throw new NotSupportedException($"The frame's texture is {other}; NV12 and P010 are supported."),
         };
 
         var plan = ImageToTensorPlan.Create(crop, Options.Width, Options.Height, Options.Fit);
-        var constants = KernelConstants.Create(plan, Options, _matrix, _range, frame.Width, frame.Height);
+        var constants = KernelConstants.Create(plan, Options, _matrix, _range, samples, frame.Width, frame.Height);
 
         int index = _next;
         _next = (_next + 1) % InFlight;
@@ -195,6 +195,8 @@ public sealed unsafe class D3D12ImageToTensor : IDisposable
         slot.List.SetComputeRoot32BitConstants(0, KernelConstants.Count, &constants, 0);
         slot.List.SetComputeRootDescriptorTable(1, _heap.GetGPUDescriptorHandleForHeapStart() + (int)(2 * index * _descriptorSize));
         slot.List.SetComputeRootUnorderedAccessView(2, TensorResource.GPUVirtualAddress);
+        // The last write, and whatever read it since, finish with the tensor before this one starts.
+        slot.List.ResourceBarrierUnorderedAccessView(TensorResource);
         uint groupsX = (uint)((Options.Width + ImageToTensorShader.GroupSize - 1) / ImageToTensorShader.GroupSize);
         uint groupsY = (uint)((Options.Height + ImageToTensorShader.GroupSize - 1) / ImageToTensorShader.GroupSize);
         slot.List.Dispatch(groupsX, groupsY, 1);
