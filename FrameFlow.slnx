@@ -59,6 +59,7 @@
     <Project Path="tests/FrameFlow.Inference.Abstractions.Tests/FrameFlow.Inference.Abstractions.Tests.csproj" />
     <Project Path="tests/FrameFlow.Inference.Cuda.Tests/FrameFlow.Inference.Cuda.Tests.csproj" />
     <Project Path="tests/FrameFlow.Inference.D3D12.Tests/FrameFlow.Inference.D3D12.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Inference.Dml.Tests/FrameFlow.Inference.Dml.Tests.csproj" />
     <Project Path="tests/FrameFlow.Integration.Tests/FrameFlow.Integration.Tests.csproj" />
     <Project Path="tests/FrameFlow.Media.Tests/FrameFlow.Media.Tests.csproj" />
     <Project Path="tests/FrameFlow.MotionClip.Tests/FrameFlow.MotionClip.Tests.csproj" />

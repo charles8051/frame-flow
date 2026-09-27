@@ -7,6 +7,9 @@ using System.Runtime.Versioning;
 // The tests pin the pure constant block and read the tensor back to compare it.
 [assembly: InternalsVisibleTo("FrameFlow.Inference.D3D12.Tests")]
 
+// The DirectML handoff tests read the tensor back to compare it with what the model saw.
+[assembly: InternalsVisibleTo("FrameFlow.Inference.Dml.Tests")]
+
 // Direct3D 12 exists only on Windows. Code that calls in without a Windows check gets CA1416 when
 // it builds.
 [assembly: SupportedOSPlatform("windows")]

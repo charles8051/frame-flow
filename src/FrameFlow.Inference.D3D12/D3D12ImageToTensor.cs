@@ -3,6 +3,7 @@
 
 using System.Runtime.InteropServices;
 using FrameFlow.Decoding;
+using FrameFlow.Graph;
 using FrameFlow.Inference.Core;
 using FrameFlow.Inference.D3D12.Core;
 using FrameFlow.Media;
@@ -136,6 +137,23 @@ public sealed unsafe class D3D12ImageToTensor : IDisposable
 
     /// <summary>The value <see cref="CompletionFence"/> reaches once the last write is on the tensor.</summary>
     public ulong CompletionValue { get; private set; }
+
+    /// <summary>
+    /// The tensor as an <see cref="IDeviceInputSession"/> takes it: <see cref="Tensor"/> on this
+    /// stage's device, shaped by <see cref="Options"/>' layout with a batch of one, and ready once
+    /// <see cref="CompletionFence"/> reaches <see cref="CompletionValue"/>. It describes the last
+    /// <see cref="Write"/>; the next one overwrites the buffer, so run the session first.
+    /// </summary>
+    public DeviceTensor DeviceTensor => new(
+        DeviceTensorKind.D3D12,
+        Tensor,
+        _device.NativePointer,
+        Options.Layout == TensorLayout.Nhwc
+            ? new TensorShape(1, Options.Height, Options.Width, 3)
+            : new TensorShape(1, 3, Options.Height, Options.Width),
+        DType.Float32,
+        CompletionFence,
+        CompletionValue);
 
     private ID3D12Resource TensorResource { get; }
 

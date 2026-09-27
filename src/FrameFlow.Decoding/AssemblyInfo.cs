@@ -34,3 +34,6 @@ using System.Runtime.CompilerServices;
 // The device-side image-to-tensor tests read a D3D12VA frame's NV12 samples on the CPU, through the
 // frame's AVFrame, to compute the exact tensor the shader should write.
 [assembly: InternalsVisibleTo("FrameFlow.Inference.D3D12.Tests")]
+
+// The DirectML handoff tests share the D3D12 tests' decode support, which reads frames the same way.
+[assembly: InternalsVisibleTo("FrameFlow.Inference.Dml.Tests")]

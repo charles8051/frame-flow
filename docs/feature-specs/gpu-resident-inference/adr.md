@@ -119,3 +119,44 @@ plan and return the same `TensorTransform`.
 - **The stage holds device references.** With a TensorRT-RTX session loaded, it has to be
   disposed before the decoder's last frame is freed (#422).
 
+
+## Decision 4: a device input is a `DeviceTensor`, bound by a session that implements `IDeviceInputSession`
+
+**Date:** 2026-09-27
+**Status:** Accepted
+**Issue:** #427
+
+### Context
+
+`D3D12ImageToTensor` writes a model input into a D3D12 buffer. ADR-0049 §3 keeps
+`IInferenceSession` host-memory only and puts device binding on each concrete session, as
+`CudaInferenceSession.Run(IReadOnlyDictionary<string, OrtValue>, ...)` does. That shape makes a
+consumer that routes frames, such as the operator #436 asks for, depend on each execution
+provider's package and on ORT's types. The #420 spike showed the binding itself works: a DirectML
+session built on the decoder's device takes the buffer through `CreateGPUAllocationFromD3DResource`.
+
+### Decision
+
+- `FrameFlow.Inference.Abstractions` gains `DeviceTensor`, a value naming the GPU API
+  (`DeviceTensorKind`), the buffer, its device, its shape and element type, and a fence with the
+  value it reaches once the buffer is written. The handles are native pointers, as in Decision 3.
+- `IDeviceInputSession : IInferenceSession` adds `CanBind(in DeviceTensor)` and a `Run` that takes
+  device inputs and writes host outputs. `IInferenceSession` stays host-only, as ADR-0049 §3 has it.
+- `DmlInferenceSession.OnDevice(model, device, commandQueue)` builds the DirectML provider on the
+  caller's device and queue through the C API's `OrtDmlApi`, which the managed binding lacks. It
+  asks the loaded runtime for its own C API version and refuses one older than 1.24.
+- The session's queue waits on each input's fence on the GPU before DirectML reads it, so the
+  stage and the session need not share a queue.
+- `D3D12ImageToTensor.DeviceTensor` describes the stage's last write.
+
+### Consequences
+
+- **A router needs no provider package.** It asks `CanBind` and falls back to the host path when
+  the answer is no.
+- **Other APIs extend the enum.** A CUDA pointer (#289), a Vulkan buffer or a Metal buffer is a new
+  `DeviceTensorKind`, and Windows ML (#423) can implement the same interface.
+- **Outputs stay on the host.** A run returns once they are written, so the buffer can be
+  rewritten when `Run` returns.
+- **The wait has no GPU-level test.** Telling a queue blocked on the fence from one that has not
+  run yet needs a clock, which ADR-0072 keeps out of tests. The pure plan of which waits a run
+  makes is tested, and a cross-queue run is checked end to end.

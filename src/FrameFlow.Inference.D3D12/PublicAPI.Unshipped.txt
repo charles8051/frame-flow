@@ -3,6 +3,7 @@ FrameFlow.Inference.D3D12.D3D12ImageToTensor
 FrameFlow.Inference.D3D12.D3D12ImageToTensor.CompletionFence.get -> nint
 FrameFlow.Inference.D3D12.D3D12ImageToTensor.CompletionValue.get -> ulong
 FrameFlow.Inference.D3D12.D3D12ImageToTensor.D3D12ImageToTensor(nint device, nint commandQueue, FrameFlow.Inference.ImageToTensorOptions! options) -> void
+FrameFlow.Inference.D3D12.D3D12ImageToTensor.DeviceTensor.get -> FrameFlow.Inference.DeviceTensor
 FrameFlow.Inference.D3D12.D3D12ImageToTensor.Dispose() -> void
 FrameFlow.Inference.D3D12.D3D12ImageToTensor.Options.get -> FrameFlow.Inference.ImageToTensorOptions!
 FrameFlow.Inference.D3D12.D3D12ImageToTensor.Tensor.get -> nint
