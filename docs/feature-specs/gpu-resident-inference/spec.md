@@ -1,7 +1,6 @@
 # GPU-resident inference
 
-**Status:** Draft. Requirements 1, 3, 5, 6 and 7 are met, 2 is met for D3D12, and 4 is decided and
-built. Tracked by #288; every
+**Status:** Draft. Requirements 1, 2, 3, 5, 6, 7, 8 and 9 are met, and 4 is decided and built. Tracked by #288; every
 requirement below names the issue that carries it. Living document, rewritten as the feature
 changes.
 

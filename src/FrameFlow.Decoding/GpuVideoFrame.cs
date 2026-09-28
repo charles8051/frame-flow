@@ -412,8 +412,10 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// last frame crashes the process when a TensorRT-RTX session is loaded (#422).
     /// </para>
     /// <para>
-    /// The pointers are borrowed: the caller keeps the frame alive, and does not dispose it on
-    /// another thread, while it uses them.
+    /// The pointers are borrowed, and the frame's surface goes back to the decoder's pool when the
+    /// frame is released. Keep the frame, or an <see cref="AddRef"/> of it, until every piece of
+    /// GPU work that reads them has finished, not only until it is submitted, and do not dispose
+    /// it on another thread meanwhile.
     /// </para>
     /// </remarks>
     /// <param name="texture">
@@ -483,26 +485,30 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// <remarks>
     /// <para>
     /// The planes are laid out as <see cref="Format"/> says: NV12 for an 8-bit stream, P010 for a
-    /// 10-bit one, each with its luma plane first and its chroma interleaved at half the height.
+    /// 10-bit one, each with its luma plane first and its chroma interleaved at half the height. A
+    /// frame in any other layout, such as 4:4:4, surfaces nothing.
     /// The decoder copies the frame into this memory asynchronously on
     /// <see cref="CudaFramePlanes.Stream"/>, so read on that stream or synchronize with it first,
     /// with <see cref="CudaFramePlanes.Context"/> current.
     /// </para>
     /// <para>
-    /// The pointers are borrowed: the caller keeps the frame alive, and does not dispose it on
-    /// another thread, while it uses them.
+    /// The pointers are borrowed, and the frame's surface goes back to the decoder's pool when the
+    /// frame is released. Keep the frame, or an <see cref="AddRef"/> of it, until every piece of
+    /// GPU work that reads them has finished, not only until it is submitted, and do not dispose
+    /// it on another thread meanwhile.
     /// </para>
     /// </remarks>
     /// <param name="planes">On success, the planes, their pitches, and the context and stream they belong to.</param>
     /// <returns>
     /// <see langword="true"/> when the planes were surfaced; <see langword="false"/> for a frame
-    /// from another backend or a disposed frame.
+    /// from another backend, one that is neither NV12 nor P010, or a disposed frame.
     /// </returns>
     public unsafe bool TryGetCudaPlanes(out CudaFramePlanes planes)
     {
         planes = default;
 
-        if (Backend != HardwareDecodeBackendKind.Cuda)
+        // Two planes, luma and interleaved chroma, is all CudaFramePlanes describes.
+        if (Backend != HardwareDecodeBackendKind.Cuda || Format is not (PixelFormat.Nv12 or PixelFormat.P010))
             return false;
 
         var h = _handle;
