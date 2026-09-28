@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Runtime.InteropServices;
+using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Vortice.D3DCompiler;
 using Vortice.Direct3D;
@@ -582,6 +583,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
                 decodeSideNv12, 0, 0, 0, 0, nv12, (uint)arraySlice, new Box(0, 0, 0, Width, Height, 1));
             decodeSideMutex.ReleaseSync(StagingKey);
             decodeAcquired = false;
+            FrameCopyMetrics.Record(FrameCopySite.PresenterGpuCopy);
 
             // (2) OWN DEVICE: acquire the staging texture (this acquire fences the decode-side copy
             // so the shader sees it), acquire the target ring buffer, replay the pre-recorded shader
@@ -593,6 +595,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             buf.KeyedMutex.AcquireSync(0, 1000);
             ringAcquired = true;
             _immediate.ExecuteCommandList(buf.CommandList, true);
+            FrameCopyMetrics.Record(FrameCopySite.PresenterGpuConvert);
             buf.KeyedMutex.ReleaseSync(1);
             ringAcquired = false;
             _sampleMutex.ReleaseSync(StagingKey);

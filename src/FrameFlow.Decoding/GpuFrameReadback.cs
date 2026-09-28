@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using FrameFlow.Media;
+using FrameFlow.Media.Diagnostics;
 using FrameFlow.Native.Interop;
 
 namespace FrameFlow.Decoding;
@@ -59,6 +60,8 @@ internal static unsafe class GpuFrameReadback
                 $"av_hwframe_transfer_data failed with code {transferRc}."
             );
         }
+
+        FrameCopyMetrics.Record(FrameCopySite.ReadbackDownload);
 
         // Now sws_scale the NV12 (or whatever CPU format the transfer
         // picked) → tight-packed Bgra32 into a managed buffer.
@@ -150,6 +153,8 @@ internal static unsafe class GpuFrameReadback
                     $"sws_scale returned {rows} rows for {planes.Width}x{planes.Height} GPU readback."
                 );
             }
+
+            FrameCopyMetrics.Record(FrameCopySite.ReadbackConvert);
         }
     }
 }

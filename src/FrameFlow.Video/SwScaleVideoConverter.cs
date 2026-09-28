@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using FrameFlow.Media;
+using FrameFlow.Media.Diagnostics;
 using FrameFlow.Native.Interop;
 
 namespace FrameFlow.Video;
@@ -144,6 +145,8 @@ internal sealed unsafe class SwScaleVideoConverter : IVideoConverter
                         + $"{planes.Width}x{planes.Height} conversion."
                 );
             }
+
+            FrameCopyMetrics.Record(FrameCopySite.OperatorConvert);
         }
     }
 

@@ -9,6 +9,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using FrameFlow.Media;
+using FrameFlow.Media.Diagnostics;
 using FrameFlow.Playback;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -429,6 +430,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                 copyStarted = true;
                 using (var fb = _back.Lock())
                     CopyPixels(data.PlaneY.Span, data.StrideY, fb);
+                FrameCopyMetrics.Record(FrameCopySite.PresenterUpload);
 
                 _backPts = frame.Pts;
                 _backBinding = binding;
@@ -527,6 +529,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             _staged = new byte[needed];
 
         data.PlaneY.Span[..needed].CopyTo(_staged);
+        FrameCopyMetrics.Record(FrameCopySite.PresenterUpload);
         _stagedPending = true;
         _stagedStride = data.StrideY;
         _stagedWidth = data.Width;
@@ -574,6 +577,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
 
             using (var fb = _back.Lock())
                 CopyPixels(_staged.AsSpan(0, stride * height), stride, fb);
+            FrameCopyMetrics.Record(FrameCopySite.PresenterUpload);
 
             _backPts = pts;
             _backBinding = binding;

@@ -71,14 +71,14 @@ public static class DecodeStageMetrics
     /// Records one <c>av_hwframe_transfer_data</c> call, in
     /// <see cref="System.Diagnostics.Stopwatch"/> ticks.
     /// </summary>
-    public static void RecordHardwareTransfer(long elapsedTicks) =>
+    internal static void RecordHardwareTransfer(long elapsedTicks) =>
         Record(TransferTicks, ref _transferCount, elapsedTicks);
 
     /// <summary>
     /// Records one colour-convert-and-copy pass (<c>sws_scale</c> into a pooled
     /// BGRA buffer), in <see cref="System.Diagnostics.Stopwatch"/> ticks.
     /// </summary>
-    public static void RecordColorConvert(long elapsedTicks) =>
+    internal static void RecordColorConvert(long elapsedTicks) =>
         Record(ConvertTicks, ref _convertCount, elapsedTicks);
 
     private static void Record(long[] reservoir, ref long counter, long elapsedTicks)

@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using FrameFlow.Decoding;
 using FrameFlow.Inference.D3D12.Tests;
 using FrameFlow.Media;
+using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
@@ -10,10 +11,18 @@ using Vortice.DXGI;
 
 namespace FrameFlow.Avalonia.Windows.Tests;
 
+/// <summary>Runs alone: its assertions read the process-wide copy counts exactly.</summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class FrameCopyCountsCollection
+{
+    public const string Name = "Frame copy counts (#435)";
+}
+
 /// <summary>
 /// What the D3D12VA presenter puts in its ring (#429), read the way the compositor reads it: the
 /// ring buffer opened by its shared handle on another D3D11 device, under the keyed mutex.
 /// </summary>
+[Collection(FrameCopyCountsCollection.Name)]
 public sealed class D3D12YuvSharedConverterTests
 {
     // 320x240 H.264, BT.601 in the stream; the presenter converts as BT.709 whatever the stream says.
@@ -29,6 +38,7 @@ public sealed class D3D12YuvSharedConverterTests
             Assert.True(first.TryGetD3D12Texture(out nint texture, out _, out _, out _));
             using var converter = new D3D12YuvSharedConverter(texture, first.Width, first.Height, NullLogger.Instance);
             using var compositor = new CompositorSide(texture);
+            var before = FrameCopyMetrics.Snapshot();
 
             for (int i = 0; i < frames.Count; i++)
             {
@@ -42,6 +52,11 @@ public sealed class D3D12YuvSharedConverterTests
             }
 
             Assert.False(converter.IsDeviceLost);
+
+            // One conversion on D3D12 and one copy across to D3D11 per frame (#435).
+            var made = FrameCopyMetrics.Snapshot().Since(before);
+            Assert.Equal(frames.Count, made[FrameCopySite.PresenterGpuConvert]);
+            Assert.Equal(frames.Count, made[FrameCopySite.PresenterGpuCopy]);
         }
         finally
         {

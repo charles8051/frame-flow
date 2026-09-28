@@ -238,8 +238,6 @@ FrameFlow.Decoding.Diagnostics.DecodeStageSummary.P50Ms.get -> double
 FrameFlow.Decoding.Diagnostics.DecodeStageSummary.P95Ms.get -> double
 static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Enabled.get -> bool
 static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Enabled.set -> void
-static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.RecordColorConvert(long elapsedTicks) -> void
-static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.RecordHardwareTransfer(long elapsedTicks) -> void
 static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Reset() -> void
 static FrameFlow.Decoding.Diagnostics.DecodeStageMetrics.Snapshot() -> FrameFlow.Decoding.Diagnostics.DecodeStageSnapshot!
 FrameFlow.Decoding.HardwareDevice

@@ -407,6 +407,15 @@ your own implementing the property.
 The parameter defaults to `null`, which derives the choice as entry 15 describes. `true` and `false`
 mean what they did.
 
+### 19. `DecodeStageMetrics.RecordHardwareTransfer` and `RecordColorConvert` are internal
+
+**A compile error.**
+
+Only the decoder records its own stages. A caller could write samples into the process-wide
+collector and skew what every other reader saw (#435). `Enabled`, `Reset` and `Snapshot` are
+unchanged. `FrameCopyMetrics` now counts every copy and conversion by site, including the
+decoder's.
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be

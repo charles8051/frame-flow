@@ -3,15 +3,25 @@ using FrameFlow.Decoding;
 using FrameFlow.Graph;
 using FrameFlow.Inference.D3D12.Tests;
 using FrameFlow.Media;
+using FrameFlow.Media.Diagnostics;
 using FrameFlow.Player;
 
 namespace FrameFlow.Inference.Dml.Tests;
 
+/// <summary>Runs alone: its assertions read the process-wide copy counts exactly.</summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class FrameCopyCountsCollection
+{
+    public const string Name = "Frame copy counts (#435)";
+}
+
 /// <summary>
 /// A player decides where hardware frames go when it is not told (#294): on the GPU for a sink
 /// that takes them, downloaded for one that has not said it does. Its own gate and pacer sit on
-/// the path, so this is the player's decision and not only the pass's.
+/// the path, so this is the player's decision and not only the pass's. The copy counts show which
+/// path the frames took (#435).
 /// </summary>
+[Collection(FrameCopyCountsCollection.Name)]
 public sealed class PlayerHardwareFramesTests
 {
     private const string Clip = "test-video-h264-yuv420p.mp4";
@@ -23,18 +33,26 @@ public sealed class PlayerHardwareFramesTests
     public async Task APlayerUnasked_KeepsFramesOnTheGpu_ForASinkThatTakesThem()
     {
         var sink = new FirstFramesSink(FrameMemoryDomains.Any);
+        var before = FrameCopyMetrics.Snapshot();
         await PlayAsync(sink);
 
         Assert.All(sink.Domains, domain => Assert.Equal(FrameMemoryDomain.Gpu, domain));
+        var made = FrameCopyMetrics.Snapshot().Since(before);
+        Assert.Equal(0, made[FrameCopySite.DecoderDownload]);
+        Assert.Equal(0, made[FrameCopySite.DecoderConvert]);
     }
 
     [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
     public async Task APlayerUnasked_DownloadsFrames_ForASinkThatSaysNothing()
     {
         var sink = new FirstFramesSink(accepts: null);
+        var before = FrameCopyMetrics.Snapshot();
         await PlayAsync(sink);
 
         Assert.All(sink.Domains, domain => Assert.Equal(FrameMemoryDomain.Cpu, domain));
+        var made = FrameCopyMetrics.Snapshot().Since(before);
+        Assert.True(made[FrameCopySite.DecoderDownload] >= sink.Domains.Count, made.ToString());
+        Assert.True(made[FrameCopySite.DecoderConvert] >= sink.Domains.Count, made.ToString());
     }
 
     /// <summary>Plays the clip on a D3D12VA device, with no <c>WithHardwareFrames</c>, until the sink has three frames.</summary>

@@ -113,3 +113,13 @@ internal sealed class RequiresFfmpegFactAttribute : FactAttribute
             Skip = "FFmpeg shared libraries not available. Run scripts/fetch-ffmpeg.cs first.";
     }
 }
+
+/// <summary>As <see cref="RequiresFfmpegFactAttribute"/>, for a theory.</summary>
+internal sealed class RequiresFfmpegTheoryAttribute : TheoryAttribute
+{
+    public RequiresFfmpegTheoryAttribute()
+    {
+        if (!TestEnvironment.HasFfmpegSharedLibraries)
+            Skip = "FFmpeg shared libraries not available. Run scripts/fetch-ffmpeg.cs first.";
+    }
+}

@@ -565,3 +565,21 @@ FrameFlow.Media.PixelFormat.P010 = 6 -> FrameFlow.Media.PixelFormat
 FrameFlow.Media.IVideoSink.AcceptedDomains.get -> FrameFlow.Graph.FrameMemoryDomains
 FrameFlow.Media.HeadlessVideoSink.AcceptedDomains.get -> FrameFlow.Graph.FrameMemoryDomains
 FrameFlow.Media.NullVideoSink.AcceptedDomains.get -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Media.Diagnostics.FrameCopySite
+FrameFlow.Media.Diagnostics.FrameCopySite.DecoderDownload = 0 -> FrameFlow.Media.Diagnostics.FrameCopySite
+FrameFlow.Media.Diagnostics.FrameCopySite.DecoderConvert = 1 -> FrameFlow.Media.Diagnostics.FrameCopySite
+FrameFlow.Media.Diagnostics.FrameCopySite.ReadbackDownload = 2 -> FrameFlow.Media.Diagnostics.FrameCopySite
+FrameFlow.Media.Diagnostics.FrameCopySite.ReadbackConvert = 3 -> FrameFlow.Media.Diagnostics.FrameCopySite
+FrameFlow.Media.Diagnostics.FrameCopySite.OperatorConvert = 4 -> FrameFlow.Media.Diagnostics.FrameCopySite
+FrameFlow.Media.Diagnostics.FrameCopySite.EncoderConvert = 5 -> FrameFlow.Media.Diagnostics.FrameCopySite
+FrameFlow.Media.Diagnostics.FrameCopySite.PresenterUpload = 6 -> FrameFlow.Media.Diagnostics.FrameCopySite
+FrameFlow.Media.Diagnostics.FrameCopySite.PresenterGpuCopy = 7 -> FrameFlow.Media.Diagnostics.FrameCopySite
+FrameFlow.Media.Diagnostics.FrameCopySite.PresenterGpuConvert = 8 -> FrameFlow.Media.Diagnostics.FrameCopySite
+FrameFlow.Media.Diagnostics.FrameCopyMetrics
+static FrameFlow.Media.Diagnostics.FrameCopyMetrics.Count(FrameFlow.Media.Diagnostics.FrameCopySite site) -> long
+static FrameFlow.Media.Diagnostics.FrameCopyMetrics.Snapshot() -> FrameFlow.Media.Diagnostics.FrameCopyCounts!
+FrameFlow.Media.Diagnostics.FrameCopyCounts
+FrameFlow.Media.Diagnostics.FrameCopyCounts.this[FrameFlow.Media.Diagnostics.FrameCopySite site].get -> long
+FrameFlow.Media.Diagnostics.FrameCopyCounts.Since(FrameFlow.Media.Diagnostics.FrameCopyCounts! earlier) -> FrameFlow.Media.Diagnostics.FrameCopyCounts!
+FrameFlow.Media.Diagnostics.FrameCopyCounts.Total.get -> long
+override FrameFlow.Media.Diagnostics.FrameCopyCounts.ToString() -> string!

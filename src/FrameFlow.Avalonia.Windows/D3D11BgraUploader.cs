@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using FrameFlow.Media;
+using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
@@ -182,6 +183,7 @@ internal sealed class D3D11BgraUploader : IDisposable
             buf.KeyedMutex.AcquireSync(0, 1000);
             acquired = true;
             _context.CopyResource(buf.Texture, _staging);
+            FrameCopyMetrics.Record(FrameCopySite.PresenterUpload);
         }
         catch (Exception ex) when (D3D11DeviceLoss.IsDeviceLost(ex))
         {

@@ -204,6 +204,8 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
                         _sdl.UpdateTexture(_texture, null, pixels, data.StrideY);
                     }
 
+                    FrameCopyMetrics.Record(FrameCopySite.PresenterUpload);
+
                     _sdl.RenderClear(_renderer);
                     _sdl.RenderCopy(_renderer, _texture, null, null);
                     _sdl.RenderPresent(_renderer);
