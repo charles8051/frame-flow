@@ -3,6 +3,7 @@ using Avalonia.Interactivity;
 using Avalonia.Threading;
 using FrameFlow.Avalonia;
 using FrameFlow.Avalonia.Windows;
+using FrameFlow.Decoding;
 using FrameFlow.Media;
 using FrameFlow.Player;
 using Microsoft.Extensions.Logging;
@@ -27,6 +28,7 @@ public partial class MainWindow : Window
     private readonly ILogger<MainWindow> _logger;
     private readonly List<IVideoSurface> _surfaces = [];
     private readonly List<IMediaTransport> _players = [];
+    private HardwareDevice? _hardwareDevice;
     private SoakSampler? _sampler;
     private DispatcherTimer? _sampleTimer;
     private DispatcherTimer? _exitTimer;
@@ -41,6 +43,12 @@ public partial class MainWindow : Window
     /// or <c>required</c>. <c>auto</c> uses the zero-copy GPU path when D3D11VA binds and the
     /// CPU upload fallback otherwise.</summary>
     public string? StartupHwMode { get; set; }
+
+    /// <summary>
+    /// <c>d3d12va</c> or <c>d3d11va</c>: decode on one device of that backend, shared by every
+    /// player, instead of letting each decoder pick. Unset, the builders pick D3D11VA on Windows.
+    /// </summary>
+    public string? StartupHwDevice { get; set; }
 
     /// <summary>When &gt; 0, the window closes itself after this many seconds —
     /// a graceful shutdown that flushes the log, for autonomous/headless runs.</summary>
@@ -100,6 +108,27 @@ public partial class MainWindow : Window
         };
         _logger.LogInformation(
             "Hardware decode mode: {Mode} (from --hw-mode '{Raw}').", hwMode, StartupHwMode ?? "(unset)");
+
+        var backend = StartupHwDevice?.Trim().ToLowerInvariant() switch
+        {
+            "d3d12va" => HardwareDecodeBackendKind.D3D12Va,
+            "d3d11va" => HardwareDecodeBackendKind.D3D11Va,
+            _ => (HardwareDecodeBackendKind?)null,
+        };
+        if (backend is { } kind)
+        {
+            try
+            {
+                _hardwareDevice = HardwareDevice.Create(kind);
+                _logger.LogInformation("Decoding on one {Backend} device (from --hw-device).", kind);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Could not create a {Backend} device.", kind);
+                StatusText.Text = $"No {kind} device — see log.";
+                return;
+            }
+        }
 
         if (Soak is { } soak)
         {
@@ -195,9 +224,9 @@ public partial class MainWindow : Window
         Panel host
     )
     {
-        // Present via the compositor-interop zero-copy view: the hardware-decoded NV12
-        // frame stays on the GPU, is color-converted to BGRA, and is imported straight
-        // into Avalonia's compositor with no CPU round-trip.
+        // Present via the compositor-interop zero-copy view: the hardware-decoded frame stays on
+        // the GPU, is color-converted to BGRA, and is imported straight into Avalonia's
+        // compositor with no CPU round-trip.
         //
         // The surface joins the teardown list only once its player is built, so a teardown that
         // runs while it is being built cannot dispose a surface that build is still using. Until
@@ -210,15 +239,17 @@ public partial class MainWindow : Window
         var handedOver = false;
         try
         {
-            var player = await FrameFlowPlayer
+            var builder = FrameFlowPlayer
                 .Create()
                 .WithMedia(path)
                 .WithVideoSink(videoSink)
                 .WithHardwareDecode(hwMode)
                 .WithHardwareFrames(surface.PrefersHardwareFrames)
                 .WithRepeatMode(RepeatMode.One)
-                .WithLogger(_loggerFactory)
-                .BuildPlayerAsync();
+                .WithLogger(_loggerFactory);
+            if (_hardwareDevice is not null)
+                builder = builder.WithHardwareDevice(_hardwareDevice);
+            var player = await builder.BuildPlayerAsync();
 
             // The window can start closing while a player is being built. Its teardown has already
             // run, so this player and its surface dispose themselves instead of joining the lists.
@@ -259,8 +290,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Zero-copy playback failed to start (HW D3D11VA decode required).");
-            StatusText.Text = "Failed — see log. (HW D3D11VA decode required for this spike.)";
+            _logger.LogError(ex, "Zero-copy playback failed to start (hardware decode required).");
+            StatusText.Text = "Failed — see log. (Hardware decode required for this spike.)";
             // A build that threw left the surface with this method, so it disposes it. One handed
             // over is the teardown's, whether or not the list still holds it.
             if (!handedOver)
@@ -294,6 +325,10 @@ public partial class MainWindow : Window
             await DisposeSurfaceAsync(surface);
         }
         _surfaces.Clear();
+
+        // Last: the players' decoders borrowed it.
+        _hardwareDevice?.Dispose();
+        _hardwareDevice = null;
     }
 
     private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)

@@ -18,10 +18,12 @@ namespace FrameFlow.Avalonia.Windows;
 
 /// <summary>
 /// An Avalonia <see cref="Control"/> that presents hardware-decoded
-/// <see cref="GpuVideoFrame"/>s without leaving the GPU: it copies the D3D11VA NV12 slice
-/// into a shareable staging texture, color-converts that to a shared keyed-mutex BGRA
-/// texture, and imports it into the compositor via <see cref="ICompositionGpuInterop"/>
-/// (ADR-0016 amendment). One GPU copy and no GPU→CPU readback, no <c>WriteableBitmap</c>.
+/// <see cref="GpuVideoFrame"/>s without leaving the GPU: it color-converts the frame into a
+/// shared keyed-mutex BGRA texture and imports that into the compositor via
+/// <see cref="ICompositionGpuInterop"/> (ADR-0016 amendment). A D3D11VA frame is copied into a
+/// shareable staging texture and converted on D3D11; a D3D12VA frame is converted on its decoder's
+/// D3D12 device and copied across by a D3D11 device (#429). One GPU copy and no GPU→CPU readback,
+/// no <c>WriteableBitmap</c>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -61,7 +63,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     private CompositionDrawingSurface? _surface;
     private CompositionSurfaceVisual? _surfaceVisual;
 
-    private D3D11Nv12SharedConverter? _gpuConverter; // GPU zero-copy source
+    private D3D11Nv12SharedConverter? _gpuConverter; // GPU zero-copy source, D3D11VA frames
+    private D3D12YuvSharedConverter? _d3d12Converter; // GPU zero-copy source, D3D12VA frames
     private D3D11BgraUploader? _cpuUploader; // CPU upload fallback source
     private bool? _activeIsGpu; // which source the imported[] ring is currently bound to
 
@@ -94,6 +97,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     private long _lastCommittedAtUtcTicks = -1;
 
     private bool _loggedGpuLive;
+    private bool _loggedD3D12Live;
     private bool _loggedCpuLive;
     private bool _warnedUnpresentable;
     private bool _warnedPresentFailure;
@@ -221,12 +225,12 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     public int FramesCommitted => Volatile.Read(ref _framesCommitted);
 
     /// <summary>
-    /// Total frames dropped because every ring buffer still had a present in flight.
-    /// Diagnostic surface; a steady climb means the compositor can't keep up with the
-    /// feed rate.
+    /// Total frames the presenter dropped: every ring buffer still had a present in flight, or,
+    /// for a D3D12VA frame, both of the converter's draws were still on the GPU. Diagnostic
+    /// surface; a steady climb means the compositor or the GPU can't keep up with the feed rate.
     /// </summary>
     /// <remarks>
-    /// This is only the ring-full share of the loss, counted for the view's whole lifetime.
+    /// This is only the presenter's share of the loss, counted for the view's whole lifetime.
     /// Frames superseded at the sink's latest-wins intake — the newest frame replacing one
     /// this render tick never took — are counted by
     /// <see cref="CompositionInteropVideoSink.FramesSuperseded"/>. The diagnostics snapshot
@@ -356,7 +360,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     //
     // FramesDropped is the SUM of both places a frame dies on this path:
     //   1. superseded at the sink's latest-wins slot (feed rate > render-tick rate), and
-    //   2. dropped here in PresentRing because the whole ring was still in flight.
+    //   2. dropped here in PresentRing because the whole ring was still in flight, or because a
+    //      D3D12VA frame found both of the converter's draws still on the GPU.
     // Reporting only (2) under-reported the loss: at 1080p60 the render tick takes one frame
     // per ~16 ms tick while the decoder feeds 60/s, so nearly all of the loss is (1) and the
     // snapshot read sink-drop=0 while a third of the frames never reached the screen. That
@@ -785,6 +790,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
 
             if (frame is GpuVideoFrame gpu && gpu.TryGetD3D11Texture(out var texture, out var slice, out var device))
             {
+                // The imported ring is bound to one converter's shared handles.
+                if (_d3d12Converter is not null)
+                    DropGpuConverter(GpuConverterDropReason.BackendChange);
+
                 // Zero-copy: the hardware D3D11VA surface stays on the GPU. Decide how to handle the
                 // cached converter for this frame:
                 //   (a) device-loss (TDR) seen on a previous frame  -> drop + rebuild (step 6), or
@@ -834,13 +843,17 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                 }
                 _gpuConverter ??= new D3D11Nv12SharedConverter(texture, frame.Width, frame.Height, _logger);
                 PresentRing(
-                    isGpu: true,
+                    PresentSource.D3D11,
                     frame.Width,
                     frame.Height,
                     _gpuConverter.GetSharedHandle,
                     i => _gpuConverter.ConvertInto(i, texture, slice),
                     frame.Pts
                 );
+            }
+            else if (frame is GpuVideoFrame d3d12 && d3d12.TryGetD3D12Texture(out var d3d12Texture, out _, out _, out _))
+            {
+                PresentD3D12(d3d12, d3d12Texture);
             }
             else if (frame.Format == FrameFlow.Media.PixelFormat.Bgra32 && frame.AsCpu() is { } cpu)
             {
@@ -849,7 +862,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                     DropCpuUploader();
                 _cpuUploader ??= new D3D11BgraUploader(frame.Width, frame.Height, _logger);
                 PresentRing(
-                    isGpu: false,
+                    PresentSource.Cpu,
                     frame.Width,
                     frame.Height,
                     _cpuUploader.GetSharedHandle,
@@ -862,7 +875,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                 _warnedUnpresentable = true;
                 _logger.LogWarning(
                     "Unpresentable frame: domain={Domain}, format={Format}, type={Type}. "
-                        + "Expected a D3D11VA GpuVideoFrame or a Bgra32 CPU frame.",
+                        + "Expected a D3D11VA or D3D12VA GpuVideoFrame or a Bgra32 CPU frame.",
                     frame.MemoryDomain, frame.Format, frame.GetType().Name
                 );
             }
@@ -883,6 +896,64 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         {
             frame.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Presents a D3D12VA frame (#429): the same converter decisions as the D3D11VA path, except
+    /// that a new decode device rebuilds the converter. Its D3D12 half lives on that device, and
+    /// decoders on one adapter share a device unless it came from <c>ID3D12DeviceFactory</c>, so a
+    /// change is rare enough that an in-place rebind is not worth its code.
+    /// </summary>
+    private void PresentD3D12(GpuVideoFrame frame, nint texture)
+    {
+        if (_gpuConverter is not null)
+            DropGpuConverter(GpuConverterDropReason.BackendChange);
+
+        switch (EvaluateConverterAction(
+            hasCached: _d3d12Converter is not null,
+            cachedDevice: _d3d12Converter?.SourceDevicePointer ?? nint.Zero,
+            cachedDeviceLost: _d3d12Converter?.IsDeviceLost ?? false,
+            frameDevice: D3D12YuvSharedConverter.DeviceIdentity(texture),
+            cachedWidth: _d3d12Converter?.Width ?? 0,
+            cachedHeight: _d3d12Converter?.Height ?? 0,
+            frameWidth: frame.Width,
+            frameHeight: frame.Height))
+        {
+            case ConverterAction.RebuildForDeviceLoss:
+                DropGpuConverter(GpuConverterDropReason.DeviceLost);
+                break;
+            case ConverterAction.RebuildForResolutionChange:
+                DropGpuConverter(GpuConverterDropReason.ResolutionChange);
+                break;
+            case ConverterAction.RebindDecodeDevice:
+                DropGpuConverter(GpuConverterDropReason.DecodeDeviceChange);
+                break;
+        }
+
+        var converter = _d3d12Converter ??= new D3D12YuvSharedConverter(texture, frame.Width, frame.Height, _logger);
+        PresentRing(
+            PresentSource.D3D12,
+            frame.Width,
+            frame.Height,
+            converter.GetSharedHandle,
+            i =>
+            {
+                // Both draws still on the GPU: the frame is dropped rather than waited for.
+                bool converted = converter.ConvertInto(i, frame);
+                if (!converted && !converter.IsDeviceLost)
+                    Interlocked.Increment(ref _framesDropped);
+                return converted;
+            },
+            frame.Pts
+        );
+    }
+
+    /// <summary>Which producer fills the ring for a frame.</summary>
+    private enum PresentSource
+    {
+        Cpu,
+        D3D11,
+        D3D12,
     }
 
     /// <summary>
@@ -928,7 +999,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// present-task bookkeeping.
     /// </remarks>
     private void PresentRing(
-        bool isGpu,
+        PresentSource source,
         int width,
         int height,
         Func<int, nint> getSharedHandle,
@@ -946,7 +1017,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         // compositor / clock; this shell performs the named outcomes below in plan order.
         var plan = PresentPlanner.Advance(
             CurrentPresentState(),
-            new FrameDescriptor(isGpu, width, height),
+            new FrameDescriptor(source != PresentSource.Cpu, width, height),
             SlotFree);
 
         // Perform "source flip" first: the imported[] ring is bound to one source's shared handles.
@@ -1049,23 +1120,32 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         // GetDiagnostics reads via Volatile from any thread.
         Volatile.Write(ref _lastPresentedPtsTicks, pts.Ticks);
         Volatile.Write(ref _lastPresentedAtUtcTicks, DateTime.UtcNow.Ticks);
-        LogProgress(isGpu);
+        LogProgress(source);
     }
 
-    private void LogProgress(bool isGpu)
+    private void LogProgress(PresentSource source)
     {
         var presented = Volatile.Read(ref _framesPresented);
 
-        if (isGpu && !_loggedGpuLive)
+        if (source == PresentSource.D3D11 && !_loggedGpuLive)
         {
             _loggedGpuLive = true;
             _logger.LogInformation(
-                "ZERO-COPY PATH LIVE: D3D11VA NV12 → VideoProcessor BGRA ({N}-buffer shared keyed-mutex "
+                "ZERO-COPY PATH LIVE: D3D11VA NV12 → pixel-shader BGRA ({N}-buffer shared keyed-mutex "
                     + "ring) → ICompositionGpuInterop.ImportImage → compositor. No CPU round-trip.",
                 D3D11Nv12SharedConverter.BufferCount
             );
         }
-        else if (!isGpu && !_loggedCpuLive)
+        else if (source == PresentSource.D3D12 && !_loggedD3D12Live)
+        {
+            _loggedD3D12Live = true;
+            _logger.LogInformation(
+                "ZERO-COPY PATH LIVE: D3D12VA NV12/P010 → D3D12 pixel-shader BGRA → D3D11 copy ({N}-buffer "
+                    + "shared keyed-mutex ring) → ICompositionGpuInterop.ImportImage → compositor. No CPU round-trip.",
+                D3D12YuvSharedConverter.BufferCount
+            );
+        }
+        else if (source == PresentSource.Cpu && !_loggedCpuLive)
         {
             _loggedCpuLive = true;
             _logger.LogInformation(
@@ -1084,8 +1164,13 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         if (presented % 120 == 0)
             _logger.LogInformation(
                 "Sustained presentation ({Mode}): {Presented} presented, {Dropped} dropped "
-                    + "({Superseded} superseded at the sink, {RingFull} ring-full).",
-                isGpu ? "zero-copy" : "cpu-upload",
+                    + "({Superseded} superseded at the sink, {Presenter} ring-full or GPU-busy).",
+                source switch
+                {
+                    PresentSource.D3D11 => "zero-copy",
+                    PresentSource.D3D12 => "zero-copy, D3D12",
+                    _ => "cpu-upload",
+                },
                 presented,
                 Volatile.Read(ref _framesDropped) + (_sink?.FramesSuperseded ?? 0),
                 _sink?.FramesSuperseded ?? 0,
@@ -1191,8 +1276,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         // the fields honest.) Only the producers — the keyed-mutex rings whose native Release
         // can block — are deferred off-thread; the surface is already gone (UI thread, above).
         var converter = _gpuConverter;
+        var d3d12Converter = _d3d12Converter;
         var uploader = _cpuUploader;
         _gpuConverter = null;
+        _d3d12Converter = null;
         _cpuUploader = null;
 
         if (drained)
@@ -1202,6 +1289,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             // thread — so even the borrowed-device Release at the converter's tail can't
             // hang the UI.
             converter?.Dispose();
+            d3d12Converter?.Dispose();
             uploader?.Dispose();
             var elapsedMs = PresenterTeardownMetrics.RecordCompleted(teardownStart);
             _logger.LogInformation(
@@ -1222,7 +1310,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                 (int)PresentDrainTimeout.TotalMilliseconds
             );
             PresenterTeardownMetrics.RecordDeferred();
-            PresenterTeardownReaper.Enqueue(gating, converter, uploader, _logger);
+            PresenterTeardownReaper.Enqueue(gating, _logger, converter, d3d12Converter, uploader);
         }
     }
 
@@ -1327,9 +1415,13 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         /// <summary>An incoming frame's dimensions differ from the converter's — the fixed-size ring +
         /// staging cannot rebind, so the converter is rebuilt at the new size.</summary>
         ResolutionChange,
+        /// <summary>The frames switched between D3D11VA and D3D12VA, which have different converters.</summary>
+        BackendChange,
+        /// <summary>A D3D12VA frame came from another device; the D3D12 converter rebuilds rather than rebinds.</summary>
+        DecodeDeviceChange,
     }
 
-    /// <summary>Drops the GPU converter and its imported ring; a fresh converter is built on the
+    /// <summary>Drops the GPU converter, D3D11 or D3D12, and its imported ring; a fresh converter is built on the
     /// next frame. Triggered by device-loss (step 6), a resolution change (the fixed-size ring can't
     /// rebind), or the warm-sink player-swap fallback (the converter owns its device and normally
     /// rebinds in place across a swap — ADR-0064 — so the swap-fallback rebuild is only taken
@@ -1352,6 +1444,17 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                 );
                 PresenterTeardownMetrics.RecordResolutionChangeRebuild();
                 break;
+            case GpuConverterDropReason.BackendChange:
+                _logger.LogInformation(
+                    "Presenter frames switched between D3D11VA and D3D12VA; dropping the GPU converter and building "
+                        + "the other one."
+                );
+                break;
+            case GpuConverterDropReason.DecodeDeviceChange:
+                _logger.LogInformation(
+                    "Presenter D3D12VA frames come from a new decode device; rebuilding the D3D12 converter on it."
+                );
+                break;
             default: // DeviceLost
                 _logger.LogWarning(
                     "Presenter GPU converter device-loss (TDR / DEVICE_REMOVED) detected; dropping it and "
@@ -1364,10 +1467,15 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         _nextBuffer = 0;
         _activeIsGpu = null;
         var conv = _gpuConverter;
+        var d3d12 = _d3d12Converter;
         _gpuConverter = null;
-        // Dispose off the UI thread: a lost device's Release can still stall in the driver.
+        _d3d12Converter = null;
+        // Dispose off the UI thread: a lost device's Release can still stall in the driver, and the
+        // D3D12 converter waits for its GPU work before releasing anything.
         if (conv is not null)
             Task.Run(conv.Dispose);
+        if (d3d12 is not null)
+            Task.Run(d3d12.Dispose);
     }
 
     /// <summary>Drops the CPU uploader and its imported ring after a device-loss; a fresh

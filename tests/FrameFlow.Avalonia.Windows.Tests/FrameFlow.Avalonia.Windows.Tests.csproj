@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- Reads NV12 planes and the presented ring through pointers. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,5 +20,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FrameFlow.Avalonia.Windows\FrameFlow.Avalonia.Windows.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- FFmpeg bootstrap, corpus decode and NV12 readback for the D3D12VA presenter tests. -->
+    <Compile Include="..\FrameFlow.Inference.D3D12.Tests\TestSupport.cs" Link="Shared\TestSupport.cs" />
   </ItemGroup>
 </Project>
