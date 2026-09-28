@@ -47,7 +47,11 @@ public sealed record FrameDomainRule
 
     /// <summary>Accepts <paramref name="accepts"/> and emits <paramref name="emits"/>.</summary>
     /// <param name="accepts">The domains the input accepts.</param>
-    /// <param name="emits">The output's domain, or <see langword="null"/> for what arrived.</param>
+    /// <param name="emits">
+    /// The output's domain, <see langword="null"/> for what arrived, or
+    /// <see cref="FrameMemoryDomains.None"/> when the output carries no frame that has one, such
+    /// as an inference node's results.
+    /// </param>
     /// <exception cref="ArgumentException"><paramref name="accepts"/> is empty.</exception>
     public static FrameDomainRule Accepting(FrameMemoryDomains accepts, FrameMemoryDomains? emits = null)
     {

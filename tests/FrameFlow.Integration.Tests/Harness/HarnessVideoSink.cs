@@ -168,6 +168,10 @@ internal sealed class HarnessVideoSink : IVideoSink
     /// <summary>The pending frame, and the one the pump is rendering.</summary>
     public int? MaxHeldFrames => 2;
 
+    /// <inheritdoc />
+    /// <summary>It records timestamps and reads no pixels, so it takes either domain.</summary>
+    public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Any;
+
     public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct)
     {
         Interlocked.Increment(ref _formatChangedCount);

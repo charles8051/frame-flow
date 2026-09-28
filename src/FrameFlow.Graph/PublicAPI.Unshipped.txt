@@ -249,6 +249,7 @@ FrameFlow.Graph.FrameMemoryDomains.Cpu = 1 -> FrameFlow.Graph.FrameMemoryDomains
 FrameFlow.Graph.FrameMemoryDomains.Gpu = 2 -> FrameFlow.Graph.FrameMemoryDomains
 FrameFlow.Graph.FrameMemoryDomains.None = 0 -> FrameFlow.Graph.FrameMemoryDomains
 FrameFlow.Graph.Graph.FrameDomainMismatchFor<T>(FrameFlow.Graph.OutputPort<T!>! source, FrameFlow.Graph.FrameMemoryDomains emitted) -> FrameFlow.Graph.FrameDomainMismatch?
+FrameFlow.Graph.Graph.FrameDomainMismatchFor<T>(FrameFlow.Graph.OutputPort<T!>! source, FrameFlow.Graph.FrameMemoryDomains emitted, FrameFlow.Graph.FrameDomainRule! undeclared) -> FrameFlow.Graph.FrameDomainMismatch?
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Domains.get -> FrameFlow.Graph.FrameDomainRule!
 FrameFlow.Graph.OperatorNode<TIn, TOut>.Domains.get -> FrameFlow.Graph.FrameDomainRule!
 FrameFlow.Graph.SinkNode<TIn>.Domains.get -> FrameFlow.Graph.FrameDomainRule!

@@ -37,7 +37,7 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         GraphChain<PcmAudioBuffer>,
         GraphChain<PcmAudioBuffer>
     >? _audioConfigurator;
-    private readonly bool _yieldHardwareFrames;
+    private readonly bool? _yieldHardwareFrames;
     private readonly HardwareDevice? _hardwareDevice;
 
     private readonly LatenessRecoveryOptions? _latenessRecovery;
@@ -60,7 +60,7 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         ILoggerFactory? loggerFactory = null,
         Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? videoConfigurator = null,
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator = null,
-        bool yieldHardwareFrames = false,
+        bool? yieldHardwareFrames = null,
         LatenessRecoveryOptions? latenessRecovery = null,
         HardwareDevice? hardwareDevice = null
     )

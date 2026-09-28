@@ -97,7 +97,13 @@ output tensor.
    frames where they are: the sink receives GPU frames and every result takes the device route
    (`PassHardwareFramesTests`).
 
-7. **Every claim above fails honestly on a machine without a GPU.** (#295) Met by #354:
+7. **A path that takes GPU frames gets them without asking.** (#294) Met: a player or pass with
+   no `WithHardwareFrames` keeps hardware frames on the GPU when every node they reach declares
+   that it takes them, the sink included, and the path is bounded; otherwise it downloads them. A
+   node or sink that declares nothing is taken to read CPU pixels (`HardwareFrameChoice`,
+   `PassHardwareFramesTests`, `PlayerHardwareFramesTests`).
+
+8. **Every claim above fails honestly on a machine without a GPU.** (#295) Met by #354:
    `RequiresHardwareDecodeFact` skips, naming what is missing, unless the probe initialised a
    backend for the codec under test. CI has no GPU on either leg, so skipping loudly there is the
    intended behaviour.

@@ -144,6 +144,9 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding, I
     /// </summary>
     public FrameDomainRule Domains { get; }
 
+    /// <summary>The rule the constructor was given, or null when it was given none.</summary>
+    internal FrameDomainRule? DeclaredDomains { get; }
+
     public OperatorNode(
         string id,
         Operator<TIn, TOut> body,
@@ -158,6 +161,7 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding, I
         Body = body;
         OnError = onError;
         Holding = holding ?? FrameHolding.Unbounded;
+        DeclaredDomains = domains;
         Domains = domains ?? FrameDomainRule.Any;
         Input = new InputPort<TIn>(this, "input");
         Output = new OutputPort<TOut>(this, "output");
@@ -165,7 +169,7 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding, I
 
     FrameHolding IDeclaresHolding.HoldingAt(IPort input) => Holding;
 
-    FrameDomainRule IDeclaresDomains.DomainsAt(IPort input) => Domains;
+    FrameDomainRule? IDeclaresDomains.DomainsAt(IPort input) => DeclaredDomains;
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpOperatorAsync(this, graphCts);
@@ -203,6 +207,9 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHoldi
     /// </summary>
     public FrameDomainRule Domains { get; }
 
+    /// <summary>The rule the constructor was given, or null when it was given none.</summary>
+    internal FrameDomainRule? DeclaredDomains { get; }
+
     public MultiOperatorNode(
         string id,
         MultiOperator<TIn, TOut> body,
@@ -217,6 +224,7 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHoldi
         Body = body;
         OnError = onError;
         Holding = holding ?? FrameHolding.Unbounded;
+        DeclaredDomains = domains;
         Domains = domains ?? FrameDomainRule.Any;
         Input = new InputPort<TIn>(this, "input");
         Output = new OutputPort<TOut>(this, "output");
@@ -224,7 +232,7 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHoldi
 
     FrameHolding IDeclaresHolding.HoldingAt(IPort input) => Holding;
 
-    FrameDomainRule IDeclaresDomains.DomainsAt(IPort input) => Domains;
+    FrameDomainRule? IDeclaresDomains.DomainsAt(IPort input) => DeclaredDomains;
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpMultiOperatorAsync(this, graphCts);
@@ -255,6 +263,9 @@ public sealed class SinkNode<TIn> : IPumpableNode, IDeclaresHolding, IDeclaresDo
     /// </summary>
     public FrameDomainRule Domains { get; }
 
+    /// <summary>The rule the constructor was given, or null when it was given none.</summary>
+    internal FrameDomainRule? DeclaredDomains { get; }
+
     public SinkNode(
         string id,
         Consumer<TIn> body,
@@ -269,13 +280,14 @@ public sealed class SinkNode<TIn> : IPumpableNode, IDeclaresHolding, IDeclaresDo
         Body = body;
         OnError = onError;
         Holding = holding ?? FrameHolding.Unbounded;
+        DeclaredDomains = domains;
         Domains = domains ?? FrameDomainRule.Any;
         Input = new InputPort<TIn>(this, "input");
     }
 
     FrameHolding IDeclaresHolding.HoldingAt(IPort input) => Holding;
 
-    FrameDomainRule IDeclaresDomains.DomainsAt(IPort input) => Domains;
+    FrameDomainRule? IDeclaresDomains.DomainsAt(IPort input) => DeclaredDomains;
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpSinkAsync(this, graphCts);

@@ -299,6 +299,13 @@ public sealed class MediaPass : IAsyncDisposable
 
         /// <summary>A node on the path that one of <paramref name="emitted"/> reaches and that does not take it.</summary>
         public FrameDomainMismatch? MismatchFor(FrameMemoryDomains emitted) => Graph.FrameDomainMismatchFor(Source, emitted);
+
+        /// <summary>
+        /// The first node that GPU frames would reach and that has not said it takes them, or null
+        /// when every one has (#294).
+        /// </summary>
+        public FrameDomainMismatch? UndeclaredGpuConsumer() =>
+            Graph.FrameDomainMismatchFor(Source, FrameMemoryDomains.Any, FrameDomainRule.CpuOnly);
     }
 
     public async ValueTask DisposeAsync()

@@ -120,11 +120,13 @@ public interface IVideoSink : IAsyncDisposable
 
     /// <summary>
     /// The memory domains of the frames the sink takes (#435). A graph that can hand it one it
-    /// does not take is refused before it runs.
+    /// does not take is refused before it runs, and a player or pass keeps hardware-decoded frames
+    /// on the GPU only when its sink takes them (#294).
     /// </summary>
     /// <remarks>
-    /// The default is <see cref="FrameMemoryDomains.Any"/>, so a sink that does not say is never
-    /// refused. A sink that reads pixels on the CPU says <see cref="FrameMemoryDomains.Cpu"/>.
+    /// The default is <see cref="FrameMemoryDomains.Cpu"/>: a sink that does not say is taken to
+    /// read pixels on the CPU. A sink that handles GPU frames, or never reads pixels, says
+    /// <see cref="FrameMemoryDomains.Any"/>.
     /// </remarks>
-    FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Any;
+    FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Cpu;
 }

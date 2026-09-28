@@ -110,8 +110,12 @@ public sealed class InferenceOperatorTests
         var model = new ChannelMeanModel(new ChannelMeanSession());
 
         // A GPU frame has no way in without a stage (#435).
-        Assert.Same(FrameDomainRule.CpuOnly, InferenceOperators.Infer("infer", model).Domains);
-        Assert.Same(FrameDomainRule.Any, InferenceOperators.Infer("infer", model, new FakeStage(model.Input)).Domains);
+        Assert.Equal(
+            FrameDomainRule.Accepting(FrameMemoryDomains.Cpu, emits: FrameMemoryDomains.None),
+            InferenceOperators.Infer("infer", model).Domains);
+        Assert.Equal(
+            FrameDomainRule.Accepting(FrameMemoryDomains.Any, emits: FrameMemoryDomains.None),
+            InferenceOperators.Infer("infer", model, new FakeStage(model.Input)).Domains);
     }
 
     [Fact]

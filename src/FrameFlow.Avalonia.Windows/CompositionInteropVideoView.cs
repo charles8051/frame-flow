@@ -407,7 +407,6 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
 
     // ── IVideoSurface (lets FrameFlowPlayerView host the zero-copy presenter) ──
     Control IVideoSurface.Control => this;
-    bool IVideoSurface.PrefersHardwareFrames => true;
     IVideoSink IVideoSurface.AttachSink(ILoggerFactory loggerFactory)
     {
         Initialize(loggerFactory);
@@ -1151,8 +1150,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             _logger.LogInformation(
                 "CPU-UPLOAD FALLBACK LIVE: CPU BGRA frame → staging → shared keyed-mutex texture "
                     + "({N}-buffer ring) → ICompositionGpuInterop.ImportImage → compositor (software "
-                    + "decode, or a hardware frame the decoder read back because WithHardwareFrames "
-                    + "is off).",
+                    + "decode, or a hardware frame the decoder downloaded because the video path "
+                    + "does not take GPU frames).",
                 D3D11Nv12SharedConverter.BufferCount
             );
         }

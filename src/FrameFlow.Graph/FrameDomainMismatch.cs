@@ -41,12 +41,26 @@ internal static class FrameDomainChecks
     /// <remarks>
     /// Each node passes on what arrived unless it declares an output domain, as a download does.
     /// A domain the source can hand out reaches every node downstream of it that nothing converts
-    /// on the way, on every branch.
+    /// on the way, on every branch. A node that declares it emits no domain, such as an inference
+    /// node whose results carry no frame, ends the walk there.
     /// </remarks>
-    public static FrameDomainMismatch? For(IPort source, FrameMemoryDomains emitted, IReadOnlyList<EdgeSpec> edges)
+    /// <param name="source">The port the frames leave from.</param>
+    /// <param name="emitted">The domains the source can hand out.</param>
+    /// <param name="edges">The graph's edges.</param>
+    /// <param name="undeclared">
+    /// What a node that declares nothing takes. <see cref="FrameDomainRule.Any"/>, the default,
+    /// never refuses one; <see cref="FrameDomainRule.CpuOnly"/> asks whether every node GPU frames
+    /// reach has said it takes them.
+    /// </param>
+    public static FrameDomainMismatch? For(
+        IPort source,
+        FrameMemoryDomains emitted,
+        IReadOnlyList<EdgeSpec> edges,
+        FrameDomainRule? undeclared = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(edges);
+        undeclared ??= FrameDomainRule.Any;
 
         var reaching = new Dictionary<IPort, FrameMemoryDomains> { [source] = emitted & FrameMemoryDomains.Any };
         var pending = new Queue<IPort>();
@@ -61,7 +75,7 @@ internal static class FrameDomainChecks
                 if (edge.From != output)
                     continue;
 
-                var rule = RuleAt(edge.To);
+                var rule = RuleAt(edge.To, undeclared);
                 var refused = domains & ~rule.Accepts;
                 if (refused != FrameMemoryDomains.None)
                     return new FrameDomainMismatch(edge.To.Owner.Id, refused, rule.Accepts);
@@ -84,6 +98,6 @@ internal static class FrameDomainChecks
         return null;
     }
 
-    private static FrameDomainRule RuleAt(IPort input) =>
-        input.Owner is IDeclaresDomains declares ? declares.DomainsAt(input) : FrameDomainRule.Any;
+    private static FrameDomainRule RuleAt(IPort input, FrameDomainRule undeclared) =>
+        (input.Owner as IDeclaresDomains)?.DomainsAt(input) ?? undeclared;
 }

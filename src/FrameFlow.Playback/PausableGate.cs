@@ -95,6 +95,8 @@ public sealed class PausableGate<T>
                 return item;
             },
             // One item, however long the gate stays shut.
-            holding: FrameHolding.InFlight
+            holding: FrameHolding.InFlight,
+            // Passes the item on untouched, so it takes a frame in either memory domain (#294).
+            domains: FrameDomainRule.Any
         );
 }

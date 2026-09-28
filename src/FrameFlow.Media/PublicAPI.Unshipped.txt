@@ -563,3 +563,5 @@ static readonly FrameFlow.Media.AudioClockInterpolation.DefaultMaxExtrapolation 
 static readonly FrameFlow.Media.AudioClockRateLimit.DefaultSlack -> System.TimeSpan
 FrameFlow.Media.PixelFormat.P010 = 6 -> FrameFlow.Media.PixelFormat
 FrameFlow.Media.IVideoSink.AcceptedDomains.get -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Media.HeadlessVideoSink.AcceptedDomains.get -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Media.NullVideoSink.AcceptedDomains.get -> FrameFlow.Graph.FrameMemoryDomains

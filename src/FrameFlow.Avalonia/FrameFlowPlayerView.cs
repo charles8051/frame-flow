@@ -189,9 +189,8 @@ public sealed class FrameFlowPlayerView : UserControl
 
     /// <summary>
     /// Wires the logger and returns the hosted surface's <see cref="IVideoSink"/> to hand to
-    /// <c>FrameFlowPlayer.Create()</c>. Pair with
-    /// <see cref="IVideoSurface.PrefersHardwareFrames"/> on <see cref="VideoSurface"/> for the
-    /// <c>yieldHardwareFrames</c> flag.
+    /// <c>FrameFlowPlayer.Create()</c>. The sink says which memory domains it takes, and the
+    /// player keeps hardware frames on the GPU for one that takes them (#294).
     /// </summary>
     public IVideoSink AttachSink(ILoggerFactory loggerFactory) => _surface.AttachSink(loggerFactory);
 

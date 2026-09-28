@@ -195,6 +195,26 @@ public sealed class Graph
     }
 
     /// <summary>
+    /// As <see cref="FrameDomainMismatchFor{T}(OutputPort{T}, FrameMemoryDomains)"/>, with a node
+    /// that declares nothing taking <paramref name="undeclared"/>.
+    /// </summary>
+    /// <remarks>
+    /// With <see cref="FrameDomainRule.CpuOnly"/>, a null result means every node that GPU frames
+    /// reach has said it takes them. A builder that decides whether to hand the graph GPU frames
+    /// asks that, rather than whether any node would refuse them (#294).
+    /// </remarks>
+    public FrameDomainMismatch? FrameDomainMismatchFor<T>(
+        OutputPort<T> source,
+        FrameMemoryDomains emitted,
+        FrameDomainRule undeclared)
+        where T : class, IRefCounted
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(undeclared);
+        return FrameDomainChecks.For(source, emitted, _edges, undeclared);
+    }
+
+    /// <summary>
     /// Runs the graph to completion. Returns when every node's pump
     /// loop has terminated (EOS propagated, cancellation requested,
     /// or a pump failed).

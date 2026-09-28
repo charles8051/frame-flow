@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Graph;
 using FrameFlow.Media.Diagnostics;
 
 namespace FrameFlow.Media;
@@ -152,6 +153,10 @@ public sealed class HeadlessVideoSink : IVideoSink
     /// <inheritdoc />
     /// <remarks>Every frame is released before the call returns.</remarks>
     public int? MaxHeldFrames => 0;
+
+    /// <inheritdoc />
+    /// <remarks>It never reads a frame's pixels.</remarks>
+    public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Any;
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()

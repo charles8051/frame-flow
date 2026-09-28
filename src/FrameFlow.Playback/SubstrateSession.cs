@@ -5,6 +5,7 @@ using System.Diagnostics;
 using FrameFlow.Media;
 using FrameFlow.Decoding;
 using FrameFlow.Media.Diagnostics;
+using FrameFlow.Playback.Core;
 using FrameFlow.Playback.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -185,7 +186,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     private bool _disposed;
     // Null reaches the decoder, which resolves it to the process probe (#181).
     private readonly FrameFlow.Media.HardwareDecodeCapabilities? _hwCapabilities;
-    private readonly bool _yieldHardwareFrames;
+    // Null: derived from the video path (#294).
+    private readonly bool? _yieldHardwareFrames;
     // Borrowed by this item's decoder; owned above the player, so it outlives the item.
     private readonly HardwareDevice? _hardwareDevice;
 
@@ -199,7 +201,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         ILoggerFactory? loggerFactory = null,
         Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? videoConfigurator = null,
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator = null,
-        bool yieldHardwareFrames = false,
+        bool? yieldHardwareFrames = null,
         HardwareDevice? hardwareDevice = null
     )
     {
@@ -474,12 +476,31 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 // VideoDecoderOptions.PacketQueueCapacity knob is available if a future,
                 // separately-validated tuning pass wants a tighter no-audio queue.
                 //
-                // A decoder that yields hardware frames sizes its pool for what the video path
-                // can hold, which is computed before it opens (ADR-0081).
-                var videoProbe = _yieldHardwareFrames
+                // Whether the decoder keeps hardware frames on the GPU is decided on a copy of
+                // the video path built before it opens, and a decoder that does sizes its pool
+                // for what that path can hold (#294, ADR-0081).
+                var hardwareDisabled = _hwMode == HardwareDecodeMode.Disabled;
+                var videoProbe = HardwareFrameChoice.NeedsProbe(_yieldHardwareFrames, hardwareDisabled)
                     ? VideoProbe(_videoConfigurator, _videoSink!)
                     : default;
-                var videoBudget = videoProbe.Graph?.FrameBudgetFor(videoProbe.Source!);
+                var pathBudget = videoProbe.Graph?.FrameBudgetFor(videoProbe.Source!);
+                var hardwareFrames = HardwareFrameChoice.Decide(
+                    _yieldHardwareFrames,
+                    hardwareDisabled,
+                    _yieldHardwareFrames is null
+                        ? videoProbe.Graph?.FrameDomainMismatchFor(
+                            videoProbe.Source!, FrameMemoryDomains.Any, FrameDomainRule.CpuOnly)
+                        : null,
+                    pathBudget);
+                if (!hardwareDisabled)
+                {
+                    _logger.LogInformation(
+                        "Hardware-decoded video frames {Where}: {Reason}.",
+                        hardwareFrames.Yield ? "stay on the GPU" : "are downloaded to system memory",
+                        hardwareFrames.Reason);
+                }
+
+                var videoBudget = hardwareFrames.Yield ? pathBudget : null;
                 var videoFactory = DecoderFactories.CreateVideo(
                     new HardwareDecodeOptions { Mode = _hwMode },
                     _hwCapabilities,
@@ -495,7 +516,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 videoDecoder = videoFactory(demux) as VideoDecoder;
                 if (videoDecoder is not null)
                 {
-                    videoDecoder.YieldHardwareFrames = _yieldHardwareFrames;
+                    videoDecoder.YieldHardwareFrames = hardwareFrames.Yield;
 
                     // A node that cannot take the frames' memory domain, and a path that holds
                     // without bound over a fixed pool, are refused here, at load, rather than
