@@ -190,13 +190,10 @@ jobs:
       # The tests reach the inference packages through project references, which
       # copy files a package consumer never gets. This packs them and runs an app
       # built against each .nupkg: a CPU session on every OS (#437), and on
-      # Windows the package's own DirectML.dll in an app built without a runtime
-      # identifier (#433). See scripts/package-smoke.cs.
+      # Windows the package's own DirectML.dll beside onnxruntime.dll in an app
+      # built without a runtime identifier (#433). See scripts/package-smoke.cs.
       - name: Package smoke test
-        shell: bash
-        run: |
-          dotnet pack FrameFlow.slnx --configuration Release --no-build -p:FrameFlowLocalFeedDisable=true -o "$RUNNER_TEMP/packages"
-          dotnet run scripts/package-smoke.cs -- --packages "$RUNNER_TEMP/packages"
+        run: dotnet run scripts/package-smoke.cs -- --no-build
 
       - name: Upload test results
         if: always()

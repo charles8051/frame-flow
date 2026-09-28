@@ -10,47 +10,55 @@
 //
 //   - FrameFlow.Inference.Cpu, on every OS: a CPU session runs a one-node
 //     model and returns the exact result (#437).
-//   - FrameFlow.Inference.Dml, on Windows: the DirectML.dll in the process is
-//     the package's, not Windows' own, which is too old on some Windows 10
-//     builds (#433). The app is built without a runtime identifier, so the
-//     package's DirectML.dll stays under runtimes/win-x64/native, where ONNX
-//     Runtime finds it only because it sits beside onnxruntime.dll. A session is
-//     attempted too; a host with no DirectX 12 adapter may refuse it, and that
-//     is not what this checks.
+//   - FrameFlow.Inference.Dml, on Windows: the package's DirectML.dll, not
+//     Windows' own, which is too old on some Windows 10 builds (#433). The app
+//     is built without a runtime identifier, so the package's DirectML.dll stays
+//     under runtimes/win-x64/native, and ONNX Runtime's DirectML provider finds
+//     it there only because it sits beside onnxruntime.dll. The app checks that
+//     layout. Where a DirectX 12 adapter lets a session open, it also checks the
+//     DirectML.dll loaded is that one; without one, as on a hosted runner, ONNX
+//     Runtime fails before it loads DirectML.dll at all.
 //
-// Pack first, then point the script at the folder:
+// The script packs what the apps need itself, not the whole solution:
+// FrameFlow.Native refuses to pack without every platform's FFmpeg binaries.
 //
-//   dotnet pack FrameFlow.slnx -c Release -p:FrameFlowLocalFeedDisable=true -o <dir>
-//   dotnet run scripts/package-smoke.cs -- --packages <dir>
+//   dotnet run scripts/package-smoke.cs                  # builds Release
+//   dotnet run scripts/package-smoke.cs -- --no-build    # after a Release build, as CI does
 //
 // Exits non-zero, naming the app, when any check fails.
 
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 
-string? packagesArg = null;
-for (int i = 0; i < args.Length - 1; i++)
-{
-    if (args[i] == "--packages")
-        packagesArg = args[i + 1];
-}
-
-if (packagesArg is null || !Directory.Exists(packagesArg))
-{
-    Console.Error.WriteLine("Usage: dotnet run scripts/package-smoke.cs -- --packages <folder of .nupkg files>");
-    return 2;
-}
-
-string packages = Path.GetFullPath(packagesArg);
+bool noBuild = args.Contains("--no-build");
 string repo = FindRepoRoot();
 string model = Path.Combine(repo, "tests", "FrameFlow.Inference.Dml.Tests", "OnnxModel.cs");
-
-// FrameFlow packages come from the folder only, so a published release cannot stand in for the
-// one under test. Their own FrameFlow dependencies are in the same folder.
-string version = VersionOf(packages, "FrameFlow.Inference.Cpu");
 string root = Path.Combine(Path.GetTempPath(), "frameflow-package-smoke");
+string packages = Path.Combine(root, "packages");
 string globalPackages = Path.Combine(root, "nuget-packages");
+if (Directory.Exists(packages))
+    Directory.Delete(packages, recursive: true);
 Directory.CreateDirectory(globalPackages);
+
+// The apps' packages and the FrameFlow packages they depend on.
+string[] projects = ["FrameFlow.Graph", "FrameFlow.Media", "FrameFlow.Inference.Abstractions", "FrameFlow.Inference.Ort", "FrameFlow.Inference.Cpu"];
+if (OperatingSystem.IsWindows())
+    projects = [.. projects, "FrameFlow.Inference.Dml"];
+foreach (var project in projects)
+{
+    string[] pack = ["pack", Path.Combine(repo, "src", project), "-c", "Release", "-p:FrameFlowLocalFeedDisable=true", "-o", packages];
+    var (packed, output) = Dotnet(repo, noBuild ? [.. pack, "--no-build"] : pack);
+    if (packed != 0)
+    {
+        Console.Error.WriteLine(output);
+        Console.Error.WriteLine($"package smoke: packing {project} failed");
+        return 1;
+    }
+}
+
+// FrameFlow packages come from that folder only, so a published release cannot stand in for the
+// one under test.
+string version = VersionOf(packages, "FrameFlow.Inference.Cpu");
 
 // A local rebuild on the same commit repacks the same version, which a warm package folder would
 // serve from cache.
@@ -199,16 +207,25 @@ partial class Program
             Console.WriteLine($"DirectML session not opened here ({ex.GetType().Name}); checking the DLL only");
         }
 
+        // ONNX Runtime's DirectML provider loads DirectML.dll from onnxruntime.dll's own folder
+        // before System32, so the package's copy has to be there.
+        string native = Path.Combine(AppContext.BaseDirectory, "runtimes", "win-x64", "native");
+        string expected = Path.Combine(native, "DirectML.dll");
+        bool beside = File.Exists(expected) && File.Exists(Path.Combine(native, "onnxruntime.dll"));
+        Console.WriteLine($"DirectML.dll beside onnxruntime.dll: {beside}");
+        if (!beside)
+            return 1;
+
         nint module = GetModuleHandleW("DirectML.dll");
         if (module == 0)
         {
-            Console.WriteLine("DirectML.dll is not loaded");
-            return 1;
+            // No DirectX 12 adapter: ONNX Runtime failed before it loaded DirectML.dll.
+            Console.WriteLine("DirectML.dll not loaded here; the layout is what was checked");
+            return 0;
         }
 
         var path = new StringBuilder(1024);
         GetModuleFileNameW(module, path, path.Capacity);
-        string expected = Path.Combine(AppContext.BaseDirectory, "runtimes", "win-x64", "native", "DirectML.dll");
         Console.WriteLine($"DirectML.dll loaded from {path}");
         return string.Equals(path.ToString(), expected, StringComparison.OrdinalIgnoreCase) ? 0 : 1;
 
