@@ -1,6 +1,6 @@
 # GPU-resident inference
 
-**Status:** Draft. Requirements 1, 2, 3, 5, 6, 7, 8 and 9 are met, and 4 is decided and built. Tracked by #288; every
+**Status:** Complete. Requirements 1 to 3 and 5 to 10 are met, and 4 is decided and built. Tracked by #288; every
 requirement below names the issue that carries it. Living document, rewritten as the feature
 changes.
 
