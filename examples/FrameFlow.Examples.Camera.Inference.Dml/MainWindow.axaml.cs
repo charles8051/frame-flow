@@ -97,10 +97,9 @@ public partial class MainWindow : Window
             (faceMode ? FaceModelPath : ModelPath) ?? "(stock yolov8n)");
 
         // FFmpeg bootstrap for the BGRA32 ConvertPixelFormat (libswscale)
-        // stage. This example never goes through the player builder, so
-        // the DllImportResolver that maps "swscale" → "swscale-8.dll" must be
-        // registered explicitly or the first frame throws DllNotFoundException.
-        // Skip the HW-decode probe — cameras don't decode.
+        // stage. The resolver would install itself on the first native call
+        // (ADR-0070); bootstrapping here chooses the binaries up front and
+        // skips the HW-decode probe — cameras don't decode.
         var ffmpeg = new FrameFlowBootstrapper(
             new FrameFlowNativeOptions { SkipHardwareProbe = true },
             _loggerFactory).Initialize();

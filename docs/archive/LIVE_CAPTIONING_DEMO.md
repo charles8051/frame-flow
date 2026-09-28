@@ -1,7 +1,9 @@
 # Live Captioning Demo — Build Plan
 
 **Last reviewed:** 2026-05-11
-**Status:** Planning
+**Status:** Historical (archived 2026-09-28). The demo shipped as
+`examples/FrameFlow.Examples.LiveCaptioning`. This is the plan it was built
+from, and its API sketches predate the current graph and player surfaces.
 **Owners:** TBD
 **Scope:** A focused demo showing FrameFlow + Crossbar running *two*
 ML models on the same playback pipeline — YOLO on video, Whisper on

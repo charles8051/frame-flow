@@ -198,6 +198,29 @@ public sealed class SinkAdaptersTests
         public ValueTask DisposeAsync() => default;
     }
 
+    [Fact]
+    public void AVideoSinksNode_TakesTheDomainsTheSinkAccepts()
+    {
+        // A sink that says nothing takes either domain; one that reads CPU pixels says so (#435).
+        Assert.Equal(FrameMemoryDomains.Any, new FakeVideoSink(_ => { }).AsSinkNode().Domains.Accepts);
+        Assert.Equal(FrameMemoryDomains.Cpu, new CpuVideoSink().AsSinkNode().Domains.Accepts);
+    }
+
+    private sealed class CpuVideoSink : IVideoSink
+    {
+        public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Cpu;
+
+        public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
+        {
+            frame.Dispose();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) => ValueTask.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     private sealed class FakeVideoSink : IVideoSink
     {
         private readonly Action<IVideoFrame> _onPresent;

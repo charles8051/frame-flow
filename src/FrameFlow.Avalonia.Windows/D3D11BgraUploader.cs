@@ -17,8 +17,9 @@ namespace FrameFlow.Avalonia.Windows;
 /// Windows / D3D11 only.
 /// </summary>
 /// <remarks>
-/// This is a <i>single-copy</i> path (CPU → staging → shared texture), not zero-copy:
-/// software decode already paid for a CPU frame, so the upload is the unavoidable cost.
+/// This path makes two copies: a memcpy into a staging texture, then a <c>CopyResource</c>
+/// into the shared texture. Software decode already paid for a CPU frame, so the upload is
+/// the unavoidable cost.
 /// It owns its own D3D11 device (there is no decoder device to borrow on the CPU path)
 /// and a reusable dynamic staging texture; <see cref="UploadInto"/> maps the staging
 /// texture, copies the rows, then <c>CopyResource</c>s it into the chosen ring buffer

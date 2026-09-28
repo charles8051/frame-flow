@@ -178,8 +178,9 @@ public interface IPlayerBuilder
 
     /// <summary>
     /// Requests that hardware-decoded frames reach the video sink still on the GPU rather than
-    /// being downloaded to system memory. Defaults to <see langword="false"/>; set it when the
-    /// sink reports <c>PrefersHardwareFrames</c>.
+    /// being downloaded to system memory. Defaults to <see langword="false"/>; set it when every
+    /// node on the video path and the sink take GPU frames (<see cref="IVideoSink.AcceptedDomains"/>).
+    /// A path with one that does not is refused at load, naming it (#435).
     /// </summary>
     IPlayerBuilder WithHardwareFrames(bool yieldHardwareFrames = true);
 

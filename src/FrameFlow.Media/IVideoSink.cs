@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Graph;
 using FrameFlow.Media.Diagnostics;
 
 namespace FrameFlow.Media;
@@ -35,11 +36,13 @@ namespace FrameFlow.Media;
 /// </para>
 /// <para>
 /// <b>Memory-domain handling.</b> The substrate does not negotiate
-/// memory-domain compatibility. If a sink only accepts CPU-resident
-/// frames and the upstream pipeline can produce GPU frames, the
-/// consumer is responsible for inserting an explicit conversion operator
-/// before the sink. Sinks that receive a frame in a domain they can't
-/// handle should fail loudly from <see cref="PresentAsync"/>.
+/// memory-domain compatibility or insert conversions. A sink says which
+/// domains it takes in <see cref="AcceptedDomains"/>, and a graph whose
+/// decoder can hand it a domain it does not take is refused before it runs,
+/// naming the sink (#435). The consumer puts an explicit conversion, such as
+/// <c>VideoOperators.ToCpu</c>, before it. A sink that receives a frame in a
+/// domain it can't handle should still fail loudly from
+/// <see cref="PresentAsync"/>.
 /// </para>
 /// <para>
 /// The playback pipeline calls <see cref="PresentAsync"/> to deliver frames
@@ -114,4 +117,14 @@ public interface IVideoSink : IAsyncDisposable
     /// bound.
     /// </remarks>
     int? MaxHeldFrames => null;
+
+    /// <summary>
+    /// The memory domains of the frames the sink takes (#435). A graph that can hand it one it
+    /// does not take is refused before it runs.
+    /// </summary>
+    /// <remarks>
+    /// The default is <see cref="FrameMemoryDomains.Any"/>, so a sink that does not say is never
+    /// refused. A sink that reads pixels on the CPU says <see cref="FrameMemoryDomains.Cpu"/>.
+    /// </remarks>
+    FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Any;
 }

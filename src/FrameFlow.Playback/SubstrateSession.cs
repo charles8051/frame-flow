@@ -476,9 +476,10 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 //
                 // A decoder that yields hardware frames sizes its pool for what the video path
                 // can hold, which is computed before it opens (ADR-0081).
-                var videoBudget = _yieldHardwareFrames
-                    ? VideoFrameBudget(_videoConfigurator, _videoSink!)
-                    : null;
+                var videoProbe = _yieldHardwareFrames
+                    ? VideoProbe(_videoConfigurator, _videoSink!)
+                    : default;
+                var videoBudget = videoProbe.Graph?.FrameBudgetFor(videoProbe.Source!);
                 var videoFactory = DecoderFactories.CreateVideo(
                     new HardwareDecodeOptions { Mode = _hwMode },
                     _hwCapabilities,
@@ -496,8 +497,11 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 {
                     videoDecoder.YieldHardwareFrames = _yieldHardwareFrames;
 
-                    // A path that holds without bound over a fixed pool is refused here, at load,
-                    // rather than when its first run starts.
+                    // A node that cannot take the frames' memory domain, and a path that holds
+                    // without bound over a fixed pool, are refused here, at load, rather than
+                    // when its first run starts (#435, ADR-0081).
+                    if (videoProbe.Graph?.FrameDomainMismatchFor(videoProbe.Source!, videoDecoder.EmittedDomains) is { } mismatch)
+                        throw new InvalidOperationException(mismatch.Message);
                     if (videoBudget is not null)
                         videoDecoder.CheckFrameBudget(videoBudget);
 
@@ -1556,6 +1560,21 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         IVideoSink sink
     )
     {
+        var (graph, source) = VideoProbe(configurator, sink);
+        return graph!.FrameBudgetFor(source!);
+    }
+
+    /// <summary>
+    /// A copy of a session's video path over <paramref name="sink"/>, with a stand-in source and
+    /// the pacer's declaration, built before the decoder opens. Its budget sizes the decoder's
+    /// pool, and once the decoder has opened it says whether a node on the path cannot take the
+    /// memory domains the decoder hands out (#435).
+    /// </summary>
+    internal static (FrameFlow.Graph.Graph? Graph, OutputPort<IVideoFrame>? Source) VideoProbe(
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? configurator,
+        IVideoSink sink
+    )
+    {
         ArgumentNullException.ThrowIfNull(sink);
         var graph = new FrameFlow.Graph.Graph();
         var source = new SourceNode<IVideoFrame>("video-source", static _ => default);
@@ -1566,7 +1585,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             configurator,
             new PacerDeclaration(sink).AsSinkNode("video-sink")
         );
-        return graph.FrameBudgetFor(source.Output);
+        return (graph, source.Output);
     }
 
     /// <summary>
@@ -1576,6 +1595,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     private sealed class PacerDeclaration(IVideoSink inner) : IVideoSink
     {
         public int? MaxHeldFrames => ClockSelectVideoSink.MaxHeldFramesOver(inner);
+
+        public FrameMemoryDomains AcceptedDomains => inner.AcceptedDomains;
 
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct) =>
             throw new InvalidOperationException("A budget's stand-in sink is never run.");

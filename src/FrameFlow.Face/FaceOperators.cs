@@ -46,6 +46,8 @@ public static class FaceOperators
                     new DetectedFaceFrameRef(videoCopy, faces));
             },
             // The output carries the input frame itself.
-            holding: FrameHolding.InFlight);
+            holding: FrameHolding.InFlight,
+            // The detectors it wraps read the frame's pixels on the CPU (#435).
+            domains: FrameDomainRule.CpuOnly);
     }
 }

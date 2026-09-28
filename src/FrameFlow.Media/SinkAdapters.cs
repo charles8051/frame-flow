@@ -62,7 +62,8 @@ public static class SinkAdapters
             id,
             (frame, ct) => sink.PresentAsync(frame.AddRef(), ct),
             // The frame in the call, and what the sink keeps after it.
-            holding: sink.MaxHeldFrames is { } kept ? FrameHolding.AtMost(kept + 1) : FrameHolding.Unbounded
+            holding: sink.MaxHeldFrames is { } kept ? FrameHolding.AtMost(kept + 1) : FrameHolding.Unbounded,
+            domains: FrameDomainRule.Accepting(sink.AcceptedDomains)
         );
     }
 

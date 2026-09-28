@@ -274,9 +274,10 @@ internal sealed class PassBuilder : IPassBuilder
             {
                 // A decoder that yields hardware frames sizes its pool for what the video path
                 // can hold, which is computed before it opens (ADR-0081, #292).
-                var videoBudget = _yieldHardwareFrames
-                    ? MediaPass.VideoFrameBudget(_videoConfigurator, _videoSink)
+                var videoProbe = _yieldHardwareFrames
+                    ? MediaPass.VideoProbe(_videoConfigurator, _videoSink)
                     : null;
+                var videoBudget = videoProbe?.Budget;
                 videoDecoder =
                     DecoderFactories.CreateVideo(
                         new HardwareDecodeOptions { Mode = _hwMode },
@@ -288,8 +289,11 @@ internal sealed class PassBuilder : IPassBuilder
                 {
                     videoDecoder.YieldHardwareFrames = _yieldHardwareFrames;
 
-                    // A path that holds without bound is refused here, before anything runs,
-                    // rather than when the run starts.
+                    // A node that cannot take the frames' memory domain, and a path that holds
+                    // without bound, are refused here, before anything runs, rather than when
+                    // the run starts (#435, ADR-0081).
+                    if (videoProbe?.MismatchFor(videoDecoder.EmittedDomains) is { } mismatch)
+                        throw new InvalidOperationException(mismatch.Message);
                     if (videoBudget is not null)
                         videoDecoder.CheckFrameBudget(videoBudget);
                 }

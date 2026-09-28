@@ -105,6 +105,16 @@ public sealed class InferenceOperatorTests
     }
 
     [Fact]
+    public void WithoutADeviceStage_TheNodeTakesCpuFramesOnly()
+    {
+        var model = new ChannelMeanModel(new ChannelMeanSession());
+
+        // A GPU frame has no way in without a stage (#435).
+        Assert.Same(FrameDomainRule.CpuOnly, InferenceOperators.Infer("infer", model).Domains);
+        Assert.Same(FrameDomainRule.Any, InferenceOperators.Infer("infer", model, new FakeStage(model.Input)).Domains);
+    }
+
+    [Fact]
     public void AStageThatWritesAnotherTensor_IsRefused()
     {
         var model = new ChannelMeanModel(new ChannelMeanSession());

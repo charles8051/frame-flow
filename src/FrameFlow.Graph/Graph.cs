@@ -176,6 +176,25 @@ public sealed class Graph
     }
 
     /// <summary>
+    /// The first node, walking from <paramref name="source"/>, that one of
+    /// <paramref name="emitted"/> can reach and that does not accept it, or <see langword="null"/>
+    /// when every node on the way accepts what can reach it (#435).
+    /// </summary>
+    /// <remarks>
+    /// Each node passes on the domains that arrived unless it declares an output domain
+    /// (<see cref="FrameDomainRule"/>), as a download to system memory does. A node that declares
+    /// nothing accepts either domain. A builder that knows its source's domains before the graph
+    /// runs uses this to refuse a graph at build; <see cref="RunAsync"/> refuses one whose source
+    /// declares its domains.
+    /// </remarks>
+    public FrameDomainMismatch? FrameDomainMismatchFor<T>(OutputPort<T> source, FrameMemoryDomains emitted)
+        where T : class, IRefCounted
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return FrameDomainChecks.For(source, emitted, _edges);
+    }
+
+    /// <summary>
     /// Runs the graph to completion. Returns when every node's pump
     /// loop has terminated (EOS propagated, cancellation requested,
     /// or a pump failed).
@@ -219,6 +238,19 @@ public sealed class Graph
                 "This graph is not wired correctly:" + Environment.NewLine + "  "
                     + string.Join(Environment.NewLine + "  ", errors)
             );
+        }
+
+        // A source that says which memory domains its frames can be in has each of them checked
+        // against the nodes it can reach, so a node that cannot read one is named here rather
+        // than failing on the first such frame (#435).
+        foreach (var node in _nodes)
+        {
+            if (node is IDomainSource source
+                && source.EmittedDomains is { } emitted
+                && FrameDomainChecks.For(source.DomainOutput, emitted, _edges) is { } mismatch)
+            {
+                throw new InvalidOperationException(mismatch.Message);
+            }
         }
 
         // Each fixed-pool source learns what this graph can hold of its frames before anything

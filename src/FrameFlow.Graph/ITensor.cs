@@ -23,10 +23,11 @@ namespace FrameFlow.Graph;
 /// <para>
 /// <b>Memory domain.</b> Tensors carry a
 /// <see cref="FrameMemoryDomain"/> indicating where their data lives
-/// (CPU, GPU, etc.). Sinks advertise the domains they accept; the
-/// runtime is responsible for inserting converter operators between
-/// incompatible domains. The memory-domain shape is intentionally
-/// extensible per ADR-0001 §4.
+/// (CPU, GPU, etc.). Nothing converts between domains for the consumer:
+/// a conversion is an explicit node (ADR-0012). For video frames, nodes and
+/// sinks declare the domains they take, and a graph refuses a node that a
+/// domain it does not take can reach (#435). The memory-domain shape is
+/// intentionally extensible per ADR-0001 §4.
 /// </para>
 /// <para>
 /// <b>Disposal semantics.</b> <see cref="IDisposable.Dispose"/>

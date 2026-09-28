@@ -44,7 +44,7 @@ internal interface IPumpableNode : INode
 /// A source node: produces items via a <see cref="Producer{TOut}"/>
 /// function until it returns null (end of stream).
 /// </summary>
-public sealed class SourceNode<TOut> : IPumpableNode, IBudgetedSource
+public sealed class SourceNode<TOut> : IPumpableNode, IBudgetedSource, IDomainSource
     where TOut : class, IRefCounted
 {
     public string Id { get; }
@@ -71,12 +71,21 @@ public sealed class SourceNode<TOut> : IPumpableNode, IBudgetedSource
     /// </summary>
     public Action<FrameBudget>? OnBudget { get; }
 
+    /// <summary>
+    /// Read each time a graph containing this source starts a run, before any pump: the memory
+    /// domains its frames can be in (#435). The graph refuses the run when one of them can reach
+    /// a node that does not accept it. <see langword="null"/> when the source does not say, and
+    /// then nothing downstream of it is checked.
+    /// </summary>
+    public Func<FrameMemoryDomains>? Emits { get; }
+
     public SourceNode(
         string id,
         Producer<TOut> body,
         FailureResponse onError = FailureResponse.Propagate,
         Func<ValueTask>? cleanup = null,
-        Action<FrameBudget>? onBudget = null
+        Action<FrameBudget>? onBudget = null,
+        Func<FrameMemoryDomains>? emits = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -86,8 +95,13 @@ public sealed class SourceNode<TOut> : IPumpableNode, IBudgetedSource
         OnError = onError;
         Cleanup = cleanup;
         OnBudget = onBudget;
+        Emits = emits;
         Output = new OutputPort<TOut>(this, "output");
     }
+
+    IPort IDomainSource.DomainOutput => Output;
+
+    FrameMemoryDomains? IDomainSource.EmittedDomains => Emits?.Invoke();
 
     IPort IBudgetedSource.BudgetedOutput => Output;
 
@@ -108,7 +122,7 @@ public sealed class SourceNode<TOut> : IPumpableNode, IBudgetedSource
 /// outputs. The operator function may return null to drop the input
 /// without producing an output.
 /// </summary>
-public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding
+public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding, IDeclaresDomains
     where TIn : class, IRefCounted
     where TOut : class, IRefCounted
 {
@@ -124,11 +138,18 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding
     /// </summary>
     public FrameHolding Holding { get; }
 
+    /// <summary>
+    /// The memory domains the node accepts and emits (#435). <see cref="FrameDomainRule.Any"/>
+    /// when the constructor was given none.
+    /// </summary>
+    public FrameDomainRule Domains { get; }
+
     public OperatorNode(
         string id,
         Operator<TIn, TOut> body,
         FailureResponse onError = FailureResponse.Propagate,
-        FrameHolding? holding = null
+        FrameHolding? holding = null,
+        FrameDomainRule? domains = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -137,11 +158,14 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding
         Body = body;
         OnError = onError;
         Holding = holding ?? FrameHolding.Unbounded;
+        Domains = domains ?? FrameDomainRule.Any;
         Input = new InputPort<TIn>(this, "input");
         Output = new OutputPort<TOut>(this, "output");
     }
 
     FrameHolding IDeclaresHolding.HoldingAt(IPort input) => Holding;
+
+    FrameDomainRule IDeclaresDomains.DomainsAt(IPort input) => Domains;
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpOperatorAsync(this, graphCts);
@@ -157,7 +181,7 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding
 /// historic Channel-bridge boilerplate consumers had to write for
 /// 1→N expansion.
 /// </summary>
-public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding
+public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding, IDeclaresDomains
     where TIn : class, IRefCounted
     where TOut : class, IRefCounted
 {
@@ -173,11 +197,18 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHoldi
     /// </summary>
     public FrameHolding Holding { get; }
 
+    /// <summary>
+    /// The memory domains the node accepts and emits (#435). <see cref="FrameDomainRule.Any"/>
+    /// when the constructor was given none.
+    /// </summary>
+    public FrameDomainRule Domains { get; }
+
     public MultiOperatorNode(
         string id,
         MultiOperator<TIn, TOut> body,
         FailureResponse onError = FailureResponse.Propagate,
-        FrameHolding? holding = null
+        FrameHolding? holding = null,
+        FrameDomainRule? domains = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -186,11 +217,14 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHoldi
         Body = body;
         OnError = onError;
         Holding = holding ?? FrameHolding.Unbounded;
+        Domains = domains ?? FrameDomainRule.Any;
         Input = new InputPort<TIn>(this, "input");
         Output = new OutputPort<TOut>(this, "output");
     }
 
     FrameHolding IDeclaresHolding.HoldingAt(IPort input) => Holding;
+
+    FrameDomainRule IDeclaresDomains.DomainsAt(IPort input) => Domains;
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpMultiOperatorAsync(this, graphCts);
@@ -201,7 +235,7 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHoldi
 // ─────────────────────────────────────────────────────────────────
 
 /// <summary>A sink node: receives items, produces side effects, no output.</summary>
-public sealed class SinkNode<TIn> : IPumpableNode, IDeclaresHolding
+public sealed class SinkNode<TIn> : IPumpableNode, IDeclaresHolding, IDeclaresDomains
     where TIn : class, IRefCounted
 {
     public string Id { get; }
@@ -215,11 +249,18 @@ public sealed class SinkNode<TIn> : IPumpableNode, IDeclaresHolding
     /// </summary>
     public FrameHolding Holding { get; }
 
+    /// <summary>
+    /// The memory domains the sink accepts (#435). <see cref="FrameDomainRule.Any"/> when the
+    /// constructor was given none.
+    /// </summary>
+    public FrameDomainRule Domains { get; }
+
     public SinkNode(
         string id,
         Consumer<TIn> body,
         FailureResponse onError = FailureResponse.Propagate,
-        FrameHolding? holding = null
+        FrameHolding? holding = null,
+        FrameDomainRule? domains = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -228,10 +269,13 @@ public sealed class SinkNode<TIn> : IPumpableNode, IDeclaresHolding
         Body = body;
         OnError = onError;
         Holding = holding ?? FrameHolding.Unbounded;
+        Domains = domains ?? FrameDomainRule.Any;
         Input = new InputPort<TIn>(this, "input");
     }
 
     FrameHolding IDeclaresHolding.HoldingAt(IPort input) => Holding;
+
+    FrameDomainRule IDeclaresDomains.DomainsAt(IPort input) => Domains;
 
     Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
         NodePumps.PumpSinkAsync(this, graphCts);

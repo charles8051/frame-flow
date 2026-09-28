@@ -25,9 +25,10 @@ namespace FrameFlow.Examples.Multicast.Dml;
 /// displace older latched frames; the worker drains the latch after
 /// each completed filter pass. Same shape as
 /// <c>ObjectDetectionPreview</c> and
-/// <c>FrameFlow.Avalonia.AvaloniaVideoSink.PresentAsync</c> — see
-/// crossbar's per-branch-edge-policies exploration for the design
-/// rationale.
+/// <c>FrameFlow.Avalonia.AvaloniaVideoSink.PresentAsync</c>. A graph can
+/// do the same on a branch edge with <c>Branch(EdgeOptions.LatestWins(1))</c>;
+/// the filter runs on its own worker rather than in a node, so it keeps
+/// the latch.
 /// </para>
 /// <para>
 /// <b>Buffer lifecycle.</b> The worker rents a byte buffer from

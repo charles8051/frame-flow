@@ -18,10 +18,10 @@ namespace FrameFlow.Avalonia.Windows;
 
 /// <summary>
 /// An Avalonia <see cref="Control"/> that presents hardware-decoded
-/// <see cref="GpuVideoFrame"/>s <b>zero-copy</b>: it color-converts the D3D11VA NV12
-/// surface to a shared keyed-mutex BGRA texture on the GPU and imports it straight into
-/// the compositor via <see cref="ICompositionGpuInterop"/> (ADR-0016 amendment). No
-/// GPU→CPU readback, no <c>WriteableBitmap</c>.
+/// <see cref="GpuVideoFrame"/>s without leaving the GPU: it copies the D3D11VA NV12 slice
+/// into a shareable staging texture, color-converts that to a shared keyed-mutex BGRA
+/// texture, and imports it into the compositor via <see cref="ICompositionGpuInterop"/>
+/// (ADR-0016 amendment). One GPU copy and no GPU→CPU readback, no <c>WriteableBitmap</c>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -1069,9 +1069,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         {
             _loggedCpuLive = true;
             _logger.LogInformation(
-                "CPU-UPLOAD FALLBACK LIVE: software BGRA frame → staging → shared keyed-mutex texture "
-                    + "({N}-buffer ring) → ICompositionGpuInterop.ImportImage → compositor (hardware decode "
-                    + "did not engage).",
+                "CPU-UPLOAD FALLBACK LIVE: CPU BGRA frame → staging → shared keyed-mutex texture "
+                    + "({N}-buffer ring) → ICompositionGpuInterop.ImportImage → compositor (software "
+                    + "decode, or a hardware frame the decoder read back because WithHardwareFrames "
+                    + "is off).",
                 D3D11Nv12SharedConverter.BufferCount
             );
         }

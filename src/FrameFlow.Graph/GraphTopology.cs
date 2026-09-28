@@ -43,6 +43,29 @@ internal interface IDeclaresHolding
 }
 
 /// <summary>
+/// A node that declares the memory domains it accepts at each input and emits (#435). A node
+/// that is not one accepts either domain and passes on what arrived.
+/// </summary>
+internal interface IDeclaresDomains
+{
+    /// <summary>What the node accepts at <paramref name="input"/>, and what it emits.</summary>
+    FrameDomainRule DomainsAt(IPort input);
+}
+
+/// <summary>
+/// A source that says which memory domains its frames can be in, so a graph checks where they
+/// go before it runs (#435).
+/// </summary>
+internal interface IDomainSource
+{
+    /// <summary>The port whose frames the domains describe.</summary>
+    IPort DomainOutput { get; }
+
+    /// <summary>The domains the source can hand out, or null when it does not say.</summary>
+    FrameMemoryDomains? EmittedDomains { get; }
+}
+
+/// <summary>
 /// A source that is told its frame budget before each run (ADR-0081, decision 4).
 /// </summary>
 internal interface IBudgetedSource

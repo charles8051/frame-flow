@@ -144,6 +144,37 @@ public sealed class DecodePoolGuardHardwareTests(FfmpegBootstrapFixture fixture)
     }
 
     /// <summary>
+    /// A decoder yielding hardware frames says so to its graph, which refuses a node that reads
+    /// CPU pixels before the run starts and names it (#435).
+    /// </summary>
+    // 27 is AV_CODEC_ID_H264.
+    [RequiresHardwareDecodeFact(codecId: 27)]
+    public async Task AGraphWithACpuOnlyNode_IsRefusedBeforeItRuns()
+    {
+        await using var demux = await OpenAsync(Fixture);
+        await using var decoder = OpenHardware(demux, options: null);
+        await QueueAllAsync(demux, decoder);
+        var graph = new FrameFlow.Graph.Graph();
+        graph
+            .Pipeline(decoder.AsSourceNode("video-source"))
+            .To(
+                new SinkNode<IVideoFrame>(
+                    "reads-pixels",
+                    (_, _) => ValueTask.CompletedTask,
+                    holding: FrameHolding.InFlight,
+                    domains: FrameDomainRule.CpuOnly
+                )
+            );
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => graph.RunAsync(CancellationToken.None).WaitAsync(FailureBound)
+        );
+
+        Assert.Contains("'reads-pixels' takes CPU frames", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(0, decoder.GetDiagnostics().FramesDecoded);
+    }
+
+    /// <summary>
     /// Opens <paramref name="backend"/> with a held-frame allowance and holds every frame of the
     /// clip. The clip has more frames than FFmpeg's fixed D3D11VA pool for H.264 would hold even
     /// with that allowance (20 slices plus 11), and a growable pool takes no budget from it.

@@ -1,4 +1,5 @@
 using FrameFlow.Decoding;
+using FrameFlow.Graph;
 using FrameFlow.Integration.Tests.Harness;
 using FrameFlow.Integration.Tests.Harness.Capture;
 using FrameFlow.Media;
@@ -214,6 +215,36 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
     }
 
     /// <summary>
+    /// A sink that takes CPU frames only, behind a player yielding hardware frames, is refused at
+    /// load and named, where it used to be handed GPU frames it could not read (#435).
+    /// </summary>
+    // 27 is AV_CODEC_ID_H264.
+    [RequiresHardwareDecodeFact(codecId: 27)]
+    public async Task YieldingHardwareFrames_ToACpuOnlySink_IsRefusedAtLoad()
+    {
+        var videoSink = new CpuOnlyVideoSink();
+        var controller = PlaybackController.Create(
+            videoSink: videoSink,
+            hardwareDecodeMode: HardwareDecodeMode.Required,
+            yieldHardwareFrames: true
+        );
+
+        try
+        {
+            var load = await controller.LoadAsync(
+                MediaSource.FromFile(PlaybackHarness.ResolveCorpusPath("test-video-h264-yuv420p.mp4"))
+            );
+
+            Assert.False(load.IsSuccess);
+            Assert.Contains("'video-sink' takes CPU frames", load.Error?.ToString() ?? "", StringComparison.Ordinal);
+        }
+        finally
+        {
+            await controller.DisposeAsync();
+        }
+    }
+
+    /// <summary>
     /// The #370 reproduction's HEVC clip, whose default pool faults at 6 held frames, plays
     /// through a player yielding hardware frames with its pool sized from the budget.
     /// </summary>
@@ -331,6 +362,24 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
                     Seen.Enqueue((gpu.HwDeviceContext, gpu.HwFramesContext));
             }
 
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) =>
+            ValueTask.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class CpuOnlyVideoSink : IVideoSink
+    {
+        public int? MaxHeldFrames => 0;
+
+        public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Cpu;
+
+        public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
+        {
+            frame.Dispose();
             return ValueTask.CompletedTask;
         }
 

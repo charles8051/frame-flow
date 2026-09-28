@@ -182,7 +182,9 @@ public static class VideoOperators
                 );
             },
             // A CPU frame is forwarded as itself, so this is not a storage boundary for it.
-            holding: FrameHolding.InFlight
+            holding: FrameHolding.InFlight,
+            // Takes either domain and hands on CPU frames (#435).
+            domains: FrameDomainRule.ToCpu
         );
     }
 
@@ -207,7 +209,9 @@ public static class VideoOperators
                 return ValueTask.FromResult<IVideoFrame?>(output);
             },
             // Every output is a new frame, even at the input's size and format.
-            holding: FrameHolding.Boundary
+            holding: FrameHolding.Boundary,
+            // sws_scale reads the input's pixels on the CPU (#435).
+            domains: FrameDomainRule.CpuOnly
         );
     }
 }

@@ -13,9 +13,12 @@ namespace FrameFlow.Graph;
 /// <para>
 /// Per ADR-0012, the substrate does not negotiate domain compatibility
 /// at the sink boundary. Conversions are explicit pipeline operators
-/// (typically <c>Transform</c>) written by the consumer at the call
-/// site where the conversion happens; the enum is for inspection and
-/// branching, not for runtime advertisement.
+/// (such as <c>VideoOperators.ToCpu</c>) written by the consumer at the
+/// call site where the conversion happens. Nodes and video sinks declare
+/// the domains they accept (<see cref="FrameDomainRule"/>,
+/// <see cref="FrameMemoryDomains"/>), and a graph refuses one that a
+/// domain it does not accept can reach (#435); the declarations are
+/// checked, never used to insert a conversion.
 /// </para>
 /// <para>
 /// The capability-handle layer that ADR-0001 §4 anticipated (a parallel

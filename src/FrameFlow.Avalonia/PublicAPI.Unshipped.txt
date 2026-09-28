@@ -100,3 +100,4 @@ static readonly FrameFlow.Avalonia.FrameFlowStreamSummary.MediaPlayerProperty ->
 static readonly FrameFlow.Avalonia.FrameFlowTransportBar.LoopByDefaultProperty -> Avalonia.StyledProperty<bool>!
 static readonly FrameFlow.Avalonia.FrameFlowTransportBar.MediaPlayerProperty -> Avalonia.StyledProperty<FrameFlow.Player.IMediaTransport?>!
 static readonly FrameFlow.Avalonia.FrameFlowVolumeControl.MediaPlayerProperty -> Avalonia.StyledProperty<FrameFlow.Player.IMediaTransport?>!
+FrameFlow.Avalonia.AvaloniaVideoSink.AcceptedDomains.get -> FrameFlow.Graph.FrameMemoryDomains

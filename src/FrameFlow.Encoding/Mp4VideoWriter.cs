@@ -183,7 +183,9 @@ public sealed class Mp4VideoWriter : IAsyncDisposable
                 // the frame after this body returns (do not dispose here).
                 await WriteCoreAsync(item, ct).ConfigureAwait(false);
             },
-            holding: FrameHolding.InFlight
+            holding: FrameHolding.InFlight,
+            // The encoder reads the frame's pixels on the CPU (#435).
+            domains: FrameDomainRule.CpuOnly
         );
     }
 

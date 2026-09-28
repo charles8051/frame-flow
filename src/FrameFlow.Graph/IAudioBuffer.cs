@@ -48,7 +48,7 @@ namespace FrameFlow.Graph;
 /// a CPU-specific refinement (future <c>ICpuAudioBuffer</c>); device-
 /// pointer access lives on a GPU-specific refinement (future
 /// <c>ICudaAudioBuffer</c> if a GPU audio producer ever materializes —
-/// rare, but the seam is the same shape as <c>ICudaTensor</c>).
+/// rare, but the seam is the same shape a device tensor would take).
 /// </para>
 /// </remarks>
 public interface IAudioBuffer : IRefCounted
