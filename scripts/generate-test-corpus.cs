@@ -208,6 +208,16 @@ Gen(
     new(Width: 320, Height: 240, Fps: 24, DurationSec: 3.0)
 );
 
+// Ten bits: a hardware decoder's surfaces hold P010 rather than NV12, and a GPU frame reports its
+// pool's format (#430). VP9 profile 2, because libvpx is in the pinned LGPL build and 10-bit
+// H.264 and HEVC encoders are not.
+Gen(
+    "test-video-vp9-yuv420p10.webm",
+    "-f lavfi -i testsrc2=size=320x240:rate=24:duration=3",
+    "-c:v libvpx-vp9 -b:v 200k -pix_fmt yuv420p10le -an",
+    new(Width: 320, Height: 240, Fps: 24, DurationSec: 3.0)
+);
+
 Gen(
     "test-video-av1-yuv444p-hard.mkv",
     "-f lavfi -i testsrc2=size=1280x720:rate=60:duration=3",

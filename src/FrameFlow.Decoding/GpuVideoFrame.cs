@@ -49,11 +49,10 @@ namespace FrameFlow.Decoding;
 /// <para>
 /// <b>Software pixel format.</b> The <see cref="Format"/> property
 /// reports the format the frame would have after
-/// <c>av_hwframe_transfer_data</c> — typically
-/// <see cref="PixelFormat.Nv12"/> for CUDA / D3D11VA / VAAPI. This is
-/// the format consumers should expect downstream of
-/// <c>ToCpu()</c>; the GPU buffer itself is in an opaque device-
-/// specific layout.
+/// <c>av_hwframe_transfer_data</c>, which is the pool's
+/// <c>sw_format</c>: <see cref="PixelFormat.Nv12"/> for an 8-bit 4:2:0
+/// stream and <see cref="PixelFormat.P010"/> for a 10-bit one. The GPU
+/// buffer itself is in an opaque device-specific layout.
 /// </para>
 /// </remarks>
 public sealed class GpuVideoFrame : IVideoFrame
@@ -164,18 +163,17 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// <param name="width">Frame width in pixels.</param>
     /// <param name="height">Frame height in pixels.</param>
     /// <param name="softwareFormat">
-    /// Pixel format the frame would have after readback (typically
-    /// <see cref="PixelFormat.Nv12"/>).
+    /// Pixel format the frame would have after readback: the pool's <c>sw_format</c>.
     /// </param>
     /// <param name="pts">Presentation timestamp.</param>
     /// <param name="duration">Frame duration.</param>
     /// <param name="backend">
+    /// The hardware backend that produced the frame, so consumers can
+    /// interpret the device handle (e.g. D3D11VA → <c>ID3D11Texture2D</c>).
+    /// </param>
     /// <param name="pool">
     /// The pool the frame's surface belongs to, which the frame holds until its final release, or
     /// <see langword="null"/> when the caller does not track pools.
-    /// </param>
-    /// The hardware backend that produced the frame, so consumers can
-    /// interpret the device handle (e.g. D3D11VA → <c>ID3D11Texture2D</c>).
     /// </param>
     /// <returns>
     /// A new <see cref="GpuVideoFrame"/> that owns the cloned
@@ -214,7 +212,7 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// <param name="ownedAvFrame">A live <c>AVFrame*</c> this frame will own.</param>
     /// <param name="width">Frame width in pixels.</param>
     /// <param name="height">Frame height in pixels.</param>
-    /// <param name="softwareFormat">Pixel format after readback (typically NV12).</param>
+    /// <param name="softwareFormat">Pixel format after readback: the pool's <c>sw_format</c>.</param>
     /// <param name="pts">Presentation timestamp.</param>
     /// <param name="duration">Frame duration.</param>
     /// <param name="backend">The hardware backend that produced the frame.</param>

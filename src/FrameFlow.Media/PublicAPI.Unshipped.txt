@@ -561,3 +561,4 @@ static FrameFlow.Media.Result<T>.Ok(T value) -> FrameFlow.Media.Result<T>
 static FrameFlow.Media.VideoFrameExtensions.CloneCpu(this FrameFlow.Media.IVideoFrame! frame) -> FrameFlow.Media.CpuVideoFrame!
 static readonly FrameFlow.Media.AudioClockInterpolation.DefaultMaxExtrapolation -> System.TimeSpan
 static readonly FrameFlow.Media.AudioClockRateLimit.DefaultSlack -> System.TimeSpan
+FrameFlow.Media.PixelFormat.P010 = 6 -> FrameFlow.Media.PixelFormat

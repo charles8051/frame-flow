@@ -243,6 +243,39 @@ Or guard the call with `OperatingSystem.IsWindows()`.
 **Why.** DirectML exists only on Windows. A Linux or macOS app compiled cleanly and failed only
 when it ran; the warning moves that to the build (#440).
 
+### 10. Hardware frames from a pool that grows are budgeted too
+
+**A runtime error, not a compile error.**
+
+Entry 7 left VideoToolbox, and with it every pool that grows, unaffected. It no longer does. When
+a decoder hands a graph hardware frames from a D3D12VA, Vulkan or VideoToolbox pool, a path with a
+node or sink that declares nothing is refused as it is on a fixed pool: `LoadAsync` or
+`BuildAsync` fails, or a plain graph's `RunAsync`, and the message names the holder. A path that
+declares is guarded at its budget, so a holder that keeps more than it declared parks the decoder
+instead of taking another surface.
+
+**Who hits this.** Anyone yielding hardware frames on macOS, or on D3D12VA or Vulkan through a
+`HardwareDevice`, through their own nodes or `IVideoSink`.
+
+**What to write instead.** What entry 7 says: `holding:` on each node, `MaxHeldFrames` on each
+sink.
+
+**Why.** A growable pool never faults, so an undeclared holder took a GPU surface per frame until
+an allocation failed: all 600 frames of a 1080p60 clip, about 1.9 GB, on D3D12VA (#416).
+
+### 11. A 10-bit hardware frame reports `P010`
+
+**A behaviour change, not a compile error.**
+
+`GpuVideoFrame.Format` is the pool's software format. A 10-bit stream's frames report the new
+`PixelFormat.P010`; they reported `Nv12`, which their surfaces never held. An exhaustive `switch`
+over `PixelFormat` gains a member to handle.
+
+**Who hits this.** Code that tests a GPU frame's `Format` for `Nv12`, and a `switch` over
+`PixelFormat` with no default arm.
+
+**Why.** The frame said `Nv12` whatever its texture held (#430).
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be

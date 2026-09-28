@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using FrameFlow.Decoding;
 using FrameFlow.Graph;
 using FrameFlow.Inference.D3D12.Tests;
@@ -28,7 +27,7 @@ public sealed class OperatorRouteTests
             using var stage = gpu.Stage(Options);
             using var session = DmlInferenceSession.OnDevice(
                 OnnxModel.Negate(1, 3, Options.Height, Options.Width), gpu.Device.NativePointer, gpu.Queue.NativePointer);
-            var runner = new InferenceRunner<float[]>(new NegateModel(session), stage);
+            var runner = new InferenceRunner<float[]>(new NegateModel(session, Options), stage);
 
             foreach (var frame in frames)
             {
@@ -54,19 +53,5 @@ public sealed class OperatorRouteTests
             foreach (var frame in frames)
                 frame.Dispose();
         }
-    }
-
-    private sealed class NegateModel(DmlInferenceSession session) : IImageModel<float[]>
-    {
-        public IInferenceSession Session => session;
-
-        public string InputName => "x";
-
-        public ImageToTensorOptions Input => Options;
-
-        public RotatedRect CropFor(IVideoFrame frame) => RotatedRect.Whole(frame);
-
-        public float[] Decode(IReadOnlyDictionary<string, ICpuTensor> outputs, TensorTransform transform, IVideoFrame frame) =>
-            MemoryMarshal.Cast<byte, float>(outputs["y"].Bytes.Span).ToArray();
     }
 }

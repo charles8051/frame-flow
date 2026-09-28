@@ -1,7 +1,7 @@
 # GPU-resident inference
 
-**Status:** Draft. Requirements 1 and 7 are met, 2 is met for D3D12, and 4 is decided; the rest
-are open. Tracked by #288; every
+**Status:** Draft. Requirements 1, 3, 5, 6 and 7 are met, 2 is met for D3D12, and 4 is decided and
+built. Tracked by #288; every
 requirement below names the issue that carries it. Living document, rewritten as the feature
 changes.
 
@@ -86,11 +86,16 @@ output tensor.
    that caused it. D3D12VA is the exception: its pool grows, so on that backend a held frame costs
    memory rather than a slice of a fixed pool (ADR-0081, 2026-09-27 revisions).
 
-6. **A pass can ask for hardware frames.** (#277) `IPassBuilder.WithHardwareFrames`, one option
-   and one assignment in `PassBuilder.BuildAsync`. It lands with requirement 3, not before: a flag
-   whose only reachable consumer is a CPU operator is a flag that breaks the run.
-   `PassBuilderTests.ThePassBuilderHasNoTransportOptions` currently asserts the option is absent
-   and gives a reason, so this reverses a recorded decision rather than adding to one.
+   Met as ADR-0081 answers it for the player: a pass that yields hardware frames computes its video
+   path's budget before the decoder opens and sizes a fixed pool for it, and refuses at build a
+   path with a holder that declares no bound. A pool that grows is guarded at the same budget, so
+   a holder that keeps more than it declared parks the decoder rather than taking a surface for
+   every frame (#416).
+
+6. **A pass can ask for hardware frames.** (#277) Met: `IPassBuilder.WithHardwareFrames`. A pass on
+   D3D12VA with `Infer` and a device stage on the decoder's `HardwareDevice` runs the model on the
+   frames where they are: the sink receives GPU frames and every result takes the device route
+   (`PassHardwareFramesTests`).
 
 7. **Every claim above fails honestly on a machine without a GPU.** (#295) Met by #354:
    `RequiresHardwareDecodeFact` skips, naming what is missing, unless the probe initialised a

@@ -31,6 +31,7 @@ internal sealed class PassBuilder : IPassBuilder
     private Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? _videoConfigurator;
     private Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? _audioConfigurator;
     private HardwareDecodeMode _hwMode = HardwareDecodeMode.Auto;
+    private bool _yieldHardwareFrames;
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private VideoDecoderOptions? _videoDecoderOptions;
     private HardwareDevice? _hardwareDevice;
@@ -77,6 +78,12 @@ internal sealed class PassBuilder : IPassBuilder
         return this;
     }
 
+    public IPassBuilder WithHardwareFrames(bool yieldHardwareFrames = true)
+    {
+        _yieldHardwareFrames = yieldHardwareFrames;
+        return this;
+    }
+
     public IPassBuilder WithHardwareDevice(HardwareDevice device)
     {
         ArgumentNullException.ThrowIfNull(device);
@@ -90,14 +97,24 @@ internal sealed class PassBuilder : IPassBuilder
         return this;
     }
 
-    private static VideoDecoderOptions? WithDevice(VideoDecoderOptions? options, HardwareDevice? device) =>
-        device is null
+    /// <summary>
+    /// The decoder's options: the caller's, the borrowed device, and a pool sized for
+    /// <paramref name="budget"/> unless the caller sized it (#292).
+    /// </summary>
+    private static VideoDecoderOptions? DecoderOptions(
+        VideoDecoderOptions? options,
+        HardwareDevice? device,
+        FrameBudget? budget
+    ) =>
+        device is null && budget is null
             ? options
             : new VideoDecoderOptions
             {
                 PacketQueueCapacity = options?.PacketQueueCapacity,
-                HeldHardwareFrames = options?.HeldHardwareFrames ?? 0,
-                Device = device,
+                HeldHardwareFrames = options is { HeldHardwareFrames: > 0 }
+                    ? options.HeldHardwareFrames
+                    : budget?.Frames ?? 0,
+                Device = device ?? options?.Device,
             };
 
     /// <summary>
@@ -255,13 +272,27 @@ internal sealed class PassBuilder : IPassBuilder
             // interfaces.
             if (_videoSink is not null)
             {
+                // A decoder that yields hardware frames sizes its pool for what the video path
+                // can hold, which is computed before it opens (ADR-0081, #292).
+                var videoBudget = _yieldHardwareFrames
+                    ? MediaPass.VideoFrameBudget(_videoConfigurator, _videoSink)
+                    : null;
                 videoDecoder =
                     DecoderFactories.CreateVideo(
                         new HardwareDecodeOptions { Mode = _hwMode },
                         bootstrapResult.Capabilities,
                         _loggerFactory,
-                        WithDevice(_videoDecoderOptions, _hardwareDevice)
+                        DecoderOptions(_videoDecoderOptions, _hardwareDevice, videoBudget)
                     )(demux) as VideoDecoder;
+                if (videoDecoder is not null)
+                {
+                    videoDecoder.YieldHardwareFrames = _yieldHardwareFrames;
+
+                    // A path that holds without bound is refused here, before anything runs,
+                    // rather than when the run starts.
+                    if (videoBudget is not null)
+                        videoDecoder.CheckFrameBudget(videoBudget);
+                }
             }
             else
             {

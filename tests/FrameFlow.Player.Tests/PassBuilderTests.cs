@@ -93,14 +93,14 @@ public sealed class PassBuilderTests
     [Fact]
     public void ThePassBuilderHasNoTransportOptions()
     {
-        // Repeat, a clock, hardware frames and audio activation belong to the player. A pass runs
-        // its source through once and waits on no presentation time, so none of them mean
-        // anything here — and the type says so rather than dropping them silently.
+        // Repeat, a clock and audio activation belong to the player. A pass runs its source
+        // through once and waits on no presentation time, so none of them mean anything here —
+        // and the type says so rather than dropping them silently. Hardware frames are not on
+        // this list: an inference operator consumes them on a pass (#277).
         var members = typeof(IPassBuilder).GetMethods().Select(m => m.Name).ToHashSet();
 
         Assert.DoesNotContain("WithRepeatMode", members);
         Assert.DoesNotContain("WithClock", members);
-        Assert.DoesNotContain("WithHardwareFrames", members);
         Assert.DoesNotContain("WithAudioActivation", members);
         Assert.DoesNotContain("WithMedia", members);
         Assert.DoesNotContain("BuildPlayerAsync", members);

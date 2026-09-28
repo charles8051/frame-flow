@@ -244,6 +244,15 @@ internal sealed class DeviceAndQueue : IDisposable
         Queue = Device.CreateCommandQueue(new CommandQueueDescription(CommandListType.Compute));
     }
 
+    /// <summary>The device a <see cref="HardwareDevice"/> decodes on, and a compute queue on it.</summary>
+    public DeviceAndQueue(HardwareDevice device)
+    {
+        Assert.True(device.TryGetD3D12Device(out nint pointer));
+        Marshal.AddRef(pointer);
+        Device = new ID3D12Device(pointer);
+        Queue = Device.CreateCommandQueue(new CommandQueueDescription(CommandListType.Compute));
+    }
+
     public ID3D12Device Device { get; }
 
     public ID3D12CommandQueue Queue { get; }

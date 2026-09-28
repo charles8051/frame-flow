@@ -284,6 +284,24 @@ the four topologies (#387) have run. Measuring the budget's VRAM cost on the pla
 
 ## Revision history
 
+**2026-09-27, growable pools guarded at the graph's budget (#416), and the pass sized (#292).**
+Decision 4's "A growable backend ignores it" left a D3D12VA, Vulkan or VideoToolbox decoder
+unguarded, so a graph with an undeclared holder took a GPU surface for every frame until an
+allocation failed. On an RTX 3080 Ti that was all 600 frames of a 1080p60 clip, about 1.9 GB of
+NV12, with no error. Two changes, the second of #416's options:
+
+- **A path with no bound is refused on a growable pool too.** `DecodePoolGuard.Judge` returns
+  `Unbounded` for it, and the message says the pool grows by a surface per frame held.
+- **A growable pool is guarded at the graph's budget.** The decoder keeps the budget its last
+  `CheckFrameBudget` reported, and the pool's guard parks the decoder there. A graph that holds
+  what it declared never reaches it; one whose holder keeps more parks instead of growing. A
+  decoder outside a graph is given no budget and stays unguarded, as the #414 and #415 tests
+  that hold every frame rely on.
+
+The pass computes its video path's budget before its decoder opens and sizes a fixed pool for it,
+as the player does, when `IPassBuilder.WithHardwareFrames` is set (#277). It refuses an unbounded
+path at `BuildAsync`.
+
 **2026-09-27, D3D12VA's pool grows (#415).** FFmpeg's D3D12VA allocator creates a texture per
 frame. Its fixed texture-array mode is opt-in, through `AV_D3D12VA_FRAME_FLAG_TEXTURE_ARRAY` and an
 `initial_pool_size`, and neither FFmpeg's decoder nor FrameFlow sets it. On an RTX 3080 Ti a

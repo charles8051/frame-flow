@@ -4,3 +4,6 @@
 using System.Runtime.CompilerServices;
 
 [assembly: InternalsVisibleTo("FrameFlow.Player.Tests")]
+
+// A pass on the GPU route, gated on the hardware the D3D12 and DirectML tests probe for (#277).
+[assembly: InternalsVisibleTo("FrameFlow.Inference.Dml.Tests")]

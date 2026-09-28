@@ -43,6 +43,13 @@ public static class ImageToTensor
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(options);
 
+        // The domain first: a GPU frame's format is its surface's, which says nothing about why
+        // this cannot read it (#430).
+        var cpu = frame.AsCpu()
+            ?? throw new InvalidOperationException(
+                $"ImageToTensor reads CPU frames, and this {frame.MemoryDomain} frame has no CPU view. "
+                    + "Download it with ToCpu first, or prepare the input on the GPU.");
+
         bool bgra = frame.Format switch
         {
             PixelFormat.Bgra32 => true,
@@ -50,10 +57,6 @@ public static class ImageToTensor
             _ => throw new NotSupportedException(
                 $"ImageToTensor reads Bgra32 or Rgba32 frames; got {frame.Format}."),
         };
-
-        var cpu = frame.AsCpu()
-            ?? throw new InvalidOperationException(
-                "ImageToTensor reads CPU frames, and AsCpu() returned null. Download the frame to the CPU first.");
 
         return Write(
             cpu.PlaneY.Span, frame.Width, frame.Height, cpu.StrideY, bgra, crop, options, destination,

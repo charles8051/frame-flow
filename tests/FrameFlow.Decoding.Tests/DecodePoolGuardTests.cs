@@ -58,7 +58,7 @@ public sealed class DecodePoolGuardTests
     )
     {
         int extra = DecodePoolGuard.ExtraSurfacesFor(backend, held);
-        Assert.Equal(held, DecodePoolGuard.BudgetFor(backend, extra));
+        Assert.Equal(held, DecodePoolGuard.BudgetFor(backend, extra, graphFrames: 0));
     }
 
     [Theory]
@@ -68,12 +68,17 @@ public sealed class DecodePoolGuardTests
     [InlineData(HardwareDecodeBackendKind.D3D11Va, 7, true, 11, "OverPool")]
     [InlineData(HardwareDecodeBackendKind.D3D11Va, 7, true, null, "Unbounded")]
     [InlineData(HardwareDecodeBackendKind.Cuda, 0, true, 1, "OverPool")]
-    // No fixed pool reaches the graph: a readback decoder, software, or a pool that grows.
+    // A pool that grows is sized by the graph, so any bound fits, and no bound is refused (#416).
+    [InlineData(HardwareDecodeBackendKind.VideoToolbox, 0, true, 40, "Fits")]
+    [InlineData(HardwareDecodeBackendKind.Vulkan, 0, true, 40, "Fits")]
+    [InlineData(HardwareDecodeBackendKind.D3D12Va, 0, true, 40, "Fits")]
+    [InlineData(HardwareDecodeBackendKind.VideoToolbox, 0, true, null, "Unbounded")]
+    [InlineData(HardwareDecodeBackendKind.Vulkan, 0, true, null, "Unbounded")]
+    [InlineData(HardwareDecodeBackendKind.D3D12Va, 0, true, null, "Unbounded")]
+    // No pool reaches the graph: a readback decoder, or software.
     [InlineData(HardwareDecodeBackendKind.D3D11Va, 7, false, null, "NoPool")]
+    [InlineData(HardwareDecodeBackendKind.D3D12Va, 0, false, null, "NoPool")]
     [InlineData(null, 0, true, null, "NoPool")]
-    [InlineData(HardwareDecodeBackendKind.VideoToolbox, 0, true, null, "NoPool")]
-    [InlineData(HardwareDecodeBackendKind.Vulkan, 0, true, null, "NoPool")]
-    [InlineData(HardwareDecodeBackendKind.D3D12Va, 0, true, null, "NoPool")]
     public void AGraphsBudget_IsJudgedAgainstThePoolTheDecoderOpened(
         HardwareDecodeBackendKind? backend,
         int extra,
@@ -94,16 +99,31 @@ public sealed class DecodePoolGuardTests
     [InlineData(HardwareDecodeBackendKind.D3D11Va, -4, 3)]
     [InlineData(HardwareDecodeBackendKind.Cuda, 0, 0)]
     [InlineData(HardwareDecodeBackendKind.Cuda, 5, 5)]
-    [InlineData(HardwareDecodeBackendKind.VideoToolbox, 5, 0)]
-    [InlineData(HardwareDecodeBackendKind.Vulkan, 5, 0)]
-    [InlineData(HardwareDecodeBackendKind.D3D12Va, 5, 0)]
-    public void TheBudget_IsTheSpareSurfacesPlusTheExtraOnes(
+    public void AFixedPoolsBudget_IsTheSpareSurfacesPlusTheExtraOnes_WhateverTheGraphHolds(
         HardwareDecodeBackendKind backend,
         int extra,
         int budget
     )
     {
-        Assert.Equal(budget, DecodePoolGuard.BudgetFor(backend, extra));
+        Assert.Equal(budget, DecodePoolGuard.BudgetFor(backend, extra, graphFrames: 0));
+        Assert.Equal(budget, DecodePoolGuard.BudgetFor(backend, extra, graphFrames: 40));
+    }
+
+    [Theory]
+    [InlineData(HardwareDecodeBackendKind.VideoToolbox, 5, 9, 9)]
+    [InlineData(HardwareDecodeBackendKind.Vulkan, 0, 9, 9)]
+    [InlineData(HardwareDecodeBackendKind.D3D12Va, 5, 12, 12)]
+    // No graph has declared a budget: unguarded, as a decoder outside a graph is.
+    [InlineData(HardwareDecodeBackendKind.D3D12Va, 5, 0, 0)]
+    [InlineData(HardwareDecodeBackendKind.D3D12Va, 0, -3, 0)]
+    public void AGrowablePoolsBudget_IsWhatItsGraphCanHold(
+        HardwareDecodeBackendKind backend,
+        int extra,
+        int graphFrames,
+        int budget
+    )
+    {
+        Assert.Equal(budget, DecodePoolGuard.BudgetFor(backend, extra, graphFrames));
     }
 
     [Theory]

@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using FFmpeg.AutoGen.Abstractions;
+using FrameFlow.Decoding.Core;
 using FrameFlow.Decoding.Diagnostics;
 using FrameFlow.Decoding.Internal;
 using FrameFlow.Graph;
@@ -82,14 +83,23 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     // Set once the decoder has logged that a graph can hold more than its pool was opened for.
     private int _overPoolReported;
 
+    // The most frames the decoder's graph can hold, from the last CheckFrameBudget; zero before
+    // one. A growable pool is guarded at it (#416). Written by the graph, read by the decode
+    // worker.
+    private int _graphBudgetFrames;
+
+    // Set once the decoder has logged a hardware pool format PixelFormat cannot name (#430).
+    private int _unmappedFormatReported;
+
     /// <summary>
     /// Checks a graph's frame budget against the pool this decoder opened (ADR-0081, decision
     /// 4). A graph source calls it before each run.
     /// </summary>
     /// <exception cref="InvalidOperationException">
-    /// The decoder hands the graph frames from a fixed pool, and a holder on the path declares no
-    /// bound. No pool size would be enough, and a readback per frame is what yielding hardware
-    /// frames exists to avoid, so the run is refused.
+    /// The decoder hands the graph hardware frames, and a holder on the path declares no bound. A
+    /// fixed pool has no size that is enough, a growable one takes GPU memory until an allocation
+    /// fails, and a readback per frame is what yielding hardware frames exists to avoid, so the
+    /// run is refused.
     /// </exception>
     internal void CheckFrameBudget(FrameBudget budget)
     {
@@ -98,21 +108,30 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             ? (HardwareDecodeBackendKind?)null
             : (HardwareDecodeBackendKind)_boundBackend;
 
+        // A growable pool is guarded at this count once its first frame arrives (#416). The
+        // configurator's contract is to wire the same path for every graph, so every run's
+        // budget is the same.
+        if (budget.Frames is int frames)
+            Volatile.Write(ref _graphBudgetFrames, frames);
+
         switch (DecodePoolGuard.Judge(backend, _extraHwFrames, YieldHardwareFrames, budget.Frames))
         {
             case PoolBudgetVerdict.Unbounded:
                 throw new InvalidOperationException(
                     $"'{budget.UnboundedHolder}' declares no bound on the frames it holds, and "
-                        + $"this decoder hands the graph frames from a fixed {backend} pool, which "
-                        + "no size can cover. Declare the node's Holding, or the sink's "
-                        + "MaxHeldFrames (ADR-0081)."
+                        + (DecodePoolGuard.SpareSurfaces(backend!.Value) is null
+                            ? $"this decoder hands the graph frames from a {backend} pool that grows "
+                                + "by a GPU surface for every frame held. "
+                            : $"this decoder hands the graph frames from a fixed {backend} pool, which "
+                                + "no size can cover. ")
+                        + "Declare the node's Holding, or the sink's MaxHeldFrames (ADR-0081)."
                 );
             case PoolBudgetVerdict.OverPool when Interlocked.Exchange(ref _overPoolReported, 1) == 0:
                 LogBudgetOverPool(
                     _logger,
                     budget.Frames!.Value,
                     backend!.Value.ToString(),
-                    DecodePoolGuard.BudgetFor(backend.Value, _extraHwFrames)
+                    DecodePoolGuard.BudgetFor(backend.Value, _extraHwFrames, graphFrames: 0)
                 );
                 break;
         }
@@ -663,7 +682,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 : new DecodePoolGeneration(
                     framesContext,
                     accessor.GetHwFramesPoolSize(),
-                    DecodePoolGuard.BudgetFor(backend, _extraHwFrames),
+                    DecodePoolGuard.BudgetFor(backend, _extraHwFrames, Volatile.Read(ref _graphBudgetFrames)),
                     _logger,
                     backend.ToString()
                 )
@@ -1051,16 +1070,18 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         var accessor = new AvFrameAccessor(framePtr);
         var pts = accessor.ComputePresentationTime(_timeBaseNum, _timeBaseDen);
 
-        // The software format reported on the GpuVideoFrame is what
-        // av_hwframe_transfer_data would produce on readback. For the
-        // common CUDA / D3D11VA / VAAPI / VideoToolbox cases this is
-        // NV12. P010 (10-bit) etc. is a Phase B concern when high-bit-
-        // depth GPU workflows actually land.
+        // The frame reports what av_hwframe_transfer_data would produce on readback, which is
+        // the pool's sw_format: NV12 for an 8-bit stream, P010 for a 10-bit one (#430).
+        int softwareFormat = accessor.GetHwFramesSoftwareFormat();
+        var format = GpuFrameFormat.From(softwareFormat);
+        if (format is null && Interlocked.Exchange(ref _unmappedFormatReported, 1) == 0)
+            LogUnmappedGpuFormat(_logger, softwareFormat);
+
         var managed = GpuVideoFrame.CloneFrom(
             sourceAvFrame: framePtr,
             width: accessor.Width,
             height: accessor.Height,
-            softwareFormat: PixelFormat.Nv12,
+            softwareFormat: format ?? PixelFormat.Nv12,
             pts: pts,
             duration: accessor.ComputeDuration(_timeBaseNum, _timeBaseDen),
             backend: HardwareBackend ?? HardwareDecodeBackendKind.Other,
@@ -1452,6 +1473,14 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
         double perSecond,
         long totalDropped
     );
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The hardware pool's sw_format {SoftwareFormat} has no PixelFormat member, so its "
+            + "frames report Nv12, which they do not hold. Read the texture's own format to "
+            + "interpret them."
+    )]
+    private static partial void LogUnmappedGpuFormat(ILogger logger, int softwareFormat);
 
     [LoggerMessage(
         Level = LogLevel.Debug,

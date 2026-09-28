@@ -25,6 +25,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\FrameFlow.Inference.D3D12\FrameFlow.Inference.D3D12.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Inference.Dml\FrameFlow.Inference.Dml.csproj" />
+    <!-- A pass on the device route (#277). -->
+    <ProjectReference Include="..\..\src\FrameFlow.Player\FrameFlow.Player.csproj" />
   </ItemGroup>
 
   <ItemGroup>

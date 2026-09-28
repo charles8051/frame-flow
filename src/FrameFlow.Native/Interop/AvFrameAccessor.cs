@@ -282,6 +282,22 @@ internal readonly unsafe ref struct AvFrameAccessor
     }
 
     /// <summary>
+    /// The <c>AVPixelFormat</c> of the samples in this hardware frame's surfaces:
+    /// <c>hw_frames_ctx → AVHWFramesContext.sw_format</c>, such as NV12 for an 8-bit stream and
+    /// P010 for a 10-bit one. -1 (<c>AV_PIX_FMT_NONE</c>) for a software frame.
+    /// </summary>
+    internal int GetHwFramesSoftwareFormat()
+    {
+        ref AVFrame f = ref Unsafe.AsRef<AVFrame>((void*)_ptr);
+        var framesCtxRef = f.hw_frames_ctx;
+        if (framesCtxRef is null)
+            return (int)AVPixelFormat.AV_PIX_FMT_NONE;
+
+        var framesCtx = (AVHWFramesContext*)framesCtxRef->data;
+        return framesCtx is null ? (int)AVPixelFormat.AV_PIX_FMT_NONE : (int)framesCtx->sw_format;
+    }
+
+    /// <summary>
     /// Returns the <c>extended_data</c> pointer for use with <c>swr_convert</c>.
     /// For planar audio, each element of the pointed array is a pointer to a channel plane.
     /// For packed formats, <c>extended_data[0]</c> equals <c>data[0]</c>.

@@ -219,6 +219,14 @@ deletion landed in #271 while this record was being written, and its reasoning i
   now on `IPassBuilder`. `WithOpenAlAudio` was retired shortly afterwards, in the change that
   closed #275; `WithAvaloniaVideoView` keeps both.
 - **`PlaybackGraph`.** Removed in #271, before this landed.
+- **Hardware frames on a pass (2026-09-27, #277).** `IPassBuilder.WithHardwareFrames` sets the
+  decoder's `YieldHardwareFrames`. When it is set, `PassBuilder` computes the video path's frame
+  budget before the decoder opens, as the player does, and opens the decoder with
+  `HeldHardwareFrames` for it (#292). A path with a holder that declares no bound is refused by
+  `BuildAsync` rather than when the run starts. The configurator therefore runs twice with the
+  option set, once for the budget and once for the run, and `ConfigureVideo` says to build new
+  nodes on each call. `PassHardwareFramesTests` runs a model on D3D12VA frames through a pass with
+  no readback.
 
 The one departure: the record did not say what a pass does with a sink it was never given a chance
 to own. `WithOpenAlAudio` constructed one and handed it through the caller-owned path, so nothing
@@ -257,6 +265,10 @@ bullets before it say.
   > **The trigger: the first operator that consumes a `GpuVideoFrame`.** The option goes in that
   > change, where it can be tested end to end. Added before it, it is a flag whose only reachable
   > use is the entry point it does not belong to.
+
+  > **Amended 2026-09-27: decided.** The trigger fired with `InferenceOperators.Infer` (#436),
+  > whose device stage reads a D3D12VA frame. `IPassBuilder.WithHardwareFrames` landed for #277,
+  > and *As implemented* says how.
 - **Whether `MediaPlayer` survives.** After #269 it is a strict subset of the builder. Deleting it
   is a separate change with its own migration, and it is orthogonal to this split.
 - **Whether a pass later gets a queue.** If batch-over-a-warm-graph turns out to be wanted, it

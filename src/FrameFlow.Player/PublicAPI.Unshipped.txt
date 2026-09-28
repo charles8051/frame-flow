@@ -71,3 +71,4 @@ FrameFlow.Player.MediaPass.RunToCompletionAsync(System.Threading.CancellationTok
 static FrameFlow.Player.FrameFlowPass.Create(FrameFlow.Media.IMediaSource! source) -> FrameFlow.Player.IPassBuilder!
 static FrameFlow.Player.FrameFlowPass.Create(string! path) -> FrameFlow.Player.IPassBuilder!
 static FrameFlow.Player.FrameFlowPlayer.Create() -> FrameFlow.Player.IPlayerBuilder!
+FrameFlow.Player.IPassBuilder.WithHardwareFrames(bool yieldHardwareFrames = true) -> FrameFlow.Player.IPassBuilder!

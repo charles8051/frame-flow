@@ -60,6 +60,12 @@ public interface IPassBuilder
     /// the decoder source's output and returns the chain the sink consumes from; the builder
     /// terminates it. This is where an inference or analysis operator goes.
     /// </summary>
+    /// <remarks>
+    /// With <see cref="WithHardwareFrames"/>, the configurator runs twice: once before the decoder
+    /// opens, to size its pool, and once for the run. Build new nodes on each call, wired the same
+    /// way each time. A node instance is wired into one graph only, so a configurator that
+    /// attaches the same node twice fails with its input already connected.
+    /// </remarks>
     /// <remarks>Replaces any previously-configured video transform.</remarks>
     IPassBuilder ConfigureVideo(Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>> configure);
 
@@ -73,10 +79,24 @@ public interface IPassBuilder
 
     /// <summary>
     /// Configures hardware-decode policy. Defaults to <see cref="HardwareDecodeMode.Auto"/>.
-    /// Hardware-decoded frames are downloaded to system memory before they reach the sink; a pass
-    /// has no equivalent of the player's <c>WithHardwareFrames</c>.
+    /// Hardware-decoded frames are downloaded to system memory before they reach the configurator
+    /// and the sink, unless <see cref="WithHardwareFrames"/> is set.
     /// </summary>
     IPassBuilder WithHardwareDecode(HardwareDecodeMode mode);
+
+    /// <summary>
+    /// Hands hardware-decoded frames to the configurator and the sink still on the GPU rather
+    /// than downloaded to system memory. Defaults to <see langword="false"/>. Set it when every
+    /// node on the video path reads GPU frames: an inference operator with a device stage for the
+    /// decoder's API, or a <c>ToCpu</c> before a node that does not.
+    /// </summary>
+    /// <remarks>
+    /// The decoder's pool is sized for what the path can hold, which the builder computes from
+    /// the nodes' declared holding and the sink's <see cref="IVideoSink.MaxHeldFrames"/> (ADR-0081).
+    /// A path with a holder that declares no bound is refused by <see cref="BuildAsync"/>, and
+    /// the message names it.
+    /// </remarks>
+    IPassBuilder WithHardwareFrames(bool yieldHardwareFrames = true);
 
     /// <summary>
     /// A device the pass's video decoder borrows instead of creating its own, so the device
@@ -99,7 +119,8 @@ public interface IPassBuilder
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// No sink was attached, a configurator was given without its sink, the FFmpeg bootstrap
-    /// failed, or the source has neither a video nor an audio stream.
+    /// failed, the source has neither a video nor an audio stream, or the pass yields hardware
+    /// frames and a holder on its video path declares no bound.
     /// </exception>
     Task<MediaPass> BuildAsync(CancellationToken cancellationToken = default);
 }
