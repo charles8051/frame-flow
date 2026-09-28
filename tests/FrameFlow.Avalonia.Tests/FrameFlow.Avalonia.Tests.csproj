@@ -7,7 +7,6 @@
     <IsTestProject>true</IsTestProject>
     <!-- Avalonia.Headless.XUnit 12 is built on xunit v3, 11 on xunit 2. -->
     <FrameFlowXunitV3>$(FrameFlowAvaloniaVersion.StartsWith('12'))</FrameFlowXunitV3>
-    <OutputType Condition="'$(FrameFlowXunitV3)' == 'true'">Exe</OutputType>
   </PropertyGroup>
 
   <ItemGroup>
