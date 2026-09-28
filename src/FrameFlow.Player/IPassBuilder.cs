@@ -61,8 +61,9 @@ public interface IPassBuilder
     /// terminates it. This is where an inference or analysis operator goes.
     /// </summary>
     /// <remarks>
-    /// With <see cref="WithHardwareFrames"/>, the configurator runs twice: once before the decoder
-    /// opens, to size its pool, and once for the run. The first call's graph never runs. Build new
+    /// Unless hardware frames are off (<see cref="WithHardwareFrames"/> false, or hardware decode
+    /// disabled), the configurator runs twice: once before the decoder opens, to decide where
+    /// frames go and size its pool, and once for the run. The first call's graph never runs. Build new
     /// nodes on each call, wired the same way each time, and do nothing else there, since anything
     /// else happens twice. A graph disposes none of its operators or sinks, so a node that needs a
     /// resource takes it on its first item, as the library's converters and <c>Infer</c> do. A node
@@ -82,22 +83,31 @@ public interface IPassBuilder
 
     /// <summary>
     /// Configures hardware-decode policy. Defaults to <see cref="HardwareDecodeMode.Auto"/>.
-    /// Hardware-decoded frames are downloaded to system memory before they reach the configurator
-    /// and the sink, unless <see cref="WithHardwareFrames"/> is set.
+    /// Where hardware-decoded frames go is <see cref="WithHardwareFrames"/>'s.
     /// </summary>
     IPassBuilder WithHardwareDecode(HardwareDecodeMode mode);
 
     /// <summary>
-    /// Hands hardware-decoded frames to the configurator and the sink still on the GPU rather
-    /// than downloaded to system memory. Defaults to <see langword="false"/>. Set it when every
-    /// node on the video path reads GPU frames: an inference operator with a device stage for the
-    /// decoder's API, or a <c>ToCpu</c> before a node that does not.
+    /// Whether hardware-decoded frames reach the configurator and the sink still on the GPU,
+    /// overriding what the builder derives. <see langword="true"/> keeps them there, and a path
+    /// with a node or sink that does not take them is refused by <see cref="BuildAsync"/>, naming
+    /// it (#435). <see langword="false"/> always downloads them to system memory.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// Unset, the builder keeps them on the GPU when every node they reach says it takes GPU
+    /// frames, the sink included (<see cref="IVideoSink.AcceptedDomains"/>), and the path holds a
+    /// bounded number of them; otherwise it downloads them (#294). An inference operator with a
+    /// device stage says it does, and so does a <c>ToCpu</c>, which also downloads them for the
+    /// nodes after it. A node or sink that says nothing is taken to read pixels on the CPU. The
+    /// builder logs which it chose, and why.
+    /// </para>
+    /// <para>
     /// The decoder's pool is sized for what the path can hold, which the builder computes from
     /// the nodes' declared holding and the sink's <see cref="IVideoSink.MaxHeldFrames"/> (ADR-0081).
-    /// A path with a holder that declares no bound is refused by <see cref="BuildAsync"/>, and
-    /// the message names it.
+    /// With <see langword="true"/>, a path with a holder that declares no bound is refused by
+    /// <see cref="BuildAsync"/>, and the message names it.
+    /// </para>
     /// </remarks>
     IPassBuilder WithHardwareFrames(bool yieldHardwareFrames = true);
 

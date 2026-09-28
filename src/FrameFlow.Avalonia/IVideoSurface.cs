@@ -24,14 +24,6 @@ public interface IVideoSurface
     Control Control { get; }
 
     /// <summary>
-    /// Whether this surface consumes GPU-resident frames. Pass this to
-    /// <c>FrameFlowPlayer.Create()...WithHardwareFrames(surface.PrefersHardwareFrames)</c>
-    /// so the decoder yields <c>GpuVideoFrame</c>s for a zero-copy surface, or CPU frames
-    /// for a software surface.
-    /// </summary>
-    bool PrefersHardwareFrames { get; }
-
-    /// <summary>
     /// Wires the logger factory and returns the <see cref="IVideoSink"/> to hand to the
     /// player's <c>FrameFlowPlayer.Create()</c>. Idempotent: repeated calls return the same sink.
     /// </summary>

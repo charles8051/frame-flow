@@ -87,8 +87,10 @@ public static class PlaybackController
     /// </param>
     /// <param name="yieldHardwareFrames">
     /// When <see langword="true"/>, hardware-decoded frames reach the video
-    /// sink as GPU frames instead of being downloaded to system memory first.
-    /// Only useful with a sink that can consume them.
+    /// sink as GPU frames instead of being downloaded to system memory first;
+    /// <see langword="false"/> always downloads them. <see langword="null"/>, the
+    /// default, keeps them on the GPU when every node on the video path, the sink
+    /// included, says it takes GPU frames (#294).
     /// </param>
     /// <param name="initialRepeatMode">
     /// Starting repeat mode. Can be changed at runtime via
@@ -135,7 +137,7 @@ public static class PlaybackController
         IAudioSink? audioSink = null,
         HardwareDecodeMode hardwareDecodeMode = HardwareDecodeMode.Auto,
         FrameFlow.Media.HardwareDecodeCapabilities? hardwareDecodeCapabilities = null,
-        bool yieldHardwareFrames = false,
+        bool? yieldHardwareFrames = null,
         RepeatMode initialRepeatMode = RepeatMode.Off,
         IPlaybackClock? clock = null,
         ILoggerFactory? loggerFactory = null,
@@ -208,7 +210,8 @@ public static class PlaybackController
     /// </param>
     /// <param name="yieldHardwareFrames">
     /// When <see langword="true"/>, hardware-decoded frames reach the video
-    /// sink as GPU frames rather than being downloaded first.
+    /// sink as GPU frames rather than being downloaded first; <see langword="null"/>
+    /// derives it from the video path, as for <see cref="Create"/>.
     /// </param>
     /// <param name="initialRepeatMode">
     /// Starting repeat mode. Defaults to <see cref="RepeatMode.All"/>, which
@@ -251,7 +254,7 @@ public static class PlaybackController
         IAudioSink? audioSink = null,
         HardwareDecodeMode hardwareDecodeMode = HardwareDecodeMode.Auto,
         FrameFlow.Media.HardwareDecodeCapabilities? hardwareDecodeCapabilities = null,
-        bool yieldHardwareFrames = false,
+        bool? yieldHardwareFrames = null,
         RepeatMode initialRepeatMode = RepeatMode.All,
         IPlaybackClock? clock = null,
         ILoggerFactory? loggerFactory = null,

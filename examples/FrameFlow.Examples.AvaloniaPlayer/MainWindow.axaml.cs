@@ -144,7 +144,6 @@ public partial class MainWindow : Window
                 .WithMedia(SourceFor(path))
                 .WithVideoSink(videoSink)
                 .WithAudioSink(_audioSink)
-                .WithHardwareFrames(PlayerView.VideoSurface.PrefersHardwareFrames)
                 .WithLogger(_loggerFactory)
                 .BuildPlayerAsync();
 
@@ -210,7 +209,6 @@ public partial class MainWindow : Window
                 .WithMedia(_playlistEntries.Select(e => e.Source))
                 .WithVideoSink(videoSink)
                 .WithAudioSink(_audioSink)
-                .WithHardwareFrames(PlayerView.VideoSurface.PrefersHardwareFrames)
                 .WithRepeatMode(RepeatMode.All)
                 .WithLogger(_loggerFactory)
                 .BuildPlayerAsync();

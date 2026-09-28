@@ -354,6 +354,8 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
 
         public int? MaxHeldFrames => 0;
 
+        public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Any;
+
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {
             using (frame)

@@ -103,8 +103,9 @@ public interface IPlayerBuilder
     /// </param>
     /// <remarks>
     /// The configurator runs once for each graph the player builds: for each item, after each
-    /// seek, and, when the player sizes a hardware decoder's pool, once more before the decoder
-    /// opens. Build new nodes on each call, wired the same way each time: the player sizes the
+    /// seek, and once more before each item's decoder opens, unless hardware frames are off
+    /// (<see cref="WithHardwareFrames"/> false, or hardware decode disabled). Build new nodes on
+    /// each call, wired the same way each time: the player decides where frames go and sizes the
     /// pool from one call's graph and runs another's. A node instance is wired into one graph
     /// only, so a configurator that attaches the same node twice fails with its input already
     /// connected.
@@ -177,11 +178,17 @@ public interface IPlayerBuilder
     IPlayerBuilder WithLatenessRecovery(LatenessRecoveryOptions options);
 
     /// <summary>
-    /// Requests that hardware-decoded frames reach the video sink still on the GPU rather than
-    /// being downloaded to system memory. Defaults to <see langword="false"/>; set it when every
-    /// node on the video path and the sink take GPU frames (<see cref="IVideoSink.AcceptedDomains"/>).
-    /// A path with one that does not is refused at load, naming it (#435).
+    /// Whether hardware-decoded frames reach the video sink still on the GPU, overriding what the
+    /// player derives. <see langword="true"/> keeps them there, and a path with a node or sink
+    /// that does not take them is refused at load, naming it (#435). <see langword="false"/>
+    /// always downloads them to system memory.
     /// </summary>
+    /// <remarks>
+    /// Unset, the player keeps them on the GPU when every node they reach says it takes GPU
+    /// frames, the sink included (<see cref="IVideoSink.AcceptedDomains"/>), and the path holds a
+    /// bounded number of them; otherwise it downloads them (#294). A node or sink that says
+    /// nothing is taken to read pixels on the CPU. The player logs which it chose, and why.
+    /// </remarks>
     IPlayerBuilder WithHardwareFrames(bool yieldHardwareFrames = true);
 
     /// <summary>

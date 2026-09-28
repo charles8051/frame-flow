@@ -34,7 +34,8 @@ internal sealed class PlayerBuilder : IPlayerBuilder
     private IPlaybackClock? _clock;
     private LatenessRecoveryOptions? _latenessRecovery;
     private TimeProvider? _timeProvider;
-    private bool _yieldHardwareFrames;
+    // Null: derived from the video path (#294).
+    private bool? _yieldHardwareFrames;
     private HardwareDevice? _hardwareDevice;
     private bool _activateAudioSink = true;
 

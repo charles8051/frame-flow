@@ -328,13 +328,13 @@ The library declares CPU only for the sws converters (`ConvertPixelFormat`, `Res
 `ResizeAndConvert`), `YoloOperators.DetectWith`, `FaceOperators.DetectWith`, `Infer` without a
 device stage, `Mp4VideoWriter`'s sink, and the Avalonia and SDL video sinks. Each of them failed on
 the first GPU frame before, or in the Avalonia view's case dropped every one; now the graph does
-not start. A node or sink that declares nothing takes
-either domain and is never refused.
+not start. A node that declares nothing takes either domain and is never refused. A video sink
+that declares nothing is taken to read CPU pixels (entry 16).
 
 `OperatorNode`, `MultiOperatorNode` and `SinkNode` take a new optional `domains` parameter, and
 `SourceNode` a new optional `emits` parameter. Source that calls them compiles unchanged; a binary
 compiled against the old constructors needs a rebuild. `IVideoSink` gains `AcceptedDomains`, with a
-default of `FrameMemoryDomains.Any`.
+default of `FrameMemoryDomains.Cpu`.
 
 **Who hits this.** A player or pass with `WithHardwareFrames()` whose path reaches one of the nodes
 above, or a sink that reads CPU pixels, with no `ToCpu` before it.
@@ -346,6 +346,66 @@ FrameMemoryDomains.Cpu`, so the refusal names it.
 
 **Why.** A GPU frame reached a node that could not read it and failed there, one frame into the run,
 with a message about the pixel format rather than the memory domain.
+
+### 15. Hardware frames stay on the GPU when the path takes them
+
+**A behaviour change, not a compile error.**
+
+A player or pass with no `WithHardwareFrames` call used to download every hardware-decoded frame to
+system memory. It now keeps them on the GPU when every node they reach declares that it takes GPU
+frames, the sink included, and the path holds a bounded number of them (#294). It logs which it
+chose and why. `WithHardwareFrames(true)` and `WithHardwareFrames(false)` still decide on their
+own.
+
+Unless hardware frames are off (`WithHardwareFrames(false)` or `HardwareDecodeMode.Disabled`), the
+video configurator now runs once more before the decoder opens, on a pass as on a player, to decide.
+Its contract already said to build the same path on each call and to do nothing else there.
+
+**Who hits this.** A path whose sink is `CompositionInteropVideoSink`, `HeadlessVideoSink`,
+`NullVideoSink`, or one of your own declaring GPU frames, with nothing undeclared on the way. A
+`HeadlessVideoSink` run now measures decode without the download it used to include.
+
+**What to write instead.** Nothing, to take the change. `WithHardwareFrames(false)` restores the
+download.
+
+**Why.** Each consumer had to say twice that it takes GPU frames: once on the sink and once on the
+builder, where the Avalonia surfaces passed their own flag.
+
+### 16. A video sink that declares nothing is taken to read CPU pixels
+
+**A runtime error at build or load, not a compile error.**
+
+`IVideoSink.AcceptedDomains` defaults to `FrameMemoryDomains.Cpu`, not `Any` (entry 14). With
+`WithHardwareFrames()`, a sink that does not override it is refused before anything runs, naming
+`'video-sink'`. `HeadlessVideoSink` and `NullVideoSink` declare `Any`, since they read no pixels.
+
+**Who hits this.** A sink of your own that handles GPU frames, on a path with
+`WithHardwareFrames()`.
+
+**What to write instead.** `public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Any;`
+on the sink.
+
+**Why.** Entry 15 hands GPU frames to a sink that takes them without being asked. A sink that says
+nothing could be one that reads pixels, and handing it GPU frames would break it one frame in.
+
+### 17. `IVideoSurface.PrefersHardwareFrames` is gone
+
+**A compile error.**
+
+The player derives the same answer from the surface's sink (entry 15), which is where the
+composition-interop view and the CPU view already declare it.
+
+**Who hits this.** Code calling `WithHardwareFrames(surface.PrefersHardwareFrames)`, and a surface of
+your own implementing the property.
+
+**What to write instead.** Drop the call, and the property.
+
+### 18. `PlaybackController.Create` takes `bool? yieldHardwareFrames`
+
+**A binary break; source that passes `true` or `false` compiles unchanged.**
+
+The parameter defaults to `null`, which derives the choice as entry 15 describes. `true` and `false`
+mean what they did.
 
 ## `v0.11.0` — since `v0.10.1`
 

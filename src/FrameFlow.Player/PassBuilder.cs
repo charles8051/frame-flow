@@ -6,6 +6,7 @@ using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Native;
 using FrameFlow.Playback;
+using FrameFlow.Playback.Core;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -31,7 +32,8 @@ internal sealed class PassBuilder : IPassBuilder
     private Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? _videoConfigurator;
     private Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? _audioConfigurator;
     private HardwareDecodeMode _hwMode = HardwareDecodeMode.Auto;
-    private bool _yieldHardwareFrames;
+    // Null: derived from the video path (#294).
+    private bool? _yieldHardwareFrames;
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private VideoDecoderOptions? _videoDecoderOptions;
     private HardwareDevice? _hardwareDevice;
@@ -272,12 +274,28 @@ internal sealed class PassBuilder : IPassBuilder
             // interfaces.
             if (_videoSink is not null)
             {
-                // A decoder that yields hardware frames sizes its pool for what the video path
-                // can hold, which is computed before it opens (ADR-0081, #292).
-                var videoProbe = _yieldHardwareFrames
+                // Whether the decoder keeps hardware frames on the GPU is decided on a copy of
+                // the video path built before it opens, and a decoder that does sizes its pool
+                // for what that path can hold (#294, ADR-0081, #292).
+                var hardwareDisabled = _hwMode == HardwareDecodeMode.Disabled;
+                var videoProbe = HardwareFrameChoice.NeedsProbe(_yieldHardwareFrames, hardwareDisabled)
                     ? MediaPass.VideoProbe(_videoConfigurator, _videoSink)
                     : null;
-                var videoBudget = videoProbe?.Budget;
+                var pathBudget = videoProbe?.Budget;
+                var hardwareFrames = HardwareFrameChoice.Decide(
+                    _yieldHardwareFrames,
+                    hardwareDisabled,
+                    _yieldHardwareFrames is null ? videoProbe?.UndeclaredGpuConsumer() : null,
+                    pathBudget);
+                if (!hardwareDisabled)
+                {
+                    _loggerFactory.CreateLogger<PassBuilder>().LogInformation(
+                        "Hardware-decoded video frames {Where}: {Reason}.",
+                        hardwareFrames.Yield ? "stay on the GPU" : "are downloaded to system memory",
+                        hardwareFrames.Reason);
+                }
+
+                var videoBudget = hardwareFrames.Yield ? pathBudget : null;
                 videoDecoder =
                     DecoderFactories.CreateVideo(
                         new HardwareDecodeOptions { Mode = _hwMode },
@@ -287,7 +305,7 @@ internal sealed class PassBuilder : IPassBuilder
                     )(demux) as VideoDecoder;
                 if (videoDecoder is not null)
                 {
-                    videoDecoder.YieldHardwareFrames = _yieldHardwareFrames;
+                    videoDecoder.YieldHardwareFrames = hardwareFrames.Yield;
 
                     // A node that cannot take the frames' memory domain, and a path that holds
                     // without bound, are refused here, before anything runs, rather than when

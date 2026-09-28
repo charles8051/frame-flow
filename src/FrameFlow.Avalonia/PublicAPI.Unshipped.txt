@@ -79,7 +79,6 @@ FrameFlow.Avalonia.FrameFlowVolumeControl.RefreshFromPlayer() -> void
 FrameFlow.Avalonia.IVideoSurface
 FrameFlow.Avalonia.IVideoSurface.AttachSink(Microsoft.Extensions.Logging.ILoggerFactory! loggerFactory) -> FrameFlow.Media.IVideoSink!
 FrameFlow.Avalonia.IVideoSurface.Control.get -> Avalonia.Controls.Control!
-FrameFlow.Avalonia.IVideoSurface.PrefersHardwareFrames.get -> bool
 override FrameFlow.Avalonia.FrameFlowVideoView.Render(Avalonia.Media.DrawingContext! context) -> void
 static FrameFlow.Avalonia.AvaloniaObservableExtensions.ObserveOnUiThread<T>(this System.IObservable<T>! source) -> System.IObservable<T>!
 static FrameFlow.Avalonia.AvaloniaVideoSink.CreateHeadless(Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.AvaloniaVideoSink!>? logger = null) -> FrameFlow.Avalonia.AvaloniaVideoSink!

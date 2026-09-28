@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Graph;
 using FrameFlow.Media;
 
 namespace FrameFlow.Examples.Common;
@@ -23,7 +24,8 @@ namespace FrameFlow.Examples.Common;
 /// </remarks>
 public sealed class DelegatingVideoSink(
     Func<IVideoFrame, CancellationToken, ValueTask> present,
-    int? maxHeldFrames = null
+    int? maxHeldFrames = null,
+    FrameMemoryDomains acceptedDomains = FrameMemoryDomains.Cpu
 ) : IVideoSink
 {
     private readonly Func<IVideoFrame, CancellationToken, ValueTask> _present =
@@ -34,6 +36,12 @@ public sealed class DelegatingVideoSink(
     /// (ADR-0081). <see langword="null"/> when the caller does not say.
     /// </summary>
     public int? MaxHeldFrames => maxHeldFrames;
+
+    /// <summary>
+    /// The memory domains the delegate's presenters take, as the caller declares them (#435).
+    /// CPU when the caller does not say.
+    /// </summary>
+    public FrameMemoryDomains AcceptedDomains => acceptedDomains;
 
     /// <inheritdoc />
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct) => _present(frame, ct);

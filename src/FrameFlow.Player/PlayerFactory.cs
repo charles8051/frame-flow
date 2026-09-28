@@ -27,7 +27,7 @@ internal static class PlayerFactory
         IVideoSink? videoSink,
         IAudioSink? audioSink,
         HardwareDecodeMode hardwareDecodeMode,
-        bool yieldHardwareFrames,
+        bool? yieldHardwareFrames,
         RepeatMode initialRepeatMode,
         ILoggerFactory? loggerFactory,
         bool activateAudioSink,

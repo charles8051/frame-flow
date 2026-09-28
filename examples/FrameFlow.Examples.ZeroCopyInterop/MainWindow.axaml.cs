@@ -244,7 +244,6 @@ public partial class MainWindow : Window
                 .WithMedia(path)
                 .WithVideoSink(videoSink)
                 .WithHardwareDecode(hwMode)
-                .WithHardwareFrames(surface.PrefersHardwareFrames)
                 .WithRepeatMode(RepeatMode.One)
                 .WithLogger(_loggerFactory);
             if (_hardwareDevice is not null)

@@ -32,7 +32,10 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <param name="videoConfigurator">Optional video-chain configurator, applied to every item.</param>
     /// <param name="audioConfigurator">Optional audio-chain configurator, applied to every item.</param>
-    /// <param name="yieldHardwareFrames">Whether hardware-decoded frames reach the sink as GPU frames.</param>
+    /// <param name="yieldHardwareFrames">
+    /// Whether hardware-decoded frames reach the sink as GPU frames; null derives it from the video
+    /// path (#294).
+    /// </param>
     /// <param name="latenessRecovery">Tuning for the lateness-recovery walk, applied to every item.</param>
     /// <param name="loadsSource">
     /// Whether each session makes the source the controller loads the queue's only item. A
@@ -52,7 +55,7 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
         ILoggerFactory? loggerFactory = null,
         Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? videoConfigurator = null,
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator = null,
-        bool yieldHardwareFrames = false,
+        bool? yieldHardwareFrames = null,
         LatenessRecoveryOptions? latenessRecovery = null,
         bool loadsSource = false,
         HardwareDevice? hardwareDevice = null

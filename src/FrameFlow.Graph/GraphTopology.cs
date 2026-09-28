@@ -43,13 +43,15 @@ internal interface IDeclaresHolding
 }
 
 /// <summary>
-/// A node that declares the memory domains it accepts at each input and emits (#435). A node
-/// that is not one accepts either domain and passes on what arrived.
+/// A node that can declare the memory domains it accepts at each input and emits (#435).
 /// </summary>
 internal interface IDeclaresDomains
 {
-    /// <summary>What the node accepts at <paramref name="input"/>, and what it emits.</summary>
-    FrameDomainRule DomainsAt(IPort input);
+    /// <summary>
+    /// What the node accepts at <paramref name="input"/>, and what it emits, or null when it
+    /// declares nothing there. A check decides what an undeclared input takes.
+    /// </summary>
+    FrameDomainRule? DomainsAt(IPort input);
 }
 
 /// <summary>

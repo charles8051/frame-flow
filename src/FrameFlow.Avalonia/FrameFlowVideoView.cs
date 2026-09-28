@@ -224,7 +224,6 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     // Lets FrameFlowPlayerView host this CPU surface or a GPU presenter
     // interchangeably (the chrome binds to the player, not the surface).
     Control IVideoSurface.Control => this;
-    bool IVideoSurface.PrefersHardwareFrames => false;
     IVideoSink IVideoSurface.AttachSink(ILoggerFactory loggerFactory)
     {
         LoggerFactory = loggerFactory;

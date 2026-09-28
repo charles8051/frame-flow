@@ -58,6 +58,61 @@ public sealed class FrameDomainTests
     }
 
     [Fact]
+    public void ANodeThatEmitsNoDomain_EndsTheWalk()
+    {
+        // An inference node's results carry no frame, so a sink for them is not refused.
+        var graph = new GraphRunner();
+        var source = Source();
+        graph
+            .Pipeline(source)
+            .Then(Op("infer", FrameDomainRule.Accepting(FrameMemoryDomains.Any, emits: FrameMemoryDomains.None)))
+            .To(Sink("results", FrameDomainRule.CpuOnly));
+
+        Assert.Null(graph.FrameDomainMismatchFor(source.Output, FrameMemoryDomains.Any));
+        Assert.Null(graph.FrameDomainMismatchFor(source.Output, FrameMemoryDomains.Any, FrameDomainRule.CpuOnly));
+    }
+
+    [Fact]
+    public void WithUndeclaredTakingCpu_AnUndeclaredNodeGpuFramesReach_IsNamed()
+    {
+        var graph = new GraphRunner();
+        var source = Source();
+        graph.Pipeline(source).Then(Op("gate", FrameDomainRule.Any)).Then(Op("tag", null)).To(Sink("present", FrameDomainRule.Any));
+
+        Assert.Null(graph.FrameDomainMismatchFor(source.Output, FrameMemoryDomains.Any));
+        Assert.Equal(
+            new FrameDomainMismatch("tag", FrameMemoryDomains.Gpu, FrameMemoryDomains.Cpu),
+            graph.FrameDomainMismatchFor(source.Output, FrameMemoryDomains.Any, FrameDomainRule.CpuOnly));
+    }
+
+    [Fact]
+    public void WithUndeclaredTakingCpu_NodesAfterADownload_NeedNotDeclare()
+    {
+        var graph = new GraphRunner();
+        var source = Source();
+        graph
+            .Pipeline(source)
+            .Then(Op("gate", FrameDomainRule.Any))
+            .Then(Op("to-cpu", FrameDomainRule.ToCpu))
+            .Then(Op("tag", null))
+            .To(Sink("encode", null));
+
+        Assert.Null(graph.FrameDomainMismatchFor(source.Output, FrameMemoryDomains.Any, FrameDomainRule.CpuOnly));
+    }
+
+    [Fact]
+    public void WithUndeclaredTakingCpu_AnUndeclaredSinkGpuFramesReach_IsNamed()
+    {
+        var graph = new GraphRunner();
+        var source = Source();
+        graph.Pipeline(source).To(Sink("present", null));
+
+        Assert.Equal(
+            "present",
+            graph.FrameDomainMismatchFor(source.Output, FrameMemoryDomains.Any, FrameDomainRule.CpuOnly)?.Node);
+    }
+
+    [Fact]
     public void ABranch_IsCheckedToo()
     {
         var graph = new GraphRunner();

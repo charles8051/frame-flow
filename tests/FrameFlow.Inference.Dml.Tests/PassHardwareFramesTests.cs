@@ -9,8 +9,9 @@ namespace FrameFlow.Inference.Dml.Tests;
 
 /// <summary>
 /// A pass that hands its graph hardware frames (#277): its decoder's pool sized for what the
-/// path holds (#292), a path with no bound refused at build (#416), and a model run on the frames
-/// where they are.
+/// path holds (#292), a path with no bound refused at build (#416), a model run on the frames
+/// where they are, and the frames kept on the GPU without being asked when every node takes
+/// them (#294).
 /// </summary>
 public sealed class PassHardwareFramesTests
 {
@@ -49,6 +50,92 @@ public sealed class PassHardwareFramesTests
         Assert.All(sink.Domains, domain => Assert.Equal(FrameMemoryDomain.Gpu, domain));
         Assert.NotEmpty(results);
         Assert.All(results, result => Assert.Equal(InferencePath.Device, result.Path));
+    }
+
+    /// <summary>
+    /// Without <c>WithHardwareFrames</c>, the same pass keeps the frames on the GPU: the
+    /// inference node and the sink both say they take GPU frames (#294).
+    /// </summary>
+    [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
+    public async Task APassUnasked_KeepsFramesOnTheGpu_WhenEveryNodeTakesThem()
+    {
+        using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D12Va);
+        using var gpu = new DeviceAndQueue(device);
+        using var stage = gpu.Stage(Options);
+        using var session = DmlInferenceSession.OnDevice(
+            OnnxModel.Negate(1, 3, Options.Height, Options.Width), gpu.Device.NativePointer, gpu.Queue.NativePointer);
+        var model = new NegateModel(session, Options);
+        var results = new ConcurrentQueue<InferenceResult<float[]>>();
+        var sink = new RecordingSink(maxHeldFrames: 0);
+
+        await using (var pass = await FrameFlowPass
+            .Create(TestEnvironment.CorpusFile(Clip)!)
+            .WithHardwareDevice(device)
+            .WithVideoSink(sink)
+            .ConfigureVideo(chain => chain.Infer("negate", model, results.Enqueue, stage))
+            .BuildAsync())
+        {
+            await pass.RunToCompletionAsync();
+        }
+
+        Assert.NotEmpty(sink.Domains);
+        Assert.All(sink.Domains, domain => Assert.Equal(FrameMemoryDomain.Gpu, domain));
+        Assert.NotEmpty(results);
+        Assert.All(results, result => Assert.Equal(InferencePath.Device, result.Path));
+    }
+
+    /// <summary>
+    /// Unasked, a pass downloads the frames for a sink that has not said it takes GPU frames. It
+    /// builds and runs on CPU frames (#294).
+    /// </summary>
+    [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
+    public async Task APassUnasked_DownloadsFrames_ForASinkThatSaysNothing()
+    {
+        var sink = new UndeclaredRecordingSink();
+        await RunUnaskedAsync(sink, undeclaredNode: false);
+        Assert.NotEmpty(sink.Domains);
+        Assert.All(sink.Domains, domain => Assert.Equal(FrameMemoryDomain.Cpu, domain));
+    }
+
+    /// <summary>Unasked, the same for a node that has not said it takes GPU frames (#294).</summary>
+    [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
+    public async Task APassUnasked_DownloadsFrames_ForANodeThatSaysNothing()
+    {
+        var sink = new RecordingSink(maxHeldFrames: 0);
+        await RunUnaskedAsync(sink, undeclaredNode: true);
+        Assert.NotEmpty(sink.Domains);
+        Assert.All(sink.Domains, domain => Assert.Equal(FrameMemoryDomain.Cpu, domain));
+    }
+
+    /// <summary>
+    /// Unasked, a path that holds frames without a bound gets CPU frames, where the same path with
+    /// <c>WithHardwareFrames</c> is refused (#294, #416).
+    /// </summary>
+    [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
+    public async Task APassUnasked_DownloadsFrames_ForASinkWithNoBound()
+    {
+        var sink = new RecordingSink(maxHeldFrames: null);
+        await RunUnaskedAsync(sink, undeclaredNode: false);
+        Assert.NotEmpty(sink.Domains);
+        Assert.All(sink.Domains, domain => Assert.Equal(FrameMemoryDomain.Cpu, domain));
+    }
+
+    /// <summary>A D3D12VA pass over <paramref name="sink"/> with no <c>WithHardwareFrames</c>.</summary>
+    private static async Task RunUnaskedAsync(IVideoSink sink, bool undeclaredNode)
+    {
+        using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D12Va);
+        var builder = FrameFlowPass
+            .Create(TestEnvironment.CorpusFile(Clip)!)
+            .WithHardwareDevice(device)
+            .WithVideoSink(sink);
+        if (undeclaredNode)
+        {
+            builder = builder.ConfigureVideo(chain => chain.Then(new OperatorNode<IVideoFrame, IVideoFrame>(
+                "tag", (frame, _) => ValueTask.FromResult<IVideoFrame?>(frame), holding: FrameHolding.InFlight)));
+        }
+
+        await using var pass = await builder.BuildAsync();
+        await pass.RunToCompletionAsync();
     }
 
     /// <summary>
@@ -135,11 +222,33 @@ public sealed class PassHardwareFramesTests
     private static OperatorNode<IVideoFrame, IVideoFrame> Passing(string id, FrameDomainRule domains) =>
         new(id, (frame, _) => ValueTask.FromResult<IVideoFrame?>(frame), holding: FrameHolding.InFlight, domains: domains);
 
+    /// <summary>Records each frame's memory domain. It reads no pixels, so it takes either.</summary>
     private sealed class RecordingSink(int? maxHeldFrames) : IVideoSink
     {
         public ConcurrentQueue<FrameMemoryDomain> Domains { get; } = new();
 
         public int? MaxHeldFrames => maxHeldFrames;
+
+        public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Any;
+
+        public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
+        {
+            Domains.Enqueue(frame.MemoryDomain);
+            frame.Dispose();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) => ValueTask.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    /// <summary>Records each frame's memory domain, and says nothing about which it takes.</summary>
+    private sealed class UndeclaredRecordingSink : IVideoSink
+    {
+        public ConcurrentQueue<FrameMemoryDomain> Domains { get; } = new();
+
+        public int? MaxHeldFrames => 0;
 
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {

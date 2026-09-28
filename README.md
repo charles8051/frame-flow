@@ -112,7 +112,10 @@ so a slow model drops frames instead of delaying the picture. `Yolov8Detector` a
 A frame in system memory is prepared on the CPU. To keep a D3D12VA frame on the GPU, create a
 `HardwareDevice` for D3D12VA, build a `DmlInferenceSession.OnDevice` and a `D3D12ImageToTensor` on
 its `TryGetD3D12Device`, and pass the stage to `Infer`: the frame is then written into the model's
-input and bound in place. A pass takes that route with the device and `WithHardwareFrames`:
+input and bound in place. A pass or a player keeps hardware frames on the GPU when every node they
+reach, the sink included, says it takes GPU frames and the path holds a bounded number of them;
+otherwise it downloads them, and logs which it chose and why (#294). `WithHardwareFrames()`
+insists, and refuses a path that cannot take them:
 
 ```csharp
 using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D12Va);
@@ -121,15 +124,15 @@ using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D12Va);
 await using var pass = await FrameFlowPass.Create(path)
     .WithHardwareDevice(device)
     .WithHardwareFrames()
-    .WithVideoSink(sink)          // declares MaxHeldFrames; one that does not is refused
+    .WithVideoSink(sink)          // declares MaxHeldFrames and AcceptedDomains
     .ConfigureVideo(chain => chain.Infer("yolo", detector, results.Add, stage))
     .BuildAsync();
 await pass.RunToCompletionAsync();
 ```
 
 `CompositionInteropVideoView` shows D3D12VA frames: it converts them on the decoder's D3D12 device
-and copies the result across to the D3D11 texture Avalonia's compositor imports (#429). A player given
-a D3D12VA `HardwareDevice` and `WithHardwareFrames` presents through it.
+and copies the result across to the D3D11 texture Avalonia's compositor imports (#429). Its sink takes
+GPU frames, so a player given a D3D12VA `HardwareDevice` presents through it without being asked.
 
 ### Generic Host and DI
 
