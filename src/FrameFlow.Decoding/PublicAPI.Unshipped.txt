@@ -248,3 +248,19 @@ FrameFlow.Decoding.VideoDecoderOptions.Device.get -> FrameFlow.Decoding.Hardware
 FrameFlow.Decoding.VideoDecoderOptions.Device.init -> void
 static FrameFlow.Decoding.HardwareDevice.Create(FrameFlow.Media.HardwareDecodeBackendKind backend, string? device = null) -> FrameFlow.Decoding.HardwareDevice!
 static FrameFlow.Decoding.HardwareDevice.FromD3D12Device(nint d3d12Device) -> FrameFlow.Decoding.HardwareDevice!
+FrameFlow.Decoding.CudaFramePlanes
+FrameFlow.Decoding.CudaFramePlanes.CudaFramePlanes() -> void
+FrameFlow.Decoding.CudaFramePlanes.CudaFramePlanes(nint Luma, int LumaPitch, nint Chroma, int ChromaPitch, nint Context, nint Stream) -> void
+FrameFlow.Decoding.CudaFramePlanes.Luma.get -> nint
+FrameFlow.Decoding.CudaFramePlanes.Luma.init -> void
+FrameFlow.Decoding.CudaFramePlanes.LumaPitch.get -> int
+FrameFlow.Decoding.CudaFramePlanes.LumaPitch.init -> void
+FrameFlow.Decoding.CudaFramePlanes.Chroma.get -> nint
+FrameFlow.Decoding.CudaFramePlanes.Chroma.init -> void
+FrameFlow.Decoding.CudaFramePlanes.ChromaPitch.get -> int
+FrameFlow.Decoding.CudaFramePlanes.ChromaPitch.init -> void
+FrameFlow.Decoding.CudaFramePlanes.Context.get -> nint
+FrameFlow.Decoding.CudaFramePlanes.Context.init -> void
+FrameFlow.Decoding.CudaFramePlanes.Stream.get -> nint
+FrameFlow.Decoding.CudaFramePlanes.Stream.init -> void
+FrameFlow.Decoding.GpuVideoFrame.TryGetCudaPlanes(out FrameFlow.Decoding.CudaFramePlanes planes) -> bool

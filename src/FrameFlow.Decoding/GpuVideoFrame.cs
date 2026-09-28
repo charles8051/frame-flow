@@ -412,8 +412,10 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// last frame crashes the process when a TensorRT-RTX session is loaded (#422).
     /// </para>
     /// <para>
-    /// The pointers are borrowed: the caller keeps the frame alive, and does not dispose it on
-    /// another thread, while it uses them.
+    /// The pointers are borrowed, and the frame's surface goes back to the decoder's pool when the
+    /// frame is released. Keep the frame, or an <see cref="AddRef"/> of it, until every piece of
+    /// GPU work that reads them has finished, not only until it is submitted, and do not dispose
+    /// it on another thread meanwhile.
     /// </para>
     /// </remarks>
     /// <param name="texture">
@@ -463,6 +465,79 @@ public sealed class GpuVideoFrame : IVideoFrame
             fence = frame->sync_ctx.fence;
             fenceValue = frame->sync_ctx.fence_value;
             return texture != nint.Zero && fence != nint.Zero;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+        finally
+        {
+            if (held)
+                h.DangerousRelease();
+        }
+    }
+
+    /// <summary>
+    /// Surfaces where a CUDA-decoded (NVDEC) frame's samples are in device memory, for a consumer
+    /// that reads them on the GPU, such as an inference session bound to CUDA memory (#289). Only
+    /// valid when <see cref="Backend"/> is <see cref="HardwareDecodeBackendKind.Cuda"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The planes are laid out as <see cref="Format"/> says: NV12 for an 8-bit stream, P010 for a
+    /// 10-bit one, each with its luma plane first and its chroma interleaved at half the height. A
+    /// frame in any other layout, such as 4:4:4, surfaces nothing.
+    /// The decoder copies the frame into this memory asynchronously on
+    /// <see cref="CudaFramePlanes.Stream"/>, so read on that stream or synchronize with it first,
+    /// with <see cref="CudaFramePlanes.Context"/> current.
+    /// </para>
+    /// <para>
+    /// The pointers are borrowed, and the frame's surface goes back to the decoder's pool when the
+    /// frame is released. Keep the frame, or an <see cref="AddRef"/> of it, until every piece of
+    /// GPU work that reads them has finished, not only until it is submitted, and do not dispose
+    /// it on another thread meanwhile.
+    /// </para>
+    /// </remarks>
+    /// <param name="planes">On success, the planes, their pitches, and the context and stream they belong to.</param>
+    /// <returns>
+    /// <see langword="true"/> when the planes were surfaced; <see langword="false"/> for a frame
+    /// from another backend, one that is neither NV12 nor P010, or a disposed frame.
+    /// </returns>
+    public unsafe bool TryGetCudaPlanes(out CudaFramePlanes planes)
+    {
+        planes = default;
+
+        // Two planes, luma and interleaved chroma, is all CudaFramePlanes describes.
+        if (Backend != HardwareDecodeBackendKind.Cuda || Format is not (PixelFormat.Nv12 or PixelFormat.P010))
+            return false;
+
+        var h = _handle;
+        if (h is null)
+            return false;
+
+        bool held = false;
+        try
+        {
+            // Hold the handle across the read, as TryGetD3D11Texture does.
+            h.DangerousAddRef(ref held);
+            if (h.IsInvalid)
+                return false;
+
+            var accessor = new AvFrameAccessor(h.DangerousGetHandle());
+            var device = accessor.GetCudaDeviceContext();
+            var luma = (nint)accessor.GetDataPointer(0);
+            var chroma = (nint)accessor.GetDataPointer(1);
+            if (device is null || luma == nint.Zero || chroma == nint.Zero)
+                return false;
+
+            planes = new CudaFramePlanes(
+                luma,
+                accessor.GetLineSize(0),
+                chroma,
+                accessor.GetLineSize(1),
+                device->cuda_ctx,
+                device->stream);
+            return true;
         }
         catch (ObjectDisposedException)
         {
