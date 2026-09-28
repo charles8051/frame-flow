@@ -475,6 +475,75 @@ public sealed class GpuVideoFrame : IVideoFrame
         }
     }
 
+    /// <summary>
+    /// Surfaces where a CUDA-decoded (NVDEC) frame's samples are in device memory, for a consumer
+    /// that reads them on the GPU, such as an inference session bound to CUDA memory (#289). Only
+    /// valid when <see cref="Backend"/> is <see cref="HardwareDecodeBackendKind.Cuda"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The planes are laid out as <see cref="Format"/> says: NV12 for an 8-bit stream, P010 for a
+    /// 10-bit one, each with its luma plane first and its chroma interleaved at half the height.
+    /// The decoder copies the frame into this memory asynchronously on
+    /// <see cref="CudaFramePlanes.Stream"/>, so read on that stream or synchronize with it first,
+    /// with <see cref="CudaFramePlanes.Context"/> current.
+    /// </para>
+    /// <para>
+    /// The pointers are borrowed: the caller keeps the frame alive, and does not dispose it on
+    /// another thread, while it uses them.
+    /// </para>
+    /// </remarks>
+    /// <param name="planes">On success, the planes, their pitches, and the context and stream they belong to.</param>
+    /// <returns>
+    /// <see langword="true"/> when the planes were surfaced; <see langword="false"/> for a frame
+    /// from another backend or a disposed frame.
+    /// </returns>
+    public unsafe bool TryGetCudaPlanes(out CudaFramePlanes planes)
+    {
+        planes = default;
+
+        if (Backend != HardwareDecodeBackendKind.Cuda)
+            return false;
+
+        var h = _handle;
+        if (h is null)
+            return false;
+
+        bool held = false;
+        try
+        {
+            // Hold the handle across the read, as TryGetD3D11Texture does.
+            h.DangerousAddRef(ref held);
+            if (h.IsInvalid)
+                return false;
+
+            var accessor = new AvFrameAccessor(h.DangerousGetHandle());
+            var device = accessor.GetCudaDeviceContext();
+            var luma = (nint)accessor.GetDataPointer(0);
+            var chroma = (nint)accessor.GetDataPointer(1);
+            if (device is null || luma == nint.Zero || chroma == nint.Zero)
+                return false;
+
+            planes = new CudaFramePlanes(
+                luma,
+                accessor.GetLineSize(0),
+                chroma,
+                accessor.GetLineSize(1),
+                device->cuda_ctx,
+                device->stream);
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+        finally
+        {
+            if (held)
+                h.DangerousRelease();
+        }
+    }
+
     /// <inheritdoc/>
     /// <remarks>
     /// Decrements the object-level ref count. Only the final release

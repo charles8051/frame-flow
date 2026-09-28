@@ -53,12 +53,13 @@ output tensor.
    `SwScaleVideoConverter.Process`, which threw on a `GpuVideoFrame`, so turning the decoder flag
    on made a graph unrunnable rather than faster.
 
-2. **A GPU frame can surface its backend handle.** (#289) Met for D3D12:
-   `TryGetD3D12Texture` gives a D3D12VA frame's texture and the fence, with its value, that the
-   decoder signals once the frame is written. That is what both inference spikes read by
-   reflection (#420, #421). The CUDA device pointer of an NVDEC frame is deferred until a path
-   decodes with CUDA directly ([decision 2](adr.md)): TensorRT-RTX gets CUDA memory from a
-   D3D12VA frame by importing the preprocessed buffer.
+2. **A GPU frame can surface its backend handle.** (#289) Met. `TryGetD3D12Texture` gives a
+   D3D12VA frame's texture and the fence, with its value, that the decoder signals once the frame
+   is written. That is what both inference spikes read by reflection (#420, #421).
+   `TryGetCudaPlanes` gives an NVDEC frame's luma and chroma device pointers, their pitches, and
+   the CUDA context and stream the decoder copied the frame on (`GpuVideoFrameCudaTests` reads
+   them back and matches FFmpeg's download byte for byte). No consumer in the tree binds them
+   yet: TensorRT-RTX gets CUDA memory from a D3D12VA frame by importing the preprocessed buffer.
 
 3. **An operator can consume a `GpuVideoFrame`, and survives one that is not.** (#290) Built as
    `InferenceOperators.Infer` (#436): it chooses a route per frame, the device stage for a frame it

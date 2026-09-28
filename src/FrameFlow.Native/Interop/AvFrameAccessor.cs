@@ -238,6 +238,25 @@ internal readonly unsafe ref struct AvFrameAccessor
     }
 
     /// <summary>
+    /// For a CUDA hardware frame, walks <c>hw_frames_ctx → device_ctx → hwctx</c> to the device's
+    /// <c>AVCUDADeviceContext</c>. Null when any link is missing. The caller checks that the
+    /// frame is a CUDA frame: the walk reads whatever <c>hwctx</c> holds.
+    /// </summary>
+    internal AVCUDADeviceContext* GetCudaDeviceContext()
+    {
+        ref AVFrame f = ref Unsafe.AsRef<AVFrame>((void*)_ptr);
+        var framesCtxRef = f.hw_frames_ctx;
+        if (framesCtxRef is null)
+            return null;
+
+        var framesCtx = (AVHWFramesContext*)framesCtxRef->data;
+        if (framesCtx is null || framesCtx->device_ctx is null)
+            return null;
+
+        return (AVCUDADeviceContext*)framesCtx->device_ctx->hwctx;
+    }
+
+    /// <summary>
     /// The address of the <c>AVHWDeviceContext</c> this hardware frame's pool was made on:
     /// <c>hw_frames_ctx → device_ctx</c>. Decoders that borrowed one <c>HardwareDevice</c> all
     /// report its context. Zero for a software frame.
