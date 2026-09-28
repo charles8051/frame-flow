@@ -32,9 +32,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.*" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
-    <PackageReference Include="Avalonia" Version="11.*" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.*" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.*" />
+    <PackageReference Include="Avalonia" Version="$(FrameFlowAvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Desktop" Version="$(FrameFlowAvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="$(FrameFlowAvaloniaVersion)" />
     <!-- Periphery (substrate-level) supplies DeviceSessionHost; the
          camera package supplies CameraSession + the fluent builder. -->
     <PackageReference Include="Periphery" Version="4.1.0-alpha.*" />

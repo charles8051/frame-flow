@@ -195,6 +195,18 @@ jobs:
       - name: Package smoke test
         run: dotnet run scripts/package-smoke.cs -- --no-build
 
+      # The Avalonia packages compile against Avalonia 11, and an app on 12 resolves 12. This
+      # builds the Avalonia projects and their tests against 12 and runs the tests, so a source
+      # break on 12 fails here. It proves source compatibility only: a DLL built against 11 is
+      # not what runs. Last in the job, because it rebuilds those projects with other packages.
+      - name: Avalonia 12
+        shell: bash
+        run: |
+          for project in tests/FrameFlow.Avalonia.Tests tests/FrameFlow.Avalonia.Windows.Tests; do
+            dotnet build "$project" --configuration Release -p:FrameFlowLocalFeedDisable=true "-p:FrameFlowAvaloniaVersion=12.*"
+            dotnet test "$project" --configuration Release --no-build "-p:FrameFlowAvaloniaVersion=12.*"
+          done
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7

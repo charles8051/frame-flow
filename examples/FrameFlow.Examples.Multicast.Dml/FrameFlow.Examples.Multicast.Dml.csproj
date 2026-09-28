@@ -34,9 +34,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.*" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.*" />
-    <PackageReference Include="Avalonia" Version="11.*" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.*" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.*" />
+    <PackageReference Include="Avalonia" Version="$(FrameFlowAvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Desktop" Version="$(FrameFlowAvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="$(FrameFlowAvaloniaVersion)" />
     <!--
       FrameFlow.Native.Runtime ships FFmpeg's avutil / avcodec / avformat
       / avdevice / avfilter / swresample / swscale as NuGet runtime

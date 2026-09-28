@@ -240,22 +240,18 @@ public sealed class FrameFlowPlayerView : UserControl
     private void OnChromeFileOpenRequested(object? sender, FileOpenRequestedEventArgs e) =>
         FileOpenRequested?.Invoke(this, e);
 
-    // Avalonia 11.4 introduces a new DataTransfer / DataFormat.File
-    // API and deprecates the existing DragEventArgs.Data + DataFormats.Files
-    // surface. We're on 11.3.x where the new API isn't fully fleshed out
-    // yet, so we stick with the old surface and pin the suppression
-    // here for easy removal when we move to 11.4+.
-#pragma warning disable CS0618 // obsolete
+    // The DataTransfer surface, which Avalonia 11.3 and 12 both have. Avalonia 12 removed
+    // DragEventArgs.Data and DataFormats.Files, which this used before.
     private void OnDragOver(object? sender, DragEventArgs e)
     {
-        e.DragEffects = e.Data.Contains(DataFormats.Files) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.DragEffects = e.DataTransfer.Contains(DataFormat.File) ? DragDropEffects.Copy : DragDropEffects.None;
     }
 
     private void OnDrop(object? sender, DragEventArgs e)
     {
-        if (!e.Data.Contains(DataFormats.Files))
+        if (!e.DataTransfer.Contains(DataFormat.File))
             return;
-        var files = e.Data.GetFiles();
+        var files = e.DataTransfer.TryGetFiles();
         if (files is null)
             return;
         foreach (var f in files)
@@ -268,7 +264,6 @@ public sealed class FrameFlowPlayerView : UserControl
             break;
         }
     }
-#pragma warning restore CS0618
 
     // ── Hover-to-reveal chrome overlay ──────────────────────────────────
     // The chrome overlay (status strip + seek bar + transport row)
