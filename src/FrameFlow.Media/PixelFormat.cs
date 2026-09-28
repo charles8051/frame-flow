@@ -33,4 +33,11 @@ public enum PixelFormat
     /// Single contiguous plane; stride is <c>Width * 2</c>.
     /// </summary>
     Uyvy422,
+
+    /// <summary>
+    /// P010 semi-planar YUV 4:2:0, 10 bits per sample in the high bits of a 16-bit word. What a
+    /// hardware decoder's surfaces hold for a 10-bit stream, where an 8-bit one holds
+    /// <see cref="Nv12"/>.
+    /// </summary>
+    P010,
 }

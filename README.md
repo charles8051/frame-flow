@@ -109,11 +109,26 @@ await using var player = await FrameFlowPlayer.Create()
 so a slow model drops frames instead of delaying the picture. `Yolov8Detector` and
 `BlazeFaceDetector` are `IImageModel`s; another model implements the same interface.
 
-A frame in system memory is prepared on the CPU. To keep a D3D12VA frame on the GPU, give the
-player a `HardwareDevice`, build a `DmlInferenceSession.OnDevice` and a `D3D12ImageToTensor` on
+A frame in system memory is prepared on the CPU. To keep a D3D12VA frame on the GPU, create a
+`HardwareDevice` for D3D12VA, build a `DmlInferenceSession.OnDevice` and a `D3D12ImageToTensor` on
 its `TryGetD3D12Device`, and pass the stage to `Infer`: the frame is then written into the model's
-input and bound in place. No presenter shows D3D12VA frames yet (#429), and a pass cannot yield
-hardware frames (#277), so that route serves a player whose sink does not display.
+input and bound in place. A pass takes that route with the device and `WithHardwareFrames`:
+
+```csharp
+using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D12Va);
+// ... the session and the stage on device.TryGetD3D12Device ...
+
+await using var pass = await FrameFlowPass.Create(path)
+    .WithHardwareDevice(device)
+    .WithHardwareFrames()
+    .WithVideoSink(sink)          // declares MaxHeldFrames; one that does not is refused
+    .ConfigureVideo(chain => chain.Infer("yolo", detector, results.Add, stage))
+    .BuildAsync();
+await pass.RunToCompletionAsync();
+```
+
+No presenter shows D3D12VA frames yet (#429), so a player on that route needs a sink that does not
+display.
 
 ### Generic Host and DI
 

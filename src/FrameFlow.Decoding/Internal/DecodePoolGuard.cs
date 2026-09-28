@@ -24,10 +24,13 @@ internal readonly record struct PoolGuardState(int Outstanding, int Budget, bool
 /// <summary>What a graph's frame budget means for a hardware decoder's pool (ADR-0081).</summary>
 internal enum PoolBudgetVerdict
 {
-    /// <summary>No fixed pool: software decode, readback, or a pool that grows.</summary>
+    /// <summary>No pool reaches the graph: software decode, or a decoder that reads back.</summary>
     NoPool,
 
-    /// <summary>The pool was opened with room for everything the graph can hold.</summary>
+    /// <summary>
+    /// The pool was opened with room for everything the graph can hold, or grows, and is guarded
+    /// at the graph's budget (#416).
+    /// </summary>
     Fits,
 
     /// <summary>
@@ -40,7 +43,7 @@ internal enum PoolBudgetVerdict
 }
 
 /// <summary>
-/// The fixed-pool guard's policy (ADR-0081 decision 5, phase 1), as total functions over
+/// The pool guard's policy (ADR-0081 decision 5, and #416 for growable pools), as total functions over
 /// <see cref="PoolGuardState"/>. The shell (<see cref="DecodePoolGeneration"/>) owns the wait,
 /// its cancellation and the watchdog's clock.
 /// </summary>
@@ -90,17 +93,21 @@ internal static class DecodePoolGuard
         SpareSurfaces(backend) is int spare ? Math.Max(0, heldFrames - spare) : 0;
 
     /// <summary>
-    /// The phase-1 budget: the pool's spare surfaces plus the <c>extra_hw_frames</c> the decoder
-    /// opened with. Zero, which leaves the pool unguarded, for a growable pool, and for an
-    /// uncharacterised one opened without extra surfaces, where nothing says how many are free.
+    /// The budget a pool is guarded at. A fixed pool's is its spare surfaces plus the
+    /// <c>extra_hw_frames</c> the decoder opened with, and zero, which leaves it unguarded, for an
+    /// uncharacterised one opened without extra surfaces, where nothing says how many are free. A
+    /// growable pool's is <paramref name="graphFrames"/>, the most frames the decoder's graph can
+    /// hold, so a holder that keeps more than it declared parks the decoder rather than growing
+    /// GPU memory without limit (#416). Zero when no graph has declared one.
     /// </summary>
-    public static int BudgetFor(HardwareDecodeBackendKind backend, int extraHwFrames) =>
-        SpareSurfaces(backend) is int spare ? spare + Math.Max(0, extraHwFrames) : 0;
+    public static int BudgetFor(HardwareDecodeBackendKind backend, int extraHwFrames, int graphFrames) =>
+        SpareSurfaces(backend) is int spare ? spare + Math.Max(0, extraHwFrames) : Math.Max(0, graphFrames);
 
     /// <summary>
     /// Judges a graph's budget against the pool a decoder opened: <paramref name="budgetFrames"/>
     /// is the most frames the graph can hold, or <see langword="null"/> when a holder on the path
-    /// declares no bound.
+    /// declares no bound. A path with no bound is refused on a growable pool as on a fixed one:
+    /// the fixed pool faults, and the growable one takes GPU memory until an allocation fails.
     /// </summary>
     public static PoolBudgetVerdict Judge(
         HardwareDecodeBackendKind? backend,
@@ -109,11 +116,13 @@ internal static class DecodePoolGuard
         int? budgetFrames
     )
     {
-        if (!yieldsHardwareFrames || backend is not { } bound || SpareSurfaces(bound) is null)
+        if (!yieldsHardwareFrames || backend is not { } bound)
             return PoolBudgetVerdict.NoPool;
         if (budgetFrames is not { } frames)
             return PoolBudgetVerdict.Unbounded;
-        return frames > BudgetFor(bound, extraHwFrames)
+        if (SpareSurfaces(bound) is null)
+            return PoolBudgetVerdict.Fits;
+        return frames > BudgetFor(bound, extraHwFrames, graphFrames: 0)
             ? PoolBudgetVerdict.OverPool
             : PoolBudgetVerdict.Fits;
     }

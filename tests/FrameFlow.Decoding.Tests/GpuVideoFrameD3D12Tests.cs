@@ -14,7 +14,9 @@ public sealed class GpuVideoFrameD3D12Tests(FfmpegBootstrapFixture fixture)
     : IClassFixture<FfmpegBootstrapFixture>
 {
     private const string Fixture = "test-video-h264-yuv420p.mp4";
+    private const string TenBitFixture = "test-video-vp9-yuv420p10.webm";
     private const int DxgiFormatNv12 = 103;
+    private const int DxgiFormatP010 = 104;
     private static readonly TimeSpan FailureBound = TimeSpan.FromSeconds(30);
     private static readonly Guid IidResource = new("696442be-a72e-4059-bc79-5b5c98040fad");
     private static readonly Guid IidFence = new("0a753dcf-c4d8-4b91-adf6-be5a60d95a76");
@@ -61,6 +63,29 @@ public sealed class GpuVideoFrameD3D12Tests(FfmpegBootstrapFixture fixture)
         Assert.False(frame.TryGetD3D12Texture(out nint texture, out _, out nint fence, out _));
         Assert.Equal(nint.Zero, texture);
         Assert.Equal(nint.Zero, fence);
+    }
+
+    /// <summary>
+    /// A frame reports its pool's format (#430). An 8-bit stream's surfaces hold NV12 and a
+    /// 10-bit stream's P010, where every frame used to report Nv12.
+    /// </summary>
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D12Va, TenBitFixture)]
+    public async Task AFrameReportsWhatItsSurfaceHolds()
+    {
+        Assert.Equal((DxgiFormatNv12, PixelFormat.Nv12), await FirstFrameFormatsAsync(Fixture));
+        Assert.Equal((DxgiFormatP010, PixelFormat.P010), await FirstFrameFormatsAsync(TenBitFixture));
+    }
+
+    private async Task<(int Texture, PixelFormat Reported)> FirstFrameFormatsAsync(string clip)
+    {
+        await using var demux = await OpenAsync(clip);
+        await using var decoder = OpenHardware(demux, HardwareDecodeBackendKind.D3D12Va);
+        await QueueAllAsync(demux, decoder);
+        await using var frames = decoder.DecodeAsync().GetAsyncEnumerator();
+        Assert.True(await frames.MoveNextAsync());
+        using var frame = Assert.IsType<GpuVideoFrame>(frames.Current);
+        Assert.True(frame.TryGetD3D12Texture(out nint texture, out _, out _, out _));
+        return (ResourceDesc(texture).Format, frame.Format);
     }
 
     [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D12Va, Fixture)]
@@ -134,10 +159,10 @@ public sealed class GpuVideoFrameD3D12Tests(FfmpegBootstrapFixture fixture)
         public int Flags;
     }
 
-    private static async Task<DemuxSession> OpenAsync()
+    private static async Task<DemuxSession> OpenAsync(string clip = Fixture)
     {
-        var file = TestEnvironment.GetCorpusFile(Fixture);
-        Assert.True(file is not null, $"Corpus is present but {Fixture} is missing.");
+        var file = TestEnvironment.GetCorpusFile(clip);
+        Assert.True(file is not null, $"Corpus is present but {clip} is missing.");
         return (DemuxSession)await new DemuxSessionFactory().OpenAsync(MediaSource.FromFile(file!));
     }
 

@@ -31,6 +31,28 @@ public sealed class MediaPassIntegrationTests
     }
 
     [RequiresFfmpegAndCorpusFact]
+    public async Task WithHardwareFrames_ReachesThePassDecoder()
+    {
+        var path = TestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");
+        Assert.NotNull(path);
+
+        await using var plain = await FrameFlowPass
+            .Create(path!)
+            .WithVideoSink(new CountingVideoSink(_ => { }))
+            .WithHardwareDecode(HardwareDecodeMode.Disabled)
+            .BuildAsync();
+        await using var yielding = await FrameFlowPass
+            .Create(path!)
+            .WithVideoSink(new CountingVideoSink(_ => { }))
+            .WithHardwareDecode(HardwareDecodeMode.Disabled)
+            .WithHardwareFrames()
+            .BuildAsync();
+
+        Assert.False(plain.VideoDecoder!.YieldHardwareFrames);
+        Assert.True(yielding.VideoDecoder!.YieldHardwareFrames);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
     public async Task BuildAsync_VideoOnlyFile_PlaysToCompletion()
     {
         var path = TestEnvironment.GetCorpusFile("test-video-h264-yuv420p.mp4");

@@ -23,6 +23,7 @@ public sealed class PixelFormatTests
                 PixelFormat.Nv12,
                 PixelFormat.Yuyv422,
                 PixelFormat.Uyvy422,
+                PixelFormat.P010,
             },
             values
         );

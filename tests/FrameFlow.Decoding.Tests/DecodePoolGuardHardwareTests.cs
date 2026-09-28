@@ -59,6 +59,66 @@ public sealed class DecodePoolGuardHardwareTests(FfmpegBootstrapFixture fixture)
         HoldEveryFrameOnAGrowablePoolAsync(HardwareDecodeBackendKind.D3D12Va);
 
     /// <summary>
+    /// In a graph, a D3D12VA pool is guarded at what the graph declares it holds (#416). A sink
+    /// that keeps more than it declared parks the decoder at the budget, where outside a graph the
+    /// same pool gives a surface to every frame held.
+    /// </summary>
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D12Va, Fixture)]
+    public async Task InAGraph_AGrowablePoolParksAtTheGraphsBudget()
+    {
+        await using var demux = await OpenAsync(Fixture);
+        await using var decoder = VideoDecoder.Open(
+            demux.FormatContextPtr,
+            demux.MediaInfo.VideoStreams[0].StreamIndex,
+            new HardwareDecodeOptions
+            {
+                Mode = HardwareDecodeMode.Required,
+                PreferredBackends = [HardwareDecodeBackendKind.D3D12Va],
+            },
+            fixture.Capabilities,
+            loggerFactory: null
+        );
+        Assert.Equal(HardwareDecodeBackendKind.D3D12Va, decoder.HardwareBackend);
+        decoder.YieldHardwareFrames = true;
+        await QueueAllAsync(demux, decoder);
+
+        var held = new ConcurrentQueue<IVideoFrame>();
+        using var cts = new CancellationTokenSource();
+        var graph = new FrameFlow.Graph.Graph();
+        graph
+            .Pipeline(decoder.AsSourceNode("video-source"))
+            .To(
+                new SinkNode<IVideoFrame>(
+                    "keeps-more-than-it-declares",
+                    (frame, _) =>
+                    {
+                        held.Enqueue(frame.AddRef());
+                        return ValueTask.CompletedTask;
+                    },
+                    holding: FrameHolding.AtMost(2)
+                )
+            );
+        var run = graph.RunAsync(cts.Token);
+        try
+        {
+            await SpinUntil(() => decoder.GetDiagnostics().PoolBudgetWaits > 0 || run.IsCompleted);
+            Assert.False(run.IsCompleted, $"The decoder ran to the end with {held.Count} frames held.");
+
+            // The source's pump item, the edge's one and the sink's two.
+            var parked = decoder.GetDiagnostics();
+            Assert.Equal(4, parked.HardwareFrameBudget);
+            Assert.Equal(4, parked.HardwareFramesOutstanding);
+        }
+        finally
+        {
+            cts.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(FailureBound));
+            while (held.TryDequeue(out var frame))
+                frame.Dispose();
+        }
+    }
+
+    /// <summary>
     /// A graph whose path holds hardware frames without bound is refused before it runs, and
     /// names the holder (ADR-0081, decision 4). No pool size could cover it.
     /// </summary>

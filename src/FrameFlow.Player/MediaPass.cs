@@ -93,6 +93,9 @@ public sealed class MediaPass : IAsyncDisposable
     /// <summary>Metadata describing the opened container and its streams.</summary>
     public MediaInfo Info => _demux.MediaInfo;
 
+    /// <summary>The video decoder, or null for a pass with no video sink. Internal: tests read how it was opened.</summary>
+    internal VideoDecoder? VideoDecoder => _videoDecoder;
+
     /// <summary>
     /// Demux counters. Internal: tests read how many packets the pump read.
     /// </summary>
@@ -153,13 +156,7 @@ public sealed class MediaPass : IAsyncDisposable
         var graph = new Graph.Graph();
 
         if (hasVideo)
-        {
-            var source = _videoDecoder!.AsSourceNode("video-source");
-            var chain = graph.Pipeline(source);
-            if (_videoConfigurator is not null)
-                chain = _videoConfigurator(chain);
-            chain.To(_videoSink!.AsSinkNode("video-sink"));
-        }
+            WireVideo(graph, _videoDecoder!.AsSourceNode("video-source"), _videoConfigurator, _videoSink!);
 
         if (hasAudio)
         {
@@ -243,6 +240,45 @@ public sealed class MediaPass : IAsyncDisposable
             }
             throw;
         }
+    }
+
+    /// <summary>
+    /// The video path's one shape: source, then the consumer's configurator, then the sink.
+    /// <see cref="RunToCompletionAsync"/> and <see cref="VideoFrameBudget"/> both wire it here, so
+    /// the budget is computed on the path that runs.
+    /// </summary>
+    private static void WireVideo(
+        Graph.Graph graph,
+        SourceNode<IVideoFrame> source,
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? configurator,
+        IVideoSink sink
+    )
+    {
+        var chain = graph.Pipeline(source);
+        if (configurator is not null)
+            chain = configurator(chain);
+        chain.To(sink.AsSinkNode("video-sink"));
+    }
+
+    /// <summary>
+    /// The frame budget of a pass's video path over <paramref name="sink"/> (ADR-0081, decision 3):
+    /// the most decoded frames the path can hold at once, or the node that leaves it unbounded.
+    /// </summary>
+    /// <remarks>
+    /// Computed on a copy of the path with a stand-in source, so it is known before the decoder
+    /// opens and can size its pool (#292). The configurator runs once more to build the copy, as
+    /// the player's does, and its contract is to wire the same path each time.
+    /// </remarks>
+    internal static FrameBudget VideoFrameBudget(
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? configurator,
+        IVideoSink sink
+    )
+    {
+        ArgumentNullException.ThrowIfNull(sink);
+        var graph = new Graph.Graph();
+        var source = new SourceNode<IVideoFrame>("video-source", static _ => default);
+        WireVideo(graph, source, configurator, sink);
+        return graph.FrameBudgetFor(source.Output);
     }
 
     public async ValueTask DisposeAsync()

@@ -1,3 +1,4 @@
+using FrameFlow.Graph;
 using FrameFlow.Inference.Core;
 using FrameFlow.Media;
 using Xunit;
@@ -245,6 +246,46 @@ public sealed class ImageToTensorTests
 
         Assert.Throws<ArgumentException>(
             () => ImageToTensor.Write(new byte[10], 4, 4, 16, true, RotatedRect.FromBounds(0, 0, 4, 4), options, tensor, ImageToTensorPath.Auto));
+    }
+
+    /// <summary>
+    /// A GPU frame's format is its surface's, so the refusal names the domain rather than the
+    /// format (#430).
+    /// </summary>
+    [Fact]
+    public void AGpuFrame_IsRefusedForItsDomain_NotItsFormat()
+    {
+        var options = new ImageToTensorOptions(4, 4);
+        var frame = new GpuFrame();
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => ImageToTensor.Write(frame, RotatedRect.Whole(frame), options, new float[options.ElementCount]));
+
+        Assert.Contains("Gpu frame", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("ToCpu", ex.Message, StringComparison.Ordinal);
+    }
+
+    private sealed class GpuFrame : IVideoFrame
+    {
+        public int Width => 4;
+
+        public int Height => 4;
+
+        public TimeSpan Pts => TimeSpan.Zero;
+
+        public TimeSpan Duration => TimeSpan.FromMilliseconds(40);
+
+        public PixelFormat Format => PixelFormat.Nv12;
+
+        public FrameMemoryDomain MemoryDomain => FrameMemoryDomain.Gpu;
+
+        public IVideoFrame AddRef() => this;
+
+        public CpuFrameData ToCpu() => throw new NotSupportedException();
+
+        public void Dispose()
+        {
+        }
     }
 
     [Fact]
