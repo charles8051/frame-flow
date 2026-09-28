@@ -171,40 +171,101 @@ public class InferenceSessionFactoryBuilderTests
     // ── Fallback order: default and custom ─────────────────────────────
 
     [Fact]
-    public void DefaultFallback_FollowsExecutionProviderEnumOrder()
+    public void DefaultFallback_GoesNarrowestFirst_AndTriesCpuLast()
     {
-        // Preferred=Cuda; both Cpu and DirectML registered. Default
-        // fallback walks ExecutionProvider declaration order: Cpu (0)
-        // before DirectML (1). With Cuda failing, the next attempt
-        // should be Cpu.
+        // CPU is the enum's first value, and the default fallback used to follow the enum, so a
+        // failed preferred provider fell to CPU before any other GPU provider (#431).
         var attempts = new List<ExecutionProvider>();
-        var providers = new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
-        {
-            [ExecutionProvider.Cuda] = _ =>
-            {
-                attempts.Add(ExecutionProvider.Cuda);
-                throw new InvalidOperationException("nope");
-            },
-            [ExecutionProvider.DirectML] = path =>
-            {
-                attempts.Add(ExecutionProvider.DirectML);
-                return new FakeInferenceSession(path);
-            },
-            [ExecutionProvider.Cpu] = path =>
-            {
-                attempts.Add(ExecutionProvider.Cpu);
-                return new FakeInferenceSession(path);
-            },
-        };
         var factory = InferenceSessionFactoryBuilder.Create(
-            preferred: ExecutionProvider.Cuda,
-            providers: providers);
+            preferred: ExecutionProvider.WindowsML,
+            providers: Recording(attempts, opens: ExecutionProvider.Cpu,
+                ExecutionProvider.Cpu, ExecutionProvider.DirectML, ExecutionProvider.Cuda, ExecutionProvider.WindowsML));
 
         using var session = factory.Open("model.onnx");
 
-        Assert.Equal(new[] { ExecutionProvider.Cuda, ExecutionProvider.Cpu }, attempts);
+        Assert.Equal(
+            new[] { ExecutionProvider.WindowsML, ExecutionProvider.Cuda, ExecutionProvider.DirectML, ExecutionProvider.Cpu },
+            attempts);
         Assert.Equal(ExecutionProvider.Cpu, factory.ActiveProvider);
     }
+
+    // ── A cached provider that stops opening ───────────────────────────
+
+    [Fact]
+    public void ACachedProviderThatFails_IsForgotten_AndTheChainIsWalkedWithoutIt()
+    {
+        var attempts = new List<ExecutionProvider>();
+        bool dmlWorks = true;
+        var factory = InferenceSessionFactoryBuilder.Create(
+            preferred: ExecutionProvider.DirectML,
+            providers: new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+            {
+                [ExecutionProvider.DirectML] = path =>
+                {
+                    attempts.Add(ExecutionProvider.DirectML);
+                    return dmlWorks ? new FakeInferenceSession(path) : throw new InvalidOperationException("887A0006");
+                },
+                [ExecutionProvider.Cpu] = path =>
+                {
+                    attempts.Add(ExecutionProvider.Cpu);
+                    return new FakeInferenceSession(path);
+                },
+            });
+        using (factory.Open("a.onnx"))
+        {
+        }
+
+        dmlWorks = false;
+        attempts.Clear();
+        using var session = factory.Open("b.onnx");
+
+        // DirectML once, on the cached path; then the chain without it.
+        Assert.Equal(new[] { ExecutionProvider.DirectML, ExecutionProvider.Cpu }, attempts);
+        Assert.Equal(ExecutionProvider.Cpu, factory.ActiveProvider);
+    }
+
+    [Fact]
+    public void ACachedProviderThatFails_WithNothingBehindIt_LeavesNoActiveProvider_AndTheNextOpenStartsOver()
+    {
+        var attempts = new List<ExecutionProvider>();
+        int dmlCalls = 0;
+        var factory = InferenceSessionFactoryBuilder.Create(
+            preferred: ExecutionProvider.DirectML,
+            providers: new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+            {
+                [ExecutionProvider.DirectML] = path =>
+                {
+                    attempts.Add(ExecutionProvider.DirectML);
+                    // Opens, then fails twice, then opens again: a transient fault.
+                    return ++dmlCalls is 2 or 3 ? throw new InvalidOperationException("reset") : new FakeInferenceSession(path);
+                },
+            });
+        using (factory.Open("a.onnx"))
+        {
+        }
+
+        Assert.Throws<InvalidOperationException>(() => factory.Open("b.onnx"));
+        Assert.Null(factory.ActiveProvider);
+
+        Assert.Throws<InvalidOperationException>(() => factory.Open("c.onnx"));
+        using var session = factory.Open("d.onnx");
+
+        Assert.Equal(ExecutionProvider.DirectML, factory.ActiveProvider);
+        Assert.Equal(4, attempts.Count);
+    }
+
+    /// <summary>
+    /// Providers that each record their attempt; <paramref name="opens"/> opens and the rest throw.
+    /// </summary>
+    private static Dictionary<ExecutionProvider, Func<string, IInferenceSession>> Recording(
+        List<ExecutionProvider> attempts, ExecutionProvider opens, params ExecutionProvider[] registered) =>
+        registered.ToDictionary(
+            provider => provider,
+            provider => (Func<string, IInferenceSession>)(path =>
+            {
+                attempts.Add(provider);
+                return provider == opens ? new FakeInferenceSession(path) : throw new InvalidOperationException("nope");
+            }));
 
     [Fact]
     public void CustomFallback_RespectsOrder_AndSkipsUnregisteredProviders()

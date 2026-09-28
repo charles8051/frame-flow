@@ -4,6 +4,7 @@
 using System.Buffers;
 using System.Collections.ObjectModel;
 using FrameFlow.Graph;
+using FrameFlow.Inference.Core;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 
@@ -34,7 +35,9 @@ namespace FrameFlow.Inference;
 /// <b>Threading.</b> A single session is safe for sequential Run
 /// calls. Concurrent calls against one session are not supported in
 /// V1 — the binding lifecycle here is per-call and not yet re-entrant.
-/// Multiple consumers hold their own sessions.
+/// Multiple consumers hold their own sessions. <see cref="Dispose"/> may be
+/// called from another thread while a run is in progress: the run completes,
+/// and the native state is freed when it ends (#432).
 /// </para>
 /// <para>
 /// <b>Session options.</b> The derived EP supplies a fully-configured
@@ -58,7 +61,9 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
     /// </summary>
     protected readonly OrtMemoryInfo CpuMemoryInfo;
 
-    private bool _disposed;
+    // Runs in progress and whether the session is disposed (#432), under _useLock.
+    private readonly object _useLock = new();
+    private SessionUse _use;
 
     /// <summary>Names of the model's inputs, in declaration order.</summary>
     public IReadOnlyList<string> InputNames { get; }
@@ -83,7 +88,51 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
     protected RunOptions RunOptions => _runOptions;
 
     /// <summary>True once <see cref="Dispose"/> has run.</summary>
-    protected bool IsDisposed => _disposed;
+    protected bool IsDisposed
+    {
+        get
+        {
+            lock (_useLock)
+                return _use.Disposed;
+        }
+    }
+
+    /// <summary>
+    /// Marks a run in progress until the returned scope is disposed, so a <see cref="Dispose"/>
+    /// during the run frees nothing until it ends (#432). A derived EP that runs
+    /// <see cref="Session"/> itself takes one around the run.
+    /// </summary>
+    /// <exception cref="ObjectDisposedException">The session is disposed.</exception>
+    protected RunScope BeginRun()
+    {
+        lock (_useLock)
+        {
+            (_use, bool entered) = SessionUse.Enter(_use);
+            ObjectDisposedException.ThrowIf(!entered, this);
+        }
+
+        return new RunScope(this);
+    }
+
+    private void EndRun()
+    {
+        bool release;
+        lock (_useLock)
+            (_use, release) = SessionUse.Exit(_use);
+        if (release)
+            ReleaseNative();
+    }
+
+    /// <summary>A run in progress, from <see cref="BeginRun"/>. Disposing it ends the run.</summary>
+    protected readonly struct RunScope : IDisposable
+    {
+        private readonly OrtInferenceSessionBase? _session;
+
+        internal RunScope(OrtInferenceSessionBase session) => _session = session;
+
+        /// <summary>Ends the run, and frees the session if it was disposed during it.</summary>
+        public void Dispose() => _session?.EndRun();
+    }
 
     /// <summary>
     /// Loads a model from <paramref name="modelPath"/> using the
@@ -132,7 +181,7 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         IReadOnlyDictionary<string, ICpuTensor> outputs
     )
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        using var run = BeginRun();
         ArgumentNullException.ThrowIfNull(inputs);
         ArgumentNullException.ThrowIfNull(outputs);
 
@@ -152,7 +201,7 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         Action<OrtIoBinding>? bindDeviceInputs
     )
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        using var run = BeginRun();
         ArgumentNullException.ThrowIfNull(hostInputs);
         ArgumentNullException.ThrowIfNull(outputs);
 
@@ -522,11 +571,26 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
     {
     }
 
+    /// <summary>
+    /// Disposes the session. A run in progress completes, and the native state is freed when it
+    /// ends rather than under it (#432); a run started afterwards throws
+    /// <see cref="ObjectDisposedException"/>.
+    /// </summary>
     public void Dispose()
     {
-        if (_disposed)
-            return;
-        _disposed = true;
+        bool release;
+        lock (_useLock)
+            (_use, release) = SessionUse.Dispose(_use);
+        if (release)
+            ReleaseNative();
+        // No-op for the current finalizer-free sealed EPs; present so a
+        // future derived type that adds a finalizer need not re-implement
+        // IDisposable (CA1816). Behaviorally inert today.
+        GC.SuppressFinalize(this);
+    }
+
+    private void ReleaseNative()
+    {
         // Disposal order preserved verbatim from the pre-refactor EP
         // sessions: run options, then the EP-specific CPU-memory-info
         // hook (see DisposeCpuMemoryInfo), then the session, then the
@@ -536,9 +600,5 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         _session.Dispose();
         _sessionOptions.Dispose();
         DisposeProviderResources();
-        // No-op for the current finalizer-free sealed EPs; present so a
-        // future derived type that adds a finalizer need not re-implement
-        // IDisposable (CA1816). Behaviorally inert today.
-        GC.SuppressFinalize(this);
     }
 }

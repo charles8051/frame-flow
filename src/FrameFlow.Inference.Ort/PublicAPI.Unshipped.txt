@@ -22,3 +22,7 @@ readonly FrameFlow.Inference.OrtInferenceSessionBase.CpuMemoryInfo -> Microsoft.
 static FrameFlow.Inference.OrtInferenceSessionBase.ValidateNames(System.Collections.Generic.IEnumerable<string!>! supplied, System.Collections.Generic.IReadOnlyList<string!>! expected, string! kind) -> void
 virtual FrameFlow.Inference.OrtInferenceSessionBase.DisposeCpuMemoryInfo() -> void
 virtual FrameFlow.Inference.OrtInferenceSessionBase.DisposeProviderResources() -> void
+FrameFlow.Inference.OrtInferenceSessionBase.BeginRun() -> FrameFlow.Inference.OrtInferenceSessionBase.RunScope
+FrameFlow.Inference.OrtInferenceSessionBase.RunScope
+FrameFlow.Inference.OrtInferenceSessionBase.RunScope.Dispose() -> void
+FrameFlow.Inference.OrtInferenceSessionBase.RunScope.RunScope() -> void

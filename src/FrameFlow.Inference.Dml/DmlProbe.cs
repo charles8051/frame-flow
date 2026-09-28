@@ -8,9 +8,9 @@ namespace FrameFlow.Inference.Dml;
 /// <summary>
 /// Process-cached probe reporting whether the DirectML execution
 /// provider is loadable on the current host. Companion to
-/// <c>FrameFlow.Inference.Cuda.OnnxProbe</c>; substantially
-/// simpler because DirectML has no bootstrap requirements
-/// (DirectML.dll ships in-box on Windows 10 1903+).
+/// <c>FrameFlow.Inference.Cuda.OnnxProbe</c>; simpler, because DirectML has
+/// no bootstrap: the package's DirectML.dll sits beside onnxruntime.dll,
+/// and ONNX Runtime loads it from there.
 /// </summary>
 /// <remarks>
 /// Constructs a <see cref="SessionOptions"/>, appends the DirectML

@@ -42,10 +42,11 @@ namespace FrameFlow.Inference.Dml;
 /// session from the constructors runs on a device ONNX Runtime created, and binds no device input.
 /// </para>
 /// <para>
-/// <b>No bootstrap.</b> DirectML.dll ships in-box on Windows 10 1903+
-/// and Windows 11. No PATH manipulation, no cuDNN equivalents, no
-/// system install gating — the EP is loadable on any DX12-capable
-/// Windows host.
+/// <b>DirectML.dll.</b> The package carries its own, because the one Windows ships is too old for
+/// current ONNX Runtime on some Windows 10 builds. It sits beside ONNX Runtime's
+/// <c>onnxruntime.dll</c>, at the app root or under <c>runtimes/win-x64/native</c>, and ONNX
+/// Runtime's DirectML provider loads it from there before Windows' own (#433). Nothing needs
+/// installing or adding to PATH.
 /// </para>
 /// <para>
 /// <b>Threading.</b> A single session is safe for sequential Run
@@ -177,7 +178,7 @@ public sealed class DmlInferenceSession : OrtInferenceSessionBase, IDeviceInputS
     /// <inheritdoc />
     public void Run(IReadOnlyDictionary<string, DeviceTensor> inputs, IReadOnlyDictionary<string, ICpuTensor> outputs)
     {
-        ObjectDisposedException.ThrowIf(IsDisposed, this);
+        using var run = BeginRun();
         ArgumentNullException.ThrowIfNull(inputs);
         ArgumentNullException.ThrowIfNull(outputs);
         if (_device is null)

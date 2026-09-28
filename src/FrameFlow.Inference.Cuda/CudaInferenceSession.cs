@@ -151,7 +151,7 @@ public sealed class CudaInferenceSession : OrtInferenceSessionBase
         IReadOnlyDictionary<string, OrtValue> outputs
     )
     {
-        ObjectDisposedException.ThrowIf(IsDisposed, this);
+        using var run = BeginRun();
         ArgumentNullException.ThrowIfNull(inputs);
         ArgumentNullException.ThrowIfNull(outputs);
 

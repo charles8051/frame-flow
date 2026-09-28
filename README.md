@@ -177,7 +177,7 @@ See [ADR-0069](docs/adr/ADR-0069-one-error-model-across-the-playback-stack.md).
 - OpenAL audio output on all three platforms, doubling as the master clock
 - Avalonia and SDL presenters
 - camera capture and an H.264 to MP4 encoder
-- optional DirectML, CUDA and Windows ML inference: YOLO detection, Whisper captioning
+- optional CPU, DirectML, CUDA and Windows ML inference: YOLO detection, Whisper captioning
 
 11 runnable example apps under `examples/` exercise these against real files
 and live camera and multicast sources.
@@ -193,10 +193,15 @@ and live camera and multicast sources.
 | Camera / video | `FrameFlow.Camera`, `FrameFlow.Video` |
 | Audio | `FrameFlow.Audio`, `FrameFlow.Audio.OpenAL` |
 | Presenters | `FrameFlow.Avalonia`, `FrameFlow.Avalonia.Windows`, `FrameFlow.Sdl` |
-| Inference | `FrameFlow.Inference.Abstractions`, `.Ort`, `.Cuda`, `.Dml`, `.WinML`, `.D3D12`, `FrameFlow.Yolo`, `FrameFlow.Face`, `FrameFlow.Whisper` |
+| Inference | `FrameFlow.Inference.Abstractions`, `.Ort`, `.Cpu`, `.Cuda`, `.Dml`, `.WinML`, `.D3D12`, `FrameFlow.Yolo`, `FrameFlow.Face`, `FrameFlow.Whisper` |
 
 `FrameFlow.Native.Runtime` carries the FFmpeg binaries. The libraries do not
 reference it — add it yourself, or supply the natives another way.
+
+An app references one of `FrameFlow.Inference.Cpu`, `.Dml`, `.Cuda` and `.WinML`.
+Each carries its own ONNX Runtime native library, and two in one process
+conflict. All four run `CpuInferenceSession`; `.Cpu` is the one for an app with
+no GPU provider, and the only one on macOS.
 
 Any package here works on its own: the FFmpeg resolver installs itself on the
 first native call (ADR-0070). Bootstrap explicitly — `AddHostedBootstrap()`, or

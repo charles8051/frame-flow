@@ -19,29 +19,28 @@ namespace FrameFlow.Inference;
 /// <code>
 /// services.AddSingleton&lt;IInferenceSessionFactory&gt;(sp =>
 ///     InferenceSessionFactoryBuilder.Create(
-///         preferred: ExecutionProvider.Cuda,
+///         preferred: ExecutionProvider.DirectML,
 ///         providers: new Dictionary&lt;ExecutionProvider, Func&lt;string, IInferenceSession&gt;&gt;
 ///         {
-///             [ExecutionProvider.Cuda] = path => new CudaInferenceSession(path),
 ///             [ExecutionProvider.DirectML] = path => new DmlInferenceSession(path),
+///             [ExecutionProvider.Cpu] = path => new CpuInferenceSession(path),
 ///         },
 ///         loggerFactory: sp.GetRequiredService&lt;ILoggerFactory&gt;()));
 /// </code>
 /// <para>
-/// The host application pins which EP packages are referenced (NVIDIA-equipped
-/// SKUs add <c>FrameFlow.Inference.Cuda</c>; the rest stick with
-/// DirectML); the registered <c>providers</c> dictionary reflects that
-/// per-SKU choice. The builder picks among them at runtime.
+/// An app references one of <c>FrameFlow.Inference.Dml</c>, <c>.Cuda</c>, <c>.WinML</c> and
+/// <c>.Cpu</c>: each carries its own ONNX Runtime native library, and two in one process
+/// conflict. Each of them runs <c>CpuInferenceSession</c> too, so the usual registration is the
+/// package's GPU provider and <see cref="ExecutionProvider.Cpu"/> behind it.
 /// </para>
 /// </remarks>
 public static class InferenceSessionFactoryBuilder
 {
     /// <summary>
     /// Builds a factory that tries <paramref name="preferred"/> first,
-    /// then walks <paramref name="fallbackOrder"/> (or the default
-    /// chain, which is the other registered EPs in
-    /// <see cref="ExecutionProvider"/> declaration order: Cpu first,
-    /// DirectML, Cuda last — broadest compatibility first).
+    /// then walks <paramref name="fallbackOrder"/>, or by default the other
+    /// registered EPs from narrowest to broadest: CUDA, Windows ML,
+    /// DirectML, and CPU last, since it is the one that nearly always opens.
     /// </summary>
     /// <param name="preferred">EP attempted first.</param>
     /// <param name="providers">
@@ -53,8 +52,8 @@ public static class InferenceSessionFactoryBuilder
     /// EPs to try after <paramref name="preferred"/> fails, in order.
     /// EPs not present in <paramref name="providers"/> are silently
     /// skipped; the preferred EP is auto-prepended if not already first.
-    /// Defaults to every other EP in <paramref name="providers"/> in
-    /// <see cref="ExecutionProvider"/> declaration order.
+    /// Defaults to every other EP in <paramref name="providers"/>, narrowest
+    /// first and <see cref="ExecutionProvider.Cpu"/> last.
     /// </param>
     /// <param name="loggerFactory">
     /// Optional logger factory. The factory logs the selected EP and
@@ -95,10 +94,25 @@ public static class InferenceSessionFactoryBuilder
     }
 
     /// <summary>
+    /// Where a provider falls in the default fallback, narrowest first (#431). The enum's
+    /// numeric order says nothing: CPU is its first value, and a provider appended later need
+    /// not be broader than the ones before it. One this does not name goes before CPU.
+    /// </summary>
+    private static int FallbackRank(ExecutionProvider provider) =>
+        provider switch
+        {
+            ExecutionProvider.Cuda => 0,
+            ExecutionProvider.WindowsML => 1,
+            ExecutionProvider.DirectML => 2,
+            ExecutionProvider.Cpu => int.MaxValue,
+            _ => int.MaxValue - 1,
+        };
+
+    /// <summary>
     /// Computes the actual EP probe order: preferred first, then the
     /// supplied fallback (filtered to registered providers and
-    /// deduplicated), or a default fallback (other registered EPs in
-    /// enum-declaration order).
+    /// deduplicated), or the default fallback: the other registered EPs
+    /// by <see cref="FallbackRank"/>.
     /// </summary>
     private static IReadOnlyList<ExecutionProvider> BuildChain(
         ExecutionProvider preferred,
@@ -120,7 +134,7 @@ public static class InferenceSessionFactoryBuilder
             return chain;
         }
 
-        foreach (var provider in registeredSet.OrderBy(p => (int)p))
+        foreach (var provider in registeredSet.OrderBy(FallbackRank).ThenBy(p => (int)p))
         {
             if (seen.Add(provider))
                 chain.Add(provider);
@@ -130,7 +144,8 @@ public static class InferenceSessionFactoryBuilder
 
     /// <summary>
     /// Caches the first successful provider; subsequent <c>Open</c>
-    /// calls use the cached provider directly. Thread-safe under the
+    /// calls use the cached provider directly, and one that fails there
+    /// forgets it and walks the chain again. Thread-safe under the
     /// "single-reader, possibly racing first Open" pattern.
     /// </summary>
     private sealed class LazyResolvingFactory : IInferenceSessionFactory
@@ -164,6 +179,7 @@ public static class InferenceSessionFactoryBuilder
 
             lock (_gate)
             {
+                var failures = new List<(ExecutionProvider Provider, Exception Exception)>();
                 if (_active is ExecutionProvider cached)
                 {
                     // Cached path: no re-probe, but a session is still
@@ -172,15 +188,33 @@ public static class InferenceSessionFactoryBuilder
                     // consistent shape on every Open(), warm or cold.
                     progress?.Report(new InferenceSessionProgress(
                         InferenceSessionPhase.ProbingProvider, cached));
-                    var cachedSession = _providers[cached](modelPath);
-                    progress?.Report(new InferenceSessionProgress(
-                        InferenceSessionPhase.OpeningSession, cached));
-                    return cachedSession;
+                    try
+                    {
+                        var cachedSession = _providers[cached](modelPath);
+                        progress?.Report(new InferenceSessionProgress(
+                            InferenceSessionPhase.OpeningSession, cached));
+                        return cachedSession;
+                    }
+                    catch (Exception ex)
+                    {
+                        // A provider that opened before can stop opening: after a GPU
+                        // reset, DirectML fails for the rest of the process (#431). Forget
+                        // it and walk the chain, without trying it twice in this call.
+                        failures.Add((cached, ex));
+                        _active = null;
+                        _logger.LogWarning(
+                            ex,
+                            "Inference factory: execution provider {Provider}, which opened before, "
+                                + "failed to open model '{ModelPath}'. Probing the chain again.",
+                            cached,
+                            modelPath);
+                    }
                 }
 
-                var failures = new List<(ExecutionProvider Provider, Exception Exception)>();
                 foreach (var provider in _chain)
                 {
+                    if (failures.Exists(f => f.Provider == provider))
+                        continue;
                     progress?.Report(new InferenceSessionProgress(
                         InferenceSessionPhase.ProbingProvider, provider));
                     try

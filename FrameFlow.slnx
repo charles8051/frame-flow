@@ -15,6 +15,7 @@
     <Project Path="src/FrameFlow.Face/FrameFlow.Face.csproj" />
     <Project Path="src/FrameFlow.Graph/FrameFlow.Graph.csproj" />
     <Project Path="src/FrameFlow.Inference.Abstractions/FrameFlow.Inference.Abstractions.csproj" />
+    <Project Path="src/FrameFlow.Inference.Cpu/FrameFlow.Inference.Cpu.csproj" />
     <Project Path="src/FrameFlow.Inference.Ort/FrameFlow.Inference.Ort.csproj" />
     <Project Path="src/FrameFlow.Inference.Cuda/FrameFlow.Inference.Cuda.csproj" />
     <Project Path="src/FrameFlow.Inference.D3D12/FrameFlow.Inference.D3D12.csproj" />
@@ -58,6 +59,7 @@
     <Project Path="tests/FrameFlow.Encoding.Tests/FrameFlow.Encoding.Tests.csproj" />
     <Project Path="tests/FrameFlow.Graph.Tests/FrameFlow.Graph.Tests.csproj" />
     <Project Path="tests/FrameFlow.Inference.Abstractions.Tests/FrameFlow.Inference.Abstractions.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Inference.Cpu.Tests/FrameFlow.Inference.Cpu.Tests.csproj" />
     <Project Path="tests/FrameFlow.Inference.Cuda.Tests/FrameFlow.Inference.Cuda.Tests.csproj" />
     <Project Path="tests/FrameFlow.Inference.D3D12.Tests/FrameFlow.Inference.D3D12.Tests.csproj" />
     <Project Path="tests/FrameFlow.Inference.Dml.Tests/FrameFlow.Inference.Dml.Tests.csproj" />
