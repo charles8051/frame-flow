@@ -15,7 +15,8 @@
 //
 //   dotnet run --project spikes/D3D12PresenterProbe -c Release -- direct|bridge
 //
-// Writes its findings to stdout and to probe-result-<mode>.txt, then closes.
+// Writes its findings to stdout and to probe-result-<mode>.txt beside its build output, then
+// closes.
 
 using System.Runtime.InteropServices;
 using Avalonia;
@@ -99,7 +100,7 @@ internal sealed class ProbeControl(IClassicDesktopStyleApplicationLifetime deskt
         }
         finally
         {
-            File.WriteAllLines($"probe-result-{mode}.txt", _log);
+            File.WriteAllLines(Path.Combine(AppContext.BaseDirectory, $"probe-result-{mode}.txt"), _log);
             desktop.Shutdown();
         }
     }
