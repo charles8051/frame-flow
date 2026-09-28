@@ -245,7 +245,8 @@ land.
   backends a FrameFlow-owned pool that each decode slice is copied into, which is the copy the
   presenter's converter already performs per frame, and leaves ADR-0025's sink-owned pool
   alone. Paired with the [video lookahead](../feature-specs/video-lookahead/spec.md) spec,
-  which is the only thing that would spend the depth.
+  which is the only thing that would spend the depth. Not planned: #231 found no overlay gains
+  from a deeper ring, and no other consumer is named.
 - [Declared pull: the master clock as a graph-visible dependency](declared-pull-clock.md) — the
   substrate models edges and nodes, and the master clock is neither, so no rule and no diagnostic
   can see which nodes depend on one. It set out to register clock readers on the `Graph`. Drafting

@@ -1,7 +1,8 @@
 # Video lookahead
 
-**Status:** Draft. Not implemented, and **provisional on #231**, which asks whether this surface
-is worth having at all. Living document, rewritten as the feature changes.
+**Status:** Not planned. #231 found that a deeper ring helps no overlay, and no throughput consumer
+is named, so the epic and its slices were closed (#227). Kept as the record of what was proposed;
+revive it from here if a throughput consumer appears.
 
 **Date:** 2026-09-15
 
