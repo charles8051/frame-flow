@@ -37,8 +37,11 @@ namespace FrameFlow.Avalonia.Windows;
 /// </para>
 /// <para>
 /// <b>Frame lifetime.</b> The GPU reads the decode texture after <see cref="ConvertInto"/> returns,
-/// so the converter holds a reference to the frame until the draw has finished, and releases it at
-/// the next call or at <see cref="Dispose"/>. The sink's <c>MaxHeldFrames</c> counts it.
+/// so the converter holds a reference to the frame until the draw has finished. Up to
+/// <see cref="InFlight"/> draws are outstanding, each with its own command list, descriptors and
+/// frame. A call releases the frames whose draws have finished without waiting; when every draw
+/// is still outstanding it drops the frame rather than wait on the UI thread. The sink's
+/// <c>MaxHeldFrames</c> counts the held frames.
 /// </para>
 /// <para>
 /// <b>The decoder's device.</b> The D3D12 half is built on the device the frames are decoded on,
@@ -57,8 +60,10 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
     /// <summary>Number of shared BGRA textures in the ring, as the D3D11 converter has.</summary>
     public const int BufferCount = D3D11Nv12SharedConverter.BufferCount;
 
-    // How long a CPU wait on the GPU may take before the device is treated as hung. A draw and a
-    // copy take well under a frame; this only bounds a device that stopped making progress.
+    /// <summary>Draws outstanding at once, each holding its frame until the GPU has read it.</summary>
+    public const int InFlight = 2;
+
+    // How long Dispose waits, off the UI thread, for the GPU to finish before it releases anything.
     private static readonly TimeSpan GpuWaitLimit = TimeSpan.FromSeconds(1);
 
     // The D3D11 converter's conversion (ADR-0063), with the sample levels and the frame's part of
@@ -126,8 +131,7 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
     private readonly ID3D12DescriptorHeap _srvHeap;
     private readonly uint _srvSize;
     private readonly ID3D12DescriptorHeap _rtvHeap;
-    private readonly ID3D12CommandAllocator _allocator;
-    private readonly ID3D12GraphicsCommandList _list;
+    private readonly DrawSlot[] _slots = new DrawSlot[InFlight];
     private readonly ID3D12Resource _drawn;
     private readonly ID3D12Fence _fence;
     private readonly ManualResetEvent _fenceReached = new(false);
@@ -139,10 +143,21 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
     private readonly RingBuffer[] _buffers = new RingBuffer[BufferCount];
 
     private ulong _frames;
-    private IVideoFrame? _held;
-    private ulong _heldUntil;
+    private int _nextSlot;
     private bool _deviceLost;
     private bool _disposed;
+
+    /// <summary>One outstanding draw: its command list, its two plane descriptors, and its frame.</summary>
+    private sealed class DrawSlot
+    {
+        public required ID3D12CommandAllocator Allocator;
+        public required ID3D12GraphicsCommandList List;
+        public required int FirstDescriptor;
+
+        /// <summary>The frame the draw reads, until the fence reaches <see cref="Drawn"/>.</summary>
+        public IVideoFrame? Frame;
+        public ulong Drawn;
+    }
 
     private sealed class RingBuffer
     {
@@ -185,12 +200,17 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
             }));
 
             const DescriptorHeapType ViewHeap = DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView;
-            _srvHeap = Own(_device12.CreateDescriptorHeap(new DescriptorHeapDescription(ViewHeap, 2, DescriptorHeapFlags.ShaderVisible)));
+            _srvHeap = Own(_device12.CreateDescriptorHeap(
+                new DescriptorHeapDescription(ViewHeap, 2 * InFlight, DescriptorHeapFlags.ShaderVisible)));
             _srvSize = _device12.GetDescriptorHandleIncrementSize(ViewHeap);
             _rtvHeap = Own(_device12.CreateDescriptorHeap(new DescriptorHeapDescription(DescriptorHeapType.RenderTargetView, 1)));
-            _allocator = Own(_device12.CreateCommandAllocator(CommandListType.Direct));
-            _list = Own(_device12.CreateCommandList<ID3D12GraphicsCommandList>(CommandListType.Direct, _allocator, _pipeline));
-            _list.Close();
+            for (var i = 0; i < InFlight; i++)
+            {
+                var allocator = Own(_device12.CreateCommandAllocator(CommandListType.Direct));
+                var list = Own(_device12.CreateCommandList<ID3D12GraphicsCommandList>(CommandListType.Direct, allocator, _pipeline));
+                list.Close();
+                _slots[i] = new DrawSlot { Allocator = allocator, List = list, FirstDescriptor = 2 * i };
+            }
 
             // The texture the shader draws into and the D3D11 device copies from, and the fence the
             // two signal in turn. Both are shared, so the D3D11 device can open them.
@@ -286,11 +306,13 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
 
     /// <summary>
     /// Converts <paramref name="frame"/> into ring buffer <paramref name="index"/>, whose previous
-    /// present must have completed. Holds the frame until the GPU has read it.
+    /// present must have completed. Holds the frame until the GPU has read it. Never waits on the
+    /// GPU.
     /// </summary>
     /// <returns>
-    /// <see langword="true"/> when the buffer is ready to present; <see langword="false"/> when a
-    /// device was lost or hung, in which case <see cref="IsDeviceLost"/> is set.
+    /// <see langword="true"/> when the buffer is ready to present. <see langword="false"/> when a
+    /// device was lost, in which case <see cref="IsDeviceLost"/> is set, or when every draw is still
+    /// outstanding and the frame was dropped.
     /// </returns>
     /// <exception cref="NotSupportedException">The frame is neither NV12 nor P010, or sits in a texture array.</exception>
     public bool ConvertInto(int index, GpuVideoFrame frame)
@@ -302,8 +324,12 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
         if (subresource != 0)
             throw new NotSupportedException("A frame in a texture array is not supported.");
 
-        // The last draw read its frame and its descriptors; both are reused below.
-        if (!Retire())
+        if (!ReleaseFinished())
+            return false;
+
+        // The slot's list, descriptors and frame are reused below, so its last draw must be done.
+        var slot = _slots[_nextSlot];
+        if (slot.Frame is not null)
             return false;
 
         using var texture = Borrow<ID3D12Resource>(textureHandle);
@@ -318,36 +344,39 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
         var constants = D3D12PresentConstants.Create(
             samples, (int)description.Width, (int)description.Height, Width, Height);
 
-        var srv = _srvHeap.GetCPUDescriptorHandleForHeapStart();
+        int descriptorOffset = slot.FirstDescriptor * (int)_srvSize;
+        var srv = _srvHeap.GetCPUDescriptorHandleForHeapStart() + descriptorOffset;
         _device12.CreateShaderResourceView(texture, PlaneView(lumaFormat, 0), srv);
         _device12.CreateShaderResourceView(texture, PlaneView(chromaFormat, 1), srv + (int)_srvSize);
 
-        _allocator.Reset();
-        _list.Reset(_allocator, _pipeline);
-        _list.SetGraphicsRootSignature(_rootSignature);
-        _list.SetDescriptorHeaps(_srvHeap);
-        _list.SetGraphicsRoot32BitConstants(0, D3D12PresentConstants.Count, &constants, 0);
-        _list.SetGraphicsRootDescriptorTable(1, _srvHeap.GetGPUDescriptorHandleForHeapStart());
-        _list.RSSetViewport(0, 0, Width, Height, 0, 1);
-        _list.RSSetScissorRect(Width, Height);
-        _list.ResourceBarrierTransition(_drawn, ResourceStates.Common, ResourceStates.RenderTarget);
-        _list.OMSetRenderTargets(_rtvHeap.GetCPUDescriptorHandleForHeapStart(), null);
-        _list.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-        _list.DrawInstanced(3, 1, 0, 0);
+        var list = slot.List;
+        slot.Allocator.Reset();
+        list.Reset(slot.Allocator, _pipeline);
+        list.SetGraphicsRootSignature(_rootSignature);
+        list.SetDescriptorHeaps(_srvHeap);
+        list.SetGraphicsRoot32BitConstants(0, D3D12PresentConstants.Count, &constants, 0);
+        list.SetGraphicsRootDescriptorTable(1, _srvHeap.GetGPUDescriptorHandleForHeapStart() + descriptorOffset);
+        list.RSSetViewport(0, 0, Width, Height, 0, 1);
+        list.RSSetScissorRect(Width, Height);
+        list.ResourceBarrierTransition(_drawn, ResourceStates.Common, ResourceStates.RenderTarget);
+        list.OMSetRenderTargets(_rtvHeap.GetCPUDescriptorHandleForHeapStart(), null);
+        list.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
+        list.DrawInstanced(3, 1, 0, 0);
         // COMMON, so the D3D11 device, which tracks no D3D12 state, can read it.
-        _list.ResourceBarrierTransition(_drawn, ResourceStates.RenderTarget, ResourceStates.Common);
-        _list.Close();
+        list.ResourceBarrierTransition(_drawn, ResourceStates.RenderTarget, ResourceStates.Common);
+        list.Close();
 
         var values = BridgeFenceValues.For(_frames + 1);
 
         // From here the GPU may read the frame, so hold it whatever happens next.
-        _held = frame.AddRef();
-        _heldUntil = values.Drawn;
+        slot.Frame = frame.AddRef();
+        slot.Drawn = values.Drawn;
+        _nextSlot = (_nextSlot + 1) % InFlight;
         try
         {
             _queue.Wait(_fence, values.CopiedBefore).CheckError();
             _queue.Wait(decoded, fenceValue).CheckError();
-            _queue.ExecuteCommandList(_list);
+            _queue.ExecuteCommandList(list);
             _queue.Signal(_fence, values.Drawn).CheckError();
         }
         catch (Exception ex)
@@ -390,8 +419,8 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
 
     /// <summary>
     /// Waits for the GPU to finish with everything the converter submitted, bounded, then releases
-    /// the held frame and every D3D12 and D3D11 object. A device that neither finishes nor reports
-    /// removal keeps its objects and the frame: releasing them under GPU work in flight would be a
+    /// the held frames and every D3D12 and D3D11 object. A device that neither finishes nor reports
+    /// removal keeps its objects and frames: releasing them under GPU work in flight would be a
     /// use-after-free on the device.
     /// </summary>
     public void Dispose()
@@ -400,59 +429,79 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
             return;
         _disposed = true;
 
-        if (_frames > 0 && !WaitFor(BridgeFenceValues.For(_frames).Copied))
+        if (_frames > 0 && !GpuFinished(BridgeFenceValues.For(_frames).Copied))
         {
-            if (_device12.DeviceRemovedReason.Success)
-            {
-                _logger.LogWarning(
-                    "D3D12 presenter converter disposed while its GPU work had not finished in {Limit}ms and the device "
-                        + "reports no removal; leaving its objects and held frame unreleased rather than freeing them under it.",
-                    (int)GpuWaitLimit.TotalMilliseconds);
-                return;
-            }
+            _logger.LogWarning(
+                "D3D12 presenter converter disposed while its GPU work had not finished in {Limit}ms and the device "
+                    + "reports no removal; leaving its objects and held frames unreleased rather than freeing them under it.",
+                (int)GpuWaitLimit.TotalMilliseconds);
+            return;
         }
 
-        _held?.Dispose();
-        _held = null;
+        foreach (var slot in _slots)
+        {
+            slot.Frame?.Dispose();
+            slot.Frame = null;
+        }
+
         ReleaseOwned();
     }
 
-    /// <summary>Releases the frame the last draw read, once that draw has finished.</summary>
-    private bool Retire()
+    /// <summary>
+    /// Releases the frames whose draws have finished, without waiting. False, with the converter
+    /// marked lost, when the device was removed; its work is abandoned, so every frame goes.
+    /// </summary>
+    private bool ReleaseFinished()
     {
-        if (_held is null)
-            return true;
-        if (!WaitFor(_heldUntil))
-            return false;
-        _held.Dispose();
-        _held = null;
-        return true;
+        ulong completed = _fence.CompletedValue;
+        bool removed = completed == ulong.MaxValue;
+        foreach (var slot in _slots)
+        {
+            if (slot.Frame is not null && slot.Drawn <= completed)
+            {
+                slot.Frame.Dispose();
+                slot.Frame = null;
+            }
+        }
+
+        if (removed)
+            MarkLost(null, "The D3D12 device was removed");
+        return !removed;
     }
 
     /// <summary>
-    /// Waits on the CPU, bounded, for the shared fence to reach <paramref name="value"/>. False, with
-    /// the converter marked lost, when the device was removed or did not get there in time.
+    /// True once the shared fence reaches <paramref name="value"/>, waiting on the CPU for at most
+    /// <see cref="GpuWaitLimit"/>, or once the device is removed, which abandons its work. Only
+    /// <see cref="Dispose"/> calls it, off the UI thread.
     /// </summary>
-    private bool WaitFor(ulong value)
+    private bool GpuFinished(ulong value)
     {
-        ulong completed = _fence.CompletedValue;
-        if (completed == ulong.MaxValue)
+        try
         {
-            // What a removed device's fence reads. Its work is abandoned, so nothing reads the frame.
-            MarkLost(null, "The D3D12 device was removed");
-            return false;
+            // A removed device's fence reads ulong.MaxValue, which passes this.
+            if (_fence.CompletedValue >= value)
+                return true;
+
+            _fenceReached.Reset();
+            _fence.SetEventOnCompletion(value, _fenceReached.SafeWaitHandle.DangerousGetHandle()).CheckError();
+            if (_fenceReached.WaitOne(GpuWaitLimit))
+                return true;
+        }
+        catch (Exception ex)
+        {
+            // Removal between the read and the registration fails the registration.
+            _logger.LogDebug(ex, "Waiting for the D3D12 presenter's GPU work failed; checking for device removal.");
         }
 
-        if (completed >= value)
+        try
+        {
+            return _device12.DeviceRemovedReason.Failure || _fence.CompletedValue == ulong.MaxValue;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Reading the D3D12 device's removal state failed; treating it as removed.");
             return true;
-
-        _fenceReached.Reset();
-        _fence.SetEventOnCompletion(value, _fenceReached.SafeWaitHandle.DangerousGetHandle()).CheckError();
-        if (_fenceReached.WaitOne(GpuWaitLimit) && _fence.CompletedValue != ulong.MaxValue)
-            return true;
-
-        MarkLost(null, $"The GPU did not reach fence value {value} within {(int)GpuWaitLimit.TotalMilliseconds}ms");
-        return false;
+        }
     }
 
     private void MarkLost(Exception? ex, string what)

@@ -53,7 +53,7 @@ public sealed class D3D12YuvSharedConverterTests
     /// <summary>
     /// The GPU reads the decode texture after <see cref="D3D12YuvSharedConverter.ConvertInto"/>
     /// returns, and the presenter disposes its frame straight after, so the converter keeps the
-    /// frame until the next conversion has seen that draw finish.
+    /// frame until a later conversion sees that its draw has finished.
     /// </summary>
     [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
     public async Task AFrameDisposedAfterConversion_IsHeldUntilTheGpuHasReadIt()
@@ -62,10 +62,15 @@ public sealed class D3D12YuvSharedConverterTests
         var (first, second) = ((GpuVideoFrame)frames[0], (GpuVideoFrame)frames[1]);
         Assert.True(first.TryGetD3D12Texture(out nint texture, out _, out _, out _));
         var converter = new D3D12YuvSharedConverter(texture, first.Width, first.Height, NullLogger.Instance);
+        using var compositor = new CompositorSide(texture);
 
         Assert.True(converter.ConvertInto(0, first));
         first.Dispose();
         Assert.True(IsAlive(first), "the first frame was freed while its draw could still read it");
+
+        // The compositor's copy waits for the converter's, which signals the fence after the first
+        // draw: once this returns, that draw is finished.
+        compositor.Read(converter.GetSharedHandle(0), first.Width, first.Height);
 
         Assert.True(converter.ConvertInto(1, second));
         second.Dispose();

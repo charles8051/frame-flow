@@ -225,12 +225,12 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     public int FramesCommitted => Volatile.Read(ref _framesCommitted);
 
     /// <summary>
-    /// Total frames dropped because every ring buffer still had a present in flight.
-    /// Diagnostic surface; a steady climb means the compositor can't keep up with the
-    /// feed rate.
+    /// Total frames the presenter dropped: every ring buffer still had a present in flight, or,
+    /// for a D3D12VA frame, both of the converter's draws were still on the GPU. Diagnostic
+    /// surface; a steady climb means the compositor or the GPU can't keep up with the feed rate.
     /// </summary>
     /// <remarks>
-    /// This is only the ring-full share of the loss, counted for the view's whole lifetime.
+    /// This is only the presenter's share of the loss, counted for the view's whole lifetime.
     /// Frames superseded at the sink's latest-wins intake — the newest frame replacing one
     /// this render tick never took — are counted by
     /// <see cref="CompositionInteropVideoSink.FramesSuperseded"/>. The diagnostics snapshot
@@ -360,7 +360,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     //
     // FramesDropped is the SUM of both places a frame dies on this path:
     //   1. superseded at the sink's latest-wins slot (feed rate > render-tick rate), and
-    //   2. dropped here in PresentRing because the whole ring was still in flight.
+    //   2. dropped here in PresentRing because the whole ring was still in flight, or because a
+    //      D3D12VA frame found both of the converter's draws still on the GPU.
     // Reporting only (2) under-reported the loss: at 1080p60 the render tick takes one frame
     // per ~16 ms tick while the decoder feeds 60/s, so nearly all of the loss is (1) and the
     // snapshot read sink-drop=0 while a third of the frames never reached the screen. That
@@ -935,7 +936,14 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             frame.Width,
             frame.Height,
             converter.GetSharedHandle,
-            i => converter.ConvertInto(i, frame),
+            i =>
+            {
+                // Both draws still on the GPU: the frame is dropped rather than waited for.
+                bool converted = converter.ConvertInto(i, frame);
+                if (!converted && !converter.IsDeviceLost)
+                    Interlocked.Increment(ref _framesDropped);
+                return converted;
+            },
             frame.Pts
         );
     }
@@ -1156,7 +1164,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         if (presented % 120 == 0)
             _logger.LogInformation(
                 "Sustained presentation ({Mode}): {Presented} presented, {Dropped} dropped "
-                    + "({Superseded} superseded at the sink, {RingFull} ring-full).",
+                    + "({Superseded} superseded at the sink, {Presenter} ring-full or GPU-busy).",
                 source switch
                 {
                     PresentSource.D3D11 => "zero-copy",
