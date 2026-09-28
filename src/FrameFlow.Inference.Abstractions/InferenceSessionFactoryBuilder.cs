@@ -145,7 +145,7 @@ public static class InferenceSessionFactoryBuilder
     /// <summary>
     /// Caches the first successful provider; subsequent <c>Open</c>
     /// calls use the cached provider directly, and one that fails there
-    /// forgets it and walks the chain again. Thread-safe under the
+    /// walks the rest of the chain. Thread-safe under the
     /// "single-reader, possibly racing first Open" pattern.
     /// </summary>
     private sealed class LazyResolvingFactory : IInferenceSessionFactory
@@ -188,27 +188,18 @@ public static class InferenceSessionFactoryBuilder
                     // consistent shape on every Open(), warm or cold.
                     progress?.Report(new InferenceSessionProgress(
                         InferenceSessionPhase.ProbingProvider, cached));
-                    try
-                    {
-                        var cachedSession = _providers[cached](modelPath);
-                        progress?.Report(new InferenceSessionProgress(
-                            InferenceSessionPhase.OpeningSession, cached));
-                        return cachedSession;
-                    }
-                    catch (Exception ex)
-                    {
-                        // A provider that opened before can stop opening: after a GPU
-                        // reset, DirectML fails for the rest of the process (#431). Forget
-                        // it and walk the chain, without trying it twice in this call.
-                        failures.Add((cached, ex));
-                        _active = null;
-                        _logger.LogWarning(
-                            ex,
-                            "Inference factory: execution provider {Provider}, which opened before, "
-                                + "failed to open model '{ModelPath}'. Probing the chain again.",
-                            cached,
-                            modelPath);
-                    }
+                    if (TryConstruct(cached, modelPath, failures) is { } cachedSession)
+                        return Opened(cachedSession, cached, progress);
+
+                    // A provider that opened before can stop opening: after a GPU reset,
+                    // DirectML fails for the rest of the process (#431). Walk the chain
+                    // without it; it stays cached unless another provider opens.
+                    _logger.LogWarning(
+                        failures[^1].Exception,
+                        "Inference factory: execution provider {Provider}, which opened before, "
+                            + "failed to open model '{ModelPath}'. Probing the rest of the chain.",
+                        cached,
+                        modelPath);
                 }
 
                 foreach (var provider in _chain)
@@ -217,46 +208,84 @@ public static class InferenceSessionFactoryBuilder
                         continue;
                     progress?.Report(new InferenceSessionProgress(
                         InferenceSessionPhase.ProbingProvider, provider));
-                    try
+                    if (TryConstruct(provider, modelPath, failures) is not { } session)
                     {
-                        var session = _providers[provider](modelPath);
-                        _active = provider;
-                        progress?.Report(new InferenceSessionProgress(
-                            InferenceSessionPhase.OpeningSession, provider));
-                        if (failures.Count == 0)
-                        {
-                            _logger.LogInformation(
-                                "Inference factory using execution provider {Provider}.",
-                                provider);
-                        }
-                        else
-                        {
-                            _logger.LogWarning(
-                                "Inference factory fell back to execution provider {Provider} "
-                                    + "after {FailureCount} earlier provider(s) failed.",
-                                provider,
-                                failures.Count);
-                        }
-                        return session;
-                    }
-                    catch (Exception ex)
-                    {
-                        failures.Add((provider, ex));
                         _logger.LogWarning(
-                            ex,
+                            failures[^1].Exception,
                             "Inference factory: execution provider {Provider} failed to open "
                                 + "model '{ModelPath}': {Message}",
                             provider,
                             modelPath,
-                            ex.Message);
+                            failures[^1].Exception.Message);
+                        continue;
                     }
+
+                    _active = provider;
+                    if (failures.Count == 0)
+                    {
+                        _logger.LogInformation(
+                            "Inference factory using execution provider {Provider}.",
+                            provider);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Inference factory fell back to execution provider {Provider} "
+                                + "after {FailureCount} earlier provider(s) failed.",
+                            provider,
+                            failures.Count);
+                    }
+                    return Opened(session, provider, progress);
                 }
 
+                // Every provider failed. One cached before stays cached: a model that no
+                // provider opens says nothing against the provider that last opened one.
                 var summary = string.Join("; ",
                     failures.Select(f => $"{f.Provider}: {f.Exception.GetType().Name}: {f.Exception.Message}"));
                 throw new InvalidOperationException(
                     $"All execution providers failed to open model '{modelPath}'. Tried: {summary}",
                     new AggregateException(failures.Select(f => f.Exception)));
+            }
+        }
+
+        /// <summary>
+        /// Constructs a session with <paramref name="provider"/>, or records why it failed and
+        /// returns null. Only the construct is caught: a failure is the provider's.
+        /// </summary>
+        private IInferenceSession? TryConstruct(
+            ExecutionProvider provider,
+            string modelPath,
+            List<(ExecutionProvider Provider, Exception Exception)> failures)
+        {
+            try
+            {
+                return _providers[provider](modelPath);
+            }
+            catch (Exception ex)
+            {
+                failures.Add((provider, ex));
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Reports <paramref name="session"/> opened and hands it over. A reporter that throws
+        /// gets the session disposed, rather than leaked or counted against the provider.
+        /// </summary>
+        private static IInferenceSession Opened(
+            IInferenceSession session,
+            ExecutionProvider provider,
+            IProgress<InferenceSessionProgress>? progress)
+        {
+            try
+            {
+                progress?.Report(new InferenceSessionProgress(InferenceSessionPhase.OpeningSession, provider));
+                return session;
+            }
+            catch
+            {
+                session.Dispose();
+                throw;
             }
         }
     }

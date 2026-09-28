@@ -114,6 +114,24 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         return new RunScope(this);
     }
 
+    /// <summary>
+    /// Refuses a run step outside a scope from <see cref="BeginRun"/>. The step does not take a scope
+    /// of its own: a second one, taken after a <see cref="Dispose"/>, would abort a run already in
+    /// progress.
+    /// </summary>
+    private void RequireRun()
+    {
+        lock (_useLock)
+        {
+            if (_use.Runs > 0)
+                return;
+            ObjectDisposedException.ThrowIf(_use.Disposed, this);
+        }
+
+        throw new InvalidOperationException(
+            $"{nameof(RunWithHostOutputs)} runs inside a scope from {nameof(BeginRun)}.");
+    }
+
     private void EndRun()
     {
         bool release;
@@ -193,15 +211,17 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
     /// Runs the model with <paramref name="hostInputs"/> bound from host memory, any inputs
     /// <paramref name="bindDeviceInputs"/> binds itself, and <paramref name="outputs"/> written to
     /// host memory. For a derived EP whose inputs can come from device memory; it validates its own
-    /// input names and owns the values it binds, which must outlive this call.
+    /// input names and owns the values it binds, which must outlive this call. Call it inside a scope
+    /// from <see cref="BeginRun"/>, which is the run a <see cref="Dispose"/> waits for.
     /// </summary>
+    /// <exception cref="InvalidOperationException">No run scope is open.</exception>
     protected void RunWithHostOutputs(
         IReadOnlyDictionary<string, ICpuTensor> hostInputs,
         IReadOnlyDictionary<string, ICpuTensor> outputs,
         Action<OrtIoBinding>? bindDeviceInputs
     )
     {
-        using var run = BeginRun();
+        RequireRun();
         ArgumentNullException.ThrowIfNull(hostInputs);
         ArgumentNullException.ThrowIfNull(outputs);
 

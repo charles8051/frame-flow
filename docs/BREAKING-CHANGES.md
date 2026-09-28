@@ -285,9 +285,10 @@ null, tries the other registered providers narrowest first: CUDA, Windows ML, Di
 It used to follow `ExecutionProvider`'s numeric order, where `Cpu` is first, so a failed preferred
 provider fell straight to CPU with a GPU provider still untried.
 
-An `Open` whose cached provider fails no longer throws. The factory forgets that provider and
-walks the chain again without it, so a DirectML session that stops opening after a GPU reset
-falls back to CPU.
+An `Open` whose cached provider fails no longer throws while another provider opens. The factory
+walks the rest of the chain and caches the provider that opens, so a DirectML session that stops
+opening after a GPU reset falls back to CPU. When every provider fails, it throws as before and
+keeps the provider it had cached.
 
 **Who hits this.** A factory with three or more providers and no `fallbackOrder`, and code that
 expected a cached provider's failure to reach the caller.

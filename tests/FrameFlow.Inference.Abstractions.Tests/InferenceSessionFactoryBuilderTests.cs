@@ -225,10 +225,11 @@ public class InferenceSessionFactoryBuilderTests
     }
 
     [Fact]
-    public void ACachedProviderThatFails_WithNothingBehindIt_LeavesNoActiveProvider_AndTheNextOpenStartsOver()
+    public void ACachedProviderThatFails_WithNothingBehindIt_StaysCached()
     {
+        // A model no provider opens says nothing against the provider that last opened one.
         var attempts = new List<ExecutionProvider>();
-        int dmlCalls = 0;
+        bool badModel = false;
         var factory = InferenceSessionFactoryBuilder.Create(
             preferred: ExecutionProvider.DirectML,
             providers: new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
@@ -236,22 +237,68 @@ public class InferenceSessionFactoryBuilderTests
                 [ExecutionProvider.DirectML] = path =>
                 {
                     attempts.Add(ExecutionProvider.DirectML);
-                    // Opens, then fails twice, then opens again: a transient fault.
-                    return ++dmlCalls is 2 or 3 ? throw new InvalidOperationException("reset") : new FakeInferenceSession(path);
+                    return badModel ? throw new InvalidOperationException("invalid protobuf") : new FakeInferenceSession(path);
+                },
+                [ExecutionProvider.Cpu] = path =>
+                {
+                    attempts.Add(ExecutionProvider.Cpu);
+                    return badModel ? throw new InvalidOperationException("invalid protobuf") : new FakeInferenceSession(path);
                 },
             });
-        using (factory.Open("a.onnx"))
+        using (factory.Open("good.onnx"))
         {
         }
 
-        Assert.Throws<InvalidOperationException>(() => factory.Open("b.onnx"));
-        Assert.Null(factory.ActiveProvider);
-
-        Assert.Throws<InvalidOperationException>(() => factory.Open("c.onnx"));
-        using var session = factory.Open("d.onnx");
-
+        badModel = true;
+        Assert.Throws<InvalidOperationException>(() => factory.Open("bad.onnx"));
         Assert.Equal(ExecutionProvider.DirectML, factory.ActiveProvider);
-        Assert.Equal(4, attempts.Count);
+
+        badModel = false;
+        attempts.Clear();
+        using var session = factory.Open("good.onnx");
+
+        Assert.Equal(new[] { ExecutionProvider.DirectML }, attempts);
+    }
+
+    [Fact]
+    public void AReporterThatThrowsOnOpening_GetsTheSessionDisposed_AndTriesNoOtherProvider()
+    {
+        var sessions = new List<FakeInferenceSession>();
+        var attempts = new List<ExecutionProvider>();
+        var factory = InferenceSessionFactoryBuilder.Create(
+            preferred: ExecutionProvider.DirectML,
+            providers: new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+            {
+                [ExecutionProvider.DirectML] = path =>
+                {
+                    attempts.Add(ExecutionProvider.DirectML);
+                    var session = new FakeInferenceSession(path);
+                    sessions.Add(session);
+                    return session;
+                },
+                [ExecutionProvider.Cpu] = path =>
+                {
+                    attempts.Add(ExecutionProvider.Cpu);
+                    return new FakeInferenceSession(path);
+                },
+            });
+        var throwsOnOpening = new SyncProgress(r =>
+        {
+            if (r.Phase == InferenceSessionPhase.OpeningSession)
+                throw new ApplicationException("the splash screen is gone");
+        });
+
+        // Cold, then on the cached path.
+        Assert.Throws<ApplicationException>(() => factory.Open("a.onnx", throwsOnOpening));
+        Assert.Throws<ApplicationException>(() => factory.Open("b.onnx", throwsOnOpening));
+
+        Assert.Equal(new[] { ExecutionProvider.DirectML, ExecutionProvider.DirectML }, attempts);
+        Assert.All(sessions, session => Assert.True(session.Disposed));
+    }
+
+    private sealed class SyncProgress(Action<InferenceSessionProgress> report) : IProgress<InferenceSessionProgress>
+    {
+        public void Report(InferenceSessionProgress value) => report(value);
     }
 
     /// <summary>

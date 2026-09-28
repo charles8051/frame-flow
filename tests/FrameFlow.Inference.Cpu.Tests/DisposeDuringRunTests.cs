@@ -38,11 +38,51 @@ public sealed class DisposeDuringRunTests
             () => session.Run(pool.Rent<float>(new TensorShape(1, 4)), pool.Rent<float>(new TensorShape(1, 4))));
     }
 
+    /// <summary>
+    /// A run disposed after it started still runs its steps: they belong to the run's scope rather
+    /// than taking another, which a disposed session would refuse.
+    /// </summary>
+    [Fact]
+    public void ARunInProgress_CompletesItsStepsAfterDispose()
+    {
+        var session = new RecordingSession();
+        var pool = new CpuTensorPool();
+        var input = pool.Rent<float>(new TensorShape(1, 4));
+        var output = pool.Rent<float>(new TensorShape(1, 4));
+        float[] values = [1f, -2f, 3.5f, 0f];
+        values.AsSpan().CopyTo(input.Span);
+
+        using (session.HoldRun())
+        {
+            session.Dispose();
+            session.RunStep(input, output);
+        }
+
+        Assert.Equal(values.Select(v => -v), output.Span.ToArray());
+        Assert.True(session.Released);
+    }
+
+    [Fact]
+    public void ARunStepOutsideARun_IsRefused()
+    {
+        using var session = new RecordingSession();
+        var pool = new CpuTensorPool();
+
+        Assert.Throws<InvalidOperationException>(
+            () => session.RunStep(pool.Rent<float>(new TensorShape(1, 4)), pool.Rent<float>(new TensorShape(1, 4))));
+    }
+
     private sealed class RecordingSession() : OrtInferenceSessionBase(OnnxModel.Negate(1, 4), new SessionOptions())
     {
         public bool Released { get; private set; }
 
         public IDisposable HoldRun() => BeginRun();
+
+        public void RunStep(ICpuTensor input, ICpuTensor output) =>
+            RunWithHostOutputs(
+                new Dictionary<string, ICpuTensor> { ["x"] = input },
+                new Dictionary<string, ICpuTensor> { ["y"] = output },
+                bindDeviceInputs: null);
 
         protected override void DisposeProviderResources() => Released = true;
     }
