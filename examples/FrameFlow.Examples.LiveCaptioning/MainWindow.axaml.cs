@@ -497,11 +497,11 @@ public partial class MainWindow : Window
                     // detector blocks at one frame, so the readback runs at most a frame ahead
                     // of inference rather than on every decoded picture.
                     var branch = head.Branch(EdgeOptions.LatestWins(1));
-                    if (_useGpu)
-                        branch = branch.Then(GpuFramesOnly());
-                    var detections = branch
-                        .Then(VideoOperators.ToCpu("inference-readback"))
-                        .Then(CreateDetectOperator(yoloDetector));
+                    var readback = VideoOperators.ToCpu("inference-readback");
+                    var cpuFrames = _useGpu
+                        ? branch.Then(GpuFramesOnly()).Then(readback)
+                        : branch.Then(readback);
+                    var detections = cpuFrames.Then(CreateDetectOperator(yoloDetector));
 
                     return head.Join(
                         detections,

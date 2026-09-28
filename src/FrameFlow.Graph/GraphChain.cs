@@ -32,46 +32,10 @@ public readonly struct GraphChain<T>
     private readonly Graph _graph;
     private readonly OutputPort<T> _head;
 
-    // Set by Branch: the options this chain's next hop uses. A chain that was not produced by
-    // Branch carries none, so nothing about a linear chain changes.
-    private readonly EdgeOptions? _pending;
-
     internal GraphChain(Graph graph, OutputPort<T> head)
-        : this(graph, head, pending: null) { }
-
-    private GraphChain(Graph graph, OutputPort<T> head, EdgeOptions? pending)
     {
         _graph = graph;
         _head = head;
-        _pending = pending;
-    }
-
-    /// <summary>
-    /// The options this chain's next hop takes. A branch uses the options
-    /// <see cref="Branch(EdgeOptions)"/> was given; anything else uses the options passed at the
-    /// call site.
-    /// </summary>
-    private EdgeOptions? NextEdge(EdgeOptions? options)
-    {
-        // A branch's first hop is already configured, by Branch. Options passed here as well
-        // would have to be either ignored or preferred, and both are silent: the caller reads
-        // one of the two settings at the call site and gets the other. Say so instead.
-        if (_pending is { } pending)
-        {
-            if (options is not null)
-            {
-                throw new ArgumentException(
-                    "This edge was configured by Branch, so it cannot take options here as "
-                        + "well. Configure the branch's first edge in the Branch call, and pass "
-                        + "options on later hops.",
-                    nameof(options)
-                );
-            }
-
-            return pending;
-        }
-
-        return options;
     }
 
     /// <summary>
@@ -80,14 +44,19 @@ public readonly struct GraphChain<T>
     /// (ADR-0080), so it does not matter which one is called the trunk.
     /// </summary>
     /// <param name="options">
-    /// Required rather than defaulted. An omitted config would be a capacity-1 blocking edge,
-    /// which is the wrong shape for a branch and the mistake <see cref="ToSecondary"/> already
-    /// warns about: a slow branch would then hold the trunk back frame for frame.
+    /// The branch's first edge. Required rather than defaulted: an omitted config would be a
+    /// capacity-1 blocking edge, which is the wrong shape for a branch and the mistake
+    /// <see cref="ToSecondary"/> already warns about. A slow branch would then hold the trunk
+    /// back frame for frame.
     /// </param>
-    public GraphChain<T> Branch(EdgeOptions options)
+    /// <returns>
+    /// The branch before its first hop. That hop takes no options of its own, since these
+    /// configure it; the chain it returns takes options on every later hop.
+    /// </returns>
+    public BranchChain<T> Branch(EdgeOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return new GraphChain<T>(_graph, _head, options);
+        return new BranchChain<T>(this, options);
     }
 
     /// <summary>
@@ -95,7 +64,10 @@ public readonly struct GraphChain<T>
     /// the chain over the join's output. This chain is the primary, which sets the join's firing
     /// cadence.
     /// </summary>
-    /// <param name="secondary">The chain to pair onto this one, usually a <see cref="Branch(EdgeOptions)"/>.</param>
+    /// <param name="secondary">
+    /// The chain to pair onto this one, usually a <see cref="Branch(EdgeOptions)"/> continued
+    /// through the node that produces the secondary.
+    /// </param>
     /// <param name="join">The join node.</param>
     /// <param name="primaryOptions">The primary edge's options.</param>
     /// <param name="secondaryOptions">
@@ -118,8 +90,7 @@ public readonly struct GraphChain<T>
 
         // Both sides have to belong to the same graph. Wired across two, each graph would hold
         // one of the join's edges: the one that runs reaches a join whose other input was never
-        // wired, and refuses to start. Checked before either edge is connected, so a rejected
-        // call leaves no half-wired join behind.
+        // wired, and refuses to start.
         if (!ReferenceEquals(_graph, secondary.Graph))
         {
             throw new ArgumentException(
@@ -128,6 +99,11 @@ public readonly struct GraphChain<T>
                 nameof(secondary)
             );
         }
+
+        // Everything that can refuse either edge is checked before the first is connected, so a
+        // rejected call leaves no half-wired join behind.
+        Graph.RequireUnconnected(join.Primary);
+        Graph.RequireUnconnected(join.Secondary);
 
         ToPrimary(join, primaryOptions);
         secondary.ToSecondary(join, secondaryOptions);
@@ -147,7 +123,7 @@ public readonly struct GraphChain<T>
     )
         where TOut : class, IRefCounted
     {
-        _graph.Connect(_head, next.Input, NextEdge(options));
+        _graph.Connect(_head, next.Input, options);
         return new GraphChain<TOut>(_graph, next.Output);
     }
 
@@ -158,7 +134,7 @@ public readonly struct GraphChain<T>
     )
         where TOut : class, IRefCounted
     {
-        _graph.Connect(_head, next.Input, NextEdge(options));
+        _graph.Connect(_head, next.Input, options);
         return new GraphChain<TOut>(_graph, next.Output);
     }
 
@@ -166,7 +142,7 @@ public readonly struct GraphChain<T>
     public void To(SinkNode<T> sink, EdgeOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(sink);
-        _graph.Connect(_head, sink.Input, NextEdge(options));
+        _graph.Connect(_head, sink.Input, options);
     }
 
     /// <summary>
@@ -181,7 +157,7 @@ public readonly struct GraphChain<T>
         where TOut : class, IRefCounted
     {
         ArgumentNullException.ThrowIfNull(join);
-        _graph.Connect(_head, join.Primary, NextEdge(options));
+        _graph.Connect(_head, join.Primary, options);
     }
 
     /// <summary>
@@ -209,7 +185,7 @@ public readonly struct GraphChain<T>
         where TOut : class, IRefCounted
     {
         ArgumentNullException.ThrowIfNull(join);
-        _graph.Connect(_head, join.Secondary, NextEdge(options));
+        _graph.Connect(_head, join.Secondary, options);
     }
 }
 

@@ -416,6 +416,28 @@ collector and skew what every other reader saw (#435). `Enabled`, `Reset` and `S
 unchanged. `FrameCopyMetrics` now counts every copy and conversion by site, including the
 decoder's.
 
+### 20. `Branch` returns a `BranchChain<T>`
+
+**A compile error where a branch is kept or passed on before its first hop.**
+`head.Branch(options).Then(op)` and `head.Branch(options).To(sink)` compile unchanged.
+
+`GraphChain<T>.Branch` returns `BranchChain<T>`. Its `Then`, `To`, `ToPrimary` and `ToSecondary`
+take no `EdgeOptions`, because `Branch` configured that edge, and each returns or terminates as the
+`GraphChain<T>` method of the same name does. Options passed on that hop used to throw
+`ArgumentException` at run time.
+
+| Before | After |
+|---|---|
+| `var b = head.Branch(o); if (gpu) b = b.Then(f); b.Then(g)` | `var b = head.Branch(o); var c = gpu ? b.Then(f).Then(g) : b.Then(g);` |
+| `head.Branch(o).Then(op, other)` | `head.Branch(other).Then(op)` |
+
+**Who hits this.** Code that reassigns a branch variable, as LiveCaptioning did. Code that passed a
+bare branch to `Join` has nothing to migrate: it threw at run time, after wiring the join's primary
+edge (#246).
+
+`Join` also checks both join inputs before it connects either, so a join input that is already
+connected is refused without wiring the other.
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be

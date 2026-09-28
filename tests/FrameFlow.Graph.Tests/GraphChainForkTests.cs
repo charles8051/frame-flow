@@ -84,18 +84,42 @@ public sealed class GraphChainForkTests
     }
 
     [Fact]
-    public void ConfiguringABranchEdgeTwice_IsRejected()
+    public void AJoinOntoAConnectedInput_IsRejectedBeforeEitherEdgeIsWired()
     {
-        // The branch's first edge is configured by Branch. Passing options on that hop as well
-        // would have to silently win or silently lose, and the caller reads one at the call site
-        // either way.
         var graph = new GraphRunner();
         var head = graph.Pipeline(CountedSource(1));
+        var join = PairingJoin();
+        graph.Pipeline(new SourceNode<RefBox<int>>("other", _ => default)).ToSecondary(join);
+        var detections = head.Branch(EdgeOptions.Buffered(4)).Then(Double("double"));
 
-        var ex = Assert.Throws<ArgumentException>(
-            () => head.Branch(EdgeOptions.Buffered(4)).Then(Double("double"), EdgeOptions.LatestWins(1))
+        Assert.Throws<InvalidOperationException>(
+            () => head.Join(detections, join, EdgeOptions.Default, EdgeOptions.Buffered(4))
         );
-        Assert.Contains("configured by Branch", ex.Message, StringComparison.Ordinal);
+
+        // The primary was not wired, so it still can be. A half-wired join would fail this call
+        // with "already connected".
+        head.ToPrimary(join);
+    }
+
+    [Fact]
+    public void ABranchsFirstHop_TakesNoEdgeOptions()
+    {
+        // Branch configures the branch's first edge. Options on that hop as well would have to
+        // silently win or silently lose, so the hop has no parameter to pass them in.
+        var hops = typeof(BranchChain<>).GetMethods(
+            System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.DeclaredOnly
+        );
+
+        Assert.Equal(
+            ["Then", "Then", "To", "ToPrimary", "ToSecondary"],
+            hops.Select(m => m.Name).Order()
+        );
+        Assert.All(
+            hops,
+            m => Assert.DoesNotContain(m.GetParameters(), p => p.ParameterType == typeof(EdgeOptions))
+        );
     }
 
     [Fact]

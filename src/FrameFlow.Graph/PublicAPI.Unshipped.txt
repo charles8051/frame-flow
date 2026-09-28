@@ -9,6 +9,13 @@ FrameFlow.Graph.AudioSampleFormat.Int16Planar = 4 -> FrameFlow.Graph.AudioSample
 FrameFlow.Graph.AudioSampleFormat.Int32 = 1 -> FrameFlow.Graph.AudioSampleFormat
 FrameFlow.Graph.AudioSampleFormat.Int32Planar = 5 -> FrameFlow.Graph.AudioSampleFormat
 FrameFlow.Graph.AudioSampleFormatExtensions
+FrameFlow.Graph.BranchChain<T>
+FrameFlow.Graph.BranchChain<T>.BranchChain() -> void
+FrameFlow.Graph.BranchChain<T>.Then<TOut>(FrameFlow.Graph.MultiOperatorNode<T!, TOut!>! next) -> FrameFlow.Graph.GraphChain<TOut!>
+FrameFlow.Graph.BranchChain<T>.Then<TOut>(FrameFlow.Graph.OperatorNode<T!, TOut!>! next) -> FrameFlow.Graph.GraphChain<TOut!>
+FrameFlow.Graph.BranchChain<T>.To(FrameFlow.Graph.SinkNode<T!>! sink) -> void
+FrameFlow.Graph.BranchChain<T>.ToPrimary<TSecondary, TOut>(FrameFlow.Graph.SyncJoinNode<T!, TSecondary!, TOut!>! join) -> void
+FrameFlow.Graph.BranchChain<T>.ToSecondary<TPrimary, TOut>(FrameFlow.Graph.SyncJoinNode<TPrimary!, T!, TOut!>! join) -> void
 FrameFlow.Graph.Consumer<TIn>
 FrameFlow.Graph.CpuTensor<T>
 FrameFlow.Graph.CpuTensor<T>.AddRef() -> FrameFlow.Graph.ITensor!
@@ -65,7 +72,7 @@ FrameFlow.Graph.Graph.FrameBudgetFor<T>(FrameFlow.Graph.OutputPort<T!>! source) 
 FrameFlow.Graph.Graph.Graph() -> void
 FrameFlow.Graph.Graph.RunAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
 FrameFlow.Graph.GraphChain<T>
-FrameFlow.Graph.GraphChain<T>.Branch(FrameFlow.Graph.EdgeOptions! options) -> FrameFlow.Graph.GraphChain<T!>
+FrameFlow.Graph.GraphChain<T>.Branch(FrameFlow.Graph.EdgeOptions! options) -> FrameFlow.Graph.BranchChain<T!>
 FrameFlow.Graph.GraphChain<T>.Graph.get -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.GraphChain<T>.GraphChain() -> void
 FrameFlow.Graph.GraphChain<T>.Join<TSecondary, TOut>(FrameFlow.Graph.GraphChain<TSecondary!> secondary, FrameFlow.Graph.SyncJoinNode<T!, TSecondary!, TOut!>! join, FrameFlow.Graph.EdgeOptions! primaryOptions, FrameFlow.Graph.EdgeOptions! secondaryOptions) -> FrameFlow.Graph.GraphChain<TOut!>

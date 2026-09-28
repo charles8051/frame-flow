@@ -123,13 +123,7 @@ public sealed class Graph
         Add(from.Owner);
         Add(to.Owner);
 
-        if (to.IsConnected)
-        {
-            throw new InvalidOperationException(
-                $"Input port '{to.Owner.Id}/{to.Name}' is already connected. "
-                    + "Each input port accepts exactly one upstream edge."
-            );
-        }
+        RequireUnconnected(to);
         to.IsConnected = true;
 
         var opts = options ?? EdgeOptions.Default;
@@ -157,6 +151,19 @@ public sealed class Graph
             to.Reader = channel.Reader;
         });
         return this;
+    }
+
+    /// <summary>Throws when <paramref name="to"/> already has its one upstream edge.</summary>
+    internal static void RequireUnconnected<T>(InputPort<T> to)
+        where T : class, IRefCounted
+    {
+        if (to.IsConnected)
+        {
+            throw new InvalidOperationException(
+                $"Input port '{to.Owner.Id}/{to.Name}' is already connected. "
+                    + "Each input port accepts exactly one upstream edge."
+            );
+        }
     }
 
     /// <summary>
