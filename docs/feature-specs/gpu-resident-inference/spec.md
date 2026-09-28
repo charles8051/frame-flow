@@ -111,7 +111,13 @@ output tensor.
    format asked for: that copy is the storage boundary between a fixed pool, such as a camera's
    buffers, and whatever holds frames after it (ADR-0081).
 
-9. **Every claim above fails honestly on a machine without a GPU.** (#295) Met by #354:
+9. **A CPU frame can reach a GPU consumer.** (#293) Met: `VideoOperators.ToGpu(device)` converts a
+   CPU frame to NV12 and uploads it into a pool on a `HardwareDevice`, so a camera, say, feeds the
+   D3D12 inference stage or a presenter as a decoder on that device would. The stage reads an
+   uploaded frame exactly as the shader's arithmetic on its samples says (`ToGpuTests`), and it
+   reads back as the original on D3D11VA, D3D12VA and CUDA (`GpuFrameUploadTests`).
+
+10. **Every claim above fails honestly on a machine without a GPU.** (#295) Met by #354:
    `RequiresHardwareDecodeFact` skips, naming what is missing, unless the probe initialised a
    backend for the codec under test. CI has no GPU on either leg, so skipping loudly there is the
    intended behaviour.
@@ -121,7 +127,7 @@ output tensor.
 | Layer | Change |
 | --- | --- |
 | `FrameFlow.Decoding` | `HardwareDevice`, which decoders borrow so the device outlives them ([borrowed device](../../adr/borrowed-hardware-device.md), #428); backend device accessors on `GpuVideoFrame`; whatever bounds in-flight leases; the `InternalsVisibleTo` grant to `FrameFlow.Video` finally has the consumer it was written for |
-| `FrameFlow.Video` | The `ToCpu` node factory; `MapToGpu` later (#293) |
+| `FrameFlow.Video` | The `ToCpu` and `ToGpu` node factories (#279, #293) |
 | `FrameFlow.Yolo` | The preprocessor splits by memory domain; `Yolov8Detector` stops assuming a CPU tensor |
 | `FrameFlow.Inference.Cuda` | The `OrtValue` device-binding path gets its first caller |
 | `FrameFlow.Inference.Abstractions` | `DeviceTensor` and `IDeviceInputSession` ([decision 4](adr.md)); `IImageModel`, `IDeviceImageToTensor`, `InferenceOperators.Infer` and `PresentedResults` (#436) |

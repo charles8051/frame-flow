@@ -189,6 +189,61 @@ public static class VideoOperators
     }
 
     /// <summary>
+    /// Builds an operator node that uploads each CPU frame to <paramref name="device"/>, and passes
+    /// a frame already on that device straight through (#293). The CPU half of a path whose GPU
+    /// consumer takes a decoder's frames: a camera feeding a D3D12 inference stage, say.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A CPU frame is converted to NV12 and copied into a surface of a pool the node keeps on the
+    /// device, so what comes out is a <see cref="GpuVideoFrame"/> in the shape a decoder on that
+    /// device produces: <see cref="GpuVideoFrame.TryGetD3D11Texture"/>,
+    /// <see cref="GpuVideoFrame.TryGetD3D12Texture"/> and the presenters read it as they read a
+    /// decoded frame. The pool grows by a surface for each uploaded frame still held downstream.
+    /// </para>
+    /// <para>
+    /// The caller owns <paramref name="device"/> and disposes it after the graph; uploaded frames
+    /// keep what they need of it alive until they are released.
+    /// </para>
+    /// </remarks>
+    /// <param name="id">Node id, unique within the graph.</param>
+    /// <param name="device">The device to upload to.</param>
+    /// <exception cref="NotSupportedException">
+    /// Raised at run time for a GPU frame on another device, which would need a readback first
+    /// (<see cref="ToCpu"/>), for a CPU pixel format with no conversion to NV12, and for a device
+    /// whose pools cannot hold NV12.
+    /// </exception>
+    public static OperatorNode<IVideoFrame, IVideoFrame> ToGpu(string id, HardwareDevice device)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        ArgumentNullException.ThrowIfNull(device);
+
+        var upload = new GpuFrameUpload(device);
+        return new OperatorNode<IVideoFrame, IVideoFrame>(
+            id,
+            (input, ct) =>
+            {
+                if (input.MemoryDomain == FrameMemoryDomain.Cpu)
+                    return ValueTask.FromResult<IVideoFrame?>(upload.Upload(input));
+
+                // Already on the device: forward the input itself.
+                if (input is GpuVideoFrame gpu && gpu.HwDeviceContext == device.ContextPointer)
+                    return ValueTask.FromResult<IVideoFrame?>(input);
+
+                throw new NotSupportedException(
+                    $"ToGpu('{id}') received a GPU frame that is not on its {device.Backend} device. "
+                        + "Moving it between devices needs a readback: put ToCpu before this node."
+                );
+            },
+            // A frame already on the device is forwarded as itself, so this is not a storage
+            // boundary for it.
+            holding: FrameHolding.InFlight,
+            // Takes either domain and hands on GPU frames (#293).
+            domains: FrameDomainRule.Accepting(FrameMemoryDomains.Any, emits: FrameMemoryDomains.Gpu)
+        );
+    }
+
+    /// <summary>
     /// Constructs the node body around an <see cref="IVideoConverter"/>.
     /// The converter is captured by the operator closure and lives
     /// for the lifetime of the graph run; the <c>SafeHandle</c>-wrapped

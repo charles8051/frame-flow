@@ -34,6 +34,12 @@ public enum FrameCopySite
 
     /// <summary>A presenter converts a GPU frame to BGRA with a shader.</summary>
     PresenterGpuConvert,
+
+    /// <summary>A CPU frame is converted to NV12 before an upload, as <c>VideoOperators.ToGpu</c> does.</summary>
+    UploadConvert,
+
+    /// <summary>A CPU frame is copied into a device's surface, as <c>VideoOperators.ToGpu</c> does.</summary>
+    Upload,
 }
 
 /// <summary>
