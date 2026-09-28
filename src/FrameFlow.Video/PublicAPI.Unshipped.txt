@@ -11,3 +11,4 @@ static FrameFlow.Video.VideoOperators.ConvertPixelFormat(string! id, FrameFlow.M
 static FrameFlow.Video.VideoOperators.Resize(string! id, int width, int height) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.IVideoFrame!, FrameFlow.Media.IVideoFrame!>!
 static FrameFlow.Video.VideoOperators.ResizeAndConvert(string! id, int width, int height, FrameFlow.Media.PixelFormat targetFormat) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.IVideoFrame!, FrameFlow.Media.IVideoFrame!>!
 static FrameFlow.Video.VideoOperators.ToCpu(string! id) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.IVideoFrame!, FrameFlow.Media.IVideoFrame!>!
+static FrameFlow.Video.VideoOperators.ToGpu(string! id, FrameFlow.Decoding.HardwareDevice! device) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.IVideoFrame!, FrameFlow.Media.IVideoFrame!>!

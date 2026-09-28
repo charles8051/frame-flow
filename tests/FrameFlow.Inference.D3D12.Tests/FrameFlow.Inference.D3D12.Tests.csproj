@@ -24,6 +24,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FrameFlow.Inference.D3D12\FrameFlow.Inference.D3D12.csproj" />
+    <!-- VideoOperators.ToGpu, uploading a CPU frame for the stage to read (#293). -->
+    <ProjectReference Include="..\..\src\FrameFlow.Video\FrameFlow.Video.csproj" />
   </ItemGroup>
 
   <ItemGroup>

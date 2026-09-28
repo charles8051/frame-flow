@@ -434,3 +434,25 @@ before still runs unless it is one that failed on its first GPU frame.
 This is the capability §Phase B's third bullet waits on: a sink can now say which domain it wants.
 The default flip (#294) still needs its migration; what it no longer needs is a way to say "this
 sink takes CPU frames".
+
+## Amended 2026-09-28 (2)
+
+**Decision: the upload is `ToGpu(HardwareDevice device)`, not `MapToGpu(domain)` (#293).** The
+table in Context and the Phase B bullet name `MapToGpu(domain)`; neither was built, and they are
+left as written.
+
+- **"Map" means the other direction.** D3D11's `Map`, Vulkan's `vkMapMemory` and FFmpeg's
+  `av_hwframe_map` make memory visible without a copy. The upload is
+  `av_hwframe_get_buffer` plus `av_hwframe_transfer_data`, a copy.
+- **A domain cannot say where to upload.** `FrameMemoryDomain` is CPU or GPU and carries no
+  device. The three questions Phase B deferred on (who owns the device, how it is shared with the
+  decoder's, and how the caller names it) are answered by the `HardwareDevice` the decoders
+  already borrow: the caller owns it and the node borrows it, as a decoder does.
+
+`VideoOperators.ToGpu` converts a CPU frame to NV12 and uploads it into a pool the node keeps on
+the device, so its output is a `GpuVideoFrame` in the shape a decoder on that device produces, and
+the D3D11 and D3D12 accessors, the presenters and the D3D12 inference stage read it unchanged. A
+GPU frame already on the device is forwarded; one on another device is refused, since moving it
+needs a readback. The node declares that it takes either domain and emits GPU frames (#435).
+`AsDomain(target)` was never built and is not needed: `ToCpu` and `ToGpu` are the two directions.
+

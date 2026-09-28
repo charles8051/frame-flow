@@ -174,6 +174,45 @@ internal static partial class FFAvUtil
     internal static partial int av_hwframe_transfer_data(nint dst, nint src, int flags);
 
     // -------------------------------------------------------------------------
+    // Hardware frame pools (CPU → GPU upload, #293)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Allocates an <c>AVHWFramesContext</c> on the device <paramref name="deviceCtxRef"/> refers
+    /// to, and returns an <c>AVBufferRef*</c> to it, or zero when out of memory. The caller sets
+    /// its format, software format and size, then calls <see cref="av_hwframe_ctx_init"/>.
+    /// </summary>
+    [LibraryImport("avutil")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial nint av_hwframe_ctx_alloc(nint deviceCtxRef);
+
+    /// <summary>Finishes setting up a frames context. 0 on success; negative AVERROR on failure.</summary>
+    [LibraryImport("avutil")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial int av_hwframe_ctx_init(nint framesCtxRef);
+
+    /// <summary>
+    /// Takes a surface from the frames context's pool into <paramref name="frame"/>, which holds a
+    /// reference to the context. 0 on success; negative AVERROR on failure.
+    /// </summary>
+    [LibraryImport("avutil")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial int av_hwframe_get_buffer(nint framesCtxRef, nint frame, int flags);
+
+    /// <summary>
+    /// What a frames context on the device can hold: an <c>AVHWFramesConstraints*</c>, or zero.
+    /// Free it with <see cref="av_hwframe_constraints_free"/>.
+    /// </summary>
+    [LibraryImport("avutil")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial nint av_hwdevice_get_hwframe_constraints(nint deviceCtxRef, nint hwconfig);
+
+    /// <summary>Frees constraints and sets the pointer to zero.</summary>
+    [LibraryImport("avutil")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial void av_hwframe_constraints_free(ref nint constraints);
+
+    // -------------------------------------------------------------------------
     // AV_CODEC_HW_CONFIG_METHOD_* flag constants (declared in libavcodec but
     // semantically describe hwaccel capability — co-located here for cohesion).
     // -------------------------------------------------------------------------

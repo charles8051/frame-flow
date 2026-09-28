@@ -575,6 +575,8 @@ FrameFlow.Media.Diagnostics.FrameCopySite.EncoderConvert = 5 -> FrameFlow.Media.
 FrameFlow.Media.Diagnostics.FrameCopySite.PresenterUpload = 6 -> FrameFlow.Media.Diagnostics.FrameCopySite
 FrameFlow.Media.Diagnostics.FrameCopySite.PresenterGpuCopy = 7 -> FrameFlow.Media.Diagnostics.FrameCopySite
 FrameFlow.Media.Diagnostics.FrameCopySite.PresenterGpuConvert = 8 -> FrameFlow.Media.Diagnostics.FrameCopySite
+FrameFlow.Media.Diagnostics.FrameCopySite.UploadConvert = 9 -> FrameFlow.Media.Diagnostics.FrameCopySite
+FrameFlow.Media.Diagnostics.FrameCopySite.Upload = 10 -> FrameFlow.Media.Diagnostics.FrameCopySite
 FrameFlow.Media.Diagnostics.FrameCopyMetrics
 static FrameFlow.Media.Diagnostics.FrameCopyMetrics.Count(FrameFlow.Media.Diagnostics.FrameCopySite site) -> long
 static FrameFlow.Media.Diagnostics.FrameCopyMetrics.Snapshot() -> FrameFlow.Media.Diagnostics.FrameCopyCounts!

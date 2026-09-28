@@ -165,7 +165,7 @@ public sealed class D3D12ImageToTensorTests
         }
     }
 
-    private static KernelConstants Constants(
+    internal static KernelConstants Constants(
         ImageToTensorOptions options, RotatedRect crop, IVideoFrame frame) =>
         KernelConstants.Create(
             ImageToTensorPlan.Create(crop, options.Width, options.Height, options.Fit),
@@ -174,7 +174,7 @@ public sealed class D3D12ImageToTensorTests
     /// <summary>
     /// The shader's arithmetic on the CPU, from the frame's NV12 samples and the same constants.
     /// </summary>
-    private static float[] Reference(Nv12Image image, KernelConstants k, int elementCount)
+    internal static float[] Reference(Nv12Image image, KernelConstants k, int elementCount)
     {
         var output = new float[elementCount];
         int width = (int)k.TensorWidth, height = (int)k.TensorHeight, plane = width * height;
@@ -273,7 +273,7 @@ public sealed class D3D12ImageToTensorTests
 
     private static float Saturate(float value) => Math.Clamp(value, 0f, 1f);
 
-    private static void AssertClose(float[] expected, float[] actual, float tolerance, string label)
+    internal static void AssertClose(float[] expected, float[] actual, float tolerance, string label)
     {
         Assert.Equal(expected.Length, actual.Length);
         int worst = 0;
