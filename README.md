@@ -127,8 +127,9 @@ await using var pass = await FrameFlowPass.Create(path)
 await pass.RunToCompletionAsync();
 ```
 
-No presenter shows D3D12VA frames yet (#429), so a player on that route needs a sink that does not
-display.
+`CompositionInteropVideoView` shows D3D12VA frames: it converts them on the decoder's D3D12 device
+and copies the result across to the D3D11 texture Avalonia's compositor imports (#429). A player given
+a D3D12VA `HardwareDevice` and `WithHardwareFrames` presents through it.
 
 ### Generic Host and DI
 

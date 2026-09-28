@@ -139,11 +139,14 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) => default;
 
     /// <inheritdoc/>
-    /// <remarks>The frame slot, and the frame the view is presenting on the UI thread.</remarks>
-    public int? MaxHeldFrames => 2;
+    /// <remarks>
+    /// The frame slot, the frame the view is presenting on the UI thread, and for D3D12VA the frame
+    /// before it, which the converter holds until the GPU has read it.
+    /// </remarks>
+    public int? MaxHeldFrames => 3;
 
     /// <inheritdoc />
-    /// <remarks>Either: a D3D11VA frame is converted on the GPU, and a CPU frame is uploaded.</remarks>
+    /// <remarks>Either: a D3D11VA or D3D12VA frame is converted on the GPU, and a CPU frame is uploaded.</remarks>
     public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Any;
 
     /// <inheritdoc/>

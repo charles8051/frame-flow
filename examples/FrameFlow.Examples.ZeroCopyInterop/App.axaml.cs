@@ -34,6 +34,7 @@ public class App : Application
             );
             var exitAfter = int.TryParse(GetArg(args, "--exit-after"), out var s) ? s : 0;
             var hwMode = GetArg(args, "--hw-mode");
+            var hwDevice = GetArg(args, "--hw-device");
             var fullscreen = args.Contains("--fullscreen");
             var soak = args.Contains("--soak") ? ParseSoak(args) : null;
 
@@ -60,6 +61,7 @@ public class App : Application
                 StartupFilePath = startupFile,
                 ExitAfterSeconds = exitAfter,
                 StartupHwMode = hwMode,
+                StartupHwDevice = hwDevice,
                 StartupFullscreen = fullscreen,
                 Soak = soak,
             };

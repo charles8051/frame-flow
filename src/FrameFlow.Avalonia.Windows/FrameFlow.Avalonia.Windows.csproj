@@ -29,6 +29,8 @@
     <PackageReference Include="Avalonia" Version="$(FrameFlowAvaloniaVersion)" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.*" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.*" />
+    <!-- The D3D12VA presenter converts on the decoder's D3D12 device (#429). -->
+    <PackageReference Include="Vortice.Direct3D12" Version="3.*" />
     <PackageReference Include="Vortice.DXGI" Version="3.*" />
     <!-- Runtime HLSL compile (D3DCompile) for the NV12->BGRA pixel-shader convert (ADR-0063). -->
     <PackageReference Include="Vortice.D3DCompiler" Version="3.*" />

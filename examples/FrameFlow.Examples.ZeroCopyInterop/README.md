@@ -87,7 +87,8 @@ Requires a Windows box whose GPU supports D3D11VA decode of the file's codec and
 whose Avalonia backend advertises `D3D11TextureGlobalSharedHandle` (logged at
 startup). `--exit-after <s>` closes the window gracefully so the log flushes —
 use it for headless/autonomous runs. No file argument → the window explains what
-to pass.
+to pass. `--hw-device d3d12va` decodes on one D3D12VA device, which the presenter
+converts on and copies across to D3D11 (#429); `d3d11va` pins D3D11VA the same way.
 
 Generate a quick test clip:
 

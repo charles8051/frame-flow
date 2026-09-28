@@ -34,28 +34,20 @@ namespace FrameFlow.Avalonia.Windows;
 internal static class PresenterTeardownReaper
 {
     /// <summary>
-    /// Schedules disposal of <paramref name="converter"/> + <paramref name="uploader"/> to
-    /// run once <paramref name="gating"/> (the in-flight present hand-offs and imported-image
-    /// disposals) completes. Returns immediately; disposal happens on a thread-pool thread,
-    /// never the caller's (UI) thread.
+    /// Schedules disposal of <paramref name="producers"/> (the GPU converters and the CPU
+    /// uploader; null entries are skipped) to run once <paramref name="gating"/> (the in-flight
+    /// present hand-offs and imported-image disposals) completes. Returns immediately; disposal
+    /// happens on a thread-pool thread, never the caller's (UI) thread.
     /// </summary>
-    public static void Enqueue(
-        Task gating,
-        D3D11Nv12SharedConverter? converter,
-        D3D11BgraUploader? uploader,
-        ILogger logger)
+    public static void Enqueue(Task gating, ILogger logger, params IDisposable?[] producers)
     {
-        if (converter is null && uploader is null)
+        if (producers.All(p => p is null))
             return;
 
-        _ = ReapAsync(gating, converter, uploader, logger);
+        _ = ReapAsync(gating, logger, producers);
     }
 
-    private static async Task ReapAsync(
-        Task gating,
-        D3D11Nv12SharedConverter? converter,
-        D3D11BgraUploader? uploader,
-        ILogger logger)
+    private static async Task ReapAsync(Task gating, ILogger logger, IDisposable?[] producers)
     {
         // Wait for the compositor to finish releasing the shared keyed mutex. ConfigureAwait
         // (false) keeps the continuation off any captured (UI) context. Faults are fine — a
@@ -71,8 +63,8 @@ internal static class PresenterTeardownReaper
 
         try
         {
-            converter?.Dispose();
-            uploader?.Dispose();
+            foreach (var producer in producers)
+                producer?.Dispose();
             logger.LogInformation("Presenter teardown reaper disposed deferred producers after compositor recovery.");
         }
         catch (Exception ex)

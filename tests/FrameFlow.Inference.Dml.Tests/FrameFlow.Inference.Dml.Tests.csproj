@@ -32,6 +32,7 @@
   <ItemGroup>
     <!-- The decode gate, the frame source and the device helper the D3D12 stage's tests use. -->
     <Compile Include="..\FrameFlow.Inference.D3D12.Tests\TestSupport.cs" Link="Shared\TestSupport.cs" />
+    <Compile Include="..\FrameFlow.Inference.D3D12.Tests\DeviceAndQueue.cs" Link="Shared\DeviceAndQueue.cs" />
   </ItemGroup>
 
   <ItemGroup>
