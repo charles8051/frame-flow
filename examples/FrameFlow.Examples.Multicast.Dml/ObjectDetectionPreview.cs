@@ -33,10 +33,10 @@ namespace FrameFlow.Examples.Multicast.Dml;
 /// upstream pacing-jitter pattern (bursts of two frames within ~14 ms
 /// at 25 fps source rate) no longer drops the second-of-burst.
 /// Mirrors <c>FrameFlow.Avalonia.AvaloniaVideoSink.PresentAsync</c>'s
-/// established latest-wins pattern. See the crossbar exploration
-/// per-branch-edge-policies-for-broadcast-fanout.md for the design
-/// rationale and what an EdgeOptions.LatestWins(1)-based version would
-/// require.
+/// established latest-wins pattern. The graph can do the same on a
+/// branch edge now, with <c>Branch(EdgeOptions.LatestWins(1))</c>, as
+/// <c>InferenceOperators.Infer</c> does; this preview keeps its own latch
+/// because its detection runs on its own worker rather than in a node.
 /// </para>
 /// <para>
 /// <b>Display path.</b> Worker does inference only — no bitmap encode,

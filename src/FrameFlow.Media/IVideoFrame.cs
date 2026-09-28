@@ -17,8 +17,10 @@ namespace FrameFlow.Media;
 /// reaches zero the frame releases its storage.
 /// </para>
 /// <para>
-/// V1 frames are always CPU-resident (<see cref="FrameMemoryDomain.Cpu"/>).
-/// GPU domain accessors will be added when hardware decode backends land.
+/// A frame is CPU-resident (<see cref="FrameMemoryDomain.Cpu"/>) unless a hardware decoder
+/// yields it on the GPU, which it does when asked to (<c>YieldHardwareFrames</c>);
+/// <see cref="MemoryDomain"/> says which. A GPU frame's <see cref="AsCpu"/> is
+/// <see langword="null"/>.
 /// </para>
 /// <para>
 /// <b>Graph binding.</b> <see cref="IVideoFrame"/> extends

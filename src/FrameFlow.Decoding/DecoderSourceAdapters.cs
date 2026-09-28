@@ -76,6 +76,9 @@ public static class DecoderSourceAdapters
             // A decoder yielding hardware frames checks what the graph can hold against its
             // pool before each run (ADR-0081).
             onBudget: decoder is VideoDecoder video ? video.CheckFrameBudget : null,
+            // And says which memory domains its frames can be in, so the graph refuses a node
+            // that cannot read one before it runs (#435).
+            emits: decoder is VideoDecoder emitting ? () => emitting.EmittedDomains : null,
             cleanup: async () =>
             {
                 // The substrate calls this once when the source pump

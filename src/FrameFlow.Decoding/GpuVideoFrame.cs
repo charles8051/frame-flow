@@ -116,8 +116,9 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// Internal accessor for the wrapped <c>AVFrame*</c>. Used by the
     /// <c>FrameFlow.Video.ToCpu</c> operator (which has
     /// <see cref="System.Runtime.CompilerServices.InternalsVisibleToAttribute"/>
-    /// access) and by future GPU-aware sinks via downcasting. Public
-    /// API surface intentionally avoids native pointers.
+    /// access) and by future GPU-aware sinks via downcasting. The public
+    /// surface hands out the device texture instead, through
+    /// <see cref="TryGetD3D11Texture"/> and <see cref="TryGetD3D12Texture"/>.
     /// </summary>
     internal nint NativeAvFrame
     {

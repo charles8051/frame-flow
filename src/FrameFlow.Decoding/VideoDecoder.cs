@@ -17,9 +17,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FrameFlow.Decoding;
 
 /// <summary>
-/// Software video decoder that accepts raw compressed packets, decodes them with FFmpeg,
-/// converts the decoded frames to BGRA32, and yields managed <see cref="CpuVideoFrame"/>
-/// instances with normalised presentation timestamps.
+/// Video decoder that accepts raw compressed packets and decodes them with FFmpeg, in
+/// software or on a hardware backend. By default it converts each decoded frame to BGRA32,
+/// reading a hardware frame back first, and yields managed <see cref="CpuVideoFrame"/>
+/// instances with normalised presentation timestamps. With <see cref="YieldHardwareFrames"/>
+/// it yields a hardware-decoded frame as a <see cref="GpuVideoFrame"/> instead, with no
+/// transfer.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -136,6 +139,16 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 break;
         }
     }
+
+    /// <summary>
+    /// The memory domains this decoder's frames can be in (#435). CPU and GPU when it yields
+    /// hardware frames and a hardware backend bound, because it can still decode a frame in
+    /// software after a renegotiation; CPU otherwise.
+    /// </summary>
+    internal FrameMemoryDomains EmittedDomains =>
+        YieldHardwareFrames && _boundBackend != NoHardwareBackend
+            ? FrameMemoryDomains.Any
+            : FrameMemoryDomains.Cpu;
 
     [LoggerMessage(
         Level = LogLevel.Warning,

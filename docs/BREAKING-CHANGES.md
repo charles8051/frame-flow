@@ -315,6 +315,38 @@ no higher than your native package's.
 **Why.** A managed layer newer than the native one can call a C API entry the native lacks, and
 fails in the app rather than here (#438).
 
+### 14. A node that cannot take GPU frames is refused before the run
+
+**A runtime error, and a binary break for code compiled against the node constructors.**
+
+Nodes and video sinks now declare the memory domains they take, and a graph that can hand one a
+domain it does not take is refused before anything runs, naming it (#435): `BuildAsync` on a
+pass, `LoadAsync` on a player, and `RunAsync` on a graph whose source says which domains its frames
+can be in. A decoder says so: CPU and GPU when it yields hardware frames, CPU otherwise.
+
+The library declares CPU only for the sws converters (`ConvertPixelFormat`, `Resize`,
+`ResizeAndConvert`), `YoloOperators.DetectWith`, `FaceOperators.DetectWith`, `Infer` without a
+device stage, `Mp4VideoWriter`'s sink, and the Avalonia and SDL video sinks. Each of them failed on
+the first GPU frame before, or in the Avalonia view's case dropped every one; now the graph does
+not start. A node or sink that declares nothing takes
+either domain and is never refused.
+
+`OperatorNode`, `MultiOperatorNode` and `SinkNode` take a new optional `domains` parameter, and
+`SourceNode` a new optional `emits` parameter. Source that calls them compiles unchanged; a binary
+compiled against the old constructors needs a rebuild. `IVideoSink` gains `AcceptedDomains`, with a
+default of `FrameMemoryDomains.Any`.
+
+**Who hits this.** A player or pass with `WithHardwareFrames()` whose path reaches one of the nodes
+above, or a sink that reads CPU pixels, with no `ToCpu` before it.
+
+**What to write instead.** Put `VideoOperators.ToCpu` before the node, give `Infer` a device stage
+for the decoder's API, or drop `WithHardwareFrames()`. A node of your own that reads CPU pixels
+should declare `domains: FrameDomainRule.CpuOnly`, and a sink `AcceptedDomains =>
+FrameMemoryDomains.Cpu`, so the refusal names it.
+
+**Why.** A GPU frame reached a node that could not read it and failed there, one frame into the run,
+with a message about the pixel format rather than the memory domain.
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be

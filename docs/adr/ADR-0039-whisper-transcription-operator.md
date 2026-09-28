@@ -6,7 +6,7 @@
 **Related:** ADR-0036 (decode/playback decoupling), ADR-0037 (pixel
 operators), ADR-0038 (memory-domain operators),
 `docs/CROSSBAR_SHAPING_ROADMAP.html` (Tier 3 audit),
-`docs/LIVE_CAPTIONING_DEMO.md` (the demo this serves).
+`docs/archive/LIVE_CAPTIONING_DEMO.md` (the plan for the demo this serves).
 
 ## Context
 

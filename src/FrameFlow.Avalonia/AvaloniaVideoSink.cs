@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Diagnostics;
+using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -273,6 +274,10 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     /// releases it in the call.
     /// </remarks>
     public int? MaxHeldFrames => 2;
+
+    /// <inheritdoc />
+    /// <remarks>CPU only: the view reads each frame's pixels through <see cref="IVideoFrame.AsCpu()"/>.</remarks>
+    public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Cpu;
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()

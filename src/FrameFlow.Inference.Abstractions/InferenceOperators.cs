@@ -107,7 +107,10 @@ public static class InferenceOperators
             onError,
             // The frame in the call, and what the stage keeps until the GPU has read it. The
             // output carries no frame.
-            FrameHolding.AtMost(Math.Max(1, deviceStage?.MaxHeldFrames ?? 1), forwardsStorage: false));
+            FrameHolding.AtMost(Math.Max(1, deviceStage?.MaxHeldFrames ?? 1), forwardsStorage: false),
+            // Without a device stage the input is prepared on the CPU, so a GPU frame has no way in
+            // (#435). With one, a GPU frame the stage cannot read still fails at run time.
+            deviceStage is null ? FrameDomainRule.CpuOnly : FrameDomainRule.Any);
     }
 }
 

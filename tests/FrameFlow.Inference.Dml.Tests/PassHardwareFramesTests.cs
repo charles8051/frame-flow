@@ -94,6 +94,47 @@ public sealed class PassHardwareFramesTests
         Assert.Equal(8, pass.VideoDecoder!.GetDiagnostics().HardwareFrameBudget);
     }
 
+    /// <summary>
+    /// A node that reads CPU pixels, on a pass that hands its graph D3D12VA frames, is refused
+    /// when the pass is built and named, where it used to fail on the first frame (#435).
+    /// </summary>
+    [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
+    public async Task ACpuOnlyNode_OnAGpuPath_IsRefusedAtBuild()
+    {
+        using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D12Va);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => FrameFlowPass
+            .Create(TestEnvironment.CorpusFile(Clip)!)
+            .WithHardwareDevice(device)
+            .WithHardwareFrames()
+            .WithVideoSink(new RecordingSink(maxHeldFrames: 0))
+            .ConfigureVideo(chain => chain.Then(Passing("scale", FrameDomainRule.CpuOnly)))
+            .BuildAsync());
+
+        Assert.Contains("'scale' takes CPU frames", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>A download before the same node is what the refusal asks for, and it builds.</summary>
+    [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
+    public async Task ADownloadBeforeACpuOnlyNode_Builds()
+    {
+        using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D12Va);
+
+        await using var pass = await FrameFlowPass
+            .Create(TestEnvironment.CorpusFile(Clip)!)
+            .WithHardwareDevice(device)
+            .WithHardwareFrames()
+            .WithVideoSink(new RecordingSink(maxHeldFrames: 0))
+            .ConfigureVideo(chain => chain
+                .Then(Passing("to-cpu", FrameDomainRule.ToCpu))
+                .Then(Passing("scale", FrameDomainRule.CpuOnly)))
+            .BuildAsync();
+    }
+
+    /// <summary>A node that forwards its input, declaring <paramref name="domains"/>. The pass is only built.</summary>
+    private static OperatorNode<IVideoFrame, IVideoFrame> Passing(string id, FrameDomainRule domains) =>
+        new(id, (frame, _) => ValueTask.FromResult<IVideoFrame?>(frame), holding: FrameHolding.InFlight, domains: domains);
+
     private sealed class RecordingSink(int? maxHeldFrames) : IVideoSink
     {
         public ConcurrentQueue<FrameMemoryDomain> Domains { get; } = new();

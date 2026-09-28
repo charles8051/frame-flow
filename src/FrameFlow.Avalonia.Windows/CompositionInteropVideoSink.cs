@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -12,7 +13,7 @@ namespace FrameFlow.Avalonia.Windows;
 /// The <see cref="IVideoSink"/> half of the composition-interop presenter. Buffers the
 /// latest decoded frame (latest-wins) and hands it to the owning
 /// <see cref="CompositionInteropVideoView"/> on the view's render tick; the view routes
-/// by memory domain (GPU frame → zero-copy, CPU frame → upload fallback).
+/// by memory domain (GPU frame → GPU conversion, CPU frame → upload fallback).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -24,8 +25,9 @@ namespace FrameFlow.Avalonia.Windows;
 /// </para>
 /// <para>
 /// <b>Dual-domain.</b> The sink is domain-agnostic — it buffers whatever the decoder
-/// produced. Hardware <c>GpuVideoFrame</c>s take the zero-copy path; CPU frames
-/// (software decode / no D3D11VA) take the view's BGRA upload fallback.
+/// produced. Hardware <c>GpuVideoFrame</c>s stay on the GPU, with one copy into the
+/// converter's staging texture; CPU frames (software decode, no D3D11VA, or a frame the
+/// decoder read back) take the view's BGRA upload fallback.
 /// </para>
 /// </remarks>
 public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSource
@@ -139,6 +141,10 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     /// <inheritdoc/>
     /// <remarks>The frame slot, and the frame the view is presenting on the UI thread.</remarks>
     public int? MaxHeldFrames => 2;
+
+    /// <inheritdoc />
+    /// <remarks>Either: a D3D11VA frame is converted on the GPU, and a CPU frame is uploaded.</remarks>
+    public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Any;
 
     /// <inheritdoc/>
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)

@@ -23,4 +23,14 @@ public sealed class OperatorHoldingTests
         // A CPU frame goes through as itself, so the node is not a boundary for it.
         Assert.Same(FrameHolding.InFlight, VideoOperators.ToCpu("to-cpu").Holding);
     }
+
+    [Fact]
+    public void TheConverters_TakeCpuFramesOnly_AndToCpuDownloads()
+    {
+        // sws_scale reads the input on the CPU (#435).
+        Assert.Same(FrameDomainRule.CpuOnly, VideoOperators.ConvertPixelFormat("convert", PixelFormat.Rgba32).Domains);
+        Assert.Same(FrameDomainRule.CpuOnly, VideoOperators.Resize("resize", 64, 32).Domains);
+        Assert.Same(FrameDomainRule.CpuOnly, VideoOperators.ResizeAndConvert("rc", 64, 64, PixelFormat.Rgba32).Domains);
+        Assert.Same(FrameDomainRule.ToCpu, VideoOperators.ToCpu("to-cpu").Domains);
+    }
 }

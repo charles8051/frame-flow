@@ -272,13 +272,33 @@ public sealed class MediaPass : IAsyncDisposable
     internal static FrameBudget VideoFrameBudget(
         Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? configurator,
         IVideoSink sink
+    ) => VideoProbe(configurator, sink).Budget;
+
+    /// <summary>
+    /// A copy of a pass's video path over a stand-in source, built before the decoder opens: its
+    /// frame budget sizes the decoder's pool, and once the decoder has opened, it says whether a
+    /// node on the path cannot take the memory domains the decoder hands out (#435).
+    /// </summary>
+    internal static VideoPathProbe VideoProbe(
+        Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? configurator,
+        IVideoSink sink
     )
     {
         ArgumentNullException.ThrowIfNull(sink);
         var graph = new Graph.Graph();
         var source = new SourceNode<IVideoFrame>("video-source", static _ => default);
         WireVideo(graph, source, configurator, sink);
-        return graph.FrameBudgetFor(source.Output);
+        return new VideoPathProbe(graph, source.Output);
+    }
+
+    /// <summary>A copy of a video path, wired from a stand-in source that never runs.</summary>
+    internal sealed record VideoPathProbe(Graph.Graph Graph, OutputPort<IVideoFrame> Source)
+    {
+        /// <summary>The most frames the path can hold, or the node that leaves it unbounded.</summary>
+        public FrameBudget Budget => Graph.FrameBudgetFor(Source);
+
+        /// <summary>A node on the path that one of <paramref name="emitted"/> reaches and that does not take it.</summary>
+        public FrameDomainMismatch? MismatchFor(FrameMemoryDomains emitted) => Graph.FrameDomainMismatchFor(Source, emitted);
     }
 
     public async ValueTask DisposeAsync()

@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -240,6 +241,10 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     /// <inheritdoc />
     /// <remarks>The frame slot, and the frame the SDL thread is rendering.</remarks>
     public int? MaxHeldFrames => 2;
+
+    /// <inheritdoc />
+    /// <remarks>CPU only: the texture upload reads each frame's pixels through <see cref="IVideoFrame.AsCpu()"/>.</remarks>
+    public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Cpu;
 
     /// <summary>
     /// Sets the SDL window title. Must be called on the SDL thread.

@@ -562,3 +562,4 @@ static FrameFlow.Media.VideoFrameExtensions.CloneCpu(this FrameFlow.Media.IVideo
 static readonly FrameFlow.Media.AudioClockInterpolation.DefaultMaxExtrapolation -> System.TimeSpan
 static readonly FrameFlow.Media.AudioClockRateLimit.DefaultSlack -> System.TimeSpan
 FrameFlow.Media.PixelFormat.P010 = 6 -> FrameFlow.Media.PixelFormat
+FrameFlow.Media.IVideoSink.AcceptedDomains.get -> FrameFlow.Graph.FrameMemoryDomains

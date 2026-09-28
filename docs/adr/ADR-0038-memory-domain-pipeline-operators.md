@@ -1,7 +1,7 @@
 # ADR-0038: Memory-Domain Pipeline Operators (Tier 2 of the Crossbar-Shaping Roadmap)
 
-**Status:** Accepted, and partly not in the tree. Read *Amended 2026-09-18* at the foot of
-this record before acting on anything described here as landed.
+**Status:** Accepted, and partly not in the tree. Read the amendments at the foot of this
+record, *Amended 2026-09-28* last, before acting on anything described here as landed.
 **Date:** 2026-05-12
 **Supersedes:** None.
 **Related:** ADR-0030 (frame-contract unification with Crossbar), ADR-0033 (hardware decode selection — explicitly deferred "Zero-copy GPU delivery" to a follow-up ADR; this is it), ADR-0036 (decode/playback decoupling), ADR-0037 (pixel-domain operators, Tier 1), `docs/CROSSBAR_SHAPING_ROADMAP.html` (Tier 2 audit).
@@ -400,3 +400,37 @@ GPU and clip, the download is 4.2 ms, the conversion 2.2 ms, `Yolov8Preprocessor
 download and conversion are most of what a GPU-resident path would recover. The two decisions that
 amendment names still stand; the ordering argument for preprocessing does not. The GPU-resident
 inference spec carries the current table.
+
+## Amended 2026-09-28
+
+**Corrections to the 2026-09-18 amendment**, which is left as written:
+
+- **`ToCpu` exists again.** `VideoOperators.ToCpu` is the node §4 specifies, restored for the graph
+  substrate (#279). A graph can mix a GPU-yielding decoder with CPU operators by putting it before
+  them; the sentence saying it cannot is no longer true.
+- **Phase B has started.** `CompositionInteropVideoSink` presents D3D11VA frames, `GpuVideoFrame`
+  hands out its device texture through `TryGetD3D11Texture` and `TryGetD3D12Texture` (#289), a
+  pass yields hardware frames (#277), and `InferenceOperators.Infer` is the GPU-aware operator the
+  amendment said this record did not anticipate (#436). `MapToGpu` (#293) and the default flip
+  (#294) are still unstarted.
+- **The two decisions it named are made.** Where preprocessing runs is decision 1 of the
+  GPU-resident inference record, and what bounds a GPU frame's lifetime is ADR-0081, applied to
+  the pass in #292 and to growable pools in #416.
+
+**Decision: memory domains are declared and checked when the graph is built (#435).** A node
+declares the domains it accepts and the domain it emits (`FrameDomainRule`), a video sink declares
+the domains it takes (`IVideoSink.AcceptedDomains`), and a decoder source says which domains its
+frames can be in: CPU and GPU when it yields hardware frames, since a renegotiation can decode a
+frame in software, and CPU otherwise. A graph walks each such source's domains through the nodes,
+passing on what arrived unless a node declares an output domain, and refuses a node that one of
+them reaches and that does not accept it. The pass refuses at `BuildAsync`, the player at load,
+and any graph when its run starts; each names the node.
+
+ADR-0012 stands: nothing negotiates and nothing inserts a conversion. The declarations are only
+checked, and the refusal says to put an explicit conversion, such as `ToCpu`, before the node. A
+node or sink that declares nothing accepts either domain and is never refused, so a graph that ran
+before still runs unless it is one that failed on its first GPU frame.
+
+This is the capability §Phase B's third bullet waits on: a sink can now say which domain it wants.
+The default flip (#294) still needs its migration; what it no longer needs is a way to say "this
+sink takes CPU frames".

@@ -24,9 +24,9 @@ public static class YoloOperators
     /// <param name="detect">
     /// Function that produces detection results for a frame. Called
     /// once per upstream item; not thread-safe by contract (matches
-    /// the behaviour of backend-specific detectors like
-    /// <c>CudaYolov8Detector.Detect</c> / <c>DmlYolov8Detector.Detect</c>,
-    /// either of which can be passed directly as a method group).
+    /// <see cref="Yolov8Detector.Detect(IVideoFrame)"/>, which can be
+    /// passed directly as a method group). The detector reads the frame's
+    /// pixels on the CPU, so the node takes CPU frames only (#435).
     /// </param>
     public static OperatorNode<IVideoFrame, DetectedVideoFrameRef> DetectWith(
         string id,
@@ -50,7 +50,9 @@ public static class YoloOperators
                 );
             },
             // The output carries the input frame itself.
-            holding: FrameHolding.InFlight
+            holding: FrameHolding.InFlight,
+            // The detectors it wraps read the frame's pixels on the CPU (#435).
+            domains: FrameDomainRule.CpuOnly
         );
     }
 }

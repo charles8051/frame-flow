@@ -10,10 +10,10 @@ namespace FrameFlow.Decoding.Diagnostics;
 /// a single point in time (ADR-0034).
 /// </summary>
 /// <param name="FramesDecoded">
-/// Cumulative count of decoded frames yielded by the decoder. For
-/// hwaccel-backed decoders this counts frames after the GPU→CPU transfer
-/// (ADR-0033), so the value matches the number of <c>CpuVideoFrame</c>
-/// instances handed downstream.
+/// Cumulative count of decoded frames yielded by the decoder: the number of
+/// frames handed downstream, whether as <c>CpuVideoFrame</c>s (software decode,
+/// or a hardware frame read back, ADR-0033) or as <c>GpuVideoFrame</c>s with no
+/// transfer (<c>YieldHardwareFrames</c>).
 /// </param>
 /// <param name="DecodeErrors">
 /// Number of non-fatal decode errors (corrupt packets, transient
