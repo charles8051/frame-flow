@@ -6,7 +6,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="11.*" />
+    <PackageReference Include="Avalonia" Version="$(FrameFlowAvaloniaVersion)" />
     <PackageReference
       Include="Microsoft.Extensions.DependencyInjection.Abstractions"
       Version="9.*"
