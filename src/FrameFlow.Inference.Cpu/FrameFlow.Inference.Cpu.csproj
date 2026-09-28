@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageTags>onnx;onnxruntime;inference;cpu;linux;macos;windows;machine-learning;dotnet</PackageTags>
+    <!-- The package is its dependencies; it has no code of its own. -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <!-- No assembly, so no symbols: an empty .snupkg would only fail the push. -->
+    <IncludeSymbols>false</IncludeSymbols>
+    <FrameFlowTrackPublicApi>false</FrameFlowTrackPublicApi>
+    <!-- NU5128: a net10.0 dependency group with no lib/net10.0 folder is what a
+         dependencies-only package is. -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    FrameFlow.Inference.Cpu: ONNX Runtime's CPU native runtime beside
+    FrameFlow.Inference.Ort, so CpuInferenceSession runs on Windows, Linux and
+    macOS with nothing else referenced (#437). Before it, the native library came
+    only from the DirectML or CUDA package, so a CPU-only app on Linux took the
+    CUDA package and one on macOS had nothing.
+
+    One of the "pick exactly one" set with FrameFlow.Inference.Dml, .Cuda and
+    .WinML: each carries its own onnxruntime native, and two in one app
+    conflict. Each of those already runs CpuInferenceSession, so an app that
+    references one does not need this.
+
+    Microsoft.ML.OnnxRuntime requires Microsoft.ML.OnnxRuntime.Managed at its own
+    version or above, and FrameFlow.Inference.Ort's reference is a minimum, so
+    the managed layer resolves to this native's version (#438).
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="../FrameFlow.Inference.Ort/FrameFlow.Inference.Ort.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.30.0" />
+  </ItemGroup>
+</Project>

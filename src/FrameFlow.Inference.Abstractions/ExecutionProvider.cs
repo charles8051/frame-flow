@@ -9,24 +9,23 @@ namespace FrameFlow.Inference;
 /// EP-specific session implementations at construction time.
 /// </summary>
 /// <remarks>
-/// Enum values are ordered by **fallback safety**, broadest first: CPU
-/// is always available, DirectML works on any DX12-capable Windows
-/// machine, CUDA requires a specific NVIDIA + CUDA Toolkit setup. The
-/// default fallback chain follows this order so the most likely-to-work
-/// EP is the last resort.
+/// The values' numeric order means nothing. The fallback order
+/// <see cref="InferenceSessionFactoryBuilder"/> uses is its own, and puts CPU last.
 /// </remarks>
 public enum ExecutionProvider
 {
     /// <summary>
     /// CPU execution provider — ORT's default. No GPU bootstrap, always
     /// available, slowest. Useful as the universally-available fallback.
+    /// Every inference package runs it; <c>FrameFlow.Inference.Cpu</c> is the
+    /// one to reference when nothing else is.
     /// </summary>
     Cpu,
 
     /// <summary>
-    /// DirectML execution provider — ORT-DML. DML.dll ships in-box on
-    /// Windows 10 1903+ and Windows 11; no separate install. Works on
-    /// any DX12-capable adapter (Intel iGPU, AMD GPU, NVIDIA GPU).
+    /// DirectML execution provider — <c>FrameFlow.Inference.Dml</c>, which carries
+    /// its own DirectML.dll. Works on any DX12-capable adapter (Intel iGPU, AMD
+    /// GPU, NVIDIA GPU).
     /// </summary>
     DirectML,
 

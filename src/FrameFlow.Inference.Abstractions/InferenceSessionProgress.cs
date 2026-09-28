@@ -11,32 +11,34 @@ namespace FrameFlow.Inference;
 /// </summary>
 /// <remarks>
 /// Purely observability — a consumer (e.g. a kiosk splash / status panel)
-/// can surface "which provider are we probing", "opening the session",
-/// "warming up" instead of a single opaque "loading…" state. The phases
-/// follow the order the work actually happens in:
-/// <see cref="ProbingProvider"/> (once per EP the factory attempts) →
-/// <see cref="OpeningSession"/> (the EP that succeeded, around the
-/// session construct) → <see cref="Warmup"/> (the detector's warmup
-/// inference, reported by the model wrapper, not the factory).
+/// can surface "which provider are we probing" and "warming up" instead of
+/// a single opaque "loading…" state. The phases follow the order the work
+/// actually happens in:
+/// <see cref="ProbingProvider"/> (once per EP the factory attempts, before
+/// the session construct, which is where the load's time goes) →
+/// <see cref="OpeningSession"/> (the EP whose session opened, after it) →
+/// <see cref="Warmup"/> (the detector's warmup inference, reported by the
+/// model wrapper, not the factory).
 /// </remarks>
 public enum InferenceSessionPhase
 {
     /// <summary>
-    /// The factory is about to attempt constructing a session with a
-    /// candidate execution provider. Reported once per EP in the probe /
-    /// fallback chain, before each construction attempt — so a chain that
-    /// falls back emits one <see cref="ProbingProvider"/> per EP tried.
-    /// The candidate EP is carried on
-    /// <see cref="InferenceSessionProgress.Provider"/>.
+    /// The factory is about to construct a session with a candidate
+    /// execution provider. The construct is the whole ORT session init
+    /// (graph load, CUDA JIT, DirectML PSO compile), so this phase lasts
+    /// until the session has opened or failed. Reported once per EP in
+    /// the probe / fallback chain — so a chain that falls back emits one
+    /// <see cref="ProbingProvider"/> per EP tried. The candidate EP is
+    /// carried on <see cref="InferenceSessionProgress.Provider"/>.
     /// </summary>
     ProbingProvider,
 
     /// <summary>
-    /// A candidate execution provider's session was constructed
-    /// successfully and is being opened (ORT session init: graph load,
-    /// CUDA JIT / DML PSO compile, etc.). Reported once, for the EP that
-    /// won selection, carried on
-    /// <see cref="InferenceSessionProgress.Provider"/>.
+    /// A candidate execution provider's session has opened. Reported once,
+    /// after the construct, for the EP that won selection, carried on
+    /// <see cref="InferenceSessionProgress.Provider"/>. ORT has no step
+    /// after the construct, so the phase marks the selection rather than
+    /// work still to come (#431).
     /// </summary>
     OpeningSession,
 

@@ -96,9 +96,13 @@
 
        Pack=true / PackagePath ensures NuGet consumers of
        FrameFlow.Inference.Dml also receive DirectML.dll inside the
-       .nupkg under the standard runtimes/<rid>/native/ layout — they
-       are responsible for their own runtimes→bin-root flatten if
-       they care about ORT-DML's OS-loader expectations. -->
+       .nupkg, under runtimes/win-x64/native beside ORT's onnxruntime.dll.
+       A consumer built with a runtime identifier gets both at the bin
+       root. One built without gets both under runtimes/win-x64/native,
+       and ORT's DirectML provider loads DirectML.dll from onnxruntime.dll's
+       own folder when one is there, before System32 (measured on ORT
+       1.24.4, #433). scripts/package-smoke.cs checks that layout from the
+       packed .nupkg in CI. -->
   <ItemGroup>
     <None Include="$(PkgMicrosoft_AI_DirectML)\bin\x64-win\DirectML.dll"
           Link="DirectML.dll"

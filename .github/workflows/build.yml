@@ -187,6 +187,14 @@ jobs:
         shell: bash
         run: dotnet test FrameFlow.slnx --configuration Release --no-build --logger "trx;LogFileName=test-${{ matrix.os }}.trx"
 
+      # The tests reach the inference packages through project references, which
+      # copy files a package consumer never gets. This packs them and runs an app
+      # built against each .nupkg: a CPU session on every OS (#437), and on
+      # Windows the package's own DirectML.dll beside onnxruntime.dll in an app
+      # built without a runtime identifier (#433). See scripts/package-smoke.cs.
+      - name: Package smoke test
+        run: dotnet run scripts/package-smoke.cs -- --no-build
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7

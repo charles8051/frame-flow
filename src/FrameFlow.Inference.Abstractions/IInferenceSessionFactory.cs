@@ -16,9 +16,14 @@ namespace FrameFlow.Inference;
 /// preferred EP and, on failure, walks the fallback chain until one
 /// succeeds. The selected EP is cached as <see cref="ActiveProvider"/>;
 /// subsequent <c>Open</c> calls construct with the cached
-/// provider directly without re-probing. If every EP in the chain
-/// fails, <c>Open</c> throws and <see cref="ActiveProvider"/>
-/// remains <c>null</c>.
+/// provider directly without re-probing. If that construct fails, as
+/// DirectML does for the rest of the process after a GPU reset, the
+/// factory walks the chain from the preferred EP, skipping the one that
+/// just failed, and caches whichever opens. If every EP in the chain
+/// fails, <c>Open</c> throws; <see cref="ActiveProvider"/> keeps the EP it
+/// held, which is <c>null</c> until an <c>Open</c> has succeeded, since a
+/// model no EP opens says nothing against it. The factory cannot tell a
+/// bad model from a failing provider, so such an <c>Open</c> tries every EP.
 /// </para>
 /// <para>
 /// <b>Bootstrap policy.</b> Each EP's session constructor is

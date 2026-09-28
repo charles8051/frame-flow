@@ -276,6 +276,45 @@ over `PixelFormat` gains a member to handle.
 
 **Why.** The frame said `Nv12` whatever its texture held (#430).
 
+### 12. The inference factory tries CPU last, and re-probes after a failure
+
+**A behaviour change, not a compile error.**
+
+`InferenceSessionFactoryBuilder.Create`'s default fallback, the one used when `fallbackOrder` is
+null, tries the other registered providers narrowest first: CUDA, Windows ML, DirectML, then CPU.
+It used to follow `ExecutionProvider`'s numeric order, where `Cpu` is first, so a failed preferred
+provider fell straight to CPU with a GPU provider still untried.
+
+An `Open` whose cached provider fails no longer throws while another provider opens. The factory
+walks the rest of the chain and caches the provider that opens, so a DirectML session that stops
+opening after a GPU reset falls back to CPU. When every provider fails, it throws as before and
+keeps the provider it had cached.
+
+**Who hits this.** A factory with three or more providers and no `fallbackOrder`, and code that
+expected a cached provider's failure to reach the caller.
+
+**What to write instead.** Pass `fallbackOrder` to keep a specific order.
+
+**Why.** CPU is the provider that nearly always opens, so trying it second hid every GPU provider
+after the first (#431).
+
+### 13. The managed ONNX Runtime assembly is the native runtime's version
+
+**Not a compile error for code that uses FrameFlow's sessions.**
+
+`FrameFlow.Inference.Ort` references `Microsoft.ML.OnnxRuntime.Managed` at 1.24.4 or above instead
+of the newest release. An app now gets the managed layer at the version of its native one: 1.24.4
+with `.Dml`, 1.26.0 with `.Cuda`, 1.30.0 with `.Cpu`. It got 1.30.0 over each of them.
+
+**Who hits this.** Code that calls ONNX Runtime's managed API directly and uses a member added
+after its native package's version.
+
+**What to write instead.** Reference `Microsoft.ML.OnnxRuntime.Managed` at the version you need,
+no higher than your native package's.
+
+**Why.** A managed layer newer than the native one can call a C API entry the native lacks, and
+fails in the app rather than here (#438).
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be
