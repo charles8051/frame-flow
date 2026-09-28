@@ -62,9 +62,12 @@ public interface IPassBuilder
     /// </summary>
     /// <remarks>
     /// With <see cref="WithHardwareFrames"/>, the configurator runs twice: once before the decoder
-    /// opens, to size its pool, and once for the run. Build new nodes on each call, wired the same
-    /// way each time. A node instance is wired into one graph only, so a configurator that
-    /// attaches the same node twice fails with its input already connected.
+    /// opens, to size its pool, and once for the run. The first call's graph never runs. Build new
+    /// nodes on each call, wired the same way each time, and do nothing else there, since anything
+    /// else happens twice. A graph disposes none of its operators or sinks, so a node that needs a
+    /// resource takes it on its first item, as the library's converters and <c>Infer</c> do. A node
+    /// instance is wired into one graph only, so a configurator that attaches the same node twice
+    /// fails with its input already connected.
     /// </remarks>
     /// <remarks>Replaces any previously-configured video transform.</remarks>
     IPassBuilder ConfigureVideo(Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>> configure);
