@@ -11,10 +11,18 @@ using Vortice.DXGI;
 
 namespace FrameFlow.Avalonia.Windows.Tests;
 
+/// <summary>Runs alone: its assertions read the process-wide copy counts exactly.</summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class FrameCopyCountsCollection
+{
+    public const string Name = "Frame copy counts (#435)";
+}
+
 /// <summary>
 /// What the D3D12VA presenter puts in its ring (#429), read the way the compositor reads it: the
 /// ring buffer opened by its shared handle on another D3D11 device, under the keyed mutex.
 /// </summary>
+[Collection(FrameCopyCountsCollection.Name)]
 public sealed class D3D12YuvSharedConverterTests
 {
     // 320x240 H.264, BT.601 in the stream; the presenter converts as BT.709 whatever the stream says.

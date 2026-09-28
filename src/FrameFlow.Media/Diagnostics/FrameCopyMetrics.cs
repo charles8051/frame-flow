@@ -55,7 +55,7 @@ public enum FrameCopySite
 /// </remarks>
 public static class FrameCopyMetrics
 {
-    private static readonly Meter Meter = new("FrameFlow.Media.Copies", "1.0.0");
+    private static readonly Meter Meter = new("FrameFlow.Media", "1.0.0");
     private static readonly FrameCopySite[] Sites = Enum.GetValues<FrameCopySite>();
     private static readonly long[] Counts = new long[Sites.Length];
 
