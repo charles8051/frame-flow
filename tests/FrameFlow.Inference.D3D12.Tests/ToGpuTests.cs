@@ -41,6 +41,41 @@ public sealed class ToGpuTests
         D3D12ImageToTensorTests.AssertClose(expected, stage.ReadBack(), 1e-3f, "the uploaded frame");
     }
 
+    /// <summary>
+    /// The upload is BT.601 studio range: white is luma 235, black 16, and pure red 81, where
+    /// BT.709 would give 63.
+    /// </summary>
+    [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
+    public async Task TheUploadIsBt601StudioRange()
+    {
+        using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D12Va);
+        var node = VideoOperators.ToGpu("to-gpu", device);
+
+        Assert.Equal(235, await CentreLumaAsync(node, blue: 255, green: 255, red: 255), 1.0);
+        Assert.Equal(16, await CentreLumaAsync(node, blue: 0, green: 0, red: 0), 1.0);
+        Assert.Equal(81, await CentreLumaAsync(node, blue: 0, green: 0, red: 255), 1.0);
+    }
+
+    private static async Task<double> CentreLumaAsync(
+        OperatorNode<IVideoFrame, IVideoFrame> node, byte blue, byte green, byte red)
+    {
+        using var solid = CpuVideoFrame.Create(
+            PixelFormat.Bgra32, 32, 32, TimeSpan.Zero, TimeSpan.Zero, (blue, green, red),
+            static (planes, colour) =>
+            {
+                for (int at = 0; at < planes.Y.Length; at += 4)
+                {
+                    planes.Y[at + 0] = colour.blue;
+                    planes.Y[at + 1] = colour.green;
+                    planes.Y[at + 2] = colour.red;
+                    planes.Y[at + 3] = 255;
+                }
+            });
+        using var uploaded = Assert.IsType<GpuVideoFrame>(await node.Body(solid, CancellationToken.None));
+        var samples = Nv12Image.Read(uploaded);
+        return samples.Luma[16 * samples.Width + 16];
+    }
+
     [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
     public async Task AFrameOnTheDevice_IsForwarded_AndOneOnAnotherDevice_IsRefused()
     {

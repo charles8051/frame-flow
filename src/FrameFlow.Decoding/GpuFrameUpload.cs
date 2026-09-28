@@ -25,6 +25,13 @@ namespace FrameFlow.Decoding;
 /// The native pool and converter are released by their handles' finalizers, since a graph
 /// disposes none of its operators. An uploaded frame holds its own reference to the pool.
 /// </para>
+/// <para>
+/// The conversion is BT.601 studio range, swscale's default for an RGB source. That is how the
+/// rest of the library reads NV12 when nothing says otherwise: <see cref="GpuVideoFrame.ReadbackToCpuBgra32"/>
+/// converts back with the same default, and <c>ImageToTensorOptions</c> defaults to BT.601 limited
+/// range. The presenters assume BT.709. Frames carry no colour metadata to choose between them
+/// (#388).
+/// </para>
 /// <para>Not thread-safe: one upload at a time, as an operator node calls it.</para>
 /// </remarks>
 internal sealed unsafe class GpuFrameUpload

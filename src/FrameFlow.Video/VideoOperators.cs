@@ -202,6 +202,10 @@ public static class VideoOperators
     /// decoded frame. The pool grows by a surface for each uploaded frame still held downstream.
     /// </para>
     /// <para>
+    /// The conversion is BT.601 studio range, as <see cref="ToCpu"/> reads back and as
+    /// <c>ImageToTensorOptions</c> assumes by default. The presenters assume BT.709 (#388).
+    /// </para>
+    /// <para>
     /// The caller owns <paramref name="device"/> and disposes it after the graph; uploaded frames
     /// keep what they need of it alive until they are released.
     /// </para>
