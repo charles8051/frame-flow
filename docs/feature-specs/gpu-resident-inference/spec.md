@@ -103,7 +103,15 @@ output tensor.
    node or sink that declares nothing is taken to read CPU pixels (`HardwareFrameChoice`,
    `PassHardwareFramesTests`, `PlayerHardwareFramesTests`).
 
-8. **Every claim above fails honestly on a machine without a GPU.** (#295) Met by #354:
+8. **A consumer can see where frames were copied.** (#435) Met: `FrameCopyMetrics` counts the
+   frames copied or converted at each site: the decoder's download and conversion, a readback,
+   the converter operators, an encoder's conversion, and a presenter's uploads, GPU copies and
+   GPU conversions. On the player's GPU path the decoder downloads and converts nothing
+   (`PlayerHardwareFramesTests`). A converter still copies a frame that already has the size and
+   format asked for: that copy is the storage boundary between a fixed pool, such as a camera's
+   buffers, and whatever holds frames after it (ADR-0081).
+
+9. **Every claim above fails honestly on a machine without a GPU.** (#295) Met by #354:
    `RequiresHardwareDecodeFact` skips, naming what is missing, unless the probe initialised a
    backend for the codec under test. CI has no GPU on either leg, so skipping loudly there is the
    intended behaviour.

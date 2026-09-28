@@ -14,4 +14,12 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("FrameFlow.Playback")]
 [assembly: InternalsVisibleTo("FrameFlow.Audio.OpenAL")]
 
+// FrameCopyMetrics.Record: the copy and conversion sites live in these assemblies, and only the
+// library records (#435).
+[assembly: InternalsVisibleTo("FrameFlow.Decoding")]
+[assembly: InternalsVisibleTo("FrameFlow.Video")]
+[assembly: InternalsVisibleTo("FrameFlow.Encoding")]
+[assembly: InternalsVisibleTo("FrameFlow.Avalonia")]
+[assembly: InternalsVisibleTo("FrameFlow.Avalonia.Windows")]
+
 [assembly: InternalsVisibleTo("FrameFlow.Media.Tests")]

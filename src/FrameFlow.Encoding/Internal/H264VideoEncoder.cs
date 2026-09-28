@@ -4,6 +4,7 @@
 using System.Buffers;
 using System.Runtime.InteropServices;
 using FrameFlow.Media;
+using FrameFlow.Media.Diagnostics;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -321,6 +322,7 @@ internal sealed class H264VideoEncoder : IVideoEncoder, INativeVideoEncoder, IEn
         );
         if (rows <= 0)
             throw new InvalidOperationException("sws_scale (BGRA→YUV420P) produced no rows.");
+        FrameCopyMetrics.Record(FrameCopySite.EncoderConvert);
 
         // Monotonic PTS in the encoder time base ({1/fps}): 0, 1, 2, …
         frameWriter.Pts = _nextPts++;

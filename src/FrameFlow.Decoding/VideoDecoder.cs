@@ -10,6 +10,7 @@ using FrameFlow.Decoding.Diagnostics;
 using FrameFlow.Decoding.Internal;
 using FrameFlow.Graph;
 using FrameFlow.Media;
+using FrameFlow.Media.Diagnostics;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -1137,6 +1138,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 return null;
             }
 
+            FrameCopyMetrics.Record(FrameCopySite.DecoderDownload);
+
             // Copy the timing fields from the GPU frame so the CPU copy carries the
             // same timestamp and display interval — av_hwframe_transfer_data
             // propagates neither.
@@ -1277,6 +1280,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
             if (rowsWritten <= 0)
                 throw new ScaleFailedException(rowsWritten);
+            FrameCopyMetrics.Record(FrameCopySite.DecoderConvert);
         }
     }
 

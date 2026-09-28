@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using FrameFlow.Avalonia.Windows.Core;
 using FrameFlow.Decoding;
 using FrameFlow.Media;
+using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32.SafeHandles;
 using Vortice.D3DCompiler;
@@ -378,6 +379,7 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
             _queue.Wait(decoded, fenceValue).CheckError();
             _queue.ExecuteCommandList(list);
             _queue.Signal(_fence, values.Drawn).CheckError();
+            FrameCopyMetrics.Record(FrameCopySite.PresenterGpuConvert);
         }
         catch (Exception ex)
         {
@@ -398,6 +400,7 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
             acquired = true;
             _context.CopyResource(buffer.Texture, _drawnOn11);
             copied = true;
+            FrameCopyMetrics.Record(FrameCopySite.PresenterGpuCopy);
         }
         catch (Exception ex) when (D3D11DeviceLoss.IsDeviceLost(ex))
         {
