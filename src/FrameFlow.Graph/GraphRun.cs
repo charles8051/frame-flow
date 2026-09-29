@@ -4,8 +4,8 @@
 namespace FrameFlow.Graph;
 
 /// <summary>
-/// What the pumps of one run of a graph share: the token that stops them all, and the faults that
-/// ended the run.
+/// What the pumps of one run of a graph share: the token that stops them all, the faults that
+/// ended the run, and the graph's tallies of what each node discarded.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -28,19 +28,30 @@ internal sealed class GraphRun : IDisposable
     private readonly CancellationTokenSource _cts;
     private readonly Dictionary<INode, int> _indexOf;
     private readonly NodeFault?[] _faultOf;
+    private readonly IReadOnlyList<DiscardTally> _discardsOf;
     private NodeFault? _firstFault;
 
     /// <summary>
     /// A run of <paramref name="nodes"/> that is also cancelled when <paramref name="callerToken"/>
-    /// is.
+    /// is, counting each node's discards in the tally at the same index of
+    /// <paramref name="discards"/>.
     /// </summary>
-    public GraphRun(IReadOnlyList<INode> nodes, CancellationToken callerToken)
+    public GraphRun(
+        IReadOnlyList<INode> nodes,
+        IReadOnlyList<DiscardTally> discards,
+        CancellationToken callerToken
+    )
     {
         ArgumentNullException.ThrowIfNull(nodes);
+        ArgumentNullException.ThrowIfNull(discards);
+        if (discards.Count != nodes.Count)
+            throw new ArgumentException("Every node needs one discard tally.", nameof(discards));
+
         _indexOf = new Dictionary<INode, int>(nodes.Count, ReferenceEqualityComparer.Instance);
         for (int i = 0; i < nodes.Count; i++)
             _indexOf.Add(nodes[i], i);
         _faultOf = new NodeFault?[nodes.Count];
+        _discardsOf = discards;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
     }
 
@@ -74,6 +85,17 @@ internal sealed class GraphRun : IDisposable
         Interlocked.CompareExchange(ref _firstFault, fault, null);
         Interlocked.CompareExchange(ref _faultOf[_indexOf[node]], fault, null);
         Cancel();
+    }
+
+    /// <summary>
+    /// Counts an input <paramref name="node"/> dropped under <see cref="FailureResponse.Discard"/>
+    /// after its body threw <paramref name="ex"/>, in the graph's tally and on the
+    /// <c>frameflow.graph.discards</c> metric (#501). The run carries on.
+    /// </summary>
+    public void Discarded(INode node, Exception ex)
+    {
+        _discardsOf[_indexOf[node]].Record(ex);
+        GraphMetrics.Discards.Add(1, new KeyValuePair<string, object?>("node", node.Id));
     }
 
     /// <summary>

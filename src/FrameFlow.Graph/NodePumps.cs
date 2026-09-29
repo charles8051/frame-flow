@@ -55,6 +55,7 @@ internal static class NodePumps
                         run.Fault(node, ex);
                         throw;
                     }
+                    run.Discarded(node, ex);
                     continue;
                 }
 
@@ -130,6 +131,7 @@ internal static class NodePumps
                         run.Fault(node, ex);
                         throw;
                     }
+                    run.Discarded(node, ex);
                     continue;
                 }
 
@@ -200,6 +202,7 @@ internal static class NodePumps
                         run.Fault(node, ex);
                         throw;
                     }
+                    run.Discarded(node, ex);
                     continue;
                 }
 
@@ -251,6 +254,7 @@ internal static class NodePumps
                         run.Fault(node, ex);
                         throw;
                     }
+                    run.Discarded(node, ex);
                     continue;
                 }
                 item.Dispose();
@@ -382,6 +386,7 @@ internal static class NodePumps
                                 run.Fault(node, ex);
                                 return;
                             }
+                            run.Discarded(node, ex);
                         }
                     }
                 }
@@ -423,6 +428,7 @@ internal static class NodePumps
                         run.Fault(node, ex);
                         throw;
                     }
+                    run.Discarded(node, ex);
                     continue;
                 }
 
@@ -446,6 +452,7 @@ internal static class NodePumps
                         run.Fault(node, ex);
                         throw;
                     }
+                    run.Discarded(node, ex);
                     continue;
                 }
 
