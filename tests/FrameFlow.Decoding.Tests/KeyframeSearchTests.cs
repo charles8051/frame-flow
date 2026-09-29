@@ -24,6 +24,9 @@ public sealed class KeyframeSearchTests
 
     private static Packet F(double? pts) => new(false, pts, pts);
 
+    /// <summary>A packet with a decode time and no presentation time.</summary>
+    private static Packet D(double dts, bool key = false) => new(key, null, dts);
+
     private static TimeSpan? S(double? seconds) => seconds is { } s ? S(s) : null;
 
     private static KeyframeSearch Read(KeyframeSearch search, params Packet[] packets)
@@ -63,15 +66,17 @@ public sealed class KeyframeSearchTests
             { [F(9.1), K(9.2, 9.2), F(9.5), K(9.8, 9.79), F(10.1)], true, 9.79 },
             // Without a decode time, the keyframe is sought by the probe.
             { [F(9.9), K(9.95, null), F(10.04)], true, 10 },
-            // A packet with no presentation time reads on, and is still where the probe landed.
+            // A packet with no timestamps reads on, and is still where the probe landed.
             { [K(null, null), K(9.5, 9.4), F(10.04)], true, 9.4 },
             // The source ended with no keyframe at or before the position: further back.
             { [F(9.5)], false, null },
-            // The source ended before a packet of the stream with a presentation time: nothing to
-            // place a keyframe by, so where a seek to the position lands.
+            // Without presentation times, decode times place the packets.
+            { [D(9.9, key: true)], true, 10 },
+            { [D(9.5), D(9.8, key: true), D(10.04)], true, 9.8 },
+            { [D(9.5), D(10.04)], true, null },
+            // No decode time to stop the next probe at: where a seek to the position lands.
             { [K(null, null)], false, 10 },
             { [], false, 10 },
-            // No decode time to stop the next probe at: likewise.
             { [new Packet(false, 9.5, null), new Packet(false, 10.04, null)], true, 10 },
             { [new Packet(false, 9.5, null)], false, 10 },
         };
@@ -200,7 +205,6 @@ public sealed class KeyframeSearchTests
 
         Assert.Equal((S(9), S(2)), (back.Probe, back.Step));
         Assert.False(back.Landed);
-        Assert.False(back.Timed);
         Assert.Null(back.LandedAt);
         Assert.False(back.Finished);
         Assert.Null(back.Found);

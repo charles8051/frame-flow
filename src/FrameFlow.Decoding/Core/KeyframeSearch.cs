@@ -36,10 +36,11 @@ namespace FrameFlow.Decoding.Core;
 /// A probe that lands on a keyframe is sought again by the same probe, which lands on it again.
 /// </para>
 /// <para>
-/// A stream whose packets lack timestamps cannot be searched this way. A probe that reaches the
-/// source's end without a packet that has a presentation time has nothing to place a keyframe
-/// by, and one that reads no packet with a decode time has nothing to stop the next probe at. The
-/// search then lands where a seek to the position does, which need not be a keyframe.
+/// A packet with no presentation time is placed by its decode time, which is never later. A
+/// keyframe placed that way presents at most the stream's reorder delay after the position, a
+/// frame or two, where a seek that lands mid-GOP can be a GOP late. A probe that reads no packet
+/// with a decode time has nothing to stop the next probe at, and the search then lands where a
+/// seek to the position does, which need not be a keyframe.
 /// </para>
 /// </remarks>
 /// <param name="Position">The position decoding has to reach from a keyframe.</param>
@@ -51,9 +52,6 @@ internal readonly record struct KeyframeSearch(TimeSpan Position, TimeSpan Probe
 
     /// <summary>Whether this probe has read a packet of the stream since its seek.</summary>
     public bool Landed { get; private init; }
-
-    /// <summary>Whether this probe has read a packet of the stream that has a presentation time.</summary>
-    public bool Timed { get; private init; }
 
     /// <summary>
     /// The decode time of the first packet of the stream this probe read that has one, or null
@@ -82,14 +80,13 @@ internal readonly record struct KeyframeSearch(TimeSpan Position, TimeSpan Probe
 
     /// <summary>
     /// Where to seek once this probe has read its packets: the keyframe it found; the source's
-    /// start when a probe from there found none; or the position when the stream's timestamps
-    /// leave nothing to search by. Null when the search goes on with <see cref="Back"/>.
+    /// start when a probe from there found none; or the position when no decode time bounds the
+    /// next probe. Null when the search goes on with <see cref="Back"/>.
     /// </summary>
     public TimeSpan? Landing =>
         Found
         ?? (
-            !Finished && !Timed ? Position
-            : Probe <= TimeSpan.Zero ? Probe
+            Probe <= TimeSpan.Zero ? Probe
             : (LandedAt ?? ScannedFrom) is null ? Position
             : null
         );
@@ -101,7 +98,9 @@ internal readonly record struct KeyframeSearch(TimeSpan Position, TimeSpan Probe
     /// The search after one more packet of the stream, read after seeking to <see cref="Probe"/>.
     /// </summary>
     /// <param name="isKeyframe">Whether the packet is a keyframe.</param>
-    /// <param name="presentation">Its presentation time, or null when it has none.</param>
+    /// <param name="presentation">
+    /// Its presentation time, or null when it has none, in which case its decode time stands in.
+    /// </param>
     /// <param name="decode">
     /// Its decode time, or null when it has none. A keyframe read after the landing is sought by
     /// it: a container that lands off keyframes, as this one did, searches by decode time, so
@@ -120,16 +119,11 @@ internal readonly record struct KeyframeSearch(TimeSpan Position, TimeSpan Probe
             return this with { Landed = true, Finished = true };
 
         var landing = !Landed;
-        var read = this with
-        {
-            Landed = true,
-            Timed = Timed || presentation is not null,
-            LandedAt = LandedAt ?? decode,
-        };
-        return presentation switch
+        var read = this with { Landed = true, LandedAt = LandedAt ?? decode };
+        return (presentation ?? decode) switch
         {
             null => read,
-            { } pts when pts > Position => read with { Finished = true },
+            { } at when at > Position => read with { Finished = true },
             _ when !isKeyframe => read,
             _ when landing => read with { Found = Probe, Finished = IsFirstProbe },
             _ => read with { Found = decode ?? Probe },
