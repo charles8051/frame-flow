@@ -164,6 +164,31 @@ public sealed class SyncJoinBackwardStepTests
         window.Clear();
     }
 
+    [Fact]
+    public void Clear_ReleasesAHeldReaderAndEveryRetainedSecondary()
+    {
+        // The pump clears the window at the start of every run and at teardown.
+        var window = new SecondaryWindow<RefBox<int>>();
+        var retained = new[] { RefBox.Of(0), RefBox.Of(50) };
+        foreach (var r in retained)
+            Assert.Null(Admit(window, r, Ms(100)));
+
+        // Before any primary the lead is measured from the earliest entry, 0 ms.
+        var held = RefBox.Of(200);
+        var room = Admit(window, held, Ms(100));
+        Assert.NotNull(room);
+
+        window.Clear();
+
+        Assert.True(room.IsCompleted);
+        Assert.All(retained, r => Assert.Equal(0, r.RefCount));
+        Assert.Null(Admit(window, held, Ms(100)));
+        Assert.Equal(1, window.Count);
+
+        window.Clear();
+        Assert.Equal(0, held.RefCount);
+    }
+
     // ─── Helpers ────────────────────────────────────────────────────
 
     private static TimeSpan Ms(int ms) => TimeSpan.FromMilliseconds(ms);

@@ -31,10 +31,10 @@ public static class AudioOperators
     /// inconsequential.
     /// </para>
     /// <para>
-    /// <b>Resampler lifetime.</b> Captured by the operator closure,
-    /// outlives the graph run until GC reclaims it. The
-    /// <c>SwrContextHandle</c> is a <c>SafeHandle</c>, so native
-    /// cleanup is guaranteed by the finalizer.
+    /// <b>Resampler lifetime.</b> One resampler per run: made on the run's first
+    /// buffer and disposed by the node's cleanup when its pump exits (#47). A
+    /// re-run of the graph, such as a loop, starts from an empty resampler, so no
+    /// samples buffered before the rewind come out after it.
     /// </para>
     /// </remarks>
     public static OperatorNode<PcmAudioBuffer, PcmAudioBuffer> Resample(
@@ -47,16 +47,21 @@ public static class AudioOperators
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(targetSampleRate);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(targetChannels);
 
-#pragma warning disable CA2000
-        var resampler = AudioResampler.Create(targetSampleRate, targetChannels);
-#pragma warning restore CA2000
+        // Touched only by this node's pump: the body and then, after its last call, the cleanup.
+        IAudioResampler? resampler = null;
 
         return new OperatorNode<PcmAudioBuffer, PcmAudioBuffer>(
             id,
             (input, ct) =>
             {
-                var output = resampler.Process(input);
-                return ValueTask.FromResult<PcmAudioBuffer?>(output);
+                resampler ??= AudioResampler.Create(targetSampleRate, targetChannels);
+                return ValueTask.FromResult<PcmAudioBuffer?>(resampler.Process(input));
+            },
+            cleanup: () =>
+            {
+                resampler?.Dispose();
+                resampler = null;
+                return ValueTask.CompletedTask;
             }
         );
     }

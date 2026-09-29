@@ -163,13 +163,14 @@ long-held frame from a fixed pool, such as a camera lease (ADR-0081).
 every branch: about 750 MB/s across three 1080p presenters at 30 fps, estimated from frame sizes.
 Frames count references now, so a branch can share the frame. ADR-0080 decision 7, #380, #93.
 
-### 6. The node constructors take a new optional parameter
+### 6. The node constructors take new optional parameters
 
 **A binary break, not a compile error.** Source that constructs these nodes compiles unchanged.
 
-`OperatorNode`, `MultiOperatorNode` and `SinkNode` take `Holding? holding = null`, and
-`SyncJoinNode` takes `int? maxRetained = null`. A parameter with a default still changes the
-constructor's signature. An assembly compiled against `v0.11.0` that constructs one of these nodes
+`OperatorNode`, `MultiOperatorNode` and `SinkNode` take `Holding? holding = null`.
+`OperatorNode` and `MultiOperatorNode` also take `Func<ValueTask>? cleanup = null`, which runs
+each time the node's pump exits, once per run, as `SourceNode`'s does. `SyncJoinNode` takes
+`int? maxRetained = null`. A parameter with a default still changes the constructor's signature. An assembly compiled against `v0.11.0` that constructs one of these nodes
 throws `MissingMethodException` against this release until it is rebuilt.
 
 **Who hits this.** A library built against `v0.11.0` and loaded with this release without being
@@ -461,6 +462,22 @@ An `IMediaPlayer` is an `IMediaTransport`, so what you assign does not change.
 **Why.** `v0.10.0` entry 38 renamed the small interface to `IMediaTransport` because every consumer
 of it is a transport widget. The property that takes it still said player, which is the mismatch
 that rename removed from the type names (#335).
+
+### 22. `SyncJoinNode.ResetWindow()` is gone
+
+**A compile error.**
+
+Nothing in this repository called it. The pump clears the window at the start of every run, so a
+seek, which rebuilds the graph, and a loop, which re-runs it, each start with an empty window. A
+backward step in the primary's time within a run starts a new timeline in the window (#92).
+ADR-0073 kept the method until a consumer appeared, and none did.
+
+**Who hits this.** Code that called `ResetWindow()` on a join it holds across runs, or mid-run on
+a discontinuity.
+
+**What to write instead.** Across runs, delete the call. Mid-run, a step back in the primary's
+timestamps is handled by the window. A discontinuity the primary's timestamps do not show needs
+the graph rebuilt, which is what a seek does.
 
 ## `v0.11.0` — since `v0.10.1`
 

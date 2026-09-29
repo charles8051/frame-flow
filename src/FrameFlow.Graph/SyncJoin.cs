@@ -193,8 +193,7 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     /// primary advances. The edge's overflow policy decides what upstream does:
     /// <see cref="EdgeOptions.Buffered(int)"/> makes the producer wait, and a dropping edge
     /// discards. Before any primary has arrived, the lead is measured from the earliest
-    /// secondary retained. Primary EOS, <see cref="ResetWindow"/> and graph teardown each
-    /// release a held secondary.
+    /// secondary retained. Primary EOS and graph teardown each release a held secondary.
     /// </para>
     /// <para>
     /// <b>A producer made to wait must not also feed the primary.</b> If one pump produces both
@@ -350,27 +349,6 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
             );
         }
     }
-
-    /// <summary>
-    /// Drops every retained secondary, for a caller that knows of a discontinuity the join
-    /// does not see in the primary's times.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// It drops what the window has admitted and nothing upstream of it. Secondaries
-    /// still on the edge were produced before the reset and are admitted after it, and
-    /// so is one held on <see cref="MaxLead"/>, which the join has read but not
-    /// admitted. A consumer that needs nothing from before its discontinuity to reach
-    /// the join discards upstream too, as a graph rebuild does.
-    /// </para>
-    /// <para>
-    /// Nothing in this repository calls it. A seek rebuilds the graph, the pump clears the
-    /// window at the start of every run, and a backward step in the primary's time within a
-    /// run is handled by the window (<see cref="Window"/>). A consumer holding a join across
-    /// runs can call it from <see cref="Graph.BeforeEachRun"/> (ADR-0073, §6).
-    /// </para>
-    /// </remarks>
-    public void ResetWindow() => _retained.Clear();
 
     internal SecondaryWindow<TSecondary> Retained => _retained;
 

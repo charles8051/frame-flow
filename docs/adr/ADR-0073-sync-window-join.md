@@ -7,6 +7,8 @@ implementation landed. Implemented, with one of its two migrations shipped and m
 > [ADR-0081](ADR-0081-fixed-pool-budget.md) adds a retained-count limit next to `Window` and `maxLead` (#386).
 >
 > **Amended 2026-09-28.** A backward step in primary time larger than `Window` starts a new timeline in the window (#92). See the amendment at the foot of this record.
+>
+> **Amended 2026-09-28 (2).** `ResetWindow()` is removed. See the last amendment at the foot of this record.
 
 ### What exists
 
@@ -448,3 +450,13 @@ silently.
 
 `ResetWindow()` still has no caller (*Not settled here*). Its documentation no longer says the
 session registers an adapter over it.
+
+## Amendment, 2026-09-28 (2): `ResetWindow()` is removed
+
+*Not settled here* said the method should go if no consumer appeared. None did, and nothing it
+covered is left. Each run clears the window (§6), so a seek and a loop start empty, and a backward
+step in primary time starts a new timeline (the amendment above). `docs/BREAKING-CHANGES.md`
+carries the entry.
+
+The window still clears itself: the pump calls it at the start of every run and at teardown, and a
+clear still releases a secondary held on the lead or the count.

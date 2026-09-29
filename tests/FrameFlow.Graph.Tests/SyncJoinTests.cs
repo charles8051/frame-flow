@@ -392,56 +392,6 @@ public sealed class SyncJoinTests
     }
 
     [Fact]
-    public async Task ResetWindow_DropsRetainedSecondaries()
-    {
-        // The seek path: a pre-reset secondary must not match a post-reset
-        // primary. Driven from the primary source so the reset lands between
-        // two known primaries without a timing race.
-        var join = Join(SyncMatch.Within, window: Ms(10_000));
-
-        var spans = new[] { RefBox.Of(new Span(Ms(0), Ms(1000), "pre-seek")) };
-        var ticks = new[]
-        {
-            RefBox.Of(new Tick(Ms(100))),  // before the reset: matches
-            RefBox.Of(new Tick(Ms(200))),  // after it: window is empty
-        };
-
-        var got = new List<string>();
-
-        // Gate the reset on the sink rather than on RetainedCount: the first
-        // primary has demonstrably been matched once its output lands, so the
-        // reset cannot race ahead of it. The source pump is single-threaded, so
-        // `i` needs no synchronization.
-        int i = 0;
-        var primary = new SourceNode<RefBox<Tick>>(
-            "primary",
-            async ct =>
-            {
-                if (i == 0)
-                {
-                    await SpinUntil(() => join.RetainedCount >= 1, ct).ConfigureAwait(false);
-                }
-                else if (i == 1)
-                {
-                    await SpinUntil(() => Collected(got) >= 1, ct).ConfigureAwait(false);
-                    join.ResetWindow();
-                }
-                return i < ticks.Length ? ticks[i++] : null;
-            }
-        );
-
-        var graph = new GraphRunner();
-        graph.Pipeline(Emit("secondary", spans)).ToSecondary(join, EdgeOptions.Buffered(8));
-        graph.Pipeline(primary).ToPrimary(join);
-        graph.Pipeline(join.Output).To(CollectInto(got));
-
-        await graph.RunAsync();
-
-        Assert.Equal(new[] { "100=pre-seek", "200=none" }, got);
-        Assert.All(spans, s => Assert.Equal(0, s.RefCount));
-    }
-
-    [Fact]
     public async Task ARerunOfTheGraph_StartsWithAnEmptyWindow()
     {
         // The loop path: the same graph runs again after the item is rewound in place, so a
@@ -1261,66 +1211,5 @@ public sealed class SyncJoinTests
         Assert.Equal(0, retainedAtEos);
         Assert.Equal(0, span.RefCount);
         Assert.Equal(0, tick.RefCount);
-    }
-
-    /// <summary>
-    /// <c>ResetWindow</c> releases a held secondary. An empty window has room, and a primary
-    /// that is paused will not advance to say so.
-    /// </summary>
-    [Fact]
-    public async Task MaxLead_ResetWindowReleasesAHeldSecondary()
-    {
-        var join = Join(SyncMatch.MostRecentAtOrBefore, window: Ms(10_000), maxLead: Ms(100));
-        var spans = SpansEvery50Ms();
-        var pulled = new StrongBox<int>();
-
-        // A primary that never emits: gated from the start.
-        var primary = new SourceNode<RefBox<Tick>>(
-            "primary",
-            async ct =>
-            {
-                await UntilCancelled(ct).ConfigureAwait(false);
-                return null;
-            }
-        );
-
-        var graph = new GraphRunner();
-        graph.Pipeline(EmitCounting(spans, pulled)).ToSecondary(join, EdgeOptions.Buffered(2));
-        graph.Pipeline(primary).ToPrimary(join);
-        graph.Pipeline(join.Output).To(CollectInto(new List<string>()));
-
-        using var cts = new CancellationTokenSource();
-        var run = graph.RunAsync(cts.Token);
-        try
-        {
-            await SpinUntil(() => join.IsSecondaryHeld, cts.Token).WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.Equal(3, join.RetainedCount);
-
-            // The reset clears the held state along with the window, so the next time it reads
-            // true the reader has been woken, admitted from the span it was holding, and parked
-            // again: 150, 200 and 250 ms are within 100 ms of 150, and 300 is not.
-            join.ResetWindow();
-            await SpinUntil(() => join.IsSecondaryHeld, cts.Token).WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.Equal(3, join.RetainedCount);
-            Assert.All(spans.Take(3), x => Assert.Equal(0, x.RefCount));
-        }
-        catch
-        {
-            await StopAsync(run, cts);
-            throw;
-        }
-
-        cts.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => run.WaitAsync(TimeSpan.FromSeconds(10))
-        );
-
-        // Every span the source handed over is disposed: retained, held, and the ones still on
-        // the edge at teardown. The rest were never pulled and are still this test's.
-        Assert.Equal(0, join.RetainedCount);
-        var handedOver = Volatile.Read(ref pulled.Value);
-        Assert.All(spans.Take(handedOver), x => Assert.Equal(0, x.RefCount));
-        foreach (var never in spans.Skip(handedOver))
-            never.Dispose();
     }
 }
