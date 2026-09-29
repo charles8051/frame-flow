@@ -227,28 +227,49 @@ public sealed class FailureResponseDiscardTests
     [Fact]
     public async Task AJoinsSecondaryKeySelector_CountsItsDiscards()
     {
-        // The secondary loop runs on its own task; RunAsync waits for it, so the count is final
-        // once the run returns.
+        // The join reads its secondary on a task of its own, and after the primary ends it drops
+        // secondaries without asking the key selector. So the primary waits until the selector has
+        // seen 30, which it does after 20, and only then emits and ends.
+        var selectedLast = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var join = new SyncJoinNode<RefBox<int>, RefBox<int>, RefBox<int>>(
             "join",
             (primary, _, _) => ValueTask.FromResult<RefBox<int>?>(primary),
             new SyncJoinKeys<RefBox<int>, RefBox<int>>(
                 p => TimeSpan.FromMilliseconds(p.Value),
-                s => s.Value == 20
-                    ? throw new CountedException(s.Value)
-                    : (TimeSpan.FromMilliseconds(s.Value), TimeSpan.FromMilliseconds(s.Value))
+                s =>
+                {
+                    if (s.Value == 20)
+                        throw new CountedException(s.Value);
+                    if (s.Value == 30)
+                        selectedLast.TrySetResult();
+                    return (TimeSpan.FromMilliseconds(s.Value), TimeSpan.FromMilliseconds(s.Value));
+                }
             ),
             SyncMatch.MostRecentAtOrBefore,
             TimeSpan.FromSeconds(10),
             onError: FailureResponse.Discard
         );
         var produced = new List<RefBox<int>>();
+        var pulls = 0;
+        var primary = new SourceNode<RefBox<int>>(
+            "primary",
+            async ct =>
+            {
+                if (pulls++ > 0)
+                    return null;
+                await selectedLast.Task.WaitAsync(ct).ConfigureAwait(false);
+                var box = RefBox.Of(1);
+                lock (produced)
+                    produced.Add(box);
+                return box;
+            }
+        );
         var graph = new GraphRunner();
         graph.Pipeline(Emit(produced, "secondary", 10, 20, 30)).ToSecondary(join, EdgeOptions.Buffered(4));
-        graph.Pipeline(Emit(produced, "primary", 1)).ToPrimary(join);
+        graph.Pipeline(primary).ToPrimary(join);
         graph.Pipeline(join.Output).To(RecordingSink([]));
 
-        await graph.RunAsync();
+        await graph.RunAsync().WaitAsync(TimeSpan.FromSeconds(15));
 
         var discards = Assert.Single(graph.Discards);
         Assert.Equal("join", discards.NodeId);
