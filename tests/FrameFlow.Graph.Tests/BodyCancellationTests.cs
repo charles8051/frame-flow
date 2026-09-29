@@ -39,8 +39,10 @@ public sealed class BodyCancellationTests
     {
         var run = new Run(site, FailureResponse.Propagate);
 
-        await Assert.ThrowsAsync<TaskCanceledException>(() => run.Graph.RunAsync());
+        var fault = await Assert.ThrowsAsync<GraphFaultException>(() => run.Graph.RunAsync());
 
+        Assert.IsType<TaskCanceledException>(fault.InnerException);
+        Assert.Equal(run.Thrower, fault.NodeId);
         Assert.All(run.Produced, box => Assert.Equal(0, box.RefCount));
     }
 
@@ -121,8 +123,20 @@ public sealed class BodyCancellationTests
         /// <summary>The values the recording sink took, in order.</summary>
         public List<int> Consumed { get; } = [];
 
+        /// <summary>The id of the node whose body throws.</summary>
+        public string Thrower { get; }
+
         public Run(Site site, FailureResponse policy)
         {
+            Thrower = site switch
+            {
+                Site.Source => "source",
+                Site.Operator => "op",
+                Site.MultiOperator => "multi",
+                Site.Sink => "sink",
+                _ => "join",
+            };
+
             switch (site)
             {
                 case Site.Source:

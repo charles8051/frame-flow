@@ -120,7 +120,8 @@ public sealed class GraphTopologyValidationTests
     {
         // Only a node that declares every input required is checked here. A sink added and never
         // wired is left to the pump's own RequireConnected, which is where that error has always
-        // come from, so this rule does not widen what a graph rejects.
+        // come from, so this rule does not widen what a graph rejects. The pump's refusal is that
+        // node's fault.
         var graph = new GraphRunner();
         var source = Source([Item(1)]);
         var sink = new SinkNode<RefBox<int>>("sink", (_, _) => ValueTask.CompletedTask);
@@ -128,9 +129,11 @@ public sealed class GraphTopologyValidationTests
 
         graph.Pipeline(source).To(sink);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var fault = await Assert.ThrowsAsync<GraphFaultException>(
             () => graph.RunAsync(CancellationToken.None)
         );
+        Assert.Equal("unused", fault.NodeId);
+        var ex = Assert.IsType<InvalidOperationException>(fault.InnerException);
         Assert.Contains("has no upstream edge connected", ex.Message, StringComparison.Ordinal);
     }
 

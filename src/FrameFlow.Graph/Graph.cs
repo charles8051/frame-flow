@@ -1,7 +1,6 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 
 namespace FrameFlow.Graph;
@@ -25,8 +24,9 @@ namespace FrameFlow.Graph;
 /// <para>
 /// <b>Fault propagation.</b> If any pump faults, an internal linked
 /// cancellation token is signalled so the remaining pumps terminate
-/// promptly, and <see cref="RunAsync"/> throws the fault recorded
-/// first. Each pump's <c>finally</c> drains its input ports and
+/// promptly, and <see cref="RunAsync"/> throws a
+/// <see cref="GraphFaultException"/> naming the node whose fault was
+/// recorded first. Each pump's <c>finally</c> drains its input ports and
 /// disposes any leftover items so refcounts stay balanced. An
 /// <see cref="OperationCanceledException"/> from a node body is a fault
 /// like any other unless the graph was cancelled (#489).
@@ -230,6 +230,15 @@ public sealed class Graph
     /// loop has terminated (EOS propagated, cancellation requested,
     /// or a pump failed).
     /// </summary>
+    /// <exception cref="GraphFaultException">
+    /// One or more nodes faulted. It names the node whose fault was recorded first and holds that
+    /// fault as its inner exception, and every node's fault in <see cref="GraphFaultException.Faults"/>.
+    /// </exception>
+    /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled and no node faulted.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The graph is already running, or it was refused before any node ran because it is wired
+    /// wrongly, two nodes share an id, or a node cannot take a memory domain its source emits.
+    /// </exception>
     public async Task RunAsync(CancellationToken ct = default)
     {
         // One run at a time. A second would drop the state the first is using and rewire the
@@ -301,7 +310,7 @@ public sealed class Graph
         foreach (var wire in _wireUps)
             wire();
 
-        using var run = new GraphRun(ct);
+        using var run = new GraphRun(_nodes, ct);
 
         var tasks = new List<Task>(_nodes.Count);
         foreach (var node in _nodes)
@@ -316,20 +325,21 @@ public sealed class Graph
         // tearing the graph down.
         //
         // So the pumps end Canceled either because the caller cancelled, and that cancellation
-        // propagates, or because one faulted, and the fault is what surfaces. A pump's task alone
-        // cannot say which: a body that throws its own OperationCanceledException ends its pump
-        // Canceled too (#489). The run can.
+        // propagates unwrapped, or because one faulted, and the faults are what surface. A pump's
+        // task alone cannot say which: a body that throws its own OperationCanceledException ends
+        // its pump Canceled too (#489). The run can.
         try
         {
             await Task.WhenAll(tasks).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (run.FirstFault is not null)
+        catch (OperationCanceledException) when (run.HasFaulted)
         {
             // The pumps stopped because one faulted; surfaced below.
         }
 
-        if (run.FirstFault is { } fault)
-            ExceptionDispatchInfo.Capture(fault).Throw();
+        // Wrapped so the exception says which node threw, and whether others did too (#499).
+        if (run.Faults is { Count: > 0 } faults)
+            throw new GraphFaultException(faults);
     }
 
     /// <summary>
