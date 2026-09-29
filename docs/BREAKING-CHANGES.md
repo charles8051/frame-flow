@@ -87,7 +87,7 @@ rebuilt.
 `BlazeFacePostprocessor.Decode(boxes, scores, roi)` now throws `ArgumentException` for a ROI with no
 area, as `Preprocess` already did.
 
-### 6. `IPassBuilder` gained `WithDecodeDiscard`
+### 7. `IPassBuilder` gained `WithDecodeDiscard`
 
 **A compile error for a type that implements `IPassBuilder`.** Code that calls it compiles unchanged.
 
