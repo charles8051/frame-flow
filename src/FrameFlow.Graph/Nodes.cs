@@ -10,7 +10,10 @@ namespace FrameFlow.Graph;
 /// </summary>
 public interface INode
 {
-    /// <summary>Unique identifier for diagnostics and graph traversal.</summary>
+    /// <summary>
+    /// Identifier for diagnostics and graph traversal, unique within the node's graph. A graph with
+    /// two nodes on one id refuses to run.
+    /// </summary>
     string Id { get; }
 
     /// <summary>How this node responds when its operator function throws.</summary>
