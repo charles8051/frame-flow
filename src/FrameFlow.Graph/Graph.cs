@@ -25,7 +25,7 @@ namespace FrameFlow.Graph;
 /// <para>
 /// <b>Fault propagation.</b> If any pump faults, an internal linked
 /// cancellation token is signalled so the remaining pumps terminate
-/// promptly, and <see cref="RunAsync"/> throws the fault that happened
+/// promptly, and <see cref="RunAsync"/> throws the fault recorded
 /// first. Each pump's <c>finally</c> drains its input ports and
 /// disposes any leftover items so refcounts stay balanced. An
 /// <see cref="OperationCanceledException"/> from a node body is a fault

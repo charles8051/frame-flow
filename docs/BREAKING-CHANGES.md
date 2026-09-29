@@ -138,7 +138,7 @@ every source had ended. Under `Discard`, the node drops that input and carries o
 graph used to stop. One thrown once the graph is cancelled, by the caller's token or by another
 node's fault, is still the cancellation.
 
-When more than one node faults, `RunAsync` throws the fault that happened first. It used to throw
+When more than one node faults, `RunAsync` throws the fault a pump caught first. It used to throw
 the fault of whichever of them was added to the graph first.
 
 **Who hits this.** A body that lets its own cancellation escape, and a caller that relied on

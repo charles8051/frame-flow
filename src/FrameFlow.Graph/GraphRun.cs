@@ -16,7 +16,9 @@ namespace FrameFlow.Graph;
 /// </para>
 /// <para>
 /// Recording a fault cancels the run, so the other pumps stop producing before the faulting one
-/// drains its inputs. The first fault recorded is the one that happened first in time.
+/// drains its inputs. A pump records a fault in the catch that caught it, so the first recorded
+/// is the first a pump caught. Two pumps that fault at once are recorded in whichever order they
+/// reach <see cref="Fault"/>, which need not be the order their bodies threw.
 /// </para>
 /// </remarks>
 internal sealed class GraphRun : IDisposable
