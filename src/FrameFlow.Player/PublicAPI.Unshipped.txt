@@ -42,6 +42,7 @@ FrameFlow.Player.IPassBuilder.BuildAsync(System.Threading.CancellationToken canc
 FrameFlow.Player.IPassBuilder.ConfigureAudio(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBuffer!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.PcmAudioBuffer!>>! configure) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.ConfigureVideo(System.Func<FrameFlow.Graph.GraphChain<FrameFlow.Media.IVideoFrame!>, FrameFlow.Graph.GraphChain<FrameFlow.Media.IVideoFrame!>>! configure) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithAudioSink(FrameFlow.Media.IAudioSink! sink) -> FrameFlow.Player.IPassBuilder!
+FrameFlow.Player.IPassBuilder.WithDecodeDiscard(FrameFlow.Decoding.DecodeDiscardLevel level) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithHardwareDecode(FrameFlow.Media.HardwareDecodeMode mode) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithHardwareDevice(FrameFlow.Decoding.HardwareDevice! device) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithLogger(Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory) -> FrameFlow.Player.IPassBuilder!

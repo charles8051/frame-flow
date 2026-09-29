@@ -87,6 +87,27 @@ rebuilt.
 `BlazeFacePostprocessor.Decode(boxes, scores, roi)` now throws `ArgumentException` for a ROI with no
 area, as `Preprocess` already did.
 
+### 7. `IPassBuilder` gained `WithDecodeDiscard`
+
+**A compile error for a type that implements `IPassBuilder`.** Code that calls it compiles unchanged.
+
+A pass can decode keyframes only (#482). A type outside FrameFlow that implements `IPassBuilder`,
+such as a test double or a decorator, stops compiling until it adds the member. One compiled
+against `v0.12.0` and not rebuilt fails to load with `TypeLoadException` when the application uses
+the type.
+
+**Who hits this.** Only an implementer. FrameFlow's own builder comes from `FrameFlowPass.Create`.
+
+**What to write instead.** Implement it, or forward it to the builder you wrap:
+
+```csharp
+public IPassBuilder WithDecodeDiscard(DecodeDiscardLevel level)
+{
+    _inner.WithDecodeDiscard(level);
+    return this;
+}
+```
+
 ## `v0.12.0` — since `v0.11.0`
 
 ### 1. A join with a frame secondary must set `maxLead`

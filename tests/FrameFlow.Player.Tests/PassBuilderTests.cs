@@ -71,9 +71,19 @@ public sealed class PassBuilderTests
         var same = builder
             .WithVideoSink(new PlayerBuilderTests.NullVideoSink())
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
+            .WithDecodeDiscard(Decoding.DecodeDiscardLevel.KeyframesOnly)
             .WithLogger(null);
 
         Assert.Same(builder, same);
+    }
+
+    [Fact]
+    public void WithDecodeDiscard_UndefinedLevel_Throws()
+    {
+        var builder = FrameFlowPass.Create("any.mp4");
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            builder.WithDecodeDiscard((Decoding.DecodeDiscardLevel)42)
+        );
     }
 
     [Fact]

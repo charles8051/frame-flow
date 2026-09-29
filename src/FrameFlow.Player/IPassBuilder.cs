@@ -119,6 +119,22 @@ public interface IPassBuilder
     IPassBuilder WithHardwareDevice(HardwareDevice device);
 
     /// <summary>
+    /// How much of the video the decoder skips, for the whole pass. Defaults to
+    /// <see cref="DecodeDiscardLevel.None"/>, which decodes every frame.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DecodeDiscardLevel.KeyframesOnly"/> delivers the source's keyframes and nothing
+    /// between them, each with its own timestamp. They arrive at the stream's keyframe interval,
+    /// not at a chosen rate, which suits a pass that samples sparsely, such as thumbnails, and is
+    /// wrong for one that needs every frame. FFmpeg's HEVC decoder can drop a keyframe at this
+    /// level, reporting a duplicate picture order count, so an HEVC pass can deliver fewer
+    /// keyframes than the stream has. What the other levels skip depends on the stream: on one
+    /// without B-frames, <see cref="DecodeDiscardLevel.Bidirectional"/> skips nothing.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="level"/> is not a defined level.</exception>
+    IPassBuilder WithDecodeDiscard(DecodeDiscardLevel level);
+
+    /// <summary>
     /// Supplies the <see cref="ILoggerFactory"/> the pass should use. When unset, logging is
     /// silent. A <see langword="null"/> factory is a no-op, so an optional logging step stays
     /// inside the chain instead of forcing the caller out to a local.
