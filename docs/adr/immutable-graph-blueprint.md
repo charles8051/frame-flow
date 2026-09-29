@@ -4,6 +4,10 @@
 
 Draft, pending number assignment at merge. **Proposed** (2026-09-16). Not implemented.
 
+Revised 2026-09-29: prior art from ComfyUI's executor added to Context; decision 2 rejects
+duplicate node ids; decision 4 says what a factory may close over; two open questions added, on
+where a node's declarations live and on composite specs.
+
 This record proposes splitting `FrameFlow.Graph.Graph` into a description that is a value and an
 instance that runs. The description would be immutable, validated at construction, and
 instantiable more than once; the instance would own the channels, the pumps, and the cancellation.
@@ -89,6 +93,37 @@ versioning sense, and stops being free at the first release that ships `FrameFlo
 In-tree there are 80 `new Graph()` sites across 13 directories, concentrated in
 `tests/FrameFlow.Graph.Tests` (8 files).
 
+### Prior art: ComfyUI
+
+ComfyUI's executor has met most of this record's questions, and has either an answer or a stated
+regret for each. Read from its source at
+[`a7169322`](https://github.com/Comfy-Org/ComfyUI/tree/a7169322) (2026-09-29) and the pull
+requests behind it.
+
+- **State on a node instance.** Its original node API calls a method on an instance the executor
+  keeps between runs, and nodes keep state there: `LoraLoader` holds `self.loaded_lora`. That state
+  is a second cache, which survives or disappears with the executor's cache mode; `--cache-none`
+  drops it. Its V3 API runs `execute` as a class method on a clone of the class that refuses
+  attribute writes (`execution.py:282-296`). That is the problem `BeforeEachRun` leaves to
+  convention.
+- **Declarations are data on the type.** `INPUT_TYPES` and `RETURN_TYPES` belong to the node's
+  class. The validator compares an upstream class's declared output type with the downstream
+  input's without constructing or running either node (`execution.py:932-951`), so a graph is
+  checked before anything executes.
+- **Checks outside the core.** Port types are strings with a `*` wildcard. Resolving a type that
+  depends on what is connected was left to the editor, so a graph submitted through the API got no
+  check for it ([Comfy-Org/ComfyUI#14223](https://github.com/Comfy-Org/ComfyUI/pull/14223)).
+- **Composites outside the core.** Group nodes were defined in the editor's save format and were
+  removed with "accepted lossiness". Subgraphs are flattened by the frontend into compound ids, and
+  the flattening shifted positional values in 113 of 471 shipped templates
+  ([Comfy-Org/ComfyUI#15102](https://github.com/Comfy-Org/ComfyUI/issues/15102)). Where the
+  executor generates nodes itself, it prefixes their ids with the parent's (`{parent}.{i}.`) and
+  reports a failure against the parent.
+- **An API that froze late.** V3's stated reason is that nothing separated internal functions from
+  a public interface, so core changes broke extensions. More than a year after it was announced,
+  `comfy_api/v0_0_2` is still an unstable alias of `latest`, and original-API nodes still load
+  beside V3 ones.
+
 ## Decision
 
 ### 1. The blueprint is a value
@@ -120,6 +155,10 @@ a graph that cannot work. The builder returns a `Result` per
 `Validate` keeps its signature and its purity. It gains a blueprint-shaped overload and loses
 nothing.
 
+The builder also rejects two node specs with one id. A `PortRef` names its node by id, so a
+duplicate makes an edge ambiguous, not only an error message. Today nothing checks ids (#500), and
+a fault that names its node (#499) needs them unique.
+
 ### 3. Instantiation is a separate step
 
 ```csharp
@@ -147,6 +186,21 @@ disturb the first.
 It is also the decision with the largest reach, because it changes what a caller writes. Today a
 caller constructs `new OperatorNode<T, T>("id", body)` and hands over the instance. Under this
 decision the caller hands over a function that constructs it.
+
+**A factory receives long-lived resources and does not create them.** A loaded model, an
+inference session, a hardware device and a sink are values the factory closes over, owned by the
+caller. `Infer` already takes its model that way ("Not disposed by the graph"), and
+[ADR-0044](ADR-0044-sink-ownership-and-disposal.md) does the same for sinks. A factory that opened
+a model would open it once per instance. `Rebuild` instantiates a new graph after every seek, so
+for the multi-gigabyte generative models in
+[the generative-inference exploration](../explorations/generative-inference.md) that is seconds
+and gigabytes per seek. ComfyUI keeps loaded models in a manager of their own, outside the node
+instances its cache modes discard.
+
+This is the one kind of state decision 3's "share nothing" does not cover: two instances of a
+blueprint share the resources their factories close over. An `IInferenceSession` does not support
+concurrent runs, so two instances running at once need a session each or a wrapper that serialises
+them. Nothing in the tree runs two instances at once.
 
 ### 5. `_resets` and `BeforeEachRun` are removed
 
@@ -186,8 +240,9 @@ together because a factory without a separate instance buys nothing.
 
 - **The typed `Connect` loses its compile-time proof.** Today
   `Connect<T>(OutputPort<T>, InputPort<T>)` cannot connect mismatched item types, because the ports
-  carry `T`. A blueprint that names ports by string checks that at instantiation instead. Keeping
-  the proof means a typed handle the builder hands out, which is the open question below.
+  carry `T`. A blueprint that names ports by string checks that later: at instantiation, or when
+  the builder validates if a spec declares its ports as data. Keeping the proof means a typed
+  handle the builder hands out, which is the open question below.
 - **It is a break across every consumer.** 80 construction sites, `GraphChain`, `Pipeline`,
   `Connect`, `Add`, and `SubstrateSession.BuildGraph`. Free in versioning terms today, not free in
   work.
@@ -233,7 +288,23 @@ so the value is immutable and what it describes is not.
   acceptable cost, or whether the check moves to instantiation and the builder's fluent surface
   carries it instead. This decides how much of the break reaches call sites, and it should be
   spiked against `SubstrateSession.BuildGraph` and one fan-out example before the record is
-  accepted.
+  accepted. If the check moves, it should move to the builder's validation rather than to
+  instantiation, so a blueprint that exists is well typed. ComfyUI left one class of type check to
+  its editor, and graphs submitted without the editor went unchecked (Context).
+- **Where a node's declarations live.** `Validate`, the memory-domain check (#435) and the frame
+  budget ([ADR-0081](ADR-0081-fixed-pool-budget.md)) all read declarations from node instances
+  today: `IDeclaresHolding`, `IDeclaresDomains`, `IDomainSource` and `IBudgetedSource` are
+  interfaces a node implements. A `NodeSpec` holds only `Func<INode>`, so a pure check over the
+  blueprint can reach none of them without constructing every node. Either the builder
+  constructs a throwaway instance per spec to read them, or a spec carries its ports as data: name,
+  item type, the domains it accepts and emits, and what it holds. The second is how ComfyUI
+  validates a graph without running it (Context), and it would also settle the typed-connect
+  question above for string-named ports.
+- **What a composite spec looks like.** `Infer` wires a branch, a node and a sink, and names the
+  sink by appending `-results` to the id the caller gives. A composite spec that owns its children
+  and prefixes their ids with its own would give ports and faults a hierarchical name, and keep
+  composition in the blueprint instead of in extension methods that call `Connect`. ComfyUI's
+  composites lived outside its executor, and both of its attempts lost information (Context).
 - **What a `SyncJoinNode` spec looks like.** It has two typed inputs and the keys and the window,
   so its factory is the largest one and the test of whether `Func<INode>` is the right shape.
 - **Whether `GraphPolicy` survives in a narrowed form.** `Reuse` becomes "instantiate the retained
@@ -241,4 +312,5 @@ so the value is immutable and what it describes is not.
   Measuring instantiation cost against the retained-graph re-run is a precondition for removing the
   enum.
 - **Whether this lands before `FrameFlow.Graph` ships.** The versioning argument in Context is the
-  whole reason to decide now rather than later, and it expires.
+  whole reason to decide now rather than later, and it expires. ComfyUI's node API shows the other
+  outcome: two contracts loaded side by side for more than a year, and no frozen version.
