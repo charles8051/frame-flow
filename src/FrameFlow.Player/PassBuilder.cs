@@ -37,6 +37,7 @@ internal sealed class PassBuilder : IPassBuilder
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private VideoDecoderOptions? _videoDecoderOptions;
     private HardwareDevice? _hardwareDevice;
+    private DecodeDiscardLevel _discardLevel = DecodeDiscardLevel.None;
     private AudioDecoderOptions? _audioDecoderOptions;
     private IPlaybackClock? _clock;
 
@@ -90,6 +91,14 @@ internal sealed class PassBuilder : IPassBuilder
     {
         ArgumentNullException.ThrowIfNull(device);
         _hardwareDevice = device;
+        return this;
+    }
+
+    public IPassBuilder WithDecodeDiscard(DecodeDiscardLevel level)
+    {
+        if (!Enum.IsDefined(level))
+            throw new ArgumentOutOfRangeException(nameof(level), level, "Not a DecodeDiscardLevel.");
+        _discardLevel = level;
         return this;
     }
 
@@ -306,6 +315,11 @@ internal sealed class PassBuilder : IPassBuilder
                 if (videoDecoder is not null)
                 {
                     videoDecoder.YieldHardwareFrames = hardwareFrames.Yield;
+
+                    // Left alone at None: the codec context's default is FFmpeg's, which also
+                    // drops empty packets, and a pass that asked for nothing keeps it (#482).
+                    if (_discardLevel != DecodeDiscardLevel.None)
+                        videoDecoder.SetDiscardLevel(_discardLevel);
 
                     // A node that cannot take the frames' memory domain, and a path that holds
                     // without bound, are refused here, before anything runs, rather than when

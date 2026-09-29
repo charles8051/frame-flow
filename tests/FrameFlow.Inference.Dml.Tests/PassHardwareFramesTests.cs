@@ -218,14 +218,62 @@ public sealed class PassHardwareFramesTests
             .BuildAsync();
     }
 
+    /// <summary>
+    /// A pass of keyframes only decodes them on hardware as it does in software: the sink gets the
+    /// clip's keyframes, on the GPU, each at its own timestamp (#482).
+    /// </summary>
+    [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, KeyframeClip)]
+    public async Task APassOfKeyframesOnly_OnD3D12Va_DeliversTheKeyframes()
+    {
+        var path = TestEnvironment.CorpusFile(KeyframeClip)!;
+        var keyframes = await KeyframesAsync(path);
+        Assert.True(keyframes.Count > 1, $"{KeyframeClip} has {keyframes.Count} keyframe(s).");
+        using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D12Va);
+        var sink = new RecordingSink(maxHeldFrames: 0);
+
+        await using (var pass = await FrameFlowPass
+            .Create(path)
+            .WithHardwareDevice(device)
+            .WithHardwareFrames()
+            .WithDecodeDiscard(DecodeDiscardLevel.KeyframesOnly)
+            .WithVideoSink(sink)
+            .BuildAsync())
+        {
+            await pass.RunToCompletionAsync();
+        }
+
+        Assert.All(sink.Domains, domain => Assert.Equal(FrameMemoryDomain.Gpu, domain));
+        Assert.Equal(keyframes, sink.Timestamps, (a, b) => (a - b).Duration() < TimeSpan.FromMilliseconds(1));
+    }
+
+    /// <summary>A keyframe a second, where the other clip has one.</summary>
+    private const string KeyframeClip = "test-video-h264-start-offset.ts";
+
+    /// <summary>The timestamps of the first video stream's keyframes, as the demuxer reports them.</summary>
+    private static async Task<List<TimeSpan>> KeyframesAsync(string path)
+    {
+        await using var demux = await new DemuxSessionFactory().OpenAsync(MediaSource.FromFile(path));
+        int video = demux.MediaInfo.VideoStreams[0].StreamIndex;
+        var keyframes = new List<TimeSpan>();
+        while (await demux.ReadPacketAsync() is { } packet)
+        {
+            if (packet.StreamIndex == video && packet.IsKeyFrame)
+                keyframes.Add(packet.Pts);
+        }
+        keyframes.Sort();
+        return keyframes;
+    }
+
     /// <summary>A node that forwards its input, declaring <paramref name="domains"/>. The pass is only built.</summary>
     private static OperatorNode<IVideoFrame, IVideoFrame> Passing(string id, FrameDomainRule domains) =>
         new(id, (frame, _) => ValueTask.FromResult<IVideoFrame?>(frame), holding: FrameHolding.InFlight, domains: domains);
 
-    /// <summary>Records each frame's memory domain. It reads no pixels, so it takes either.</summary>
+    /// <summary>Records each frame's memory domain and timestamp. It reads no pixels, so it takes either.</summary>
     private sealed class RecordingSink(int? maxHeldFrames) : IVideoSink
     {
         public ConcurrentQueue<FrameMemoryDomain> Domains { get; } = new();
+
+        public ConcurrentQueue<TimeSpan> Timestamps { get; } = new();
 
         public int? MaxHeldFrames => maxHeldFrames;
 
@@ -234,6 +282,7 @@ public sealed class PassHardwareFramesTests
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {
             Domains.Enqueue(frame.MemoryDomain);
+            Timestamps.Enqueue(frame.Pts);
             frame.Dispose();
             return ValueTask.CompletedTask;
         }
