@@ -153,7 +153,8 @@ public sealed class DemuxSession : IDemuxSession
     /// A packet with no presentation time is placed by its decode time, so the keyframe the seek
     /// lands on can present up to the stream's reorder delay after the position. A packet the
     /// container fails to read ends the search with the container's own seek to the position, as
-    /// does a stream whose packets have no decode times. That seek need not land on a keyframe.
+    /// do a packet with neither timestamp and a stream with no decode times. That seek need not
+    /// land on a keyframe.
     /// </para>
     /// </remarks>
     /// <exception cref="ObjectDisposedException">Thrown when the session has been disposed.</exception>
