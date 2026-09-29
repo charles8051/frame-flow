@@ -36,7 +36,9 @@ namespace FrameFlow.Inference.Dml;
 /// <para>
 /// <b>Free dimensions.</b> <see cref="DmlInferenceSessionOptions.FreeDimensions"/> fixes a model's
 /// named dynamic dimensions when it loads. DirectML runs a pinned shape faster, and compiles it
-/// faster on the first run (#472).
+/// faster on the first run (#472). <see cref="DmlInferenceSessionOptions.OptimizationLevel"/> is
+/// basic by default; a higher level holds less GPU memory, which matters when sessions share a GPU
+/// (#481).
 /// </para>
 /// <para>
 /// <b>Device inputs.</b> A session built with <see cref="OnDevice(string, nint, nint, ILogger{DmlInferenceSession}?)"/>
@@ -361,17 +363,19 @@ public sealed partial class DmlInferenceSession : OrtInferenceSessionBase, IDevi
 
     private static readonly DmlInferenceSessionOptions DefaultOptions = new();
 
-    private static SessionOptions BuildSessionOptions(
+    internal static SessionOptions BuildSessionOptions(
         DmlInferenceSessionOptions sessionOptions, Action<SessionOptions> appendProvider)
     {
         ArgumentNullException.ThrowIfNull(sessionOptions);
         var options = new SessionOptions();
         try
         {
-            // DirectML EP needs the graph optimizer set to BASIC; the
-            // EP's pattern matcher requires conv/matmul/etc. to be in
-            // their canonical shape before DML rewrites.
-            options.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC;
+            // BASIC unless the caller raises it. The session was written on the premise that
+            // the DirectML EP needs BASIC to find conv/matmul in their canonical shape;
+            // docs/investigations/2026-09-09-windows-ml-ep-selection.md measured the premise as
+            // costing nothing on one adapter without retiring it, and #481 measured a higher
+            // level holding less GPU memory.
+            options.GraphOptimizationLevel = sessionOptions.OptimizationLevel;
             options.EnableMemoryPattern = false;   // required by DML EP
             foreach (var (name, size) in sessionOptions.FreeDimensions)
                 options.AddFreeDimensionOverrideByName(name, size);

@@ -13,8 +13,15 @@ FrameFlow.Inference.WinML.WinMLDeviceType.Npu = 2 -> FrameFlow.Inference.WinML.W
 FrameFlow.Inference.WinML.WinMLInferenceSession
 FrameFlow.Inference.WinML.WinMLInferenceSession.WinMLInferenceSession(byte[]! modelBytes) -> void
 FrameFlow.Inference.WinML.WinMLInferenceSession.WinMLInferenceSession(byte[]! modelBytes, FrameFlow.Inference.WinML.WinMLDevicePolicy policy, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.WinML.WinMLInferenceSession!>? logger = null) -> void
+FrameFlow.Inference.WinML.WinMLInferenceSession.WinMLInferenceSession(byte[]! modelBytes, FrameFlow.Inference.WinML.WinMLInferenceSessionOptions! options, FrameFlow.Inference.WinML.WinMLDevicePolicy policy = FrameFlow.Inference.WinML.WinMLDevicePolicy.PreferGpu, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.WinML.WinMLInferenceSession!>? logger = null) -> void
 FrameFlow.Inference.WinML.WinMLInferenceSession.WinMLInferenceSession(string! modelPath) -> void
 FrameFlow.Inference.WinML.WinMLInferenceSession.WinMLInferenceSession(string! modelPath, FrameFlow.Inference.WinML.WinMLDevicePolicy policy, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.WinML.WinMLInferenceSession!>? logger = null) -> void
+FrameFlow.Inference.WinML.WinMLInferenceSession.WinMLInferenceSession(string! modelPath, FrameFlow.Inference.WinML.WinMLInferenceSessionOptions! options, FrameFlow.Inference.WinML.WinMLDevicePolicy policy = FrameFlow.Inference.WinML.WinMLDevicePolicy.PreferGpu, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.WinML.WinMLInferenceSession!>? logger = null) -> void
+FrameFlow.Inference.WinML.WinMLInferenceSessionOptions
+FrameFlow.Inference.WinML.WinMLInferenceSessionOptions.OptimizationLevel.get -> Microsoft.ML.OnnxRuntime.GraphOptimizationLevel
+FrameFlow.Inference.WinML.WinMLInferenceSessionOptions.OptimizationLevel.init -> void
+FrameFlow.Inference.WinML.WinMLInferenceSessionOptions.ProviderOptions.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>!
+FrameFlow.Inference.WinML.WinMLInferenceSessionOptions.ProviderOptions.init -> void
 FrameFlow.Inference.WinML.WinMLProvider
 FrameFlow.Inference.WinML.WinMLProvider.AdapterLuid.get -> ulong?
 FrameFlow.Inference.WinML.WinMLProvider.AdapterLuid.init -> void
@@ -27,7 +34,10 @@ FrameFlow.Inference.WinML.WinMLProvider.Vendor.init -> void
 FrameFlow.Inference.WinML.WinMLProvider.WinMLProvider(string! Name, string! Vendor, FrameFlow.Inference.WinML.WinMLDeviceType DeviceType, ulong? AdapterLuid) -> void
 FrameFlow.Inference.WinML.WinMLProviders
 static FrameFlow.Inference.WinML.WinMLInferenceSession.CreateAsync(string! modelPath, FrameFlow.Inference.WinML.WinMLDevicePolicy policy = FrameFlow.Inference.WinML.WinMLDevicePolicy.PreferGpu) -> System.Threading.Tasks.Task<FrameFlow.Inference.WinML.WinMLInferenceSession!>!
+static FrameFlow.Inference.WinML.WinMLInferenceSession.CreateAsync(string! modelPath, FrameFlow.Inference.WinML.WinMLInferenceSessionOptions! options, FrameFlow.Inference.WinML.WinMLDevicePolicy policy = FrameFlow.Inference.WinML.WinMLDevicePolicy.PreferGpu) -> System.Threading.Tasks.Task<FrameFlow.Inference.WinML.WinMLInferenceSession!>!
+static FrameFlow.Inference.WinML.WinMLInferenceSession.OnProvider(byte[]! modelBytes, FrameFlow.Inference.WinML.WinMLInferenceSessionOptions! options, string! providerName, ulong? adapterLuid = null, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.WinML.WinMLInferenceSession!>? logger = null) -> FrameFlow.Inference.WinML.WinMLInferenceSession!
 static FrameFlow.Inference.WinML.WinMLInferenceSession.OnProvider(byte[]! modelBytes, string! providerName, ulong? adapterLuid = null, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.WinML.WinMLInferenceSession!>? logger = null) -> FrameFlow.Inference.WinML.WinMLInferenceSession!
+static FrameFlow.Inference.WinML.WinMLInferenceSession.OnProvider(string! modelPath, FrameFlow.Inference.WinML.WinMLInferenceSessionOptions! options, string! providerName, ulong? adapterLuid = null, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.WinML.WinMLInferenceSession!>? logger = null) -> FrameFlow.Inference.WinML.WinMLInferenceSession!
 static FrameFlow.Inference.WinML.WinMLInferenceSession.OnProvider(string! modelPath, string! providerName, ulong? adapterLuid = null, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.WinML.WinMLInferenceSession!>? logger = null) -> FrameFlow.Inference.WinML.WinMLInferenceSession!
 static FrameFlow.Inference.WinML.WinMLProviders.Available() -> System.Collections.Generic.IReadOnlyList<FrameFlow.Inference.WinML.WinMLProvider!>!
 static FrameFlow.Inference.WinML.WinMLProviders.InstallAndRegisterAsync(System.IProgress<double>? progress = null) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<string!>!>!

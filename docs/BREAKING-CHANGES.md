@@ -54,7 +54,18 @@ or `default` there, such as `new DmlInferenceSession(path, null)` or
 
 **What to write instead.** Drop the argument, or name it: `new DmlInferenceSession(path, logger: null)`.
 
-### 4. `Yolov8Detector.Create` and `CreateAsync` take a thresholds parameter
+### 4. A `default` policy to `WinMLInferenceSession` is ambiguous
+
+**A compile error (CS0121).**
+
+`WinMLInferenceSession` has constructors that take a `WinMLInferenceSessionOptions` in the
+position the device policy had (#481). `new WinMLInferenceSession(path, default)` now matches both.
+`CreateAsync` and `OnProvider` are unaffected.
+
+**What to write instead.** Name the policy: `WinMLDevicePolicy.PreferGpu`, which is what `default`
+meant.
+
+### 5. `Yolov8Detector.Create` and `CreateAsync` take a thresholds parameter
 
 **A binary break, not a compile error.** Source that calls them compiles unchanged.
 
@@ -67,7 +78,7 @@ rebuilt.
 
 **What to write instead.** Rebuild.
 
-### 5. `BlazeFacePreprocessor.Preprocess` returns the transform
+### 6. `BlazeFacePreprocessor.Preprocess` returns the transform
 
 **A binary break, not a compile error.** Source that calls it compiles unchanged.
 
