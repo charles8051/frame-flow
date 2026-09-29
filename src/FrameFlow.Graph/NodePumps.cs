@@ -11,27 +11,30 @@ namespace FrameFlow.Graph;
 /// (b) implements the always-refcount ownership protocol (substrate
 ///     handles AddRef/Dispose around each operator invocation),
 /// (c) on exit (success or failure):
-///       - if exiting via exception, signals graph cancellation so
-///         siblings (esp. upstream sources) stop producing,
+///       - if exiting on a fault, records it in the <see cref="GraphRun"/>,
+///         which cancels the run so siblings (esp. upstream sources) stop
+///         producing,
 ///       - async-drains input ports so items still in upstream
 ///         buffers get disposed,
 ///       - completes output ports so downstream pumps terminate.
 /// </summary>
+/// <remarks>
+/// An exception from a body is the run's cancellation only when the run's token is cancelled
+/// (<see cref="FaultRules.IsCancellation"/>). Any other one, an
+/// <see cref="OperationCanceledException"/> included, takes the node's
+/// <see cref="FailureResponse"/> (#489).
+/// </remarks>
 internal static class NodePumps
 {
     // ─────────────────────────────────────────────────────────────
     // Source
     // ─────────────────────────────────────────────────────────────
 
-    public static async Task PumpSourceAsync<TOut>(
-        SourceNode<TOut> node,
-        CancellationTokenSource graphCts
-    )
+    public static async Task PumpSourceAsync<TOut>(SourceNode<TOut> node, GraphRun run)
         where TOut : class, IRefCounted
     {
-        var ct = graphCts.Token;
+        var ct = run.Token;
         var outputs = node.Output.Writers;
-        bool faulted = false;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -41,15 +44,15 @@ internal static class NodePumps
                 {
                     item = await node.Body(ct).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
+                catch (Exception ex) when (FaultRules.IsCancellation(ex, ct.IsCancellationRequested))
                 {
                     throw;
                 }
-                catch
+                catch (Exception ex)
                 {
                     if (node.OnError == FailureResponse.Propagate)
                     {
-                        faulted = true;
+                        run.Fault(node, ex);
                         throw;
                     }
                     continue;
@@ -61,15 +64,13 @@ internal static class NodePumps
                 await ForwardAsync(item, outputs, ct).ConfigureAwait(false);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            faulted = true;
+            run.Ended(node, ex);
             throw;
         }
         finally
         {
-            if (faulted)
-                TryCancel(graphCts);
             foreach (var edge in outputs)
                 edge.Writer.TryComplete();
             await RunCleanupAsync(node.Cleanup).ConfigureAwait(false);
@@ -98,15 +99,14 @@ internal static class NodePumps
 
     public static async Task PumpOperatorAsync<TIn, TOut>(
         OperatorNode<TIn, TOut> node,
-        CancellationTokenSource graphCts
+        GraphRun run
     )
         where TIn : class, IRefCounted
         where TOut : class, IRefCounted
     {
-        var ct = graphCts.Token;
+        var ct = run.Token;
         var input = RequireConnected(node.Input);
         var outputs = node.Output.Writers;
-        bool faulted = false;
 
         try
         {
@@ -117,17 +117,17 @@ internal static class NodePumps
                 {
                     result = await node.Body(item, ct).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
+                catch (Exception ex) when (FaultRules.IsCancellation(ex, ct.IsCancellationRequested))
                 {
                     item.Dispose();
                     throw;
                 }
-                catch
+                catch (Exception ex)
                 {
                     item.Dispose();
                     if (node.OnError == FailureResponse.Propagate)
                     {
-                        faulted = true;
+                        run.Fault(node, ex);
                         throw;
                     }
                     continue;
@@ -142,19 +142,16 @@ internal static class NodePumps
                 await ForwardAsync(result, outputs, ct).ConfigureAwait(false);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            faulted = true;
+            // A fault stops sibling pumps (esp. upstream) BEFORE the
+            // async-drain below. Otherwise the drain would wait forever for
+            // upstream to complete its writer.
+            run.Ended(node, ex);
             throw;
         }
         finally
         {
-            // If exiting via exception, signal sibling pumps (esp.
-            // upstream) so they stop producing BEFORE we async-drain.
-            // Otherwise the drain would wait forever for upstream to
-            // complete its writer.
-            if (faulted)
-                TryCancel(graphCts);
             await DrainUntilCompletedAsync(input).ConfigureAwait(false);
             foreach (var edge in outputs)
                 edge.Writer.TryComplete();
@@ -168,15 +165,14 @@ internal static class NodePumps
 
     public static async Task PumpMultiOperatorAsync<TIn, TOut>(
         MultiOperatorNode<TIn, TOut> node,
-        CancellationTokenSource graphCts
+        GraphRun run
     )
         where TIn : class, IRefCounted
         where TOut : class, IRefCounted
     {
-        var ct = graphCts.Token;
+        var ct = run.Token;
         var input = RequireConnected(node.Input);
         var outputs = node.Output.Writers;
-        bool faulted = false;
 
         try
         {
@@ -191,17 +187,17 @@ internal static class NodePumps
                         await ForwardAsync(output, outputs, ct).ConfigureAwait(false);
                     }
                 }
-                catch (OperationCanceledException)
+                catch (Exception ex) when (FaultRules.IsCancellation(ex, ct.IsCancellationRequested))
                 {
                     item.Dispose();
                     throw;
                 }
-                catch
+                catch (Exception ex)
                 {
                     item.Dispose();
                     if (node.OnError == FailureResponse.Propagate)
                     {
-                        faulted = true;
+                        run.Fault(node, ex);
                         throw;
                     }
                     continue;
@@ -210,15 +206,13 @@ internal static class NodePumps
                 item.Dispose();
             }
         }
-        catch
+        catch (Exception ex)
         {
-            faulted = true;
+            run.Ended(node, ex);
             throw;
         }
         finally
         {
-            if (faulted)
-                TryCancel(graphCts);
             await DrainUntilCompletedAsync(input).ConfigureAwait(false);
             foreach (var edge in outputs)
                 edge.Writer.TryComplete();
@@ -230,15 +224,11 @@ internal static class NodePumps
     // Sink
     // ─────────────────────────────────────────────────────────────
 
-    public static async Task PumpSinkAsync<TIn>(
-        SinkNode<TIn> node,
-        CancellationTokenSource graphCts
-    )
+    public static async Task PumpSinkAsync<TIn>(SinkNode<TIn> node, GraphRun run)
         where TIn : class, IRefCounted
     {
-        var ct = graphCts.Token;
+        var ct = run.Token;
         var input = RequireConnected(node.Input);
-        bool faulted = false;
 
         try
         {
@@ -248,17 +238,17 @@ internal static class NodePumps
                 {
                     await node.Body(item, ct).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
+                catch (Exception ex) when (FaultRules.IsCancellation(ex, ct.IsCancellationRequested))
                 {
                     item.Dispose();
                     throw;
                 }
-                catch
+                catch (Exception ex)
                 {
                     item.Dispose();
                     if (node.OnError == FailureResponse.Propagate)
                     {
-                        faulted = true;
+                        run.Fault(node, ex);
                         throw;
                     }
                     continue;
@@ -266,15 +256,13 @@ internal static class NodePumps
                 item.Dispose();
             }
         }
-        catch
+        catch (Exception ex)
         {
-            faulted = true;
+            run.Ended(node, ex);
             throw;
         }
         finally
         {
-            if (faulted)
-                TryCancel(graphCts);
             await DrainUntilCompletedAsync(input).ConfigureAwait(false);
         }
     }
@@ -285,18 +273,17 @@ internal static class NodePumps
 
     public static async Task PumpSyncJoinAsync<TPrimary, TSecondary, TOut>(
         SyncJoinNode<TPrimary, TSecondary, TOut> node,
-        CancellationTokenSource graphCts
+        GraphRun run
     )
         where TPrimary : class, IRefCounted
         where TSecondary : class, IRefCounted
         where TOut : class, IRefCounted
     {
-        var ct = graphCts.Token;
+        var ct = run.Token;
         var primary = RequireConnected(node.Primary);
         var secondary = RequireConnected(node.Secondary);
         var outputs = node.Output.Writers;
         var retained = node.Retained;
-        bool faulted = false;
 
         // The pump's teardown clears the window, so a run starts with an empty one. Cleared here
         // as well because a run that never reached that teardown — a graph abandoned mid-run —
@@ -307,7 +294,7 @@ internal static class NodePumps
         // instead of admitting. It must keep reading: a secondary upstream with
         // more pending items than the edge's free capacity blocks in WriteAsync
         // forever if nobody drains it, and Graph.RunAsync would never return.
-        // Cancelling graphCts here instead would be wrong the other way — the
+        // Cancelling the run here instead would be wrong the other way — the
         // join sits on one branch, and video EOS is not audio EOS.
         //
         // A finite secondary therefore completes its writer and ends this loop
@@ -315,7 +302,6 @@ internal static class NodePumps
         // graph token fires, which is the same deal every consumer of an
         // unbounded source gets.
         var primaryDone = false;
-        Exception? secondaryFault = null;
 
         // Cancelled when the primary ends. A secondary held on the lead bound waits on
         // this, because after EOS no primary will advance to release it, and the drain
@@ -363,14 +349,23 @@ internal static class NodePumps
                             )
                                 await room.WaitAsync(primaryEnded.Token).ConfigureAwait(false);
                         }
-                        catch (OperationCanceledException) when (primaryEnded.IsCancellationRequested)
+                        catch (OperationCanceledException held)
+                            when (held.CancellationToken == primaryEnded.Token)
                         {
                             // Held when the primary ended or the graph tore down. The
                             // window never took it. After EOS the loop carries on
-                            // discarding; on teardown it exits.
+                            // discarding; on teardown it exits. Matched on the wait's own
+                            // token, so a key selector's own cancellation is not taken
+                            // for this one.
                             item.Dispose();
                             if (ct.IsCancellationRequested)
                                 throw;
+                        }
+                        catch (Exception ex)
+                            when (FaultRules.IsCancellation(ex, ct.IsCancellationRequested))
+                        {
+                            item.Dispose();
+                            throw;
                         }
                         catch (Exception ex)
                         {
@@ -379,22 +374,22 @@ internal static class NodePumps
                             item.Dispose();
                             if (node.OnError == FailureResponse.Propagate)
                             {
-                                // Cancel at the fault site, the way every other
-                                // pump's finally does. Deferring to the primary's
-                                // exit means "never" while the primary is live:
-                                // nobody reads this edge any more, so its upstream
-                                // blocks once the edge fills, and the join emits
-                                // every primary unmatched in the meantime.
-                                secondaryFault ??= ex;
-                                TryCancel(graphCts);
+                                // Record, and so cancel, at the fault site. Deferring
+                                // to the primary's exit means "never" while the
+                                // primary is live: nobody reads this edge any more,
+                                // so its upstream blocks once the edge fills, and the
+                                // join emits every primary unmatched in the meantime.
+                                run.Fault(node, ex);
                                 return;
                             }
                         }
                     }
                 }
-                catch (OperationCanceledException)
+                catch (Exception ex)
                 {
-                    // Primary ended, or the graph is tearing down.
+                    // The graph tearing down, or a fault outside the key selector, which
+                    // is the join's whatever its failure response.
+                    run.Ended(node, ex);
                 }
             },
             CancellationToken.None
@@ -415,12 +410,17 @@ internal static class NodePumps
                         node.MaxStaleness
                     );
                 }
-                catch
+                catch (Exception ex) when (FaultRules.IsCancellation(ex, ct.IsCancellationRequested))
+                {
+                    item.Dispose();
+                    throw;
+                }
+                catch (Exception ex)
                 {
                     item.Dispose();
                     if (node.OnError == FailureResponse.Propagate)
                     {
-                        faulted = true;
+                        run.Fault(node, ex);
                         throw;
                     }
                     continue;
@@ -431,19 +431,19 @@ internal static class NodePumps
                 {
                     result = await node.Body(item, match, ct).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
+                catch (Exception ex) when (FaultRules.IsCancellation(ex, ct.IsCancellationRequested))
                 {
                     item.Dispose();
                     match?.Dispose();
                     throw;
                 }
-                catch
+                catch (Exception ex)
                 {
                     item.Dispose();
                     match?.Dispose();
                     if (node.OnError == FailureResponse.Propagate)
                     {
-                        faulted = true;
+                        run.Fault(node, ex);
                         throw;
                     }
                     continue;
@@ -475,31 +475,15 @@ internal static class NodePumps
                 await ForwardAsync(result, outputs, ct).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException)
+        catch (Exception ex)
         {
-            faulted = true;
-            // When the secondary faulted, this cancellation is its consequence.
-            // Surface the cause rather than the symptom; the post-finally
-            // rethrow below is unreachable on this path.
-            if (secondaryFault is not null && node.OnError == FailureResponse.Propagate)
-            {
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo
-                    .Capture(secondaryFault)
-                    .Throw();
-            }
-            throw;
-        }
-        catch
-        {
-            // A genuine primary fault wins over a secondary one.
-            faulted = true;
+            // A cancellation, including the one a secondary fault requested, which the run
+            // already holds; or a fault of the primary side, recorded before the teardown below.
+            run.Ended(node, ex);
             throw;
         }
         finally
         {
-            if (faulted)
-                TryCancel(graphCts);
-
             // Flip the secondary loop to discard-only, then let it run to the
             // secondary's own EOS (or graph cancellation). Completing the
             // output first would be premature: downstream EOS is signalled
@@ -512,8 +496,8 @@ internal static class NodePumps
             }
             catch
             {
-                // Best-effort; the primary's fault (if any) is the cause worth
-                // surfacing.
+                // Best-effort. The secondary loop records its own fault in the run, which is
+                // where the graph surfaces it from.
             }
 
             // The secondary loop exits early on teardown, and a lead bound can leave
@@ -524,16 +508,6 @@ internal static class NodePumps
 
             foreach (var edge in outputs)
                 edge.Writer.TryComplete();
-        }
-
-        // A secondary-side fault has to be surfaced here or not at all: the
-        // pump's observable result is the primary loop's, and the primary may
-        // have exited through the cancellation the secondary itself requested.
-        if (secondaryFault is not null && node.OnError == FailureResponse.Propagate)
-        {
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo
-                .Capture(secondaryFault)
-                .Throw();
         }
     }
 
@@ -635,11 +609,6 @@ internal static class NodePumps
             // Best-effort cleanup. Swallow secondary exceptions so the
             // primary cause surfaces.
         }
-    }
-
-    private static void TryCancel(CancellationTokenSource cts)
-    {
-        try { cts.Cancel(); } catch { /* already disposed */ }
     }
 
     private static ChannelReader<T> RequireConnected<T>(InputPort<T> port)

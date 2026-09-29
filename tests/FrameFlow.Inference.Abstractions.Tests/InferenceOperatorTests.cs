@@ -187,6 +187,47 @@ public sealed class InferenceOperatorTests
         Assert.All(results, r => Assert.Equal(InferencePath.Host, r.Path));
     }
 
+    /// <summary>
+    /// The result sink's id is derived from the caller's, so two branches given one id collide on
+    /// both of their nodes, and the graph names both ids (#500).
+    /// </summary>
+    [Fact]
+    public async Task TwoBranchesWithOneId_AreRefusedBeforeTheRunStarts()
+    {
+        var graph = new GraphRunner();
+        var model = new ChannelMeanModel(new ChannelMeanSession());
+
+        graph.Pipeline(Frames(1))
+            .Infer("infer", model, _ => { })
+            .Infer("infer", model, _ => { })
+            .To(Discarding("trunk"));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => graph.RunAsync(CancellationToken.None));
+
+        Assert.Contains("2 nodes have the id 'infer'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("2 nodes have the id 'infer-results'", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACallersNodeOnTheResultSinksId_IsRefused()
+    {
+        var graph = new GraphRunner();
+        var model = new ChannelMeanModel(new ChannelMeanSession());
+
+        graph.Pipeline(Frames(1))
+            .Infer("infer", model, _ => { })
+            .To(Discarding("infer-results"));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => graph.RunAsync(CancellationToken.None));
+
+        Assert.Contains("2 nodes have the id 'infer-results'", ex.Message, StringComparison.Ordinal);
+    }
+
+    private static SinkNode<IVideoFrame> Discarding(string id) =>
+        new(id, (_, _) => ValueTask.CompletedTask, holding: FrameHolding.InFlight);
+
     private static SourceNode<IVideoFrame> Frames(int count)
     {
         int next = 0;

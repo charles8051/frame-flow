@@ -7,7 +7,7 @@ namespace FrameFlow.Inference.Dml.Interop;
 
 /// <summary>
 /// The few COM calls the device-bound session makes, through the vtables directly: this package
-/// does not take a Direct3D binding for three methods.
+/// does not take a Direct3D binding for a handful of methods.
 /// </summary>
 internal static unsafe class D3D12Native
 {
@@ -16,6 +16,9 @@ internal static unsafe class D3D12Native
 
     // ID3D12CommandQueue::Wait, after ID3D12DeviceChild and seven queue methods before it.
     private const int QueueWaitSlot = 15;
+
+    // ID3D12Device::GetAdapterLuid, the 37th ID3D12Device method after ID3D12Object's seven slots.
+    private const int GetAdapterLuidSlot = 43;
 
     private const uint DmlFeatureLevel5_0 = 0x5000;
 
@@ -59,6 +62,31 @@ internal static unsafe class D3D12Native
         finally
         {
             Marshal.Release(device);
+        }
+    }
+
+    /// <summary>
+    /// The LUID of the adapter <paramref name="device"/> (any interface of a D3D12 device) was created
+    /// on, high part above low part.
+    /// </summary>
+    public static ulong AdapterLuid(nint device)
+    {
+        Marshal.ThrowExceptionForHR(Marshal.QueryInterface(device, in IidID3D12Device, out nint d3d12Device));
+        try
+        {
+            // A method returning a struct takes a hidden pointer for it after `this` and returns
+            // that pointer, in the Windows x64 ABI for C++ member functions, whatever the struct's
+            // size. An 8-byte struct comes back in RAX only from a free function. The SDK's C
+            // binding says so: LUID *(STDMETHODCALLTYPE *GetAdapterLuid)(ID3D12Device *This,
+            // LUID *RetVal). GpuMemoryTests compares the result with Vortice's on hardware.
+            var getAdapterLuid =
+                (delegate* unmanaged<nint, DxgiNative.Luid*, DxgiNative.Luid*>)(*(nint**)d3d12Device)[GetAdapterLuidSlot];
+            DxgiNative.Luid luid;
+            return getAdapterLuid(d3d12Device, &luid)->Value;
+        }
+        finally
+        {
+            Marshal.Release(d3d12Device);
         }
     }
 

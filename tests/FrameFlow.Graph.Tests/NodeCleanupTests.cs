@@ -57,7 +57,8 @@ public sealed class NodeCleanupTests
         var graph = new GraphRunner();
         graph.Pipeline(Source(1, 2, 3)).Then(op).To(Discard());
 
-        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => graph.RunAsync());
+        var fault = await Assert.ThrowsAsync<GraphFaultException>(() => graph.RunAsync());
+        Assert.IsType<InvalidOperationException>(fault.InnerException);
 
         Assert.Equal(["body 1", "body 2", "cleanup"], events);
     }

@@ -204,18 +204,43 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
     /// </summary>
     /// <remarks>
     /// Called automatically from <see cref="Create"/>; consumers
-    /// don't normally invoke it directly. Tensor contents are
-    /// whatever <see cref="CpuTensorPool"/> returned (stale or zero)
-    /// — the cold-start work is driven by input *shape*, not content,
-    /// so the Run is meaningful even with arbitrary data.
+    /// don't normally invoke it directly. The input is blank, so the
+    /// output depends only on the model and the provider, and the run
+    /// checks it: a model that returns values that are not finite
+    /// numbers on this provider, as an fp16 model can when it overflows,
+    /// fails here rather than detecting nothing on every frame (#498).
     /// </remarks>
+    /// <exception cref="InvalidOperationException">The output holds a NaN or an infinity.</exception>
     public void Warmup()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        _inputTensor.Span.Clear();
+        _outputTensor.Span.Clear();
         var sw = Stopwatch.StartNew();
         _session.Run(_inputTensor, _outputTensor);
         sw.Stop();
         LogWarmupCompleted(_logger, sw.Elapsed.TotalMilliseconds);
+
+        int nonFinite = CountNonFinite(_outputTensor.ReadOnlySpan);
+        if (nonFinite > 0)
+        {
+            throw new InvalidOperationException(
+                $"The model returned {nonFinite} values that are not finite numbers for a blank input on "
+                    + $"{_session.GetType().Name}, so its detections cannot be trusted there. A model with "
+                    + "fp16 inside that overflows does this; try another provider or an fp32 model.");
+        }
+    }
+
+    private static int CountNonFinite(ReadOnlySpan<float> values)
+    {
+        int count = 0;
+        foreach (float value in values)
+        {
+            if (!float.IsFinite(value))
+                count++;
+        }
+
+        return count;
     }
 
     /// <summary>

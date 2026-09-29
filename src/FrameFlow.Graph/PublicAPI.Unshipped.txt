@@ -83,6 +83,10 @@ FrameFlow.Graph.GraphChain<T>.To(FrameFlow.Graph.SinkNode<T!>! sink, FrameFlow.G
 FrameFlow.Graph.GraphChain<T>.ToPrimary<TSecondary, TOut>(FrameFlow.Graph.SyncJoinNode<T!, TSecondary!, TOut!>! join, FrameFlow.Graph.EdgeOptions? options = null) -> void
 FrameFlow.Graph.GraphChain<T>.ToSecondary<TPrimary, TOut>(FrameFlow.Graph.SyncJoinNode<TPrimary!, T!, TOut!>! join, FrameFlow.Graph.EdgeOptions? options = null) -> void
 FrameFlow.Graph.GraphChainExtensions
+FrameFlow.Graph.GraphFaultException
+FrameFlow.Graph.GraphFaultException.Faults.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Graph.NodeFault!>!
+FrameFlow.Graph.GraphFaultException.GraphFaultException(System.Collections.Generic.IReadOnlyList<FrameFlow.Graph.NodeFault!>! faults) -> void
+FrameFlow.Graph.GraphFaultException.NodeId.get -> string!
 FrameFlow.Graph.FrameHolding
 FrameFlow.Graph.FrameHolding.ForwardsStorage.get -> bool
 FrameFlow.Graph.FrameHolding.FramesPerOutputItem.get -> int?
@@ -134,6 +138,10 @@ FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Input.get -> FrameFlow.Graph.InputP
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.MultiOperatorNode(string! id, FrameFlow.Graph.MultiOperator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, FrameFlow.Graph.FrameHolding? holding = null, FrameFlow.Graph.FrameDomainRule? domains = null, System.Func<System.Threading.Tasks.ValueTask>? cleanup = null) -> void
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
+FrameFlow.Graph.NodeFault
+FrameFlow.Graph.NodeFault.Exception.get -> System.Exception!
+FrameFlow.Graph.NodeFault.NodeFault(string! nodeId, System.Exception! exception) -> void
+FrameFlow.Graph.NodeFault.NodeId.get -> string!
 FrameFlow.Graph.Operator<TIn, TOut>
 FrameFlow.Graph.OperatorNode<TIn, TOut>
 FrameFlow.Graph.OperatorNode<TIn, TOut>.Body.get -> FrameFlow.Graph.Operator<TIn!, TOut!>!

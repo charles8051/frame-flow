@@ -8,7 +8,10 @@ namespace FrameFlow.Graph;
 /// </summary>
 public enum FailureResponse
 {
-    /// <summary>Exception propagates upward; the graph faults.</summary>
+    /// <summary>
+    /// Exception propagates upward; the graph faults, and <see cref="Graph.RunAsync"/> throws a
+    /// <see cref="GraphFaultException"/> that names the node.
+    /// </summary>
     Propagate,
 
     /// <summary>The input that triggered the failure is disposed and the node continues with the next.</summary>

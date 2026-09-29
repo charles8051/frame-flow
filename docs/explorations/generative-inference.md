@@ -1,6 +1,9 @@
 # Exploration: generative models through ONNX Runtime GenAI
 
-**Status:** Exploration. Nothing here is decided.
+**Status:** Exploration, concluded. Its proposals went into
+[Generative models on video, through a caller-owned chat client](../adr/generative-model-operators.md),
+which is withdrawn: an application builds generative-model features from FrameFlow's public API, and
+FrameFlow adds no operator for them. This document keeps the evidence.
 
 **Date:** 2026-09-29
 

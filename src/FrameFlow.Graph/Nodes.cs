@@ -10,7 +10,10 @@ namespace FrameFlow.Graph;
 /// </summary>
 public interface INode
 {
-    /// <summary>Unique identifier for diagnostics and graph traversal.</summary>
+    /// <summary>
+    /// Identifier for diagnostics and graph traversal, unique within the node's graph. A graph with
+    /// two nodes on one id refuses to run.
+    /// </summary>
     string Id { get; }
 
     /// <summary>How this node responds when its operator function throws.</summary>
@@ -24,16 +27,15 @@ public interface INode
 /// in <see cref="NodePumps"/>.
 /// </summary>
 /// <remarks>
-/// Pumps receive the *graph CTS itself*, not just the token, so they
-/// can trigger cancellation of sibling pumps from inside their own
-/// finally blocks. This lets a pump that's exiting via exception
-/// signal upstream sources to stop producing *before* the pump
-/// async-drains its input channel — otherwise upstream items written
-/// after the pump's main loop exits would have nowhere to go.
+/// Pumps receive the <see cref="GraphRun"/>, not just its token, so a pump
+/// that faults can record the fault there, which cancels its siblings. It
+/// does so *before* it async-drains its input channel, so upstream sources
+/// stop producing — otherwise upstream items written after the pump's main
+/// loop exits would have nowhere to go.
 /// </remarks>
 internal interface IPumpableNode : INode
 {
-    Task RunPumpAsync(CancellationTokenSource graphCts);
+    Task RunPumpAsync(GraphRun run);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -109,8 +111,8 @@ public sealed class SourceNode<TOut> : IPumpableNode, IBudgetedSource, IDomainSo
 
     void IBudgetedSource.ApplyBudget(FrameBudget budget) => OnBudget?.Invoke(budget);
 
-    Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
-        NodePumps.PumpSourceAsync(this, graphCts);
+    Task IPumpableNode.RunPumpAsync(GraphRun run) =>
+        NodePumps.PumpSourceAsync(this, run);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -183,8 +185,8 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding, I
 
     FrameDomainRule? IDeclaresDomains.DomainsAt(IPort input) => DeclaredDomains;
 
-    Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
-        NodePumps.PumpOperatorAsync(this, graphCts);
+    Task IPumpableNode.RunPumpAsync(GraphRun run) =>
+        NodePumps.PumpOperatorAsync(this, run);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -258,8 +260,8 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHoldi
 
     FrameDomainRule? IDeclaresDomains.DomainsAt(IPort input) => DeclaredDomains;
 
-    Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
-        NodePumps.PumpMultiOperatorAsync(this, graphCts);
+    Task IPumpableNode.RunPumpAsync(GraphRun run) =>
+        NodePumps.PumpMultiOperatorAsync(this, run);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -313,6 +315,6 @@ public sealed class SinkNode<TIn> : IPumpableNode, IDeclaresHolding, IDeclaresDo
 
     FrameDomainRule? IDeclaresDomains.DomainsAt(IPort input) => DeclaredDomains;
 
-    Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
-        NodePumps.PumpSinkAsync(this, graphCts);
+    Task IPumpableNode.RunPumpAsync(GraphRun run) =>
+        NodePumps.PumpSinkAsync(this, run);
 }
