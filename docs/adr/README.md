@@ -290,16 +290,13 @@ land.
   enforce, bounded by the interface fold [ADR-0077](ADR-0077-one-player-type.md) decision 2 already
   defers.
 - [Generative models on video, through a caller-owned chat client](generative-model-operators.md) —
-  a vision-language model takes seconds, takes an encoded image and returns text of unknown length,
-  so it does not fit `IInferenceSession`, which stays unchanged. Proposes a `Describe` operator over
-  a caller-owned `IChatClient`, with the model outside the player's process and no model host in
-  FrameFlow. One node on a `LatestWins(1)` branch takes the newest frame when it is free, reads back
-  only the frames it fires on, and holds its frame through the call under the fixed-pool budget; the
-  frame prompt is a pure per-model-family value whose decode is total; a pure core sets the cadence
-  and the backoff; failures are results. Promotes
-  [the GenAI exploration](../explorations/generative-inference.md), which holds the evidence. Waits
-  on #489 and on an abandonable node, named for its own record, so end of stream does not wait on a
-  generation. Considers and declines a demand edge.
+  **withdrawn**, not to be numbered. It proposed a `Describe` operator that sends frames to a
+  vision-language model behind a caller-owned `IChatClient`, with the model outside the player's
+  process. An application builds the same thing from the public API: a second decoder reading ahead
+  of the playhead for a seekable source, which a graph tap cannot do, and a `LatestWins(1)` branch
+  into an `InFlight` sink that hands encoded frames to the application's own worker for a live
+  source. The abandonable node it named is not pursued. The record and
+  [the GenAI exploration](../explorations/generative-inference.md) are kept as the evidence.
 
 ## Recently numbered
 
