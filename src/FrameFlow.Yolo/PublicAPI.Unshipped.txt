@@ -1,6 +1,4 @@
 #nullable enable
-const FrameFlow.Yolo.CocoClasses.Count = 80 -> int
-const FrameFlow.Yolo.Yolov8ModelDownloader.DefaultModelFileName = "yolov8n.onnx" -> string!
 FrameFlow.Yolo.CocoClasses
 FrameFlow.Yolo.DetectedVideoFrameRef
 FrameFlow.Yolo.DetectedVideoFrameRef.AddRef() -> FrameFlow.Graph.IRefCounted!
@@ -38,6 +36,13 @@ FrameFlow.Yolo.YoloModelDescriptor.OutputChannelCount.get -> int
 FrameFlow.Yolo.YoloModelDescriptor.OutputElementCount.get -> int
 FrameFlow.Yolo.YoloModelDescriptor.YoloModelDescriptor(int inputSize, int classCount, System.Collections.Generic.IReadOnlyList<string!>? classNames = null) -> void
 FrameFlow.Yolo.YoloOperators
+FrameFlow.Yolo.YoloThresholds
+FrameFlow.Yolo.YoloThresholds.Confidence.get -> float
+FrameFlow.Yolo.YoloThresholds.Confidence.init -> void
+FrameFlow.Yolo.YoloThresholds.IoU.get -> float
+FrameFlow.Yolo.YoloThresholds.IoU.init -> void
+FrameFlow.Yolo.YoloThresholds.MaxDetections.get -> int
+FrameFlow.Yolo.YoloThresholds.MaxDetections.init -> void
 FrameFlow.Yolo.Yolov8Detector
 FrameFlow.Yolo.Yolov8Detector.Detect(FrameFlow.Media.IVideoFrame! frame) -> System.Collections.Generic.List<FrameFlow.Yolo.Detection>!
 FrameFlow.Yolo.Yolov8Detector.Dispose() -> void
@@ -64,13 +69,16 @@ FrameFlow.Yolo.Yolov8Preprocessor.InputElementCount.get -> int
 FrameFlow.Yolo.Yolov8Preprocessor.InputSize.get -> int
 FrameFlow.Yolo.Yolov8Preprocessor.Preprocess(FrameFlow.Media.IVideoFrame! frame, System.Span<float> destination) -> (float ScaleX, float ScaleY)
 FrameFlow.Yolo.Yolov8Preprocessor.Yolov8Preprocessor(int inputSize = 640) -> void
+const FrameFlow.Yolo.CocoClasses.Count = 80 -> int
+const FrameFlow.Yolo.Yolov8ModelDownloader.DefaultModelFileName = "yolov8n.onnx" -> string!
 static FrameFlow.Yolo.CocoClasses.Names.get -> System.Collections.Generic.IReadOnlyList<string!>!
 static FrameFlow.Yolo.YoloModelDescriptor.AnchorsFor(int inputSize) -> int
 static FrameFlow.Yolo.YoloModelDescriptor.CocoDefault.get -> FrameFlow.Yolo.YoloModelDescriptor!
 static FrameFlow.Yolo.YoloModelDescriptor.FromSession(FrameFlow.Inference.IInferenceSession! session) -> FrameFlow.Yolo.YoloModelDescriptor!
 static FrameFlow.Yolo.YoloModelDescriptor.TryDescribe(FrameFlow.Inference.IInferenceSession! session, out FrameFlow.Yolo.YoloModelDescriptor? descriptor, out string? error) -> bool
 static FrameFlow.Yolo.YoloOperators.DetectWith(string! id, System.Func<FrameFlow.Media.IVideoFrame!, System.Collections.Generic.IReadOnlyList<FrameFlow.Yolo.Detection>!>! detect) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.IVideoFrame!, FrameFlow.Yolo.DetectedVideoFrameRef!>!
-static FrameFlow.Yolo.Yolov8Detector.Create(FrameFlow.Inference.IInferenceSession! session, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Yolo.YoloModelDescriptor? descriptor = null, System.Collections.Generic.IReadOnlyCollection<int>? classFilter = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null) -> FrameFlow.Yolo.Yolov8Detector!
-static FrameFlow.Yolo.Yolov8Detector.CreateAsync(FrameFlow.Inference.IInferenceSessionFactory! factory, string? overrideModelPath = null, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken), Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Yolo.YoloModelDescriptor? descriptor = null, System.Collections.Generic.IReadOnlyCollection<int>? classFilter = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null) -> System.Threading.Tasks.Task<FrameFlow.Yolo.Yolov8Detector!>!
-static FrameFlow.Yolo.Yolov8Detector.CreateAsync(System.Func<string!, FrameFlow.Inference.IInferenceSession!>! sessionFactory, string? overrideModelPath = null, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken), Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Yolo.YoloModelDescriptor? descriptor = null, System.Collections.Generic.IReadOnlyCollection<int>? classFilter = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null) -> System.Threading.Tasks.Task<FrameFlow.Yolo.Yolov8Detector!>!
+static FrameFlow.Yolo.YoloThresholds.Default.get -> FrameFlow.Yolo.YoloThresholds!
+static FrameFlow.Yolo.Yolov8Detector.Create(FrameFlow.Inference.IInferenceSession! session, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Yolo.YoloModelDescriptor? descriptor = null, System.Collections.Generic.IReadOnlyCollection<int>? classFilter = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null, FrameFlow.Yolo.YoloThresholds? thresholds = null) -> FrameFlow.Yolo.Yolov8Detector!
+static FrameFlow.Yolo.Yolov8Detector.CreateAsync(FrameFlow.Inference.IInferenceSessionFactory! factory, string? overrideModelPath = null, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken), Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Yolo.YoloModelDescriptor? descriptor = null, System.Collections.Generic.IReadOnlyCollection<int>? classFilter = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null, FrameFlow.Yolo.YoloThresholds? thresholds = null) -> System.Threading.Tasks.Task<FrameFlow.Yolo.Yolov8Detector!>!
+static FrameFlow.Yolo.Yolov8Detector.CreateAsync(System.Func<string!, FrameFlow.Inference.IInferenceSession!>! sessionFactory, string? overrideModelPath = null, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken), Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, FrameFlow.Yolo.YoloModelDescriptor? descriptor = null, System.Collections.Generic.IReadOnlyCollection<int>? classFilter = null, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null, FrameFlow.Yolo.YoloThresholds? thresholds = null) -> System.Threading.Tasks.Task<FrameFlow.Yolo.Yolov8Detector!>!
 static FrameFlow.Yolo.Yolov8ModelDownloader.EnsureModelAvailableAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken), string! modelUrl = "https://huggingface.co/cabelo/yolov8/resolve/main/yolov8n.onnx", string? overrideCacheDir = null, Microsoft.Extensions.Logging.ILogger? logger = null) -> System.Threading.Tasks.Task<string!>!

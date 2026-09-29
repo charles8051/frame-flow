@@ -93,15 +93,18 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
     /// the warmup inference. <c>null</c> ⇒ identical to the previous
     /// behaviour (no reporting).
     /// </param>
+    /// <param name="thresholds">Which candidate boxes to keep; <see cref="YoloThresholds.Default"/> when null.</param>
     public static Yolov8Detector Create(
         FrameFlow.Inference.IInferenceSession session,
         ILoggerFactory? loggerFactory = null,
         YoloModelDescriptor? descriptor = null,
         IReadOnlyCollection<int>? classFilter = null,
-        IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null
+        IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null,
+        YoloThresholds? thresholds = null
     )
     {
         ArgumentNullException.ThrowIfNull(session);
+        thresholds ??= YoloThresholds.Default;
         var factory = loggerFactory ?? NullLoggerFactory.Instance;
         var log = factory.CreateLogger<Yolov8Detector>();
 
@@ -132,7 +135,12 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
                 inputTensor,
                 outputTensor,
                 new Yolov8Preprocessor(shape.InputSize),
-                new Yolov8Postprocessor(shape, classFilter),
+                new Yolov8Postprocessor(shape, classFilter)
+                {
+                    ConfidenceThreshold = thresholds.Confidence,
+                    IoUThreshold = thresholds.IoU,
+                    MaxDetections = thresholds.MaxDetections,
+                },
                 log
             );
             // Ownership of pool/session/tensors has transferred to detector.
@@ -229,6 +237,7 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
     /// (which reports EP probe / session-open phases) and into the warmup
     /// phase. <c>null</c> ⇒ identical to the previous behaviour.
     /// </param>
+    /// <param name="thresholds">Which candidate boxes to keep; <see cref="YoloThresholds.Default"/> when null.</param>
     public static Task<Yolov8Detector> CreateAsync(
         FrameFlow.Inference.IInferenceSessionFactory factory,
         string? overrideModelPath = null,
@@ -236,7 +245,8 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
         ILoggerFactory? loggerFactory = null,
         YoloModelDescriptor? descriptor = null,
         IReadOnlyCollection<int>? classFilter = null,
-        IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null
+        IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null,
+        YoloThresholds? thresholds = null
     )
     {
         ArgumentNullException.ThrowIfNull(factory);
@@ -247,7 +257,8 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
             loggerFactory: loggerFactory,
             descriptor: descriptor,
             classFilter: classFilter,
-            progress: progress);
+            progress: progress,
+            thresholds: thresholds);
     }
 
     /// <summary>
@@ -259,7 +270,7 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
     /// a model path. Typical: <c>path => new CudaInferenceSession(path)</c>
     /// or <c>path => new DmlInferenceSession(path)</c>. New consumers
     /// should prefer the
-    /// <see cref="CreateAsync(FrameFlow.Inference.IInferenceSessionFactory, string, CancellationToken, ILoggerFactory, YoloModelDescriptor, IReadOnlyCollection{int}, IProgress{FrameFlow.Inference.InferenceSessionProgress})"/>
+    /// <see cref="CreateAsync(FrameFlow.Inference.IInferenceSessionFactory, string, CancellationToken, ILoggerFactory, YoloModelDescriptor, IReadOnlyCollection{int}, IProgress{FrameFlow.Inference.InferenceSessionProgress}, YoloThresholds)"/>
     /// overload, which centralises EP selection and fallback.
     /// </param>
     /// <param name="overrideModelPath">Optional path override; if null, downloads.</param>
@@ -275,6 +286,7 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
     /// the <see cref="FrameFlow.Inference.IInferenceSessionFactory"/> overload to get those
     /// reported too. <c>null</c> ⇒ identical to the previous behaviour.
     /// </param>
+    /// <param name="thresholds">Which candidate boxes to keep; <see cref="YoloThresholds.Default"/> when null.</param>
     public static async Task<Yolov8Detector> CreateAsync(
         Func<string, FrameFlow.Inference.IInferenceSession> sessionFactory,
         string? overrideModelPath = null,
@@ -282,7 +294,8 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
         ILoggerFactory? loggerFactory = null,
         YoloModelDescriptor? descriptor = null,
         IReadOnlyCollection<int>? classFilter = null,
-        IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null
+        IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress = null,
+        YoloThresholds? thresholds = null
     )
     {
         ArgumentNullException.ThrowIfNull(sessionFactory);
@@ -317,7 +330,7 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
         sessionWatch.Stop();
         LogSessionConstructed(log, sessionWatch.Elapsed.TotalMilliseconds);
 
-        return Create(session, factory, descriptor, classFilter, progress);
+        return Create(session, factory, descriptor, classFilter, progress, thresholds);
     }
 
     /// <summary>
