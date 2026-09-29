@@ -103,6 +103,22 @@ FrameFlow.Inference.TensorNormalization.Blue.get -> (float Scale, float Offset)
 FrameFlow.Inference.TensorNormalization.Green.get -> (float Scale, float Offset)
 FrameFlow.Inference.TensorNormalization.Red.get -> (float Scale, float Offset)
 FrameFlow.Inference.TensorNormalization.TensorNormalization() -> void
+FrameFlow.Inference.TensorToImage
+FrameFlow.Inference.TensorToImageOptions
+FrameFlow.Inference.TensorToImageOptions.ChannelOrder.get -> FrameFlow.Inference.TensorChannelOrder
+FrameFlow.Inference.TensorToImageOptions.ChannelOrder.init -> void
+FrameFlow.Inference.TensorToImageOptions.Channels.get -> int
+FrameFlow.Inference.TensorToImageOptions.Channels.init -> void
+FrameFlow.Inference.TensorToImageOptions.ElementCount.get -> int
+FrameFlow.Inference.TensorToImageOptions.Format.get -> FrameFlow.Media.PixelFormat
+FrameFlow.Inference.TensorToImageOptions.Format.init -> void
+FrameFlow.Inference.TensorToImageOptions.Height.get -> int
+FrameFlow.Inference.TensorToImageOptions.Layout.get -> FrameFlow.Inference.TensorLayout
+FrameFlow.Inference.TensorToImageOptions.Layout.init -> void
+FrameFlow.Inference.TensorToImageOptions.Normalization.get -> FrameFlow.Inference.TensorNormalization
+FrameFlow.Inference.TensorToImageOptions.Normalization.init -> void
+FrameFlow.Inference.TensorToImageOptions.TensorToImageOptions(int width, int height) -> void
+FrameFlow.Inference.TensorToImageOptions.Width.get -> int
 FrameFlow.Inference.TensorTransform
 FrameFlow.Inference.TensorTransform.TensorToFrame.get -> System.Numerics.Matrix3x2
 FrameFlow.Inference.TensorTransform.TensorToFrame.init -> void
@@ -158,3 +174,5 @@ FrameFlow.Inference.PresentedResults<TResult>.Presented -> System.EventHandler<F
 FrameFlow.Inference.PresentedResults<TResult>.PresentedResults(FrameFlow.Media.IFramePresentedSource! source, int capacity = 64) -> void
 static FrameFlow.Inference.InferenceOperators.Infer<TResult>(string! id, FrameFlow.Inference.IImageModel<TResult>! model, FrameFlow.Inference.IDeviceImageToTensor? deviceStage = null, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.IVideoFrame!, FrameFlow.Inference.InferenceResult<TResult>!>!
 static FrameFlow.Inference.InferenceOperators.Infer<TResult>(this FrameFlow.Graph.GraphChain<FrameFlow.Media.IVideoFrame!> chain, string! id, FrameFlow.Inference.IImageModel<TResult>! model, System.Action<FrameFlow.Inference.InferenceResult<TResult>!>! onResult, FrameFlow.Inference.IDeviceImageToTensor? deviceStage = null) -> FrameFlow.Graph.GraphChain<FrameFlow.Media.IVideoFrame!>
+static FrameFlow.Inference.TensorToImage.ToFrame(FrameFlow.Graph.ICpuTensor! tensor, FrameFlow.Inference.TensorToImageOptions! options, System.TimeSpan presentationTime, System.TimeSpan duration, System.Buffers.ArrayPool<byte>? pool = null) -> FrameFlow.Media.CpuVideoFrame!
+static FrameFlow.Inference.TensorToImage.Write(System.ReadOnlySpan<float> tensor, FrameFlow.Inference.TensorToImageOptions! options, System.Span<byte> destination, int stride) -> void
