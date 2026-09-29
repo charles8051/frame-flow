@@ -131,12 +131,120 @@ public sealed class DemuxSession : IDemuxSession
     }
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// <para>
+    /// The keyframe is the video stream's: the first video stream in <see cref="MediaInfo"/>
+    /// that is not a cover picture and that <see cref="DiscardStream"/> has not discarded. A
+    /// session with no such stream seeks by the container alone, since every audio packet
+    /// decodes on its own.
+    /// </para>
+    /// <para>
+    /// A container that seeks by timestamp, such as MPEG-TS, lands on the packet nearest the
+    /// position whether or not it is a keyframe (#495). So the seek probes: it reads the stream's
+    /// packets after each seek, and <see cref="KeyframeSearch"/> decides where the next probe
+    /// goes and where the last seek lands. On a container that seeks to keyframes the first
+    /// packet of the stream is one, and the seek reads that packet and seeks to the position
+    /// again. The packets a probe reads are read again after the last seek, and are not counted
+    /// in <see cref="GetDiagnostics"/>. A packet the container fails to read ends the search
+    /// with the container's own seek to the position.
+    /// </para>
+    /// </remarks>
     /// <exception cref="ObjectDisposedException">Thrown when the session has been disposed.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when the container fails to seek.</exception>
     public ValueTask SeekAsync(TimeSpan position, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (KeyframeStream() is { } stream)
+            SeekToKeyframe(position, stream, cancellationToken);
+        else
+            SeekContainer(position);
+
+        _logger.LogDebug("Seek completed to position {Position}", position);
+        Interlocked.Increment(ref _seeksPerformed);
+        return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// Seeks so that the packets of the stream at <paramref name="streamIndex"/> start from the
+    /// nearest keyframe at or before <paramref name="position"/>.
+    /// </summary>
+    private void SeekToKeyframe(
+        TimeSpan position,
+        int streamIndex,
+        CancellationToken cancellationToken
+    )
+    {
+        for (var search = KeyframeSearch.For(position); ; search = search.Back())
+        {
+            SeekContainer(search.Probe);
+
+            while (!search.Finished)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                int result = ReadProbePacket(out var packet);
+                if (result == FFAvUtil.AvErrorEof)
+                    break;
+                if (result < 0)
+                {
+                    _logger.LogWarning(
+                        "Reading a packet while seeking to {Position} failed (error code "
+                            + "{ErrorCode}); seeking without the keyframe search",
+                        position,
+                        result
+                    );
+                    SeekContainer(position);
+                    return;
+                }
+
+                if (packet.StreamIndex == streamIndex)
+                    search = search.Read(packet.IsKeyframe, packet.Pts, packet.Dts);
+            }
+
+            if (search.Landing is { } landing)
+            {
+                SeekContainer(landing);
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The stream whose keyframe <see cref="SeekAsync"/> lands on, or null when there is none.
+    /// </summary>
+    private unsafe int? KeyframeStream()
+    {
+        ref AVFormatContext fmtCtx = ref Unsafe.AsRef<AVFormatContext>(
+            (void*)_formatCtx.DangerousGetHandle()
+        );
+
+        foreach (var video in MediaInfo.VideoStreams)
+        {
+            if ((uint)video.StreamIndex >= fmtCtx.nb_streams)
+                continue;
+
+            // A cover picture is one packet the demuxer hands out again after each seek, not a
+            // stream with keyframes to search.
+            AVStream* stream = fmtCtx.streams[video.StreamIndex];
+            if (
+                stream != null
+                && stream->discard != AVDiscard.AVDISCARD_ALL
+                && (stream->disposition & FFmpegConstants.DispositionAttachedPic) == 0
+            )
+                return video.StreamIndex;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Seeks the container to <paramref name="position"/>, on whichever packet it lands on, and
+    /// drops what it had read ahead.
+    /// </summary>
+    private void SeekContainer(TimeSpan position)
+    {
         // Seek using the global time base (stream_index = -1, timestamp in microseconds).
         //
         // The caller's position is media time, which starts at zero; av_seek_frame wants
@@ -175,63 +283,6 @@ public sealed class DemuxSession : IDemuxSession
         // PaceUntil waited for the clock to advance 24.5 s of realtime
         // before forwarding the first post-seek video frame.
         FFAvFormat.avformat_flush(ctxPtr);
-
-        _logger.LogDebug("Seek completed to position {Position}", position);
-        Interlocked.Increment(ref _seeksPerformed);
-        return ValueTask.CompletedTask;
-    }
-
-    /// <summary>
-    /// Seeks so that decoding the stream at <paramref name="streamIndex"/> from where the session
-    /// lands reaches a keyframe at or before <paramref name="position"/> (#483).
-    /// </summary>
-    /// <remarks>
-    /// <see cref="SeekAsync"/> alone does not, on a container that seeks by timestamp: on MPEG-TS
-    /// it lands on the packet nearest the position whether or not it is a keyframe. This probes
-    /// instead, reading the stream's packets after each seek, and <see cref="KeyframeSearch"/>
-    /// decides where the next probe goes and where the last seek lands. On a container that
-    /// seeks to keyframes the first probe lands on one. The packets a probe reads are read
-    /// again after the last seek.
-    /// </remarks>
-    internal async ValueTask SeekToKeyframeAsync(
-        TimeSpan position,
-        int streamIndex,
-        CancellationToken cancellationToken = default
-    )
-    {
-        for (var search = KeyframeSearch.For(position); ; )
-        {
-            await SeekAsync(search.Probe, cancellationToken).ConfigureAwait(false);
-
-            TimeSpan? seekTo = null;
-            var landing = true;
-            while (await ReadPacketAsync(cancellationToken).ConfigureAwait(false) is { } packet)
-            {
-                if (packet.StreamIndex != streamIndex)
-                    continue;
-
-                var scan = search.Scan(packet.IsKeyFrame, packet.HasPts ? packet.Pts : null);
-                if (scan == KeyframeScan.Passed)
-                    break;
-                if (scan == KeyframeScan.Found)
-                    seekTo = search.SeekFor(landing, packet.HasDts ? packet.Dts : null);
-                landing = false;
-            }
-
-            if (seekTo is { } target)
-            {
-                await SeekAsync(target, cancellationToken).ConfigureAwait(false);
-                return;
-            }
-
-            if (search.Back() is not { } back)
-            {
-                // No keyframe at or before the position from the source's start: decode from there.
-                await SeekAsync(search.Probe, cancellationToken).ConfigureAwait(false);
-                return;
-            }
-            search = back;
-        }
     }
 
     /// <summary>
@@ -406,21 +457,8 @@ public sealed class DemuxSession : IDemuxSession
         // Read the stream's time base to normalize timestamps.
         GetStreamTimeBase(ctx, streamIndex, out int timeBaseNum, out int timeBaseDen);
 
-        bool hasPts = rawPts != FFAvUtil.AvNoPtsValue;
-        bool hasDts = rawDts != FFAvUtil.AvNoPtsValue;
-
-        // Media time, not container time (#358): a DemuxPacket's timestamps are on the
-        // same scale as the positions the rest of the API takes and reports.
-        long offset = _origin.InStreamUnits(timeBaseNum, timeBaseDen);
-        long mediaPts = MediaTimeOrigin.ToMediaTimestamp(rawPts, hasPts, offset);
-        long mediaDts = MediaTimeOrigin.ToMediaTimestamp(rawDts, hasDts, offset);
-
-        TimeSpan pts = hasPts
-            ? RescaleToTimeSpan(mediaPts, timeBaseNum, timeBaseDen)
-            : TimeSpan.Zero;
-        TimeSpan dts = hasDts
-            ? RescaleToTimeSpan(mediaDts, timeBaseNum, timeBaseDen)
-            : TimeSpan.Zero;
+        TimeSpan? pts = ToMediaTime(rawPts, timeBaseNum, timeBaseDen);
+        TimeSpan? dts = ToMediaTime(rawDts, timeBaseNum, timeBaseDen);
         TimeSpan duration =
             rawDuration > 0
                 ? RescaleToTimeSpan(rawDuration, timeBaseNum, timeBaseDen)
@@ -441,14 +479,72 @@ public sealed class DemuxSession : IDemuxSession
 
         return new DemuxPacket(
             streamIndex: streamIndex,
-            pts: pts,
-            hasPts: hasPts,
-            dts: dts,
-            hasDts: hasDts,
+            pts: pts ?? TimeSpan.Zero,
+            hasPts: pts is not null,
+            dts: dts ?? TimeSpan.Zero,
+            hasDts: dts is not null,
             duration: duration,
             data: data,
             isKeyFrame: isKeyFrame
         );
+    }
+
+    /// <summary>
+    /// Converts a timestamp in a stream's time base to media time, or null when it is
+    /// <c>AV_NOPTS_VALUE</c>.
+    /// </summary>
+    /// <remarks>
+    /// Media time, not container time (#358): a packet's timestamps are on the same scale as
+    /// the positions the rest of the API takes and reports.
+    /// </remarks>
+    private TimeSpan? ToMediaTime(long rawTimestamp, int timeBaseNum, int timeBaseDen)
+    {
+        if (rawTimestamp == FFAvUtil.AvNoPtsValue)
+            return null;
+
+        long offset = _origin.InStreamUnits(timeBaseNum, timeBaseDen);
+        long media = MediaTimeOrigin.ToMediaTimestamp(rawTimestamp, hasTimestamp: true, offset);
+        return RescaleToTimeSpan(media, timeBaseNum, timeBaseDen);
+    }
+
+    /// <summary>What a keyframe search reads of one packet.</summary>
+    private readonly record struct ProbePacket(
+        int StreamIndex,
+        bool IsKeyframe,
+        TimeSpan? Pts,
+        TimeSpan? Dts
+    );
+
+    /// <summary>
+    /// Reads the next packet's stream, keyframe flag and timestamps for a keyframe search,
+    /// without copying its data or counting it in the diagnostics.
+    /// </summary>
+    /// <returns>0 for a packet, <c>AVERROR_EOF</c> at the end, or another negative FFmpeg error code.</returns>
+    private unsafe int ReadProbePacket(out ProbePacket packet)
+    {
+        packet = default;
+        nint ctx = _formatCtx.DangerousGetHandle();
+
+        int result = FFAvFormat.av_read_frame(ctx, _packet);
+        if (result < 0)
+            return result;
+
+        try
+        {
+            ref AVPacket pkt = ref Unsafe.AsRef<AVPacket>((void*)_packet);
+            GetStreamTimeBase(ctx, pkt.stream_index, out int timeBaseNum, out int timeBaseDen);
+            packet = new ProbePacket(
+                pkt.stream_index,
+                (pkt.flags & FFmpegConstants.PktFlagKey) != 0,
+                ToMediaTime(pkt.pts, timeBaseNum, timeBaseDen),
+                ToMediaTime(pkt.dts, timeBaseNum, timeBaseDen)
+            );
+            return 0;
+        }
+        finally
+        {
+            FFAvCodec.av_packet_unref(_packet);
+        }
     }
 
     /// <summary>

@@ -3,22 +3,9 @@
 
 namespace FrameFlow.Decoding.Core;
 
-/// <summary>What one packet of the searched stream, read after a probe's seek, says.</summary>
-internal enum KeyframeScan
-{
-    /// <summary>Nothing yet: read the next packet.</summary>
-    ReadOn,
-
-    /// <summary>A keyframe presented at or before the position, which decoding can start from.</summary>
-    Found,
-
-    /// <summary>A packet presented after the position, so no keyframe after it is at or before it.</summary>
-    Passed,
-}
-
 /// <summary>
-/// The search for a seek from which decoding a stream reaches a keyframe at or before a
-/// position (#483).
+/// The search for a seek from which decoding a stream reaches the nearest keyframe at or before a
+/// position (#483, #495).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -32,8 +19,14 @@ internal enum KeyframeScan
 /// far each time, down to the source's start.
 /// </para>
 /// <para>
-/// A container that seeks to keyframes lands on one at the first probe, and seeking to that
-/// probe again lands on it again.
+/// The first probe seeks to the position itself. When the first packet of the stream it lands on
+/// is a keyframe at or before the position, the search ends there: a seek lands on the last packet
+/// it can at or before the position, and a keyframe presents no earlier than it decodes, so no
+/// later keyframe presents at or before the position. A container that seeks to keyframes ends
+/// the search after one packet.
+/// </para>
+/// <para>
+/// A probe that lands on a keyframe is sought again by the same probe, which lands on it again.
 /// </para>
 /// </remarks>
 /// <param name="Position">The position decoding has to reach from a keyframe.</param>
@@ -43,46 +36,70 @@ internal readonly record struct KeyframeSearch(TimeSpan Position, TimeSpan Probe
 {
     private static readonly TimeSpan FirstStep = TimeSpan.FromSeconds(1);
 
+    /// <summary>Whether this probe has read a packet of the stream since its seek.</summary>
+    public bool Landed { get; private init; }
+
+    /// <summary>
+    /// Whether this probe has read enough: a packet presented after the position, or the first
+    /// probe landed on a keyframe at or before it.
+    /// </summary>
+    public bool Finished { get; private init; }
+
+    /// <summary>
+    /// Where to seek to decode from the last keyframe at or before the position that this probe
+    /// read, or null when it has read none.
+    /// </summary>
+    public TimeSpan? Found { get; private init; }
+
+    /// <summary>
+    /// Where to seek once this probe has read its packets: the keyframe it found, or the source's
+    /// start when a probe from there found none. Null when the search goes on with
+    /// <see cref="Back"/>.
+    /// </summary>
+    public TimeSpan? Landing => Found ?? (Probe <= TimeSpan.Zero ? Probe : null);
+
     /// <summary>The search for <paramref name="position"/>, whose first probe seeks to it.</summary>
     public static KeyframeSearch For(TimeSpan position) => new(position, position, FirstStep);
 
-    /// <summary>What a packet of the stream, read after seeking to <see cref="Probe"/>, says.</summary>
+    /// <summary>
+    /// The search after one more packet of the stream, read after seeking to <see cref="Probe"/>.
+    /// </summary>
     /// <param name="isKeyframe">Whether the packet is a keyframe.</param>
     /// <param name="presentation">Its presentation time, or null when it has none.</param>
-    public KeyframeScan Scan(bool isKeyframe, TimeSpan? presentation) =>
-        presentation switch
-        {
-            null => KeyframeScan.ReadOn,
-            { } pts when pts > Position => KeyframeScan.Passed,
-            _ when isKeyframe => KeyframeScan.Found,
-            _ => KeyframeScan.ReadOn,
-        };
-
-    /// <summary>Where to seek to decode from a keyframe this probe found.</summary>
-    /// <param name="landedOnIt">
-    /// Whether it was the first packet of the stream the probe read. The same seek lands on it
-    /// again, which is the one answer that holds on every container.
+    /// <param name="decode">
+    /// Its decode time, or null when it has none. A keyframe read after the landing is sought by
+    /// it: a container that lands off keyframes, as this one did, searches by decode time, so
+    /// that seek lands on the keyframe or just before it. Its presentation time could land after
+    /// it, on a frame that presents before it and decodes after it.
     /// </param>
-    /// <param name="decodeTime">Its decode time, or null when it has none.</param>
-    /// <returns>
-    /// This probe when the seek landed on the keyframe or it has no decode time; otherwise its
-    /// decode time. A container that lands off keyframes, as this one did, searches by decode
-    /// time, so that seek lands on the keyframe or just before it. Its presentation time could
-    /// land after it, on a frame that presents before it and decodes after it.
-    /// </returns>
-    public TimeSpan SeekFor(bool landedOnIt, TimeSpan? decodeTime) =>
-        !landedOnIt && decodeTime is { } dts ? dts : Probe;
+    public KeyframeSearch Read(bool isKeyframe, TimeSpan? presentation, TimeSpan? decode)
+    {
+        if (Finished)
+            return this;
+
+        var landing = !Landed;
+        var read = this with { Landed = true };
+        return presentation switch
+        {
+            null => read,
+            { } pts when pts > Position => read with { Finished = true },
+            _ when !isKeyframe => read,
+            _ when landing => read with { Found = Probe, Finished = IsFirstProbe },
+            _ => read with { Found = decode ?? Probe },
+        };
+    }
 
     /// <summary>
-    /// The next probe after this one found no keyframe, or null when this one was at the
-    /// source's start, which is then where decoding begins.
+    /// The next probe, after this one read its packets and <see cref="Landing"/> is null: one
+    /// <see cref="Step"/> further back, never before the source's start, with the step doubled.
     /// </summary>
-    public KeyframeSearch? Back() =>
-        Probe <= TimeSpan.Zero
-            ? null
-            : this with
-            {
-                Probe = Probe > Step ? Probe - Step : TimeSpan.Zero,
-                Step = Step < TimeSpan.MaxValue / 2 ? Step * 2 : TimeSpan.MaxValue,
-            };
+    public KeyframeSearch Back() =>
+        new(
+            Position,
+            Probe > Step ? Probe - Step : TimeSpan.Zero,
+            Step < TimeSpan.MaxValue / 2 ? Step * 2 : TimeSpan.MaxValue
+        );
+
+    /// <summary>The first probe is the only one that seeks to the position.</summary>
+    private bool IsFirstProbe => Probe == Position;
 }
