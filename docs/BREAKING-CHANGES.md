@@ -140,9 +140,9 @@ the target. It now shows the first frame at or after the target.
 **Who hits this.** Code that reads packets straight after `SeekAsync` on MPEG-TS, which now gets
 the keyframe rather than the packet nearest the position, and anything sensitive to seek latency.
 To find the keyframe the seek reads the video packets after where it lands, without decoding them,
-and seeks further back when none is a keyframe at or before the position; on MPEG-TS it reads each
-packet from somewhat before the keyframe up to the position once. On a container that seeks to
-keyframes, such as MP4, it reads one video packet and seeks a second time.
+and seeks further back when none is a keyframe at or before the position; on MPEG-TS it reads the
+packets from somewhat before the keyframe up to the position about once. On a container that seeks
+to keyframes, such as MP4, it reads one video packet and seeks a second time.
 
 **What to write instead.** Nothing.
 

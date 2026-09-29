@@ -71,6 +71,9 @@ public sealed class KeyframeSearchTests
             // place a keyframe by, so where a seek to the position lands.
             { [K(null, null)], false, 10 },
             { [], false, 10 },
+            // No decode time to stop the next probe at: likewise.
+            { [new Packet(false, 9.5, null), new Packet(false, 10.04, null)], true, 10 },
+            { [new Packet(false, 9.5, null)], false, 10 },
         };
 
     [Theory]
@@ -85,19 +88,24 @@ public sealed class KeyframeSearchTests
 
     /// <summary>
     /// A later probe, one second back, after the first landed at 9.5 and found nothing: a keyframe
-    /// it lands on is not necessarily the nearest, so it reads on, and stops where the first
-    /// landed.
+    /// it lands on is not necessarily the nearest, so it reads on, and stops at the first packet
+    /// that decodes after where the first landed.
     /// </summary>
     public static TheoryData<Packet[], bool, double?> LaterProbes =>
         new()
         {
             { [K(8, 8)], false, 9 },
             { [K(8, 8), F(9)], false, 9 },
-            { [K(8, 8), F(9), F(9.5)], true, 9 },
-            { [K(8, 8), F(9), K(9.2, 9.18), F(9.5)], true, 9.18 },
-            { [F(8.5), F(9), F(9.5)], true, null },
-            // Landed where the first probe did: nothing it has not read.
-            { [F(9.5)], true, null },
+            { [K(8, 8), F(9), F(9.5)], false, 9 },
+            { [K(8, 8), F(9), F(9.5), F(9.54)], true, 9 },
+            { [K(8, 8), F(9), K(9.2, 9.18), F(9.5), F(9.54)], true, 9.18 },
+            { [F(8.5), F(9), F(9.5), F(9.54)], true, null },
+            // Landed where the first probe did: one packet it has not read.
+            { [F(9.5), F(9.54)], true, null },
+            // Landed after where the first probe did: nothing it has not read.
+            { [F(9.54)], true, null },
+            // A packet that shares the decode time the first probe landed at is still read.
+            { [F(8.5), K(9.5, 9.5), F(9.54)], true, 9.5 },
         };
 
     [Theory]
@@ -140,12 +148,12 @@ public sealed class KeyframeSearchTests
         .ToArray();
 
     [Theory]
-    [InlineData(1.52, 1.0, new[] { 2, 25 })]
+    [InlineData(1.52, 1.0, new[] { 2, 26 })]
     [InlineData(1.0, 1.0, new[] { 1 })]
-    [InlineData(0.99, 0.0, new[] { 2, 24 })]
-    [InlineData(2.9, 2.0, new[] { 2, 25 })]
+    [InlineData(0.99, 0.0, new[] { 2, 25 })]
+    [InlineData(2.9, 2.0, new[] { 2, 26 })]
     [InlineData(10.0, 2.0, new[] { 1, 1, 1, 1, 72 })]
-    public void OnAContainerThatSeeksByTimestamp_EachPacketIsReadOnce(
+    public void OnAContainerThatSeeksByTimestamp_EachProbeStopsWhereTheOneBeforeItLanded(
         double position,
         double keyframe,
         int[] reads
@@ -202,7 +210,7 @@ public sealed class KeyframeSearchTests
     [Fact]
     public void AProbeThatReadsOnlyWhatAnEarlierOneRead_KeepsItsBound()
     {
-        var second = Read(Read(KeyframeSearch.For(Position), F(9.5), F(10.04)).Back(), F(9.5));
+        var second = Read(Read(KeyframeSearch.For(Position), F(9.5), F(10.04)).Back(), F(9.54));
 
         Assert.Equal(S(9.5), second.Back().ScannedFrom);
     }

@@ -26,16 +26,20 @@ namespace FrameFlow.Decoding.Core;
 /// the search after one packet.
 /// </para>
 /// <para>
-/// Each later probe stops where the probe before it landed, since that one read on from there
-/// and found no keyframe at or before the position. So a search reads the packets between where
-/// its last probe lands and the position once, and reads to the source's end at most once: when
-/// the stream ends before the position, only the first probe does.
+/// Each later probe stops at the first packet that decodes after the one the probe before it
+/// landed on, since that probe read on from there and found no keyframe at or before the
+/// position. So a search reads the packets between where its last probe lands and the position
+/// about once, and reads to the source's end at most once: when the stream ends before the
+/// position, only the first probe does.
 /// </para>
 /// <para>
 /// A probe that lands on a keyframe is sought again by the same probe, which lands on it again.
-/// A probe that reaches the source's end without reading a packet of the stream that has a
-/// presentation time has nothing to place a keyframe by, and the search lands where a seek to the
-/// position does.
+/// </para>
+/// <para>
+/// A stream whose packets lack timestamps cannot be searched this way. A probe that reaches the
+/// source's end without a packet that has a presentation time has nothing to place a keyframe
+/// by, and one that reads no packet with a decode time has nothing to stop the next probe at. The
+/// search then lands where a seek to the position does, which need not be a keyframe.
 /// </para>
 /// </remarks>
 /// <param name="Position">The position decoding has to reach from a keyframe.</param>
@@ -58,7 +62,7 @@ internal readonly record struct KeyframeSearch(TimeSpan Position, TimeSpan Probe
     public TimeSpan? LandedAt { get; private init; }
 
     /// <summary>
-    /// The decode time from which earlier probes read the stream's packets and found no keyframe
+    /// The decode time after which earlier probes read the stream's packets and found no keyframe
     /// at or before the position, or null on the first probe.
     /// </summary>
     public TimeSpan? ScannedFrom { get; private init; }
@@ -77,16 +81,16 @@ internal readonly record struct KeyframeSearch(TimeSpan Position, TimeSpan Probe
     public TimeSpan? Found { get; private init; }
 
     /// <summary>
-    /// Where to seek once this probe has read its packets: the keyframe it found; the position
-    /// when the source ended before a packet of the stream with a presentation time; or the
-    /// source's start when a probe from there found none. Null when the search goes on with
-    /// <see cref="Back"/>.
+    /// Where to seek once this probe has read its packets: the keyframe it found; the source's
+    /// start when a probe from there found none; or the position when the stream's timestamps
+    /// leave nothing to search by. Null when the search goes on with <see cref="Back"/>.
     /// </summary>
     public TimeSpan? Landing =>
         Found
         ?? (
             !Finished && !Timed ? Position
             : Probe <= TimeSpan.Zero ? Probe
+            : (LandedAt ?? ScannedFrom) is null ? Position
             : null
         );
 
@@ -109,8 +113,10 @@ internal readonly record struct KeyframeSearch(TimeSpan Position, TimeSpan Probe
         if (Finished)
             return this;
 
-        // False while either is null: a packet with no decode time is read like any other.
-        if (decode >= ScannedFrom)
+        // False while either is null: a packet with no decode time is read like any other. The
+        // packet an earlier probe landed on is read again, so one sharing its decode time is not
+        // skipped.
+        if (decode > ScannedFrom)
             return this with { Landed = true, Finished = true };
 
         var landing = !Landed;
