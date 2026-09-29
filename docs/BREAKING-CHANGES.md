@@ -114,6 +114,19 @@ public IPassBuilder WithRange(TimeSpan start, TimeSpan? end)
 }
 ```
 
+### 8. `TensorShape` accepts a dimension of 0
+
+**A change in behaviour, not a compile error.**
+
+`TensorShape`'s constructors take a dimension of 0, for a tensor with no elements, such as the boxes
+of a detector that found nothing (#479). They threw `ArgumentException` for it before. A negative
+dimension still throws.
+
+**Who hits this.** Code that relied on the constructor to refuse 0, or that divides by a dimension of
+a shape it did not build. A model output ONNX Runtime allocates can now have one.
+
+**What to write instead.** Check for 0 where a dimension must be positive.
+
 ## `v0.12.0` — since `v0.11.0`
 
 ### 1. A join with a frame secondary must set `maxLead`

@@ -23,6 +23,8 @@ FrameFlow.Inference.ExecutionProvider.Cpu = 0 -> FrameFlow.Inference.ExecutionPr
 FrameFlow.Inference.ExecutionProvider.Cuda = 2 -> FrameFlow.Inference.ExecutionProvider
 FrameFlow.Inference.ExecutionProvider.DirectML = 1 -> FrameFlow.Inference.ExecutionProvider
 FrameFlow.Inference.ExecutionProvider.WindowsML = 3 -> FrameFlow.Inference.ExecutionProvider
+FrameFlow.Inference.IAllocatingSession
+FrameFlow.Inference.IAllocatingSession.RunAllocating(System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>! inputs, System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>? outputs = null) -> FrameFlow.Inference.SessionOutputs<FrameFlow.Graph.ICpuTensor!>!
 FrameFlow.Inference.IDeviceInputSession
 FrameFlow.Inference.IDeviceInputSession.CanBind(in FrameFlow.Inference.DeviceTensor tensor) -> bool
 FrameFlow.Inference.IDeviceInputSession.Run(System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Inference.DeviceTensor>! inputs, System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>! outputs) -> void

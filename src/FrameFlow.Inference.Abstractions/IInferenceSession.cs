@@ -35,7 +35,9 @@ namespace FrameFlow.Inference;
 /// allocation cost on the caller's pool (visible via pool counters)
 /// rather than hiding it inside the EP.
 /// <see cref="InferenceSessionExtensions.RentOutputs{T}"/> rents one per output
-/// from the shapes the model declares.
+/// from the shapes the model declares. An output whose shape depends on the
+/// input cannot be allocated in advance; <see cref="IAllocatingSession.RunAllocating"/>
+/// leaves it to the execution provider.
 /// </para>
 /// </remarks>
 public interface IInferenceSession : IDisposable

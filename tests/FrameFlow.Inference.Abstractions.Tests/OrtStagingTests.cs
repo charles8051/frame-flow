@@ -185,4 +185,42 @@ public sealed class OrtStagingTests
         Assert.IsNotType<long[]>(shape);
         Assert.IsType<System.Collections.ObjectModel.ReadOnlyCollection<long>>(shape);
     }
+
+    // ── MapElementType / ToTensorShape: what ORT allocated → FrameFlow (#479) ──
+
+    [Fact]
+    public void MapElementType_InvertsMapDType_ForEveryDType()
+    {
+        foreach (var dtype in Enum.GetValues<DType>())
+            Assert.Equal(dtype, OrtInferenceSessionBase.MapElementType(OrtInferenceSessionBase.MapDType(dtype)));
+    }
+
+    [Theory]
+    [InlineData(TensorElementType.String)]
+    [InlineData(TensorElementType.Complex64)]
+    [InlineData(TensorElementType.DataTypeMax)]
+    public void MapElementType_ATypeWithNoDType_IsNull(TensorElementType type) =>
+        Assert.Null(OrtInferenceSessionBase.MapElementType(type));
+
+    [Fact]
+    public void ToTensorShape_InvertsToLongShape()
+    {
+        var shape = new TensorShape(2, 0, 7);
+        Assert.Equal(shape, OrtInferenceSessionBase.ToTensorShape(OrtInferenceSessionBase.ToLongShape(shape)));
+    }
+
+    [Fact]
+    public void ToTensorShape_RankZero_IsTheDefaultShape()
+    {
+        var shape = OrtInferenceSessionBase.ToTensorShape([]);
+
+        Assert.Equal(default(TensorShape), shape);
+        Assert.Equal(1, shape!.Value.ElementCount);
+    }
+
+    [Theory]
+    [InlineData(-1L)]
+    [InlineData(int.MaxValue + 1L)]
+    public void ToTensorShape_ADimensionAnIntCannotHold_IsNull(long dim) =>
+        Assert.Null(OrtInferenceSessionBase.ToTensorShape([3, dim]));
 }

@@ -16,6 +16,7 @@ FrameFlow.Inference.OrtInferenceSessionBase.OutputNames.get -> System.Collection
 FrameFlow.Inference.OrtInferenceSessionBase.OutputShapes.get -> System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<long>!>!
 FrameFlow.Inference.OrtInferenceSessionBase.Run(FrameFlow.Graph.ICpuTensor! input, FrameFlow.Graph.ICpuTensor! output) -> void
 FrameFlow.Inference.OrtInferenceSessionBase.Run(System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>! inputs, System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>! outputs) -> void
+FrameFlow.Inference.OrtInferenceSessionBase.RunAllocating(System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>! inputs, System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>? outputs = null) -> FrameFlow.Inference.SessionOutputs<FrameFlow.Graph.ICpuTensor!>!
 FrameFlow.Inference.OrtInferenceSessionBase.RunOptions.get -> Microsoft.ML.OnnxRuntime.RunOptions!
 FrameFlow.Inference.OrtInferenceSessionBase.RunWithHostOutputs(System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>! hostInputs, System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>! outputs, System.Action<Microsoft.ML.OnnxRuntime.OrtIoBinding!>? bindDeviceInputs) -> void
 FrameFlow.Inference.OrtInferenceSessionBase.Session.get -> Microsoft.ML.OnnxRuntime.InferenceSession!

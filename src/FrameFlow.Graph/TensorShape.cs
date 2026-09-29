@@ -6,11 +6,16 @@ using System.Collections.Immutable;
 namespace FrameFlow.Graph;
 
 /// <summary>
-/// The shape of an <see cref="ITensor"/> — an ordered list of positive
+/// The shape of an <see cref="ITensor"/> — an ordered list of non-negative
 /// dimensions. Immutable and value-typed; equality is structural (two
 /// shapes with the same dimensions in the same order are equal).
 /// </summary>
 /// <remarks>
+/// <para>
+/// A dimension of 0 gives a tensor with no elements, such as the boxes of a
+/// detector that found nothing. The default value has rank 0 and one
+/// element: the shape of a scalar.
+/// </para>
 /// <para>
 /// Storage is <see cref="ImmutableArray{Int32}"/>. Hot-path access via
 /// <see cref="AsSpan"/> returns a <see cref="ReadOnlySpan{Int32}"/>
@@ -33,10 +38,10 @@ public readonly struct TensorShape : IEquatable<TensorShape>
     private readonly ImmutableArray<int> _dims;
 
     /// <summary>
-    /// Constructs a shape from a sequence of positive dimensions.
+    /// Constructs a shape from a sequence of non-negative dimensions.
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// <paramref name="dims"/> is empty or contains a non-positive value.
+    /// <paramref name="dims"/> is empty or contains a negative value.
     /// </exception>
     public TensorShape(params int[] dims)
     {
@@ -50,10 +55,10 @@ public readonly struct TensorShape : IEquatable<TensorShape>
         }
         for (int i = 0; i < dims.Length; i++)
         {
-            if (dims[i] <= 0)
+            if (dims[i] < 0)
             {
                 throw new ArgumentException(
-                    $"Dimension {i} is {dims[i]}; all dimensions must be positive.",
+                    $"Dimension {i} is {dims[i]}; all dimensions must be non-negative.",
                     nameof(dims)
                 );
             }
@@ -77,10 +82,10 @@ public readonly struct TensorShape : IEquatable<TensorShape>
         }
         for (int i = 0; i < dims.Length; i++)
         {
-            if (dims[i] <= 0)
+            if (dims[i] < 0)
             {
                 throw new ArgumentException(
-                    $"Dimension {i} is {dims[i]}; all dimensions must be positive.",
+                    $"Dimension {i} is {dims[i]}; all dimensions must be non-negative.",
                     nameof(dims)
                 );
             }

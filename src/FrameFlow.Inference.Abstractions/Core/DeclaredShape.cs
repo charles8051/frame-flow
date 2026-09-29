@@ -20,7 +20,7 @@ internal static class DeclaredShape
     /// than 1; or <paramref name="names"/> is not the length of <paramref name="declared"/>.
     /// </exception>
     /// <exception cref="NotSupportedException">
-    /// The output is a scalar, a dynamic dimension has no name, or a fixed dimension is not 1 to
+    /// The output is a scalar, a dynamic dimension has no name, or a fixed dimension is larger than
     /// <see cref="int.MaxValue"/>.
     /// </exception>
     public static TensorShape Resolve(
@@ -49,10 +49,10 @@ internal static class DeclaredShape
             {
                 dims[i] = Dynamic(output, i, names[i], dynamicSizes);
             }
-            else if (dim is 0 or > int.MaxValue)
+            else if (dim > int.MaxValue)
             {
                 throw new NotSupportedException(
-                    $"Output '{output}' dimension {i} is {dim}; a TensorShape dimension is 1 to {int.MaxValue}.");
+                    $"Output '{output}' dimension {i} is {dim}; a TensorShape dimension is at most {int.MaxValue}.");
             }
             else
             {

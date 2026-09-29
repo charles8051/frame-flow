@@ -120,7 +120,10 @@ provider's own options.
 A model run directly through `IInferenceSession.Run` writes into outputs the caller allocates.
 `session.RentOutputs<float>(pool, new Dictionary<string, int> { ["batch"] = 4 })` rents one per
 output at the shape the model declares, sizing each dynamic dimension by its name, and one `Dispose`
-returns them all.
+returns them all. A model whose output shape depends on its input, such as a detector that filters
+inside its graph, runs through `IAllocatingSession.RunAllocating`, which every ONNX Runtime session
+implements: outputs in its dictionary are written in place, and ONNX Runtime allocates the rest at
+the shape the run produced.
 
 A frame in system memory is prepared on the CPU. To keep a D3D12VA frame on the GPU, create a
 `HardwareDevice` for D3D12VA, build a `DmlInferenceSession.OnDevice` and a `D3D12ImageToTensor` on

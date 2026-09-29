@@ -24,6 +24,8 @@ public sealed class DeclaredShapeTests
         // A name on a fixed dimension does not override its size.
         { [3, -1], ["n", "batch"], [3, 4] },
         { [int.MaxValue], [""], [int.MaxValue] },
+        // A fixed dimension of 0 is an output with no elements.
+        { [0, 4], ["", ""], [0, 4] },
     };
 
     [Theory]
@@ -83,13 +85,11 @@ public sealed class DeclaredShapeTests
         Assert.Contains("dimension 1", error.Message);
     }
 
-    [Theory]
-    [InlineData(0L)]
-    [InlineData(int.MaxValue + 1L)]
-    public void AFixedDimensionATensorShapeCannotHold_IsRefused(long dim)
+    [Fact]
+    public void AFixedDimensionATensorShapeCannotHold_IsRefused()
     {
         var error = Assert.Throws<NotSupportedException>(
-            () => DeclaredShape.Resolve("y", [1, dim], ["", ""], Sizes));
+            () => DeclaredShape.Resolve("y", [1, int.MaxValue + 1L], ["", ""], Sizes));
 
         Assert.Contains("'y'", error.Message);
         Assert.Contains("dimension 1", error.Message);

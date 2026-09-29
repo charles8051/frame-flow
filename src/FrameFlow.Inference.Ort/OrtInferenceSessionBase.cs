@@ -3,6 +3,8 @@
 
 using System.Buffers;
 using System.Collections.ObjectModel;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using FrameFlow.Graph;
 using FrameFlow.Inference.Core;
 using Microsoft.ML.OnnxRuntime;
@@ -49,8 +51,11 @@ namespace FrameFlow.Inference;
 /// instance method that cannot run before <c>this</c> exists.
 /// </para>
 /// </remarks>
-public abstract class OrtInferenceSessionBase : IInferenceSession
+public abstract class OrtInferenceSessionBase : IAllocatingSession
 {
+    private static readonly IReadOnlyDictionary<string, ICpuTensor> NoOutputs =
+        new Dictionary<string, ICpuTensor>();
+
     private readonly InferenceSession _session;
     private readonly SessionOptions _sessionOptions;
     private readonly RunOptions _runOptions;
@@ -227,6 +232,51 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         Action<OrtIoBinding>? bindDeviceInputs
     )
     {
+        // CA2000: with nothing to allocate, RunBound returns null; there is nothing to dispose.
+#pragma warning disable CA2000
+        _ = RunBound(hostInputs, outputs, bindDeviceInputs, allocate: []);
+#pragma warning restore CA2000
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// ONNX Runtime allocates each output left out of <paramref name="outputs"/> in CPU memory,
+    /// copying it from the device where the execution provider ran, and the returned tensor reads
+    /// that allocation in place, with no copy of its own.
+    /// </remarks>
+    public SessionOutputs<ICpuTensor> RunAllocating(
+        IReadOnlyDictionary<string, ICpuTensor> inputs,
+        IReadOnlyDictionary<string, ICpuTensor>? outputs = null
+    )
+    {
+        using var run = BeginRun();
+        ArgumentNullException.ThrowIfNull(inputs);
+        outputs ??= NoOutputs;
+
+        ValidateNames(inputs.Keys, InputNames, "input");
+        var allocate = new List<string>(OutputNames.Count);
+        foreach (var name in OutputNames)
+        {
+            if (!outputs.ContainsKey(name))
+                allocate.Add(name);
+        }
+
+        return RunBound(inputs, outputs, bindDeviceInputs: null, allocate)
+            ?? new SessionOutputs<ICpuTensor>([]);
+    }
+
+    /// <summary>
+    /// The one run path: binds the host inputs, any device inputs, the caller's outputs and the
+    /// outputs in <paramref name="allocate"/>, runs, and returns what ORT allocated for
+    /// <paramref name="allocate"/>, or null when it is empty.
+    /// </summary>
+    private SessionOutputs<ICpuTensor>? RunBound(
+        IReadOnlyDictionary<string, ICpuTensor> hostInputs,
+        IReadOnlyDictionary<string, ICpuTensor> outputs,
+        Action<OrtIoBinding>? bindDeviceInputs,
+        IReadOnlyList<string> allocate
+    )
+    {
         RequireRun();
         ArgumentNullException.ThrowIfNull(hostInputs);
         ArgumentNullException.ThrowIfNull(outputs);
@@ -256,8 +306,11 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
                 binding.BindOutput(name, value);
             }
 #pragma warning restore CA2000
+            foreach (var name in allocate)
+                binding.BindOutputToDevice(name, CpuMemoryInfo);
 
             _session.RunWithBinding(_runOptions, binding);
+            return allocate.Count == 0 ? null : TakeAllocated(binding, allocate);
         }
         finally
         {
@@ -287,6 +340,107 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
             new Dictionary<string, ICpuTensor> { [InputNames[0]] = input },
             new Dictionary<string, ICpuTensor> { [OutputNames[0]] = output }
         );
+    }
+
+    /// <summary>
+    /// Takes the outputs ORT allocated for <paramref name="allocate"/> from a binding that has run.
+    /// </summary>
+    private static SessionOutputs<ICpuTensor> TakeAllocated(OrtIoBinding binding, IReadOnlyList<string> allocate)
+    {
+        var names = binding.GetOutputNames();
+        // CA2000: not disposed as a collection, which would release the values the tensors keep.
+        // TakeValues disposes each value or hands it to a tensor.
+#pragma warning disable CA2000
+        var values = binding.GetOutputValues();
+#pragma warning restore CA2000
+        return TakeValues(names, values, allocate, WrapAllocated);
+    }
+
+    /// <summary>
+    /// Every bound output comes back from a binding as a value of its own, in bind order. Wraps
+    /// each value named in <paramref name="allocate"/> as a tensor that owns it, and disposes the
+    /// rest, which are the caller's outputs. When anything throws, every value and tensor is
+    /// disposed before the exception leaves.
+    /// </summary>
+    /// <remarks>
+    /// Generic over the value, like <see cref="BindPinned{TValue}"/>, so the ownership can be driven
+    /// in a test with no <c>InferenceSession</c>.
+    /// </remarks>
+    internal static SessionOutputs<ICpuTensor> TakeValues<TValue>(
+        IReadOnlyList<string> names,
+        IReadOnlyList<TValue> values,
+        IReadOnlyList<string> allocate,
+        Func<string, TValue, ICpuTensor> wrap
+    )
+        where TValue : IDisposable
+    {
+        ArgumentNullException.ThrowIfNull(names);
+        ArgumentNullException.ThrowIfNull(values);
+        ArgumentNullException.ThrowIfNull(allocate);
+        ArgumentNullException.ThrowIfNull(wrap);
+
+        var wanted = new HashSet<string>(allocate, StringComparer.Ordinal);
+        var taken = new List<KeyValuePair<string, ICpuTensor>>(allocate.Count);
+        int next = 0;
+        try
+        {
+            if (names.Count != values.Count)
+            {
+                throw new InvalidOperationException(
+                    $"ONNX Runtime returned {values.Count} output values for {names.Count} bound outputs.");
+            }
+
+            // CA2000: each tensor goes to taken, which the set below or the catch disposes.
+#pragma warning disable CA2000
+            for (; next < values.Count; next++)
+            {
+                if (wanted.Contains(names[next]))
+                    taken.Add(new(names[next], wrap(names[next], values[next])));
+                else
+                    values[next].Dispose();
+            }
+#pragma warning restore CA2000
+
+            return new SessionOutputs<ICpuTensor>(taken);
+        }
+        catch
+        {
+            // The value that failed and those after it are still here; the rest went to tensors.
+            for (; next < values.Count; next++)
+                values[next].Dispose();
+            foreach (var (_, tensor) in taken)
+                tensor.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// A tensor over <paramref name="value"/>'s own CPU buffer. Takes ownership of
+    /// <paramref name="value"/> when it returns; the caller still owns it when this throws.
+    /// </summary>
+    private static OrtOutputTensor WrapAllocated(string name, OrtValue value)
+    {
+        if (!value.IsTensor)
+            throw new NotSupportedException($"Output '{name}' is a {value.OnnxType}; only tensor outputs are returned.");
+
+        var info = value.GetTensorTypeAndShape();
+        var dtype = MapElementType(info.ElementDataType)
+            ?? throw new NotSupportedException(
+                $"Output '{name}' has element type {info.ElementDataType}, which has no FrameFlow DType.");
+        var shape = ToTensorShape(info.Shape)
+            ?? throw new NotSupportedException(
+                $"Output '{name}' has shape [{string.Join(", ", info.Shape)}], which a TensorShape cannot hold.");
+        long byteCount = value.GetTensorSizeInBytes();
+        if (byteCount > int.MaxValue)
+            throw new NotSupportedException($"Output '{name}' is {byteCount} bytes; a tensor's bytes are at most {int.MaxValue}.");
+
+        nint address;
+        unsafe
+        {
+            address = (nint)Unsafe.AsPointer(ref MemoryMarshal.GetReference(value.GetTensorMutableRawData()));
+        }
+
+        return new OrtOutputTensor(value, address, (int)byteCount, dtype, shape);
     }
 
     /// <summary>
@@ -505,6 +659,53 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
                 $"DType {dtype} has no ONNX TensorElementType mapping."
             ),
         };
+
+    /// <summary>
+    /// Maps an ONNX Runtime <see cref="TensorElementType"/> to its FrameFlow <see cref="DType"/>:
+    /// the inverse of <see cref="MapDType"/>, and null for a type with no <see cref="DType"/>.
+    /// Pure; exposed <c>internal</c> for direct unit testing.
+    /// </summary>
+    internal static DType? MapElementType(TensorElementType type) =>
+        type switch
+        {
+            TensorElementType.Float => DType.Float32,
+            TensorElementType.Float16 => DType.Float16,
+            TensorElementType.BFloat16 => DType.BFloat16,
+            TensorElementType.Double => DType.Float64,
+            TensorElementType.Int8 => DType.Int8,
+            TensorElementType.UInt8 => DType.UInt8,
+            TensorElementType.Int16 => DType.Int16,
+            TensorElementType.UInt16 => DType.UInt16,
+            TensorElementType.Int32 => DType.Int32,
+            TensorElementType.UInt32 => DType.UInt32,
+            TensorElementType.Int64 => DType.Int64,
+            TensorElementType.UInt64 => DType.UInt64,
+            TensorElementType.Bool => DType.Bool,
+            _ => null,
+        };
+
+    /// <summary>
+    /// Converts the shape of a value ORT produced to a <see cref="TensorShape"/>: the inverse of
+    /// <see cref="ToLongShape"/>. Rank 0 is the default shape, and a dimension of 0 stays 0. Null
+    /// when a dimension is negative or larger than <see cref="int.MaxValue"/>. Pure; exposed
+    /// <c>internal</c> for direct unit testing.
+    /// </summary>
+    internal static TensorShape? ToTensorShape(long[] dims)
+    {
+        ArgumentNullException.ThrowIfNull(dims);
+        if (dims.Length == 0)
+            return default(TensorShape);
+
+        var shape = new int[dims.Length];
+        for (int i = 0; i < dims.Length; i++)
+        {
+            if (dims[i] is < 0 or > int.MaxValue)
+                return null;
+            shape[i] = (int)dims[i];
+        }
+
+        return new TensorShape(shape);
+    }
 
     /// <summary>
     /// Validates that every supplied input / output name is declared by
