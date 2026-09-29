@@ -24,7 +24,7 @@ namespace FrameFlow.Avalonia;
 /// overlay-on-video YouTube/Netflix layout: video fills the surface,
 /// chrome sits at the bottom over a transparent-to-dark gradient,
 /// auto-hides on pointer idle, fades back in on pointer movement.
-/// Bind <see cref="MediaPlayer"/>; handle <see cref="FileOpenRequested"/>
+/// Bind <see cref="Transport"/>; handle <see cref="FileOpenRequested"/>
 /// to wire your build pipeline.
 /// </summary>
 /// <remarks>
@@ -43,7 +43,7 @@ namespace FrameFlow.Avalonia;
 /// via <c>FrameFlowPlayer.Create().WithMedia(path).BuildPlayerAsync()</c>. When the user
 /// clicks Open (chrome's button) or drops a file (this view's
 /// drag-drop), <see cref="FileOpenRequested"/> fires with the chosen
-/// path; the consumer disposes any prior <see cref="MediaPlayer"/>,
+/// path; the consumer disposes any prior <see cref="Transport"/>,
 /// builds a new one, and assigns it.
 /// </para>
 /// <para>
@@ -53,15 +53,15 @@ namespace FrameFlow.Avalonia;
 /// </remarks>
 public sealed class FrameFlowPlayerView : UserControl
 {
-    /// <summary>The player to display + control.</summary>
-    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowPlayerView, IMediaTransport?>(nameof(MediaPlayer));
+    /// <summary>The transport to display + control.</summary>
+    public static readonly StyledProperty<IMediaTransport?> TransportProperty =
+        AvaloniaProperty.Register<FrameFlowPlayerView, IMediaTransport?>(nameof(Transport));
 
-    /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaTransport? MediaPlayer
+    /// <inheritdoc cref="TransportProperty"/>
+    public IMediaTransport? Transport
     {
-        get => GetValue(MediaPlayerProperty);
-        set => SetValue(MediaPlayerProperty, value);
+        get => GetValue(TransportProperty);
+        set => SetValue(TransportProperty, value);
     }
 
     /// <summary>Initial state of the Loop toggle. See
@@ -79,7 +79,7 @@ public sealed class FrameFlowPlayerView : UserControl
     /// <summary>
     /// Fires when the user clicks the Open button (and selects a
     /// file) or drops a file onto the control. Consumer handles
-    /// teardown of the prior <see cref="MediaPlayer"/> and assigns
+    /// teardown of the prior <see cref="Transport"/> and assigns
     /// the new one.
     /// </summary>
     public event EventHandler<FileOpenRequestedEventArgs>? FileOpenRequested;
@@ -205,10 +205,10 @@ public sealed class FrameFlowPlayerView : UserControl
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == MediaPlayerProperty)
+        if (change.Property == TransportProperty)
         {
             var p = change.GetNewValue<IMediaTransport?>();
-            _chrome.MediaPlayer = p;
+            _chrome.Transport = p;
 
             // Wire the hover-to-reveal state subscription so the
             // chrome pins visible on Paused/Idle/Error and fades on
@@ -268,7 +268,7 @@ public sealed class FrameFlowPlayerView : UserControl
     // The chrome overlay (status strip + seek bar + transport row)
     // auto-hides after a couple of seconds of pointer idle while
     // playback is active, fading back in on any pointer movement
-    // (YouTube / Netflix pattern). When the player is paused / idle
+    // (YouTube / Netflix pattern). When the transport is paused / idle
     // / errored, the chrome stays visible — those are the states
     // where the user is most likely to want to scrub or hit Play.
     // Pointer-over-chrome pins it visible so it doesn't vanish while
@@ -342,16 +342,16 @@ public sealed class FrameFlowPlayerView : UserControl
     }
 
     /// <summary>
-    /// True when the player is in a state where the chrome should
+    /// True when the transport is in a state where the chrome should
     /// fade after a beat. Paused / idle / errored states keep the
     /// chrome pinned so scrubbing remains easy.
     /// </summary>
     private bool ShouldAutoHide()
     {
-        var player = MediaPlayer;
-        if (player is null)
+        var transport = Transport;
+        if (transport is null)
             return false;
-        return player.State == PlaybackState.Playing;
+        return transport.State == PlaybackState.Playing;
     }
 
     private void OnTrackedStateChanged(PlaybackState state)
@@ -373,7 +373,7 @@ public sealed class FrameFlowPlayerView : UserControl
 /// <see cref="FrameFlowPlayerChrome.FileOpenRequested"/>. The
 /// consumer inspects <see cref="FilePath"/>, builds an
 /// <see cref="IMediaTransport"/>, and assigns it to
-/// <see cref="FrameFlowPlayerView.MediaPlayer"/>.
+/// <see cref="FrameFlowPlayerView.Transport"/>.
 /// </summary>
 public sealed class FileOpenRequestedEventArgs(string filePath) : EventArgs
 {

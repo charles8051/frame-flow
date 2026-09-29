@@ -29,15 +29,15 @@ namespace FrameFlow.Avalonia;
 /// </remarks>
 public sealed class FrameFlowPositionLabel : TextBlock
 {
-    /// <summary>The player whose position to display.</summary>
-    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowPositionLabel, IMediaTransport?>(nameof(MediaPlayer));
+    /// <summary>The transport whose position to display.</summary>
+    public static readonly StyledProperty<IMediaTransport?> TransportProperty =
+        AvaloniaProperty.Register<FrameFlowPositionLabel, IMediaTransport?>(nameof(Transport));
 
-    /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaTransport? MediaPlayer
+    /// <inheritdoc cref="TransportProperty"/>
+    public IMediaTransport? Transport
     {
-        get => GetValue(MediaPlayerProperty);
-        set => SetValue(MediaPlayerProperty, value);
+        get => GetValue(TransportProperty);
+        set => SetValue(TransportProperty, value);
     }
 
     private DispatcherTimer? _refreshTimer;
@@ -73,20 +73,20 @@ public sealed class FrameFlowPositionLabel : TextBlock
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == MediaPlayerProperty)
+        if (change.Property == TransportProperty)
             Refresh();
     }
 
     private void Refresh()
     {
-        var player = MediaPlayer;
-        if (player is null)
+        var transport = Transport;
+        if (transport is null)
         {
             Text = "--:--.--- / --:--.---";
             return;
         }
-        var duration = player.Duration;
-        var position = player.Position;
+        var duration = transport.Duration;
+        var position = transport.Position;
         Text = $"{Format(position)} / {Format(duration)}";
     }
 

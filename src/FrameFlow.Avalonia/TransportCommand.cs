@@ -13,9 +13,9 @@ namespace FrameFlow.Avalonia;
 /// <remarks>
 /// <para>
 /// The chrome has no error surface of its own — a transport bar shows the
-/// state the player reports, and a refused command simply leaves the buttons
+/// state the transport reports, and a refused command simply leaves the buttons
 /// where the state observable put them. That is the right visible outcome, but
-/// it used to be the <i>only</i> outcome: every call site wrapped the player in
+/// it used to be the <i>only</i> outcome: every call site wrapped the transport in
 /// a bare <c>catch { }</c>, which discarded the refusal and any bug in the
 /// chrome along with it.
 /// </para>
@@ -32,7 +32,7 @@ namespace FrameFlow.Avalonia;
 /// escaping exception takes the process down rather than reaching a caller.
 /// </para>
 /// </remarks>
-internal static class PlayerCommand
+internal static class TransportCommand
 {
     /// <summary>
     /// Start <paramref name="command"/> and report its outcome. Returns
