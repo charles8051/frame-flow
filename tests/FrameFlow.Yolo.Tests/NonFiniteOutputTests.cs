@@ -47,6 +47,31 @@ public sealed class NonFiniteOutputTests
     }
 
     [Theory]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void AnInfiniteScore_NeverWins(float infinity)
+    {
+        var output = Boxes();
+        int a = Descriptor.AnchorCount;
+        output[4 * a] = infinity;
+        output[5 * a] = 0.8f;
+
+        var detection = Assert.Single(new Yolov8Postprocessor(Descriptor).Decode(output, 1f, 1f));
+
+        Assert.Equal(1, detection.ClassId);
+        Assert.Equal(0.8f, detection.Confidence);
+    }
+
+    [Fact]
+    public void OnlyInfiniteScores_DecodeToNothing()
+    {
+        var output = Boxes();
+        output.AsSpan(4 * Descriptor.AnchorCount).Fill(float.PositiveInfinity);
+
+        Assert.Empty(new Yolov8Postprocessor(Descriptor).Decode(output, 1f, 1f));
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(2)]
     public void AFiniteScore_WithANaNBox_IsDropped(int boxChannel)

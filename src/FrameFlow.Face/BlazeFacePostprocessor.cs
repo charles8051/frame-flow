@@ -105,7 +105,10 @@ public sealed class BlazeFacePostprocessor
         var candidates = new List<FaceDetection>(capacity: 64);
         for (int i = 0; i < n; i++)
         {
-            // Written so a NaN score, which compares false with everything, is dropped (#498).
+            // A raw score that is not a finite number is dropped before the clip, which would
+            // turn an infinity into a confident face (#498).
+            if (!float.IsFinite(scores[i]))
+                continue;
             float score = Sigmoid(Clip(scores[i], ScoreClipThreshold));
             if (!(score >= MinScore))
                 continue;

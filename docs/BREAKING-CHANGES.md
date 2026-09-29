@@ -134,10 +134,12 @@ a shape it did not build. A model output ONNX Runtime allocates can now have one
 `Yolov8Detector.Create` and `BlazeFaceDetector.Create` run the model once on a blank input as they
 always did, and now throw `InvalidOperationException` when its output holds a NaN or an infinity
 (#498). The message names the session type. Decoding also drops any candidate whose score, box or
-keypoint is not a finite number; those used to come back as detections with a NaN confidence.
+keypoint is not a finite number; those used to come back as detections with a NaN or infinite
+confidence.
 
-**Who hits this.** A model that overflows on the chosen provider, typically one with fp16 inside. It
-used to load and then report NaN detections, or none, on every frame.
+**Who hits this.** A model that overflows on the chosen provider, typically one with fp16 inside,
+already on a blank frame. It used to load and then report detections with a NaN confidence wherever
+it overflowed.
 
 **What to write instead.** Open the model on another provider, or use an fp32 export.
 

@@ -22,6 +22,19 @@ public sealed class NonFiniteOutputTests
     }
 
     [Theory]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void AnInfiniteScore_IsNotAFace_WhateverTheMinimum(float infinity)
+    {
+        // Every other anchor is NaN, which is dropped, so only anchor 0 can pass a minimum of 0.
+        var scores = new float[D.ScoreElementCount];
+        Array.Fill(scores, float.NaN);
+        scores[0] = infinity;
+
+        Assert.Empty(new BlazeFacePostprocessor(D) { MinScore = 0f }.Decode(Boxes(), scores, Roi));
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(2)]
     [InlineData(4)]

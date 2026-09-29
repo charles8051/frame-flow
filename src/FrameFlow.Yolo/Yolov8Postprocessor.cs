@@ -137,8 +137,8 @@ public sealed class Yolov8Postprocessor
         // allow-listed classes (_classesToScan); unfiltered, that's every
         // class and the result is identical to a full scan.
         //
-        // A NaN never wins: the scan starts below every number and replaces
-        // only on a greater one, so an anchor whose scores are all NaN keeps
+        // Only a finite score can win: the scan starts below every number and
+        // skips a NaN or an infinity, so an anchor with no finite score keeps
         // negative infinity and the gate drops it (#498).
         var classes = _classesToScan;
         var candidates = new List<Detection>(capacity: 256);
@@ -150,7 +150,7 @@ public sealed class Yolov8Postprocessor
             {
                 int c = classes[i];
                 float score = modelOutput[(4 + c) * anchorCount + anchor];
-                if (score > bestScore)
+                if (score > bestScore && float.IsFinite(score))
                 {
                     bestScore = score;
                     bestClass = c;
