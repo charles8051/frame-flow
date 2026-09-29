@@ -13,7 +13,17 @@ errors, which announce themselves. A few are not, and those are called out.
 
 ## Unreleased — since `v0.12.0`
 
-### 1. `Yolov8Detector.Create` and `CreateAsync` take a thresholds parameter
+### 1. A literal `null` logger to `DmlInferenceSession` is ambiguous
+
+**A compile error (CS0121).**
+
+`DmlInferenceSession` has constructors and `OnDevice` overloads that take a
+`DmlInferenceSessionOptions` in the position the logger had (#472). A call that passes a bare `null`
+there, such as `new DmlInferenceSession(path, null)`, now matches both.
+
+**What to write instead.** Drop the argument, or name it: `new DmlInferenceSession(path, logger: null)`.
+
+### 2. `Yolov8Detector.Create` and `CreateAsync` take a thresholds parameter
 
 **A binary break, not a compile error.** Source that calls them compiles unchanged.
 
