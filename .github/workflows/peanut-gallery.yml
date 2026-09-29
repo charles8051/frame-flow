@@ -13,6 +13,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  statuses: write   # the peanut-gallery commit status (commit-status below)
 
 # cancel-in-progress: false (with an action-side stale-run skip) — serialize
 # review runs in the group instead of killing the older
@@ -65,7 +66,7 @@ jobs:
     # What it was: `comment.user.type != 'Bot'` plus "is this a PR comment".
     # Both are satisfied by any GitHub account on earth. On a public repo that
     # means a drive-by commenter starts a job on the maintainer's own hardware,
-    # holding OPENROUTER_API_KEY and pull-requests: write. The action refuses
+    # holding OPENROUTER_API_KEY, pull-requests: write and statuses: write. The action refuses
     # untrusted callers internally, but the job has already been scheduled,
     # checked out, and handed the secrets by then - refusal is not the same as
     # never running.
@@ -104,7 +105,7 @@ jobs:
           persist-credentials: false
       # Pinned to a commit, not a branch. This is the one step that runs
       # third-party code on a self-hosted runner while holding a provider API
-      # key and pull-requests: write, so a mutable ref means whoever can push
+      # key, pull-requests: write and statuses: write, so a mutable ref means whoever can push
       # to that repository's main executes here on the next PR event, across
       # every open PR, with no diff in this repo to review.
       #
@@ -113,12 +114,17 @@ jobs:
       # lines explaining why :main is unacceptable for a job with a read-only
       # token. This job's blast radius is strictly wider.
       #
-      # Pinned at v0.1.1. main is three commits ahead and all three are
-      # docs-only (#49, #50, #51), so this pins a released, reviewed version
-      # without losing behaviour. To move it: pick a tag, resolve it with
+      # Pinned at v0.1.2, the first release with the commit-status gate. To move
+      # it: pick a tag, resolve it with
       # `gh api repos/charles8051/peanut-gallery/tags`, and paste both here.
-      - uses: charles8051/peanut-gallery@aa1f3845086e0400b5d64070b876a45444207bad # v0.1.1
+      - uses: charles8051/peanut-gallery@e4ca3862a3954519409142840080f9e62c31cbfa # v0.1.2
         with:
           config: .github/peanut-gallery.json   # seed: bug-hunter + general; orchestrator adds diff-specific reviewers
           pr-number: ${{ github.event.pull_request.number || github.event.issue.number }}
           openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          # Posts a `peanut-gallery` commit status on the PR head: pending while the panel
+          # reviews, success only when it reports the head with no findings. Make it a
+          # required check to hold auto-merge. The concurrency group above keeps an older
+          # run from overwriting a newer run's status. A fork PR never gets one (its token is
+          # read-only), so with the status required it merges by admin bypass.
+          commit-status: true
