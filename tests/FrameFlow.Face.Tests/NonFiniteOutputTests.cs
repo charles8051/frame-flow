@@ -50,6 +50,21 @@ public sealed class NonFiniteOutputTests
     }
 
     [Fact]
+    public void AFaceWhoseCornersAreFinite_ButTooFarApartForAFloat_IsDropped()
+    {
+        // A 1.2-unit box through a transform scaling by 3.3e38 puts its corners at about -1.9e38 and
+        // 2.1e38: each finite, their difference past float.MaxValue.
+        var boxes = new float[D.BoxElementCount];
+        boxes[2] = 128f * 1.2f;
+        boxes[3] = 128f * 1.2f;
+        var scores = Scores();
+        scores[0] = 100f;
+        var transform = new TensorTransform(System.Numerics.Matrix3x2.CreateScale(3.3e38f));
+
+        Assert.Empty(new BlazeFacePostprocessor(D).Decode(boxes, scores, transform));
+    }
+
+    [Fact]
     public void TheSameFace_WithNumbers_IsKept()
     {
         var scores = Scores();
