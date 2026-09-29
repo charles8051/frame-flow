@@ -289,6 +289,16 @@ land.
   a surface whose remarks already run to five paragraphs, and a duplication the types do not
   enforce, bounded by the interface fold [ADR-0077](ADR-0077-one-player-type.md) decision 2 already
   defers.
+- [Generative models on video, through a caller-owned chat client](generative-model-operators.md) —
+  a vision-language model takes seconds, takes an encoded image and returns text of unknown length,
+  so it does not fit `IInferenceSession`, which stays unchanged. Proposes a `Describe` operator over
+  a caller-owned `IChatClient`, with the model outside the player's process and no model host in
+  FrameFlow. A snapshot node reads back and encodes a frame only when the generate node asks for
+  one; the frame prompt is a pure per-model-family value whose decode is total; a pure core sets the
+  cadence and the backoff; failures are results. Promotes
+  [the GenAI exploration](../explorations/generative-inference.md), which holds the evidence. Waits
+  on #489 and on two graph changes it names for their own records: an abandonable node, so end of
+  stream does not wait on a generation, and a demand edge.
 
 ## Recently numbered
 
