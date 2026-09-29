@@ -135,6 +135,32 @@ public interface IPassBuilder
     IPassBuilder WithDecodeDiscard(DecodeDiscardLevel level);
 
     /// <summary>
+    /// Bounds the pass to the source from <paramref name="start"/>, inclusive, to
+    /// <paramref name="end"/>, exclusive, in media time. A null <paramref name="end"/> runs to
+    /// the end of the source. Replaces any previously-set range.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The pass seeks to a keyframe at or before <paramref name="start"/> and decodes from there,
+    /// delivering nothing before <paramref name="start"/>, so the first frame delivered is the
+    /// first at or after it. It stops reading once every stream it decodes reaches
+    /// <paramref name="end"/>. A frame at exactly <paramref name="end"/> is not delivered, so
+    /// ranges that share an endpoint split a source without overlap. A range that starts past
+    /// the end of the source delivers nothing.
+    /// </para>
+    /// <para>
+    /// An audio buffer is delivered whole when its presentation time is in the range; audio is
+    /// not trimmed to it. With <see cref="WithDecodeDiscard"/>, the pass delivers the frames the
+    /// decoder keeps that fall in the range, so with
+    /// <see cref="DecodeDiscardLevel.KeyframesOnly"/> it delivers the keyframes in it.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="start"/> is negative, or <paramref name="end"/> is not after it.
+    /// </exception>
+    IPassBuilder WithRange(TimeSpan start, TimeSpan? end);
+
+    /// <summary>
     /// Supplies the <see cref="ILoggerFactory"/> the pass should use. When unset, logging is
     /// silent. A <see langword="null"/> factory is a no-op, so an optional logging step stays
     /// inside the chain instead of forcing the caller out to a local.

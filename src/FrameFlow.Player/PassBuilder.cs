@@ -7,6 +7,7 @@ using FrameFlow.Media;
 using FrameFlow.Native;
 using FrameFlow.Playback;
 using FrameFlow.Playback.Core;
+using FrameFlow.Player.Core;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -38,6 +39,7 @@ internal sealed class PassBuilder : IPassBuilder
     private VideoDecoderOptions? _videoDecoderOptions;
     private HardwareDevice? _hardwareDevice;
     private DecodeDiscardLevel _discardLevel = DecodeDiscardLevel.None;
+    private PassRange _range = PassRange.Whole;
     private AudioDecoderOptions? _audioDecoderOptions;
     private IPlaybackClock? _clock;
 
@@ -99,6 +101,15 @@ internal sealed class PassBuilder : IPassBuilder
         if (!Enum.IsDefined(level))
             throw new ArgumentOutOfRangeException(nameof(level), level, "Not a DecodeDiscardLevel.");
         _discardLevel = level;
+        return this;
+    }
+
+    public IPassBuilder WithRange(TimeSpan start, TimeSpan? end)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(start, TimeSpan.Zero);
+        if (end is { } until && until <= start)
+            throw new ArgumentOutOfRangeException(nameof(end), end, "The end of a range must be after its start.");
+        _range = new PassRange(start, end);
         return this;
     }
 
@@ -351,12 +362,33 @@ internal sealed class PassBuilder : IPassBuilder
                     concreteDemux.DiscardStream(stream.StreamIndex);
             }
 
+            // A range positions the source so that decoding reaches a keyframe at or before its
+            // start, and the pump stops reading at its end. The frames outside it are the pass's
+            // to drop (#483). Every audio packet decodes on its own, so audio alone needs only
+            // the seek.
+            if (_range.SeekTo is { } start)
+            {
+                if (videoDecoder is not null)
+                {
+                    await concreteDemux
+                        .SeekToKeyframeAsync(start, demux.MediaInfo.VideoStreams[0].StreamIndex, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    await demux.SeekAsync(start, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
             var pipeline = new DecodingPipeline(
                 concreteDemux,
                 videoDecoder,
                 audioDecoder,
                 _loggerFactory.CreateLogger<DecodingPipeline>()
-            );
+            )
+            {
+                ReadUntil = _range.End,
+            };
 
             // Hand ownership to MediaPass; suppress outer dispose.
             var session = new MediaPass(
@@ -369,7 +401,8 @@ internal sealed class PassBuilder : IPassBuilder
                 _videoConfigurator,
                 _audioConfigurator,
                 _loggerFactory.CreateLogger<MediaPass>(),
-                _clock
+                _clock,
+                _range
             );
             demux = null;
             videoDecoder = null;

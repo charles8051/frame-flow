@@ -4,6 +4,7 @@
 using FrameFlow.Media;
 using FrameFlow.Decoding;
 using FrameFlow.Playback;
+using FrameFlow.Player.Core;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using FrameFlow.Graph;
@@ -49,6 +50,7 @@ public sealed class MediaPass : IAsyncDisposable
     private readonly Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? _videoConfigurator;
     private readonly Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? _audioConfigurator;
     private readonly ILogger _logger;
+    private readonly PassRange _range;
 
     private int _started;
     private bool _disposed;
@@ -75,10 +77,12 @@ public sealed class MediaPass : IAsyncDisposable
         Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? videoConfigurator,
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator,
         ILogger? logger = null,
-        IPlaybackClock? clock = null
+        IPlaybackClock? clock = null,
+        PassRange range = default
     )
     {
         Clock = clock;
+        _range = range;
         _demux = demux ?? throw new ArgumentNullException(nameof(demux));
         _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
         _videoDecoder = videoDecoder;
@@ -156,11 +160,17 @@ public sealed class MediaPass : IAsyncDisposable
         var graph = new Graph.Graph();
 
         if (hasVideo)
-            WireVideo(graph, _videoDecoder!.AsSourceNode("video-source"), _videoConfigurator, _videoSink!);
+        {
+            var source = Within(_videoDecoder!.AsSourceNode("video-source"), static frame => frame.Pts);
+            WireVideo(graph, source, _videoConfigurator, _videoSink!);
+        }
 
         if (hasAudio)
         {
-            var source = _audioDecoder!.AsSourceNode("audio-source");
+            var source = Within(
+                _audioDecoder!.AsSourceNode("audio-source"),
+                static buffer => buffer.PresentationTime
+            );
             var chain = graph.Pipeline(source);
             if (_audioConfigurator is not null)
                 chain = _audioConfigurator(chain);
@@ -240,6 +250,37 @@ public sealed class MediaPass : IAsyncDisposable
             }
             throw;
         }
+    }
+
+    /// <summary>
+    /// <paramref name="source"/>, delivering only what the pass's range does (#483). An item
+    /// outside it is released as soon as it is decoded, and the source reads on. The whole
+    /// source is returned as it is.
+    /// </summary>
+    private SourceNode<T> Within<T>(SourceNode<T> source, Func<T, TimeSpan> timestamp)
+        where T : class, IRefCounted
+    {
+        if (_range.IsWhole)
+            return source;
+
+        var range = _range;
+        return new SourceNode<T>(
+            source.Id,
+            async ct =>
+            {
+                while (await source.Body(ct).ConfigureAwait(false) is { } item)
+                {
+                    if (range.Delivers(timestamp(item)))
+                        return item;
+                    item.Dispose();
+                }
+                return null;
+            },
+            source.OnError,
+            source.Cleanup,
+            source.OnBudget,
+            source.Emits
+        );
     }
 
     /// <summary>

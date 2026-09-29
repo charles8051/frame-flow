@@ -182,6 +182,59 @@ public sealed class DemuxSession : IDemuxSession
     }
 
     /// <summary>
+    /// Seeks so that decoding the stream at <paramref name="streamIndex"/> from where the session
+    /// lands reaches a keyframe at or before <paramref name="position"/> (#483).
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SeekAsync"/> alone does not, on a container that seeks by timestamp: on MPEG-TS
+    /// it lands on the packet nearest the position whether or not it is a keyframe. This probes
+    /// instead, reading the stream's packets after each seek, and <see cref="KeyframeSearch"/>
+    /// decides where the next probe goes and where the last seek lands. On a container that
+    /// seeks to keyframes the first probe lands on one. The packets a probe reads are read
+    /// again after the last seek.
+    /// </remarks>
+    internal async ValueTask SeekToKeyframeAsync(
+        TimeSpan position,
+        int streamIndex,
+        CancellationToken cancellationToken = default
+    )
+    {
+        for (var search = KeyframeSearch.For(position); ; )
+        {
+            await SeekAsync(search.Probe, cancellationToken).ConfigureAwait(false);
+
+            TimeSpan? seekTo = null;
+            var landing = true;
+            while (await ReadPacketAsync(cancellationToken).ConfigureAwait(false) is { } packet)
+            {
+                if (packet.StreamIndex != streamIndex)
+                    continue;
+
+                var scan = search.Scan(packet.IsKeyFrame, packet.HasPts ? packet.Pts : null);
+                if (scan == KeyframeScan.Passed)
+                    break;
+                if (scan == KeyframeScan.Found)
+                    seekTo = search.SeekFor(landing, packet.HasDts ? packet.Dts : null);
+                landing = false;
+            }
+
+            if (seekTo is { } target)
+            {
+                await SeekAsync(target, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (search.Back() is not { } back)
+            {
+                // No keyframe at or before the position from the source's start: decode from there.
+                await SeekAsync(search.Probe, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            search = back;
+        }
+    }
+
+    /// <summary>
     /// Marks the stream at <paramref name="streamIndex"/> for full discard at the
     /// demuxer (FFmpeg <c>AVDISCARD_ALL</c>) so <c>av_read_frame</c> skips its
     /// packets (ADR-0059).
