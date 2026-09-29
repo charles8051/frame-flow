@@ -1,6 +1,8 @@
 # Exploration: generative models through ONNX Runtime GenAI
 
-**Status:** Exploration. Nothing here is decided.
+**Status:** Exploration. Its proposals are decided or left open in
+[Generative models on video, through a caller-owned chat client](../adr/generative-model-operators.md).
+This document keeps the evidence.
 
 **Date:** 2026-09-29
 
