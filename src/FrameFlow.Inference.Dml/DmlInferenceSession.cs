@@ -34,6 +34,11 @@ namespace FrameFlow.Inference.Dml;
 /// the caller passes, which selects its adapter.
 /// </para>
 /// <para>
+/// <b>Free dimensions.</b> <see cref="DmlInferenceSessionOptions.FreeDimensions"/> fixes a model's
+/// named dynamic dimensions when it loads. DirectML runs a pinned shape faster, and compiles it
+/// faster on the first run (#472).
+/// </para>
+/// <para>
 /// <b>Device inputs.</b> A session built with <see cref="OnDevice(string, nint, nint, ILogger{DmlInferenceSession}?)"/>
 /// runs DirectML on the caller's <c>ID3D12Device</c> and <c>ID3D12CommandQueue</c>, and
 /// <see cref="Run(IReadOnlyDictionary{string, DeviceTensor}, IReadOnlyDictionary{string, ICpuTensor})"/>
@@ -68,51 +73,79 @@ namespace FrameFlow.Inference.Dml;
 /// before re-opening this — the analysis is done and the answer is no.
 /// </para>
 /// </remarks>
-public sealed class DmlInferenceSession : OrtInferenceSessionBase, IDeviceInputSession
+public sealed partial class DmlInferenceSession : OrtInferenceSessionBase, IDeviceInputSession
 {
     private readonly DeviceBinding? _device;
 
     /// <summary>Loads a model from <paramref name="modelPath"/> and configures the DirectML EP.</summary>
     public DmlInferenceSession(string modelPath)
-        : this(modelPath, logger: null) { }
+        : this(modelPath, DefaultOptions, logger: null) { }
 
     /// <inheritdoc cref="DmlInferenceSession(string)" />
+    public DmlInferenceSession(string modelPath, ILogger<DmlInferenceSession>? logger)
+        : this(modelPath, DefaultOptions, logger) { }
+
+    /// <summary>
+    /// Loads a model from <paramref name="modelPath"/> as <paramref name="options"/> says and
+    /// configures the DirectML EP.
+    /// </summary>
+    public DmlInferenceSession(string modelPath, DmlInferenceSessionOptions options)
+        : this(modelPath, options, logger: null) { }
+
+    /// <inheritdoc cref="DmlInferenceSession(string, DmlInferenceSessionOptions)" />
     // CA2000: the SessionOptions built here is owned by the base, which
     // disposes it in OrtInferenceSessionBase.Dispose(). The analyzer
     // can't see the ownership handoff across the base initializer.
 #pragma warning disable CA2000
-    public DmlInferenceSession(string modelPath, ILogger<DmlInferenceSession>? logger)
-        : base(modelPath, BuildSessionOptions(static options => options.AppendExecutionProvider_DML()))
+    public DmlInferenceSession(
+        string modelPath, DmlInferenceSessionOptions options, ILogger<DmlInferenceSession>? logger)
+        : base(modelPath, BuildSessionOptions(options, static o => o.AppendExecutionProvider_DML()))
     {
-        _ = logger;   // reserved for future DML adapter / fallback logging
+        LogFreeDimensionsLeft(options, logger);
     }
 #pragma warning restore CA2000
 
     /// <summary>Loads a model from <paramref name="modelBytes"/> and configures the DirectML EP.</summary>
     public DmlInferenceSession(byte[] modelBytes)
-        : this(modelBytes, logger: null) { }
+        : this(modelBytes, DefaultOptions, logger: null) { }
 
     /// <inheritdoc cref="DmlInferenceSession(byte[])" />
+    public DmlInferenceSession(byte[] modelBytes, ILogger<DmlInferenceSession>? logger)
+        : this(modelBytes, DefaultOptions, logger) { }
+
+    /// <summary>
+    /// Loads a model from <paramref name="modelBytes"/> as <paramref name="options"/> says and
+    /// configures the DirectML EP.
+    /// </summary>
+    public DmlInferenceSession(byte[] modelBytes, DmlInferenceSessionOptions options)
+        : this(modelBytes, options, logger: null) { }
+
+    /// <inheritdoc cref="DmlInferenceSession(byte[], DmlInferenceSessionOptions)" />
     // CA2000: see the string-path overload above — the base owns and
     // disposes the SessionOptions.
 #pragma warning disable CA2000
-    public DmlInferenceSession(byte[] modelBytes, ILogger<DmlInferenceSession>? logger)
-        : base(modelBytes, BuildSessionOptions(static options => options.AppendExecutionProvider_DML()))
+    public DmlInferenceSession(
+        byte[] modelBytes, DmlInferenceSessionOptions options, ILogger<DmlInferenceSession>? logger)
+        : base(modelBytes, BuildSessionOptions(options, static o => o.AppendExecutionProvider_DML()))
     {
-        _ = logger;
+        LogFreeDimensionsLeft(options, logger);
     }
 #pragma warning restore CA2000
 
-    private DmlInferenceSession(string modelPath, DeviceBinding device)
+    private DmlInferenceSession(
+        string modelPath, DeviceBinding device, DmlInferenceSessionOptions options, ILogger<DmlInferenceSession>? logger)
         : base(modelPath, device.Options)
     {
         _device = device;
+        LogFreeDimensionsLeft(options, logger);
     }
 
-    private DmlInferenceSession(byte[] modelBytes, DeviceBinding device)
+    private DmlInferenceSession(
+        byte[] modelBytes, DeviceBinding device, DmlInferenceSessionOptions options, ILogger<DmlInferenceSession>? logger)
         : base(modelBytes, device.Options)
     {
         _device = device;
+        LogFreeDimensionsLeft(options, logger);
     }
 
     /// <summary>
@@ -123,16 +156,39 @@ public sealed class DmlInferenceSession : OrtInferenceSessionBase, IDeviceInputS
     /// <param name="modelPath">The model file.</param>
     /// <param name="device">An <c>ID3D12Device*</c>. The session holds no reference to it beyond DirectML's own.</param>
     /// <param name="commandQueue">An <c>ID3D12CommandQueue*</c> of type compute or direct on <paramref name="device"/>.</param>
-    /// <param name="logger">Reserved.</param>
+    /// <param name="logger">Unused without options.</param>
     public static DmlInferenceSession OnDevice(
-        string modelPath, nint device, nint commandQueue, ILogger<DmlInferenceSession>? logger = null)
+        string modelPath, nint device, nint commandQueue, ILogger<DmlInferenceSession>? logger = null) =>
+        OnDevice(modelPath, device, commandQueue, DefaultOptions, logger);
+
+    /// <inheritdoc cref="OnDevice(string, nint, nint, ILogger{DmlInferenceSession}?)" />
+    /// <param name="modelBytes">The model.</param>
+    /// <param name="device">An <c>ID3D12Device*</c>. The session holds no reference to it beyond DirectML's own.</param>
+    /// <param name="commandQueue">An <c>ID3D12CommandQueue*</c> of type compute or direct on <paramref name="device"/>.</param>
+    /// <param name="logger">Unused without options.</param>
+    public static DmlInferenceSession OnDevice(
+        byte[] modelBytes, nint device, nint commandQueue, ILogger<DmlInferenceSession>? logger = null) =>
+        OnDevice(modelBytes, device, commandQueue, DefaultOptions, logger);
+
+    /// <inheritdoc cref="OnDevice(string, nint, nint, ILogger{DmlInferenceSession}?)" />
+    /// <param name="modelPath">The model file.</param>
+    /// <param name="device">An <c>ID3D12Device*</c>. The session holds no reference to it beyond DirectML's own.</param>
+    /// <param name="commandQueue">An <c>ID3D12CommandQueue*</c> of type compute or direct on <paramref name="device"/>.</param>
+    /// <param name="options">How the model loads.</param>
+    /// <param name="logger">Where the session reports input dimensions left free after loading.</param>
+    public static DmlInferenceSession OnDevice(
+        string modelPath,
+        nint device,
+        nint commandQueue,
+        DmlInferenceSessionOptions options,
+        ILogger<DmlInferenceSession>? logger = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(modelPath);
-        _ = logger;
-        var binding = DeviceBinding.Create(device, commandQueue);
+        ArgumentNullException.ThrowIfNull(options);
+        var binding = DeviceBinding.Create(device, commandQueue, options);
         try
         {
-            return new DmlInferenceSession(modelPath, binding);
+            return new DmlInferenceSession(modelPath, binding, options, logger);
         }
         catch
         {
@@ -145,16 +201,21 @@ public sealed class DmlInferenceSession : OrtInferenceSessionBase, IDeviceInputS
     /// <param name="modelBytes">The model.</param>
     /// <param name="device">An <c>ID3D12Device*</c>. The session holds no reference to it beyond DirectML's own.</param>
     /// <param name="commandQueue">An <c>ID3D12CommandQueue*</c> of type compute or direct on <paramref name="device"/>.</param>
-    /// <param name="logger">Reserved.</param>
+    /// <param name="options">How the model loads.</param>
+    /// <param name="logger">Where the session reports input dimensions left free after loading.</param>
     public static DmlInferenceSession OnDevice(
-        byte[] modelBytes, nint device, nint commandQueue, ILogger<DmlInferenceSession>? logger = null)
+        byte[] modelBytes,
+        nint device,
+        nint commandQueue,
+        DmlInferenceSessionOptions options,
+        ILogger<DmlInferenceSession>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(modelBytes);
-        _ = logger;
-        var binding = DeviceBinding.Create(device, commandQueue);
+        ArgumentNullException.ThrowIfNull(options);
+        var binding = DeviceBinding.Create(device, commandQueue, options);
         try
         {
-            return new DmlInferenceSession(modelBytes, binding);
+            return new DmlInferenceSession(modelBytes, binding, options, logger);
         }
         catch
         {
@@ -260,14 +321,50 @@ public sealed class DmlInferenceSession : OrtInferenceSessionBase, IDeviceInputS
         throw new ArgumentException($"The model has no input '{name}'.", nameof(name));
     }
 
+    /// <summary>
+    /// Reports each input dimension the overrides left free. A misspelt name leaves its dimension
+    /// free and changes nothing else, so this is where it shows.
+    /// </summary>
+    private void LogFreeDimensionsLeft(DmlInferenceSessionOptions options, ILogger<DmlInferenceSession>? logger)
+    {
+        if (logger is null || options.FreeDimensions.Count == 0)
+            return;
+
+        for (int i = 0; i < InputNames.Count; i++)
+        {
+            var names = Session.InputMetadata[InputNames[i]].SymbolicDimensions;
+            var free = new List<string>();
+            for (int d = 0; d < InputShapes[i].Count; d++)
+            {
+                if (InputShapes[i][d] < 0)
+                    free.Add(d < names.Length && names[d].Length > 0 ? names[d] : $"#{d}");
+            }
+
+            if (free.Count > 0)
+            {
+                LogFreeDimensionsLeft(
+                    logger, InputNames[i], string.Join(", ", free), string.Join(", ", options.FreeDimensions.Keys));
+            }
+        }
+    }
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Input '{Input}' still has free dimensions [{Free}] after the overrides [{Overrides}]. An override whose name the model does not use is ignored.")]
+    private static partial void LogFreeDimensionsLeft(ILogger logger, string input, string free, string overrides);
+
     /// <inheritdoc />
     protected override void DisposeProviderResources() => _device?.Release(disposeOptions: false);
 
     private static readonly IReadOnlyDictionary<string, ICpuTensor> NoHostInputs =
         new Dictionary<string, ICpuTensor>();
 
-    private static SessionOptions BuildSessionOptions(Action<SessionOptions> appendProvider)
+    private static readonly DmlInferenceSessionOptions DefaultOptions = new();
+
+    private static SessionOptions BuildSessionOptions(
+        DmlInferenceSessionOptions sessionOptions, Action<SessionOptions> appendProvider)
     {
+        ArgumentNullException.ThrowIfNull(sessionOptions);
         var options = new SessionOptions();
         try
         {
@@ -276,6 +373,8 @@ public sealed class DmlInferenceSession : OrtInferenceSessionBase, IDeviceInputS
             // their canonical shape before DML rewrites.
             options.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC;
             options.EnableMemoryPattern = false;   // required by DML EP
+            foreach (var (name, size) in sessionOptions.FreeDimensions)
+                options.AddFreeDimensionOverrideByName(name, size);
             appendProvider(options);
             return options;
         }
@@ -312,7 +411,7 @@ public sealed class DmlInferenceSession : OrtInferenceSessionBase, IDeviceInputS
 
         public OrtMemoryInfo Memory { get; }
 
-        public static DeviceBinding Create(nint device, nint commandQueue)
+        public static DeviceBinding Create(nint device, nint commandQueue, DmlInferenceSessionOptions sessionOptions)
         {
             if (device == 0)
                 throw new ArgumentNullException(nameof(device));
@@ -328,7 +427,7 @@ public sealed class DmlInferenceSession : OrtInferenceSessionBase, IDeviceInputS
             OrtMemoryInfo? memory = null;
             try
             {
-                options = BuildSessionOptions(o => OrtDmlApi.AppendDirectML(o, dmlDevice, commandQueue));
+                options = BuildSessionOptions(sessionOptions, o => OrtDmlApi.AppendDirectML(o, dmlDevice, commandQueue));
                 memory = new OrtMemoryInfo("DML", OrtAllocatorType.DeviceAllocator, 0, OrtMemType.Default);
                 Marshal.AddRef(commandQueue);
                 return new DeviceBinding(options, commandQueue, dmlDevice, identity, memory);
