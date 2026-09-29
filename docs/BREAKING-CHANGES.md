@@ -127,6 +127,28 @@ a shape it did not build. A model output ONNX Runtime allocates can now have one
 
 **What to write instead.** Check for 0 where a dimension must be positive.
 
+### 9. The inference factory throws when a provider runs out of memory
+
+**A change in behaviour, not a compile error.**
+
+`IInferenceSessionFactory.Open` reads why a provider failed to open a model (#497). When the provider
+ran out of memory, `Open` throws `ProviderOutOfMemoryException`, naming the provider and the model,
+with the provider's exception inside. It no longer opens the model on the next provider, and the
+cached provider does not change, so the next model opens where the last one did. The factory used to
+fall back and cache the provider that opened, which sent every later model in the process to CPU.
+
+The cache also moves less. Only a lost GPU device or an unavailable provider (a missing library,
+entry point or adapter) caches the provider that opens after it. After any other failure, such as an
+error ONNX Runtime raises for this model alone, the model still opens further down the chain but the
+cached provider stays, and `ActiveProvider` stays `null` if nothing was cached yet.
+
+**Who hits this.** Code that relied on a model too large for the GPU opening on CPU instead, and code
+that read `ActiveProvider` after a fallback past a failure the factory does not recognise.
+
+**What to write instead.** Catch `ProviderOutOfMemoryException` and decide: free memory and open
+again, open a smaller model, or open with a factory that prefers CPU. It derives from
+`InvalidOperationException`, so a catch of that still catches it.
+
 ## `v0.12.0` — since `v0.11.0`
 
 ### 1. A join with a frame secondary must set `maxLead`
