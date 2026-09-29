@@ -56,14 +56,18 @@ until the process restarts. Running in process would buy GPU-resident input, whi
 Out of process, the model has its own runtime, device and failure domain, and every FrameFlow EP
 package can use it, DirectML's included.
 
-### 3. The client is owned by the caller
+### 3. The client is owned by the caller, and its calls are serialized across graphs
 
 The caller creates the `IChatClient` and disposes it. No node constructs one, because a node factory
 can run once per graph instance and a seek builds a new instance.
 
-`IChatClient` does not say how a client behaves under concurrent calls, dispose during a call, or
-cancellation. The operator makes one call at a time per operator, passes the graph's token, and
-documents that a client which ignores the token delays seek and stop by the rest of its call.
+`IChatClient` does not say how a client behaves under concurrent calls or cancellation, and decision
+7 stops waiting for a call without ending it. The caller therefore wraps the client once in a
+FrameFlow serializer and passes the wrapper to `Describe`. The wrapper lives as long as the client,
+across loops, seeks and graph instances. It starts a call only after the previous call has returned,
+whether that call finished, failed or was abandoned. A client that ignores cancellation then delays
+the next call, not the graph, and two generations never overlap on one client. The wrapper cannot
+stop a server finishing a request the client failed to cancel; that cost stays with the client.
 
 ### 4. A frame prompt is a pure value, written for one model family
 
@@ -120,8 +124,12 @@ back, which on a hosted service is a call every few seconds per stream.
 At end of stream the generate node drops its call in flight and the snapshot waiting for it, so end
 of stream and a loop's restart do not wait on a generation. `FrameFlow.Graph` gains a per-node option
 for this: a node marked abandonable has its body cancelled, and its buffered input dropped, when its
-input completes. Other nodes finish their work as they do today, so a pass that wants its last result
-still gets it. Its semantics go in their own record.
+input completes. When the graph is cancelled for a seek or a stop, its pump does not wait for the
+cancelled body either. Other nodes finish their work as they do today, so a pass that wants its last
+result still gets it. Its semantics go in their own record.
+
+Abandoning ends the graph's wait, not the call. The serializer in decision 3 holds the next call on
+the same client until the abandoned one returns.
 
 ### 8. The graph gains a demand edge
 
@@ -155,6 +163,8 @@ needs its own record. GPU-resident input is out of scope.
 
 - A new operator package over `Microsoft.Extensions.AI.Abstractions`, whose release pace then affects
   FrameFlow's public surface. It stays out of `FrameFlow.Inference.Abstractions`.
+- The serializer is the one piece of the operator's state that outlives a graph instance, and the
+  caller owns it with the client.
 - Three pure cores: the prompt, the cadence and the backoff. Each is testable without a model or a
   clock. Operator tests use a fake client that completes through `TaskCompletionSource` (ADR-0072).
 - An end-to-end test runs against a local OpenAI-compatible server with greedy decoding, asserts that
