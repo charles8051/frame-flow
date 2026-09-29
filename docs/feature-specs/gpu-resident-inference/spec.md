@@ -148,6 +148,12 @@ output tensor.
   If the input upload goes away and the output download does not, the round trip is halved rather
   than removed.
 
+  For a model whose output is an image, the output is the larger transfer: a 1080p colour output
+  is 24.9 MB of float32, three times the `Bgra32` frame it becomes (#470). `TensorToImage`
+  converts it to a `Bgra32` or `Rgba32` frame on the CPU, configured once per model by
+  `TensorToImageOptions` as `ImageToTensor` is by `ImageToTensorOptions`. It has no device side
+  yet: every output is an `ICpuTensor`, and `IDeviceInputSession` binds inputs only.
+
 - **What the CPU-only path costs after requirement 4.** Every consumer shares one
   `Yolov8Preprocessor`. If preprocessing splits by memory domain, the CPU branch has to stay at
   least as fast as it is now. Since #363 the CPU branch is `ImageToTensor`, shared by the YOLO and

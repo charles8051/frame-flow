@@ -107,7 +107,8 @@ await using var player = await FrameFlowPlayer.Create()
 
 `Infer` runs the model on a branch that keeps only the newest frame while a run is in progress,
 so a slow model drops frames instead of delaying the picture. `Yolov8Detector` and
-`BlazeFaceDetector` are `IImageModel`s; another model implements the same interface.
+`BlazeFaceDetector` are `IImageModel`s; another model implements the same interface. A model
+that returns an image, such as an upscaler, can build its result frame with `TensorToImage.ToFrame`.
 
 DirectML runs a model with dynamic input dimensions much slower than the same model with its shape
 fixed. `new DmlInferenceSession(path, new DmlInferenceSessionOptions { FreeDimensions = ... })` fixes
