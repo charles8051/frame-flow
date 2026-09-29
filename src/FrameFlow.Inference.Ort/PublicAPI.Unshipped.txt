@@ -11,6 +11,7 @@ FrameFlow.Inference.OrtInferenceSessionBase.InputShapes.get -> System.Collection
 FrameFlow.Inference.OrtInferenceSessionBase.IsDisposed.get -> bool
 FrameFlow.Inference.OrtInferenceSessionBase.OrtInferenceSessionBase(byte[]! modelBytes, Microsoft.ML.OnnxRuntime.SessionOptions! sessionOptions) -> void
 FrameFlow.Inference.OrtInferenceSessionBase.OrtInferenceSessionBase(string! modelPath, Microsoft.ML.OnnxRuntime.SessionOptions! sessionOptions) -> void
+FrameFlow.Inference.OrtInferenceSessionBase.OutputDimensionNames.get -> System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<string!>!>!
 FrameFlow.Inference.OrtInferenceSessionBase.OutputNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
 FrameFlow.Inference.OrtInferenceSessionBase.OutputShapes.get -> System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<long>!>!
 FrameFlow.Inference.OrtInferenceSessionBase.Run(FrameFlow.Graph.ICpuTensor! input, FrameFlow.Graph.ICpuTensor! output) -> void

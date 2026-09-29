@@ -34,6 +34,8 @@ namespace FrameFlow.Inference;
 /// The EP writes results into the caller-owned tensors. This puts
 /// allocation cost on the caller's pool (visible via pool counters)
 /// rather than hiding it inside the EP.
+/// <see cref="InferenceSessionExtensions.RentOutputs{T}"/> rents one per output
+/// from the shapes the model declares.
 /// </para>
 /// </remarks>
 public interface IInferenceSession : IDisposable
@@ -58,6 +60,33 @@ public interface IInferenceSession : IDisposable
     /// dimension is <c>-1</c> when the model declares it dynamic.
     /// </summary>
     IReadOnlyList<IReadOnlyList<long>> OutputShapes { get; }
+
+    /// <summary>
+    /// The name of each output dimension, in <see cref="OutputNames"/> order and shaped like
+    /// <see cref="OutputShapes"/>: the name the model gives a dimension it leaves free, such as
+    /// <c>batch</c>, or an empty string for a fixed dimension or a free one the model leaves
+    /// unnamed. <see cref="InferenceSessionExtensions.RentOutputs{T}"/> sizes free dimensions by
+    /// these names.
+    /// </summary>
+    /// <remarks>
+    /// The default implementation names no dimension. ONNX Runtime sessions report the model's names.
+    /// </remarks>
+    IReadOnlyList<IReadOnlyList<string>> OutputDimensionNames
+    {
+        get
+        {
+            var shapes = OutputShapes;
+            var names = new IReadOnlyList<string>[shapes.Count];
+            for (int i = 0; i < names.Length; i++)
+            {
+                var unnamed = new string[shapes[i].Count];
+                Array.Fill(unnamed, string.Empty);
+                names[i] = unnamed;
+            }
+
+            return names;
+        }
+    }
 
     /// <summary>
     /// Runs the model with the supplied inputs and writes outputs into

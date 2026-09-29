@@ -117,6 +117,11 @@ defaults to ONNX Runtime's basic level; a higher level holds less GPU memory, wh
 sessions share a GPU. `WinMLInferenceSessionOptions` sets the level for Windows ML, and a named
 provider's own options.
 
+A model run directly through `IInferenceSession.Run` writes into outputs the caller allocates.
+`session.RentOutputs<float>(pool, new Dictionary<string, int> { ["batch"] = 4 })` rents one per
+output at the shape the model declares, sizing each dynamic dimension by its name, and one `Dispose`
+returns them all.
+
 A frame in system memory is prepared on the CPU. To keep a D3D12VA frame on the GPU, create a
 `HardwareDevice` for D3D12VA, build a `DmlInferenceSession.OnDevice` and a `D3D12ImageToTensor` on
 its `TryGetD3D12Device`, and pass the stage to `Infer`: the frame is then written into the model's

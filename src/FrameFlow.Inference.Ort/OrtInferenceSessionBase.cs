@@ -77,6 +77,10 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
     /// <inheritdoc />
     public IReadOnlyList<IReadOnlyList<long>> OutputShapes { get; }
 
+    /// <inheritdoc />
+    /// <remarks>The names are the model's <c>dim_param</c>s, as ONNX Runtime reports them.</remarks>
+    public IReadOnlyList<IReadOnlyList<string>> OutputDimensionNames { get; }
+
     /// <summary>
     /// The underlying ORT session. Exposed to derived EPs that need
     /// session-level operations beyond the shared host-binding path
@@ -168,6 +172,7 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         OutputNames = new ReadOnlyCollection<string>([.. _session.OutputNames]);
         InputShapes = BuildShapes(_session.InputMetadata, InputNames);
         OutputShapes = BuildShapes(_session.OutputMetadata, OutputNames);
+        OutputDimensionNames = BuildDimensionNames(_session.OutputMetadata, OutputNames);
     }
 
     /// <summary>
@@ -186,6 +191,7 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
         OutputNames = new ReadOnlyCollection<string>([.. _session.OutputNames]);
         InputShapes = BuildShapes(_session.InputMetadata, InputNames);
         OutputShapes = BuildShapes(_session.OutputMetadata, OutputNames);
+        OutputDimensionNames = BuildDimensionNames(_session.OutputMetadata, OutputNames);
     }
 
     /// <summary>
@@ -549,6 +555,24 @@ public abstract class OrtInferenceSessionBase : IInferenceSession
             shapes[i] = ConvertDims(metadata[names[i]].Dimensions);
         }
         return new ReadOnlyCollection<IReadOnlyList<long>>(shapes);
+    }
+
+    /// <summary>
+    /// Each name's <see cref="NodeMetadata.SymbolicDimensions"/>: the model's name for each
+    /// dimension, empty where it gives none.
+    /// </summary>
+    private static IReadOnlyList<IReadOnlyList<string>> BuildDimensionNames(
+        IReadOnlyDictionary<string, NodeMetadata> metadata,
+        IReadOnlyList<string> names
+    )
+    {
+        var dimensionNames = new IReadOnlyList<string>[names.Count];
+        for (int i = 0; i < names.Count; i++)
+        {
+            var symbolic = metadata[names[i]].SymbolicDimensions;
+            dimensionNames[i] = new ReadOnlyCollection<string>(Array.ConvertAll(symbolic, name => name ?? string.Empty));
+        }
+        return new ReadOnlyCollection<IReadOnlyList<string>>(dimensionNames);
     }
 
     /// <summary>
