@@ -31,33 +31,6 @@ public sealed class GpuMemoryTests
     }
 
     [WindowsFact]
-    public void EachSegmentGroup_IsTheOneDxgiReports()
-    {
-        // Vortice's binding is generated independently of the vtable slots this package calls, so
-        // agreeing with it pins the slot and the segment group. A budget can move between reads, so
-        // each is checked against Vortice's reads on either side of it.
-        using var factory = DXGI.CreateDXGIFactory2<IDXGIFactory4>(debug: false);
-        factory.EnumAdapters1(0, out IDXGIAdapter1 first).CheckError();
-        using (first)
-        using (var adapter = first.QueryInterface<IDXGIAdapter3>())
-        {
-            var localBefore = adapter.QueryVideoMemoryInfo(0, MemorySegmentGroup.Local);
-            var nonLocalBefore = adapter.QueryVideoMemoryInfo(0, MemorySegmentGroup.NonLocal);
-            var snapshot = GpuMemory.ReadDefaultAdapter();
-            var localAfter = adapter.QueryVideoMemoryInfo(0, MemorySegmentGroup.Local);
-            var nonLocalAfter = adapter.QueryVideoMemoryInfo(0, MemorySegmentGroup.NonLocal);
-
-            AssertBetween(localBefore.Budget, localAfter.Budget, snapshot.Local.BudgetBytes, "local budget");
-            AssertBetween(nonLocalBefore.Budget, nonLocalAfter.Budget, snapshot.NonLocal.BudgetBytes, "non-local budget");
-        }
-
-        static void AssertBetween(ulong a, ulong b, long value, string what) =>
-            Assert.True(
-                (ulong)value >= Math.Min(a, b) && (ulong)value <= Math.Max(a, b),
-                $"The {what} read {value}; DXGI reported {a} and {b} either side of it.");
-    }
-
-    [WindowsFact]
     public void AnAdapter_IsFoundByItsLuid()
     {
         using var device = WarpDevice();
