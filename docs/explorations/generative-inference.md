@@ -248,10 +248,13 @@ A prompt is written for one model family:
   throws when the count does not match the images, and `ApplyChatTemplate` does not insert them for
   Phi-3.5-vision. GenAI's own examples insert them per model type
   ([Common.cs](https://github.com/microsoft/onnxruntime-genai/blob/v0.17.0/examples/csharp/Common/Common.cs)).
-- **Coordinates.** Qwen2.5-VL answers in pixels of the image its processor resized. Qwen3-VL answers
-  in coordinates normalized to 0 to 1000. `ImageFor` returns the processor's target size, computed
-  from `processor_config.json`. The operator resizes to that size, the processor's own resize then
-  changes nothing, and the transform maps the answer back to the frame exactly.
+- **Coordinates.** Qwen2.5-VL answers in pixels of the image its processor resized
+  ([Qwen2.5-VL](https://qwenlm.github.io/blog/qwen2.5-vl/),
+  [model discussion](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct/discussions/13)). Qwen3-VL
+  answers in coordinates normalized to 0 to 1000. `ImageFor` returns the processor's target size,
+  computed from `processor_config.json`. The operator resizes to that size, the processor's own
+  resize then changes nothing, and the image the operator sent is the image the model answers about.
+  The transform maps the answer back to the frame once.
 
 ### Operator
 
