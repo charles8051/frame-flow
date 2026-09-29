@@ -21,8 +21,8 @@ namespace FrameFlow.Inference;
 /// </para>
 /// <para>
 /// Each value becomes <c>(value − Offset) / Scale</c> for its channel's normalization, computed in
-/// float, then is clamped to 0 to 255 and rounded to the nearest integer, ties to even. A value
-/// within float error of a tie can round either way. NaN becomes 0. Alpha is 255. The conversion is
+/// float as <c>(value − Offset) · (1 / Scale)</c>, then is clamped to 0 to 255 and rounded to the
+/// nearest integer, ties to even. A value within float error of a tie can round either way. NaN becomes 0. Alpha is 255. The conversion is
 /// vectorised where the hardware allows.
 /// </para>
 /// <para>
@@ -176,13 +176,8 @@ public static class TensorToImage
 
         static bool Invertible((float Scale, float Offset) channel)
         {
-            if (!float.IsFinite(channel.Scale) || channel.Scale == 0f || !float.IsFinite(channel.Offset))
-            {
-                return false;
-            }
-
-            var (scale, offset) = TensorToImageKernel.Inverse(channel);
-            return float.IsFinite(scale) && float.IsFinite(offset);
+            return float.IsFinite(channel.Scale) && channel.Scale != 0f && float.IsFinite(channel.Offset)
+                && float.IsFinite(TensorToImageKernel.Reciprocal(channel.Scale));
         }
     }
 }

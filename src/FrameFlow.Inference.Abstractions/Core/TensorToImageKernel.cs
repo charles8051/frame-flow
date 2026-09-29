@@ -25,11 +25,14 @@ internal enum TensorToImagePath
 /// </summary>
 /// <remarks>
 /// <para>
-/// Each value becomes a byte in four steps: <c>value · Scale + Offset</c> with the inverse of the
-/// channel's normalization, a clamp to 0 to 255 that sends NaN to 0, a round to the nearest integer
-/// with ties to even, and a shift into its place in the pixel beside an alpha of 255. The vector
-/// loop does the same float operations in the same order as <see cref="Quantize(float)"/>, so the
-/// paths agree bit for bit.
+/// Each value becomes a byte in four steps: <c>(value − Offset) · (1 / Scale)</c> with the channel's
+/// normalization, a clamp to 0 to 255 that sends NaN to 0, a round to the nearest integer with ties
+/// to even, and a shift into its place in the pixel beside an alpha of 255. The vector loop does the
+/// same float operations in the same order as the scalar loop, so the paths agree bit for bit.
+/// </para>
+/// <para>
+/// The offset is subtracted before the scale is applied. A value close to a large offset then keeps
+/// its difference exactly; scaling first would round it at the scaled offset's magnitude.
 /// </para>
 /// <para>
 /// A planar tensor's rows are read in place. An interleaved (NHWC) tensor's row is first split
@@ -103,13 +106,8 @@ internal static class TensorToImageKernel
         }
     }
 
-    /// <summary>
-    /// The scale and offset that undo one channel's normalization,
-    /// <c>sample = value · Scale + Offset</c>. Each is computed in double from the channel's floats
-    /// and rounded to a float once.
-    /// </summary>
-    internal static (float Scale, float Offset) Inverse((float Scale, float Offset) channel)
-        => ((float)(1.0 / channel.Scale), (float)(-(double)channel.Offset / channel.Scale));
+    /// <summary>The factor that undoes a channel's scale, computed in double and rounded to a float once.</summary>
+    internal static float Reciprocal(float scale) => (float)(1.0 / scale);
 
     private static void ConvertRow(
         ReadOnlySpan<float> r,
@@ -122,18 +120,18 @@ internal static class TensorToImageKernel
         int i = 0;
         if (vector)
         {
-            var scaleR = new Vector<float>(channels.ScaleRed);
-            var scaleG = new Vector<float>(channels.ScaleGreen);
-            var scaleB = new Vector<float>(channels.ScaleBlue);
             var offsetR = new Vector<float>(channels.OffsetRed);
             var offsetG = new Vector<float>(channels.OffsetGreen);
             var offsetB = new Vector<float>(channels.OffsetBlue);
+            var reciprocalR = new Vector<float>(channels.ReciprocalRed);
+            var reciprocalG = new Vector<float>(channels.ReciprocalGreen);
+            var reciprocalB = new Vector<float>(channels.ReciprocalBlue);
             var alpha = new Vector<uint>(channels.Alpha);
             for (; i <= pixels.Length - Vector<float>.Count; i += Vector<float>.Count)
             {
-                var red = Quantize(new Vector<float>(r[i..]) * scaleR + offsetR);
-                var green = Quantize(new Vector<float>(g[i..]) * scaleG + offsetG);
-                var blue = Quantize(new Vector<float>(b[i..]) * scaleB + offsetB);
+                var red = Quantize((new Vector<float>(r[i..]) - offsetR) * reciprocalR);
+                var green = Quantize((new Vector<float>(g[i..]) - offsetG) * reciprocalG);
+                var blue = Quantize((new Vector<float>(b[i..]) - offsetB) * reciprocalB);
                 (alpha
                     | Vector.ShiftLeft(red, channels.ShiftRed)
                     | Vector.ShiftLeft(green, channels.ShiftGreen)
@@ -144,9 +142,9 @@ internal static class TensorToImageKernel
         for (; i < pixels.Length; i++)
         {
             pixels[i] = channels.Alpha
-                | (Quantize(r[i] * channels.ScaleRed + channels.OffsetRed) << channels.ShiftRed)
-                | (Quantize(g[i] * channels.ScaleGreen + channels.OffsetGreen) << channels.ShiftGreen)
-                | (Quantize(b[i] * channels.ScaleBlue + channels.OffsetBlue) << channels.ShiftBlue);
+                | (Quantize((r[i] - channels.OffsetRed) * channels.ReciprocalRed) << channels.ShiftRed)
+                | (Quantize((g[i] - channels.OffsetGreen) * channels.ReciprocalGreen) << channels.ShiftGreen)
+                | (Quantize((b[i] - channels.OffsetBlue) * channels.ReciprocalBlue) << channels.ShiftBlue);
         }
     }
 
@@ -192,9 +190,12 @@ internal static class TensorToImageKernel
             ShiftGreen = Shift(1);
             ShiftBlue = Shift(bgra ? 0 : 2);
             Alpha = 0xFFu << Shift(3);
-            (ScaleRed, OffsetRed) = Inverse(normalization.Red);
-            (ScaleGreen, OffsetGreen) = Inverse(normalization.Green);
-            (ScaleBlue, OffsetBlue) = Inverse(normalization.Blue);
+            OffsetRed = normalization.Red.Offset;
+            OffsetGreen = normalization.Green.Offset;
+            OffsetBlue = normalization.Blue.Offset;
+            ReciprocalRed = Reciprocal(normalization.Red.Scale);
+            ReciprocalGreen = Reciprocal(normalization.Green.Scale);
+            ReciprocalBlue = Reciprocal(normalization.Blue.Scale);
 
             static int Shift(int byteIndex) => BitConverter.IsLittleEndian ? 8 * byteIndex : 24 - 8 * byteIndex;
         }
@@ -207,16 +208,16 @@ internal static class TensorToImageKernel
 
         public uint Alpha { get; }
 
-        public float ScaleRed { get; }
-
-        public float ScaleGreen { get; }
-
-        public float ScaleBlue { get; }
-
         public float OffsetRed { get; }
 
         public float OffsetGreen { get; }
 
         public float OffsetBlue { get; }
+
+        public float ReciprocalRed { get; }
+
+        public float ReciprocalGreen { get; }
+
+        public float ReciprocalBlue { get; }
     }
 }

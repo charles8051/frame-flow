@@ -97,6 +97,32 @@ public sealed class TensorToImageTests
     }
 
     /// <summary>
+    /// A range narrow beside its offset: 0 to 255 is 1 to 1 + 21 ulps. The offset is subtracted
+    /// before the scale is applied, so the ulp above 1 is sample 255 / 21 ≈ 12.1. Scaling first and
+    /// adding a scaled offset loses it: the scaled value is near 1e8, where floats are 8 apart, and
+    /// that path writes 16.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AValueBesideALargeOffset_KeepsItsPrecision(bool scalar)
+    {
+        float top = 1f + 21 * (MathF.BitIncrement(1f) - 1f);
+        float[] tensor = [1f, MathF.BitIncrement(1f), top, 1f, 1f, 1f, 1f, 1f, 1f];
+        var options = new TensorToImageOptions(tensor.Length, 1)
+        {
+            Channels = 1,
+            Normalization = TensorNormalization.Range(1f, top),
+        };
+        var image = new byte[4 * tensor.Length];
+
+        TensorToImage.Write(
+            tensor, options, image, image.Length, scalar ? TensorToImagePath.Scalar : TensorToImagePath.Auto);
+
+        Assert.Equal(new byte[] { 0, 12, 255 }, new[] { image[0], image[4], image[8] });
+    }
+
+    /// <summary>
     /// <see cref="ImageToTensor"/> followed by <see cref="TensorToImage"/> with the same layout,
     /// channel order and normalization gives back every byte of the frame.
     /// </summary>
