@@ -309,6 +309,26 @@ through `terminate_session` and releases once it stops.
 
 GenAI's C API is not thread-safe. The backend runs each model on a dedicated thread fed from a queue.
 
+### Prompt prefix
+
+Every request repeats the same system prompt, instructions and schema, and only the image changes.
+Reusing the KV cache for that prefix is not available to a VLM through GenAI's C# API:
+
+- The `Engine` caches prefixes by default
+  ([config.h](https://github.com/microsoft/onnxruntime-genai/blob/v0.17.0/src/config.h#L789)). It
+  has no C# binding, and it rejects multimodal position layouts
+  ([simple_decoder.cpp](https://github.com/microsoft/onnxruntime-genai/blob/v0.17.0/src/engine/decoders/simple_decoder.cpp#L34)).
+- `Generator.RewindTo` throws for `phi3v` and `lfm2_vl`
+  ([generators.cpp](https://github.com/microsoft/onnxruntime-genai/blob/v0.17.0/src/generator/generators.cpp#L973)).
+- For the other VLM types, `MultiModalPipelineState` does not override `RewindTo`, and the base
+  `State::RewindTo` does nothing
+  ([model.h](https://github.com/microsoft/onnxruntime-genai/blob/v0.17.0/src/models/model.h#L32)).
+  A rewind on Gemma 3 or Qwen-VL would shorten the token sequence and leave the decoder's KV cache
+  as it was, producing wrong output rather than an error. This is read from source, not run.
+
+Each generation prefills its whole prompt. The backend does not call `RewindTo` on a VLM until the
+spike settles what it does.
+
 ### Provider selection
 
 `InferenceSessionFactoryBuilder` falls back from the preferred EP to the others, ending on CPU. That
@@ -351,7 +371,7 @@ The app adds the native GenAI package that matches its FrameFlow EP package. `Fr
 | Step | Where | Complexity |
 |---|---|---|
 | Fix #489 | `FrameFlow.Graph` | Small: one exception filter in five pumps, two regression tests |
-| Spike: a VLM on GenAI.WinML beside `Inference.WinML`, in both load orders; an image through placeholders and the processor; `terminate_session` during a prefill; the processor's target size | Outside `src` | Small to medium |
+| Spike: a VLM on GenAI.WinML beside `Inference.WinML`, in both load orders; an image through placeholders and the processor; `terminate_session` during a prefill; the processor's target size; prefill time for the intended prompt, measured apart from decode; on a Qwen-VL generator, a generation on one image, `RewindTo` the shared prefix, and a second request with a different image, compared with a fresh generator given that second request | Outside `src` | Small to medium |
 | Decide in process or out of process | This document | |
 | A branch node that drops its work when upstream completes | `FrameFlow.Graph` | Medium |
 | Pure cores: prompt, cadence, retry, generation lifecycle | New operator package | Small each |
