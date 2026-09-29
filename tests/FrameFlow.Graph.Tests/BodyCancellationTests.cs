@@ -56,6 +56,12 @@ public sealed class BodyCancellationTests
 
         Assert.Equal([1, 3], run.Consumed);
         Assert.All(run.Produced, box => Assert.Equal(0, box.RefCount));
+
+        // Every pump kind counts what it drops (#501).
+        var discards = Assert.Single(run.Graph.Discards);
+        Assert.Equal(run.Thrower, discards.NodeId);
+        Assert.Equal(1, discards.Count);
+        Assert.IsType<TaskCanceledException>(discards.LastException);
     }
 
     [Fact]

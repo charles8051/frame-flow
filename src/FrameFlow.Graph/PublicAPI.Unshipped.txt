@@ -68,6 +68,7 @@ FrameFlow.Graph.Graph
 FrameFlow.Graph.Graph.Add<T>(T node) -> T
 FrameFlow.Graph.Graph.BeforeEachRun(System.Action! beforeRun) -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.Graph.Connect<T>(FrameFlow.Graph.OutputPort<T!>! from, FrameFlow.Graph.InputPort<T!>! to, FrameFlow.Graph.EdgeOptions? options = null) -> FrameFlow.Graph.Graph!
+FrameFlow.Graph.Graph.Discards.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Graph.NodeDiscards!>!
 FrameFlow.Graph.Graph.FrameBudgetFor<T>(FrameFlow.Graph.OutputPort<T!>! source) -> FrameFlow.Graph.FrameBudget!
 FrameFlow.Graph.Graph.Graph() -> void
 FrameFlow.Graph.Graph.RunAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
@@ -138,6 +139,11 @@ FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Input.get -> FrameFlow.Graph.InputP
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.MultiOperatorNode(string! id, FrameFlow.Graph.MultiOperator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, FrameFlow.Graph.FrameHolding? holding = null, FrameFlow.Graph.FrameDomainRule? domains = null, System.Func<System.Threading.Tasks.ValueTask>? cleanup = null) -> void
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
+FrameFlow.Graph.NodeDiscards
+FrameFlow.Graph.NodeDiscards.Count.get -> long
+FrameFlow.Graph.NodeDiscards.LastException.get -> System.Exception!
+FrameFlow.Graph.NodeDiscards.NodeDiscards(string! nodeId, long count, System.Exception! lastException) -> void
+FrameFlow.Graph.NodeDiscards.NodeId.get -> string!
 FrameFlow.Graph.NodeFault
 FrameFlow.Graph.NodeFault.Exception.get -> System.Exception!
 FrameFlow.Graph.NodeFault.NodeFault(string! nodeId, System.Exception! exception) -> void

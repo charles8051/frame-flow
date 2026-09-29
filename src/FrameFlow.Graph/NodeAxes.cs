@@ -14,6 +14,10 @@ public enum FailureResponse
     /// </summary>
     Propagate,
 
-    /// <summary>The input that triggered the failure is disposed and the node continues with the next.</summary>
+    /// <summary>
+    /// The input that triggered the failure is disposed and the node continues with the next. Each
+    /// discard is counted in <see cref="Graph.Discards"/> with the exception, and on the
+    /// <c>frameflow.graph.discards</c> metric.
+    /// </summary>
     Discard,
 }

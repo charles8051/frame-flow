@@ -40,6 +40,11 @@ namespace FrameFlow.Graph;
 public sealed class Graph
 {
     private readonly List<INode> _nodes = new();
+
+    // What each node has discarded, at the node's index in _nodes. Kept for the graph's life, so a
+    // count covers every run (#501).
+    private readonly List<DiscardTally> _discards = new();
+
     private readonly List<Action> _wireUps = new();
 
     // What each wire-up wires, as a value. The closures say how an edge is built; this says what
@@ -104,8 +109,40 @@ public sealed class Graph
     {
         ArgumentNullException.ThrowIfNull(node);
         if (!_nodes.Contains(node))
+        {
             _nodes.Add(node);
+            _discards.Add(new DiscardTally(node.Id));
+        }
         return node;
+    }
+
+    /// <summary>
+    /// Every node of this graph that has discarded an input under
+    /// <see cref="FailureResponse.Discard"/>, in the order the nodes were added, with how many and
+    /// what the last one threw (#501).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A snapshot, safe to read from any thread while the graph runs. Counts cover every run of
+    /// this graph and never reset. A node that has discarded nothing is not listed.
+    /// </para>
+    /// <para>
+    /// The same discards are counted process-wide as <c>frameflow.graph.discards</c> on the
+    /// <c>FrameFlow.Graph</c> meter, tagged <c>node</c> with the node's id.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<NodeDiscards> Discards
+    {
+        get
+        {
+            var discards = new List<NodeDiscards>();
+            foreach (var tally in _discards)
+            {
+                if (tally.Snapshot() is { } snapshot)
+                    discards.Add(snapshot);
+            }
+            return discards;
+        }
     }
 
     /// <summary>
@@ -310,7 +347,7 @@ public sealed class Graph
         foreach (var wire in _wireUps)
             wire();
 
-        using var run = new GraphRun(_nodes, ct);
+        using var run = new GraphRun(_nodes, _discards, ct);
 
         var tasks = new List<Task>(_nodes.Count);
         foreach (var node in _nodes)

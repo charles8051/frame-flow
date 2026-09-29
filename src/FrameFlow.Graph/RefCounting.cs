@@ -36,9 +36,7 @@ namespace FrameFlow.Graph;
 /// </remarks>
 public static class RefCounting
 {
-    private static readonly Meter Meter = new("FrameFlow.Graph", "1.0.0");
-
-    private static readonly Counter<long> OverReleaseCounter = Meter.CreateCounter<long>(
+    private static readonly Counter<long> OverReleaseCounter = GraphMetrics.Meter.CreateCounter<long>(
         "frameflow.graph.over_releases",
         unit: "{release}",
         description: "Releases of a ref-counted item past zero. Each one is a caller bug.");
