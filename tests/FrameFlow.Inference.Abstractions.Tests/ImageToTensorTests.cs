@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using FrameFlow.Graph;
 using FrameFlow.Inference.Core;
 using FrameFlow.Media;
@@ -239,17 +240,26 @@ public sealed class ImageToTensorTests
 
     /// <summary>
     /// The vector path, the scalar table path and the per-pixel path compute each value with the
-    /// same operations in the same order, so they agree bit for bit. Widths that are not a
-    /// multiple of the vector width exercise the scalar tail after the vector loop.
+    /// same operations in the same order, and convert it to a half or a byte the same way, so they
+    /// agree bit for bit. Widths that are not a multiple of the vector width exercise the scalar
+    /// tail after the vector loop.
     /// </summary>
     [Theory]
-    [InlineData(ImageSampling.Nearest, ImageFit.Stretch, TensorLayout.Nchw, ImageBorder.Replicate)]
-    [InlineData(ImageSampling.Bilinear, ImageFit.Stretch, TensorLayout.Nchw, ImageBorder.Replicate)]
-    [InlineData(ImageSampling.Nearest, ImageFit.Letterbox, TensorLayout.Nhwc, ImageBorder.Replicate)]
-    [InlineData(ImageSampling.Bilinear, ImageFit.Letterbox, TensorLayout.Nhwc, ImageBorder.Replicate)]
-    [InlineData(ImageSampling.Nearest, ImageFit.Stretch, TensorLayout.Nchw, ImageBorder.Pad)]
-    [InlineData(ImageSampling.Bilinear, ImageFit.Letterbox, TensorLayout.Nhwc, ImageBorder.Pad)]
-    public void ThePaths_AgreeBitForBit(ImageSampling sampling, ImageFit fit, TensorLayout layout, ImageBorder border)
+    [InlineData(ImageSampling.Nearest, ImageFit.Stretch, TensorLayout.Nchw, ImageBorder.Replicate, DType.Float32)]
+    [InlineData(ImageSampling.Bilinear, ImageFit.Stretch, TensorLayout.Nchw, ImageBorder.Replicate, DType.Float32)]
+    [InlineData(ImageSampling.Nearest, ImageFit.Letterbox, TensorLayout.Nhwc, ImageBorder.Replicate, DType.Float32)]
+    [InlineData(ImageSampling.Bilinear, ImageFit.Letterbox, TensorLayout.Nhwc, ImageBorder.Replicate, DType.Float32)]
+    [InlineData(ImageSampling.Nearest, ImageFit.Stretch, TensorLayout.Nchw, ImageBorder.Pad, DType.Float32)]
+    [InlineData(ImageSampling.Bilinear, ImageFit.Letterbox, TensorLayout.Nhwc, ImageBorder.Pad, DType.Float32)]
+    [InlineData(ImageSampling.Nearest, ImageFit.Stretch, TensorLayout.Nchw, ImageBorder.Replicate, DType.Float16)]
+    [InlineData(ImageSampling.Bilinear, ImageFit.Stretch, TensorLayout.Nchw, ImageBorder.Replicate, DType.Float16)]
+    [InlineData(ImageSampling.Bilinear, ImageFit.Letterbox, TensorLayout.Nhwc, ImageBorder.Pad, DType.Float16)]
+    [InlineData(ImageSampling.Nearest, ImageFit.Stretch, TensorLayout.Nchw, ImageBorder.Pad, DType.UInt8)]
+    [InlineData(ImageSampling.Bilinear, ImageFit.Stretch, TensorLayout.Nchw, ImageBorder.Replicate, DType.UInt8)]
+    [InlineData(ImageSampling.Nearest, ImageFit.Letterbox, TensorLayout.Nhwc, ImageBorder.Replicate, DType.UInt8)]
+    [InlineData(ImageSampling.Bilinear, ImageFit.Letterbox, TensorLayout.Nhwc, ImageBorder.Pad, DType.UInt8)]
+    public void ThePaths_AgreeBitForBit(
+        ImageSampling sampling, ImageFit fit, TensorLayout layout, ImageBorder border, DType dtype)
     {
         var random = new Random(363);
         const int width = 37, height = 23, stride = width * 4 + 12;
@@ -276,25 +286,285 @@ public sealed class ImageToTensorTests
                 Layout = layout,
                 Border = border,
                 PadValue = 77,
-                Normalization = TensorNormalization.MeanStd((0.485f, 0.456f, 0.406f), (0.229f, 0.224f, 0.225f)),
+                Dtype = dtype,
+                Normalization = dtype == DType.UInt8
+                    ? TensorNormalization.Range(0, 255)
+                    : TensorNormalization.MeanStd((0.485f, 0.456f, 0.406f), (0.229f, 0.224f, 0.225f)),
             };
 
             foreach (var crop in crops)
             {
                 var auto = Run(ImageToTensorPath.Auto);
-                Assert.Equal(Bits(Run(ImageToTensorPath.General)), Bits(auto));
-                Assert.Equal(Bits(Run(ImageToTensorPath.Scalar)), Bits(auto));
+                Assert.Equal(Run(ImageToTensorPath.General), auto);
+                Assert.Equal(Run(ImageToTensorPath.Scalar), auto);
 
-                float[] Run(ImageToTensorPath path)
+                byte[] Run(ImageToTensorPath path) => dtype switch
                 {
-                    var tensor = new float[options.ElementCount];
-                    ImageToTensor.Write(pixels, width, height, stride, bgra: true, crop, options, tensor, path);
-                    return tensor;
+                    DType.Float16 => Bits<Half>(path),
+                    DType.UInt8 => Bits<byte>(path),
+                    _ => Bits<float>(path),
+                };
+
+                byte[] Bits<T>(ImageToTensorPath path)
+                    where T : unmanaged
+                {
+                    var tensor = new T[options.ElementCount];
+                    ImageToTensor.Write<T>(pixels, width, height, stride, bgra: true, crop, options, tensor, path);
+                    return MemoryMarshal.AsBytes(tensor.AsSpan()).ToArray();
                 }
             }
         }
+    }
 
-        static int[] Bits(float[] values) => Array.ConvertAll(values, BitConverter.SingleToInt32Bits);
+    /// <summary>
+    /// A UInt8 tensor at the frame's own size, sampled nearest, holds the frame's bytes, each in the
+    /// plane or position its colour takes.
+    /// </summary>
+    [Theory]
+    [InlineData(PixelFormat.Bgra32, TensorLayout.Nchw, TensorChannelOrder.Rgb)]
+    [InlineData(PixelFormat.Bgra32, TensorLayout.Nchw, TensorChannelOrder.Bgr)]
+    [InlineData(PixelFormat.Rgba32, TensorLayout.Nchw, TensorChannelOrder.Rgb)]
+    [InlineData(PixelFormat.Bgra32, TensorLayout.Nhwc, TensorChannelOrder.Rgb)]
+    [InlineData(PixelFormat.Rgba32, TensorLayout.Nhwc, TensorChannelOrder.Bgr)]
+    public void UInt8Nearest_HoldsTheFramesBytes(PixelFormat format, TensorLayout layout, TensorChannelOrder order)
+    {
+        // Wider than a vector of bytes, and not a multiple of one.
+        const int width = 45, height = 7;
+        var random = new Random(480);
+        var colours = new (byte B, byte G, byte R, byte A)[width * height];
+        for (int i = 0; i < colours.Length; i++)
+        {
+            colours[i] = ((byte)random.Next(256), (byte)random.Next(256), (byte)random.Next(256), 255);
+        }
+
+        using var frame = Frame(format, width, height, (x, y) => colours[y * width + x]);
+        var options = new ImageToTensorOptions(width, height)
+        {
+            Sampling = ImageSampling.Nearest,
+            Normalization = TensorNormalization.Range(0, 255),
+            Dtype = DType.UInt8,
+            Layout = layout,
+            ChannelOrder = order,
+        };
+        var tensor = new byte[options.ElementCount];
+
+        ImageToTensor.Write(frame, RotatedRect.Whole(frame), options, tensor);
+
+        bool rgb = order == TensorChannelOrder.Rgb;
+        int plane = width * height;
+        for (int i = 0; i < plane; i++)
+        {
+            var (b, g, r, _) = colours[i];
+            var (first, second, third) = rgb ? (r, g, b) : (b, g, r);
+            if (layout == TensorLayout.Nchw)
+            {
+                Assert.Equal((first, second, third), (tensor[i], tensor[plane + i], tensor[2 * plane + i]));
+            }
+            else
+            {
+                Assert.Equal((first, second, third), (tensor[3 * i], tensor[3 * i + 1], tensor[3 * i + 2]));
+            }
+        }
+    }
+
+    /// <summary>
+    /// A UInt8 element is the Float32 value, with samples as they are, rounded to nearest with ties
+    /// to even. Nearest sampling gives whole values, so it copies the frame's byte; bilinear gives
+    /// fractions, which round.
+    /// </summary>
+    [Theory]
+    [InlineData(ImageSampling.Nearest, TensorLayout.Nchw)]
+    [InlineData(ImageSampling.Bilinear, TensorLayout.Nchw)]
+    [InlineData(ImageSampling.Bilinear, TensorLayout.Nhwc)]
+    public void UInt8_IsTheFloatValueRounded(ImageSampling sampling, TensorLayout layout)
+    {
+        using var frame = RandomFrame(61, 43, seed: 481);
+        var floatOptions = new ImageToTensorOptions(67, 29)
+        {
+            Sampling = sampling,
+            Layout = layout,
+            Border = ImageBorder.Pad,
+            PadValue = 114,
+            Normalization = TensorNormalization.Range(0, 255),
+        };
+        var byteOptions = floatOptions with { Dtype = DType.UInt8 };
+        int fractions = 0;
+
+        foreach (var crop in Crops)
+        {
+            var floats = new float[floatOptions.ElementCount];
+            var bytes = new byte[byteOptions.ElementCount];
+            ImageToTensor.Write(frame, crop, floatOptions, floats);
+            ImageToTensor.Write(frame, crop, byteOptions, bytes);
+
+            Assert.Equal(Array.ConvertAll(floats, v => (byte)MathF.Round(v, MidpointRounding.ToEven)), bytes);
+            fractions += floats.Count(v => v != MathF.Floor(v));
+        }
+
+        if (sampling == ImageSampling.Nearest)
+        {
+            Assert.Equal(0, fractions);
+        }
+        else
+        {
+            Assert.True(fractions > 1000, $"{fractions} fractional values");
+        }
+    }
+
+    /// <summary>A Float16 element is the Float32 value converted to <see cref="Half"/>.</summary>
+    [Theory]
+    [InlineData(ImageSampling.Nearest, TensorLayout.Nhwc)]
+    [InlineData(ImageSampling.Bilinear, TensorLayout.Nchw)]
+    public void Float16_IsTheFloatValueConverted(ImageSampling sampling, TensorLayout layout)
+    {
+        using var frame = RandomFrame(61, 43, seed: 482);
+        var floatOptions = new ImageToTensorOptions(67, 29)
+        {
+            Sampling = sampling,
+            Layout = layout,
+            Fit = ImageFit.Letterbox,
+            PadValue = 114,
+            Normalization = TensorNormalization.MeanStd((0.485f, 0.456f, 0.406f), (0.229f, 0.224f, 0.225f)),
+        };
+        var halfOptions = floatOptions with { Dtype = DType.Float16 };
+
+        foreach (var crop in Crops)
+        {
+            var floats = new float[floatOptions.ElementCount];
+            var halves = new Half[halfOptions.ElementCount];
+            ImageToTensor.Write(frame, crop, floatOptions, floats);
+            ImageToTensor.Write(frame, crop, halfOptions, halves);
+
+            Assert.Equal(
+                Array.ConvertAll(floats, v => BitConverter.HalfToUInt16Bits((Half)v)),
+                Array.ConvertAll(halves, BitConverter.HalfToUInt16Bits));
+        }
+    }
+
+    /// <summary>
+    /// Both of <see cref="ImageToTensorKernel.ToBytes"/>'s loops clamp to 0 to 255 and round to
+    /// nearest, ties to even. Each value is repeated so that it lands in a vector lane and in the
+    /// scalar tail.
+    /// </summary>
+    [Fact]
+    public void ToBytes_ClampsAndRoundsHalfToEven_OnBothLoops()
+    {
+        (float Value, byte Expected)[] cases =
+        [
+            (float.NegativeInfinity, 0), (-3f, 0), (-0.5f, 0), (0f, 0), (0.49999997f, 0), (0.5f, 0),
+            (1.5f, 2), (2.5f, 2), (3.5f, 4), (127.5f, 128), (128.5f, 128), (200.50002f, 201),
+            (254.5f, 254), (255f, 255), (255.5f, 255), (256f, 255), (1e9f, 255), (float.PositiveInfinity, 255),
+        ];
+        var values = new float[5 * cases.Length + 3];
+        var expected = new byte[values.Length];
+        for (int i = 0; i < values.Length; i++)
+        {
+            (values[i], expected[i]) = cases[i % cases.Length];
+        }
+
+        foreach (bool vector in new[] { false, true })
+        {
+            var bytes = new byte[values.Length];
+            ImageToTensorKernel.ToBytes(values, bytes, vector);
+            Assert.Equal(expected, bytes);
+        }
+    }
+
+    /// <summary>
+    /// Both of <see cref="ImageToTensorKernel.ToHalves"/>'s loops give <c>(Half)value</c>'s bits:
+    /// for random bit patterns, which cover NaNs and subnormals, and for the edges of a half's
+    /// range and precision.
+    /// </summary>
+    [Fact]
+    public void ToHalves_IsTheHalfCast_OnBothLoops()
+    {
+        float ulp = MathF.Pow(2, -11);
+        float tiny = MathF.Pow(2, -25);
+        var values = new List<float>
+        {
+            0f, -0f, 1f, 1f + ulp, 1f + 3 * ulp, -(1f + ulp), 2049f, 2051f, 65504f, 65519.996f, 65520f,
+            -65520f, 1e10f, float.MaxValue, float.PositiveInfinity, float.NegativeInfinity, float.NaN,
+            -float.NaN, 2 * tiny, tiny, 3 * tiny, tiny / 2, MathF.Pow(2, -14), 6.097555e-5f, float.Epsilon,
+        };
+        var random = new Random(483);
+        while (values.Count < 20_003)
+        {
+            values.Add(BitConverter.Int32BitsToSingle(random.Next(int.MinValue, int.MaxValue)));
+        }
+
+        var expected = values.Select(v => BitConverter.HalfToUInt16Bits((Half)v)).ToArray();
+        foreach (bool vector in new[] { false, true })
+        {
+            var halves = new Half[values.Count];
+            ImageToTensorKernel.ToHalves(values.ToArray(), halves, vector);
+            Assert.Equal(expected, Array.ConvertAll(halves, BitConverter.HalfToUInt16Bits));
+        }
+    }
+
+    [Fact]
+    public void Write_RefusesADestinationOfAnotherElementType()
+    {
+        using var frame = Frame(PixelFormat.Bgra32, 4, 4, (_, _) => (0, 0, 0, 255));
+        var options = new ImageToTensorOptions(4, 4);
+        var bytes = options with { Dtype = DType.UInt8, Normalization = TensorNormalization.Range(0, 255) };
+        var crop = RotatedRect.Whole(frame);
+
+        Assert.Equal("destination", Assert.Throws<ArgumentException>(
+            () => ImageToTensor.Write(frame, crop, options, new byte[options.ElementCount])).ParamName);
+        Assert.Equal("destination", Assert.Throws<ArgumentException>(
+            () => ImageToTensor.Write(frame, crop, bytes, new float[options.ElementCount])).ParamName);
+        Assert.Equal("destination", Assert.Throws<ArgumentException>(
+            () => ImageToTensor.Write(frame, crop, bytes, new Half[options.ElementCount])).ParamName);
+        Assert.Equal("destination", Assert.Throws<ArgumentException>(
+            () => ImageToTensor.Write(frame, crop, bytes, new byte[options.ElementCount - 1])).ParamName);
+    }
+
+    [Fact]
+    public void Options_DefaultToFloat32_AndRefuseAnElementTypeTheyCannotWrite()
+    {
+        var options = new ImageToTensorOptions(4, 4);
+
+        Assert.Equal(DType.Float32, options.Dtype);
+        Assert.Throws<ArgumentException>(() => ImageToTensor.ValidateOptions(options with { Dtype = DType.Int32 }));
+        Assert.Throws<ArgumentException>(() => ImageToTensor.ValidateOptions(options with { Dtype = (DType)99 }));
+        ImageToTensor.ValidateOptions(options with { Dtype = DType.Float16 });
+    }
+
+    /// <summary>
+    /// A UInt8 tensor holds samples, so the default normalization, which maps them to 0 to 1, is
+    /// refused rather than rounded to zeros and ones.
+    /// </summary>
+    [Fact]
+    public void Options_ForUInt8_TakeTheIdentityNormalizationOnly()
+    {
+        var options = new ImageToTensorOptions(4, 4) { Dtype = DType.UInt8 };
+
+        var error = Assert.Throws<ArgumentException>(() => ImageToTensor.ValidateOptions(options));
+        Assert.Contains("Range(0, 255)", error.Message, StringComparison.Ordinal);
+        Assert.Throws<ArgumentException>(
+            () => ImageToTensor.ValidateOptions(options with { Normalization = TensorNormalization.MeanStd((0, 0, 0), (1, 1, 1)) }));
+        ImageToTensor.ValidateOptions(options with { Normalization = TensorNormalization.Range(0, 255) });
+    }
+
+    private static readonly RotatedRect[] Crops =
+    [
+        RotatedRect.FromBounds(0, 0, 61, 43),
+        RotatedRect.FromBounds(3.3f, 1.7f, 20.9f, 11.2f),
+        RotatedRect.FromBounds(-12.3f, -7.9f, 40f, 25f),
+        new RotatedRect(30f, 20f, 50f, 30f, 0.3f),
+        new RotatedRect(2f, 40f, 24f, 24f, -2.1f),
+    ];
+
+    private static CpuVideoFrame RandomFrame(int width, int height, int seed)
+    {
+        var random = new Random(seed);
+        var colours = new (byte, byte, byte, byte)[width * height];
+        for (int i = 0; i < colours.Length; i++)
+        {
+            colours[i] = ((byte)random.Next(256), (byte)random.Next(256), (byte)random.Next(256), 255);
+        }
+
+        return Frame(PixelFormat.Bgra32, width, height, (x, y) => colours[y * width + x]);
     }
 
     [Fact]

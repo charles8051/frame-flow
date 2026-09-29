@@ -1,4 +1,5 @@
 using FrameFlow.Decoding;
+using FrameFlow.Graph;
 using FrameFlow.Inference.Core;
 using FrameFlow.Inference.D3D12.Core;
 using FrameFlow.Media;
@@ -147,6 +148,21 @@ public sealed class D3D12ImageToTensorTests
         stage.WaitForCompletion();
         Assert.Equal((ulong)frames.Count, stage.CompletionValue);
         AssertClose(expected, stage.ReadBack(), 1e-3f, "the last frame");
+    }
+
+    /// <summary>
+    /// The shader writes 32-bit floats only, so the stage refuses any other element type by name
+    /// before it looks at the device: no GPU needed.
+    /// </summary>
+    [Theory]
+    [InlineData(DType.Float16)]
+    [InlineData(DType.UInt8)]
+    public void AnElementTypeOtherThanFloat32_IsRefusedWhenTheStageIsBuilt(DType dtype)
+    {
+        var options = new ImageToTensorOptions(8, 8) { Dtype = dtype, Normalization = TensorNormalization.Range(0, 255) };
+
+        var error = Assert.Throws<NotSupportedException>(() => new D3D12ImageToTensor(0, 0, options));
+        Assert.Contains(dtype.ToString(), error.Message, StringComparison.Ordinal);
     }
 
     [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D11Va, Clip)]

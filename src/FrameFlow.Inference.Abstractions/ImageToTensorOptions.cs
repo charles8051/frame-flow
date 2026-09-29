@@ -26,7 +26,7 @@ public sealed record ImageToTensorOptions
         if ((long)width * height > Array.MaxLength / 3)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(height), height, $"A {width}x{height} tensor has more floats than an array can hold.");
+                nameof(height), height, $"A {width}x{height} tensor has more elements than an array can hold.");
         }
 
         Width = width;
@@ -47,6 +47,25 @@ public sealed record ImageToTensorOptions
 
     /// <summary>How samples become tensor values. Defaults to <see cref="TensorNormalization.ZeroToOne"/>.</summary>
     public TensorNormalization Normalization { get; init; } = TensorNormalization.ZeroToOne;
+
+    /// <summary>
+    /// The tensor's element type: <see cref="DType.Float32"/>, the default, <see cref="DType.Float16"/>
+    /// or <see cref="DType.UInt8"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A <see cref="DType.Float16"/> element is the <see cref="DType.Float32"/> value converted to
+    /// <see cref="Half"/>, rounding to nearest with ties to even.
+    /// </para>
+    /// <para>
+    /// A <see cref="DType.UInt8"/> element is the sample itself, so <see cref="Normalization"/> must be
+    /// <c>TensorNormalization.Range(0, 255)</c>, under which the <see cref="DType.Float32"/> value is
+    /// the sample. Nearest sampling copies the frame's byte. A bilinear sample is the
+    /// <see cref="DType.Float32"/> value rounded to nearest with ties to even, clamped to 0 to 255.
+    /// A bar or a padded pixel is <see cref="PadValue"/>.
+    /// </para>
+    /// </remarks>
+    public DType Dtype { get; init; } = DType.Float32;
 
     /// <summary>The memory layout. Defaults to <see cref="TensorLayout.Nchw"/>.</summary>
     public TensorLayout Layout { get; init; } = TensorLayout.Nchw;
@@ -76,6 +95,6 @@ public sealed record ImageToTensorOptions
     /// </summary>
     public YuvRange YuvRange { get; init; } = YuvRange.Limited;
 
-    /// <summary>The number of floats the tensor holds: <c>3 · Width · Height</c>.</summary>
+    /// <summary>The number of elements the tensor holds: <c>3 · Width · Height</c>.</summary>
     public int ElementCount => 3 * Width * Height;
 }

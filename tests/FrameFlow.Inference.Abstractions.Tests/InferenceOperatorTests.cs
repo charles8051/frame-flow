@@ -42,6 +42,34 @@ public sealed class InferenceOperatorTests
         Assert.Equal([60 / 255f, 40 / 255f, 20 / 255f], result.Result, new ToleranceComparer(1e-6f));
     }
 
+    /// <summary>
+    /// The host input takes the element type the model's options name, so a model that takes bytes
+    /// gets the frame's bytes with no second pass.
+    /// </summary>
+    [Theory]
+    [InlineData(DType.Float32, new byte[] { 0, 0, 0x70, 0x42 })]
+    [InlineData(DType.Float16, new byte[] { 0x80, 0x53 })]
+    [InlineData(DType.UInt8, new byte[] { 60 })]
+    public void TheHostInput_TakesTheModelsElementType(DType dtype, byte[] red)
+    {
+        var session = new InputRecordingSession();
+        var model = new InputRecordingModel(session, new ImageToTensorOptions(2, 2)
+        {
+            Dtype = dtype,
+            Normalization = TensorNormalization.Range(0, 255),
+        });
+        var runner = new InferenceRunner<int>(model, stage: null);
+        using var frame = Solid(20, 40, 60, TimeSpan.Zero);
+
+        runner.Run(frame);
+
+        var input = session.LastInput!;
+        Assert.Equal(dtype, input.Dtype);
+        Assert.Equal(new TensorShape(1, 3, 2, 2), input.Shape);
+        // The first red value: 60 as a float, a half, or a byte.
+        Assert.Equal(red, input.Bytes[..red.Length]);
+    }
+
     [Fact]
     public void AGpuFrameTheStageReads_IsPreparedOnTheDeviceAndBoundInPlace()
     {
@@ -248,6 +276,46 @@ public sealed class InferenceOperatorTests
         private static Span<float> Writable(ICpuTensor tensor) =>
             MemoryMarshal.Cast<byte, float>(MemoryMarshal.AsMemory(tensor.Bytes).Span);
     }
+
+    /// <summary>A model over <see cref="InputRecordingSession"/> whose result is always zero.</summary>
+    private sealed class InputRecordingModel(InputRecordingSession session, ImageToTensorOptions input) : IImageModel<int>
+    {
+        public IInferenceSession Session => session;
+
+        public string InputName => "x";
+
+        public ImageToTensorOptions Input => input;
+
+        public RotatedRect CropFor(IVideoFrame frame) => RotatedRect.Whole(frame);
+
+        public int Decode(IReadOnlyDictionary<string, ICpuTensor> outputs, TensorTransform transform, IVideoFrame frame) => 0;
+    }
+
+    /// <summary>Keeps a copy of the input of each host run.</summary>
+    private sealed class InputRecordingSession : IInferenceSession
+    {
+        public RecordedInput? LastInput { get; private set; }
+
+        public IReadOnlyList<string> InputNames => ["x"];
+
+        public IReadOnlyList<string> OutputNames => ["y"];
+
+        public IReadOnlyList<IReadOnlyList<long>> InputShapes => [new long[] { 1, 3, 2, 2 }];
+
+        public IReadOnlyList<IReadOnlyList<long>> OutputShapes => [new long[] { 1 }];
+
+        public void Run(IReadOnlyDictionary<string, ICpuTensor> inputs, IReadOnlyDictionary<string, ICpuTensor> outputs)
+        {
+            var input = inputs["x"];
+            LastInput = new RecordedInput(input.Dtype, input.Shape, input.Bytes.ToArray());
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed record RecordedInput(DType Dtype, TensorShape Shape, byte[] Bytes);
 
     private sealed class FakeStage(ImageToTensorOptions options) : IDeviceImageToTensor
     {
