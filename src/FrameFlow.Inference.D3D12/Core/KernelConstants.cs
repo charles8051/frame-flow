@@ -38,14 +38,15 @@ internal struct KernelConstants
     public uint TensorWidth, TensorHeight;
     public uint FrameWidth, FrameHeight, Bilinear, Nhwc;
 
-    // Where each colour goes: the plane in NCHW, the position within a pixel in NHWC.
-    public uint RedIndex, GreenIndex, BlueIndex, Unused0;
+    // Where each colour goes: the plane in NCHW, the position within a pixel in NHWC. PadOutside
+    // is 1 when a pixel whose centre lands outside the frame takes the pad colour.
+    public uint RedIndex, GreenIndex, BlueIndex, PadOutside;
 
     // value = sample · Scale + Offset, with the sample on 0 to 255, per colour.
     public float ScaleRed, ScaleGreen, ScaleBlue, Unused1;
     public float OffsetRed, OffsetGreen, OffsetBlue, Unused2;
 
-    // A letterbox bar's tensor value, per colour.
+    // A letterbox bar's tensor value, per colour, also written outside the frame when PadOutside is 1.
     public float PadRed, PadGreen, PadBlue, Unused3;
 
     // The YUV to RGB conversion, as YuvToRgb states it, on the samples as the shader reads them.
@@ -93,6 +94,7 @@ internal struct KernelConstants
             RedIndex = rgb ? 0u : 2u,
             GreenIndex = 1,
             BlueIndex = rgb ? 2u : 0u,
+            PadOutside = options.Border == ImageBorder.Pad ? 1u : 0u,
             ScaleRed = normalization.Red.Scale,
             ScaleGreen = normalization.Green.Scale,
             ScaleBlue = normalization.Blue.Scale,

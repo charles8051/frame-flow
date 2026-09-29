@@ -48,6 +48,12 @@ public sealed class D3D12ImageToTensorTests
         ["crop past the edges, nearest"] = (
             new ImageToTensorOptions(48, 36) { Sampling = ImageSampling.Nearest },
             RotatedRect.FromBounds(-20, -10, 120, 90)),
+        ["crop past the edges, nearest, pad"] = (
+            new ImageToTensorOptions(48, 36) { Sampling = ImageSampling.Nearest, Border = ImageBorder.Pad, PadValue = 40 },
+            RotatedRect.FromBounds(-20, -10, 120, 90)),
+        ["rotated crop past the edges, bilinear, letterbox, pad"] = (
+            new ImageToTensorOptions(40, 40) { Fit = ImageFit.Letterbox, Border = ImageBorder.Pad, PadValue = 200 },
+            new RotatedRect(290, 30, 90, 60, -0.35f)),
     };
 
     [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
@@ -185,13 +191,15 @@ public sealed class D3D12ImageToTensorTests
             {
                 float px = tx + 0.5f, py = ty + 0.5f;
                 float r, g, b;
-                if (px < k.FitLeft || px >= k.FitRight || py < k.FitTop || py >= k.FitBottom)
+                float x = k.A * px + k.B * py + k.C, y = k.D * px + k.E * py + k.F;
+                bool outsideFrame = x < 0 || x >= k.FrameWidth || y < 0 || y >= k.FrameHeight;
+                if (px < k.FitLeft || px >= k.FitRight || py < k.FitTop || py >= k.FitBottom
+                    || (k.PadOutside != 0 && outsideFrame))
                 {
                     (r, g, b) = (k.PadRed, k.PadGreen, k.PadBlue);
                 }
                 else
                 {
-                    float x = k.A * px + k.B * py + k.C, y = k.D * px + k.E * py + k.F;
                     float luma = bilinear ? BilinearLuma(image, x, y) : NearestLuma(image, x, y);
                     var (cb, cr) = bilinear ? BilinearChroma(image, x, y) : NearestChroma(image, x, y);
                     float yl = (luma - k.YOffset) * k.YScale;

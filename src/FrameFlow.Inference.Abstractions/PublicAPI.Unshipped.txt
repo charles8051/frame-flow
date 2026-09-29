@@ -37,6 +37,9 @@ FrameFlow.Inference.IInferenceSessionFactory
 FrameFlow.Inference.IInferenceSessionFactory.ActiveProvider.get -> FrameFlow.Inference.ExecutionProvider?
 FrameFlow.Inference.IInferenceSessionFactory.Open(string! modelPath) -> FrameFlow.Inference.IInferenceSession!
 FrameFlow.Inference.IInferenceSessionFactory.Open(string! modelPath, System.IProgress<FrameFlow.Inference.InferenceSessionProgress>? progress) -> FrameFlow.Inference.IInferenceSession!
+FrameFlow.Inference.ImageBorder
+FrameFlow.Inference.ImageBorder.Pad = 1 -> FrameFlow.Inference.ImageBorder
+FrameFlow.Inference.ImageBorder.Replicate = 0 -> FrameFlow.Inference.ImageBorder
 FrameFlow.Inference.ImageFit
 FrameFlow.Inference.ImageFit.Letterbox = 1 -> FrameFlow.Inference.ImageFit
 FrameFlow.Inference.ImageFit.Stretch = 0 -> FrameFlow.Inference.ImageFit
@@ -45,6 +48,8 @@ FrameFlow.Inference.ImageSampling.Bilinear = 1 -> FrameFlow.Inference.ImageSampl
 FrameFlow.Inference.ImageSampling.Nearest = 0 -> FrameFlow.Inference.ImageSampling
 FrameFlow.Inference.ImageToTensor
 FrameFlow.Inference.ImageToTensorOptions
+FrameFlow.Inference.ImageToTensorOptions.Border.get -> FrameFlow.Inference.ImageBorder
+FrameFlow.Inference.ImageToTensorOptions.Border.init -> void
 FrameFlow.Inference.ImageToTensorOptions.ChannelOrder.get -> FrameFlow.Inference.TensorChannelOrder
 FrameFlow.Inference.ImageToTensorOptions.ChannelOrder.init -> void
 FrameFlow.Inference.ImageToTensorOptions.ElementCount.get -> int
@@ -132,6 +137,7 @@ FrameFlow.Inference.YuvMatrix.Bt709 = 1 -> FrameFlow.Inference.YuvMatrix
 FrameFlow.Inference.YuvRange
 FrameFlow.Inference.YuvRange.Full = 1 -> FrameFlow.Inference.YuvRange
 FrameFlow.Inference.YuvRange.Limited = 0 -> FrameFlow.Inference.YuvRange
+static FrameFlow.Inference.ImageToTensor.Transform(FrameFlow.Inference.RotatedRect crop, FrameFlow.Inference.ImageToTensorOptions! options) -> FrameFlow.Inference.TensorTransform
 static FrameFlow.Inference.ImageToTensor.Write(FrameFlow.Media.IVideoFrame! frame, FrameFlow.Inference.RotatedRect crop, FrameFlow.Inference.ImageToTensorOptions! options, System.Span<float> destination) -> FrameFlow.Inference.TensorTransform
 static FrameFlow.Inference.InferenceSessionFactoryBuilder.Create(FrameFlow.Inference.ExecutionProvider preferred, System.Collections.Generic.IReadOnlyDictionary<FrameFlow.Inference.ExecutionProvider, System.Func<string!, FrameFlow.Inference.IInferenceSession!>!>! providers, System.Collections.Generic.IReadOnlyList<FrameFlow.Inference.ExecutionProvider>? fallbackOrder = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Inference.IInferenceSessionFactory!
 static FrameFlow.Inference.RotatedRect.FromBounds(float x, float y, float width, float height) -> FrameFlow.Inference.RotatedRect

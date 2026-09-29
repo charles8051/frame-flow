@@ -8,15 +8,18 @@ namespace FrameFlow.Face.Tests;
 
 /// <summary>
 /// The detector as an <see cref="IImageModel{TResult}"/>: through <see cref="InferenceOperators"/>
-/// it finds what <see cref="BlazeFaceDetector.Detect(IVideoFrame)"/> finds on the same frame (#436).
+/// it finds what <see cref="BlazeFaceDetector.Detect(IVideoFrame)"/> finds on the same frame (#436),
+/// and on a frame that is not square both keep a square face square (#473).
 /// </summary>
 public sealed class BlazeFaceInferenceModelTests
 {
-    [Fact]
-    public async Task ThroughTheOperator_TheDetectorFindsWhatDetectFinds()
+    [Theory]
+    [InlineData(64, 64)]
+    [InlineData(1280, 720)]
+    public async Task ThroughTheOperator_TheDetectorFindsWhatDetectFinds(int width, int height)
     {
         using var detector = BlazeFaceDetector.Create(new OneFaceSession());
-        using var frame = FaceTestFrames.SolidBgra(64, 64, b: 10, g: 20, r: 30);
+        using var frame = FaceTestFrames.SolidBgra(width, height, b: 10, g: 20, r: 30);
         var expected = detector.Detect(frame);
         Assert.Single(expected);
 
@@ -37,6 +40,12 @@ public sealed class BlazeFaceInferenceModelTests
         var want = expected[0];
         Assert.Equal((want.Confidence, want.X, want.Y, want.Width, want.Height), (face.Confidence, face.X, face.Y, face.Width, face.Height));
         Assert.Equal(want.Keypoints, face.Keypoints);
+
+        // The model's face is 20 of 128 input pixels on each side, and the input spans the
+        // frame's longer side.
+        float side = 20f / 128 * Math.Max(width, height);
+        Assert.Equal(side, want.Width, 3);
+        Assert.Equal(side, want.Height, 3);
     }
 
     /// <summary>Anchor 0 holds one confident 20-pixel face; every other score is off.</summary>

@@ -64,6 +64,18 @@ public static class ImageToTensor
     }
 
     /// <summary>
+    /// The mapping <see cref="Write(IVideoFrame, RotatedRect, ImageToTensorOptions, Span{float})"/>
+    /// returns for <paramref name="crop"/>, without reading a frame. It depends only on the crop,
+    /// the tensor's size and <see cref="ImageToTensorOptions.Fit"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">The crop is not finite or has no area.</exception>
+    public static TensorTransform Transform(RotatedRect crop, ImageToTensorOptions options)
+    {
+        Validate(crop, options);
+        return ImageToTensorPlan.Create(crop, options.Width, options.Height, options.Fit).Transform;
+    }
+
+    /// <summary>
     /// <see cref="Write(IVideoFrame, RotatedRect, ImageToTensorOptions, Span{float})"/> over a
     /// packed 32-bit image, on a chosen path.
     /// </summary>
@@ -126,7 +138,8 @@ public static class ImageToTensor
 
         if (!Enum.IsDefined(options.Fit) || !Enum.IsDefined(options.Sampling)
             || !Enum.IsDefined(options.Layout) || !Enum.IsDefined(options.ChannelOrder)
-            || !Enum.IsDefined(options.YuvMatrix) || !Enum.IsDefined(options.YuvRange))
+            || !Enum.IsDefined(options.YuvMatrix) || !Enum.IsDefined(options.YuvRange)
+            || !Enum.IsDefined(options.Border))
         {
             throw new ArgumentException($"The options name an undefined mode: {options}.", nameof(options));
         }
