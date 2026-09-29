@@ -90,6 +90,10 @@ FrameFlow.Inference.InferenceSessionProgress.Phase.get -> FrameFlow.Inference.In
 FrameFlow.Inference.InferenceSessionProgress.Phase.init -> void
 FrameFlow.Inference.InferenceSessionProgress.Provider.get -> FrameFlow.Inference.ExecutionProvider?
 FrameFlow.Inference.InferenceSessionProgress.Provider.init -> void
+FrameFlow.Inference.ProviderOutOfMemoryException
+FrameFlow.Inference.ProviderOutOfMemoryException.ModelPath.get -> string!
+FrameFlow.Inference.ProviderOutOfMemoryException.Provider.get -> FrameFlow.Inference.ExecutionProvider
+FrameFlow.Inference.ProviderOutOfMemoryException.ProviderOutOfMemoryException(FrameFlow.Inference.ExecutionProvider provider, string! modelPath, System.Exception! innerException) -> void
 FrameFlow.Inference.RotatedRect
 FrameFlow.Inference.RotatedRect.CenterX.get -> float
 FrameFlow.Inference.RotatedRect.CenterX.init -> void

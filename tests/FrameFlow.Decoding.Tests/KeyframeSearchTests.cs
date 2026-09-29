@@ -77,8 +77,10 @@ public sealed class KeyframeSearchTests
             { [F(9.5), K(9.7, 9.7), K(null, null)], true, 9.7 },
             { [K(null, null), K(9.5, 9.4), F(10.04)], true, 10 },
             { [F(9.5), K(null, null)], true, 10 },
-            // No decode time to stop the next probe at: where a seek to the position lands.
-            { [], false, 10 },
+            // Read no packet, as a probe past the source's end can: further back.
+            { [], false, null },
+            // Packets but no decode time to stop the next probe at: where a seek to the position
+            // lands.
             { [new Packet(false, 9.5, null), new Packet(false, 10.04, null)], true, 10 },
             { [new Packet(false, 9.5, null)], false, 10 },
         };
@@ -178,6 +180,37 @@ public sealed class KeyframeSearchTests
         var search = Read(KeyframeSearch.For(Position), K(9, 9));
 
         Assert.Equal(search, Read(search, K(9.5, 9.5), F(10.04)));
+    }
+
+    /// <summary>
+    /// A container that returns the source's end, not its last packet, for a seek past the end:
+    /// the probes past it read nothing and step back, and the first within the stream reads to the
+    /// end and finds its last keyframe.
+    /// </summary>
+    [Fact]
+    public void PastTheEnd_OfAContainerThatReturnsTheEnd_TheSearchStepsBack_ToTheLastKeyframe()
+    {
+        var end = ThreeSeconds[^1].Dts!.Value;
+        var probes = new List<TimeSpan>();
+        for (var search = KeyframeSearch.For(S(10)); ; search = search.Back())
+        {
+            probes.Add(search.Probe);
+            if (search.Probe.TotalSeconds <= end)
+            {
+                var at = Math.Max(0, Array.FindLastIndex(ThreeSeconds, p => p.Dts <= search.Probe.TotalSeconds));
+                for (var i = at; i < ThreeSeconds.Length && !search.Finished; i++)
+                    search = Read(search, ThreeSeconds[i]);
+            }
+
+            if (search.Landing is { } landing)
+            {
+                Assert.Equal(S(2), landing);
+                break;
+            }
+        }
+
+        // 10, then 9, 7 and 3 past the end, then 0 within it.
+        Assert.Equal([S(10), S(9), S(7), S(3), TimeSpan.Zero], probes);
     }
 
     [Fact]

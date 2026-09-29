@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Inference.Core;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -145,8 +146,11 @@ public static class InferenceSessionFactoryBuilder
     /// <summary>
     /// Caches the first successful provider; subsequent <c>Open</c>
     /// calls use the cached provider directly, and one that fails there
-    /// walks the rest of the chain. Thread-safe under the
-    /// "single-reader, possibly racing first Open" pattern.
+    /// walks the rest of the chain. What a failure does depends on its
+    /// <see cref="ConstructFailure"/> kind: out of memory throws, device loss and
+    /// an unavailable provider let the provider that opens be cached, and an
+    /// unrecognised failure opens the model without changing the cache.
+    /// Thread-safe under the "single-reader, possibly racing first Open" pattern.
     /// </summary>
     private sealed class LazyResolvingFactory : IInferenceSessionFactory
     {
@@ -179,7 +183,7 @@ public static class InferenceSessionFactoryBuilder
 
             lock (_gate)
             {
-                var failures = new List<(ExecutionProvider Provider, Exception Exception)>();
+                var failures = new List<Failure>();
                 if (_active is ExecutionProvider cached)
                 {
                     // Cached path: no re-probe, but a session is still
@@ -190,16 +194,19 @@ public static class InferenceSessionFactoryBuilder
                         InferenceSessionPhase.ProbingProvider, cached));
                     if (TryConstruct(cached, modelPath, failures) is { } cachedSession)
                         return Opened(cachedSession, cached, progress);
+                    ThrowIfOutOfMemory(failures[^1], modelPath);
 
                     // A provider that opened before can stop opening: after a GPU reset,
                     // DirectML fails for the rest of the process (#431). Walk the chain
-                    // without it; it stays cached unless another provider opens.
+                    // without it; the provider that opens replaces it in the cache only when
+                    // every failure on the way rules its provider out (#497).
                     _logger.LogWarning(
                         failures[^1].Exception,
                         "Inference factory: execution provider {Provider}, which opened before, "
-                            + "failed to open model '{ModelPath}'. Probing the rest of the chain.",
+                            + "failed to open model '{ModelPath}' ({Kind}). Probing the rest of the chain.",
                         cached,
-                        modelPath);
+                        modelPath,
+                        failures[^1].Kind);
                 }
 
                 foreach (var provider in _chain)
@@ -210,31 +217,48 @@ public static class InferenceSessionFactoryBuilder
                         InferenceSessionPhase.ProbingProvider, provider));
                     if (TryConstruct(provider, modelPath, failures) is not { } session)
                     {
+                        ThrowIfOutOfMemory(failures[^1], modelPath);
                         _logger.LogWarning(
                             failures[^1].Exception,
                             "Inference factory: execution provider {Provider} failed to open "
-                                + "model '{ModelPath}': {Message}",
+                                + "model '{ModelPath}' ({Kind}): {Message}",
                             provider,
                             modelPath,
+                            failures[^1].Kind,
                             failures[^1].Exception.Message);
                         continue;
                     }
 
-                    _active = provider;
                     if (failures.Count == 0)
                     {
+                        _active = provider;
                         _logger.LogInformation(
                             "Inference factory using execution provider {Provider}.",
                             provider);
                     }
-                    else
+                    else if (failures.TrueForAll(f => ConstructFailure.RulesOut(f.Kind)))
                     {
+                        _active = provider;
                         _logger.LogWarning(
                             "Inference factory fell back to execution provider {Provider} "
                                 + "after {FailureCount} earlier provider(s) failed.",
                             provider,
                             failures.Count);
                     }
+                    else
+                    {
+                        // A failure the factory does not recognise may be this model's alone, so
+                        // the model opens here and the next one starts where this one did (#497).
+                        _logger.LogWarning(
+                            "Inference factory opened model '{ModelPath}' on execution provider {Provider} "
+                                + "after {FailureCount} earlier provider(s) failed, and keeps {Active} for the "
+                                + "next model: a failure it does not recognise does not rule a provider out.",
+                            modelPath,
+                            provider,
+                            failures.Count,
+                            _active?.ToString() ?? "no provider");
+                    }
+
                     return Opened(session, provider, progress);
                 }
 
@@ -255,7 +279,7 @@ public static class InferenceSessionFactoryBuilder
         private IInferenceSession? TryConstruct(
             ExecutionProvider provider,
             string modelPath,
-            List<(ExecutionProvider Provider, Exception Exception)> failures)
+            List<Failure> failures)
         {
             try
             {
@@ -263,10 +287,30 @@ public static class InferenceSessionFactoryBuilder
             }
             catch (Exception ex)
             {
-                failures.Add((provider, ex));
+                failures.Add(new Failure(provider, ex, ConstructFailure.Classify(ex)));
                 return null;
             }
         }
+
+        /// <summary>
+        /// Throws for a provider that ran out of memory: the model did not fit, which says nothing
+        /// about the next model, so no other provider is tried and the cache stays (#497).
+        /// </summary>
+        private void ThrowIfOutOfMemory(Failure failure, string modelPath)
+        {
+            if (failure.Kind != ConstructFailureKind.OutOfMemory)
+                return;
+
+            _logger.LogWarning(
+                failure.Exception,
+                "Inference factory: execution provider {Provider} ran out of memory opening model "
+                    + "'{ModelPath}'. No other provider was tried.",
+                failure.Provider,
+                modelPath);
+            throw new ProviderOutOfMemoryException(failure.Provider, modelPath, failure.Exception);
+        }
+
+        private readonly record struct Failure(ExecutionProvider Provider, Exception Exception, ConstructFailureKind Kind);
 
         /// <summary>
         /// Reports <paramref name="session"/> opened and hands it over. A reporter that throws

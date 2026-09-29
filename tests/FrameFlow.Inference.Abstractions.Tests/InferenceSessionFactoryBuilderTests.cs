@@ -77,8 +77,7 @@ public class InferenceSessionFactoryBuilderTests
     {
         var providers = new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
         {
-            [ExecutionProvider.Cuda] = _ =>
-                throw new InvalidOperationException("CUDA not available on this host"),
+            [ExecutionProvider.Cuda] = _ => throw CudaUnavailable(),
             [ExecutionProvider.DirectML] = path => new FakeInferenceSession($"dml:{path}"),
         };
         var factory = InferenceSessionFactoryBuilder.Create(
@@ -96,8 +95,9 @@ public class InferenceSessionFactoryBuilderTests
     {
         var providers = new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
         {
-            [ExecutionProvider.Cuda] = _ => throw new InvalidOperationException("CUDA missing"),
-            [ExecutionProvider.DirectML] = _ => throw new InvalidOperationException("DML failed"),
+            [ExecutionProvider.Cuda] = _ => throw CudaUnavailable(),
+            [ExecutionProvider.DirectML] = _ => throw new InvalidOperationException(
+                "[ErrorCode:RuntimeException] dml_provider_factory.cc(513) Exception(1) tid(dab0) 887A0002 The object was not found."),
             [ExecutionProvider.Cpu] = path => new FakeInferenceSession($"cpu:{path}"),
         };
         var factory = InferenceSessionFactoryBuilder.Create(
@@ -146,7 +146,7 @@ public class InferenceSessionFactoryBuilderTests
             [ExecutionProvider.Cuda] = path =>
             {
                 cudaConstructions++;
-                throw new InvalidOperationException("CUDA out of memory");
+                throw CudaUnavailable();
             },
             [ExecutionProvider.DirectML] = path =>
             {
@@ -166,6 +166,223 @@ public class InferenceSessionFactoryBuilderTests
         Assert.Equal(1, cudaConstructions);
         // DML called twice — once for the first Open, once for the cached second Open.
         Assert.Equal(2, dmlConstructions);
+    }
+
+    // ── A model that does not fit (#497) ───────────────────────────────
+
+    [Fact]
+    public void APreferredProviderOutOfMemory_Throws_TriesNoOtherProvider_AndCachesNothing()
+    {
+        // This test used to feed "CUDA out of memory" and assert DirectML got cached, so every
+        // later model went to DirectML. Running out of memory is the model's, not CUDA's.
+        int cudaConstructions = 0;
+        int dmlConstructions = 0;
+        var outOfMemory = new InvalidOperationException("CUDA failure 2: out of memory ; GPU=0");
+        var providers = new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+        {
+            [ExecutionProvider.Cuda] = path =>
+            {
+                cudaConstructions++;
+                throw outOfMemory;
+            },
+            [ExecutionProvider.DirectML] = path =>
+            {
+                dmlConstructions++;
+                return new FakeInferenceSession($"dml:{path}");
+            },
+        };
+        var factory = InferenceSessionFactoryBuilder.Create(
+            preferred: ExecutionProvider.Cuda,
+            providers: providers);
+
+        var ex = Assert.Throws<ProviderOutOfMemoryException>(() => factory.Open("a.onnx"));
+
+        Assert.Equal(ExecutionProvider.Cuda, ex.Provider);
+        Assert.Equal("a.onnx", ex.ModelPath);
+        Assert.Same(outOfMemory, ex.InnerException);
+        Assert.Contains("Cuda", ex.Message);
+        Assert.Contains("did not fit", ex.Message);
+        Assert.Null(factory.ActiveProvider);
+        Assert.Equal(1, cudaConstructions);
+        Assert.Equal(0, dmlConstructions);
+
+        // Nothing was cached, so the next model tries CUDA again.
+        Assert.Throws<ProviderOutOfMemoryException>(() => factory.Open("b.onnx"));
+        Assert.Equal(2, cudaConstructions);
+        Assert.Equal(0, dmlConstructions);
+    }
+
+    [Fact]
+    public void AModelThatDoesNotFit_LeavesTheCache_AndTheNextModelOpensOnThePreferredProvider()
+    {
+        // #497: DirectML opens A, runs out of memory for B, and C still opens on DirectML.
+        var attempts = new List<(ExecutionProvider Provider, string Path)>();
+        var factory = InferenceSessionFactoryBuilder.Create(
+            preferred: ExecutionProvider.DirectML,
+            providers: new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+            {
+                [ExecutionProvider.DirectML] = path =>
+                {
+                    attempts.Add((ExecutionProvider.DirectML, path));
+                    return path == "b.onnx"
+                        ? throw new InvalidOperationException(
+                            "[ErrorCode:RuntimeException] Exception(3) tid(9264) 8007000E Not enough memory resources are available to complete this operation.")
+                        : new FakeInferenceSession(path);
+                },
+                [ExecutionProvider.Cpu] = path =>
+                {
+                    attempts.Add((ExecutionProvider.Cpu, path));
+                    return new FakeInferenceSession(path);
+                },
+            });
+
+        using (factory.Open("a.onnx"))
+        {
+        }
+
+        var ex = Assert.Throws<ProviderOutOfMemoryException>(() => factory.Open("b.onnx"));
+        Assert.Equal(ExecutionProvider.DirectML, ex.Provider);
+        Assert.Equal(ExecutionProvider.DirectML, factory.ActiveProvider);
+
+        using var c = (FakeInferenceSession)factory.Open("c.onnx");
+
+        Assert.Equal("c.onnx", c.ModelPath);
+        Assert.Equal(
+            new[] { (ExecutionProvider.DirectML, "a.onnx"), (ExecutionProvider.DirectML, "b.onnx"), (ExecutionProvider.DirectML, "c.onnx") },
+            attempts);
+    }
+
+    [Fact]
+    public void AnOutOfMemoryWhileWalkingTheChain_Throws_AndLeavesTheCache()
+    {
+        bool deviceLost = false;
+        var factory = InferenceSessionFactoryBuilder.Create(
+            preferred: ExecutionProvider.DirectML,
+            providers: new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+            {
+                [ExecutionProvider.DirectML] = path => deviceLost
+                    ? throw new InvalidOperationException("Exception(1) tid(9264) 887A0005 The GPU device instance has been suspended.")
+                    : new FakeInferenceSession(path),
+                [ExecutionProvider.Cpu] = _ => throw new OutOfMemoryException(),
+            });
+        using (factory.Open("a.onnx"))
+        {
+        }
+
+        deviceLost = true;
+        var ex = Assert.Throws<ProviderOutOfMemoryException>(() => factory.Open("b.onnx"));
+
+        Assert.Equal(ExecutionProvider.Cpu, ex.Provider);
+        Assert.Equal(ExecutionProvider.DirectML, factory.ActiveProvider);
+    }
+
+    // ── A failure the factory does not recognise (#497) ────────────────
+
+    [Fact]
+    public void AnUnrecognisedFailure_OpensTheModelFurtherDown_WithoutMovingTheCache()
+    {
+        var attempts = new List<(ExecutionProvider Provider, string Path)>();
+        var factory = InferenceSessionFactoryBuilder.Create(
+            preferred: ExecutionProvider.DirectML,
+            providers: new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+            {
+                [ExecutionProvider.DirectML] = path =>
+                {
+                    attempts.Add((ExecutionProvider.DirectML, path));
+                    return path == "b.onnx"
+                        ? throw new InvalidOperationException("an operator this provider cannot run")
+                        : new FakeInferenceSession(path);
+                },
+                [ExecutionProvider.Cpu] = path =>
+                {
+                    attempts.Add((ExecutionProvider.Cpu, path));
+                    return new FakeInferenceSession($"cpu:{path}");
+                },
+            });
+        using (factory.Open("a.onnx"))
+        {
+        }
+
+        using var b = (FakeInferenceSession)factory.Open("b.onnx");
+        Assert.Equal("cpu:b.onnx", b.ModelPath);
+        Assert.Equal(ExecutionProvider.DirectML, factory.ActiveProvider);
+
+        using var c = factory.Open("c.onnx");
+
+        Assert.Equal(
+            new[]
+            {
+                (ExecutionProvider.DirectML, "a.onnx"),
+                (ExecutionProvider.DirectML, "b.onnx"),
+                (ExecutionProvider.Cpu, "b.onnx"),
+                (ExecutionProvider.DirectML, "c.onnx"),
+            },
+            attempts);
+    }
+
+    [Fact]
+    public void AnUnrecognisedFailureOnTheFirstOpen_CachesNothing()
+    {
+        var attempts = new List<ExecutionProvider>();
+        bool cudaFails = true;
+        var factory = InferenceSessionFactoryBuilder.Create(
+            preferred: ExecutionProvider.Cuda,
+            providers: new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+            {
+                [ExecutionProvider.Cuda] = path =>
+                {
+                    attempts.Add(ExecutionProvider.Cuda);
+                    return cudaFails ? throw new InvalidOperationException("an operator this provider cannot run") : new FakeInferenceSession(path);
+                },
+                [ExecutionProvider.Cpu] = path =>
+                {
+                    attempts.Add(ExecutionProvider.Cpu);
+                    return new FakeInferenceSession(path);
+                },
+            });
+
+        using (factory.Open("a.onnx"))
+        {
+        }
+
+        Assert.Null(factory.ActiveProvider);
+
+        cudaFails = false;
+        using var b = factory.Open("b.onnx");
+
+        Assert.Equal(new[] { ExecutionProvider.Cuda, ExecutionProvider.Cpu, ExecutionProvider.Cuda }, attempts);
+        Assert.Equal(ExecutionProvider.Cuda, factory.ActiveProvider);
+    }
+
+    [Fact]
+    public void AWalkPastOneLastingAndOneUnrecognisedFailure_CachesNothing()
+    {
+        var attempts = new List<ExecutionProvider>();
+        var factory = InferenceSessionFactoryBuilder.Create(
+            preferred: ExecutionProvider.Cuda,
+            providers: new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+            {
+                [ExecutionProvider.Cuda] = _ =>
+                {
+                    attempts.Add(ExecutionProvider.Cuda);
+                    throw CudaUnavailable();
+                },
+                [ExecutionProvider.DirectML] = _ =>
+                {
+                    attempts.Add(ExecutionProvider.DirectML);
+                    throw new InvalidOperationException("an operator this provider cannot run");
+                },
+                [ExecutionProvider.Cpu] = path =>
+                {
+                    attempts.Add(ExecutionProvider.Cpu);
+                    return new FakeInferenceSession(path);
+                },
+            });
+
+        using var session = factory.Open("a.onnx");
+
+        Assert.Equal(new[] { ExecutionProvider.Cuda, ExecutionProvider.DirectML, ExecutionProvider.Cpu }, attempts);
+        Assert.Null(factory.ActiveProvider);
     }
 
     // ── Fallback order: default and custom ─────────────────────────────
@@ -302,7 +519,8 @@ public class InferenceSessionFactoryBuilderTests
     }
 
     /// <summary>
-    /// Providers that each record their attempt; <paramref name="opens"/> opens and the rest throw.
+    /// Providers that each record their attempt; <paramref name="opens"/> opens and the rest throw
+    /// as a provider whose library is missing does.
     /// </summary>
     private static Dictionary<ExecutionProvider, Func<string, IInferenceSession>> Recording(
         List<ExecutionProvider> attempts, ExecutionProvider opens, params ExecutionProvider[] registered) =>
@@ -311,8 +529,12 @@ public class InferenceSessionFactoryBuilderTests
             provider => (Func<string, IInferenceSession>)(path =>
             {
                 attempts.Add(provider);
-                return provider == opens ? new FakeInferenceSession(path) : throw new InvalidOperationException("nope");
+                return provider == opens ? new FakeInferenceSession(path) : throw new DllNotFoundException("nope");
             }));
+
+    /// <summary>What the CUDA provider raises in a process with ONNX Runtime's DirectML build.</summary>
+    private static EntryPointNotFoundException CudaUnavailable() =>
+        new("Unable to find an entry point named 'OrtSessionOptionsAppendExecutionProvider_CUDA' in DLL 'onnxruntime'.");
 
     [Fact]
     public void CustomFallback_RespectsOrder_AndSkipsUnregisteredProviders()
@@ -323,7 +545,7 @@ public class InferenceSessionFactoryBuilderTests
             [ExecutionProvider.Cuda] = _ =>
             {
                 attempts.Add(ExecutionProvider.Cuda);
-                throw new InvalidOperationException("nope");
+                throw CudaUnavailable();
             },
             [ExecutionProvider.DirectML] = path =>
             {
@@ -467,7 +689,7 @@ public class InferenceSessionFactoryBuilderTests
     {
         var providers = new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
         {
-            [ExecutionProvider.Cuda] = _ => throw new InvalidOperationException("no CUDA"),
+            [ExecutionProvider.Cuda] = _ => throw CudaUnavailable(),
             [ExecutionProvider.DirectML] = path => new FakeInferenceSession($"dml:{path}"),
         };
         var factory = InferenceSessionFactoryBuilder.Create(
