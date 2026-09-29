@@ -39,8 +39,8 @@ public static class TensorToImage
     /// </summary>
     /// <exception cref="NotSupportedException">The options ask for a format other than Bgra32 or Rgba32.</exception>
     /// <exception cref="ArgumentException">
-    /// The options name an undefined mode, a normalization with no inverse, or a per-channel
-    /// normalization for a single-channel tensor; <paramref name="tensor"/> does not hold exactly
+    /// The options name an undefined mode, a normalization whose inverse or 255-sample span is not
+    /// finite, or a per-channel normalization for a single-channel tensor; <paramref name="tensor"/> does not hold exactly
     /// <see cref="TensorToImageOptions.ElementCount"/> floats; or <paramref name="destination"/> is
     /// too short for the rows.
     /// </exception>
@@ -64,8 +64,8 @@ public static class TensorToImage
     /// <returns>The frame, holding one reference.</returns>
     /// <exception cref="NotSupportedException">The options ask for a format other than Bgra32 or Rgba32.</exception>
     /// <exception cref="ArgumentException">
-    /// The options name an undefined mode, a normalization with no inverse, or a per-channel
-    /// normalization for a single-channel tensor; or the tensor is not 32-bit float or does not hold
+    /// The options name an undefined mode, a normalization whose inverse or 255-sample span is not
+    /// finite, or a per-channel normalization for a single-channel tensor; or the tensor is not 32-bit float or does not hold
     /// exactly <see cref="TensorToImageOptions.ElementCount"/> elements.
     /// </exception>
     public static CpuVideoFrame ToFrame(
@@ -141,8 +141,8 @@ public static class TensorToImage
 
     /// <summary>
     /// Refuses options that name an undefined mode, a format other than Bgra32 or Rgba32, or a
-    /// normalization with no finite inverse, and a single-channel tensor whose channels are
-    /// normalized differently.
+    /// normalization with no finite inverse or whose 255 samples span more than a float holds, and a
+    /// single-channel tensor whose channels are normalized differently.
     /// </summary>
     internal static void ValidateOptions(TensorToImageOptions options)
     {
@@ -162,7 +162,8 @@ public static class TensorToImage
         if (!Invertible(normalization.Red) || !Invertible(normalization.Green) || !Invertible(normalization.Blue))
         {
             throw new ArgumentException(
-                $"Each channel's normalization needs a finite, non-zero scale with a finite inverse; got {normalization}.",
+                $"Each channel's normalization needs a finite offset and a non-zero scale whose reciprocal, "
+                    + $"and whose span over 255 samples, are finite; got {normalization}.",
                 nameof(options));
         }
 
@@ -174,10 +175,13 @@ public static class TensorToImage
                 nameof(options));
         }
 
+        // A finite span is what keeps the kernel's value - Offset honest: a difference that overflows
+        // is then wider than the span, so it is a sample past 0 or 255 either way and clamps the same.
         static bool Invertible((float Scale, float Offset) channel)
         {
             return float.IsFinite(channel.Scale) && channel.Scale != 0f && float.IsFinite(channel.Offset)
-                && float.IsFinite(TensorToImageKernel.Reciprocal(channel.Scale));
+                && float.IsFinite(TensorToImageKernel.Reciprocal(channel.Scale))
+                && Math.Abs(255.0 * channel.Scale) <= float.MaxValue;
         }
     }
 }

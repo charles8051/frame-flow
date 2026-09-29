@@ -123,6 +123,31 @@ public sealed class TensorToImageTests
     }
 
     /// <summary>
+    /// A span close to the widest a float holds. A value far outside it overflows
+    /// <c>value - Offset</c> to an infinity of the right sign, and clamps as its sample would.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AtTheWidestSpan_AnOverflowingValueClampsTheWayItsSampleWould(bool scalar)
+    {
+        float[] tensor = [-1.5e38f, 0.5e38f, 1.5e38f, 3.4e38f, -3.4e38f, float.MaxValue, -float.MaxValue, 0f, 0f];
+        var options = new TensorToImageOptions(tensor.Length, 1)
+        {
+            Channels = 1,
+            Normalization = TensorNormalization.Range(-1.5e38f, 1.5e38f),
+        };
+        var image = new byte[4 * tensor.Length];
+
+        TensorToImage.Write(
+            tensor, options, image, image.Length, scalar ? TensorToImagePath.Scalar : TensorToImagePath.Auto);
+
+        Assert.Equal(
+            new byte[] { 0, 170, 255, 255, 0, 255, 0 },
+            Enumerable.Range(0, 7).Select(i => image[4 * i]).ToArray());
+    }
+
+    /// <summary>
     /// <see cref="ImageToTensor"/> followed by <see cref="TensorToImage"/> with the same layout,
     /// channel order and normalization gives back every byte of the frame.
     /// </summary>
@@ -290,6 +315,11 @@ public sealed class TensorToImageTests
         Assert.Throws<ArgumentException>(() => TensorToImage.Write(tensor, options with { Normalization = default }, image, 16));
         Assert.Throws<ArgumentException>(
             () => TensorToImage.Write(tensor, options with { Normalization = TensorNormalization.Range(1, 1) }, image, 16));
+
+        // A span wider than a float: value - Offset could overflow for a sample inside it.
+        Assert.Throws<ArgumentException>(
+            () => TensorToImage.Write(tensor, options with { Normalization = TensorNormalization.Range(-3e38f, 3e38f) }, image, 16));
+        TensorToImage.Write(tensor, options with { Normalization = TensorNormalization.Range(-1e38f, 1e38f) }, image, 16);
 
         // Grey needs one normalization for all three channels.
         var grey = options with { Channels = 1 };
