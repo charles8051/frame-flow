@@ -147,12 +147,23 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding, I
     /// <summary>The rule the constructor was given, or null when it was given none.</summary>
     internal FrameDomainRule? DeclaredDomains { get; }
 
+    /// <summary>
+    /// Optional cleanup invoked each time the node's pump exits, whatever the reason (end of
+    /// input, cancellation, a fault), after the last call to <see cref="Body"/> and once its
+    /// outputs are complete. Once per run, so state that must survive a re-run of the graph is
+    /// created again on the next run's first item rather than once at construction. For an
+    /// operator that owns a native resource and releases it deterministically, as
+    /// <see cref="SourceNode{TOut}.Cleanup"/> does for a source.
+    /// </summary>
+    public Func<ValueTask>? Cleanup { get; }
+
     public OperatorNode(
         string id,
         Operator<TIn, TOut> body,
         FailureResponse onError = FailureResponse.Propagate,
         FrameHolding? holding = null,
-        FrameDomainRule? domains = null
+        FrameDomainRule? domains = null,
+        Func<ValueTask>? cleanup = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -163,6 +174,7 @@ public sealed class OperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHolding, I
         Holding = holding ?? FrameHolding.Unbounded;
         DeclaredDomains = domains;
         Domains = domains ?? FrameDomainRule.Any;
+        Cleanup = cleanup;
         Input = new InputPort<TIn>(this, "input");
         Output = new OutputPort<TOut>(this, "output");
     }
@@ -210,12 +222,23 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHoldi
     /// <summary>The rule the constructor was given, or null when it was given none.</summary>
     internal FrameDomainRule? DeclaredDomains { get; }
 
+    /// <summary>
+    /// Optional cleanup invoked each time the node's pump exits, whatever the reason (end of
+    /// input, cancellation, a fault), after the last call to <see cref="Body"/> and once its
+    /// outputs are complete. Once per run, so state that must survive a re-run of the graph is
+    /// created again on the next run's first item rather than once at construction. For an
+    /// operator that owns a native resource and releases it deterministically, as
+    /// <see cref="SourceNode{TOut}.Cleanup"/> does for a source.
+    /// </summary>
+    public Func<ValueTask>? Cleanup { get; }
+
     public MultiOperatorNode(
         string id,
         MultiOperator<TIn, TOut> body,
         FailureResponse onError = FailureResponse.Propagate,
         FrameHolding? holding = null,
-        FrameDomainRule? domains = null
+        FrameDomainRule? domains = null,
+        Func<ValueTask>? cleanup = null
     )
     {
         ArgumentNullException.ThrowIfNull(id);
@@ -226,6 +249,7 @@ public sealed class MultiOperatorNode<TIn, TOut> : IPumpableNode, IDeclaresHoldi
         Holding = holding ?? FrameHolding.Unbounded;
         DeclaredDomains = domains;
         Domains = domains ?? FrameDomainRule.Any;
+        Cleanup = cleanup;
         Input = new InputPort<TIn>(this, "input");
         Output = new OutputPort<TOut>(this, "output");
     }

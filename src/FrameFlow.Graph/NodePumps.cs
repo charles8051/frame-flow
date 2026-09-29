@@ -72,11 +72,23 @@ internal static class NodePumps
                 TryCancel(graphCts);
             foreach (var edge in outputs)
                 edge.Writer.TryComplete();
-            if (node.Cleanup is not null)
-            {
-                try { await node.Cleanup().ConfigureAwait(false); }
-                catch { /* cleanup is best-effort; don't mask primary fault */ }
-            }
+            await RunCleanupAsync(node.Cleanup).ConfigureAwait(false);
+        }
+    }
+
+    // A node's cleanup is best-effort: a throw from it must not mask the fault that ended the
+    // pump, or turn a clean end into a failed run.
+    private static async ValueTask RunCleanupAsync(Func<ValueTask>? cleanup)
+    {
+        if (cleanup is null)
+            return;
+        try
+        {
+            await cleanup().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Swallowed; see above.
         }
     }
 
@@ -146,6 +158,7 @@ internal static class NodePumps
             await DrainUntilCompletedAsync(input).ConfigureAwait(false);
             foreach (var edge in outputs)
                 edge.Writer.TryComplete();
+            await RunCleanupAsync(node.Cleanup).ConfigureAwait(false);
         }
     }
 
@@ -209,6 +222,7 @@ internal static class NodePumps
             await DrainUntilCompletedAsync(input).ConfigureAwait(false);
             foreach (var edge in outputs)
                 edge.Writer.TryComplete();
+            await RunCleanupAsync(node.Cleanup).ConfigureAwait(false);
         }
     }
 

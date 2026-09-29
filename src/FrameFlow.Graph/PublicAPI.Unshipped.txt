@@ -131,7 +131,7 @@ FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Body.get -> FrameFlow.Graph.MultiOp
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Holding.get -> FrameFlow.Graph.FrameHolding!
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Id.get -> string!
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Input.get -> FrameFlow.Graph.InputPort<TIn!>!
-FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.MultiOperatorNode(string! id, FrameFlow.Graph.MultiOperator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, FrameFlow.Graph.FrameHolding? holding = null, FrameFlow.Graph.FrameDomainRule? domains = null) -> void
+FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.MultiOperatorNode(string! id, FrameFlow.Graph.MultiOperator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, FrameFlow.Graph.FrameHolding? holding = null, FrameFlow.Graph.FrameDomainRule? domains = null, System.Func<System.Threading.Tasks.ValueTask>? cleanup = null) -> void
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
 FrameFlow.Graph.Operator<TIn, TOut>
@@ -141,7 +141,7 @@ FrameFlow.Graph.OperatorNode<TIn, TOut>.Holding.get -> FrameFlow.Graph.FrameHold
 FrameFlow.Graph.OperatorNode<TIn, TOut>.Id.get -> string!
 FrameFlow.Graph.OperatorNode<TIn, TOut>.Input.get -> FrameFlow.Graph.InputPort<TIn!>!
 FrameFlow.Graph.OperatorNode<TIn, TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
-FrameFlow.Graph.OperatorNode<TIn, TOut>.OperatorNode(string! id, FrameFlow.Graph.Operator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, FrameFlow.Graph.FrameHolding? holding = null, FrameFlow.Graph.FrameDomainRule? domains = null) -> void
+FrameFlow.Graph.OperatorNode<TIn, TOut>.OperatorNode(string! id, FrameFlow.Graph.Operator<TIn!, TOut!>! body, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, FrameFlow.Graph.FrameHolding? holding = null, FrameFlow.Graph.FrameDomainRule? domains = null, System.Func<System.Threading.Tasks.ValueTask>? cleanup = null) -> void
 FrameFlow.Graph.OperatorNode<TIn, TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
 FrameFlow.Graph.OutputPort<T>
 FrameFlow.Graph.OutputPort<T>.Name.get -> string!
@@ -193,7 +193,6 @@ FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.MaxStaleness.get -> Sys
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.OnError.get -> FrameFlow.Graph.FailureResponse
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Output.get -> FrameFlow.Graph.OutputPort<TOut!>!
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Primary.get -> FrameFlow.Graph.InputPort<TPrimary!>!
-FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.ResetWindow() -> void
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.RetainedCount.get -> int
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Secondary.get -> FrameFlow.Graph.InputPort<TSecondary!>!
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.SyncJoinNode(string! id, FrameFlow.Graph.SyncJoinOperator<TPrimary!, TSecondary!, TOut!>! body, FrameFlow.Graph.SyncJoinKeys<TPrimary!, TSecondary!>! keys, FrameFlow.Graph.SyncMatch matchPolicy, System.TimeSpan window, System.TimeSpan? maxStaleness = null, FrameFlow.Graph.FailureResponse onError = FrameFlow.Graph.FailureResponse.Propagate, System.TimeSpan? maxLead = null, int? maxRetained = null) -> void
@@ -259,6 +258,8 @@ FrameFlow.Graph.Graph.FrameDomainMismatchFor<T>(FrameFlow.Graph.OutputPort<T!>! 
 FrameFlow.Graph.Graph.FrameDomainMismatchFor<T>(FrameFlow.Graph.OutputPort<T!>! source, FrameFlow.Graph.FrameMemoryDomains emitted, FrameFlow.Graph.FrameDomainRule! undeclared) -> FrameFlow.Graph.FrameDomainMismatch?
 FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Domains.get -> FrameFlow.Graph.FrameDomainRule!
 FrameFlow.Graph.OperatorNode<TIn, TOut>.Domains.get -> FrameFlow.Graph.FrameDomainRule!
+FrameFlow.Graph.MultiOperatorNode<TIn, TOut>.Cleanup.get -> System.Func<System.Threading.Tasks.ValueTask>?
+FrameFlow.Graph.OperatorNode<TIn, TOut>.Cleanup.get -> System.Func<System.Threading.Tasks.ValueTask>?
 FrameFlow.Graph.SinkNode<TIn>.Domains.get -> FrameFlow.Graph.FrameDomainRule!
 FrameFlow.Graph.SourceNode<TOut>.Emits.get -> System.Func<FrameFlow.Graph.FrameMemoryDomains>?
 static FrameFlow.Graph.FrameDomainRule.Accepting(FrameFlow.Graph.FrameMemoryDomains accepts, FrameFlow.Graph.FrameMemoryDomains? emits = null) -> FrameFlow.Graph.FrameDomainRule!
