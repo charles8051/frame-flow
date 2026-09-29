@@ -8,9 +8,8 @@ Promotes [the GenAI exploration](../explorations/generative-inference.md), which
 package compatibility, what ONNX Runtime GenAI's source does, and the review findings that shaped
 this record.
 
-The operator depends on three changes to `FrameFlow.Graph` that are not decided here: the fix for
-#489, an abandonable node (decision 7) and a demand edge (decision 8). Each needs its own record or
-fix before `Describe` ships.
+The operator depends on two changes to `FrameFlow.Graph` that are not decided here: the fix for #489
+and an abandonable node (decision 7). Each needs its own fix or record before `Describe` ships.
 
 Related: [ADR-0038](ADR-0038-memory-domain-pipeline-operators.md) (memory-domain operators),
 [ADR-0069](ADR-0069-one-error-model-across-the-playback-stack.md) (one error model),
@@ -29,7 +28,7 @@ Three properties separate a generative model from the models FrameFlow runs toda
 
 - **It takes seconds.** YOLO takes milliseconds. Graph behaviour nobody notices at 10 ms shows at
   2 s: end of stream and looping wait for the branch, seek and stop wait for the body to return, and a
-  frame held by the node pins a decoder surface for the whole generation.
+  frame the node holds stays out of the decoder's pool for the whole generation.
 - **Its input is an encoded image.** A server takes bytes, and GenAI cannot bind device memory. The
   GPU-resident path does not apply.
 - **Its output is text of unknown length.** `IInferenceSession.Run` writes into outputs the caller
@@ -97,20 +96,18 @@ to 1000. `ImageFor` returns the size that family's processor resizes to, the ope
 at that size, and the transform maps an answer back to the frame once. Image placeholders and the chat
 template are the server's concern.
 
-### 5. Two nodes, joined by a demand edge
+### 5. One node on a `LatestWins(1)` branch, holding one frame
 
-`Describe` builds two nodes on a branch whose edge is `LatestWins(1)`:
+`Describe` puts one node on a branch whose edge is `LatestWins(1)`. While the node is busy, the edge
+keeps only the newest frame, so the node always takes a frame at most one frame interval old. For
+each frame it asks the cadence core (decision 6) whether to fire, and drops the frame if not. For a
+frame it fires on, it reads back, crops, resizes and encodes, sends the image to the client, and emits
+the outcome. It reads back only the frames it fires on.
 
-- **The snapshot node** runs when the generate node asks for work. It takes the newest frame, asks
-  the cadence core (decision 6) whether to fire, and drops the frame if not. For a frame it fires on,
-  it reads back, crops, resizes and encodes, and emits a snapshot: the image bytes, the `FrameInfo`
-  and the transform. It declares `FrameHolding.Boundary`, so no frame is held during a generation.
-- **The generate node** sends the snapshot to the client, emits the outcome, and then asks for the
-  next snapshot.
-
-Between them is a demand edge (decision 8), so the snapshot node reads back and encodes only frames
-the generate node will take, and only when it is free. The frame it takes is at most one frame
-interval older than the newest.
+The node holds its frame until the call returns, and declares it: `FrameHolding.AtMost(1,
+forwardsStorage: false)`, as `Infer` does. The fixed-pool budget counts frames, not time
+([ADR-0081](ADR-0081-fixed-pool-budget.md)), so the decoder's pool gets one more frame for it: a
+decoder surface of about 3 MB at 1080p.
 
 The caller passes the readback function and the image encoder at the call site. The readback stays as
 explicit as ADR-0038 asks of `ToCpu`, and the operator package takes no reference to FFmpeg.
@@ -124,10 +121,10 @@ an interval, a trigger from a detector's results or a motion event, and backoff 
 `(state, outcome, now) -> (state', notBefore)`. Without it the operator would call the model back to
 back, which on a hosted service is a call every few seconds per stream.
 
-### 7. The generate node is abandonable
+### 7. The node is abandonable
 
-At end of stream the generate node drops its call in flight and the snapshot waiting for it, so end
-of stream and a loop's restart do not wait on a generation. `FrameFlow.Graph` gains a per-node option
+At end of stream the node drops its call in flight and the frame waiting in its edge, so end of
+stream and a loop's restart do not wait on a generation. `FrameFlow.Graph` gains a per-node option
 for this: a node marked abandonable has its body cancelled, and its buffered input dropped, when its
 input completes. When the graph is cancelled for a seek or a stop, its pump does not wait for the
 cancelled body either. Other nodes finish their work as they do today, so a pass that wants its last
@@ -136,14 +133,7 @@ result still gets it. Its semantics go in their own record.
 Abandoning ends the graph's wait, not the call. The serializer in decision 3 holds the next call on
 the same client until the abandoned one returns.
 
-### 8. The graph gains a demand edge
-
-An edge mode in which the upstream node runs only when the downstream node asks for an item. It is a
-general graph feature with its own record. It also answers the stale input that `ToCpu` in front of
-any slow node delivers today, `Infer`'s included: with the default blocking edge, `ToCpu` converts a
-frame and waits, and from the third run the slow node reads a frame two runs old.
-
-### 9. A failure is a result
+### 8. A failure is a result
 
 A client failure, a timeout or an unparseable answer becomes an outcome on the output, not an
 exception. `FailureResponse.Propagate` would stop playback on one rate-limit response, and `Discard`
@@ -152,14 +142,14 @@ would hide it. An exception from the operator's own code remains a fault.
 The operator does not ship until #489 is fixed. Until then an HTTP client's timeout, which surfaces as
 `TaskCanceledException`, ends the graph as a clean finish.
 
-### 10. Results are late annotations of a past frame
+### 9. Results are late annotations of a past frame
 
 A new result type carries the frame's timestamp and the time the answer completed. It is not
 `InferenceResult<TResult>`, whose `Path` means nothing here. A result arrives seconds after its frame,
 and a consumer that draws it over the picture draws it over a later frame. `PresentedResults` can
 still order results; it cannot make them current.
 
-### 11. Scope
+### 10. Scope
 
 Vision-language and text models. Speech recognition, whose streaming form keeps state between calls,
 needs its own record. GPU-resident input is out of scope.
@@ -176,8 +166,8 @@ needs its own record. GPU-resident input is out of scope.
   the answer matches its schema rather than its text, and is skipped when no server is configured.
 - Per-request cost is the server's. A server built on GenAI prefills the whole prompt on every
   request, because GenAI's C# API gives a VLM no prefix reuse.
-- Order of work: fix #489; the abandonable node and the demand edge, each with its record; the cores
-  and the operator against a fake client; an example against a local server.
+- Order of work: fix #489; the abandonable node, with its record; the cores and the operator against
+  a fake client; an example against a local server.
 
 ## Alternatives considered
 
@@ -192,11 +182,22 @@ needs its own record. GPU-resident input is out of scope.
   result, YOLO's included.
 - **Raising end of stream when the presentation sink completes and letting branches finish.** A loop
   would start its next iteration while the previous one's generation still runs on the same client.
-- **A busy flag shared by the two nodes.** It works without a graph change, but the coupling is
-  invisible to the topology and to validation, and it fixes only this operator.
-- **An operator that releases its input before its body completes.** It changes the `Operator`
-  contract for one caller, and a node that snapshots on every frame still reads back frames nobody
-  takes.
+- **Two nodes: one that snapshots and releases the frame, one that generates.** The split exists
+  only to avoid holding a frame during a generation, and the pool budget already covers that hold.
+  The snapshot node would also need to know when the generate node is free, which the graph cannot
+  express without one of the next two changes.
+- **A demand edge, where the upstream node runs only when the downstream node asks.** It is the
+  general primitive for "prepare work only when the consumer can take it", but FrameFlow's graph is
+  push-based. Adding it means a consumer-to-producer signal, gating in the pumps, a new class of
+  blocking edge for the fork-rejoin deadlock check, wake-ups at termination, and new `EdgeOptions`
+  surface. The one other place it would apply, a `ToCpu` node in front of a fast detector, has
+  staleness of two runs of a few milliseconds, and demand would stop readback and inference
+  overlapping there.
+- **A busy flag shared by two nodes, or an operator that releases its input early.** Either lets the
+  two-node split work. Neither is needed once one node holds the frame.
+- **`ToCpu` in front of the node.** With the default blocking edge, `ToCpu` converts a frame and
+  waits, so from the third run the node reads a frame two runs, here several seconds, old. A
+  `LatestWins(1)` edge after it keeps the frame fresh but reads back every frame.
 - **A FrameFlow-owned session interface instead of `IChatClient`.** It gains nothing in tests, and as a
   synchronous enumerable it would hold a pool thread for seconds and block on a remote client.
 - **The vision encoder on FrameFlow's device path.** `InferenceRunner` refuses the encoder's dynamic

@@ -293,12 +293,13 @@ land.
   a vision-language model takes seconds, takes an encoded image and returns text of unknown length,
   so it does not fit `IInferenceSession`, which stays unchanged. Proposes a `Describe` operator over
   a caller-owned `IChatClient`, with the model outside the player's process and no model host in
-  FrameFlow. A snapshot node reads back and encodes a frame only when the generate node asks for
-  one; the frame prompt is a pure per-model-family value whose decode is total; a pure core sets the
-  cadence and the backoff; failures are results. Promotes
+  FrameFlow. One node on a `LatestWins(1)` branch takes the newest frame when it is free, reads back
+  only the frames it fires on, and holds its frame through the call under the fixed-pool budget; the
+  frame prompt is a pure per-model-family value whose decode is total; a pure core sets the cadence
+  and the backoff; failures are results. Promotes
   [the GenAI exploration](../explorations/generative-inference.md), which holds the evidence. Waits
-  on #489 and on two graph changes it names for their own records: an abandonable node, so end of
-  stream does not wait on a generation, and a demand edge.
+  on #489 and on an abandonable node, named for its own record, so end of stream does not wait on a
+  generation. Considers and declines a demand edge.
 
 ## Recently numbered
 
