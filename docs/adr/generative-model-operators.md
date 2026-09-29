@@ -9,7 +9,9 @@ An application builds this from FrameFlow's public API, so FrameFlow does not ne
 - **A seekable source** is better served by a second decoder that reads ahead of the playhead. A
   tap on the playback graph cannot read ahead, because `ClockSelectVideoSink` keeps the decoder only
   a few frames ahead of the clock, and that is why decision 9 below has to accept late results. A
-  reader that samples a few frames seconds ahead has each answer ready before its picture plays.
+  reader that samples a few frames seconds ahead has an answer ready before its picture plays
+  whenever the lead covers the decode and the model's latency. When it does not, the answer is late
+  here too, and the application can skip a window it knows would be answered too late.
 - **A live source**, which has nothing to read ahead, takes a `Branch(EdgeOptions.LatestWins(1))`
   ending in a `SinkNode` declared `FrameHolding.InFlight`. The sink drops the frame while the
   application's model worker is busy, and otherwise encodes it and hands the bytes over. The model
