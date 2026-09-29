@@ -371,7 +371,7 @@ The app adds the native GenAI package that matches its FrameFlow EP package. `Fr
 | Step | Where | Complexity |
 |---|---|---|
 | Fix #489 | `FrameFlow.Graph` | Small: one exception filter in five pumps, two regression tests |
-| Spike: a VLM on GenAI.WinML beside `Inference.WinML`, in both load orders; an image through placeholders and the processor; `terminate_session` during a prefill; the processor's target size; prefill time for the intended prompt, measured apart from decode; `RewindTo` on a Qwen-VL generator, compared with a fresh generator given the same prompt | Outside `src` | Small to medium |
+| Spike: a VLM on GenAI.WinML beside `Inference.WinML`, in both load orders; an image through placeholders and the processor; `terminate_session` during a prefill; the processor's target size; prefill time for the intended prompt, measured apart from decode; on a Qwen-VL generator, a generation on one image, `RewindTo` the shared prefix, and a second request with a different image, compared with a fresh generator given that second request | Outside `src` | Small to medium |
 | Decide in process or out of process | This document | |
 | A branch node that drops its work when upstream completes | `FrameFlow.Graph` | Medium |
 | Pure cores: prompt, cadence, retry, generation lifecycle | New operator package | Small each |
