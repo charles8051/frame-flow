@@ -114,6 +114,11 @@ DirectML runs a model with dynamic input dimensions much slower than the same mo
 fixed. `new DmlInferenceSession(path, new DmlInferenceSessionOptions { FreeDimensions = ... })` fixes
 them by name when the model loads, such as `batch = 1` and `height = 518`.
 
+A model run directly through `IInferenceSession.Run` writes into outputs the caller allocates.
+`session.RentOutputs<float>(pool, new Dictionary<string, int> { ["batch"] = 4 })` rents one per
+output at the shape the model declares, sizing each dynamic dimension by its name, and one `Dispose`
+returns them all.
+
 A frame in system memory is prepared on the CPU. To keep a D3D12VA frame on the GPU, create a
 `HardwareDevice` for D3D12VA, build a `DmlInferenceSession.OnDevice` and a `D3D12ImageToTensor` on
 its `TryGetD3D12Device`, and pass the stage to `Infer`: the frame is then written into the model's
