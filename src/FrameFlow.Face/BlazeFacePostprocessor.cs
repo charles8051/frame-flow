@@ -17,7 +17,7 @@ namespace FrameFlow.Face;
 /// Steps, per MediaPipe's <c>TensorsToDetectionsCalculator</c>:
 /// </para>
 /// <list type="number">
-/// <item><description>Score = <c>sigmoid(clip(raw, ±ScoreClipThreshold))</c>; drop below <see cref="MinScore"/>.</description></item>
+/// <item><description>Score = <c>sigmoid(clip(raw, ±ScoreClipThreshold))</c>; drop below <see cref="MinScore"/>, and a score, box or keypoint that is not a finite number.</description></item>
 /// <item><description>Decode box + 6 keypoints as offsets against the descriptor's anchor at that index (<c>reverse_output_order</c>: x before y).</description></item>
 /// <item><description>Map the normalized <c>[0,1]</c> result into the source frame through the preprocessor's letterbox.</description></item>
 /// <item><description>Suppress overlapping detections by score with <see cref="IoUThreshold"/>, as <see cref="Suppression"/> says.</description></item>
@@ -105,8 +105,12 @@ public sealed class BlazeFacePostprocessor
         var candidates = new List<FaceDetection>(capacity: 64);
         for (int i = 0; i < n; i++)
         {
+            // A raw score that is not a finite number is dropped before the clip, which would
+            // turn an infinity into a confident face (#498).
+            if (!float.IsFinite(scores[i]))
+                continue;
             float score = Sigmoid(Clip(scores[i], ScoreClipThreshold));
-            if (score < MinScore)
+            if (!(score >= MinScore))
                 continue;
 
             var anchor = anchors[i];
@@ -123,6 +127,7 @@ public sealed class BlazeFacePostprocessor
             var (x1, y1) = transform.ToFrame(xCenter + w / 2f, yCenter + h / 2f);
 
             var keypoints = new FaceKeypoint2D[numKeypoints];
+            bool finite = float.IsFinite(x0) && float.IsFinite(y0) && float.IsFinite(x1) && float.IsFinite(y1);
             for (int k = 0; k < numKeypoints; k++)
             {
                 int kp = b + 4 + k * 2;
@@ -130,7 +135,12 @@ public sealed class BlazeFacePostprocessor
                 float ky = boxes[kp + 1] / scale * anchor.Height + anchor.YCenter;
                 var (skx, sky) = transform.ToFrame(kx, ky);
                 keypoints[k] = new FaceKeypoint2D(skx, sky);
+                finite &= float.IsFinite(skx) && float.IsFinite(sky);
             }
+
+            // A face that is not a number cannot be placed or suppressed.
+            if (!finite)
+                continue;
 
             candidates.Add(new FaceDetection(
                 score, MathF.Min(x0, x1), MathF.Min(y0, y1), MathF.Abs(x1 - x0), MathF.Abs(y1 - y0), keypoints));

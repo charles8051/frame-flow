@@ -229,13 +229,43 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
             : new TensorShape(1, shape.InputSize, shape.InputSize, 3);
 
     /// <summary>Runs one inference to absorb the EP's cold-start cost before the first real frame.</summary>
+    /// <remarks>
+    /// The input is blank, so the output depends only on the model and the provider, and the run
+    /// checks it: a model that returns values that are not finite numbers on this provider, as an
+    /// fp16 model can when it overflows, fails here rather than finding no faces on every frame (#498).
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">An output holds a NaN or an infinity.</exception>
     public void Warmup()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        _inputTensor.Span.Clear();
+        _boxTensor.Span.Clear();
+        _scoreTensor.Span.Clear();
         var sw = Stopwatch.StartNew();
         _session.Run(_inputBinding, _outputBinding);
         sw.Stop();
         LogWarmupCompleted(_logger, sw.Elapsed.TotalMilliseconds);
+
+        int nonFinite = CountNonFinite(_boxTensor.ReadOnlySpan) + CountNonFinite(_scoreTensor.ReadOnlySpan);
+        if (nonFinite > 0)
+        {
+            throw new InvalidOperationException(
+                $"The model returned {nonFinite} values that are not finite numbers for a blank input on "
+                    + $"{_session.GetType().Name}, so its faces cannot be trusted there. A model with fp16 "
+                    + "inside that overflows does this; try another provider or an fp32 model.");
+        }
+    }
+
+    private static int CountNonFinite(ReadOnlySpan<float> values)
+    {
+        int count = 0;
+        foreach (float value in values)
+        {
+            if (!float.IsFinite(value))
+                count++;
+        }
+
+        return count;
     }
 
     /// <summary>
