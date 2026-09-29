@@ -14,8 +14,8 @@ namespace FrameFlow.Avalonia;
 /// <summary>
 /// Play / Pause / Stop / Loop button row bound to an
 /// <see cref="IMediaTransport"/>. Buttons enable/disable based on the
-/// player's current state; clicking dispatches the corresponding
-/// async call on the player.
+/// transport's current state; clicking dispatches the corresponding
+/// async call on the transport.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -27,7 +27,7 @@ namespace FrameFlow.Avalonia;
 /// <para>
 /// A refused <c>PlayAsync</c> / <c>PauseAsync</c> / <c>SeekAsync</c> /
 /// <c>SetRepeatModeAsync</c> comes back as a <see cref="Result"/> and is
-/// logged through Avalonia's logger by <c>PlayerCommand</c> (ADR-0069).
+/// logged through Avalonia's logger by <c>TransportCommand</c> (ADR-0069).
 /// The bar has no error affordance of its own: the buttons follow
 /// <see cref="IMediaTransport.StateChanged"/>, so a refusal leaves them
 /// where the state says they belong. A consumer wanting failures that
@@ -37,15 +37,15 @@ namespace FrameFlow.Avalonia;
 /// </remarks>
 public sealed class FrameFlowTransportBar : StackPanel
 {
-    /// <summary>The player to control.</summary>
-    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowTransportBar, IMediaTransport?>(nameof(MediaPlayer));
+    /// <summary>The transport to control.</summary>
+    public static readonly StyledProperty<IMediaTransport?> TransportProperty =
+        AvaloniaProperty.Register<FrameFlowTransportBar, IMediaTransport?>(nameof(Transport));
 
-    /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaTransport? MediaPlayer
+    /// <inheritdoc cref="TransportProperty"/>
+    public IMediaTransport? Transport
     {
-        get => GetValue(MediaPlayerProperty);
-        set => SetValue(MediaPlayerProperty, value);
+        get => GetValue(TransportProperty);
+        set => SetValue(TransportProperty, value);
     }
 
     /// <summary>
@@ -108,8 +108,8 @@ public sealed class FrameFlowTransportBar : StackPanel
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == MediaPlayerProperty)
-            OnMediaPlayerChanged(change.GetNewValue<IMediaTransport?>());
+        if (change.Property == TransportProperty)
+            OnTransportChanged(change.GetNewValue<IMediaTransport?>());
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -119,12 +119,12 @@ public sealed class FrameFlowTransportBar : StackPanel
         base.OnDetachedFromVisualTree(e);
     }
 
-    private void OnMediaPlayerChanged(IMediaTransport? player)
+    private void OnTransportChanged(IMediaTransport? transport)
     {
         _stateSubscription?.Dispose();
         _stateSubscription = null;
 
-        if (player is null)
+        if (transport is null)
         {
             UpdateButtonsForState(null);
             _loopButton.IsEnabled = false;
@@ -133,29 +133,29 @@ public sealed class FrameFlowTransportBar : StackPanel
 
         _loopButton.IsEnabled = true;
         _loopButton.IsChecked = LoopByDefault;
-        // Apply the initial loop preference to the freshly-bound player.
+        // Apply the initial loop preference to the freshly-bound transport.
         if (LoopByDefault)
-            PlayerCommand.FireAndForget(
+            TransportCommand.FireAndForget(
                 this,
                 nameof(IMediaTransport.SetRepeatModeAsync),
-                () => player.SetRepeatModeAsync(RepeatMode.One),
+                () => transport.SetRepeatModeAsync(RepeatMode.One),
                 // Repeat mode has no observable to resynchronise from, so a
                 // refused command would otherwise leave the toggle showing a
-                // mode the player never adopted.
+                // mode the transport never adopted.
                 //
-                // Only while this player is still the bound one. A rebind
-                // during the command leaves this callback holding a player the
+                // Only while this transport is still the bound one. A rebind
+                // during the command leaves this callback holding a transport the
                 // control no longer shows, and unchecking then would overwrite
                 // the new binding's LoopByDefault.
                 _ =>
                 {
-                    if (ReferenceEquals(MediaPlayer, player))
+                    if (ReferenceEquals(Transport, transport))
                         _loopButton.IsChecked = false;
                 }
             );
 
-        UpdateButtonsForState(player.State);
-        _stateSubscription = player
+        UpdateButtonsForState(transport.State);
+        _stateSubscription = transport
             .StateChanged.ObserveOnUiThread()
             .Subscribe(s => UpdateButtonsForState(s));
     }
@@ -169,26 +169,26 @@ public sealed class FrameFlowTransportBar : StackPanel
 
     private void OnPlayClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (MediaPlayer is { } p)
-            PlayerCommand.FireAndForget(this, nameof(IMediaTransport.PlayAsync), () => p.PlayAsync());
+        if (Transport is { } p)
+            TransportCommand.FireAndForget(this, nameof(IMediaTransport.PlayAsync), () => p.PlayAsync());
     }
 
     private void OnPauseClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (MediaPlayer is { } p)
-            PlayerCommand.FireAndForget(this, nameof(IMediaTransport.PauseAsync), () => p.PauseAsync());
+        if (Transport is { } p)
+            TransportCommand.FireAndForget(this, nameof(IMediaTransport.PauseAsync), () => p.PauseAsync());
     }
 
     private void OnStopClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (MediaPlayer is not { } p)
+        if (Transport is not { } p)
             return;
 
         // Stop is a pause followed by a rewind. If the pause is refused there
         // is nothing to rewind to, so its Result is what the caller hears
         // about. Under the old exception model the throw skipped the seek
         // implicitly; this says so.
-        PlayerCommand.FireAndForget(
+        TransportCommand.FireAndForget(
             this,
             "Stop",
             async () =>
@@ -203,18 +203,18 @@ public sealed class FrameFlowTransportBar : StackPanel
 
     private void OnLoopClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (MediaPlayer is not { } p)
+        if (Transport is not { } p)
             return;
         var requested = _loopButton.IsChecked == true;
         var mode = requested ? RepeatMode.One : RepeatMode.Off;
-        PlayerCommand.FireAndForget(
+        TransportCommand.FireAndForget(
             this,
             nameof(IMediaTransport.SetRepeatModeAsync),
             () => p.SetRepeatModeAsync(mode),
             // Click already flipped the toggle. Unlike play/pause/stop, whose
             // buttons follow StateChanged, repeat mode has no observable on
             // this surface — so nothing would correct the glyph and it would
-            // keep advertising a mode the player refused until the next click.
+            // keep advertising a mode the transport refused until the next click.
             // Setting IsChecked here does not re-raise Click.
             //
             // Guarded, because the button stays live while the command runs.
@@ -222,11 +222,11 @@ public sealed class FrameFlowTransportBar : StackPanel
             // completing last would roll back a state the newer click already
             // replaced. If the toggle no longer reads what this call asked
             // for, a later click owns it.
-            // The player check is the rebind case, the IsChecked check the
+            // The transport check is the rebind case, the IsChecked check the
             // newer-click one.
             _ =>
             {
-                if (ReferenceEquals(MediaPlayer, p) && _loopButton.IsChecked == requested)
+                if (ReferenceEquals(Transport, p) && _loopButton.IsChecked == requested)
                     _loopButton.IsChecked = !requested;
             }
         );

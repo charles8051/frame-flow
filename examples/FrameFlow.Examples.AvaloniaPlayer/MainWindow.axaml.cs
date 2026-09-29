@@ -147,7 +147,7 @@ public partial class MainWindow : Window
                 .WithLogger(_loggerFactory)
                 .BuildPlayerAsync();
 
-            PlayerView.MediaPlayer = _player;
+            PlayerView.Transport = _player;
             Title = $"FrameFlow Player — {Path.GetFileName(path)}";
 
             // ADR-0069: a refused command comes back as a Result. The catch
@@ -221,7 +221,7 @@ public partial class MainWindow : Window
                 .SourceTransitioned.ObserveOnUiThread()
                 .Subscribe(OnSourceTransitioned);
 
-            PlayerView.MediaPlayer = playlist;
+            PlayerView.Transport = playlist;
             UpdateSelection(playlist.CurrentSource);
             Title =
                 $"FrameFlow Player — {Path.GetFileName(folderPath)} ({_playlistEntries.Count} files)";
@@ -338,7 +338,7 @@ public partial class MainWindow : Window
     {
         // Unbind from the view so the sub-controls dispose their observable
         // subscriptions before the player itself dies.
-        PlayerView.MediaPlayer = null;
+        PlayerView.Transport = null;
 
         _transitionSub?.Dispose();
         _transitionSub = null;

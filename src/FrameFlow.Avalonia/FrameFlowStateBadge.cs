@@ -18,10 +18,10 @@ namespace FrameFlow.Avalonia;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Bind the <see cref="MediaPlayer"/> styled property; the badge
+/// Bind the <see cref="Transport"/> styled property; the badge
 /// subscribes to <see cref="IMediaTransport.StateChanged"/>, marshals
 /// onto the UI thread via <see cref="AvaloniaObservableExtensions.ObserveOnUiThread"/>,
-/// and seeds itself from the current state on assignment. Swap players
+/// and seeds itself from the current state on assignment. Swap transports
 /// (or set to <see langword="null"/>) at any time — the badge disposes
 /// the prior subscription and re-binds.
 /// </para>
@@ -37,14 +37,14 @@ public sealed class FrameFlowStateBadge : TextBlock
     /// The <see cref="IMediaTransport"/> whose state the badge displays.
     /// Settable via XAML binding; can be re-assigned or cleared at runtime.
     /// </summary>
-    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowStateBadge, IMediaTransport?>(nameof(MediaPlayer));
+    public static readonly StyledProperty<IMediaTransport?> TransportProperty =
+        AvaloniaProperty.Register<FrameFlowStateBadge, IMediaTransport?>(nameof(Transport));
 
-    /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaTransport? MediaPlayer
+    /// <inheritdoc cref="TransportProperty"/>
+    public IMediaTransport? Transport
     {
-        get => GetValue(MediaPlayerProperty);
-        set => SetValue(MediaPlayerProperty, value);
+        get => GetValue(TransportProperty);
+        set => SetValue(TransportProperty, value);
     }
 
     private IDisposable? _stateSubscription;
@@ -63,8 +63,8 @@ public sealed class FrameFlowStateBadge : TextBlock
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == MediaPlayerProperty)
-            OnMediaPlayerChanged(change.GetNewValue<IMediaTransport?>());
+        if (change.Property == TransportProperty)
+            OnTransportChanged(change.GetNewValue<IMediaTransport?>());
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -74,12 +74,12 @@ public sealed class FrameFlowStateBadge : TextBlock
         base.OnDetachedFromVisualTree(e);
     }
 
-    private void OnMediaPlayerChanged(IMediaTransport? player)
+    private void OnTransportChanged(IMediaTransport? transport)
     {
         _stateSubscription?.Dispose();
         _stateSubscription = null;
 
-        if (player is null)
+        if (transport is null)
         {
             ApplyState(PlaybackState.Idle);
             return;
@@ -88,8 +88,8 @@ public sealed class FrameFlowStateBadge : TextBlock
         // Seed from current state — the observable only fires on
         // *changes*, so without this the badge would lag until the
         // first transition after binding.
-        ApplyState(player.State);
-        _stateSubscription = player.StateChanged.ObserveOnUiThread().Subscribe(ApplyState);
+        ApplyState(transport.State);
+        _stateSubscription = transport.StateChanged.ObserveOnUiThread().Subscribe(ApplyState);
     }
 
     private void ApplyState(PlaybackState state)

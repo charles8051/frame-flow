@@ -14,21 +14,21 @@ namespace FrameFlow.Avalonia;
 /// Display-only one-line summary of an
 /// <see cref="IMediaTransport"/>'s loaded media —
 /// codec, resolution, frame rate, audio sample rate / channels, and
-/// container. Refreshes whenever the player's state changes (which
+/// container. Refreshes whenever the transport's state changes (which
 /// covers the Initializing → Paused / Playing transition where
 /// <see cref="IMediaTransport.MediaInfo"/> first becomes available).
 /// </summary>
 public sealed class FrameFlowStreamSummary : TextBlock
 {
-    /// <summary>The player whose loaded media to summarise.</summary>
-    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowStreamSummary, IMediaTransport?>(nameof(MediaPlayer));
+    /// <summary>The transport whose loaded media to summarise.</summary>
+    public static readonly StyledProperty<IMediaTransport?> TransportProperty =
+        AvaloniaProperty.Register<FrameFlowStreamSummary, IMediaTransport?>(nameof(Transport));
 
-    /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaTransport? MediaPlayer
+    /// <inheritdoc cref="TransportProperty"/>
+    public IMediaTransport? Transport
     {
-        get => GetValue(MediaPlayerProperty);
-        set => SetValue(MediaPlayerProperty, value);
+        get => GetValue(TransportProperty);
+        set => SetValue(TransportProperty, value);
     }
 
     private IDisposable? _stateSubscription;
@@ -45,8 +45,8 @@ public sealed class FrameFlowStreamSummary : TextBlock
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == MediaPlayerProperty)
-            OnMediaPlayerChanged(change.GetNewValue<IMediaTransport?>());
+        if (change.Property == TransportProperty)
+            OnTransportChanged(change.GetNewValue<IMediaTransport?>());
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -56,26 +56,26 @@ public sealed class FrameFlowStreamSummary : TextBlock
         base.OnDetachedFromVisualTree(e);
     }
 
-    private void OnMediaPlayerChanged(IMediaTransport? player)
+    private void OnTransportChanged(IMediaTransport? transport)
     {
         _stateSubscription?.Dispose();
         _stateSubscription = null;
 
-        if (player is null)
+        if (transport is null)
         {
             Text = string.Empty;
             return;
         }
 
-        Refresh(player);
-        _stateSubscription = player.StateChanged.ObserveOnUiThread().Subscribe(_ => Refresh(player));
+        Refresh(transport);
+        _stateSubscription = transport.StateChanged.ObserveOnUiThread().Subscribe(_ => Refresh(transport));
     }
 
-    private void Refresh(IMediaTransport player)
+    private void Refresh(IMediaTransport transport)
     {
         // Null until the current item finishes loading. Clear and wait; the next state
         // transition retries.
-        if (player.MediaInfo is not { } info)
+        if (transport.MediaInfo is not { } info)
         {
             Text = string.Empty;
             return;

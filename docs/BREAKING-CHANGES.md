@@ -438,6 +438,30 @@ edge (#246).
 `Join` also checks both join inputs before it connects either, so a join input that is already
 connected is refused without wiring the other.
 
+### 21. The chrome controls take `Transport`, not `MediaPlayer`
+
+**A compile error at every use, and a mechanical one.**
+
+The eight chrome controls in `FrameFlow.Avalonia` had a property named `MediaPlayer` whose type is
+`IMediaTransport`. It is `Transport` now, and its styled property is `TransportProperty`.
+`FrameFlowVolumeControl.RefreshFromPlayer()` is `RefreshFromTransport()`.
+
+| Was | Is |
+|---|---|
+| `view.MediaPlayer = player` | `view.Transport = player` |
+| `FrameFlowSeekBar.MediaPlayerProperty` | `FrameFlowSeekBar.TransportProperty` |
+| `volume.RefreshFromPlayer()` | `volume.RefreshFromTransport()` |
+
+The controls are `FrameFlowPlayerView`, `FrameFlowPlayerChrome`, `FrameFlowPositionLabel`,
+`FrameFlowSeekBar`, `FrameFlowStateBadge`, `FrameFlowStreamSummary`, `FrameFlowTransportBar` and
+`FrameFlowVolumeControl`. XAML that sets `MediaPlayer` on one of them takes the same rename.
+
+An `IMediaPlayer` is an `IMediaTransport`, so what you assign does not change.
+
+**Why.** `v0.10.0` entry 38 renamed the small interface to `IMediaTransport` because every consumer
+of it is a transport widget. The property that takes it still said player, which is the mismatch
+that rename removed from the type names (#335).
+
 ## `v0.11.0` — since `v0.10.1`
 
 A new FFmpeg major under the bindings, and one platform that is no longer pretended to be

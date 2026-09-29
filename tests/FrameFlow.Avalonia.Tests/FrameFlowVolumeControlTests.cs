@@ -33,7 +33,7 @@ public sealed class FrameFlowVolumeControlTests
     {
         var control = new FrameFlowVolumeControl
         {
-            MediaPlayer = new FakePlayer { SupportsVolumeControl = false },
+            Transport = new FakeTransport { SupportsVolumeControl = false },
         };
 
         Assert.False(MuteButton(control).IsEnabled);
@@ -45,7 +45,7 @@ public sealed class FrameFlowVolumeControlTests
     {
         var control = new FrameFlowVolumeControl
         {
-            MediaPlayer = new FakePlayer { SupportsVolumeControl = true },
+            Transport = new FakeTransport { SupportsVolumeControl = true },
         };
 
         Assert.True(MuteButton(control).IsEnabled);
@@ -70,7 +70,7 @@ public sealed class FrameFlowVolumeControlTests
         // attached.
         var control = new FrameFlowVolumeControl
         {
-            MediaPlayer = new FakePlayer
+            Transport = new FakeTransport
             {
                 SupportsVolumeControl = true,
                 Volume = 0.25f,
@@ -82,7 +82,7 @@ public sealed class FrameFlowVolumeControlTests
         Assert.Equal(0.25, SliderOf(control).Value, precision: 3);
         Assert.Equal(true, MuteButton(control).IsChecked);
 
-        control.MediaPlayer = new FakePlayer { SupportsVolumeControl = false };
+        control.Transport = new FakeTransport { SupportsVolumeControl = false };
 
         Assert.False(SliderOf(control).IsEnabled);
         Assert.False(MuteButton(control).IsEnabled);
@@ -95,7 +95,7 @@ public sealed class FrameFlowVolumeControlTests
     {
         var control = new FrameFlowVolumeControl
         {
-            MediaPlayer = new FakePlayer
+            Transport = new FakeTransport
             {
                 SupportsVolumeControl = true,
                 Volume = 0.4f,
@@ -103,7 +103,7 @@ public sealed class FrameFlowVolumeControlTests
             },
         };
 
-        control.MediaPlayer = null;
+        control.Transport = null;
 
         Assert.False(SliderOf(control).IsEnabled);
         Assert.Equal(1.0, SliderOf(control).Value, precision: 3);
@@ -118,7 +118,7 @@ public sealed class FrameFlowVolumeControlTests
         // than reset to the control's defaults.
         var control = new FrameFlowVolumeControl
         {
-            MediaPlayer = new FakePlayer
+            Transport = new FakeTransport
             {
                 SupportsVolumeControl = true,
                 Volume = 0.6f,
@@ -140,7 +140,7 @@ public sealed class FrameFlowVolumeControlTests
     /// Minimal <see cref="IMediaTransport"/>. Only the volume projection is
     /// exercised; the transport and observables are never touched.
     /// </summary>
-    private sealed class FakePlayer : IMediaTransport
+    private sealed class FakeTransport : IMediaTransport
     {
         public bool SupportsVolumeControl { get; init; }
         public float Volume { get; set; } = 1.0f;

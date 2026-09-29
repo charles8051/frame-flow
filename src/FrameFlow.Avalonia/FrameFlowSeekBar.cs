@@ -79,15 +79,15 @@ public sealed class FrameFlowSeekBar : Slider
     // Value doesn't actually move.
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMilliseconds(33);
 
-    /// <summary>The player whose position the bar reflects and controls.</summary>
-    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowSeekBar, IMediaTransport?>(nameof(MediaPlayer));
+    /// <summary>The transport whose position the bar reflects and controls.</summary>
+    public static readonly StyledProperty<IMediaTransport?> TransportProperty =
+        AvaloniaProperty.Register<FrameFlowSeekBar, IMediaTransport?>(nameof(Transport));
 
-    /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaTransport? MediaPlayer
+    /// <inheritdoc cref="TransportProperty"/>
+    public IMediaTransport? Transport
     {
-        get => GetValue(MediaPlayerProperty);
-        set => SetValue(MediaPlayerProperty, value);
+        get => GetValue(TransportProperty);
+        set => SetValue(TransportProperty, value);
     }
 
     private DispatcherTimer? _refreshTimer;
@@ -95,8 +95,8 @@ public sealed class FrameFlowSeekBar : Slider
     private bool _userIsInteracting;
     private TimeSpan _lastKnownDuration = TimeSpan.Zero;
 
-    // Coalescing scrub-seek dispatcher, rebuilt per bound player and null when
-    // no player is bound. See ScrubSeekDispatcher for the one-in-flight,
+    // Coalescing scrub-seek dispatcher, rebuilt per bound transport and null
+    // when no transport is bound. See ScrubSeekDispatcher for the one-in-flight,
     // latest-target-wins policy that keeps a drag from flooding the engine.
     private ScrubSeekDispatcher? _scrub;
 
@@ -106,10 +106,10 @@ public sealed class FrameFlowSeekBar : Slider
     // on the Avalonia context.
     private bool _seekRefusalReported;
 
-    // Bumped on every MediaPlayer rebind. A scrub callback captures the value
+    // Bumped on every Transport rebind. A scrub callback captures the value
     // it was created under so a pump still draining against the previous
-    // player cannot touch the latch above.
-    private int _playerGeneration;
+    // transport cannot touch the latch above.
+    private int _transportGeneration;
 
     public FrameFlowSeekBar()
     {
@@ -142,7 +142,7 @@ public sealed class FrameFlowSeekBar : Slider
         _refreshTimer = new DispatcherTimer(
             RefreshInterval,
             DispatcherPriority.Background,
-            (_, _) => RefreshFromPlayer()
+            (_, _) => RefreshFromTransport()
         );
         _refreshTimer.Start();
     }
@@ -157,8 +157,8 @@ public sealed class FrameFlowSeekBar : Slider
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == MediaPlayerProperty)
-            OnMediaPlayerChanged(change.GetNewValue<IMediaTransport?>());
+        if (change.Property == TransportProperty)
+            OnTransportChanged(change.GetNewValue<IMediaTransport?>());
         else if (change.Property == ValueProperty)
             OnValueChangedHandler(change.GetNewValue<double>());
     }
@@ -182,15 +182,15 @@ public sealed class FrameFlowSeekBar : Slider
         // Programmatic update (refresh tick / duration coercion) — ignore.
         if (_suppressUserSeek)
             return;
-        // No bound player → no dispatcher → no seek target.
+        // No bound transport → no dispatcher → no seek target.
         _scrub?.Request(TimeSpan.FromSeconds(newValue));
     }
 
-    private void OnMediaPlayerChanged(IMediaTransport? player)
+    private void OnTransportChanged(IMediaTransport? transport)
     {
-        // Rebind the coalescing dispatcher to the new player (or drop it). Any
-        // pump still draining against the previous player finishes harmlessly
-        // — its seeks target the old, now-disposing player and are swallowed.
+        // Rebind the coalescing dispatcher to the new transport (or drop it). Any
+        // pump still draining against the previous transport finishes harmlessly
+        // — its seeks target the old, now-disposing transport and are swallowed.
         //
         // This call site reports its Result through a latch rather than on
         // every seek. A scrub emits seeks continuously, so reporting each
@@ -202,19 +202,19 @@ public sealed class FrameFlowSeekBar : Slider
         //
         // The latch belongs to one binding, not to the control. The old pump
         // is still draining per the note above, and now that its callback
-        // reports, a late result from it could log against a player that is no
-        // longer attached, eat the new player's first refusal, or clear a latch
+        // reports, a late result from it could log against a transport that is no
+        // longer attached, eat the new transport's first refusal, or clear a latch
         // it does not own. Each callback captures the generation it was built
         // for and does nothing once that is stale.
-        var generation = ++_playerGeneration;
+        var generation = ++_transportGeneration;
         _seekRefusalReported = false;
         _scrub =
-            player is null
+            transport is null
                 ? null
                 : new ScrubSeekDispatcher(async t =>
                 {
-                    var result = await player.SeekAsync(t).ConfigureAwait(true);
-                    if (generation != _playerGeneration)
+                    var result = await transport.SeekAsync(t).ConfigureAwait(true);
+                    if (generation != _transportGeneration)
                         return;
 
                     if (result.IsSuccess)
@@ -226,10 +226,10 @@ public sealed class FrameFlowSeekBar : Slider
                     if (_seekRefusalReported)
                         return;
                     _seekRefusalReported = true;
-                    PlayerCommand.Report(this, nameof(IMediaTransport.SeekAsync), result);
+                    TransportCommand.Report(this, nameof(IMediaTransport.SeekAsync), result);
                 });
 
-        if (player is null)
+        if (transport is null)
         {
             IsEnabled = false;
             _suppressUserSeek = true;
@@ -247,7 +247,7 @@ public sealed class FrameFlowSeekBar : Slider
         }
         IsEnabled = true;
         _lastKnownDuration = TimeSpan.Zero; // force Maximum re-sync on next sample
-        RefreshFromPlayer();
+        RefreshFromTransport();
     }
 
     /// <summary>
@@ -255,17 +255,17 @@ public sealed class FrameFlowSeekBar : Slider
     /// with the media duration and glide <see cref="RangeBase.Value"/> to
     /// the live position. Skipped entirely while the user owns the thumb.
     /// </summary>
-    private void RefreshFromPlayer()
+    private void RefreshFromTransport()
     {
-        var player = MediaPlayer;
-        if (player is null)
+        var transport = Transport;
+        if (transport is null)
             return;
         // Skip programmatic updates while the user is mid-drag — would
         // fight the user's input.
         if (_userIsInteracting)
             return;
 
-        var duration = player.Duration;
+        var duration = transport.Duration;
         if (duration != _lastKnownDuration && duration > TimeSpan.Zero)
         {
             _suppressUserSeek = true;
@@ -284,7 +284,7 @@ public sealed class FrameFlowSeekBar : Slider
         // requested target. Reading the live position here would show the
         // pre-seek value until the engine catches up, snapping the thumb
         // back and then forward — visible jitter on every scrub.
-        var position = _scrub is { IsSeeking: true } scrub ? scrub.LastRequested : player.Position;
+        var position = _scrub is { IsSeeking: true } scrub ? scrub.LastRequested : transport.Position;
         if (duration > TimeSpan.Zero && position > duration)
             position = duration;
         if (position < TimeSpan.Zero)

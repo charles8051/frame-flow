@@ -91,7 +91,7 @@
 
     <!-- Player chrome row — demonstrates FrameFlowPlayerChrome used
          standalone (separate from any video surface). The chrome is
-         bound to the source MediaPlayer that drives the broadcast
+         bound to the source player that drives the broadcast
          above, so Play/Pause/Stop/seek/volume all act on the upstream
          source — controlling all three panes at once.
 

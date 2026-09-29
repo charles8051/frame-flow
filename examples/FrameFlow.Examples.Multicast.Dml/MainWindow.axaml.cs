@@ -313,7 +313,7 @@ public partial class MainWindow : Window
             // single chrome instance controls all three panes
             // simultaneously (they're downstream consumers of one
             // decoded stream).
-            PlayerChrome.MediaPlayer = _player;
+            PlayerChrome.Transport = _player;
 
             if (ExitAfterSeconds is { } seconds)
             {
@@ -470,7 +470,7 @@ public partial class MainWindow : Window
     {
         // Clear the chrome binding first so its sub-controls don't
         // touch a player mid-dispose.
-        PlayerChrome.MediaPlayer = null;
+        PlayerChrome.Transport = null;
         if (_player is not null)
         {
             try

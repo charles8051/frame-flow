@@ -24,21 +24,21 @@ namespace FrameFlow.Avalonia;
 /// (off / quiet / medium / loud). Matches the AvaloniaPlayer example.
 /// </para>
 /// <para>
-/// The slider is disabled until <see cref="MediaPlayer"/> is non-null
-/// so users can't fling the slider before a player exists.
+/// The slider is disabled until <see cref="Transport"/> is non-null
+/// so users can't fling the slider before a transport is bound.
 /// </para>
 /// </remarks>
 public sealed class FrameFlowVolumeControl : StackPanel
 {
-    /// <summary>The player whose volume/mute to control.</summary>
-    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowVolumeControl, IMediaTransport?>(nameof(MediaPlayer));
+    /// <summary>The transport whose volume/mute to control.</summary>
+    public static readonly StyledProperty<IMediaTransport?> TransportProperty =
+        AvaloniaProperty.Register<FrameFlowVolumeControl, IMediaTransport?>(nameof(Transport));
 
-    /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaTransport? MediaPlayer
+    /// <inheritdoc cref="TransportProperty"/>
+    public IMediaTransport? Transport
     {
-        get => GetValue(MediaPlayerProperty);
-        set => SetValue(MediaPlayerProperty, value);
+        get => GetValue(TransportProperty);
+        set => SetValue(TransportProperty, value);
     }
 
     private readonly ToggleButton _muteButton;
@@ -93,40 +93,40 @@ public sealed class FrameFlowVolumeControl : StackPanel
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == MediaPlayerProperty)
-            OnMediaPlayerChanged(change.GetNewValue<IMediaTransport?>());
+        if (change.Property == TransportProperty)
+            OnTransportChanged(change.GetNewValue<IMediaTransport?>());
     }
 
-    private void OnMediaPlayerChanged(IMediaTransport? player)
+    private void OnTransportChanged(IMediaTransport? transport)
     {
-        // Enabled only when a player is attached and its audio sink has a gain
-        // stage. Writing volume to a player without one is a documented no-op,
+        // Enabled only when a transport is attached and its audio sink has a gain
+        // stage. Writing volume to a transport without one is a documented no-op,
         // so a live-looking slider that changes nothing is worse than a
         // disabled one.
-        var canControl = player is not null && player.SupportsVolumeControl;
+        var canControl = transport is not null && transport.SupportsVolumeControl;
         _muteButton.IsEnabled = canControl;
         _slider.IsEnabled = canControl;
 
         // Seed the display unconditionally, including when disabled. Rebinding
-        // from a gain-capable player to a gainless one would otherwise leave
-        // the previous player's slider position and mute glyph on screen,
-        // describing a player that is no longer attached.
-        SeedFrom(player);
+        // from a gain-capable transport to a gainless one would otherwise leave
+        // the previous transport's slider position and mute glyph on screen,
+        // describing a transport that is no longer attached.
+        SeedFrom(transport);
     }
 
     /// <summary>
-    /// Pushes <paramref name="player"/>'s volume and mute state into the
+    /// Pushes <paramref name="transport"/>'s volume and mute state into the
     /// widgets, or resets to unity and unmuted when it is <see langword="null"/>.
     /// </summary>
-    private void SeedFrom(IMediaTransport? player)
+    private void SeedFrom(IMediaTransport? transport)
     {
         // Volume and mute persist across player lifetimes via the audio-sink
         // singleton, so an existing setting should be reflected immediately.
-        _muteButton.IsChecked = player?.Muted ?? false;
+        _muteButton.IsChecked = transport?.Muted ?? false;
         _suppressSliderEvent = true;
         try
         {
-            _slider.Value = player?.Volume ?? 1.0;
+            _slider.Value = transport?.Volume ?? 1.0;
         }
         finally
         {
@@ -139,12 +139,12 @@ public sealed class FrameFlowVolumeControl : StackPanel
     {
         if (_suppressSliderEvent)
             return;
-        var player = MediaPlayer;
-        if (player is null)
+        var transport = Transport;
+        if (transport is null)
             return;
         try
         {
-            player.Volume = (float)e.NewValue;
+            transport.Volume = (float)e.NewValue;
             UpdateUi();
         }
         catch
@@ -156,12 +156,12 @@ public sealed class FrameFlowVolumeControl : StackPanel
 
     private void OnMuteClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
     {
-        var player = MediaPlayer;
-        if (player is null)
+        var transport = Transport;
+        if (transport is null)
             return;
         try
         {
-            player.Muted = _muteButton.IsChecked == true;
+            transport.Muted = _muteButton.IsChecked == true;
             UpdateUi();
         }
         catch
@@ -173,26 +173,26 @@ public sealed class FrameFlowVolumeControl : StackPanel
     /// <summary>
     /// Re-reads <see cref="IMediaTransport.Volume"/> and
     /// <see cref="IMediaTransport.Muted"/> and refreshes the slider /
-    /// mute toggle / glyph / label. Call after mutating the player's
+    /// mute toggle / glyph / label. Call after mutating the transport's
     /// volume or mute from outside the control (e.g. keyboard
     /// shortcuts on a parent view) so the visual state matches.
     /// </summary>
-    public void RefreshFromPlayer() => SeedFrom(MediaPlayer);
+    public void RefreshFromTransport() => SeedFrom(Transport);
 
     private void UpdateUi()
     {
-        var player = MediaPlayer;
-        if (player is null)
+        var transport = Transport;
+        if (transport is null)
             return;
 
-        var pct = (int)Math.Round(player.Volume * 100);
-        _label.Text = player.Muted ? "mute" : $"{pct}%";
+        var pct = (int)Math.Round(transport.Volume * 100);
+        _label.Text = transport.Muted ? "mute" : $"{pct}%";
         _label.Foreground = new SolidColorBrush(
-            Color.Parse(player.Muted ? "#d07a7a" : "#888888")
+            Color.Parse(transport.Muted ? "#d07a7a" : "#888888")
         );
-        _muteButton.Content = player.Muted
+        _muteButton.Content = transport.Muted
             ? "🔇"
-            : player.Volume switch
+            : transport.Volume switch
             {
                 <= 0.001f => "🔈",
                 < 0.34f => "🔈",

@@ -17,10 +17,10 @@ namespace FrameFlow.Avalonia;
 /// Standalone player chrome — the controls UI of a media player
 /// (status badge, stream summary, position label, seek bar, transport
 /// buttons, volume control, optional Open button + keyboard shortcuts)
-/// without the video surface. Bind the <see cref="MediaPlayer"/>
+/// without the video surface. Bind the <see cref="Transport"/>
 /// property and the panel renders + drives playback for whatever
 /// <see cref="FrameFlowVideoView"/> (or other view) is showing that
-/// player's output.
+/// transport's output.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -36,7 +36,7 @@ namespace FrameFlow.Avalonia;
 /// </para>
 /// <para>
 /// <b>What this control owns and does not own.</b> It owns: forwarding
-/// <see cref="MediaPlayer"/> to every sub-control, the file picker
+/// <see cref="Transport"/> to every sub-control, the file picker
 /// behind the optional Open button, and the TopLevel keyboard
 /// shortcut handler (Space / M / ←/→). It does NOT own: hover-to-
 /// reveal opacity transitions, drag-drop, the gradient background a
@@ -47,15 +47,15 @@ namespace FrameFlow.Avalonia;
 /// </remarks>
 public sealed class FrameFlowPlayerChrome : UserControl
 {
-    /// <summary>The player to display + control.</summary>
-    public static readonly StyledProperty<IMediaTransport?> MediaPlayerProperty =
-        AvaloniaProperty.Register<FrameFlowPlayerChrome, IMediaTransport?>(nameof(MediaPlayer));
+    /// <summary>The transport to display + control.</summary>
+    public static readonly StyledProperty<IMediaTransport?> TransportProperty =
+        AvaloniaProperty.Register<FrameFlowPlayerChrome, IMediaTransport?>(nameof(Transport));
 
-    /// <inheritdoc cref="MediaPlayerProperty"/>
-    public IMediaTransport? MediaPlayer
+    /// <inheritdoc cref="TransportProperty"/>
+    public IMediaTransport? Transport
     {
-        get => GetValue(MediaPlayerProperty);
-        set => SetValue(MediaPlayerProperty, value);
+        get => GetValue(TransportProperty);
+        set => SetValue(TransportProperty, value);
     }
 
     /// <summary>Initial state of the Loop toggle. See
@@ -115,7 +115,7 @@ public sealed class FrameFlowPlayerChrome : UserControl
     /// <summary>
     /// Fires when the user clicks the built-in Open button (and
     /// picks a file). The consumer handles teardown of the prior
-    /// <see cref="MediaPlayer"/> and assigns the new one.
+    /// <see cref="Transport"/> and assigns the new one.
     /// </summary>
     public event EventHandler<FileOpenRequestedEventArgs>? FileOpenRequested;
 
@@ -193,15 +193,15 @@ public sealed class FrameFlowPlayerChrome : UserControl
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == MediaPlayerProperty)
+        if (change.Property == TransportProperty)
         {
             var p = change.GetNewValue<IMediaTransport?>();
-            _stateBadge.MediaPlayer = p;
-            _streamSummary.MediaPlayer = p;
-            _positionLabel.MediaPlayer = p;
-            _seekBar.MediaPlayer = p;
-            _transportBar.MediaPlayer = p;
-            _volumeControl.MediaPlayer = p;
+            _stateBadge.Transport = p;
+            _streamSummary.Transport = p;
+            _positionLabel.Transport = p;
+            _seekBar.Transport = p;
+            _transportBar.Transport = p;
+            _volumeControl.Transport = p;
         }
         else if (change.Property == LoopByDefaultProperty)
         {
@@ -285,8 +285,8 @@ public sealed class FrameFlowPlayerChrome : UserControl
 
     private void OnTopLevelKeyDown(object? sender, KeyEventArgs e)
     {
-        var player = MediaPlayer;
-        if (player is null)
+        var transport = Transport;
+        if (transport is null)
             return;
 
         // Don't steal keys destined for a focused text input — the
@@ -298,57 +298,57 @@ public sealed class FrameFlowPlayerChrome : UserControl
         switch (e.Key)
         {
             case Key.Space:
-                TogglePlayPause(player);
+                TogglePlayPause(transport);
                 e.Handled = true;
                 break;
             case Key.M:
                 // Ignore the shortcut when the sink has no gain stage; the
                 // write would be a no-op and the glyph would flip to a mute
                 // state the audio never entered.
-                if (player.SupportsVolumeControl)
+                if (transport.SupportsVolumeControl)
                 {
-                    player.Muted = !player.Muted;
+                    transport.Muted = !transport.Muted;
                     // Muted has no observable today; nudge the volume
                     // glyph to re-read so the icon stays in sync.
-                    _volumeControl.RefreshFromPlayer();
+                    _volumeControl.RefreshFromTransport();
                 }
                 e.Handled = true;
                 break;
             case Key.Left:
-                PlayerCommand.FireAndForget(
+                TransportCommand.FireAndForget(
                     this,
                     nameof(IMediaTransport.SeekAsync),
-                    () => player.SeekAsync(SeekBy(player, -5))
+                    () => transport.SeekAsync(SeekBy(transport, -5))
                 );
                 e.Handled = true;
                 break;
             case Key.Right:
-                PlayerCommand.FireAndForget(
+                TransportCommand.FireAndForget(
                     this,
                     nameof(IMediaTransport.SeekAsync),
-                    () => player.SeekAsync(SeekBy(player, +5))
+                    () => transport.SeekAsync(SeekBy(transport, +5))
                 );
                 e.Handled = true;
                 break;
         }
     }
 
-    private void TogglePlayPause(IMediaTransport player)
+    private void TogglePlayPause(IMediaTransport transport)
     {
-        var playing = player.State == PlaybackState.Playing;
-        PlayerCommand.FireAndForget(
+        var playing = transport.State == PlaybackState.Playing;
+        TransportCommand.FireAndForget(
             this,
             playing ? nameof(IMediaTransport.PauseAsync) : nameof(IMediaTransport.PlayAsync),
-            () => playing ? player.PauseAsync() : player.PlayAsync()
+            () => playing ? transport.PauseAsync() : transport.PlayAsync()
         );
     }
 
-    private static TimeSpan SeekBy(IMediaTransport player, double seconds)
+    private static TimeSpan SeekBy(IMediaTransport transport, double seconds)
     {
-        var target = player.Position + TimeSpan.FromSeconds(seconds);
+        var target = transport.Position + TimeSpan.FromSeconds(seconds);
         if (target < TimeSpan.Zero)
             target = TimeSpan.Zero;
-        var duration = player.Duration;
+        var duration = transport.Duration;
         // Clamp shy of duration — landing exactly on Ended drains
         // the audio pre-buffer for ~800 ms while the video pump
         // finds nothing past EOF to render, producing a silent

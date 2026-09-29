@@ -524,7 +524,7 @@ public partial class MainWindow : Window
         // bind off this property. Mode caveats (no audio, no detection)
         // go to the AppStatusPill; player state is chrome's job via
         // FrameFlowStateBadge.
-        PlayerChrome.MediaPlayer = _player;
+        PlayerChrome.Transport = _player;
 
         var caveats = new List<string>();
         // BuildPlayerAsync loaded the first item, so MediaInfo is set here. Kept as three cases
@@ -856,7 +856,7 @@ public partial class MainWindow : Window
 
         // Detach chrome from the doomed player first so its sub-
         // controls don't poke a half-disposed player.
-        PlayerChrome.MediaPlayer = null;
+        PlayerChrome.Transport = null;
 
         // Stop the caption pump first: cancelling the linked CTS
         // makes the captionPipeline.RunAsync exit; the bridge's
