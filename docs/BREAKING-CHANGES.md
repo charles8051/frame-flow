@@ -207,6 +207,25 @@ exception one level further down.
 catch (GraphFaultException ex) when (ex.InnerException is TimeoutException)
 ```
 
+### 13. A seek on MPEG-TS lands on a keyframe
+
+**A change in behaviour, not a compile error.**
+
+`DemuxSession.SeekAsync` lands on the first video stream's nearest keyframe at or before the
+position, as `IDemuxSession` documents (#495). On a container that seeks by timestamp, such as
+MPEG-TS, it landed on the packet nearest the position, and a decoder fed from there dropped every
+frame up to the next keyframe: after a seek the player showed that keyframe first, up to a GOP past
+the target. It now shows the first frame at or after the target.
+
+**Who hits this.** Code that reads packets straight after `SeekAsync` on MPEG-TS, which now gets
+the keyframe rather than the packet nearest the position, and anything sensitive to seek latency.
+To find the keyframe the seek reads the video packets after where it lands, without decoding them,
+and seeks further back when none is a keyframe at or before the position; on MPEG-TS it reads the
+packets from somewhat before the keyframe up to the position about once. On a container that seeks
+to keyframes, such as MP4, it reads one video packet and seeks a second time.
+
+**What to write instead.** Nothing.
+
 ## `v0.12.0` — since `v0.11.0`
 
 ### 1. A join with a frame secondary must set `maxLead`

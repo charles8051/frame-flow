@@ -362,23 +362,11 @@ internal sealed class PassBuilder : IPassBuilder
                     concreteDemux.DiscardStream(stream.StreamIndex);
             }
 
-            // A range positions the source so that decoding reaches a keyframe at or before its
-            // start, and the pump stops reading at its end. The frames outside it are the pass's
-            // to drop (#483). Every audio packet decodes on its own, so audio alone needs only
-            // the seek.
+            // A range positions the source on the keyframe at or before its start, and the pump
+            // stops reading at its end. The frames outside it are the pass's to drop (#483). With
+            // the video streams discarded, the seek is the container's alone.
             if (_range.SeekTo is { } start)
-            {
-                if (videoDecoder is not null)
-                {
-                    await concreteDemux
-                        .SeekToKeyframeAsync(start, demux.MediaInfo.VideoStreams[0].StreamIndex, cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                else
-                {
-                    await demux.SeekAsync(start, cancellationToken).ConfigureAwait(false);
-                }
-            }
+                await demux.SeekAsync(start, cancellationToken).ConfigureAwait(false);
 
             var pipeline = new DecodingPipeline(
                 concreteDemux,
