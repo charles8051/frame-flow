@@ -340,6 +340,7 @@ internal static class NodePumps
                                     item,
                                     from,
                                     to,
+                                    node.Window,
                                     node.MaxLead,
                                     node.MaxRetained,
                                     node.MatchPolicy,

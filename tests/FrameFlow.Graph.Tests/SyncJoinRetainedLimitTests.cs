@@ -220,6 +220,7 @@ public sealed class SyncJoinRetainedLimitTests
             point,
             Ms(point.Value),
             Ms(point.Value),
+            Ms(10_000),
             maxLead: null,
             limit,
             policy,
@@ -231,7 +232,7 @@ public sealed class SyncJoinRetainedLimitTests
         Timed span,
         int limit,
         SyncMatch policy
-    ) => window.TryAdmit(span.Box, span.From, span.To, maxLead: null, limit, policy, TimeSpan.MaxValue);
+    ) => window.TryAdmit(span.Box, span.From, span.To, Ms(10_000), maxLead: null, limit, policy, TimeSpan.MaxValue);
 
     /// <summary>Advances the primary to <paramref name="ms"/> and releases the match it hands back.</summary>
     private static void Match(SecondaryWindow<RefBox<int>> window, int ms, SyncMatch policy) =>

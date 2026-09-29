@@ -157,6 +157,15 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     /// How far back the window retains secondaries. An entry is evicted once
     /// its <c>To</c> falls more than this behind the highest primary time seen.
     /// </summary>
+    /// <remarks>
+    /// A primary more than this behind the highest time seen is a discontinuity, such as a
+    /// timestamp wrap or a restarted source. The window releases every secondary still live on
+    /// the old timeline and continues from the new primary's time. Until the primary climbs back
+    /// to where the old timeline's window began, a secondary that arrives ahead of the primary
+    /// and ends in that range is taken to be from the old timeline and released: it is still on
+    /// the edge from before the step, and holding it on <see cref="MaxLead"/> would stop the
+    /// reader until the primary reached it.
+    /// </remarks>
     public TimeSpan Window { get; }
 
     /// <summary>
@@ -343,8 +352,8 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     }
 
     /// <summary>
-    /// Drops every retained secondary. Called on the seek path: the window is
-    /// pre-seek state and nothing in it correlates to post-seek primaries.
+    /// Drops every retained secondary, for a caller that knows of a discontinuity the join
+    /// does not see in the primary's times.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -355,10 +364,10 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     /// the join discards upstream too, as a graph rebuild does.
     /// </para>
     /// <para>
-    /// <see cref="FrameFlow.Graph"/> sits below <c>FrameFlow.Decoding</c> and so
-    /// cannot implement its <c>ISeekResettable</c> without inverting the
-    /// layering. The session registers an adapter over this method instead. See
-    /// the sync-window-join ADR §6.
+    /// Nothing in this repository calls it. A seek rebuilds the graph, the pump clears the
+    /// window at the start of every run, and a backward step in the primary's time within a
+    /// run is handled by the window (<see cref="Window"/>). A consumer holding a join across
+    /// runs can call it from <see cref="Graph.BeforeEachRun"/> (ADR-0073, §6).
     /// </para>
     /// </remarks>
     public void ResetWindow() => _retained.Clear();
@@ -391,6 +400,12 @@ internal sealed class SecondaryWindow<T>
     // _highWater, whose TimeSpan.MinValue floor is also a legal primary time.
     private bool _primarySeen;
 
+    // Where each timeline left behind by a backward step in primary time had its window begin,
+    // nearest on top. Until the primary climbs back to the top one, a secondary ahead of the
+    // primary that ends at or past it belongs to a timeline from before a step. A later step
+    // pushes a lower boundary, so the stack ascends from the top.
+    private readonly Stack<TimeSpan> _staleFrom = new();
+
     // Set while the secondary reader is parked on the lead bound or the count limit. Completed
     // and cleared by anything that can make room: the primary advancing, or the window being
     // cleared.
@@ -421,7 +436,9 @@ internal sealed class SecondaryWindow<T>
     /// the window holds that many entries that can still match. At the count
     /// limit, entries that can no longer match are released first. Entries
     /// usually arrive in order, so the insertion point is found by scanning back
-    /// from the end.
+    /// from the end. An item that ends more than <paramref name="window"/> behind
+    /// the primary, which the next primary would evict, is released at once, and
+    /// so is an item from a timeline before a backward step in primary time.
     /// </summary>
     /// <returns>
     /// <see langword="null"/> when the item was admitted. Otherwise the item is
@@ -432,6 +449,7 @@ internal sealed class SecondaryWindow<T>
         T item,
         TimeSpan from,
         TimeSpan to,
+        TimeSpan window,
         TimeSpan? maxLead,
         int? maxRetained,
         SyncMatch policy,
@@ -440,6 +458,17 @@ internal sealed class SecondaryWindow<T>
     {
         lock (_gate)
         {
+            // Released rather than filed, a late item cannot outlive the timeline it arrived on
+            // and survive a backward step as if it were on the new one.
+            if (
+                (TryGetCutoff(window, out var cutoff) && to < cutoff)
+                || (_staleFrom.TryPeek(out var staleFrom) && to >= staleFrom && from > _highWater)
+            )
+            {
+                item.Dispose();
+                return null;
+            }
+
             if (
                 (maxLead is { } lead && !HasRoom(from, lead))
                 || (maxRetained is { } limit && !HasCountRoom(limit, policy, maxStaleness))
@@ -463,7 +492,9 @@ internal sealed class SecondaryWindow<T>
     /// Advances the high-water mark to <paramref name="t"/>, evicts entries
     /// that have aged out of <paramref name="window"/>, and returns an AddRef'd
     /// match for <paramref name="t"/> under <paramref name="policy"/>, or
-    /// <see langword="null"/>.
+    /// <see langword="null"/>. A <paramref name="t"/> more than
+    /// <paramref name="window"/> behind the high-water mark starts a new timeline
+    /// instead (<see cref="SyncJoinNode{TPrimary, TSecondary, TOut}.Window"/>).
     /// </summary>
     public T? AdvanceAndMatch(
         TimeSpan t,
@@ -481,6 +512,13 @@ internal sealed class SecondaryWindow<T>
                     _highWater = t;
                 ReleaseRoomWaiter();
             }
+            else if (TryGetCutoff(window, out var oldCutoff) && t < oldCutoff)
+            {
+                StepBack(t, oldCutoff);
+            }
+
+            while (_staleFrom.TryPeek(out var staleFrom) && _highWater >= staleFrom)
+                _staleFrom.Pop();
 
             Evict(window);
 
@@ -528,8 +566,40 @@ internal sealed class SecondaryWindow<T>
             _entries.Clear();
             _highWater = TimeSpan.MinValue;
             _primarySeen = false;
+            _staleFrom.Clear();
             ReleaseRoomWaiter();
         }
+    }
+
+    // Caller holds _gate. The primary stepped back to t from a timeline whose window began at
+    // oldCutoff. Every retained entry ends at or past oldCutoff, since TryAdmit and Evict release
+    // the rest, so every one is from that timeline and is released. A reader held on the lead or
+    // the count is released to try again, and TryAdmit releases its item if it is from a timeline
+    // before the step.
+    private void StepBack(TimeSpan t, TimeSpan oldCutoff)
+    {
+        foreach (var e in _entries)
+            e.Item.Dispose();
+        _entries.Clear();
+
+        _highWater = t;
+        _staleFrom.Push(oldCutoff);
+        ReleaseRoomWaiter();
+    }
+
+    // Caller holds _gate. Where the window begins: an entry that ends before it is evicted. There
+    // is none before the first primary, and none while the high-water mark is within the window
+    // of TimeSpan.MinValue, where subtracting the window would overflow.
+    private bool TryGetCutoff(TimeSpan window, out TimeSpan cutoff)
+    {
+        if (_highWater == TimeSpan.MinValue || _highWater < TimeSpan.MinValue + window)
+        {
+            cutoff = default;
+            return false;
+        }
+
+        cutoff = _highWater - window;
+        return true;
     }
 
     // Caller holds _gate. The lead is measured from the primary once one has been
@@ -591,15 +661,8 @@ internal sealed class SecondaryWindow<T>
     // Caller holds _gate.
     private void Evict(TimeSpan window)
     {
-        if (_highWater == TimeSpan.MinValue)
+        if (!TryGetCutoff(window, out var cutoff))
             return;
-
-        // TimeSpan.MinValue - window would overflow; nothing has aged out yet
-        // when the high-water mark is still near the floor.
-        if (_highWater < TimeSpan.MinValue + window)
-            return;
-
-        var cutoff = _highWater - window;
 
         // Scan the whole list rather than stopping at the first survivor.
         // Entries are ordered by From, not by To, so one long or open-ended
@@ -626,9 +689,9 @@ internal sealed class SecondaryWindow<T>
 }
 
 /// <summary>
-/// Which retained secondaries can still match (ADR-0081, decision 1). Between window resets the
-/// primary's time does not go backwards, so an entry that cannot match the primary now never
-/// will.
+/// Which retained secondaries can still match (ADR-0081, decision 1). Between window resets and
+/// backward steps the primary's time does not go backwards, so an entry that cannot match the
+/// primary now never will.
 /// </summary>
 internal static class SecondaryCandidates
 {
