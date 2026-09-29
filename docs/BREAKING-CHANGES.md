@@ -43,7 +43,31 @@ detector does. It used to keep the highest-scoring box and drop the rest.
 
 **What to write instead.** Set `Suppression = FaceSuppression.Hard` for the old behaviour.
 
-### 3. `BlazeFacePreprocessor.Preprocess` returns the transform
+### 3. A `null` or `default` logger to `DmlInferenceSession` is ambiguous
+
+**A compile error (CS0121).**
+
+`DmlInferenceSession` has constructors and `OnDevice` overloads that take a
+`DmlInferenceSessionOptions` in the position the logger had (#472). A call that passes a bare `null`
+or `default` there, such as `new DmlInferenceSession(path, null)` or
+`OnDevice(path, device, queue, default)`, now matches both.
+
+**What to write instead.** Drop the argument, or name it: `new DmlInferenceSession(path, logger: null)`.
+
+### 4. `Yolov8Detector.Create` and `CreateAsync` take a thresholds parameter
+
+**A binary break, not a compile error.** Source that calls them compiles unchanged.
+
+All three take `YoloThresholds? thresholds = null` last (#23). An assembly compiled against
+`v0.12.0` that calls one of them throws `MissingMethodException` against this release until it is
+rebuilt.
+
+**Who hits this.** A library built against `v0.12.0` and loaded with this release without being
+rebuilt.
+
+**What to write instead.** Rebuild.
+
+### 5. `BlazeFacePreprocessor.Preprocess` returns the transform
 
 **A binary break, not a compile error.** Source that calls it compiles unchanged.
 
