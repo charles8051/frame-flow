@@ -11,6 +11,18 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## Unreleased — since `v0.12.0`
+
+### 1. A literal `null` logger to `DmlInferenceSession` is ambiguous
+
+**A compile error (CS0121).**
+
+`DmlInferenceSession` has constructors and `OnDevice` overloads that take a
+`DmlInferenceSessionOptions` in the position the logger had (#472). A call that passes a bare `null`
+there, such as `new DmlInferenceSession(path, null)`, now matches both.
+
+**What to write instead.** Drop the argument, or name it: `new DmlInferenceSession(path, logger: null)`.
+
 ## `v0.12.0` — since `v0.11.0`
 
 ### 1. A join with a frame secondary must set `maxLead`
