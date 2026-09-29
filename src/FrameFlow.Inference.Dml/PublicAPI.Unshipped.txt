@@ -13,6 +13,8 @@ FrameFlow.Inference.Dml.DmlInferenceSession.Run(System.Collections.Generic.IRead
 FrameFlow.Inference.Dml.DmlInferenceSessionOptions
 FrameFlow.Inference.Dml.DmlInferenceSessionOptions.FreeDimensions.get -> System.Collections.Generic.IReadOnlyDictionary<string!, long>!
 FrameFlow.Inference.Dml.DmlInferenceSessionOptions.FreeDimensions.init -> void
+FrameFlow.Inference.Dml.DmlInferenceSessionOptions.OptimizationLevel.get -> Microsoft.ML.OnnxRuntime.GraphOptimizationLevel
+FrameFlow.Inference.Dml.DmlInferenceSessionOptions.OptimizationLevel.init -> void
 FrameFlow.Inference.Dml.DmlProbe
 static FrameFlow.Inference.Dml.DmlInferenceSession.OnDevice(byte[]! modelBytes, nint device, nint commandQueue, FrameFlow.Inference.Dml.DmlInferenceSessionOptions! options, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.Dml.DmlInferenceSession!>? logger = null) -> FrameFlow.Inference.Dml.DmlInferenceSession!
 static FrameFlow.Inference.Dml.DmlInferenceSession.OnDevice(byte[]! modelBytes, nint device, nint commandQueue, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.Dml.DmlInferenceSession!>? logger = null) -> FrameFlow.Inference.Dml.DmlInferenceSession!

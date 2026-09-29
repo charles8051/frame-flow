@@ -125,6 +125,8 @@ FrameFlow.Inference.TensorToImageOptions.Normalization.init -> void
 FrameFlow.Inference.TensorToImageOptions.TensorToImageOptions(int width, int height) -> void
 FrameFlow.Inference.TensorToImageOptions.Width.get -> int
 FrameFlow.Inference.TensorTransform
+FrameFlow.Inference.TensorTransform.Deconstruct(out System.Numerics.Matrix3x2 TensorToFrame) -> void
+FrameFlow.Inference.TensorTransform.Equals(FrameFlow.Inference.TensorTransform other) -> bool
 FrameFlow.Inference.TensorTransform.TensorToFrame.get -> System.Numerics.Matrix3x2
 FrameFlow.Inference.TensorTransform.TensorToFrame.init -> void
 FrameFlow.Inference.TensorTransform.TensorTransform() -> void
@@ -137,6 +139,7 @@ FrameFlow.Inference.YuvMatrix.Bt709 = 1 -> FrameFlow.Inference.YuvMatrix
 FrameFlow.Inference.YuvRange
 FrameFlow.Inference.YuvRange.Full = 1 -> FrameFlow.Inference.YuvRange
 FrameFlow.Inference.YuvRange.Limited = 0 -> FrameFlow.Inference.YuvRange
+override FrameFlow.Inference.TensorTransform.GetHashCode() -> int
 static FrameFlow.Inference.ImageToTensor.Transform(FrameFlow.Inference.RotatedRect crop, FrameFlow.Inference.ImageToTensorOptions! options) -> FrameFlow.Inference.TensorTransform
 static FrameFlow.Inference.ImageToTensor.Write(FrameFlow.Media.IVideoFrame! frame, FrameFlow.Inference.RotatedRect crop, FrameFlow.Inference.ImageToTensorOptions! options, System.Span<float> destination) -> FrameFlow.Inference.TensorTransform
 static FrameFlow.Inference.InferenceSessionFactoryBuilder.Create(FrameFlow.Inference.ExecutionProvider preferred, System.Collections.Generic.IReadOnlyDictionary<FrameFlow.Inference.ExecutionProvider, System.Func<string!, FrameFlow.Inference.IInferenceSession!>!>! providers, System.Collections.Generic.IReadOnlyList<FrameFlow.Inference.ExecutionProvider>? fallbackOrder = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> FrameFlow.Inference.IInferenceSessionFactory!

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Collections.Frozen;
+using Microsoft.ML.OnnxRuntime;
 
 namespace FrameFlow.Inference.Dml;
 
@@ -9,6 +10,7 @@ namespace FrameFlow.Inference.Dml;
 public sealed record DmlInferenceSessionOptions
 {
     private readonly IReadOnlyDictionary<string, long> _freeDimensions = FrozenDictionary<string, long>.Empty;
+    private readonly GraphOptimizationLevel _optimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC;
 
     /// <summary>
     /// Sizes for the model's named free dimensions, fixed when the session loads, such as
@@ -45,6 +47,35 @@ public sealed record DmlInferenceSessionOptions
 
             // A copy, so the caller changing its dictionary later cannot change what was checked.
             _freeDimensions = value.ToFrozenDictionary(StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// How far ONNX Runtime optimizes the graph before DirectML runs it. Defaults to
+    /// <see cref="GraphOptimizationLevel.ORT_ENABLE_BASIC"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The level also sets how much GPU memory the session holds. An image encoder measured at
+    /// <see cref="GraphOptimizationLevel.ORT_ENABLE_ALL"/> held about 1.3 GB less than at basic,
+    /// with its own time unchanged, and a second session sharing the GPU ran 37 times faster (#481).
+    /// Raise it when sessions share a GPU.
+    /// </para>
+    /// <para>
+    /// Basic stays the default because the session was written on the premise that the DirectML
+    /// provider needs it. The measurements so far found it neither needed nor helpful on the
+    /// adapters tried, which does not rule it out on others.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">The value is not a defined level.</exception>
+    public GraphOptimizationLevel OptimizationLevel
+    {
+        get => _optimizationLevel;
+        init
+        {
+            if (!Enum.IsDefined(value))
+                throw new ArgumentOutOfRangeException(nameof(value), value, "Not a defined optimization level.");
+            _optimizationLevel = value;
         }
     }
 }
