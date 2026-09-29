@@ -14,6 +14,9 @@ inherit marker and `Validate` are in the tree, and `docs/BREAKING-CHANGES.md` ca
 > distinguishes nothing. #380 removed it, with `Branch(EdgeConfig<T>)` and `Validate`'s rule against
 > two trunks on one port; `Branch(EdgeOptions)` remains.
 
+> **Amended 2026-09-28 (#246).** `Branch` returns a `BranchChain<T>` whose first hop takes no
+> options. See the last amendment at the foot of this record.
+
 This record decides that a fork and a join are expressible in `GraphChain<T>`, that a chain-built
 fork names its inheritor instead of leaving it to wiring order, and that a configurator has
 one contract: it returns an open chain and the builder terminates it. The configurator-terminated
@@ -348,3 +351,20 @@ The three example migrations are verified by compilation and by reading the topo
 GUI apps and nothing in CI runs them. In particular, that keying LiveCaptioning's overlays off
 `IFramePresentedSource.FramePresented` holds the 40 ms pairing now that its configured chain sits
 upstream of the pacer is unmeasured, and is what #231 exists to settle.
+
+## Amendment, 2026-09-28: a branch's first hop is typed (#246)
+
+The third departure above resolved a branch edge configured twice with a runtime `ArgumentException`,
+and named a distinct type as the fix this record prefers. That type is in the tree. `Branch` returns
+a `BranchChain<T>`, whose `Then`, `To`, `ToPrimary` and `ToSecondary` take no `EdgeOptions` and
+return or terminate as the `GraphChain<T>` methods do. Configuring the edge twice no longer
+compiles, and the check and its test are gone. `GraphChain<T>` carries no pending options.
+
+The runtime check had a second failure. `Join` wired its primary edge, then threw when its secondary
+was a bare `Branch`, leaving the join half-wired. A bare branch is now not a `GraphChain<T>`, so it
+cannot be passed to `Join`. `Join` also checks that neither join input is already connected before
+it connects either.
+
+The cost is the one #246 weighed. A branch kept in a variable and extended conditionally, as
+LiveCaptioning's GPU filter was, has to branch on the condition rather than reassign.
+`docs/BREAKING-CHANGES.md` carries the entry.
