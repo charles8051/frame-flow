@@ -19,11 +19,35 @@ namespace FrameFlow.Inference;
 /// provider directly without re-probing. If that construct fails, as
 /// DirectML does for the rest of the process after a GPU reset, the
 /// factory walks the chain from the preferred EP, skipping the one that
-/// just failed, and caches whichever opens. If every EP in the chain
-/// fails, <c>Open</c> throws; <see cref="ActiveProvider"/> keeps the EP it
-/// held, which is <c>null</c> until an <c>Open</c> has succeeded, since a
-/// model no EP opens says nothing against it. The factory cannot tell a
-/// bad model from a failing provider, so such an <c>Open</c> tries every EP.
+/// just failed. If every EP in the chain fails, <c>Open</c> throws;
+/// <see cref="ActiveProvider"/> keeps the EP it held, which is <c>null</c>
+/// until an <c>Open</c> has succeeded, since a model no EP opens says nothing
+/// against it.
+/// </para>
+/// <para>
+/// <b>What a failure does.</b> The factory reads why an EP failed from its
+/// exception (#497):
+/// </para>
+/// <list type="bullet">
+/// <item><description>
+/// <b>Out of memory</b> (a CUDA or ONNX Runtime allocation failure,
+/// <c>E_OUTOFMEMORY</c>): <c>Open</c> throws <see cref="ProviderOutOfMemoryException"/>
+/// without trying another EP, and <see cref="ActiveProvider"/> does not change.
+/// The model did not fit; the next one may.
+/// </description></item>
+/// <item><description>
+/// <b>Device lost</b> (<c>DXGI_ERROR_DEVICE_REMOVED</c>, <c>_HUNG</c>,
+/// <c>_RESET</c>) or <b>EP unavailable</b> (its library or entry point missing,
+/// no adapter): the walk goes on, and the EP that opens is cached.
+/// </description></item>
+/// <item><description>
+/// <b>Anything else</b>, such as a model an EP cannot run: the walk goes on
+/// and opens the model, but the cache does not change, so the next model
+/// starts where this one did.
+/// </description></item>
+/// </list>
+/// <para>
+/// A bad model fails on every EP, so such an <c>Open</c> tries every EP.
 /// </para>
 /// <para>
 /// <b>Bootstrap policy.</b> Each EP's session constructor is
@@ -65,6 +89,9 @@ public interface IInferenceSessionFactory
     /// with no progress reporter. Provided as a default interface method
     /// so existing call sites and implementers are unaffected.
     /// </remarks>
+    /// <exception cref="ProviderOutOfMemoryException">
+    /// An EP ran out of memory opening the model. No other EP was tried.
+    /// </exception>
     IInferenceSession Open(string modelPath) => Open(modelPath, progress: null);
 
     /// <summary>
@@ -85,5 +112,14 @@ public interface IInferenceSessionFactory
     /// phase is reported by the model wrapper (e.g. <c>Yolov8Detector</c>),
     /// not the factory.
     /// </param>
+    /// <exception cref="ProviderOutOfMemoryException">
+    /// An EP ran out of memory opening the model: it did not fit. No other EP
+    /// was tried and <see cref="ActiveProvider"/> did not change. Derives from
+    /// <see cref="InvalidOperationException"/>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Every EP in the chain failed to construct a session. The per-EP failures
+    /// are in an <see cref="AggregateException"/> as the inner exception.
+    /// </exception>
     IInferenceSession Open(string modelPath, IProgress<InferenceSessionProgress>? progress);
 }
