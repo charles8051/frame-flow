@@ -138,6 +138,24 @@ public sealed class ConstructFailureTests
             nameof(ConstructFailureKind.Unknown)
         },
 
+        // Words in a quoted path or name are not the failure.
+        {
+            "ONNX Runtime unable to load a library whose path holds a failure's words",
+            new Exception(
+                @"[ErrorCode:RuntimeException] onnxruntime::ProviderLibrary::Get [ONNXRuntimeError] : 1 : FAIL : LoadLibrary failed with error 126 """" when trying to load ""C:\out of memory\887A0005\onnxruntime_providers_cuda.dll"""),
+            nameof(ConstructFailureKind.ProviderUnavailable)
+        },
+        {
+            "a missing library whose path holds a failure's words",
+            new DllNotFoundException(@"Unable to load DLL 'C:\out of memory\cudnn64_9.dll' or one of its dependencies."),
+            nameof(ConstructFailureKind.ProviderUnavailable)
+        },
+        {
+            "apostrophes inside words quote nothing",
+            new Exception("the provider's allocator reported out of memory and can't continue"),
+            nameof(ConstructFailureKind.OutOfMemory)
+        },
+
         // Several causes: device loss wins, then out of memory.
         {
             "out of memory and device lost together",

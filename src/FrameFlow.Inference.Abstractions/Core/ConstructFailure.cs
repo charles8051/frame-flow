@@ -50,7 +50,7 @@ internal static partial class ConstructFailure
 
     // ONNX Runtime failing to load a provider's library, and Windows ML naming a provider it does
     // not have.
-    private static readonly string[] UnavailableTexts = ["LoadLibrary failed", "No registered provider '"];
+    private static readonly string[] UnavailableTexts = ["LoadLibrary failed", "No registered provider"];
 
     /// <summary>
     /// The kind of <paramref name="exception"/>. When it and the exceptions it wraps say different
@@ -92,40 +92,49 @@ internal static partial class ConstructFailure
 
     private static ConstructFailureKind Of(Exception exception)
     {
-        string message = exception.Message;
-        var codes = HexCodes(message);
-
-        if (DeviceLostCodes.Contains(exception.HResult) || codes.Overlaps(DeviceLostCodes))
+        // The type and the HRESULT say what the exception is, so they are read before its text.
+        if (DeviceLostCodes.Contains(exception.HResult))
             return ConstructFailureKind.DeviceLost;
-
-        if (exception is OutOfMemoryException
-            || exception.HResult == EOutOfMemory
-            || codes.Contains(EOutOfMemory)
-            || OutOfMemoryTexts.Any(text => message.Contains(text, StringComparison.OrdinalIgnoreCase)))
+        if (exception is OutOfMemoryException || exception.HResult == EOutOfMemory)
             return ConstructFailureKind.OutOfMemory;
-
         if (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException
-            || UnavailableCodes.Contains(exception.HResult)
-            || codes.Overlaps(UnavailableCodes)
-            || UnavailableTexts.Any(text => message.Contains(text, StringComparison.Ordinal)))
+            || UnavailableCodes.Contains(exception.HResult))
+            return ConstructFailureKind.ProviderUnavailable;
+
+        // A quoted span is a path or a name, such as the library ONNX Runtime could not load, and
+        // says nothing about why it failed.
+        string text = Quoted().Replace(exception.Message, " ");
+        var codes = HexCodes(text);
+        if (codes.Overlaps(DeviceLostCodes))
+            return ConstructFailureKind.DeviceLost;
+        if (codes.Contains(EOutOfMemory)
+            || OutOfMemoryTexts.Any(t => text.Contains(t, StringComparison.OrdinalIgnoreCase)))
+            return ConstructFailureKind.OutOfMemory;
+        if (codes.Overlaps(UnavailableCodes)
+            || UnavailableTexts.Any(t => text.Contains(t, StringComparison.Ordinal)))
             return ConstructFailureKind.ProviderUnavailable;
 
         return ConstructFailureKind.Unknown;
     }
 
     /// <summary>
-    /// Every eight-digit hex number in <paramref name="message"/> that stands alone, as an HRESULT
+    /// Every eight-digit hex number in <paramref name="text"/> that stands alone, as an HRESULT
     /// does in <c>887A0005</c> or <c>(0x887A0005)</c>. A longer run of hex digits, such as an
     /// address, is not one.
     /// </summary>
-    private static HashSet<int> HexCodes(string message)
+    private static HashSet<int> HexCodes(string text)
     {
         var codes = new HashSet<int>();
-        foreach (Match match in StandaloneHex().Matches(message))
+        foreach (Match match in StandaloneHex().Matches(text))
             codes.Add(unchecked((int)Convert.ToUInt32(match.Value, 16)));
         return codes;
     }
 
     [GeneratedRegex("(?<![0-9A-Fa-f])[0-9A-Fa-f]{8}(?![0-9A-Fa-f])")]
     private static partial Regex StandaloneHex();
+
+    // A double-quoted span, or a single-quoted one whose quotes are not inside a word, so the
+    // apostrophe in "doesn't" opens nothing.
+    [GeneratedRegex("\"[^\"]*\"|(?<!\\w)'[^']*'(?!\\w)")]
+    private static partial Regex Quoted();
 }
