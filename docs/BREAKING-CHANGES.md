@@ -164,6 +164,20 @@ the item.
 **What to write instead.** A body that means to drop an item on its own timeout catches the
 exception and returns `null`, or runs under `FailureResponse.Discard`.
 
+### 10. A graph with two nodes on one id refuses to run
+
+**A runtime error, not a compile error.**
+
+`Graph.RunAsync` throws `InvalidOperationException` before any node runs when more than one node has
+the same `Id`, naming each such id and how many nodes hold it (#500). Ids compare ordinally. Such a
+graph used to run, and every message that named one of those nodes or its ports could mean either.
+
+**Who hits this.** A graph that reuses an id: two `Infer` branches given one id, which collide on
+the operator and on the `{id}-results` sink, a node of your own on an id a helper derives, such as
+`yolo-results`, or a configurator node on an id the player uses (`video-sink`, `audio-sink`).
+
+**What to write instead.** Give each node its own id.
+
 ## `v0.12.0` — since `v0.11.0`
 
 ### 1. A join with a frame secondary must set `maxLead`

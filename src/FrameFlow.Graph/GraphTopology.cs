@@ -104,9 +104,9 @@ internal interface IRequiresEveryInput
 /// </summary>
 /// <remarks>
 /// <para>
-/// Pure by design: the answer depends only on which ports carry an edge, so the rules are
-/// testable without starting a pump or touching a channel. <see cref="Graph.RunAsync"/> calls
-/// this before it resets or wires anything.
+/// Pure by design: the answer depends only on the nodes' ids and which ports carry an edge, so
+/// the rules are testable without starting a pump or touching a channel.
+/// <see cref="Graph.RunAsync"/> calls this before it resets or wires anything.
 /// </para>
 /// <para>
 /// <b>Why before the pumps.</b> A pump does refuse an unconnected input, but too late to help:
@@ -131,6 +131,7 @@ internal static class GraphTopology
 
         var errors = new List<string>();
 
+        errors.AddRange(DuplicateIds(nodes));
         errors.AddRange(DeadlockedForkRejoins(nodes, edges));
 
         foreach (var node in nodes)
@@ -153,6 +154,24 @@ internal static class GraphTopology
 
         return errors;
     }
+
+    /// <summary>
+    /// One message for each id that more than one node holds, naming the id and how many hold it,
+    /// in the order the ids first appear (#500).
+    /// </summary>
+    /// <remarks>
+    /// Every message about a graph names a node or a port by its node's id, and a fault names the
+    /// node that threw. With two nodes on one id, each of those could be either. Ids compare
+    /// ordinally, so ids that differ only in case are distinct.
+    /// </remarks>
+    private static IEnumerable<string> DuplicateIds(IReadOnlyList<INode> nodes) =>
+        nodes
+            .GroupBy(node => node.Id, StringComparer.Ordinal)
+            .Where(holders => holders.Count() > 1)
+            .Select(holders =>
+                $"{holders.Count()} nodes have the id '{holders.Key}'. Every node in a graph needs "
+                + "an id of its own, since messages and faults name a node by it."
+            );
 
     /// <summary>
     /// Finds every fork that rejoins a join which can stop reading, along a path that can only
