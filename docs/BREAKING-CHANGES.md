@@ -11,6 +11,21 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## Unreleased — since `v0.12.0`
+
+### 1. `Yolov8Detector.Create` and `CreateAsync` take a thresholds parameter
+
+**A binary break, not a compile error.** Source that calls them compiles unchanged.
+
+All three take `YoloThresholds? thresholds = null` last (#23). An assembly compiled against
+`v0.12.0` that calls one of them throws `MissingMethodException` against this release until it is
+rebuilt.
+
+**Who hits this.** A library built against `v0.12.0` and loaded with this release without being
+rebuilt.
+
+**What to write instead.** Rebuild.
+
 ## `v0.12.0` — since `v0.11.0`
 
 ### 1. A join with a frame secondary must set `maxLead`
