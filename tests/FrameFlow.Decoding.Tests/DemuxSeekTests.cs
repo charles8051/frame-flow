@@ -23,6 +23,8 @@ public sealed class DemuxSeekTests : IClassFixture<FfmpegBootstrapFixture>
     [InlineData("test-video-h265-yuv420p.mp4", 2.8, 2.6666666)]
     [InlineData("test-video-h265-yuv420p.mp4", 2.0, 0.0)]
     [InlineData("test-av-h264-aac.mp4", 1.5, 0.0)]
+    [InlineData("test-video-h265-yuv420p.mp4", 60.0, 2.6666666)]
+    [InlineData("test-av-h264-aac.mp4", 60.0, 0.0)]
     public async Task TheFirstVideoPacketAfterIt_IsTheLastKeyframeAtOrBeforeThePosition(
         string clip,
         double position,

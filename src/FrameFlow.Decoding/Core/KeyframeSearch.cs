@@ -36,13 +36,19 @@ namespace FrameFlow.Decoding.Core;
 /// A probe that lands on a keyframe is sought again by the same probe, which lands on it again.
 /// </para>
 /// <para>
+/// A probe that reads no packet of the stream at all, as one past the source's end can on a
+/// container that returns the end rather than its last packet, is followed by one further back
+/// like any other. The probes before the source's end read nothing, and the first within it reads
+/// to the end once.
+/// </para>
+/// <para>
 /// A packet with no presentation time is placed by its decode time, which is never later. A
 /// keyframe placed that way presents at most the stream's reorder delay after the position, a
 /// frame or two, where a seek that lands mid-GOP can be a GOP late. A packet with neither
 /// timestamp cannot be placed, and ends the search on the keyframe the probe has found, if any.
-/// Without one, and when a probe reads no packet with a decode time and so has nothing to stop
-/// the next probe at, the search lands where a seek to the position does, which need not be a
-/// keyframe.
+/// Without one, and when a probe reads packets but none with a decode time, and so has nothing to
+/// stop the next probe at, the search lands where a seek to the position does, which need not be
+/// a keyframe.
 /// </para>
 /// </remarks>
 /// <param name="Position">The position decoding has to reach from a keyframe.</param>
@@ -85,15 +91,16 @@ internal readonly record struct KeyframeSearch(TimeSpan Position, TimeSpan Probe
 
     /// <summary>
     /// Where to seek once this probe has read its packets: the keyframe it found; the position
-    /// when it read a packet it could not place, or no decode time to bound the next probe by; or
-    /// the source's start when a probe from there found none. Null when the search goes on with
-    /// <see cref="Back"/>.
+    /// when it read a packet it could not place, or packets but no decode time to bound the next
+    /// probe by; or the source's start when a probe from there found none. Null when the search
+    /// goes on with <see cref="Back"/>, which includes a probe that read no packet at all.
     /// </summary>
     public TimeSpan? Landing =>
         Found
         ?? (
             Unplaced ? Position
             : Probe <= TimeSpan.Zero ? Probe
+            : !Landed ? null
             : (LandedAt ?? ScannedFrom) is null ? Position
             : null
         );
