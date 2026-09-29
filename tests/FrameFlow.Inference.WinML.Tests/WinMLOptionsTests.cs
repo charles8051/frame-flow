@@ -163,6 +163,8 @@ internal sealed class RequiresTensorRtRtxFactAttribute : FactAttribute
 
     public RequiresTensorRtRtxFactAttribute()
     {
+        // The GPU gate registers the installed providers before it decides, so Available() below
+        // already lists them.
         var gpu = new RequiresWindowsMLGpuProviderFactAttribute();
         if (gpu.Skip is not null)
             Skip = gpu.Skip;
