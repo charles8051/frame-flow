@@ -124,6 +124,11 @@ public sealed class GraphFaultTests
         faults.Add(new NodeFault("b", new Exception("later")));
 
         Assert.Single(fault.Faults);
+
+        // Nor can a cast write to it.
+        var asList = Assert.IsAssignableFrom<IList<NodeFault>>(fault.Faults);
+        Assert.Throws<NotSupportedException>(() => asList[0] = new NodeFault("b", new Exception()));
+        Assert.Equal("a", fault.NodeId);
     }
 
     [Fact]
@@ -145,6 +150,11 @@ public sealed class GraphFaultTests
         Assert.Equal([b, a, c], FaultRules.Ordered(b, [a, b, c]));
         Assert.Equal([a, c], FaultRules.Ordered(a, [a, null, c]));
         Assert.Equal([c], FaultRules.Ordered(c, [null, null, c]));
+
+        // Two pumps of one node faulting at once: one won the run's slot, the other the node's.
+        // The node is listed once, by the fault that won the run's.
+        var bAgain = new NodeFault("b", new Exception());
+        Assert.Equal([b, a, c], FaultRules.Ordered(b, [a, bAgain, c]));
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────

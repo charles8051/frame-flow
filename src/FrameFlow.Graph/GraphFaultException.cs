@@ -30,6 +30,8 @@ public sealed class GraphFaultException : Exception
     public GraphFaultException(IReadOnlyList<NodeFault> faults)
         : base(MessageFor(Checked(faults)), faults[0].Exception)
     {
+        // A collection expression typed IReadOnlyList<T> builds a read-only list, so a cast cannot
+        // change it after the message and the inner exception were taken from it.
         Faults = [.. faults];
     }
 

@@ -16,11 +16,11 @@ namespace FrameFlow.Graph;
 /// </para>
 /// <para>
 /// Recording a fault cancels the run, so the other pumps stop producing before the faulting one
-/// drains its inputs. Each node keeps the first fault it records, and the run keeps the first
-/// recorded by any node in a slot written once (#499). A pump records a fault in the catch that
+/// drains its inputs. The run keeps the first fault recorded by any node in a slot written once
+/// (#499), and each node keeps the first it records. A pump records a fault in the catch that
 /// caught it, so the first recorded is the first a pump caught. Two pumps that fault at once are
-/// recorded in whichever order they reach <see cref="Fault"/>, which need not be the order their
-/// bodies threw.
+/// recorded in whichever order they win the run's slot, which need not be the order their bodies
+/// threw.
 /// </para>
 /// </remarks>
 internal sealed class GraphRun : IDisposable
@@ -68,8 +68,11 @@ internal sealed class GraphRun : IDisposable
         ArgumentNullException.ThrowIfNull(node);
         ArgumentNullException.ThrowIfNull(ex);
         var fault = new NodeFault(node.Id, ex);
-        if (Interlocked.CompareExchange(ref _faultOf[_indexOf[node]], fault, null) is null)
-            Interlocked.CompareExchange(ref _firstFault, fault, null);
+
+        // The run's slot first: winning it is what being recorded first means, so no pump can
+        // publish its node's slot and then lose the cause to one that came after it.
+        Interlocked.CompareExchange(ref _firstFault, fault, null);
+        Interlocked.CompareExchange(ref _faultOf[_indexOf[node]], fault, null);
         Cancel();
     }
 
