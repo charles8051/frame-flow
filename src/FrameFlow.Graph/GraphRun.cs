@@ -4,7 +4,7 @@
 namespace FrameFlow.Graph;
 
 /// <summary>
-/// What the pumps of one run of a graph share: the token that stops them all, and the fault that
+/// What the pumps of one run of a graph share: the token that stops them all, and the faults that
 /// ended the run.
 /// </summary>
 /// <remarks>
@@ -16,37 +16,63 @@ namespace FrameFlow.Graph;
 /// </para>
 /// <para>
 /// Recording a fault cancels the run, so the other pumps stop producing before the faulting one
-/// drains its inputs. A pump records a fault in the catch that caught it, so the first recorded
-/// is the first a pump caught. Two pumps that fault at once are recorded in whichever order they
-/// reach <see cref="Fault"/>, which need not be the order their bodies threw.
+/// drains its inputs. The run keeps the first fault recorded by any node in a slot written once
+/// (#499), and each node keeps the first it records. A pump records a fault in the catch that
+/// caught it, so the first recorded is the first a pump caught. Two pumps that fault at once are
+/// recorded in whichever order they win the run's slot, which need not be the order their bodies
+/// threw.
 /// </para>
 /// </remarks>
 internal sealed class GraphRun : IDisposable
 {
     private readonly CancellationTokenSource _cts;
-    private Exception? _firstFault;
+    private readonly Dictionary<INode, int> _indexOf;
+    private readonly NodeFault?[] _faultOf;
+    private NodeFault? _firstFault;
 
-    /// <summary>A run that is also cancelled when <paramref name="callerToken"/> is.</summary>
-    public GraphRun(CancellationToken callerToken) =>
+    /// <summary>
+    /// A run of <paramref name="nodes"/> that is also cancelled when <paramref name="callerToken"/>
+    /// is.
+    /// </summary>
+    public GraphRun(IReadOnlyList<INode> nodes, CancellationToken callerToken)
+    {
+        ArgumentNullException.ThrowIfNull(nodes);
+        _indexOf = new Dictionary<INode, int>(nodes.Count, ReferenceEqualityComparer.Instance);
+        for (int i = 0; i < nodes.Count; i++)
+            _indexOf.Add(nodes[i], i);
+        _faultOf = new NodeFault?[nodes.Count];
         _cts = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
+    }
 
     /// <summary>Cancelled when the caller cancels or a pump faults.</summary>
     public CancellationToken Token => _cts.Token;
 
-    /// <summary>The first fault recorded in this run, or <see langword="null"/> when none was.</summary>
-    public Exception? FirstFault => Volatile.Read(ref _firstFault);
+    /// <summary>Whether any node has recorded a fault.</summary>
+    public bool HasFaulted => Volatile.Read(ref _firstFault) is not null;
+
+    /// <summary>
+    /// Every node's fault, the first recorded at index 0 and the rest in node order, or an empty
+    /// list when none was. Read once the pumps have ended.
+    /// </summary>
+    public IReadOnlyList<NodeFault> Faults => FaultRules.Ordered(Volatile.Read(ref _firstFault), _faultOf);
 
     /// <summary>Records <paramref name="ex"/> as the fault of <paramref name="node"/> and stops the run.</summary>
     /// <remarks>
     /// For a caller that has already decided <paramref name="ex"/> is a fault, such as a body's
-    /// catch site under <see cref="FailureResponse.Propagate"/>. Recording the same exception
-    /// twice records it once.
+    /// catch site under <see cref="FailureResponse.Propagate"/>. A node that has recorded a fault
+    /// keeps it, so recording the same exception again, from the pump's outer catch, changes
+    /// nothing.
     /// </remarks>
     public void Fault(INode node, Exception ex)
     {
         ArgumentNullException.ThrowIfNull(node);
         ArgumentNullException.ThrowIfNull(ex);
-        Interlocked.CompareExchange(ref _firstFault, ex, null);
+        var fault = new NodeFault(node.Id, ex);
+
+        // The run's slot first: winning it is what being recorded first means, so no pump can
+        // publish its node's slot and then lose the cause to one that came after it.
+        Interlocked.CompareExchange(ref _firstFault, fault, null);
+        Interlocked.CompareExchange(ref _faultOf[_indexOf[node]], fault, null);
         Cancel();
     }
 

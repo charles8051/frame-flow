@@ -149,12 +149,13 @@ it overflowed.
 
 A node body that throws an `OperationCanceledException` of its own, such as the
 `TaskCanceledException` of an `HttpClient` timeout, takes the node's `FailureResponse` like any other
-exception (#489). Under `Propagate`, `Graph.RunAsync` throws it, where it used to return as though
-every source had ended. Under `Discard`, the node drops that input and carries on, where the whole
-graph used to stop. One thrown once the graph is cancelled, by the caller's token or by another
-node's fault, is still the cancellation.
+exception (#489). Under `Propagate`, `Graph.RunAsync` throws it, wrapped in a
+`GraphFaultException` (#499), where it used to return as though every source had ended. Under
+`Discard`, the node drops that input and carries on, where the whole graph used to stop. One thrown
+once the graph is cancelled, by the caller's token or by another node's fault, is still the
+cancellation.
 
-When more than one node faults, `RunAsync` throws the fault a pump caught first. It used to throw
+When more than one node faults, the one a pump caught first is the cause. `RunAsync` used to throw
 the fault of whichever of them was added to the graph first.
 
 **Who hits this.** A body that lets its own cancellation escape, and a caller that relied on
@@ -177,6 +178,34 @@ the operator and on the `{id}-results` sink, a node of your own on an id a helpe
 `yolo-results`, or a configurator node on an id the player uses (`video-sink`, `audio-sink`).
 
 **What to write instead.** Give each node its own id.
+
+### 12. A node's fault surfaces as `GraphFaultException`
+
+**A change in behaviour, not a compile error.** Code that catches a node's exception type compiles
+and stops matching.
+
+`Graph.RunAsync` throws `GraphFaultException` when a node faults, where it threw the node's own
+exception (#499). Its `InnerException` is that exception, `NodeId` names the node, and the message
+reads `Node '<id>' faulted: <inner message>`. When more than one node faulted, `Faults` holds each
+node's fault, the cause first, and the message counts the others. A cancelled run still throws
+`OperationCanceledException`, and a graph refused before any node runs still throws
+`InvalidOperationException`; neither is wrapped.
+
+`MediaPass.RunToCompletionAsync` passes the wrapper on. A player's `PlaybackError` carries it as
+`Inner`, with the same category, and its message now names the node:
+`Playlist item 'clip.mp4' faulted during playback: Node 'inject-fault' faulted: <inner message>`.
+An exception that wraps the last fault, such as the playlist's give-up error, has the node's
+exception one level further down.
+
+**Who hits this.** Code that catches or tests for a node's exception type from `RunAsync`,
+`RunToCompletionAsync` or `PlaybackError.Inner`, such as `catch (TimeoutException)` around a run or
+`Assert.ThrowsAsync<MyException>(() => graph.RunAsync())`.
+
+**What to write instead.** Match the wrapper and look inside it:
+
+```csharp
+catch (GraphFaultException ex) when (ex.InnerException is TimeoutException)
+```
 
 ## `v0.12.0` — since `v0.11.0`
 

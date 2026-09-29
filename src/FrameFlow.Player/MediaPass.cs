@@ -129,7 +129,9 @@ public sealed class MediaPass : IAsyncDisposable
     /// </para>
     /// <para>
     /// If either side faults the other is cancelled via the linked
-    /// CTS; the exception propagates after both have unwound.
+    /// CTS; the exception propagates after both have unwound. A node's
+    /// fault arrives as a <see cref="GraphFaultException"/> naming the
+    /// node, with what it threw as the inner exception.
     /// </para>
     /// </remarks>
     public async Task RunToCompletionAsync(CancellationToken ct = default)

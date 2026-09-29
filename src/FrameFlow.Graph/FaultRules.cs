@@ -21,4 +21,31 @@ internal static class FaultRules
     /// <param name="runCancelled">Whether the run's token was cancelled when it was caught.</param>
     internal static bool IsCancellation(Exception ex, bool runCancelled) =>
         ex is OperationCanceledException && runCancelled;
+
+    /// <summary>
+    /// The faults of a run as <see cref="GraphFaultException"/> lists them: <paramref name="first"/>,
+    /// then every other node's fault in node order (#499). Empty when <paramref name="first"/> is
+    /// <see langword="null"/>, since no node recorded a fault.
+    /// </summary>
+    /// <remarks>
+    /// One fault per node. <paramref name="first"/>'s node is left out of the rest by id, which a
+    /// run can rely on because a graph with two nodes on one id does not run (#500). Its slot can
+    /// hold a different fault from <paramref name="first"/> when two pumps of one node, such as a
+    /// join's primary and secondary, fault at once.
+    /// </remarks>
+    /// <param name="first">The fault that won the run's slot.</param>
+    /// <param name="byNode">Each node's fault, or <see langword="null"/> for a node that did not fault.</param>
+    internal static IReadOnlyList<NodeFault> Ordered(NodeFault? first, IReadOnlyList<NodeFault?> byNode)
+    {
+        if (first is null)
+            return [];
+
+        var ordered = new List<NodeFault>(byNode.Count) { first };
+        foreach (var fault in byNode)
+        {
+            if (fault is not null && !string.Equals(fault.NodeId, first.NodeId, StringComparison.Ordinal))
+                ordered.Add(fault);
+        }
+        return ordered;
+    }
 }
