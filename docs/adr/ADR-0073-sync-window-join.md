@@ -5,6 +5,8 @@ implementation landed. Implemented, with one of its two migrations shipped and m
 
 > **Amended 2026-09-24.** [ADR-0080](ADR-0080-one-ownership-contract-for-graph-items.md) makes `maxLead` required when the secondary is a frame (#377).
 > [ADR-0081](ADR-0081-fixed-pool-budget.md) adds a retained-count limit next to `Window` and `maxLead` (#386).
+>
+> **Amended 2026-09-28.** A backward step in primary time larger than `Window` starts a new timeline in the window (#92). See the amendment at the foot of this record.
 
 ### What exists
 
@@ -411,3 +413,32 @@ project is green at 36 tests.
 - **Three-or-more inputs.** Frame plus detections plus captions is two chained
   joins. Whether that stays acceptable is a question for the second consumer
   that wants it.
+
+## Amendment, 2026-09-28: a backward step in primary time (#92)
+
+Decision 4 evicts against the highest primary time seen, and that mark only moved forward. After a
+backward step within one run, such as an MPEG-TS timestamp wrap or a restarted camera, every
+secondary admitted afterwards ended far below the old mark and was evicted before it could match.
+For a wrap that lasted until the primary climbed back, about 26 hours. §6 covers a seek and a loop,
+because each run starts with an empty window. This covers a step inside a run.
+
+A primary more than `Window` behind the high-water mark now starts a new timeline:
+
+- The window releases every entry the old timeline's window still held, and the high-water mark
+  moves to the new primary's time.
+- Until the primary climbs back to where the old window began, a secondary that arrives ahead of
+  the primary and ends at or past that point is released rather than filed. It was still on the
+  edge from before the step. Filed, it would sit ahead of the primary, and under `maxLead` the
+  reader would hold it and stop until the primary reached it.
+- A reader held on the lead or the count is released at the step to try again.
+
+The second rule is what the issue's proposed fix, clearing the window and re-basing the mark, left
+out. In a fork-rejoin the secondary branch lags the trunk, so secondaries from before the step are
+still on the edge when it happens.
+
+A step smaller than `Window` changes nothing. *The delegates are unvalidated*, under *Negative*,
+still holds for it: a `PrimaryTime` that goes back by less than `Window` degrades matching
+silently.
+
+`ResetWindow()` still has no caller (*Not settled here*). Its documentation no longer says the
+session registers an adapter over it.
