@@ -41,6 +41,12 @@ namespace FrameFlow.Inference.Dml;
 /// (#481).
 /// </para>
 /// <para>
+/// <b>GPU memory.</b> Given a logger, the session logs this process's budget and usage on its adapter
+/// before it opens, at debug level, and again with the change once it has, at information level. The
+/// <c>FrameFlow.Inference.Dml</c> meter publishes the same numbers for each adapter a session opened
+/// on. <see cref="GpuMemory"/> reads them on demand.
+/// </para>
+/// <para>
 /// <b>Device inputs.</b> A session built with <see cref="OnDevice(string, nint, nint, ILogger{DmlInferenceSession}?)"/>
 /// runs DirectML on the caller's <c>ID3D12Device</c> and <c>ID3D12CommandQueue</c>, and
 /// <see cref="Run(IReadOnlyDictionary{string, DeviceTensor}, IReadOnlyDictionary{string, ICpuTensor})"/>
@@ -95,17 +101,9 @@ public sealed partial class DmlInferenceSession : OrtInferenceSessionBase, IDevi
         : this(modelPath, options, logger: null) { }
 
     /// <inheritdoc cref="DmlInferenceSession(string, DmlInferenceSessionOptions)" />
-    // CA2000: the SessionOptions built here is owned by the base, which
-    // disposes it in OrtInferenceSessionBase.Dispose(). The analyzer
-    // can't see the ownership handoff across the base initializer.
-#pragma warning disable CA2000
     public DmlInferenceSession(
         string modelPath, DmlInferenceSessionOptions options, ILogger<DmlInferenceSession>? logger)
-        : base(modelPath, BuildSessionOptions(options, static o => o.AppendExecutionProvider_DML()))
-    {
-        LogFreeDimensionsLeft(options, logger);
-    }
-#pragma warning restore CA2000
+        : this(modelPath, options, logger, GpuMemoryLog.Before(d3d12Device: 0, logger)) { }
 
     /// <summary>Loads a model from <paramref name="modelBytes"/> and configures the DirectML EP.</summary>
     public DmlInferenceSession(byte[] modelBytes)
@@ -123,30 +121,56 @@ public sealed partial class DmlInferenceSession : OrtInferenceSessionBase, IDevi
         : this(modelBytes, options, logger: null) { }
 
     /// <inheritdoc cref="DmlInferenceSession(byte[], DmlInferenceSessionOptions)" />
-    // CA2000: see the string-path overload above — the base owns and
-    // disposes the SessionOptions.
-#pragma warning disable CA2000
     public DmlInferenceSession(
         byte[] modelBytes, DmlInferenceSessionOptions options, ILogger<DmlInferenceSession>? logger)
+        : this(modelBytes, options, logger, GpuMemoryLog.Before(d3d12Device: 0, logger)) { }
+
+    // The public constructors read the GPU's memory in their initializer, so the read comes before
+    // the DirectML provider is appended; these take it and load the model.
+    // CA2000: the SessionOptions built here is owned by the base, which
+    // disposes it in OrtInferenceSessionBase.Dispose(). The analyzer
+    // can't see the ownership handoff across the base initializer.
+#pragma warning disable CA2000
+    private DmlInferenceSession(
+        string modelPath, DmlInferenceSessionOptions options, ILogger<DmlInferenceSession>? logger, GpuMemorySnapshot? before)
+        : base(modelPath, BuildSessionOptions(options, static o => o.AppendExecutionProvider_DML()))
+    {
+        GpuMemoryLog.After(before, logger);
+        LogFreeDimensionsLeft(options, logger);
+    }
+
+    private DmlInferenceSession(
+        byte[] modelBytes, DmlInferenceSessionOptions options, ILogger<DmlInferenceSession>? logger, GpuMemorySnapshot? before)
         : base(modelBytes, BuildSessionOptions(options, static o => o.AppendExecutionProvider_DML()))
     {
+        GpuMemoryLog.After(before, logger);
         LogFreeDimensionsLeft(options, logger);
     }
 #pragma warning restore CA2000
 
     private DmlInferenceSession(
-        string modelPath, DeviceBinding device, DmlInferenceSessionOptions options, ILogger<DmlInferenceSession>? logger)
+        string modelPath,
+        DeviceBinding device,
+        DmlInferenceSessionOptions options,
+        ILogger<DmlInferenceSession>? logger,
+        GpuMemorySnapshot? before)
         : base(modelPath, device.Options)
     {
         _device = device;
+        GpuMemoryLog.After(before, logger);
         LogFreeDimensionsLeft(options, logger);
     }
 
     private DmlInferenceSession(
-        byte[] modelBytes, DeviceBinding device, DmlInferenceSessionOptions options, ILogger<DmlInferenceSession>? logger)
+        byte[] modelBytes,
+        DeviceBinding device,
+        DmlInferenceSessionOptions options,
+        ILogger<DmlInferenceSession>? logger,
+        GpuMemorySnapshot? before)
         : base(modelBytes, device.Options)
     {
         _device = device;
+        GpuMemoryLog.After(before, logger);
         LogFreeDimensionsLeft(options, logger);
     }
 
@@ -187,16 +211,9 @@ public sealed partial class DmlInferenceSession : OrtInferenceSessionBase, IDevi
     {
         ArgumentException.ThrowIfNullOrEmpty(modelPath);
         ArgumentNullException.ThrowIfNull(options);
-        var binding = DeviceBinding.Create(device, commandQueue, options);
-        try
-        {
-            return new DmlInferenceSession(modelPath, binding, options, logger);
-        }
-        catch
-        {
-            binding.Release(disposeOptions: true);
-            throw;
-        }
+        return OpenOnDevice(
+            device, commandQueue, options, logger,
+            (binding, before) => new DmlInferenceSession(modelPath, binding, options, logger, before));
     }
 
     /// <inheritdoc cref="OnDevice(string, nint, nint, ILogger{DmlInferenceSession}?)" />
@@ -214,10 +231,28 @@ public sealed partial class DmlInferenceSession : OrtInferenceSessionBase, IDevi
     {
         ArgumentNullException.ThrowIfNull(modelBytes);
         ArgumentNullException.ThrowIfNull(options);
-        var binding = DeviceBinding.Create(device, commandQueue, options);
+        return OpenOnDevice(
+            device, commandQueue, options, logger,
+            (binding, before) => new DmlInferenceSession(modelBytes, binding, options, logger, before));
+    }
+
+    /// <summary>
+    /// Checks the device and queue, reads the adapter's memory, binds DirectML to them, and loads the
+    /// model through <paramref name="load"/>.
+    /// </summary>
+    private static DmlInferenceSession OpenOnDevice(
+        nint device,
+        nint commandQueue,
+        DmlInferenceSessionOptions options,
+        ILogger<DmlInferenceSession>? logger,
+        Func<DeviceBinding, GpuMemorySnapshot?, DmlInferenceSession> load)
+    {
+        nint identity = DeviceBinding.Check(device, commandQueue);
+        var before = GpuMemoryLog.Before(device, logger);
+        var binding = DeviceBinding.Create(device, commandQueue, identity, options);
         try
         {
-            return new DmlInferenceSession(modelBytes, binding, options, logger);
+            return load(binding, before);
         }
         catch
         {
@@ -415,7 +450,8 @@ public sealed partial class DmlInferenceSession : OrtInferenceSessionBase, IDevi
 
         public OrtMemoryInfo Memory { get; }
 
-        public static DeviceBinding Create(nint device, nint commandQueue, DmlInferenceSessionOptions sessionOptions)
+        /// <summary>The device's identity, once the queue is known to be on it.</summary>
+        public static nint Check(nint device, nint commandQueue)
         {
             if (device == 0)
                 throw new ArgumentNullException(nameof(device));
@@ -425,7 +461,13 @@ public sealed partial class DmlInferenceSession : OrtInferenceSessionBase, IDevi
             nint identity = D3D12Native.Identity(device);
             if (D3D12Native.DeviceIdentityOf(commandQueue) != identity)
                 throw new ArgumentException("The command queue belongs to another device.", nameof(commandQueue));
+            return identity;
+        }
 
+        /// <summary>Binds DirectML to a device and queue <see cref="Check"/> accepted.</summary>
+        public static DeviceBinding Create(
+            nint device, nint commandQueue, nint identity, DmlInferenceSessionOptions sessionOptions)
+        {
             nint dmlDevice = D3D12Native.CreateDmlDevice(device);
             SessionOptions? options = null;
             OrtMemoryInfo? memory = null;

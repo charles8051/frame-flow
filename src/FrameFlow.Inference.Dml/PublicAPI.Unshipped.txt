@@ -16,9 +16,37 @@ FrameFlow.Inference.Dml.DmlInferenceSessionOptions.FreeDimensions.init -> void
 FrameFlow.Inference.Dml.DmlInferenceSessionOptions.OptimizationLevel.get -> Microsoft.ML.OnnxRuntime.GraphOptimizationLevel
 FrameFlow.Inference.Dml.DmlInferenceSessionOptions.OptimizationLevel.init -> void
 FrameFlow.Inference.Dml.DmlProbe
+FrameFlow.Inference.Dml.GpuMemory
+FrameFlow.Inference.Dml.GpuMemoryChange
+FrameFlow.Inference.Dml.GpuMemoryChange.GpuMemoryChange() -> void
+FrameFlow.Inference.Dml.GpuMemoryChange.GpuMemoryChange(long LocalBytes, long NonLocalBytes) -> void
+FrameFlow.Inference.Dml.GpuMemoryChange.LocalBytes.get -> long
+FrameFlow.Inference.Dml.GpuMemoryChange.LocalBytes.init -> void
+FrameFlow.Inference.Dml.GpuMemoryChange.NonLocalBytes.get -> long
+FrameFlow.Inference.Dml.GpuMemoryChange.NonLocalBytes.init -> void
+FrameFlow.Inference.Dml.GpuMemorySegment
+FrameFlow.Inference.Dml.GpuMemorySegment.BudgetBytes.get -> long
+FrameFlow.Inference.Dml.GpuMemorySegment.BudgetBytes.init -> void
+FrameFlow.Inference.Dml.GpuMemorySegment.GpuMemorySegment() -> void
+FrameFlow.Inference.Dml.GpuMemorySegment.GpuMemorySegment(long BudgetBytes, long UsageBytes) -> void
+FrameFlow.Inference.Dml.GpuMemorySegment.UsageBytes.get -> long
+FrameFlow.Inference.Dml.GpuMemorySegment.UsageBytes.init -> void
+FrameFlow.Inference.Dml.GpuMemorySnapshot
+FrameFlow.Inference.Dml.GpuMemorySnapshot.AdapterLuid.get -> ulong
+FrameFlow.Inference.Dml.GpuMemorySnapshot.AdapterLuid.init -> void
+FrameFlow.Inference.Dml.GpuMemorySnapshot.GpuMemorySnapshot() -> void
+FrameFlow.Inference.Dml.GpuMemorySnapshot.GpuMemorySnapshot(ulong AdapterLuid, FrameFlow.Inference.Dml.GpuMemorySegment Local, FrameFlow.Inference.Dml.GpuMemorySegment NonLocal) -> void
+FrameFlow.Inference.Dml.GpuMemorySnapshot.Local.get -> FrameFlow.Inference.Dml.GpuMemorySegment
+FrameFlow.Inference.Dml.GpuMemorySnapshot.Local.init -> void
+FrameFlow.Inference.Dml.GpuMemorySnapshot.NonLocal.get -> FrameFlow.Inference.Dml.GpuMemorySegment
+FrameFlow.Inference.Dml.GpuMemorySnapshot.NonLocal.init -> void
 static FrameFlow.Inference.Dml.DmlInferenceSession.OnDevice(byte[]! modelBytes, nint device, nint commandQueue, FrameFlow.Inference.Dml.DmlInferenceSessionOptions! options, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.Dml.DmlInferenceSession!>? logger = null) -> FrameFlow.Inference.Dml.DmlInferenceSession!
 static FrameFlow.Inference.Dml.DmlInferenceSession.OnDevice(byte[]! modelBytes, nint device, nint commandQueue, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.Dml.DmlInferenceSession!>? logger = null) -> FrameFlow.Inference.Dml.DmlInferenceSession!
 static FrameFlow.Inference.Dml.DmlInferenceSession.OnDevice(string! modelPath, nint device, nint commandQueue, FrameFlow.Inference.Dml.DmlInferenceSessionOptions! options, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.Dml.DmlInferenceSession!>? logger = null) -> FrameFlow.Inference.Dml.DmlInferenceSession!
 static FrameFlow.Inference.Dml.DmlInferenceSession.OnDevice(string! modelPath, nint device, nint commandQueue, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.Dml.DmlInferenceSession!>? logger = null) -> FrameFlow.Inference.Dml.DmlInferenceSession!
 static FrameFlow.Inference.Dml.DmlProbe.Failure.get -> System.Exception?
 static FrameFlow.Inference.Dml.DmlProbe.IsAvailable.get -> bool
+static FrameFlow.Inference.Dml.GpuMemory.AdapterLuidOf(nint d3d12Device) -> ulong
+static FrameFlow.Inference.Dml.GpuMemory.ReadAdapter(ulong adapterLuid) -> FrameFlow.Inference.Dml.GpuMemorySnapshot
+static FrameFlow.Inference.Dml.GpuMemory.ReadDefaultAdapter() -> FrameFlow.Inference.Dml.GpuMemorySnapshot
+static FrameFlow.Inference.Dml.GpuMemoryChange.Between(FrameFlow.Inference.Dml.GpuMemorySnapshot before, FrameFlow.Inference.Dml.GpuMemorySnapshot after) -> FrameFlow.Inference.Dml.GpuMemoryChange

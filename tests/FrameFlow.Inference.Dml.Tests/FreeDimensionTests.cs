@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using FrameFlow.Graph;
-using Microsoft.Extensions.Logging;
 using Vortice.Direct3D;
 using Vortice.Direct3D12;
 using Vortice.DXGI;
@@ -14,6 +13,9 @@ namespace FrameFlow.Inference.Dml.Tests;
 public sealed class FreeDimensionTests
 {
     private static readonly byte[] Dynamic = OnnxModel.Negate("batch", 3, "height", "width");
+
+    // The session also logs its GPU memory around the open (#503).
+    private const string FreeDimensionsLeft = "LogFreeDimensionsLeft";
 
     private static readonly DmlInferenceSessionOptions AllFixed = new()
     {
@@ -96,7 +98,7 @@ public sealed class FreeDimensionTests
         using var session = new DmlInferenceSession(Dynamic, options, logger);
 
         Assert.Equal([1, 3, -1, 16], session.InputShapes[0]);
-        string message = Assert.Single(logger.Messages);
+        string message = Assert.Single(logger.MessagesOf(FreeDimensionsLeft));
         Assert.Contains("'x'", message);
         Assert.Contains("[height]", message);
     }
@@ -108,7 +110,7 @@ public sealed class FreeDimensionTests
 
         using var session = new DmlInferenceSession(Dynamic, AllFixed, logger);
 
-        Assert.Empty(logger.Messages);
+        Assert.Empty(logger.MessagesOf(FreeDimensionsLeft));
     }
 
     private static void AssertNegates(DmlInferenceSession session)
@@ -131,20 +133,6 @@ public sealed class FreeDimensionTests
         using var adapter = factory.EnumWarpAdapter<IDXGIAdapter>();
         Vortice.Direct3D12.D3D12.D3D12CreateDevice(adapter, FeatureLevel.Level_11_0, out ID3D12Device? device).CheckError();
         return device!;
-    }
-
-    private sealed class RecordingLogger : ILogger<DmlInferenceSession>
-    {
-        public List<string> Messages { get; } = [];
-
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(
-            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-            Messages.Add(formatter(state, exception));
     }
 }
 
