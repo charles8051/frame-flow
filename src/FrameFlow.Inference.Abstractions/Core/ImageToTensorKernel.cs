@@ -25,15 +25,21 @@ internal enum ImageToTensorPath
 }
 
 /// <summary>
-/// Writes a 32-bit BGRA or RGBA image into a float tensor as an <see cref="ImageToTensorPlan"/>
-/// says. It writes only <c>destination</c>, and the same inputs write the same floats on every
-/// path.
+/// Writes a 32-bit BGRA or RGBA image into a tensor of floats, halves or bytes as an
+/// <see cref="ImageToTensorPlan"/> says. It writes only <c>destination</c>, and the same inputs
+/// write the same elements on every path.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Every path computes a value with the same float operations in the same order, so the paths
 /// agree bit for bit. The vector loops mirror the scalar helpers <see cref="NearestValue"/> and
 /// <see cref="BilinearValue"/> operation for operation.
+/// </para>
+/// <para>
+/// A float tensor in NCHW is written in place. Any other tensor has each row computed as floats
+/// in a buffer and then stored: interleaved for NHWC, and converted for a half or byte tensor by
+/// <see cref="ToHalves"/> or <see cref="ToBytes"/>, whose vector loops round as their scalar
+/// forms do.
 /// </para>
 /// <para>
 /// An unrotated crop is separable: a column's frame x is the same on every row, and a row's
@@ -54,7 +60,7 @@ internal static class ImageToTensorKernel
     /// <paramref name="height"/> rows of <paramref name="stride"/> bytes, the last at least
     /// <c>4 · width</c> long, and that <paramref name="destination"/> holds the whole tensor.
     /// </summary>
-    public static void Run(
+    public static void Run<T>(
         ReadOnlySpan<byte> pixels,
         int width,
         int height,
@@ -62,8 +68,9 @@ internal static class ImageToTensorKernel
         bool bgra,
         in ImageToTensorPlan plan,
         ImageToTensorOptions options,
-        Span<float> destination,
+        Span<T> destination,
         ImageToTensorPath path)
+        where T : unmanaged
     {
         var channels = new Channels(bgra, options.Normalization, options.PadValue);
         int tensorWidth = plan.TensorWidth;
@@ -76,8 +83,15 @@ internal static class ImageToTensorKernel
         bool general = path == ImageToTensorPath.General;
         bool tables = plan.IsAxisAligned && !general;
 
+        // Only a float tensor in NCHW takes each row's values where they are computed.
+        bool inPlace = typeof(T) == typeof(float) && !nhwc;
         var source = new Source(pixels, width, height, stride);
-        var scratch = new Scratch(tensorWidth, nhwc, bilinear, rotated: !plan.IsAxisAligned && !general && bilinear);
+        var scratch = new Scratch(
+            tensorWidth,
+            colours: !inPlace,
+            interleaved: nhwc && typeof(T) != typeof(float),
+            bilinear,
+            rotated: !plan.IsAxisAligned && !general && bilinear);
         try
         {
             (int First, int End) columns = default;
@@ -88,21 +102,24 @@ internal static class ImageToTensorKernel
 
             bool vector = path == ImageToTensorPath.Auto && Vector.IsHardwareAccelerated;
             int planeLength = tensorWidth * tensorHeight;
+            int redPlane = rgb ? 0 : 2 * planeLength;
+            int bluePlane = rgb ? 2 * planeLength : 0;
             for (int dy = 0; dy < tensorHeight; dy++)
             {
+                int row = dy * tensorWidth;
                 Span<float> r, g, b;
-                if (nhwc)
+                if (inPlace)
+                {
+                    var floats = MemoryMarshal.Cast<T, float>(destination);
+                    r = floats.Slice(redPlane + row, tensorWidth);
+                    g = floats.Slice(planeLength + row, tensorWidth);
+                    b = floats.Slice(bluePlane + row, tensorWidth);
+                }
+                else
                 {
                     r = scratch.Red;
                     g = scratch.Green;
                     b = scratch.Blue;
-                }
-                else
-                {
-                    int row = dy * tensorWidth;
-                    r = destination.Slice((rgb ? 0 : 2 * planeLength) + row, tensorWidth);
-                    g = destination.Slice(planeLength + row, tensorWidth);
-                    b = destination.Slice((rgb ? 2 * planeLength : 0) + row, tensorWidth);
                 }
 
                 // An unrotated row reads one frame row, so the whole row is inside or outside.
@@ -129,15 +146,29 @@ internal static class ImageToTensorKernel
 
                 if (nhwc)
                 {
-                    var pixelsOut = destination.Slice(dy * tensorWidth * 3, tensorWidth * 3);
+                    var pixelsOut = destination.Slice(row * 3, tensorWidth * 3);
+                    var interleaved = typeof(T) == typeof(float)
+                        ? MemoryMarshal.Cast<T, float>(pixelsOut)
+                        : scratch.Interleaved;
                     if (rgb)
                     {
-                        Interleave(r, g, b, pixelsOut);
+                        Interleave(r, g, b, interleaved);
                     }
                     else
                     {
-                        Interleave(b, g, r, pixelsOut);
+                        Interleave(b, g, r, interleaved);
                     }
+
+                    if (typeof(T) != typeof(float))
+                    {
+                        Store(interleaved, pixelsOut, vector);
+                    }
+                }
+                else if (!inPlace)
+                {
+                    Store(r, destination.Slice(redPlane + row, tensorWidth), vector);
+                    Store(g, destination.Slice(planeLength + row, tensorWidth), vector);
+                    Store(b, destination.Slice(bluePlane + row, tensorWidth), vector);
                 }
             }
         }
@@ -145,6 +176,116 @@ internal static class ImageToTensorKernel
         {
             scratch.Return();
         }
+    }
+
+    /// <summary>Converts a row of values to a half or byte tensor's elements.</summary>
+    private static void Store<T>(ReadOnlySpan<float> values, Span<T> destination, bool vector)
+        where T : unmanaged
+    {
+        if (typeof(T) == typeof(byte))
+        {
+            ToBytes(values, MemoryMarshal.Cast<T, byte>(destination), vector);
+        }
+        else if (typeof(T) == typeof(Half))
+        {
+            ToHalves(values, MemoryMarshal.Cast<T, Half>(destination), vector);
+        }
+        else
+        {
+            throw new NotSupportedException($"The kernel writes float, Half or byte tensors; got {typeof(T).Name}.");
+        }
+    }
+
+    /// <summary>
+    /// Each value clamped to 0 to 255 and rounded to the nearest integer, ties to even. The vector
+    /// loop clamps, rounds and converts as <see cref="ToByte"/> does.
+    /// </summary>
+    internal static void ToBytes(ReadOnlySpan<float> values, Span<byte> destination, bool vector)
+    {
+        int i = 0;
+        if (vector)
+        {
+            // Four float vectors narrow to one byte vector. Each lane is 0 to 255, which narrowing
+            // keeps: the signed byte it passes through has the same bits.
+            int floats = Vector<float>.Count;
+            var max = new Vector<float>(255f);
+            for (; i <= values.Length - Vector<byte>.Count; i += Vector<byte>.Count)
+            {
+                var low = Vector.Narrow(
+                    ToInt32(new Vector<float>(values[i..]), max),
+                    ToInt32(new Vector<float>(values[(i + floats)..]), max));
+                var high = Vector.Narrow(
+                    ToInt32(new Vector<float>(values[(i + 2 * floats)..]), max),
+                    ToInt32(new Vector<float>(values[(i + 3 * floats)..]), max));
+                Vector.AsVectorByte(Vector.Narrow(low, high)).CopyTo(destination[i..]);
+            }
+        }
+
+        for (; i < values.Length; i++)
+        {
+            destination[i] = ToByte(values[i]);
+        }
+    }
+
+    // The vector form of ToByte up to the narrowing. It converts to int32, not uint32: without
+    // AVX-512, x64 has no float to uint32 instruction, and the emulated conversion measured four
+    // times slower.
+    private static Vector<int> ToInt32(Vector<float> value, Vector<float> max)
+        => Vector.ConvertToInt32(Vector.Round(Vector.Min(Vector.Max(value, Vector<float>.Zero), max)));
+
+    private static byte ToByte(float value) => (byte)MathF.Round(Math.Clamp(value, 0f, 255f));
+
+    /// <summary>
+    /// Each value converted to <see cref="Half"/>, rounding to nearest with ties to even. The vector
+    /// loop is <see cref="HalfBits"/>, which gives <c>(Half)value</c>'s bits.
+    /// </summary>
+    internal static void ToHalves(ReadOnlySpan<float> values, Span<Half> destination, bool vector)
+    {
+        int i = 0;
+        if (vector)
+        {
+            // Two float vectors narrow to one vector of 16-bit halves.
+            var bits = MemoryMarshal.Cast<Half, ushort>(destination);
+            int floats = Vector<float>.Count;
+            for (; i <= values.Length - Vector<ushort>.Count; i += Vector<ushort>.Count)
+            {
+                Vector.Narrow(
+                    HalfBits(new Vector<float>(values[i..])),
+                    HalfBits(new Vector<float>(values[(i + floats)..]))).CopyTo(bits[i..]);
+            }
+        }
+
+        for (; i < values.Length; i++)
+        {
+            destination[i] = (Half)values[i];
+        }
+    }
+
+    /// <summary>
+    /// <c>(Half)value</c> for each lane, in the low 16 bits, by the same branch-free steps as the
+    /// runtime's scalar conversion. <see cref="Vector.Min{T}"/> and <see cref="Vector.Max{T}"/>
+    /// propagate NaN as <c>float.Min</c> and <c>float.Max</c> do, so a NaN lane matches too.
+    /// </summary>
+    private static Vector<uint> HalfBits(Vector<float> value)
+    {
+        var sign = Vector.ShiftRightLogical(Vector.AsVectorUInt32(value) & new Vector<uint>(0x8000_0000u), 16);
+        var real = Vector.AsVectorUInt32(Vector.Equals(value, value));
+
+        // 65520 is the smallest float that rounds to a half's infinity. Adding 2^13 times the
+        // value's leading power of two, or times 2^-14 (a half's smallest normal, whose precision
+        // its subnormals share) if the value is smaller, leaves the sum's last bit worth a half's
+        // last bit, so the add rounds to a half's precision, ties to even.
+        value = Vector.Min(new Vector<float>(65520f), Vector.Abs(value));
+        var step = Vector.AsVectorUInt32(Vector.Max(value, Vector.AsVectorSingle(new Vector<uint>(0x3880_0000u))));
+        step = (step & new Vector<uint>(0x7F80_0000u)) + new Vector<uint>(0x0680_0000u);
+        var bits = Vector.AsVectorUInt32(value + Vector.AsVectorSingle(step));
+
+        // Rebias the exponent and shift the rounded bits into a half's. A NaN takes an all-ones
+        // exponent and keeps the top of its payload.
+        bits -= new Vector<uint>(0x3F00_0000u);
+        var exponent = Vector.ShiftRightLogical(bits, 13);
+        var nanExponent = Vector.AndNot(new Vector<uint>(0x7C00u), real);
+        return ((bits & real) + exponent) | nanExponent | sign;
     }
 
     private static void NearestRow(
@@ -570,9 +711,10 @@ internal static class ImageToTensorKernel
     private readonly struct Scratch
     {
         private readonly float[]? _colours;
+        private readonly float[]? _interleaved;
         private readonly int _width;
 
-        public Scratch(int width, bool nhwc, bool bilinear, bool rotated)
+        public Scratch(int width, bool colours, bool interleaved, bool bilinear, bool rotated)
         {
             _width = width;
             Offset0 = ArrayPool<int>.Shared.Rent(width);
@@ -592,9 +734,14 @@ internal static class ImageToTensorKernel
                 Packed3 = ArrayPool<uint>.Shared.Rent(width);
             }
 
-            if (nhwc)
+            if (colours)
             {
                 _colours = ArrayPool<float>.Shared.Rent(3 * width);
+            }
+
+            if (interleaved)
+            {
+                _interleaved = ArrayPool<float>.Shared.Rent(3 * width);
             }
         }
 
@@ -622,6 +769,9 @@ internal static class ImageToTensorKernel
 
         public Span<float> Blue => _colours.AsSpan(2 * _width, _width);
 
+        /// <summary>A row of pixels, interleaved, before it is converted.</summary>
+        public Span<float> Interleaved => _interleaved.AsSpan(0, 3 * _width);
+
         public void Return()
         {
             ArrayPool<int>.Shared.Return(Offset0);
@@ -639,6 +789,11 @@ internal static class ImageToTensorKernel
             if (_colours is not null)
             {
                 ArrayPool<float>.Shared.Return(_colours);
+            }
+
+            if (_interleaved is not null)
+            {
+                ArrayPool<float>.Shared.Return(_interleaved);
             }
 
             if (Padded is not null)

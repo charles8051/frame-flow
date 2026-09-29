@@ -12,7 +12,10 @@ namespace FrameFlow.Inference;
 /// </summary>
 public interface IDeviceImageToTensor
 {
-    /// <summary>The tensor it writes, and how a frame fills it.</summary>
+    /// <summary>
+    /// The tensor it writes, and how a frame fills it. A stage that cannot write the options'
+    /// <see cref="ImageToTensorOptions.Dtype"/> refuses them when it is built.
+    /// </summary>
     ImageToTensorOptions Options { get; }
 
     /// <summary>

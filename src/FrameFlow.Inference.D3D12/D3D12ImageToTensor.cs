@@ -68,12 +68,24 @@ public sealed unsafe class D3D12ImageToTensor : IDisposable, IDeviceImageToTenso
     /// The tensor and how to fill it, including the frames' <see cref="ImageToTensorOptions.YuvMatrix"/> and
     /// <see cref="ImageToTensorOptions.YuvRange"/>.
     /// </param>
+    /// <exception cref="NotSupportedException">
+    /// The options' <see cref="ImageToTensorOptions.Dtype"/> is not <see cref="DType.Float32"/>. The
+    /// shader writes 32-bit floats only; prepare a Float16 or UInt8 input on the CPU with
+    /// <see cref="ImageToTensor"/>.
+    /// </exception>
     public D3D12ImageToTensor(
         nint device,
         nint commandQueue,
         ImageToTensorOptions options)
     {
         ImageToTensor.ValidateOptions(options);
+        if (options.Dtype != DType.Float32)
+        {
+            throw new NotSupportedException(
+                $"D3D12ImageToTensor writes Float32 tensors; the options ask for {options.Dtype}. "
+                    + "Prepare this input on the CPU with ImageToTensor.");
+        }
+
         if (device == 0)
             throw new ArgumentNullException(nameof(device));
         if (commandQueue == 0)

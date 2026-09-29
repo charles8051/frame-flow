@@ -124,7 +124,7 @@ public static class InferenceOperators
 internal sealed class InferenceRunner<TResult>(IImageModel<TResult> model, IDeviceImageToTensor? stage)
 {
     private readonly CpuTensorPool _pool = new();
-    private CpuTensor<float>? _input;
+    private ICpuTensor? _input;
     private Dictionary<string, ICpuTensor>? _outputs;
 
     public InferenceResult<TResult> Run(IVideoFrame frame)
@@ -147,7 +147,12 @@ internal sealed class InferenceRunner<TResult>(IImageModel<TResult> model, IDevi
                 break;
             case InferenceRoute.Host:
                 var input = Input();
-                transform = ImageToTensor.Write(frame, crop, model.Input, input.Span);
+                transform = input switch
+                {
+                    CpuTensor<byte> bytes => ImageToTensor.Write(frame, crop, model.Input, bytes.Span),
+                    CpuTensor<Half> halves => ImageToTensor.Write(frame, crop, model.Input, halves.Span),
+                    _ => ImageToTensor.Write(frame, crop, model.Input, ((CpuTensor<float>)input).Span),
+                };
                 model.Session.Run(new Dictionary<string, ICpuTensor> { [model.InputName] = input }, outputs);
                 path = InferencePath.Host;
                 break;
@@ -160,10 +165,24 @@ internal sealed class InferenceRunner<TResult>(IImageModel<TResult> model, IDevi
         return new InferenceResult<TResult>(model.Decode(outputs, transform, frame), frame.Timestamp, frame.Width, frame.Height, path);
     }
 
-    private CpuTensor<float> Input() =>
-        _input ??= _pool.Rent<float>(model.Input.Layout == TensorLayout.Nhwc
-            ? new TensorShape(1, model.Input.Height, model.Input.Width, 3)
-            : new TensorShape(1, 3, model.Input.Height, model.Input.Width));
+    /// <summary>The host input, in the element type the model's options name.</summary>
+    private ICpuTensor Input()
+    {
+        if (_input is not null)
+            return _input;
+
+        var options = model.Input;
+        var shape = options.Layout == TensorLayout.Nhwc
+            ? new TensorShape(1, options.Height, options.Width, 3)
+            : new TensorShape(1, 3, options.Height, options.Width);
+        return _input = options.Dtype switch
+        {
+            DType.UInt8 => _pool.Rent<byte>(shape),
+            DType.Float16 => _pool.Rent<Half>(shape),
+            // ImageToTensor refuses any other element type by name.
+            _ => _pool.Rent<float>(shape),
+        };
+    }
 
     private Dictionary<string, ICpuTensor> Outputs()
     {
