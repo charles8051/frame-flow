@@ -200,7 +200,15 @@ instances its cache modes discard.
 This is the one kind of state decision 3's "share nothing" does not cover: two instances of a
 blueprint share the resources their factories close over. An `IInferenceSession` does not support
 concurrent runs, so two instances running at once need a session each or a wrapper that serialises
-them. Nothing in the tree runs two instances at once.
+them. The same holds for a sink or a device: a resource shared by instances that overlap has to be
+safe for overlapping use, or be given to one instance at a time. Nothing in the tree runs two
+instances at once. A seek's rebuild cancels the old graph and awaits it before the new one starts
+(`SubstrateSession.StopGraphAsync`).
+
+The graph cannot see what a factory closes over, so it cannot keep those resources alive. The
+caller keeps each one usable until every instance that closes over it has stopped, including an
+instance still unwinding a cancellation. Disposing a model or a sink while an old instance winds
+down is a use-after-dispose that no check here catches.
 
 ### 5. `_resets` and `BeforeEachRun` are removed
 
