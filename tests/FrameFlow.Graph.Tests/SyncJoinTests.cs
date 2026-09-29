@@ -706,7 +706,9 @@ public sealed class SyncJoinTests
 
         if (policy == FailureResponse.Propagate)
         {
-            await Assert.ThrowsAsync<BoomException>(() => graph.RunAsync());
+            var fault = await Assert.ThrowsAsync<GraphFaultException>(() => graph.RunAsync());
+            Assert.IsType<BoomException>(fault.InnerException);
+            Assert.Equal("join", fault.NodeId);
             Assert.Equal(1, calls);
         }
         else
@@ -758,9 +760,11 @@ public sealed class SyncJoinTests
         graph.Pipeline(endless).ToPrimary(join);
         graph.Pipeline(join.Output).To(CollectInto(got));
 
-        await Assert.ThrowsAsync<BoomException>(
+        var fault = await Assert.ThrowsAsync<GraphFaultException>(
             () => graph.RunAsync().WaitAsync(TimeSpan.FromSeconds(15))
         );
+        Assert.IsType<BoomException>(fault.InnerException);
+        Assert.Equal("join", fault.NodeId);
 
         Assert.All(spans, x => Assert.Equal(0, x.RefCount));
     }

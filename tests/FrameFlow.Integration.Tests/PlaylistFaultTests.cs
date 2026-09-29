@@ -51,6 +51,12 @@ public sealed class PlaylistFaultTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.Equal(PlaybackState.Ended, run.Controller.State);
         var error = Assert.Single(run.Errors);
         Assert.True(InjectedFault.Caused(error), $"Unexpected error: {error}");
+        // The graph's fault names the node that threw and carries what it threw (#499).
+        Assert.Contains(
+            "Node 'inject-fault' faulted: Injected fault in chain 0.",
+            error.Message,
+            StringComparison.Ordinal
+        );
     }
 
     [RequiresFfmpegAndCorpusTheory]

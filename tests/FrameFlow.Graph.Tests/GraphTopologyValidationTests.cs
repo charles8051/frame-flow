@@ -120,7 +120,8 @@ public sealed class GraphTopologyValidationTests
     {
         // Only a node that declares every input required is checked here. A sink added and never
         // wired is left to the pump's own RequireConnected, which is where that error has always
-        // come from, so this rule does not widen what a graph rejects.
+        // come from, so this rule does not widen what a graph rejects. The pump's refusal is that
+        // node's fault.
         var graph = new GraphRunner();
         var source = Source([Item(1)]);
         var sink = new SinkNode<RefBox<int>>("sink", (_, _) => ValueTask.CompletedTask);
@@ -128,10 +129,55 @@ public sealed class GraphTopologyValidationTests
 
         graph.Pipeline(source).To(sink);
 
+        var fault = await Assert.ThrowsAsync<GraphFaultException>(
+            () => graph.RunAsync(CancellationToken.None)
+        );
+        Assert.Equal("unused", fault.NodeId);
+        var ex = Assert.IsType<InvalidOperationException>(fault.InnerException);
+        Assert.Contains("has no upstream edge connected", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TwoNodesWithOneId_AreRefusedBeforeTheRunStarts()
+    {
+        var graph = new GraphRunner();
+        int produced = 0;
+        var source = CountingSource([Item(1)], () => produced++);
+        var step = new OperatorNode<RefBox<int>, RefBox<int>>(
+            "step",
+            (item, _) => ValueTask.FromResult<RefBox<int>?>(item)
+        );
+        var sink = new SinkNode<RefBox<int>>("step", (_, _) => ValueTask.CompletedTask);
+
+        graph.Pipeline(source).Then(step).To(sink);
+
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => graph.RunAsync(CancellationToken.None)
         );
-        Assert.Contains("has no upstream edge connected", ex.Message, StringComparison.Ordinal);
+
+        Assert.Contains("2 nodes have the id 'step'", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(0, produced);
+    }
+
+    [Theory]
+    [InlineData(new[] { "a", "b" }, new string[0])]
+    [InlineData(new[] { "a", "b", "a" }, new[] { "2 nodes have the id 'a'" })]
+    [InlineData(new[] { "a", "A" }, new string[0])]
+    [InlineData(
+        new[] { "b", "a", "b", "a", "b" },
+        new[] { "3 nodes have the id 'b'", "2 nodes have the id 'a'" }
+    )]
+    public void EachIdHeldByMoreThanOneNode_IsReportedOnce(string[] ids, string[] expected)
+    {
+        var nodes = ids
+            .Select(id => (INode)new SinkNode<RefBox<int>>(id, (_, _) => ValueTask.CompletedTask))
+            .ToList();
+
+        var errors = GraphTopology.Validate(nodes, []);
+
+        Assert.Equal(expected.Length, errors.Count);
+        for (int i = 0; i < expected.Length; i++)
+            Assert.StartsWith(expected[i], errors[i], StringComparison.Ordinal);
     }
 
     // ─── Helpers ────────────────────────────────────────────────────

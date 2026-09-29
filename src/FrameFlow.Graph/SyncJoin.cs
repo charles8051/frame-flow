@@ -352,8 +352,8 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
 
     internal SecondaryWindow<TSecondary> Retained => _retained;
 
-    Task IPumpableNode.RunPumpAsync(CancellationTokenSource graphCts) =>
-        NodePumps.PumpSyncJoinAsync(this, graphCts);
+    Task IPumpableNode.RunPumpAsync(GraphRun run) =>
+        NodePumps.PumpSyncJoinAsync(this, run);
 }
 
 /// <summary>

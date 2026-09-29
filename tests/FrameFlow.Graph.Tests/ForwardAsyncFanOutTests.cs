@@ -121,7 +121,10 @@ public sealed class ForwardAsyncFanOutTests
         graph.Connect(src.Output, NullSink<FailingSecondAddRef>("b").Input);
         graph.Connect(src.Output, NullSink<FailingSecondAddRef>("c").Input);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => graph.RunAsync());
+        // The AddRef runs in the source's pump, outside any body, so the fault is the source's.
+        var fault = await Assert.ThrowsAsync<GraphFaultException>(() => graph.RunAsync());
+        Assert.IsType<InvalidOperationException>(fault.InnerException);
+        Assert.Equal("src", fault.NodeId);
 
         Assert.Equal(0, item.RefCount);
     }

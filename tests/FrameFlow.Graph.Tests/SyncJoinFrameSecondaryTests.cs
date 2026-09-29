@@ -67,10 +67,12 @@ public sealed class SyncJoinFrameSecondaryTests
             return ValueTask.CompletedTask;
         }));
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var fault = await Assert.ThrowsAsync<GraphFaultException>(
             () => graph.RunAsync().WaitAsync(TimeSpan.FromSeconds(15))
         );
 
+        Assert.Equal("join", fault.NodeId);
+        var ex = Assert.IsType<InvalidOperationException>(fault.InnerException);
         Assert.Contains("'join'", ex.Message);
         Assert.Equal(0, frame.RefCount);
     }
