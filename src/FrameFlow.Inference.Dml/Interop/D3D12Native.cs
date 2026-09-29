@@ -75,7 +75,10 @@ internal static unsafe class D3D12Native
         try
         {
             // A method returning a struct takes a hidden pointer for it after `this` and returns
-            // that pointer, in the Windows x64 ABI for C++ member functions.
+            // that pointer, in the Windows x64 ABI for C++ member functions, whatever the struct's
+            // size. An 8-byte struct comes back in RAX only from a free function. The SDK's C
+            // binding says so: LUID *(STDMETHODCALLTYPE *GetAdapterLuid)(ID3D12Device *This,
+            // LUID *RetVal). GpuMemoryTests compares the result with Vortice's on hardware.
             var getAdapterLuid =
                 (delegate* unmanaged<nint, DxgiNative.Luid*, DxgiNative.Luid*>)(*(nint**)d3d12Device)[GetAdapterLuidSlot];
             DxgiNative.Luid luid;

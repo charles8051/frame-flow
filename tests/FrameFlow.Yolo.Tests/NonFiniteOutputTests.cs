@@ -71,6 +71,16 @@ public sealed class NonFiniteOutputTests
         Assert.Empty(new Yolov8Postprocessor(Descriptor).Decode(output, 1f, 1f));
     }
 
+    [Fact]
+    public void ANegativeInfinityThreshold_StillDropsAnAnchorWithNoFiniteScore()
+    {
+        var output = Boxes();
+        output.AsSpan(4 * Descriptor.AnchorCount).Fill(float.NaN);
+        var post = new Yolov8Postprocessor(Descriptor) { ConfidenceThreshold = float.NegativeInfinity };
+
+        Assert.Empty(post.Decode(output, 1f, 1f));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(2)]

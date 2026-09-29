@@ -157,7 +157,9 @@ public sealed class Yolov8Postprocessor
                 }
             }
 
-            if (!(bestScore >= ConfidenceThreshold))
+            // Finite as well as high enough: a threshold of negative infinity would otherwise
+            // admit an anchor that kept its starting value.
+            if (!(float.IsFinite(bestScore) && bestScore >= ConfidenceThreshold))
                 continue;
 
             float cx = modelOutput[0 * anchorCount + anchor];
