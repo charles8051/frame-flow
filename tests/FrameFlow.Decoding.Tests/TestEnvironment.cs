@@ -154,6 +154,25 @@ internal sealed class RequiresFfmpegAndCorpusFactAttribute : FactAttribute
 }
 
 /// <summary>
+/// Theory-shaped sibling of <see cref="RequiresFfmpegAndCorpusFactAttribute"/>. A theory is not a
+/// fact attribute, so the skip conditions are repeated rather than inherited.
+/// </summary>
+internal sealed class RequiresFfmpegAndCorpusTheoryAttribute : TheoryAttribute
+{
+    public RequiresFfmpegAndCorpusTheoryAttribute()
+    {
+        if (!TestEnvironment.HasFfmpegSharedLibraries)
+        {
+            Skip = "FFmpeg shared libraries not available.";
+            return;
+        }
+
+        if (!TestEnvironment.HasCorpusFiles)
+            Skip = "Test corpus not generated. Run scripts/generate-test-corpus.cs first.";
+    }
+}
+
+/// <summary>
 /// As <see cref="RequiresFfmpegAndCorpusFactAttribute"/>, and skipped unless a decoder for
 /// <c>codecId</c> advertises a hardware config for a backend that initialised here. Hardware
 /// support is per codec, so the gate asks about the codec, not just the device.
