@@ -30,7 +30,7 @@ namespace FrameFlow.Yolo;
 /// </para>
 /// <list type="number">
 /// <item><description>For each of the A anchors, find max class score and class id (scanning C classes).</description></item>
-/// <item><description>Drop anchors below <see cref="ConfidenceThreshold"/>.</description></item>
+/// <item><description>Drop anchors below <see cref="ConfidenceThreshold"/>, and those whose score or box is not a finite number.</description></item>
 /// <item><description>Run greedy NMS per class with <see cref="IoUThreshold"/>.</description></item>
 /// <item><description>Map surviving box coords from model-space back to source-image-space via the scale factors from the preprocessor.</description></item>
 /// </list>
@@ -136,13 +136,17 @@ public sealed class Yolov8Postprocessor
         // followed by all A cy values, etc. The argmax scans only the
         // allow-listed classes (_classesToScan); unfiltered, that's every
         // class and the result is identical to a full scan.
+        //
+        // A NaN never wins: the scan starts below every number and replaces
+        // only on a greater one, so an anchor whose scores are all NaN keeps
+        // negative infinity and the gate drops it (#498).
         var classes = _classesToScan;
         var candidates = new List<Detection>(capacity: 256);
         for (int anchor = 0; anchor < anchorCount; anchor++)
         {
             int bestClass = classes[0];
-            float bestScore = modelOutput[(4 + bestClass) * anchorCount + anchor];
-            for (int i = 1; i < classes.Length; i++)
+            float bestScore = float.NegativeInfinity;
+            for (int i = 0; i < classes.Length; i++)
             {
                 int c = classes[i];
                 float score = modelOutput[(4 + c) * anchorCount + anchor];
@@ -153,7 +157,7 @@ public sealed class Yolov8Postprocessor
                 }
             }
 
-            if (bestScore < ConfidenceThreshold)
+            if (!(bestScore >= ConfidenceThreshold))
                 continue;
 
             float cx = modelOutput[0 * anchorCount + anchor];
@@ -165,6 +169,10 @@ public sealed class Yolov8Postprocessor
             float y = (cy - h / 2f) * scaleY;
             float scaledW = w * scaleX;
             float scaledH = h * scaleY;
+
+            // A box that is not a number cannot be placed or suppressed.
+            if (!(float.IsFinite(x) && float.IsFinite(y) && float.IsFinite(scaledW) && float.IsFinite(scaledH)))
+                continue;
 
             candidates.Add(
                 new Detection(
