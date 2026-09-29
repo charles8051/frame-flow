@@ -179,7 +179,7 @@ the operator and on the `{id}-results` sink, a node of your own on an id a helpe
 
 **What to write instead.** Give each node its own id.
 
-### 11. A node's fault surfaces as `GraphFaultException`
+### 12. A node's fault surfaces as `GraphFaultException`
 
 **A change in behaviour, not a compile error.** Code that catches a node's exception type compiles
 and stops matching.
