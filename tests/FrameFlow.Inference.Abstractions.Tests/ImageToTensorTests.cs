@@ -134,6 +134,59 @@ public sealed class ImageToTensorTests
         Assert.Equal(new[] { 2f, 3f, 3f, 3f }, tensor[..4], (a, b) => MathF.Abs(a - b) < 1e-3f);
     }
 
+    [Theory]
+    [InlineData(ImageSampling.Nearest)]
+    [InlineData(ImageSampling.Bilinear)]
+    public void ACropPastTheEdge_WithPad_WritesThePadValueThere(ImageSampling sampling)
+    {
+        // Red is the column index. The crop starts at column 2 and runs two columns past the edge;
+        // the last two tensor pixels' centres, x = 4.5 and 5.5, are outside the frame.
+        using var frame = Frame(PixelFormat.Bgra32, 4, 1, (x, _) => (0, 0, (byte)x, 255));
+        var options = new ImageToTensorOptions(4, 1)
+        {
+            Sampling = sampling,
+            Border = ImageBorder.Pad,
+            PadValue = 9,
+            Normalization = TensorNormalization.Range(0, 255),
+        };
+        var tensor = new float[options.ElementCount];
+
+        ImageToTensor.Write(frame, RotatedRect.FromBounds(2, 0, 4, 1), options, tensor);
+
+        Assert.Equal(new[] { 2f, 3f, 9f, 9f }, tensor[..4], (a, b) => MathF.Abs(a - b) < 1e-3f);
+    }
+
+    [Fact]
+    public void ARotatedCropPastTheEdge_WithPad_PadsEachPixelOutside()
+    {
+        // A quarter-turned 4 x 4 crop centred on the frame's top-left corner: only the tensor
+        // pixels whose centres land in the frame's top-left 2 x 2 read it.
+        using var frame = Frame(PixelFormat.Bgra32, 4, 4, (x, y) => (0, 0, (byte)(100 + 4 * y + x), 255));
+        var options = new ImageToTensorOptions(4, 4)
+        {
+            Sampling = ImageSampling.Nearest,
+            Border = ImageBorder.Pad,
+            Normalization = TensorNormalization.Range(0, 255),
+        };
+        var tensor = new float[options.ElementCount];
+
+        var transform = ImageToTensor.Write(frame, new RotatedRect(0, 0, 4, 4, MathF.PI / 2), options, tensor);
+
+        for (int ty = 0; ty < 4; ty++)
+        {
+            for (int tx = 0; tx < 4; tx++)
+            {
+                var (x, y) = transform.ToFrame((tx + 0.5f) / 4, (ty + 0.5f) / 4);
+                float expected = x is >= 0 and < 4 && y is >= 0 and < 4
+                    ? 100 + 4 * (int)MathF.Floor(y) + (int)MathF.Floor(x)
+                    : 0;
+                Assert.Equal(expected, tensor[4 * ty + tx], 1e-3f);
+            }
+        }
+
+        Assert.Equal(4, tensor[..16].Count(v => v != 0));
+    }
+
     [Fact]
     public void AQuarterTurnCrop_WritesTheCropUpright()
     {
@@ -159,6 +212,19 @@ public sealed class ImageToTensorTests
     }
 
     [Fact]
+    public void Transform_IsWhatWriteReturns()
+    {
+        using var frame = Frame(PixelFormat.Bgra32, 64, 48, (_, _) => (0, 0, 0, 255));
+        var options = new ImageToTensorOptions(16, 16) { Fit = ImageFit.Letterbox };
+        var crop = new RotatedRect(20, 15, 30, 12, 0.4f);
+
+        var written = ImageToTensor.Write(frame, crop, options, new float[options.ElementCount]);
+
+        Assert.Equal(written, ImageToTensor.Transform(crop, options));
+        Assert.Throws<ArgumentException>(() => ImageToTensor.Transform(RotatedRect.FromBounds(0, 0, 0, 4), options));
+    }
+
+    [Fact]
     public void TheReturnedTransform_MapsTheTensorOntoTheCrop()
     {
         using var frame = Frame(PixelFormat.Bgra32, 64, 48, (_, _) => (0, 0, 0, 255));
@@ -177,11 +243,13 @@ public sealed class ImageToTensorTests
     /// multiple of the vector width exercise the scalar tail after the vector loop.
     /// </summary>
     [Theory]
-    [InlineData(ImageSampling.Nearest, ImageFit.Stretch, TensorLayout.Nchw)]
-    [InlineData(ImageSampling.Bilinear, ImageFit.Stretch, TensorLayout.Nchw)]
-    [InlineData(ImageSampling.Nearest, ImageFit.Letterbox, TensorLayout.Nhwc)]
-    [InlineData(ImageSampling.Bilinear, ImageFit.Letterbox, TensorLayout.Nhwc)]
-    public void ThePaths_AgreeBitForBit(ImageSampling sampling, ImageFit fit, TensorLayout layout)
+    [InlineData(ImageSampling.Nearest, ImageFit.Stretch, TensorLayout.Nchw, ImageBorder.Replicate)]
+    [InlineData(ImageSampling.Bilinear, ImageFit.Stretch, TensorLayout.Nchw, ImageBorder.Replicate)]
+    [InlineData(ImageSampling.Nearest, ImageFit.Letterbox, TensorLayout.Nhwc, ImageBorder.Replicate)]
+    [InlineData(ImageSampling.Bilinear, ImageFit.Letterbox, TensorLayout.Nhwc, ImageBorder.Replicate)]
+    [InlineData(ImageSampling.Nearest, ImageFit.Stretch, TensorLayout.Nchw, ImageBorder.Pad)]
+    [InlineData(ImageSampling.Bilinear, ImageFit.Letterbox, TensorLayout.Nhwc, ImageBorder.Pad)]
+    public void ThePaths_AgreeBitForBit(ImageSampling sampling, ImageFit fit, TensorLayout layout, ImageBorder border)
     {
         var random = new Random(363);
         const int width = 37, height = 23, stride = width * 4 + 12;
@@ -194,6 +262,7 @@ public sealed class ImageToTensorTests
             RotatedRect.FromBounds(3.3f, 1.7f, 20.9f, 11.2f),
             RotatedRect.FromBounds(-5f, 10f, 50f, 30f),
             RotatedRect.FromBounds(30f, 20f, 2.5f, 1.5f),
+            RotatedRect.FromBounds(-12.3f, -7.9f, 20f, 15f),
         };
 
         foreach (int tensorWidth in new[] { 1, 29, 64, 67 })
@@ -203,6 +272,7 @@ public sealed class ImageToTensorTests
                 Sampling = sampling,
                 Fit = fit,
                 Layout = layout,
+                Border = border,
                 PadValue = 77,
                 Normalization = TensorNormalization.MeanStd((0.485f, 0.456f, 0.406f), (0.229f, 0.224f, 0.225f)),
             };
@@ -304,6 +374,15 @@ public sealed class ImageToTensorTests
         Assert.Equal((YuvMatrix.Bt601, YuvRange.Limited), (options.YuvMatrix, options.YuvRange));
         Assert.Throws<ArgumentException>(() => ImageToTensor.ValidateOptions(options with { YuvMatrix = (YuvMatrix)7 }));
         Assert.Throws<ArgumentException>(() => ImageToTensor.ValidateOptions(options with { YuvRange = (YuvRange)7 }));
+    }
+
+    [Fact]
+    public void Options_DefaultToReplicate_AndRefuseAnUndefinedBorder()
+    {
+        var options = new ImageToTensorOptions(4, 4);
+
+        Assert.Equal(ImageBorder.Replicate, options.Border);
+        Assert.Throws<ArgumentException>(() => ImageToTensor.ValidateOptions(options with { Border = (ImageBorder)7 }));
     }
 
     private static CpuVideoFrame Frame(

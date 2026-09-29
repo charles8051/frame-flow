@@ -28,6 +28,7 @@ FrameFlow.Face.BlazeFaceModelDescriptor.ValidateSession(FrameFlow.Inference.IInf
 FrameFlow.Face.BlazeFacePostprocessor
 FrameFlow.Face.BlazeFacePostprocessor.BlazeFacePostprocessor(FrameFlow.Face.BlazeFaceModelDescriptor? descriptor = null) -> void
 FrameFlow.Face.BlazeFacePostprocessor.Decode(System.ReadOnlySpan<float> boxes, System.ReadOnlySpan<float> scores, FrameFlow.Face.FaceRoi roi) -> System.Collections.Generic.List<FrameFlow.Face.FaceDetection>!
+FrameFlow.Face.BlazeFacePostprocessor.Decode(System.ReadOnlySpan<float> boxes, System.ReadOnlySpan<float> scores, FrameFlow.Inference.TensorTransform transform) -> System.Collections.Generic.List<FrameFlow.Face.FaceDetection>!
 FrameFlow.Face.BlazeFacePostprocessor.IoUThreshold.get -> float
 FrameFlow.Face.BlazeFacePostprocessor.IoUThreshold.init -> void
 FrameFlow.Face.BlazeFacePostprocessor.MaxFaces.get -> int
@@ -36,12 +37,14 @@ FrameFlow.Face.BlazeFacePostprocessor.MinScore.get -> float
 FrameFlow.Face.BlazeFacePostprocessor.MinScore.init -> void
 FrameFlow.Face.BlazeFacePostprocessor.ScoreClipThreshold.get -> float
 FrameFlow.Face.BlazeFacePostprocessor.ScoreClipThreshold.init -> void
+FrameFlow.Face.BlazeFacePostprocessor.Suppression.get -> FrameFlow.Face.FaceSuppression
+FrameFlow.Face.BlazeFacePostprocessor.Suppression.init -> void
 FrameFlow.Face.BlazeFacePreprocessor
 FrameFlow.Face.BlazeFacePreprocessor.BlazeFacePreprocessor(int inputSize = 128, FrameFlow.Face.BlazeFaceInputLayout layout = FrameFlow.Face.BlazeFaceInputLayout.Nchw) -> void
 FrameFlow.Face.BlazeFacePreprocessor.InputElementCount.get -> int
 FrameFlow.Face.BlazeFacePreprocessor.InputSize.get -> int
 FrameFlow.Face.BlazeFacePreprocessor.Layout.get -> FrameFlow.Face.BlazeFaceInputLayout
-FrameFlow.Face.BlazeFacePreprocessor.Preprocess(FrameFlow.Media.IVideoFrame! frame, FrameFlow.Face.FaceRoi roi, System.Span<float> destination) -> void
+FrameFlow.Face.BlazeFacePreprocessor.Preprocess(FrameFlow.Media.IVideoFrame! frame, FrameFlow.Face.FaceRoi roi, System.Span<float> destination) -> FrameFlow.Inference.TensorTransform
 FrameFlow.Face.DetectedFaceFrameRef
 FrameFlow.Face.DetectedFaceFrameRef.AddRef() -> FrameFlow.Graph.IRefCounted!
 FrameFlow.Face.DetectedFaceFrameRef.DetectedFaceFrameRef(FrameFlow.Media.IVideoFrame! video, System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceDetection>! faces) -> void
@@ -94,6 +97,9 @@ FrameFlow.Face.FaceRoi.X.get -> float
 FrameFlow.Face.FaceRoi.X.init -> void
 FrameFlow.Face.FaceRoi.Y.get -> float
 FrameFlow.Face.FaceRoi.Y.init -> void
+FrameFlow.Face.FaceSuppression
+FrameFlow.Face.FaceSuppression.Hard = 0 -> FrameFlow.Face.FaceSuppression
+FrameFlow.Face.FaceSuppression.Weighted = 1 -> FrameFlow.Face.FaceSuppression
 FrameFlow.Face.SsdAnchor
 FrameFlow.Face.SsdAnchor.Height.get -> float
 FrameFlow.Face.SsdAnchor.Height.init -> void

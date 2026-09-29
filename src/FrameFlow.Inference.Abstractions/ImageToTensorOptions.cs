@@ -55,10 +55,13 @@ public sealed record ImageToTensorOptions
     public TensorChannelOrder ChannelOrder { get; init; } = TensorChannelOrder.Rgb;
 
     /// <summary>
-    /// The 8-bit sample written in every channel of a letterbox bar, normalized like any other.
-    /// Unused by <see cref="ImageFit.Stretch"/>.
+    /// The 8-bit sample written in every channel of a letterbox bar, and outside the frame with
+    /// <see cref="ImageBorder.Pad"/>, normalized like any other.
     /// </summary>
     public byte PadValue { get; init; }
+
+    /// <summary>What a crop reads past the frame's edge. Defaults to <see cref="ImageBorder.Replicate"/>.</summary>
+    public ImageBorder Border { get; init; } = ImageBorder.Replicate;
 
     /// <summary>
     /// The matrix a YUV frame's samples are converted to RGB with. Defaults to

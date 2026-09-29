@@ -1,17 +1,18 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Inference;
 using FrameFlow.Media;
 
 namespace FrameFlow.Face;
 
 /// <summary>
 /// A rectangular region of a source frame, in source pixel coordinates,
-/// that BlazeFace runs on. It is the single mapping shared by the
-/// <see cref="BlazeFacePreprocessor"/> (which crops + stretches it to the
-/// model input) and the <see cref="BlazeFacePostprocessor"/> (which maps
-/// the model's normalized <c>[0,1]</c> outputs back into it) — so a box
-/// decoded from the model lands in the right place on the original frame.
+/// that BlazeFace runs on. The <see cref="BlazeFacePreprocessor"/>
+/// letterboxes it into the model input, and the
+/// <see cref="BlazeFacePostprocessor"/> maps the model's outputs back
+/// through the same letterbox, so a box decoded from the model lands in the
+/// right place on the original frame.
 /// </summary>
 /// <remarks>
 /// In the gaze pipeline the ROI is the tracked person's box (optionally
@@ -29,10 +30,14 @@ public readonly record struct FaceRoi(float X, float Y, float Width, float Heigh
     }
 
     /// <summary>
-    /// Maps a point in the model's normalized <c>[0,1]</c> input space to
-    /// a source-frame pixel coordinate. With the preprocessor's stretched
-    /// resize this is exactly linear.
+    /// Maps a point in the ROI's own normalized <c>[0,1]</c> space to a
+    /// source-frame pixel coordinate. This is not the model's input space,
+    /// which is letterboxed: use the transform
+    /// <see cref="BlazeFacePreprocessor.Preprocess"/> returns for that.
     /// </summary>
     public (float X, float Y) ToSource(float normalizedX, float normalizedY)
         => (X + normalizedX * Width, Y + normalizedY * Height);
+
+    /// <summary>The ROI as an unrotated crop.</summary>
+    internal RotatedRect ToCrop() => RotatedRect.FromBounds(X, Y, Width, Height);
 }

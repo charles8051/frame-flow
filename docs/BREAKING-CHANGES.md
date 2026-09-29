@@ -11,6 +11,47 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## Unreleased — since `v0.12.0`
+
+### 1. BlazeFace letterboxes its input
+
+**A change in results, not a compile error.**
+
+`BlazeFacePreprocessor` fits the ROI into the square model input with its aspect kept and black
+bars, as MediaPipe's detector does, instead of stretching it (#473). A ROI that reaches past the
+frame's edge reads black there instead of the repeated edge pixel. `BlazeFacePostprocessor.Decode`
+maps boxes back through the same letterbox, so on a non-square ROI a face's box now has the face's
+aspect: square, where it used to take the ROI's.
+
+**Who hits this.** Anyone running BlazeFace on a non-square frame or ROI, which is most video. Boxes
+and keypoints move. A caller that paired `Preprocess` with its own mapping through
+`FaceRoi.ToSource` gets wrong positions, since that maps the ROI, not the model input.
+
+**What to write instead.** Decode through the `TensorTransform` that `Preprocess` now returns, or
+through `Decode(boxes, scores, roi)` with the same ROI.
+
+**Why.** On a 1280x720 clip the stretched boxes were 1.78 times wider than tall, and a landmark
+crop built from them was nearly twice the right size.
+
+### 2. BlazeFace merges overlapping detections by weighted average
+
+**A change in results, not a compile error.**
+
+`BlazeFacePostprocessor.Suppression` defaults to `FaceSuppression.Weighted`: overlapping detections
+become their score-weighted average box and keypoints under the highest score, as MediaPipe's face
+detector does. It used to keep the highest-scoring box and drop the rest.
+
+**What to write instead.** Set `Suppression = FaceSuppression.Hard` for the old behaviour.
+
+### 3. `BlazeFacePreprocessor.Preprocess` returns the transform
+
+**A binary break, not a compile error.** Source that calls it compiles unchanged.
+
+`Preprocess` returns a `TensorTransform` where it returned `void`. An assembly compiled against
+`v0.12.0` that calls it throws `MissingMethodException` until it is rebuilt.
+`BlazeFacePostprocessor.Decode(boxes, scores, roi)` now throws `ArgumentException` for a ROI with no
+area, as `Preprocess` already did.
+
 ## `v0.12.0` — since `v0.11.0`
 
 ### 1. A join with a frame secondary must set `maxLead`

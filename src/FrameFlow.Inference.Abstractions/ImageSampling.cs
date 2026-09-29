@@ -5,7 +5,8 @@ namespace FrameFlow.Inference;
 
 /// <summary>
 /// How <see cref="ImageToTensor"/> reads the frame at a tensor pixel. Both map the tensor pixel's
-/// centre into the frame, and both repeat the edge pixel for a position outside the frame.
+/// centre into the frame, and both repeat the edge pixel for a position outside the frame unless
+/// <see cref="ImageToTensorOptions.Border"/> pads it.
 /// </summary>
 public enum ImageSampling
 {

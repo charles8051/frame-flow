@@ -65,6 +65,7 @@ internal static class ImageToTensorKernel
         bool nhwc = options.Layout == TensorLayout.Nhwc;
         bool rgb = options.ChannelOrder == TensorChannelOrder.Rgb;
         bool bilinear = options.Sampling == ImageSampling.Bilinear;
+        bool padOutside = options.Border == ImageBorder.Pad;
 
         var source = new Source(pixels, width, height, stride);
         var scratch = new Scratch(tensorWidth, nhwc, bilinear);
@@ -74,7 +75,7 @@ internal static class ImageToTensorKernel
             bool tables = plan.IsAxisAligned && path != ImageToTensorPath.General;
             if (tables)
             {
-                columns = BuildColumns(plan, width, bilinear, scratch);
+                columns = BuildColumns(plan, width, bilinear, padOutside, scratch);
             }
 
             bool vector = path == ImageToTensorPath.Auto && Vector.IsHardwareAccelerated;
@@ -96,13 +97,14 @@ internal static class ImageToTensorKernel
                     b = destination.Slice((rgb ? 2 * planeLength : 0) + row, tensorWidth);
                 }
 
-                if (!plan.CoversRow(dy))
+                // An unrotated row reads one frame row, so the whole row is inside or outside.
+                if (!plan.CoversRow(dy) || (tables && padOutside && !Inside(plan.SourceY(0, dy), height)))
                 {
                     channels.Pad(r, g, b);
                 }
                 else if (!tables)
                 {
-                    GeneralRow(source, plan, dy, bilinear, channels, r, g, b);
+                    GeneralRow(source, plan, dy, bilinear, padOutside, channels, r, g, b);
                 }
                 else if (bilinear)
                 {
@@ -206,6 +208,7 @@ internal static class ImageToTensorKernel
         in ImageToTensorPlan plan,
         int dy,
         bool bilinear,
+        bool padOutside,
         in Channels channels,
         Span<float> r,
         Span<float> g,
@@ -215,7 +218,10 @@ internal static class ImageToTensorKernel
         int maxY = source.Height - 1;
         for (int dx = 0; dx < r.Length; dx++)
         {
-            if (!plan.CoversColumn(dx))
+            double x = plan.SourceX(dx, dy);
+            double y = plan.SourceY(dx, dy);
+            if (!plan.CoversColumn(dx)
+                || (padOutside && !(Inside(x, source.Width) && Inside(y, source.Height))))
             {
                 r[dx] = channels.PadRed;
                 g[dx] = channels.PadGreen;
@@ -223,8 +229,6 @@ internal static class ImageToTensorKernel
                 continue;
             }
 
-            double x = plan.SourceX(dx, dy);
-            double y = plan.SourceY(dx, dy);
             if (!bilinear)
             {
                 uint p = source.Read(
@@ -410,6 +414,9 @@ internal static class ImageToTensorKernel
     private static int Clamp(double index, int max)
         => !(index > 0) ? 0 : index >= max ? max : (int)index;
 
+    /// <summary>Whether a position falls in one of <paramref name="size"/> pixels, each covering <c>[i, i + 1)</c>.</summary>
+    internal static bool Inside(double position, int size) => position >= 0 && position < size;
+
     private readonly ref struct Source
     {
         private readonly ref byte _origin;
@@ -435,19 +442,21 @@ internal static class ImageToTensorKernel
 
     /// <summary>
     /// Fills the per-column tables in <paramref name="scratch"/>: a byte offset and, for bilinear, a
-    /// second offset and a weight. Returns the range of columns inside the fitted crop.
+    /// second offset and a weight. Returns the range of columns inside the fitted crop and, when
+    /// <paramref name="padOutside"/> is set, inside the frame. An unrotated crop's frame x rises
+    /// with the column, so both ranges are contiguous and so is their overlap.
     /// </summary>
     private static (int First, int End) BuildColumns(
-        in ImageToTensorPlan plan, int width, bool bilinear, in Scratch scratch)
+        in ImageToTensorPlan plan, int width, bool bilinear, bool padOutside, in Scratch scratch)
     {
         int first = 0;
-        while (first < plan.TensorWidth && !plan.CoversColumn(first))
+        while (first < plan.TensorWidth && !ReadsColumn(plan, first, width, padOutside))
         {
             first++;
         }
 
         int end = first;
-        while (end < plan.TensorWidth && plan.CoversColumn(end))
+        while (end < plan.TensorWidth && ReadsColumn(plan, end, width, padOutside))
         {
             end++;
         }
@@ -471,6 +480,9 @@ internal static class ImageToTensorKernel
 
         return (first, end);
     }
+
+    private static bool ReadsColumn(in ImageToTensorPlan plan, int dx, int width, bool padOutside)
+        => plan.CoversColumn(dx) && (!padOutside || Inside(plan.SourceX(dx, 0), width));
 
     /// <summary>Pooled per-call buffers, sized to one tensor row.</summary>
     private readonly struct Scratch

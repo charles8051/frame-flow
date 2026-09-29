@@ -22,19 +22,20 @@ namespace FrameFlow.Face;
 /// it <c>/255</c> data quietly wrecks detection.
 /// </description></item>
 /// <item><description>
-/// <b>It crops a ROI</b> rather than resizing the whole frame. The
-/// stretched resize samples only inside the <see cref="FaceRoi"/>, so the
-/// model sees just the person region and its normalized outputs map
-/// linearly back via <see cref="FaceRoi.ToSource"/>.
+/// <b>It crops a ROI</b> rather than resizing the whole frame, so the
+/// model sees just the person region.
 /// </description></item>
 /// </list>
 /// <para>
-/// Like the YOLO preprocessor this uses a stretched (non-letterboxed)
-/// resize; face detection tolerates modest aspect distortion, and the
-/// ROI is typically close to square.
+/// <b>It letterboxes</b>, as MediaPipe's detector does: the ROI keeps its
+/// aspect and is centred in the square input between black bars, and
+/// anything past the frame's edge is black too. A stretched non-square ROI
+/// gives every box the ROI's aspect instead of the face's (#473).
+/// <see cref="Preprocess"/> returns the mapping back to the frame for
+/// <see cref="BlazeFacePostprocessor.Decode(ReadOnlySpan{float}, ReadOnlySpan{float}, TensorTransform)"/>.
 /// </para>
 /// <para>
-/// The pixel work is <see cref="ImageToTensor"/>'s: the ROI, stretched,
+/// The pixel work is <see cref="ImageToTensor"/>'s: the ROI, letterboxed,
 /// nearest-neighbour, <c>[-1, 1]</c>, RGB, in the model's layout.
 /// </para>
 /// </remarks>
@@ -64,30 +65,36 @@ public sealed class BlazeFacePreprocessor
         }
         InputSize = inputSize;
         Layout = layout;
-        _options = new ImageToTensorOptions(inputSize, inputSize)
+        _options = OptionsFor(inputSize, layout);
+    }
+
+    /// <summary>The input tensor for a square model input of <paramref name="inputSize"/> px, and how a frame fills it.</summary>
+    internal static ImageToTensorOptions OptionsFor(int inputSize, BlazeFaceInputLayout layout) =>
+        new(inputSize, inputSize)
         {
+            Fit = ImageFit.Letterbox,
+            Border = ImageBorder.Pad,
+            PadValue = 0,
             Sampling = ImageSampling.Nearest,
             Normalization = TensorNormalization.MinusOneToOne,
             Layout = layout == BlazeFaceInputLayout.Nhwc ? TensorLayout.Nhwc : TensorLayout.Nchw,
         };
-    }
 
     /// <summary>
-    /// Crops <paramref name="roi"/> from <paramref name="frame"/>, resizes
-    /// it to the model input, normalizes to <c>[-1,1]</c>, and writes the
+    /// Crops <paramref name="roi"/> from <paramref name="frame"/>, letterboxes
+    /// it into the model input, normalizes to <c>[-1,1]</c>, and writes the
     /// tensor into <paramref name="destination"/> (≥
-    /// <see cref="InputElementCount"/> elements). The <paramref name="roi"/>
-    /// is returned to the caller to hand to the postprocessor unchanged.
-    /// A ROI that spills past the frame's edge samples the edge pixel.
+    /// <see cref="InputElementCount"/> elements). A ROI that spills past the
+    /// frame's edge reads black there.
     /// </summary>
+    /// <returns>The mapping from the model's normalized input coordinates to frame pixels.</returns>
     /// <exception cref="ArgumentException">The ROI has no area.</exception>
     /// <exception cref="NotSupportedException">The frame is not Bgra32 or Rgba32.</exception>
     /// <exception cref="InvalidOperationException">The frame is not on the CPU.</exception>
-    public void Preprocess(IVideoFrame frame, FaceRoi roi, Span<float> destination)
+    public TensorTransform Preprocess(IVideoFrame frame, FaceRoi roi, Span<float> destination)
     {
         ArgumentNullException.ThrowIfNull(frame);
 
-        ImageToTensor.Write(
-            frame, RotatedRect.FromBounds(roi.X, roi.Y, roi.Width, roi.Height), _options, destination);
+        return ImageToTensor.Write(frame, roi.ToCrop(), _options, destination);
     }
 }

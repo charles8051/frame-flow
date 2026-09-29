@@ -249,7 +249,7 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         var swPre = Stopwatch.StartNew();
-        _preprocessor.Preprocess(frame, roi, _inputTensor.Span);
+        var transform = _preprocessor.Preprocess(frame, roi, _inputTensor.Span);
         swPre.Stop();
 
         var swRun = Stopwatch.StartNew();
@@ -257,7 +257,7 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
         swRun.Stop();
 
         var swPost = Stopwatch.StartNew();
-        var faces = _postprocessor.Decode(_boxTensor.ReadOnlySpan, _scoreTensor.ReadOnlySpan, roi);
+        var faces = _postprocessor.Decode(_boxTensor.ReadOnlySpan, _scoreTensor.ReadOnlySpan, transform);
         swPost.Stop();
 
         double preMs = swPre.Elapsed.TotalMilliseconds;
@@ -286,8 +286,8 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
     /// <summary>Wall-clock ms of the postprocess (decode + NMS) stage of the most recent detect. CPU work.</summary>
     public double LastPostprocessMs => Volatile.Read(ref _lastPostprocessMs);
 
-    // The detector as an IImageModel, for InferenceOperators.Infer: the whole frame, and the
-    // postprocessor's decode of the box and score outputs.
+    // The detector as an IImageModel, for InferenceOperators.Infer: the whole frame, letterboxed,
+    // and the postprocessor's decode of the box and score outputs through the stage's transform.
     IInferenceSession IImageModel<IReadOnlyList<FaceDetection>>.Session => _session;
 
     string IImageModel<IReadOnlyList<FaceDetection>>.InputName => _inputName;
@@ -301,7 +301,7 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
         _postprocessor.Decode(
             System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(outputs[_boxName].Bytes.Span),
             System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(outputs[_scoreName].Bytes.Span),
-            FaceRoi.Full(frame));
+            transform);
 
     public void Dispose()
     {

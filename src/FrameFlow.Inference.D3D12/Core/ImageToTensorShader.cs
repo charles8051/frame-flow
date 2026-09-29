@@ -7,7 +7,8 @@ namespace FrameFlow.Inference.D3D12.Core;
 /// The compute shader <see cref="D3D12ImageToTensor"/> dispatches: one thread per tensor pixel.
 /// It samples a planar YUV texture (NV12 or P010) where the plan maps the pixel, converts to RGB,
 /// normalizes, and writes the tensor. The geometry is the CPU stage's: sample positions at pixel
-/// centres, the edge pixel repeated outside the frame, bars outside the fitted region.
+/// centres, the edge pixel repeated outside the frame or the pad colour there, bars outside the
+/// fitted region.
 /// </summary>
 /// <remarks>
 /// Chroma is sampled the way luma is. Nearest takes the chroma sample of the 2x2 block the luma
@@ -36,7 +37,7 @@ internal static class ImageToTensorShader
             float FitRight, FitBottom;
             uint TensorWidth, TensorHeight;
             uint FrameWidth, FrameHeight, Bilinear, Nhwc;
-            uint RedIndex, GreenIndex, BlueIndex, Unused0;
+            uint RedIndex, GreenIndex, BlueIndex, PadOutside;
             float4 Scale;
             float4 Offset;
             float4 PadColour;
@@ -96,13 +97,16 @@ internal static class ImageToTensorShader
             float px = id.x + 0.5;
             float py = id.y + 0.5;
             float3 value;
-            if (px < FitLeft || px >= FitRight || py < FitTop || py >= FitBottom)
+            float2 position = float2(A * px + B * py + C, D * px + E * py + F);
+            bool outsideFrame = position.x < 0 || position.x >= float(FrameWidth)
+                || position.y < 0 || position.y >= float(FrameHeight);
+            if (px < FitLeft || px >= FitRight || py < FitTop || py >= FitBottom
+                || (PadOutside != 0 && outsideFrame))
             {
                 value = PadColour.rgb;
             }
             else
             {
-                float2 position = float2(A * px + B * py + C, D * px + E * py + F);
                 int2 lumaLast = int2(FrameWidth - 1, FrameHeight - 1);
                 int2 chromaLast = int2((FrameWidth + 1) / 2 - 1, (FrameHeight + 1) / 2 - 1);
                 float y = (SampleLuma(position, lumaLast) - YOffset) * YScale;
