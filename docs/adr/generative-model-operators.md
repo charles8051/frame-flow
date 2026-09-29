@@ -56,18 +56,23 @@ until the process restarts. Running in process would buy GPU-resident input, whi
 Out of process, the model has its own runtime, device and failure domain, and every FrameFlow EP
 package can use it, DirectML's included.
 
-### 3. The client is owned by the caller, and its calls are serialized across graphs
+### 3. The caller owns the client through a serializer that spans graphs
 
-The caller creates the `IChatClient` and disposes it. No node constructs one, because a node factory
-can run once per graph instance and a seek builds a new instance.
+The caller creates the `IChatClient`. No node constructs one, because a node factory can run once per
+graph instance and a seek builds a new instance.
 
 `IChatClient` does not say how a client behaves under concurrent calls or cancellation, and decision
-7 stops waiting for a call without ending it. The caller therefore wraps the client once in a
-FrameFlow serializer and passes the wrapper to `Describe`. The wrapper lives as long as the client,
+7 stops waiting for a call without ending it. The caller therefore hands the client to a FrameFlow
+serializer, which owns it from then on, and passes the serializer to `Describe`. The serializer lives
 across loops, seeks and graph instances. It starts a call only after the previous call has returned,
 whether that call finished, failed or was abandoned. A client that ignores cancellation then delays
-the next call, not the graph, and two generations never overlap on one client. The wrapper cannot
+the next call, not the graph, and two generations never overlap on one client. The serializer cannot
 stop a server finishing a request the client failed to cancel; that cost stays with the client.
+
+The caller disposes the serializer, not the client. `DisposeAsync` refuses new calls, cancels the call
+in flight, waits for it to return, and then disposes the client. A call abandoned by a graph that has
+already stopped is still the serializer's, so no call outlives the client it runs on. A client that
+ignores cancellation makes `DisposeAsync` wait for the rest of its call.
 
 ### 4. A frame prompt is a pure value, written for one model family
 
@@ -163,8 +168,8 @@ needs its own record. GPU-resident input is out of scope.
 
 - A new operator package over `Microsoft.Extensions.AI.Abstractions`, whose release pace then affects
   FrameFlow's public surface. It stays out of `FrameFlow.Inference.Abstractions`.
-- The serializer is the one piece of the operator's state that outlives a graph instance, and the
-  caller owns it with the client.
+- The serializer is the one piece of the operator's state that outlives a graph instance. The caller
+  owns it, and through it the client.
 - Three pure cores: the prompt, the cadence and the backoff. Each is testable without a model or a
   clock. Operator tests use a fake client that completes through `TaskCompletionSource` (ADR-0072).
 - An end-to-end test runs against a local OpenAI-compatible server with greedy decoding, asserts that
