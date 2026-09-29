@@ -128,7 +128,9 @@ public sealed class Graph
     /// </para>
     /// <para>
     /// The same discards are counted process-wide as <c>frameflow.graph.discards</c> on the
-    /// <c>FrameFlow.Graph</c> meter, tagged <c>node</c> with the node's id.
+    /// <c>FrameFlow.Graph</c> meter, tagged <c>node</c> with the node's id. A series starts at a
+    /// node's first discard, one per distinct id, so ids that carry a per-request or per-job value
+    /// make a series per request.
     /// </para>
     /// </remarks>
     public IReadOnlyList<NodeDiscards> Discards
