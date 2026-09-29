@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using FFmpeg.AutoGen.Abstractions;
 using FrameFlow.Decoding.Core;
 using FrameFlow.Decoding.Diagnostics;
@@ -515,9 +516,12 @@ public sealed class DemuxSession : IDemuxSession
             // Other stream types (subtitle, data, etc.) are not surfaced in Phase 02.
         }
 
-        // Container name is not trivially accessible from AVFormatContext struct offsets.
-        // Use a placeholder for now; a future phase can extract it via iformat->name.
-        const string containerName = "unknown";
+        // The demuxer's short name, as ffprobe prints format_name. iformat is set by a
+        // successful avformat_open_input, which is the only way here.
+        AVInputFormat* inputFormat = fmtCtx.iformat;
+        string containerName =
+            (inputFormat is null ? null : Marshal.PtrToStringUTF8((nint)inputFormat->name))
+            ?? "unknown";
 
         return new MediaInfo(containerName, duration, videoStreams, audioStreams);
     }

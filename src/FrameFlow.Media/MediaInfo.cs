@@ -8,8 +8,9 @@ namespace FrameFlow.Media;
 /// for the current item.
 /// </summary>
 /// <param name="ContainerName">
-/// The container format's name. A demuxed source reports <c>"unknown"</c> for now, because the
-/// demuxer does not read the format name yet (#465).
+/// The name FFmpeg's demuxer gives the container format, as ffprobe prints it. A demuxer that
+/// reads several related formats gives them all, comma-separated: <c>mov,mp4,m4a,3gp,3g2,mj2</c>
+/// or <c>matroska,webm</c>. <c>"unknown"</c> when the demuxer reports no name.
 /// </param>
 /// <param name="Duration">
 /// The container's duration, or <see cref="TimeSpan.Zero"/> when it reports none, as a live

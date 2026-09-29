@@ -39,6 +39,24 @@ public sealed class DemuxSessionIntegrationTests : IClassFixture<FfmpegBootstrap
         );
     }
 
+    [RequiresFfmpegAndCorpusTheory]
+    [InlineData("test-av-h264-aac.mp4", "mov,mp4,m4a,3gp,3g2,mj2")]
+    [InlineData("test-av-h264-aac.mkv", "matroska,webm")]
+    [InlineData("test-video-vp9-yuv420p.webm", "matroska,webm")]
+    [InlineData("test-video-h264-start-offset.ts", "mpegts")]
+    [InlineData("test-audio-mp3.mp3", "mp3")]
+    public async Task OpenAsync_ReportsTheDemuxersFormatName(string name, string expected)
+    {
+        var file = Corpus(name);
+        if (file is null)
+            return;
+
+        var factory = new DemuxSessionFactory();
+        await using var session = await factory.OpenAsync(MediaSource.FromFile(file));
+
+        Assert.Equal(expected, session.MediaInfo.ContainerName);
+    }
+
     [RequiresFfmpegAndCorpusFact]
     public async Task OpenAsync_PopulatesVideoStreams_ForVideoFile()
     {
