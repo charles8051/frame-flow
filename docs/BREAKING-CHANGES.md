@@ -127,6 +127,27 @@ a shape it did not build. A model output ONNX Runtime allocates can now have one
 
 **What to write instead.** Check for 0 where a dimension must be positive.
 
+### 9. An `OperationCanceledException` from a node body is a fault unless the graph was cancelled
+
+**A change in behaviour, not a compile error.**
+
+A node body that throws an `OperationCanceledException` of its own, such as the
+`TaskCanceledException` of an `HttpClient` timeout, takes the node's `FailureResponse` like any other
+exception (#489). Under `Propagate`, `Graph.RunAsync` throws it, where it used to return as though
+every source had ended. Under `Discard`, the node drops that input and carries on, where the whole
+graph used to stop. One thrown once the graph is cancelled, by the caller's token or by another
+node's fault, is still the cancellation.
+
+When more than one node faults, `RunAsync` throws the fault that happened first. It used to throw
+the fault of whichever of them was added to the graph first.
+
+**Who hits this.** A body that lets its own cancellation escape, and a caller that relied on
+`RunAsync` returning when one did. A player reports it as a playback error rather than the end of
+the item.
+
+**What to write instead.** A body that means to drop an item on its own timeout catches the
+exception and returns `null`, or runs under `FailureResponse.Discard`.
+
 ## `v0.12.0` — since `v0.11.0`
 
 ### 1. A join with a frame secondary must set `maxLead`
