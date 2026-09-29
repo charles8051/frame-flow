@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 
 namespace FrameFlow.Graph;
@@ -22,10 +23,13 @@ namespace FrameFlow.Graph;
 /// when all node tasks have terminated.
 /// </para>
 /// <para>
-/// <b>Fault propagation.</b> If any pump throws, an internal linked
+/// <b>Fault propagation.</b> If any pump faults, an internal linked
 /// cancellation token is signalled so the remaining pumps terminate
-/// promptly. Each pump's <c>finally</c> drains its input ports and
-/// disposes any leftover items so refcounts stay balanced.
+/// promptly, and <see cref="RunAsync"/> throws the fault recorded
+/// first. Each pump's <c>finally</c> drains its input ports and
+/// disposes any leftover items so refcounts stay balanced. An
+/// <see cref="OperationCanceledException"/> from a node body is a fault
+/// like any other unless the graph was cancelled (#489).
 /// </para>
 /// <para>
 /// <b>Dispatch.</b> Every node implements <see cref="IPumpableNode"/>;
@@ -297,44 +301,54 @@ public sealed class Graph
         foreach (var wire in _wireUps)
             wire();
 
-        using var graphCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var run = new GraphRun(ct);
 
         var tasks = new List<Task>(_nodes.Count);
         foreach (var node in _nodes)
         {
-            tasks.Add(((IPumpableNode)node).RunPumpAsync(graphCts));
+            tasks.Add(PumpAsync((IPumpableNode)node, run));
         }
 
-        // Pumps handle fault-propagation internally: each pump's
-        // finally cancels graphCts if it exits via exception. Sibling
-        // pumps observe cancellation and exit cleanly. No pump cancels
-        // on a clean exit — one branch reaching EOS says nothing about
-        // the others, so a pump that has nothing left to do drains its
-        // inputs instead of tearing the graph down.
+        // A pump that faults records the fault in the run, which cancels it, and every other pump
+        // ends on that cancellation. The run is cancelled for no other reason than the caller's
+        // token: no pump cancels on a clean exit, because one branch reaching EOS says nothing
+        // about the others, so a pump that has nothing left to do drains its inputs instead of
+        // tearing the graph down.
         //
-        // The OCE-suppression below distinguishes "caller cancelled
-        // the graph" (legitimate, propagate) from "a pump triggered
-        // internal cleanup cancellation" (normal end-of-graph,
-        // swallow). Real pump exceptions still surface — they're
-        // Faulted, not Canceled, and surface before any OCE in the
-        // WhenAll aggregation.
+        // So the pumps end Canceled either because the caller cancelled, and that cancellation
+        // propagates, or because one faulted, and the fault is what surfaces. A pump's task alone
+        // cannot say which: a body that throws its own OperationCanceledException ends its pump
+        // Canceled too (#489). The run can.
         try
         {
             await Task.WhenAll(tasks).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (run.FirstFault is not null)
         {
-            // Internal cleanup cancellation; normal end-of-graph.
-            // Surface any pump exception if one exists.
-            foreach (var t in tasks)
-            {
-                if (t.IsFaulted)
-                {
-                    // Re-throw the first faulted pump's exception.
-                    await t.ConfigureAwait(false);
-                }
-            }
-            // No pump faulted — all cancellation was from internal cleanup.
+            // The pumps stopped because one faulted; surfaced below.
+        }
+
+        if (run.FirstFault is { } fault)
+            ExceptionDispatchInfo.Capture(fault).Throw();
+    }
+
+    /// <summary>
+    /// Runs <paramref name="node"/>'s pump, recording what the pump itself did not: a fault
+    /// thrown before its loop, such as an input with no edge.
+    /// </summary>
+    /// <remarks>
+    /// Faults end the returned task normally, since the run holds them. The run's cancellation
+    /// ends it Canceled.
+    /// </remarks>
+    private static async Task PumpAsync(IPumpableNode node, GraphRun run)
+    {
+        try
+        {
+            await node.RunPumpAsync(run).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!FaultRules.IsCancellation(ex, run.Token.IsCancellationRequested))
+        {
+            run.Fault(node, ex);
         }
     }
 
