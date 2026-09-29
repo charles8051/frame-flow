@@ -400,10 +400,11 @@ internal sealed class SecondaryWindow<T>
     // _highWater, whose TimeSpan.MinValue floor is also a legal primary time.
     private bool _primarySeen;
 
-    // Set by a backward step in primary time to where the old timeline's window began. Until
-    // the primary climbs back to it, a secondary ahead of the primary that ends at or past it
-    // belongs to the old timeline.
-    private TimeSpan? _staleFrom;
+    // Where each timeline left behind by a backward step in primary time had its window begin,
+    // nearest on top. Until the primary climbs back to the top one, a secondary ahead of the
+    // primary that ends at or past it belongs to a timeline from before a step. A later step
+    // pushes a lower boundary, so the stack ascends from the top.
+    private readonly Stack<TimeSpan> _staleFrom = new();
 
     // Set while the secondary reader is parked on the lead bound or the count limit. Completed
     // and cleared by anything that can make room: the primary advancing, or the window being
@@ -435,8 +436,9 @@ internal sealed class SecondaryWindow<T>
     /// the window holds that many entries that can still match. At the count
     /// limit, entries that can no longer match are released first. Entries
     /// usually arrive in order, so the insertion point is found by scanning back
-    /// from the end. After a backward step in primary time, an item from the old
-    /// timeline is released instead of filed or held.
+    /// from the end. An item that ends more than <paramref name="window"/> behind
+    /// the primary, which the next primary would evict, is released at once, and
+    /// so is an item from a timeline before a backward step in primary time.
     /// </summary>
     /// <returns>
     /// <see langword="null"/> when the item was admitted. Otherwise the item is
@@ -447,6 +449,7 @@ internal sealed class SecondaryWindow<T>
         T item,
         TimeSpan from,
         TimeSpan to,
+        TimeSpan window,
         TimeSpan? maxLead,
         int? maxRetained,
         SyncMatch policy,
@@ -455,7 +458,12 @@ internal sealed class SecondaryWindow<T>
     {
         lock (_gate)
         {
-            if (_staleFrom is { } staleFrom && to >= staleFrom && from > _highWater)
+            // Released rather than filed, a late item cannot outlive the timeline it arrived on
+            // and survive a backward step as if it were on the new one.
+            if (
+                (TryGetCutoff(window, out var cutoff) && to < cutoff)
+                || (_staleFrom.TryPeek(out var staleFrom) && to >= staleFrom && from > _highWater)
+            )
             {
                 item.Dispose();
                 return null;
@@ -504,13 +512,13 @@ internal sealed class SecondaryWindow<T>
                     _highWater = t;
                 ReleaseRoomWaiter();
             }
-            else if (_highWater >= TimeSpan.MinValue + window && t < _highWater - window)
+            else if (TryGetCutoff(window, out var oldCutoff) && t < oldCutoff)
             {
-                StepBack(t, _highWater - window);
+                StepBack(t, oldCutoff);
             }
 
-            if (_staleFrom is { } staleFrom && _highWater >= staleFrom)
-                _staleFrom = null;
+            while (_staleFrom.TryPeek(out var staleFrom) && _highWater >= staleFrom)
+                _staleFrom.Pop();
 
             Evict(window);
 
@@ -558,35 +566,40 @@ internal sealed class SecondaryWindow<T>
             _entries.Clear();
             _highWater = TimeSpan.MinValue;
             _primarySeen = false;
-            _staleFrom = null;
+            _staleFrom.Clear();
             ReleaseRoomWaiter();
         }
     }
 
     // Caller holds _gate. The primary stepped back to t from a timeline whose window began at
-    // oldCutoff, and every entry that window still held is released. An entry that ends before
-    // oldCutoff was admitted after the last old primary, which would have evicted it, so it may
-    // be on the new timeline; eviction against t decides it. A reader held on the lead or the
-    // count is released to try again, and TryAdmit releases its item if it is from the old
-    // timeline.
+    // oldCutoff. Every retained entry ends at or past oldCutoff, since TryAdmit and Evict release
+    // the rest, so every one is from that timeline and is released. A reader held on the lead or
+    // the count is released to try again, and TryAdmit releases its item if it is from a timeline
+    // before the step.
     private void StepBack(TimeSpan t, TimeSpan oldCutoff)
     {
-        int keep = 0;
-        for (int i = 0; i < _entries.Count; i++)
-        {
-            var e = _entries[i];
-            if (e.To >= oldCutoff)
-            {
-                e.Item.Dispose();
-                continue;
-            }
-            _entries[keep++] = e;
-        }
-        _entries.RemoveRange(keep, _entries.Count - keep);
+        foreach (var e in _entries)
+            e.Item.Dispose();
+        _entries.Clear();
 
         _highWater = t;
-        _staleFrom = oldCutoff;
+        _staleFrom.Push(oldCutoff);
         ReleaseRoomWaiter();
+    }
+
+    // Caller holds _gate. Where the window begins: an entry that ends before it is evicted. There
+    // is none before the first primary, and none while the high-water mark is within the window
+    // of TimeSpan.MinValue, where subtracting the window would overflow.
+    private bool TryGetCutoff(TimeSpan window, out TimeSpan cutoff)
+    {
+        if (_highWater == TimeSpan.MinValue || _highWater < TimeSpan.MinValue + window)
+        {
+            cutoff = default;
+            return false;
+        }
+
+        cutoff = _highWater - window;
+        return true;
     }
 
     // Caller holds _gate. The lead is measured from the primary once one has been
@@ -648,15 +661,8 @@ internal sealed class SecondaryWindow<T>
     // Caller holds _gate.
     private void Evict(TimeSpan window)
     {
-        if (_highWater == TimeSpan.MinValue)
+        if (!TryGetCutoff(window, out var cutoff))
             return;
-
-        // TimeSpan.MinValue - window would overflow; nothing has aged out yet
-        // when the high-water mark is still near the floor.
-        if (_highWater < TimeSpan.MinValue + window)
-            return;
-
-        var cutoff = _highWater - window;
 
         // Scan the whole list rather than stopping at the first survivor.
         // Entries are ordered by From, not by To, so one long or open-ended

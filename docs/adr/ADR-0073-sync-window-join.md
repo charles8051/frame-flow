@@ -431,6 +431,12 @@ A primary more than `Window` behind the high-water mark now starts a new timelin
   edge from before the step. Filed, it would sit ahead of the primary, and under `maxLead` the
   reader would hold it and stop until the primary reached it.
 - A reader held on the lead or the count is released at the step to try again.
+- Each step's boundary stays until the primary reaches it, so a second step before then does not
+  re-admit the first timeline's secondaries.
+
+A secondary that ends more than `Window` behind the primary is released when it arrives, where it
+used to wait for the next primary to evict it. Retained until then, a late secondary could survive
+a step and pair with a primary on the new timeline.
 
 The second rule is what the issue's proposed fix, clearing the window and re-basing the mark, left
 out. In a fork-rejoin the secondary branch lags the trunk, so secondaries from before the step are

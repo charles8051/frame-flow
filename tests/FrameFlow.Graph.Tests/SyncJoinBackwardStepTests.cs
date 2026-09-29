@@ -113,10 +113,53 @@ public sealed class SyncJoinBackwardStepTests
         // Ends inside the old timeline's window, but starts at or before the primary.
         var caption = RefBox.Of(840);
         Assert.Null(
-            window.TryAdmit(caption, Ms(840), Ms(950), maxLead: null, maxRetained: null, SyncMatch.Within, TimeSpan.MaxValue)
+            window.TryAdmit(caption, Ms(840), Ms(950), Window, maxLead: null, maxRetained: null, SyncMatch.Within, TimeSpan.MaxValue)
         );
         using var match = window.AdvanceAndMatch(Ms(860), SyncMatch.Within, Window, TimeSpan.MaxValue);
         Assert.Same(caption, match);
+
+        window.Clear();
+    }
+
+    [Fact]
+    public void ASecondaryMoreThanTheWindowLate_IsReleasedOnArrival_SoItCannotMatchAfterAStepBack()
+    {
+        var window = new SecondaryWindow<RefBox<int>>();
+        Assert.Null(Admit(window, RefBox.Of(1000)));
+        Assert.Equal(1000, Match(window, 1000));
+
+        // The window begins at 900, so the next primary would evict this before it could match.
+        var late = RefBox.Of(850);
+        Assert.Null(Admit(window, late));
+        Assert.Equal(0, late.RefCount);
+
+        // Retained, it would pair with a primary on the new timeline.
+        Assert.Null(Match(window, 800));
+        Assert.Null(Match(window, 850));
+    }
+
+    [Fact]
+    public void ASecondStepBack_KeepsTheFirstTimelinesBoundaryUntilThePrimaryReachesIt()
+    {
+        var window = new SecondaryWindow<RefBox<int>>();
+        Assert.Null(Admit(window, RefBox.Of(1000)));
+        Assert.Equal(1000, Match(window, 1000));
+
+        // Two steps: the first timeline's window began at 900, the second's at 400.
+        Assert.Null(Match(window, 0));
+        Assert.Null(Match(window, 500));
+        Assert.Null(Match(window, 300));
+        Assert.Null(Match(window, 400));
+
+        // Past the second boundary, a secondary from the first timeline is still released.
+        var first = RefBox.Of(950);
+        Assert.Null(Admit(window, first));
+        Assert.Equal(0, first.RefCount);
+
+        Assert.Null(Match(window, 900));
+        var later = RefBox.Of(950);
+        Assert.Null(Admit(window, later));
+        Assert.Equal(1, later.RefCount);
 
         window.Clear();
     }
@@ -130,6 +173,7 @@ public sealed class SyncJoinBackwardStepTests
             point,
             Ms(point.Value),
             Ms(point.Value),
+            Window,
             maxLead,
             maxRetained: null,
             SyncMatch.MostRecentAtOrBefore,
