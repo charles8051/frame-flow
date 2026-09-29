@@ -23,5 +23,14 @@
       -p:FrameFlowAvaloniaVersion=12.* so a source break on 12 shows before an app on 12 finds it.
     -->
     <FrameFlowAvaloniaVersion Condition="'$(FrameFlowAvaloniaVersion)' == ''">11.*</FrameFlowAvaloniaVersion>
+
+    <!--
+      The FrameFlow.Native.Runtime every app references, which is where a published app's FFmpeg
+      comes from. Exact, not floating: its libraries must be the FFmpeg major that
+      FFmpegLibraryResolver loads, and a floating range resolved to an older package whose FFmpeg
+      the loader refuses. Bump it with an FFmpeg major, to a published version that ships the new
+      libraries. The release job checks the published app for the resolver's names.
+    -->
+    <FrameFlowNativeRuntimeVersion Condition="'$(FrameFlowNativeRuntimeVersion)' == ''">0.11.0</FrameFlowNativeRuntimeVersion>
   </PropertyGroup>
 </Project>

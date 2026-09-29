@@ -12,8 +12,9 @@ name: Release
 # FrameFlow packages go to nuget.org on every v*.*.* tag. GitHub Packages is no
 # longer a publish destination: the reseed left every FrameFlow.* package there
 # owned by frame-flow-archive, so this repository's GITHUB_TOKEN cannot write to
-# them. It is still READ from, until the runtime package exists on nuget.org and
-# the six references to it can be bumped.
+# them. Nothing reads it either: every id the solution restores is on nuget.org,
+# FrameFlow.Native.Runtime included since the six references to it were pinned to
+# a nuget.org version.
 # nuget.org uses Trusted Publishing: the publish job requests a short-lived OIDC
 # token from GitHub and nuget.org validates it against a policy naming this
 # repository and the `nuget.org` environment. There is no publishing secret.
@@ -39,7 +40,6 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   DOTNET_NOLOGO: true
-  NUGET_SOURCE: https://nuget.pkg.github.com/charles8051/index.json
 
 permissions:
   contents: read
@@ -145,26 +145,6 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      # nuget.config no longer defines the github-charles8051 source: it needs a
-      # credential, and an unauthenticated restore against it fails NU1301 rather
-      # than skipping it, which broke every public clone. Add it here, where the
-      # credential is, so Restore can resolve FrameFlow.Native.Runtime — the one
-      # package still published only to GitHub Packages. nuget.config already
-      # maps that source, so the mapping activates the moment this step runs.
-      #
-      # Periphery* no longer needs this: 4.1.0-alpha.2 is on nuget.org.
-      #
-      # PACKAGES_READ_PAT is a Personal Access Token with read:packages
-      # scope. The auto-generated GITHUB_TOKEN is scoped to this repo
-      # only and gets 403 when reading packages published by sibling
-      # repos under the same user (Periphery.* in our case).
-      # The same PAT secret is reused in the publish job and in
-      # periphery's publish workflow.
-      - name: Authenticate GitHub Packages
-        # Single line + the job's default shell so this runs on every runner: bash on the Linux
-        # job, Windows PowerShell on the self-hosted Windows box (which, unlike hosted
-        # windows-latest, has no bash — that mismatch failed the first self-hosted run).
-        run: dotnet nuget add source "${{ env.NUGET_SOURCE }}" --name github-charles8051 --username "${{ github.repository_owner }}" --password "${{ secrets.PACKAGES_READ_PAT }}" --store-password-in-clear-text --configfile nuget.config
 
       - name: Restore
         run: dotnet restore FrameFlow.slnx
@@ -210,18 +190,6 @@ jobs:
           path: "**/test-*.trx"
           retention-days: 30
 
-      # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
-      # clear text — NuGet has no other way to hand a credential to a v3 source in
-      # a non-interactive job. On a self-hosted runner the workspace can outlive
-      # the job, so remove it explicitly rather than relying on the runner being
-      # torn down. `remove source` drops the packageSourceCredentials entry along
-      # with the source; verified, not assumed.
-      #
-      # if: always() so a failed build still scrubs the credential.
-      - name: Remove GitHub Packages credential
-        if: always()
-        run: dotnet nuget remove source github-charles8051 --configfile nuget.config
-
   publish:
     needs: [test, release-notes]
     # The trusted-publishing policy on nuget.org names this environment, so a
@@ -232,8 +200,7 @@ jobs:
     permissions:
       # A job-level block REPLACES the workflow-level one rather than extending
       # it. packages: write is deliberately NOT restated: nothing in this job
-      # pushes to GitHub Packages any more, and the read below uses
-      # PACKAGES_READ_PAT rather than GITHUB_TOKEN.
+      # pushes to GitHub Packages any more.
       contents: read
       id-token: write   # required for nuget.org to issue the short-lived key
     # Defaults to the maintainer's self-hosted Linux runner. Set the repo
@@ -289,14 +256,6 @@ jobs:
           sudo rm -rf /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
             /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift || true
           df -h /
-
-      # Mirror the test-job auth so Restore can resolve FrameFlow.Native.Runtime
-      # from GitHub Packages. See the test job's matching step for rationale.
-      - name: Authenticate GitHub Packages
-        # Single line + the job's default shell so this runs on every runner: bash on the Linux
-        # job, Windows PowerShell on the self-hosted Windows box (which, unlike hosted
-        # windows-latest, has no bash — that mismatch failed the first self-hosted run).
-        run: dotnet nuget add source "${{ env.NUGET_SOURCE }}" --name github-charles8051 --username "${{ github.repository_owner }}" --password "${{ secrets.PACKAGES_READ_PAT }}" --store-password-in-clear-text --configfile nuget.config
 
       # Native binaries for all RIDs must exist before
       # FrameFlow.Native.Runtime is packed — the runtime package's whole
@@ -461,7 +420,7 @@ jobs:
 
           echo "OK: all ${#expected[@]} expected packages are present."
 
-      # The GitHub Packages PUSH is gone; the READ above stays, for now.
+      # GitHub Packages is gone from this workflow, push and read.
       #
       # The reseed retired it. Every FrameFlow.* package on GitHub Packages is
       # linked to the repository that first published it, which is now
@@ -473,13 +432,11 @@ jobs:
       # Rather than delete 39 archive-linked packages or re-link them by hand, the
       # destination is nuget.org, which is where these were always headed.
       #
-      # Reading is still authenticated above, deliberately. The six projects that
-      # reference FrameFlow.Native.Runtime resolve it from GitHub Packages at
-      # 0.1.1-alpha.*, and that read still works — only the cross-repo write is
-      # refused. Removing the source before the package exists on nuget.org would
-      # fail restore before anything could publish it. Once this tag lands the
-      # package publicly, the follow-up bumps those six references and drops the
-      # read, the PACKAGES_READ_PAT secret and the github-charles8051 source.
+      # The read went last. The six projects that reference FrameFlow.Native.Runtime
+      # resolved it from GitHub Packages until the package was on nuget.org; they
+      # now pin a nuget.org version (FrameFlowNativeRuntimeVersion in
+      # Directory.Build.props), and the read, its PACKAGES_READ_PAT and the
+      # github-charles8051 source are gone.
 
       # v0.7.0-alpha.3 published PARTIALLY: the push walks the glob one package at
       # a time, five were accepted, and FrameFlow.MotionClip was rejected 413
@@ -617,18 +574,6 @@ jobs:
           # runner workspace goes, because nothing else has a copy.
           retention-days: 90
 
-      # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
-      # clear text — NuGet has no other way to hand a credential to a v3 source in
-      # a non-interactive job. On a self-hosted runner the workspace can outlive
-      # the job, so remove it explicitly rather than relying on the runner being
-      # torn down. `remove source` drops the packageSourceCredentials entry along
-      # with the source; verified, not assumed.
-      #
-      # if: always() so a failed build still scrubs the credential.
-      - name: Remove GitHub Packages credential
-        if: always()
-        run: dotnet nuget remove source github-charles8051 --configfile nuget.config
-
   # Self-contained FrameFlow.MotionClip for consumers who want a portable
   # .exe — no .NET SDK / runtime / `dotnet tool install` required on the
   # target, just download, extract, and run Install-MotionClip.ps1 (the
@@ -639,7 +584,8 @@ jobs:
   # Windows-only: MotionClip's camera path is Periphery / Media Foundation.
   # FFmpeg natives come from the FrameFlow.Native.Runtime PackageReference, so
   # — unlike the test job — no FFmpeg fetch is needed; this job only compiles
-  # and bundles.
+  # and bundles. It then checks that the package's FFmpeg is the one the code
+  # loads, because nothing else does.
   #
   # IncludeNativeLibrariesForSelfExtract is deliberately FALSE. The managed side
   # is still one file; the natives sit loose beside the exe. OpenAL Soft is
@@ -677,14 +623,6 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      # Restore must resolve FrameFlow.Native.Runtime from GitHub Packages.
-      # See the test job's matching step for rationale.
-      - name: Authenticate GitHub Packages
-        # Single line + the job's default shell so this runs on every runner: bash on the Linux
-        # job, Windows PowerShell on the self-hosted Windows box (which, unlike hosted
-        # windows-latest, has no bash — that mismatch failed the first self-hosted run).
-        run: dotnet nuget add source "${{ env.NUGET_SOURCE }}" --name github-charles8051 --username "${{ github.repository_owner }}" --password "${{ secrets.PACKAGES_READ_PAT }}" --store-password-in-clear-text --configfile nuget.config
-
       - name: Publish MotionClip (self-contained single-file)
         shell: powershell
         run: |
@@ -697,6 +635,14 @@ jobs:
             -p:EnableCompressionInSingleFile=true `
             -p:FrameFlowLocalFeedDisable=true `
             --output "artifacts/MotionClip-${{ matrix.rid }}"
+
+      # The v0.11.0 zip resolved a floating FrameFlow.Native.Runtime reference to a
+      # package holding FFmpeg 7.1, which the FFmpeg 9 loader refuses at startup, and
+      # nothing noticed. The script reads the library names from FFmpegLibraryResolver
+      # and fails if the published app lacks any of them.
+      - name: Check the FFmpeg natives match the loader
+        shell: powershell
+        run: ./scripts/Assert-PublishedFFmpeg.ps1 -PublishDir "artifacts/MotionClip-${{ matrix.rid }}"
 
       # Ship the per-user installer alongside the binary so the zip is a
       # self-contained "download, extract, run Install-MotionClip.ps1" bundle.
@@ -765,15 +711,3 @@ jobs:
           # following the patch, and this tag glob is `v*.*.*`, so a hyphen
           # anywhere in the ref name is that identifier and nothing else.
           prerelease: ${{ contains(github.ref_name, '-') }}
-
-      # "Authenticate GitHub Packages" wrote PACKAGES_READ_PAT into nuget.config in
-      # clear text — NuGet has no other way to hand a credential to a v3 source in
-      # a non-interactive job. On a self-hosted runner the workspace can outlive
-      # the job, so remove it explicitly rather than relying on the runner being
-      # torn down. `remove source` drops the packageSourceCredentials entry along
-      # with the source; verified, not assumed.
-      #
-      # if: always() so a failed build still scrubs the credential.
-      - name: Remove GitHub Packages credential
-        if: always()
-        run: dotnet nuget remove source github-charles8051 --configfile nuget.config
