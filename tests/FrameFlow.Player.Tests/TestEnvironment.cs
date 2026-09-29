@@ -93,3 +93,22 @@ internal sealed class RequiresFfmpegAndCorpusFactAttribute : FactAttribute
             Skip = "Test corpus not generated. Run scripts/generate-test-corpus.cs first.";
     }
 }
+
+/// <summary>
+/// XUnit theory that is skipped when FFmpeg shared libraries or test
+/// corpus files are unavailable.
+/// </summary>
+internal sealed class RequiresFfmpegAndCorpusTheoryAttribute : TheoryAttribute
+{
+    public RequiresFfmpegAndCorpusTheoryAttribute()
+    {
+        if (!TestEnvironment.HasFfmpegSharedLibraries)
+        {
+            Skip = "FFmpeg shared libraries not available.";
+            return;
+        }
+
+        if (!TestEnvironment.HasCorpusFiles)
+            Skip = "Test corpus not generated. Run scripts/generate-test-corpus.cs first.";
+    }
+}

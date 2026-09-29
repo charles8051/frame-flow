@@ -90,6 +90,28 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
         _audioPacketOffset = StreamOffset(demuxSession, _audioStreamIndex);
     }
 
+    /// <summary>
+    /// The pump's bound for a run that ends at <paramref name="end"/>: a cutoff for each stream
+    /// it feeds, in that stream's time base, or no bound for a run to the end of the source.
+    /// </summary>
+    private ReadBound BoundFor(TimeSpan? end) =>
+        end is { } until
+            ? new ReadBound(
+                _videoDecoder is null ? null : StreamCutoff(_demuxSession, _videoStreamIndex, until),
+                _audioDecoder is null ? null : StreamCutoff(_demuxSession, _audioStreamIndex, until)
+            )
+            : ReadBound.Unbounded;
+
+    private static unsafe long? StreamCutoff(DemuxSession demuxSession, int streamIndex, TimeSpan end)
+    {
+        nint ctx = demuxSession.FormatContextPtr;
+        if (streamIndex < 0 || ctx == nint.Zero)
+            return null;
+
+        var stream = new AvStreamAccessor(new AvFormatContextAccessor(ctx).GetStream(streamIndex));
+        return ReadBound.CutoffIn(end, stream.TimeBaseNum, stream.TimeBaseDen);
+    }
+
     private static unsafe long StreamOffset(DemuxSession demuxSession, int streamIndex)
     {
         var origin = demuxSession.Origin;
@@ -121,6 +143,13 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
             return signal.Task;
         }
     }
+
+    /// <summary>
+    /// The media time at which the pump stops feeding the decoders, or null to read to the end
+    /// of the source. A pass bounded to a range sets it before the pump runs (#483); what is
+    /// fed and when the pump stops is <see cref="ReadBound"/>'s.
+    /// </summary>
+    internal TimeSpan? ReadUntil { get; init; }
 
     /// <summary>
     /// Read-only access to the underlying demux session, exposed so the
@@ -169,6 +198,7 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
         var state = _pendingPacketPtr != nint.Zero
             ? DemuxPump.Retain(DemuxPumpState.Initial)
             : DemuxPumpState.Initial;
+        var bound = BoundFor(ReadUntil);
 
         try
         {
@@ -191,6 +221,7 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
                 var readKind = ClassifyDemuxReadResult(readRet);
 
                 int streamIndex = -1;
+                long? decodeTimestamp = null;
                 if (readKind == DemuxReadResultKind.PacketAvailable)
                 {
                     var pkt = new AvPacketAccessor(packetPtr);
@@ -203,6 +234,9 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
                         pkt.ShiftToMediaTime(_videoPacketOffset);
                     else if (streamIndex == _audioStreamIndex)
                         pkt.ShiftToMediaTime(_audioPacketOffset);
+
+                    if (pkt.Dts != FFAvUtil.AvNoPtsValue)
+                        decodeTimestamp = pkt.Dts;
 
                     // ADR-0034: bump the demux session's packet/bytes counters. The
                     // pump reads directly from the format context for performance,
@@ -220,6 +254,10 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
                     _videoDecoder is not null,
                     _audioDecoder is not null
                 );
+
+                // A run with an end stops feeding each stream at its cutoff, and stops reading
+                // once every stream it feeds has passed one (#483).
+                (bound, outcome) = bound.Offer(outcome, decodeTimestamp);
 
                 var transition = DemuxPump.Advance(state, outcome);
                 state = transition.State;
@@ -243,9 +281,13 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
                         break;
 
                     case DemuxPumpAction.Complete:
-                        // ADR-0034: latch EOF for the session's diagnostics surface.
+                        // ADR-0034: latch EOF for the session's diagnostics surface. A run that
+                        // ended at its cutoff has read everything it will read, too.
                         _demuxSession.RecordEndOfStream();
-                        LogDemuxPumpEof(_logger);
+                        if (readKind == DemuxReadResultKind.PacketAvailable)
+                            LogDemuxPumpReachedReadUntil(_logger, ReadUntil);
+                        else
+                            LogDemuxPumpEof(_logger);
                         return;
 
                     case DemuxPumpAction.FaultRead:
@@ -525,6 +567,12 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "Demux pump reached end of stream.")]
     private static partial void LogDemuxPumpEof(ILogger logger);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Demux pump stopped: every stream it feeds reached {ReadUntil}."
+    )]
+    private static partial void LogDemuxPumpReachedReadUntil(ILogger logger, TimeSpan? readUntil);
 
     [LoggerMessage(
         Level = LogLevel.Warning,

@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using FrameFlow.Decoding;
 
 namespace FrameFlow.Player.Tests;
@@ -57,23 +56,5 @@ public sealed class PassDecodeDiscardTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await pass.RunToCompletionAsync(cts.Token);
         return [.. sink.Timestamps];
-    }
-
-    /// <summary>Records each frame's timestamp.</summary>
-    internal sealed class TimestampSink : IVideoSink
-    {
-        public ConcurrentQueue<TimeSpan> Timestamps { get; } = new();
-
-        public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
-        {
-            Timestamps.Enqueue(frame.Pts);
-            frame.Dispose();
-            return ValueTask.CompletedTask;
-        }
-
-        public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) =>
-            ValueTask.CompletedTask;
-
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

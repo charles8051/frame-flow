@@ -72,9 +72,31 @@ public sealed class PassBuilderTests
             .WithVideoSink(new PlayerBuilderTests.NullVideoSink())
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
             .WithDecodeDiscard(Decoding.DecodeDiscardLevel.KeyframesOnly)
+            .WithRange(TimeSpan.FromSeconds(1), null)
             .WithLogger(null);
 
         Assert.Same(builder, same);
+    }
+
+    [Fact]
+    public void WithRange_NegativeStart_Throws()
+    {
+        var builder = FrameFlowPass.Create("any.mp4");
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            builder.WithRange(TimeSpan.FromTicks(-1), null)
+        );
+    }
+
+    [Theory]
+    [InlineData(1.0)] // an end at the start: nothing to deliver
+    [InlineData(0.5)]
+    public void WithRange_EndNotAfterStart_Throws(double endSeconds)
+    {
+        var builder = FrameFlowPass.Create("any.mp4");
+        var error = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            builder.WithRange(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(endSeconds))
+        );
+        Assert.Equal("end", error.ParamName);
     }
 
     [Fact]

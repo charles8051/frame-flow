@@ -46,6 +46,7 @@ FrameFlow.Player.IPassBuilder.WithDecodeDiscard(FrameFlow.Decoding.DecodeDiscard
 FrameFlow.Player.IPassBuilder.WithHardwareDecode(FrameFlow.Media.HardwareDecodeMode mode) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithHardwareDevice(FrameFlow.Decoding.HardwareDevice! device) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithLogger(Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory) -> FrameFlow.Player.IPassBuilder!
+FrameFlow.Player.IPassBuilder.WithRange(System.TimeSpan start, System.TimeSpan? end) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithVideoSink(FrameFlow.Media.IVideoSink! sink) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPlayerBuilder
 FrameFlow.Player.IPlayerBuilder.BuildPlayerAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Player.IMediaPlayer!>!
