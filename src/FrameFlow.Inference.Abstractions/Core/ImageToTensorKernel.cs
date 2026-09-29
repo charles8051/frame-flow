@@ -11,13 +11,16 @@ namespace FrameFlow.Inference.Core;
 /// <summary>Which of the kernel's paths to take. Tests pin one to compare it with another.</summary>
 internal enum ImageToTensorPath
 {
-    /// <summary>Tables for an unrotated crop, vectorised where the hardware allows; per pixel otherwise.</summary>
+    /// <summary>
+    /// Tables for an unrotated crop and a per-row gather for a rotated bilinear one, each converted
+    /// a vector at a time where the hardware allows. A rotated nearest crop is sampled per pixel.
+    /// </summary>
     Auto,
 
-    /// <summary>Tables for an unrotated crop, one pixel at a time.</summary>
-    AxisAlignedScalar,
+    /// <summary><see cref="Auto"/>, converted one pixel at a time.</summary>
+    Scalar,
 
-    /// <summary>Per pixel whatever the crop.</summary>
+    /// <summary>Each pixel sampled and converted on its own, whatever the crop.</summary>
     General,
 }
 
@@ -36,7 +39,10 @@ internal enum ImageToTensorPath
 /// An unrotated crop is separable: a column's frame x is the same on every row, and a row's
 /// frame y the same in every column. That path reads each row's pixels through a per-column table
 /// into a buffer, then converts the buffer a vector at a time. A rotated crop computes each
-/// pixel's position.
+/// pixel's position. For bilinear sampling it reads the four pixels around each into the same
+/// buffers, a row at a time, and converts them the same way, which halves the time of a 256x256
+/// crop. Nearest sampling converts too little per pixel to repay the buffers, so a rotated nearest
+/// crop converts each pixel as it reads it.
 /// </para>
 /// </remarks>
 internal static class ImageToTensorKernel
@@ -67,12 +73,14 @@ internal static class ImageToTensorKernel
         bool bilinear = options.Sampling == ImageSampling.Bilinear;
         bool padOutside = options.Border == ImageBorder.Pad;
 
+        bool general = path == ImageToTensorPath.General;
+        bool tables = plan.IsAxisAligned && !general;
+
         var source = new Source(pixels, width, height, stride);
-        var scratch = new Scratch(tensorWidth, nhwc, bilinear);
+        var scratch = new Scratch(tensorWidth, nhwc, bilinear, rotated: !plan.IsAxisAligned && !general && bilinear);
         try
         {
             (int First, int End) columns = default;
-            bool tables = plan.IsAxisAligned && path != ImageToTensorPath.General;
             if (tables)
             {
                 columns = BuildColumns(plan, width, bilinear, padOutside, scratch);
@@ -102,9 +110,13 @@ internal static class ImageToTensorKernel
                 {
                     channels.Pad(r, g, b);
                 }
-                else if (!tables)
+                else if (general || (!tables && !bilinear))
                 {
                     GeneralRow(source, plan, dy, bilinear, padOutside, channels, r, g, b);
+                }
+                else if (!tables)
+                {
+                    RotatedBilinearRow(source, plan, dy, padOutside, scratch, channels, vector, r, g, b);
                 }
                 else if (bilinear)
                 {
@@ -198,9 +210,78 @@ internal static class ImageToTensorKernel
             p11[i] = source.Read(row1 + right[i]);
         }
 
+        var rowWeights = scratch.WeightY!.AsSpan(first, count);
+        rowWeights.Fill(wy);
         ConvertBilinear(
-            p00, p01, p10, p11, scratch.Weight!.AsSpan(first, count), wy, channels, vector,
+            p00, p01, p10, p11, scratch.Weight!.AsSpan(first, count), rowWeights, channels, vector,
             r[first..end], g[first..end], b[first..end]);
+    }
+
+    /// <summary>
+    /// A row of a rotated crop, sampled bilinearly: each pixel's position computed as
+    /// <see cref="GeneralRow"/> computes it, the four frame pixels around it read into the scratch
+    /// buffers with its weights, then the row converted as the table path converts, and the pixels
+    /// outside the fitted crop or the frame padded after.
+    /// </summary>
+    private static void RotatedBilinearRow(
+        in Source source,
+        in ImageToTensorPlan plan,
+        int dy,
+        bool padOutside,
+        in Scratch scratch,
+        in Channels channels,
+        bool vector,
+        Span<float> r,
+        Span<float> g,
+        Span<float> b)
+    {
+        int count = r.Length;
+        int maxX = source.Width - 1;
+        int maxY = source.Height - 1;
+        var padded = scratch.Padded!.AsSpan(0, count);
+        var p00 = scratch.Packed0.AsSpan(0, count);
+        var p01 = scratch.Packed1!.AsSpan(0, count);
+        var p10 = scratch.Packed2!.AsSpan(0, count);
+        var p11 = scratch.Packed3!.AsSpan(0, count);
+        var columnWeights = scratch.Weight!.AsSpan(0, count);
+        var rowWeights = scratch.WeightY!.AsSpan(0, count);
+        bool anyPadded = false;
+        for (int dx = 0; dx < count; dx++)
+        {
+            double x = plan.SourceX(dx, dy);
+            double y = plan.SourceY(dx, dy);
+            bool pad = !plan.CoversColumn(dx)
+                || (padOutside && !(Inside(x, source.Width) && Inside(y, source.Height)));
+            padded[dx] = pad;
+            anyPadded |= pad;
+
+            // A padded pixel reads its clamped neighbours too; its value is overwritten below.
+            var (x0, x1, wx) = LinearIndex(x, maxX);
+            var (y0, y1, wy) = LinearIndex(y, maxY);
+            nint row0 = source.RowOffset(y0);
+            nint row1 = source.RowOffset(y1);
+            p00[dx] = source.Read(row0 + x0 * BytesPerPixel);
+            p01[dx] = source.Read(row0 + x1 * BytesPerPixel);
+            p10[dx] = source.Read(row1 + x0 * BytesPerPixel);
+            p11[dx] = source.Read(row1 + x1 * BytesPerPixel);
+            columnWeights[dx] = wx;
+            rowWeights[dx] = wy;
+        }
+
+        ConvertBilinear(p00, p01, p10, p11, columnWeights, rowWeights, channels, vector, r, g, b);
+
+        if (anyPadded)
+        {
+            for (int dx = 0; dx < count; dx++)
+            {
+                if (padded[dx])
+                {
+                    r[dx] = channels.PadRed;
+                    g[dx] = channels.PadGreen;
+                    b[dx] = channels.PadBlue;
+                }
+            }
+        }
     }
 
     private static void GeneralRow(
@@ -295,7 +376,7 @@ internal static class ImageToTensorKernel
         ReadOnlySpan<uint> p10,
         ReadOnlySpan<uint> p11,
         ReadOnlySpan<float> weights,
-        float wy,
+        ReadOnlySpan<float> rowWeights,
         in Channels channels,
         bool vector,
         Span<float> r,
@@ -306,7 +387,6 @@ internal static class ImageToTensorKernel
         if (vector)
         {
             var mask = new Vector<uint>(0xFFu);
-            var rowWeight = new Vector<float>(wy);
             var scaleR = new Vector<float>(channels.ScaleRed);
             var scaleG = new Vector<float>(channels.ScaleGreen);
             var scaleB = new Vector<float>(channels.ScaleBlue);
@@ -320,6 +400,7 @@ internal static class ImageToTensorKernel
                 var d = new Vector<uint>(p10[i..]);
                 var e = new Vector<uint>(p11[i..]);
                 var columnWeight = new Vector<float>(weights[i..]);
+                var rowWeight = new Vector<float>(rowWeights[i..]);
                 (Lerp(a, c, d, e, columnWeight, rowWeight, channels.ShiftRed, mask) * scaleR + offsetR).CopyTo(r[i..]);
                 (Lerp(a, c, d, e, columnWeight, rowWeight, channels.ShiftGreen, mask) * scaleG + offsetG).CopyTo(g[i..]);
                 (Lerp(a, c, d, e, columnWeight, rowWeight, channels.ShiftBlue, mask) * scaleB + offsetB).CopyTo(b[i..]);
@@ -329,6 +410,7 @@ internal static class ImageToTensorKernel
         for (; i < p00.Length; i++)
         {
             float wx = weights[i];
+            float wy = rowWeights[i];
             r[i] = BilinearValue(p00[i], p01[i], p10[i], p11[i], wx, wy, channels.ShiftRed, channels.ScaleRed, channels.OffsetRed);
             g[i] = BilinearValue(p00[i], p01[i], p10[i], p11[i], wx, wy, channels.ShiftGreen, channels.ScaleGreen, channels.OffsetGreen);
             b[i] = BilinearValue(p00[i], p01[i], p10[i], p11[i], wx, wy, channels.ShiftBlue, channels.ScaleBlue, channels.OffsetBlue);
@@ -490,15 +572,21 @@ internal static class ImageToTensorKernel
         private readonly float[]? _colours;
         private readonly int _width;
 
-        public Scratch(int width, bool nhwc, bool bilinear)
+        public Scratch(int width, bool nhwc, bool bilinear, bool rotated)
         {
             _width = width;
             Offset0 = ArrayPool<int>.Shared.Rent(width);
             Packed0 = ArrayPool<uint>.Shared.Rent(width);
+            if (rotated)
+            {
+                Padded = ArrayPool<bool>.Shared.Rent(width);
+            }
+
             if (bilinear)
             {
                 Offset1 = ArrayPool<int>.Shared.Rent(width);
                 Weight = ArrayPool<float>.Shared.Rent(width);
+                WeightY = ArrayPool<float>.Shared.Rent(width);
                 Packed1 = ArrayPool<uint>.Shared.Rent(width);
                 Packed2 = ArrayPool<uint>.Shared.Rent(width);
                 Packed3 = ArrayPool<uint>.Shared.Rent(width);
@@ -515,6 +603,10 @@ internal static class ImageToTensorKernel
         public int[]? Offset1 { get; }
 
         public float[]? Weight { get; }
+
+        public float[]? WeightY { get; }
+
+        public bool[]? Padded { get; }
 
         public uint[] Packed0 { get; }
 
@@ -538,6 +630,7 @@ internal static class ImageToTensorKernel
             {
                 ArrayPool<int>.Shared.Return(Offset1);
                 ArrayPool<float>.Shared.Return(Weight!);
+                ArrayPool<float>.Shared.Return(WeightY!);
                 ArrayPool<uint>.Shared.Return(Packed1!);
                 ArrayPool<uint>.Shared.Return(Packed2!);
                 ArrayPool<uint>.Shared.Return(Packed3!);
@@ -546,6 +639,11 @@ internal static class ImageToTensorKernel
             if (_colours is not null)
             {
                 ArrayPool<float>.Shared.Return(_colours);
+            }
+
+            if (Padded is not null)
+            {
+                ArrayPool<bool>.Shared.Return(Padded);
             }
         }
     }

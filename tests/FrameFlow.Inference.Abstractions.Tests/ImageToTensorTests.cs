@@ -263,6 +263,8 @@ public sealed class ImageToTensorTests
             RotatedRect.FromBounds(-5f, 10f, 50f, 30f),
             RotatedRect.FromBounds(30f, 20f, 2.5f, 1.5f),
             RotatedRect.FromBounds(-12.3f, -7.9f, 20f, 15f),
+            new RotatedRect(18.5f, 11.5f, 30f, 17f, 0.3f),
+            new RotatedRect(2f, 20f, 24f, 24f, -2.1f),
         };
 
         foreach (int tensorWidth in new[] { 1, 29, 64, 67 })
@@ -281,7 +283,7 @@ public sealed class ImageToTensorTests
             {
                 var auto = Run(ImageToTensorPath.Auto);
                 Assert.Equal(Bits(Run(ImageToTensorPath.General)), Bits(auto));
-                Assert.Equal(Bits(Run(ImageToTensorPath.AxisAlignedScalar)), Bits(auto));
+                Assert.Equal(Bits(Run(ImageToTensorPath.Scalar)), Bits(auto));
 
                 float[] Run(ImageToTensorPath path)
                 {
