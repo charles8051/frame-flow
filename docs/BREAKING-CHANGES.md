@@ -164,7 +164,7 @@ the item.
 **What to write instead.** A body that means to drop an item on its own timeout catches the
 exception and returns `null`, or runs under `FailureResponse.Discard`.
 
-### 10. A graph with two nodes on one id refuses to run
+### 11. A graph with two nodes on one id refuses to run
 
 **A runtime error, not a compile error.**
 
