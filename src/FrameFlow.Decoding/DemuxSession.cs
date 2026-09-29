@@ -142,11 +142,13 @@ public sealed class DemuxSession : IDemuxSession
     /// A container that seeks by timestamp, such as MPEG-TS, lands on the packet nearest the
     /// position whether or not it is a keyframe (#495). So the seek probes: it reads the stream's
     /// packets after each seek, and <see cref="KeyframeSearch"/> decides where the next probe
-    /// goes and where the last seek lands. On a container that seeks to keyframes the first
-    /// packet of the stream is one, and the seek reads that packet and seeks to the position
-    /// again. The packets a probe reads are read again after the last seek, and are not counted
-    /// in <see cref="GetDiagnostics"/>. A packet the container fails to read ends the search
-    /// with the container's own seek to the position.
+    /// goes and where the last seek lands. Each probe stops where the one before it landed, so
+    /// the search reads each packet from where its last probe lands up to the position once. On
+    /// a container that seeks to keyframes the first packet of the stream is one, and the seek
+    /// reads that packet and seeks to the position again. The packets a probe reads are read
+    /// again after the last seek, and are not counted in <see cref="GetDiagnostics"/>. A packet
+    /// the container fails to read ends the search with the container's own seek to the
+    /// position, as does a stream whose packets have no presentation time.
     /// </para>
     /// </remarks>
     /// <exception cref="ObjectDisposedException">Thrown when the session has been disposed.</exception>

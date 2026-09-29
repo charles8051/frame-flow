@@ -64,10 +64,13 @@ public sealed class KeyframeSearchTests
             // Without a decode time, the keyframe is sought by the probe.
             { [F(9.9), K(9.95, null), F(10.04)], true, 10 },
             // A packet with no presentation time reads on, and is still where the probe landed.
-            { [K(null, null)], false, null },
             { [K(null, null), K(9.5, 9.4), F(10.04)], true, 9.4 },
-            // The source ended before any packet of the stream.
-            { [], false, null },
+            // The source ended with no keyframe at or before the position: further back.
+            { [F(9.5)], false, null },
+            // The source ended before a packet of the stream with a presentation time: nothing to
+            // place a keyframe by, so where a seek to the position lands.
+            { [K(null, null)], false, 10 },
+            { [], false, 10 },
         };
 
     [Theory]
@@ -81,28 +84,77 @@ public sealed class KeyframeSearchTests
     }
 
     /// <summary>
-    /// A later probe, one second back: a keyframe it lands on is not necessarily the nearest, so
-    /// it reads on to a packet after the position.
+    /// A later probe, one second back, after the first landed at 9.5 and found nothing: a keyframe
+    /// it lands on is not necessarily the nearest, so it reads on, and stops where the first
+    /// landed.
     /// </summary>
     public static TheoryData<Packet[], bool, double?> LaterProbes =>
         new()
         {
             { [K(8, 8)], false, 9 },
-            { [K(8, 8), F(9), F(10.04)], true, 9 },
-            { [K(8, 8), F(9), K(9.5, 9.46), F(10.04)], true, 9.46 },
-            { [F(8.5), F(9), F(10.04)], true, null },
-            { [F(8.5), K(10.5, 10.5)], true, null },
+            { [K(8, 8), F(9)], false, 9 },
+            { [K(8, 8), F(9), F(9.5)], true, 9 },
+            { [K(8, 8), F(9), K(9.2, 9.18), F(9.5)], true, 9.18 },
+            { [F(8.5), F(9), F(9.5)], true, null },
+            // Landed where the first probe did: nothing it has not read.
+            { [F(9.5)], true, null },
         };
 
     [Theory]
     [MemberData(nameof(LaterProbes))]
     public void ALaterProbe(Packet[] packets, bool finished, double? landing)
     {
-        var search = Read(KeyframeSearch.For(Position).Back(), packets);
+        var first = Read(KeyframeSearch.For(Position), F(9.5), F(10.04));
+        var search = Read(first.Back(), packets);
 
         Assert.Equal(S(9), search.Probe);
         Assert.Equal(finished, search.Finished);
         Assert.Equal(S(landing), search.Landing);
+    }
+
+    /// <summary>
+    /// The search over a container that seeks by timestamp, as MPEG-TS does: a probe lands on the
+    /// last packet whose decode time is at or before it.
+    /// </summary>
+    /// <returns>Where the search lands, and how many packets each probe read.</returns>
+    private static (TimeSpan Landing, List<int> Reads) SearchByTimestamp(Packet[] stream, double position)
+    {
+        var reads = new List<int>();
+        for (var search = KeyframeSearch.For(S(position)); ; search = search.Back())
+        {
+            var at = Math.Max(0, Array.FindLastIndex(stream, p => p.Dts <= search.Probe.TotalSeconds));
+            var read = 0;
+            for (var i = at; i < stream.Length && !search.Finished; i++, read++)
+                search = Read(search, stream[i]);
+            reads.Add(read);
+
+            if (search.Landing is { } landing)
+                return (landing, reads);
+        }
+    }
+
+    /// <summary>Three seconds at 24 fps with a keyframe a second, like the MPEG-TS corpus clip.</summary>
+    private static readonly Packet[] ThreeSeconds = Enumerable
+        .Range(0, 72)
+        .Select(i => new Packet(i % 24 == 0, i / 24.0, i / 24.0))
+        .ToArray();
+
+    [Theory]
+    [InlineData(1.52, 1.0, new[] { 2, 25 })]
+    [InlineData(1.0, 1.0, new[] { 1 })]
+    [InlineData(0.99, 0.0, new[] { 2, 24 })]
+    [InlineData(2.9, 2.0, new[] { 2, 25 })]
+    [InlineData(10.0, 2.0, new[] { 1, 1, 1, 1, 72 })]
+    public void OnAContainerThatSeeksByTimestamp_EachPacketIsReadOnce(
+        double position,
+        double keyframe,
+        int[] reads
+    )
+    {
+        var result = SearchByTimestamp(ThreeSeconds, position);
+
+        Assert.Equal(S(keyframe), result.Landing);
+        Assert.Equal(reads, result.Reads);
     }
 
     [Fact]
@@ -134,14 +186,25 @@ public sealed class KeyframeSearchTests
     }
 
     [Fact]
-    public void TheNextProbe_StartsReadingAfresh()
+    public void TheNextProbe_StartsReadingAfresh_AndStopsWhereThisOneLanded()
     {
         var back = Read(KeyframeSearch.For(Position), F(9.5), F(10.04)).Back();
 
-        Assert.Equal(KeyframeSearch.For(Position) with { Probe = S(9), Step = S(2) }, back);
+        Assert.Equal((S(9), S(2)), (back.Probe, back.Step));
         Assert.False(back.Landed);
+        Assert.False(back.Timed);
+        Assert.Null(back.LandedAt);
         Assert.False(back.Finished);
         Assert.Null(back.Found);
+        Assert.Equal(S(9.5), back.ScannedFrom);
+    }
+
+    [Fact]
+    public void AProbeThatReadsOnlyWhatAnEarlierOneRead_KeepsItsBound()
+    {
+        var second = Read(Read(KeyframeSearch.For(Position), F(9.5), F(10.04)).Back(), F(9.5));
+
+        Assert.Equal(S(9.5), second.Back().ScannedFrom);
     }
 
     [Theory]
