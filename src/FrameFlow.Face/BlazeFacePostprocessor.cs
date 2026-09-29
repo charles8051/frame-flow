@@ -138,12 +138,14 @@ public sealed class BlazeFacePostprocessor
                 finite &= float.IsFinite(skx) && float.IsFinite(sky);
             }
 
-            // A face that is not a number cannot be placed or suppressed.
-            if (!finite)
+            // A face that is not a number cannot be placed or suppressed. Two finite corners can
+            // still be too far apart for a float, so the size is checked too.
+            float width = MathF.Abs(x1 - x0);
+            float height = MathF.Abs(y1 - y0);
+            if (!(finite && float.IsFinite(width) && float.IsFinite(height)))
                 continue;
 
-            candidates.Add(new FaceDetection(
-                score, MathF.Min(x0, x1), MathF.Min(y0, y1), MathF.Abs(x1 - x0), MathF.Abs(y1 - y0), keypoints));
+            candidates.Add(new FaceDetection(score, MathF.Min(x0, x1), MathF.Min(y0, y1), width, height, keypoints));
         }
 
         return Suppression == FaceSuppression.Weighted
