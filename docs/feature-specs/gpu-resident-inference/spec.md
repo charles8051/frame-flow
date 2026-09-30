@@ -59,6 +59,10 @@ output tensor.
    the CUDA context and stream the decoder copied the frame on (`GpuVideoFrameCudaTests` reads
    them back and matches FFmpeg's download byte for byte). No consumer in the tree binds them
    yet: TensorRT-RTX gets CUDA memory from a D3D12VA frame by importing the preprocessed buffer.
+   `TryLockVulkanImage` gives a Vulkan frame's image under FFmpeg's frame lock, with its layout,
+   last access and the timeline semaphore values to wait on and signal, and `Commit` writes back
+   what the caller's submission leaves (#535). `TryGetVulkanDevice` gives the instance, device,
+   queue families and queue lock. The Vulkan presenter spike read all of it by reflection.
 
 3. **An operator can consume a `GpuVideoFrame`, and survives one that is not.** (#290) Built as
    `InferenceOperators.Infer` (#436): it chooses a route per frame, the device stage for a frame it

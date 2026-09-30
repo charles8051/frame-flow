@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Diagnostics.CodeAnalysis;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
 using FrameFlow.Graph;
@@ -537,6 +538,115 @@ public sealed class GpuVideoFrame : IVideoFrame
                 accessor.GetLineSize(1),
                 device->cuda_ctx,
                 device->stream);
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+        finally
+        {
+            if (held)
+                h.DangerousRelease();
+        }
+    }
+
+    /// <summary>
+    /// Locks a Vulkan-decoded frame's image for one submission and surfaces what the submission
+    /// needs: the image, its layout and last access, and the timeline semaphore values to wait on
+    /// and signal (#535). Only valid when <see cref="Backend"/> is
+    /// <see cref="HardwareDecodeBackendKind.Vulkan"/>.
+    /// </summary>
+    /// <remarks>
+    /// Lock just before submitting and dispose the lock straight after, without waiting for the
+    /// work: FFmpeg's decoder waits on the lock to use the image as a reference picture.
+    /// <see cref="VulkanImageLock"/> has the rules. The device the image lives on is
+    /// <see cref="TryGetVulkanDevice"/>'s.
+    /// </remarks>
+    /// <param name="image">On success, the locked image, which the caller disposes.</param>
+    /// <returns>
+    /// <see langword="true"/> when the image was locked; <see langword="false"/> for a frame from
+    /// another backend, one held in more than one image, or a disposed frame.
+    /// </returns>
+    public unsafe bool TryLockVulkanImage([NotNullWhen(true)] out VulkanImageLock? image)
+    {
+        image = null;
+        if (Backend != HardwareDecodeBackendKind.Vulkan)
+            return false;
+
+        var h = _handle;
+        if (h is null)
+            return false;
+
+        bool held = false;
+        try
+        {
+            // Held until the lock is disposed, so the frame's AVVkFrame outlives a concurrent Dispose.
+            h.DangerousAddRef(ref held);
+            if (h.IsInvalid)
+                return false;
+
+            var accessor = new AvFrameAccessor(h.DangerousGetHandle());
+            var framesCtx = accessor.GetHwFramesContext();
+            var frame = accessor.GetVulkanFrame();
+            // The decoder's pool holds every plane in one multi-planar image; a frame split across
+            // images, as a pool with AV_VK_FRAME_FLAG_DISABLE_MULTIPLANE makes, has more to lock.
+            if (framesCtx is null || framesCtx->hwctx is null || frame is null || frame->img[0] == 0 || frame->img[1] != 0)
+                return false;
+
+            var vulkanFrames = (AVVulkanFramesContext*)framesCtx->hwctx;
+            if (vulkanFrames->lock_frame != null)
+                vulkanFrames->lock_frame(framesCtx, frame);
+            image = new VulkanImageLock(h, framesCtx, frame);
+            held = false;
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+        finally
+        {
+            if (held)
+                h.DangerousRelease();
+        }
+    }
+
+    /// <summary>
+    /// The Vulkan device a Vulkan-decoded frame was decoded on (#535), for building the objects that
+    /// read its image. Only valid when <see cref="Backend"/> is
+    /// <see cref="HardwareDecodeBackendKind.Vulkan"/>.
+    /// </summary>
+    /// <param name="device">
+    /// On success, the device, which holds a reference that keeps it alive until the caller
+    /// disposes it.
+    /// </param>
+    /// <returns><see langword="false"/> for a frame from another backend, or a disposed frame.</returns>
+    public unsafe bool TryGetVulkanDevice([NotNullWhen(true)] out VulkanDevice? device)
+    {
+        device = null;
+        if (Backend != HardwareDecodeBackendKind.Vulkan)
+            return false;
+
+        var h = _handle;
+        if (h is null)
+            return false;
+
+        bool held = false;
+        try
+        {
+            h.DangerousAddRef(ref held);
+            if (h.IsInvalid)
+                return false;
+
+            var framesCtx = new AvFrameAccessor(h.DangerousGetHandle()).GetHwFramesContext();
+            if (framesCtx is null || framesCtx->device_ref is null)
+                return false;
+
+            nint deviceCtxRef = FFAvUtil.av_buffer_ref((nint)framesCtx->device_ref);
+            if (deviceCtxRef == nint.Zero)
+                throw new InvalidOperationException("av_buffer_ref returned null (out of memory).");
+            device = new VulkanDevice(deviceCtxRef);
             return true;
         }
         catch (ObjectDisposedException)

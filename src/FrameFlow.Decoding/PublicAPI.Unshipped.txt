@@ -264,3 +264,41 @@ FrameFlow.Decoding.CudaFramePlanes.Context.init -> void
 FrameFlow.Decoding.CudaFramePlanes.Stream.get -> nint
 FrameFlow.Decoding.CudaFramePlanes.Stream.init -> void
 FrameFlow.Decoding.GpuVideoFrame.TryGetCudaPlanes(out FrameFlow.Decoding.CudaFramePlanes planes) -> bool
+FrameFlow.Decoding.GpuVideoFrame.TryLockVulkanImage(out FrameFlow.Decoding.VulkanImageLock? image) -> bool
+FrameFlow.Decoding.GpuVideoFrame.TryGetVulkanDevice(out FrameFlow.Decoding.VulkanDevice? device) -> bool
+FrameFlow.Decoding.HardwareDevice.TryGetVulkanDevice(out FrameFlow.Decoding.VulkanDevice? device) -> bool
+FrameFlow.Decoding.VulkanDevice
+FrameFlow.Decoding.VulkanDevice.Device.get -> nint
+FrameFlow.Decoding.VulkanDevice.Dispose() -> void
+FrameFlow.Decoding.VulkanDevice.EnabledDeviceExtensions.get -> System.Collections.Generic.IReadOnlyList<string!>!
+FrameFlow.Decoding.VulkanDevice.EnabledInstanceExtensions.get -> System.Collections.Generic.IReadOnlyList<string!>!
+FrameFlow.Decoding.VulkanDevice.GetInstanceProcAddr.get -> nint
+FrameFlow.Decoding.VulkanDevice.Instance.get -> nint
+FrameFlow.Decoding.VulkanDevice.LockQueue(uint family, uint index) -> FrameFlow.Decoding.VulkanQueueLock
+FrameFlow.Decoding.VulkanDevice.PhysicalDevice.get -> nint
+FrameFlow.Decoding.VulkanDevice.QueueFamilies.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Decoding.VulkanQueueFamily>!
+FrameFlow.Decoding.VulkanQueueFamily
+FrameFlow.Decoding.VulkanQueueFamily.VulkanQueueFamily() -> void
+FrameFlow.Decoding.VulkanQueueFamily.VulkanQueueFamily(uint Index, int QueueCount, uint Flags, uint VideoCodecOperations) -> void
+FrameFlow.Decoding.VulkanQueueFamily.Index.get -> uint
+FrameFlow.Decoding.VulkanQueueFamily.Index.init -> void
+FrameFlow.Decoding.VulkanQueueFamily.QueueCount.get -> int
+FrameFlow.Decoding.VulkanQueueFamily.QueueCount.init -> void
+FrameFlow.Decoding.VulkanQueueFamily.Flags.get -> uint
+FrameFlow.Decoding.VulkanQueueFamily.Flags.init -> void
+FrameFlow.Decoding.VulkanQueueFamily.VideoCodecOperations.get -> uint
+FrameFlow.Decoding.VulkanQueueFamily.VideoCodecOperations.init -> void
+FrameFlow.Decoding.VulkanQueueLock
+FrameFlow.Decoding.VulkanQueueLock.VulkanQueueLock() -> void
+FrameFlow.Decoding.VulkanQueueLock.Dispose() -> void
+FrameFlow.Decoding.VulkanImageLock
+FrameFlow.Decoding.VulkanImageLock.Access.get -> ulong
+FrameFlow.Decoding.VulkanImageLock.Commit(int layout, ulong access) -> void
+FrameFlow.Decoding.VulkanImageLock.Dispose() -> void
+FrameFlow.Decoding.VulkanImageLock.Format.get -> int
+FrameFlow.Decoding.VulkanImageLock.Image.get -> ulong
+FrameFlow.Decoding.VulkanImageLock.Layout.get -> int
+FrameFlow.Decoding.VulkanImageLock.QueueFamily.get -> uint
+FrameFlow.Decoding.VulkanImageLock.Semaphore.get -> ulong
+FrameFlow.Decoding.VulkanImageLock.SignalValue.get -> ulong
+FrameFlow.Decoding.VulkanImageLock.WaitValue.get -> ulong

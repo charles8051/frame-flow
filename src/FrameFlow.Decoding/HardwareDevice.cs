@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using FFmpeg.AutoGen.Abstractions;
 using FrameFlow.Media;
@@ -121,6 +122,32 @@ public sealed class HardwareDevice : IDisposable
             ? HwContext(deviceCtxRef)->device
             : 0;
         return device != 0;
+    }
+
+    /// <summary>
+    /// The Vulkan device a Vulkan device decodes on, for building objects that read its frames on the
+    /// same device (#535).
+    /// </summary>
+    /// <param name="device">
+    /// On success, the device, which holds its own reference to FFmpeg's device context, so it
+    /// outlives this object until the caller disposes it.
+    /// </param>
+    /// <returns><see langword="false"/> for any other backend, or once disposed.</returns>
+    public bool TryGetVulkanDevice([NotNullWhen(true)] out VulkanDevice? device)
+    {
+        device = null;
+        if (Backend != HardwareDecodeBackendKind.Vulkan || Volatile.Read(ref _deviceCtxRef) == nint.Zero)
+            return false;
+
+        try
+        {
+            device = new VulkanDevice(Borrow());
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
     }
 
     /// <summary>A new reference to the device context, for a decoder to own.</summary>
