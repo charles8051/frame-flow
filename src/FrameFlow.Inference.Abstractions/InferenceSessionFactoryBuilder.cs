@@ -29,10 +29,10 @@ namespace FrameFlow.Inference;
 ///         loggerFactory: sp.GetRequiredService&lt;ILoggerFactory&gt;()));
 /// </code>
 /// <para>
-/// An app references one of <c>FrameFlow.Inference.Dml</c>, <c>.Cuda</c>, <c>.WinML</c> and
-/// <c>.Cpu</c>: each carries its own ONNX Runtime native library, and two in one process
-/// conflict. Each of them runs <c>CpuInferenceSession</c> too, so the usual registration is the
-/// package's GPU provider and <see cref="ExecutionProvider.Cpu"/> behind it.
+/// An app references one of <c>FrameFlow.Inference.Dml</c>, <c>.Cuda</c>, <c>.WinML</c>,
+/// <c>.OpenVino</c> and <c>.Cpu</c>: each carries its own ONNX Runtime native library, and two in
+/// one process conflict. Each of them runs <c>CpuInferenceSession</c> too, so the usual
+/// registration is the package's GPU provider and <see cref="ExecutionProvider.Cpu"/> behind it.
 /// </para>
 /// </remarks>
 public static class InferenceSessionFactoryBuilder
@@ -40,7 +40,7 @@ public static class InferenceSessionFactoryBuilder
     /// <summary>
     /// Builds a factory that tries <paramref name="preferred"/> first,
     /// then walks <paramref name="fallbackOrder"/>, or by default the other
-    /// registered EPs from narrowest to broadest: CUDA, Windows ML,
+    /// registered EPs from narrowest to broadest: CUDA, OpenVINO, Windows ML,
     /// DirectML, and CPU last, since it is the one that nearly always opens.
     /// </summary>
     /// <param name="preferred">EP attempted first.</param>
@@ -99,12 +99,19 @@ public static class InferenceSessionFactoryBuilder
     /// numeric order says nothing: CPU is its first value, and a provider appended later need
     /// not be broader than the ones before it. One this does not name goes before CPU.
     /// </summary>
+    /// <remarks>
+    /// OpenVINO follows CUDA: both serve one vendor's hardware, and where an NVIDIA GPU sits beside
+    /// an Intel one it is usually the faster. It goes before Windows ML, which chooses among vendors
+    /// and reaches OpenVINO only from Windows 11 24H2, and before DirectML, which it ran about twice
+    /// as fast as on a Gen9 Intel GPU (#523).
+    /// </remarks>
     private static int FallbackRank(ExecutionProvider provider) =>
         provider switch
         {
             ExecutionProvider.Cuda => 0,
-            ExecutionProvider.WindowsML => 1,
-            ExecutionProvider.DirectML => 2,
+            ExecutionProvider.OpenVino => 1,
+            ExecutionProvider.WindowsML => 2,
+            ExecutionProvider.DirectML => 3,
             ExecutionProvider.Cpu => int.MaxValue,
             _ => int.MaxValue - 1,
         };

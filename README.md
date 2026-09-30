@@ -117,6 +117,12 @@ defaults to ONNX Runtime's basic level; a higher level holds less GPU memory, wh
 sessions share a GPU. `WinMLInferenceSessionOptions` sets the level for Windows ML, and a named
 provider's own options.
 
+On an Intel GPU below Windows ML's Windows 11 24H2 floor, `OpenVinoInferenceSession` runs Intel's
+OpenVINO build of ONNX Runtime, about twice as fast as DirectML on a Gen9 GPU. It is Windows x64
+only. `OpenVinoInferenceSessionOptions` sets the device per model: `GPU` by default, or `CPU`,
+which ran a small face model faster. The session caches compiled models under local app data, and
+refuses a model OpenVINO can take only in part.
+
 A model run directly through `IInferenceSession.Run` writes into outputs the caller allocates.
 `session.RentOutputs<float>(pool, new Dictionary<string, int> { ["batch"] = 4 })` rents one per
 output at the shape the model declares, sizing each dynamic dimension by its name, and one `Dispose`
@@ -197,7 +203,7 @@ See [ADR-0069](docs/adr/ADR-0069-one-error-model-across-the-playback-stack.md).
 - OpenAL audio output on all three platforms, doubling as the master clock
 - Avalonia and SDL presenters
 - camera capture and an H.264 to MP4 encoder
-- optional CPU, DirectML, CUDA and Windows ML inference: YOLO detection, Whisper captioning
+- optional CPU, DirectML, CUDA, Windows ML and OpenVINO inference: YOLO detection, Whisper captioning
 
 11 runnable example apps under `examples/` exercise these against real files
 and live camera and multicast sources.
@@ -213,15 +219,15 @@ and live camera and multicast sources.
 | Camera / video | `FrameFlow.Camera`, `FrameFlow.Video` |
 | Audio | `FrameFlow.Audio`, `FrameFlow.Audio.OpenAL` |
 | Presenters | `FrameFlow.Avalonia`, `FrameFlow.Avalonia.Windows`, `FrameFlow.Sdl` |
-| Inference | `FrameFlow.Inference.Abstractions`, `.Ort`, `.Cpu`, `.Cuda`, `.Dml`, `.WinML`, `.D3D12`, `FrameFlow.Yolo`, `FrameFlow.Face`, `FrameFlow.Whisper` |
+| Inference | `FrameFlow.Inference.Abstractions`, `.Ort`, `.Cpu`, `.Cuda`, `.Dml`, `.WinML`, `.OpenVino` (Windows x64), `.D3D12`, `FrameFlow.Yolo`, `FrameFlow.Face`, `FrameFlow.Whisper` |
 
 `FrameFlow.Native.Runtime` carries the FFmpeg binaries. The libraries do not
 reference it — add it yourself, or supply the natives another way.
 
-An app references one of `FrameFlow.Inference.Cpu`, `.Dml`, `.Cuda` and `.WinML`.
-Each carries its own ONNX Runtime native library, and two in one process
-conflict. All four run `CpuInferenceSession`; `.Cpu` is the one for an app with
-no GPU provider, and the only one on macOS.
+An app references one of `FrameFlow.Inference.Cpu`, `.Dml`, `.Cuda`, `.WinML`
+and `.OpenVino`. Each carries its own ONNX Runtime native library, and two in one
+process conflict. All five run `CpuInferenceSession`; `.Cpu` is the one for an app
+with no GPU provider, and the only one on macOS.
 
 Any package here works on its own: the FFmpeg resolver installs itself on the
 first native call (ADR-0070). Bootstrap explicitly — `AddHostedBootstrap()`, or

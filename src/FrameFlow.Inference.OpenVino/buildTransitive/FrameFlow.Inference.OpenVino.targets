@@ -1,0 +1,17 @@
+<Project>
+  <!--
+    Intel.ML.OnnxRuntime.OpenVino ships TBB's debug DLLs (*_debug.dll) and ONNX Runtime's import
+    library (onnxruntime.lib) under runtimes/win-x64/native, beside the DLLs the runtime loads, so
+    NuGet copies them into every app. Nothing loads them. Removing them from the resolved native
+    assets keeps them out of the build output, the publish output and the app's deps.json.
+  -->
+  <Target Name="FrameFlowOpenVinoDropUnusedNatives" AfterTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <_FrameFlowOpenVinoUnused
+        Include="@(RuntimeTargetsCopyLocalItems);@(NativeCopyLocalItems)"
+        Condition="'%(NuGetPackageId)' == 'Intel.ML.OnnxRuntime.OpenVino' and ($([System.String]::Copy('%(Filename)').EndsWith('_debug')) or '%(Extension)' == '.lib')" />
+      <RuntimeTargetsCopyLocalItems Remove="@(_FrameFlowOpenVinoUnused)" />
+      <NativeCopyLocalItems Remove="@(_FrameFlowOpenVinoUnused)" />
+    </ItemGroup>
+  </Target>
+</Project>

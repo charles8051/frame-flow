@@ -18,6 +18,12 @@
 //     layout. Where a DirectX 12 adapter lets a session open, it also checks the
 //     DirectML.dll loaded is that one; without one, as on a hosted runner, ONNX
 //     Runtime fails before it loads DirectML.dll at all.
+//   - FrameFlow.Inference.OpenVino, on Windows x64: Intel's natives under
+//     runtimes/win-x64/native, where ONNX Runtime loads the OpenVINO provider
+//     beside onnxruntime.dll and the provider loads OpenVINO, its plugins and
+//     TBB. The app checks that layout, that the package's targets kept TBB's
+//     debug DLLs and onnxruntime.lib out of it and out of deps.json, and that
+//     OpenVINO's CPU device runs the model (#523).
 //
 // The script packs what the apps need itself, not the whole solution:
 // FrameFlow.Native refuses to pack without every platform's FFmpeg binaries.
@@ -28,6 +34,7 @@
 // Exits non-zero, naming the app, when any check fails.
 
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 
 bool noBuild = args.Contains("--no-build");
@@ -42,8 +49,11 @@ Directory.CreateDirectory(globalPackages);
 
 // The apps' packages and the FrameFlow packages they depend on.
 string[] projects = ["FrameFlow.Graph", "FrameFlow.Media", "FrameFlow.Inference.Abstractions", "FrameFlow.Inference.Ort", "FrameFlow.Inference.Cpu"];
+bool windowsX64 = OperatingSystem.IsWindows() && RuntimeInformation.ProcessArchitecture == Architecture.X64;
 if (OperatingSystem.IsWindows())
     projects = [.. projects, "FrameFlow.Inference.Dml"];
+if (windowsX64)
+    projects = [.. projects, "FrameFlow.Inference.OpenVino"];
 foreach (var project in projects)
 {
     string[] pack = ["pack", Path.Combine(repo, "src", project), "-c", "Release", "-p:FrameFlowLocalFeedDisable=true", "-o", packages];
@@ -69,6 +79,8 @@ int failures = 0;
 failures += Run("cpu", "FrameFlow.Inference.Cpu", CpuProgram);
 if (OperatingSystem.IsWindows())
     failures += Run("dml", "FrameFlow.Inference.Dml", DmlProgram);
+if (windowsX64)
+    failures += Run("openvino", "FrameFlow.Inference.OpenVino", OpenVinoProgram);
 
 Console.WriteLine(failures == 0 ? "package smoke: all apps passed" : $"package smoke: {failures} app(s) failed");
 return failures == 0 ? 0 : 1;
@@ -234,5 +246,55 @@ partial class Program
 
         [DllImport("kernel32", CharSet = CharSet.Unicode, ExactSpelling = true)]
         static extern int GetModuleFileNameW(nint module, StringBuilder path, int size);
+        """;
+
+    const string OpenVinoProgram = """
+        using FrameFlow.Graph;
+        using FrameFlow.Inference.Dml.Tests;
+        using FrameFlow.Inference.OpenVino;
+        using Microsoft.ML.OnnxRuntime;
+        using System.Runtime.InteropServices;
+
+        if (!OperatingSystem.IsWindows())
+            return 0;
+
+        // ONNX Runtime loads the OpenVINO provider from beside onnxruntime.dll, and the provider
+        // loads OpenVINO, its plugins and TBB from there.
+        string native = Path.Combine(AppContext.BaseDirectory, "runtimes", "win-x64", "native");
+        string[] needed =
+        [
+            "onnxruntime.dll", "onnxruntime_providers_openvino.dll", "onnxruntime_providers_shared.dll",
+            "openvino.dll", "openvino_intel_cpu_plugin.dll", "openvino_intel_gpu_plugin.dll",
+            "openvino_onnx_frontend.dll", "tbb12.dll",
+        ];
+        string[] missing = [.. needed.Where(f => !File.Exists(Path.Combine(native, f)))];
+        Console.WriteLine($"beside onnxruntime.dll, missing: [{string.Join(", ", missing)}]");
+
+        // The package's targets drop what nothing loads, from the output and from deps.json.
+        string[] unused =
+        [
+            .. Directory.EnumerateFiles(native)
+                .Select(f => Path.GetFileName(f))
+                .Where(f => f.EndsWith("_debug.dll", StringComparison.OrdinalIgnoreCase) || f == "onnxruntime.lib"),
+        ];
+        string deps = File.ReadAllText(Directory.GetFiles(AppContext.BaseDirectory, "*.deps.json").Single());
+        bool depsListsUnused = deps.Contains("_debug.dll", StringComparison.OrdinalIgnoreCase) || deps.Contains("onnxruntime.lib");
+        Console.WriteLine($"unused natives: [{string.Join(", ", unused)}], in deps.json: {depsListsUnused}");
+        if (missing.Length > 0 || unused.Length > 0 || depsListsUnused)
+            return 1;
+
+        Console.WriteLine($"ONNX Runtime {OrtEnv.Instance().GetVersionString()}");
+        using var session = new OpenVinoInferenceSession(
+            OnnxModel.Negate(1, 4), new OpenVinoInferenceSessionOptions { Device = "CPU", CacheDirectory = null });
+        var pool = new CpuTensorPool();
+        var input = pool.Rent<float>(new TensorShape(1, 4));
+        var output = pool.Rent<float>(new TensorShape(1, 4));
+        float[] values = [1f, -2f, 3.5f, 0f];
+        values.AsSpan().CopyTo(input.Span);
+        session.Run(input, output);
+
+        float[] result = MemoryMarshal.Cast<byte, float>(output.Bytes.Span).ToArray();
+        Console.WriteLine($"OpenVINO CPU: negate [{string.Join(", ", values)}] = [{string.Join(", ", result)}]");
+        return result.SequenceEqual(values.Select(v => -v)) ? 0 : 1;
         """;
 }

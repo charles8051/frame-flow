@@ -18,9 +18,9 @@
     the managed runtime this package brings unifies with the one FrameFlow.Inference.Ort compiles
     against.
 
-    It brings its own onnxruntime.dll, so it conflicts with FrameFlow.Inference.Dml and
-    FrameFlow.Inference.Cuda in one process: apps pick exactly one inference EP package at the
-    executable boundary. The vendor catalog needs Windows 11 24H2 (build 26100) or later; below
+    It brings its own onnxruntime.dll, so it conflicts with FrameFlow.Inference.Cpu, .Dml, .Cuda
+    and .OpenVino in one process: apps pick exactly one inference EP package at the executable
+    boundary. The vendor catalog needs Windows 11 24H2 (build 26100) or later; below
     that, Windows ML offers only CPU and DirectML, which FrameFlow.Inference.Dml already does.
   -->
 

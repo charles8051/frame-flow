@@ -11,7 +11,8 @@ namespace FrameFlow.Inference.Abstractions.Tests;
 /// ONNX Runtime raises its failures as <c>OnnxRuntimeException</c>, which has no public constructor;
 /// the classifier reads only the message, so those rows carry the message on a plain exception.
 /// Rows marked "observed" were raised on a Windows machine with a discrete NVIDIA GPU, the ONNX
-/// Runtime DirectML build and FrameFlow's sessions; the device-lost ones during a GPU reset. The rest
+/// Runtime DirectML build or Intel's OpenVINO build, and FrameFlow's sessions; the device-lost ones
+/// during a GPU reset. The rest
 /// follow ONNX Runtime's source and its reported failures; no DirectML out-of-memory was observed
 /// (docs/investigations/2026-09-29-dml-out-of-memory.md).
 /// </remarks>
@@ -114,6 +115,17 @@ public sealed class ConstructFailureTests
                 "providerName"),
             nameof(ConstructFailureKind.ProviderUnavailable)
         },
+        {
+            "observed: OpenVINO asked for a device it does not have; the device goes only to ONNX Runtime's log",
+            new Exception("[ErrorCode:Fail] Failed to load provider OpenVINO"),
+            nameof(ConstructFailureKind.ProviderUnavailable)
+        },
+        {
+            "a session package on a platform it ships no runtime for",
+            new PlatformNotSupportedException(
+                "FrameFlow.Inference.OpenVino runs on Windows x64 only: Intel's OpenVINO build of ONNX Runtime ships no native runtime for linux-x64."),
+            nameof(ConstructFailureKind.ProviderUnavailable)
+        },
 
         // Unknown.
         {
@@ -125,6 +137,12 @@ public sealed class ConstructFailureTests
         {
             "observed: bytes that are not a model",
             new Exception("[ErrorCode:InvalidProtobuf] Failed to load model because protobuf parsing failed."),
+            nameof(ConstructFailureKind.Unknown)
+        },
+        {
+            "observed: OpenVINO taking a model only in part, with CPU fallback refused",
+            new Exception(
+                "[ErrorCode:Fail] This session contains graph nodes that are assigned to the default CPU EP, but fallback to CPU EP has been explicitly disabled by the user."),
             nameof(ConstructFailureKind.Unknown)
         },
         {

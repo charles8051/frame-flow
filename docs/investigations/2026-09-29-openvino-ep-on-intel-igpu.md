@@ -146,6 +146,11 @@ was level with DirectML at best and had a wide tail.
    - several sessions sharing the GPU
    - power and thermals under sustained load
 
+**Follow-up (#523):** built as `FrameFlow.Inference.OpenVino`, with recommendation 1's defaults and
+the device set per session, which is recommendation 3. It refuses a model OpenVINO takes only in
+part unless told otherwise; see
+[decision 6](../feature-specs/gpu-resident-inference/adr.md).
+
 ## Reproducing
 
 ```bash

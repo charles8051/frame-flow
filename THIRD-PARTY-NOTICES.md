@@ -197,9 +197,11 @@ NuGet dependency of `FrameFlow.Audio.OpenAL` via `Silk.NET.OpenAL.Soft.Native`
   https://github.com/kcat/openal-soft
 - **License:** LGPL-2.1-or-later
 
-## ONNX Runtime, DirectML, CUDA and cuDNN
+## ONNX Runtime, DirectML, OpenVINO, CUDA and cuDNN
 
 Referenced as NuGet packages under their vendors' terms; consult each package.
+`FrameFlow.Inference.OpenVino` references `Intel.ML.OnnxRuntime.OpenVino`, which
+carries ONNX Runtime, OpenVINO and oneTBB; NuGet delivers it from upstream.
 CUDA and cuDNN redistributables are marked `CopyToPublishDirectory="Never"` and
 are **not** published in any FrameFlow package.
 
