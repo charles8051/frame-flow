@@ -97,11 +97,17 @@ public sealed unsafe class VulkanDevice : IDisposable
                 nameof(family), $"FFmpeg created no queue {index} in family {family}.");
         }
 
-        var deviceCtx = (AVHWDeviceContext*)((AVBufferRef*)deviceCtxRef)->data;
+        // The lock holds its own reference, so disposing this object first cannot free the
+        // context before the queue is unlocked.
+        nint lockRef = FFAvUtil.av_buffer_ref(deviceCtxRef);
+        if (lockRef == nint.Zero)
+            throw new InvalidOperationException("av_buffer_ref returned null (out of memory).");
+
+        var deviceCtx = (AVHWDeviceContext*)((AVBufferRef*)lockRef)->data;
         var vk = (AVVulkanDeviceContext*)deviceCtx->hwctx;
         if (vk->lock_queue != null)
             vk->lock_queue(deviceCtx, family, index);
-        return new VulkanQueueLock(deviceCtx, vk->unlock_queue, family, index);
+        return new VulkanQueueLock(lockRef, family, index);
     }
 
     /// <summary>Drops this object's reference to FFmpeg's device context.</summary>
@@ -133,32 +139,34 @@ public readonly record struct VulkanQueueFamily(uint Index, int QueueCount, uint
 
 /// <summary>
 /// One of FFmpeg's queues, locked by <see cref="VulkanDevice.LockQueue"/> until this is disposed.
+/// It holds its own reference to the device context, so it can be disposed after the
+/// <see cref="VulkanDevice"/> it came from.
 /// </summary>
-public unsafe ref struct VulkanQueueLock
+public sealed unsafe class VulkanQueueLock : IDisposable
 {
-    private AVHWDeviceContext* _deviceCtx;
-    private readonly delegate* unmanaged<AVHWDeviceContext*, uint, uint, void> _unlock;
+    private nint _deviceCtxRef;
     private readonly uint _family;
     private readonly uint _index;
 
-    internal VulkanQueueLock(
-        AVHWDeviceContext* deviceCtx,
-        delegate* unmanaged<AVHWDeviceContext*, uint, uint, void> unlock,
-        uint family,
-        uint index)
+    /// <param name="deviceCtxRef">An <c>AVBufferRef*</c> this lock owns, to a context whose queue is locked.</param>
+    internal VulkanQueueLock(nint deviceCtxRef, uint family, uint index)
     {
-        _deviceCtx = deviceCtx;
-        _unlock = unlock;
+        _deviceCtxRef = deviceCtxRef;
         _family = family;
         _index = index;
     }
 
-    /// <summary>Unlocks the queue. A second call does nothing.</summary>
+    /// <summary>Unlocks the queue and drops the lock's reference. A second call does nothing.</summary>
     public void Dispose()
     {
-        var deviceCtx = _deviceCtx;
-        _deviceCtx = null;
-        if (deviceCtx != null && _unlock != null)
-            _unlock(deviceCtx, _family, _index);
+        nint deviceCtxRef = Interlocked.Exchange(ref _deviceCtxRef, nint.Zero);
+        if (deviceCtxRef == nint.Zero)
+            return;
+
+        var deviceCtx = (AVHWDeviceContext*)((AVBufferRef*)deviceCtxRef)->data;
+        var vk = (AVVulkanDeviceContext*)deviceCtx->hwctx;
+        if (vk->unlock_queue != null)
+            vk->unlock_queue(deviceCtx, _family, _index);
+        FFAvUtil.av_buffer_unref(ref deviceCtxRef);
     }
 }

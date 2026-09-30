@@ -145,6 +145,11 @@ internal static partial class FFAvUtil
     [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
     internal static partial nint av_buffer_ref(nint buf);
 
+    /// <summary>How many <c>AVBufferRef</c>s share the buffer <paramref name="buf"/> refers to.</summary>
+    [LibraryImport("avutil")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial int av_buffer_get_ref_count(nint buf);
+
     /// <summary>
     /// Decrements the buffer's reference count and frees the buffer if it reaches
     /// zero. Sets the pointer to <see langword="null"/>. Safe to call on a

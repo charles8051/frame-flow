@@ -118,8 +118,7 @@ public sealed unsafe class VulkanImageLock : IDisposable
         if (handle is null)
             return;
 
-        if (_vulkanFrames->unlock_frame != null)
-            _vulkanFrames->unlock_frame(_framesCtx, _frame);
+        _vulkanFrames->unlock_frame(_framesCtx, _frame);
         handle.DangerousRelease();
     }
 }

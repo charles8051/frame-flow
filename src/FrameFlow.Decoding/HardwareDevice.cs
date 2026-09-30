@@ -136,7 +136,9 @@ public sealed class HardwareDevice : IDisposable
     public bool TryGetVulkanDevice([NotNullWhen(true)] out VulkanDevice? device)
     {
         device = null;
-        if (Backend != HardwareDecodeBackendKind.Vulkan || Volatile.Read(ref _deviceCtxRef) == nint.Zero)
+        // The hwcontext mirrors have the 64-bit layout, which every runtime FrameFlow ships uses.
+        if (Backend != HardwareDecodeBackendKind.Vulkan || !Environment.Is64BitProcess
+            || Volatile.Read(ref _deviceCtxRef) == nint.Zero)
             return false;
 
         try

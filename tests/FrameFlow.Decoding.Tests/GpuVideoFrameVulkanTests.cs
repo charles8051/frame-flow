@@ -228,6 +228,38 @@ public sealed class GpuVideoFrameVulkanTests(FfmpegBootstrapFixture fixture)
         }
     }
 
+    /// <summary>
+    /// A queue lock holds its own reference to FFmpeg's device context, so the device it came from
+    /// can be disposed first without the unlock reaching freed memory.
+    /// </summary>
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.Vulkan, Fixture)]
+    public void AQueueLock_HoldsTheDeviceUntilItIsDisposed()
+    {
+        using var borrowed = HardwareDevice.Create(HardwareDecodeBackendKind.Vulkan);
+        nint probe = borrowed.Borrow();
+        try
+        {
+            int RefCount() => FFAvUtil.av_buffer_get_ref_count(probe);
+            int before = RefCount();
+
+            Assert.True(borrowed.TryGetVulkanDevice(out var device));
+            var family = device.QueueFamilies[0];
+            var queue = device.LockQueue(family.Index, 0);
+            Assert.Equal(before + 2, RefCount());
+
+            device.Dispose();
+            Assert.Equal(before + 1, RefCount());
+
+            queue.Dispose();
+            queue.Dispose();
+            Assert.Equal(before, RefCount());
+        }
+        finally
+        {
+            FFAvUtil.av_buffer_unref(ref probe);
+        }
+    }
+
     [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.Vulkan, Fixture)]
     public async Task ADisposedFrame_LocksNothing()
     {

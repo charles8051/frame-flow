@@ -571,7 +571,8 @@ public sealed class GpuVideoFrame : IVideoFrame
     public unsafe bool TryLockVulkanImage([NotNullWhen(true)] out VulkanImageLock? image)
     {
         image = null;
-        if (Backend != HardwareDecodeBackendKind.Vulkan)
+        // The hwcontext mirrors have the 64-bit layout, which every runtime FrameFlow ships uses.
+        if (Backend != HardwareDecodeBackendKind.Vulkan || !Environment.Is64BitProcess)
             return false;
 
         var h = _handle;
@@ -594,9 +595,12 @@ public sealed class GpuVideoFrame : IVideoFrame
             if (framesCtx is null || framesCtx->hwctx is null || frame is null || frame->img[0] == 0 || frame->img[1] != 0)
                 return false;
 
+            // FFmpeg fills both in at init; without them the lock would protect nothing.
             var vulkanFrames = (AVVulkanFramesContext*)framesCtx->hwctx;
-            if (vulkanFrames->lock_frame != null)
-                vulkanFrames->lock_frame(framesCtx, frame);
+            if (vulkanFrames->lock_frame == null || vulkanFrames->unlock_frame == null)
+                return false;
+
+            vulkanFrames->lock_frame(framesCtx, frame);
             image = new VulkanImageLock(h, framesCtx, frame);
             held = false;
             return true;
@@ -625,7 +629,7 @@ public sealed class GpuVideoFrame : IVideoFrame
     public unsafe bool TryGetVulkanDevice([NotNullWhen(true)] out VulkanDevice? device)
     {
         device = null;
-        if (Backend != HardwareDecodeBackendKind.Vulkan)
+        if (Backend != HardwareDecodeBackendKind.Vulkan || !Environment.Is64BitProcess)
             return false;
 
         var h = _handle;

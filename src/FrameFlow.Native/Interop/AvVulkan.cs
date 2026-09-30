@@ -9,8 +9,9 @@ namespace FrameFlow.Native.Interop;
 // FFmpeg.AutoGen does not generate the Vulkan hwcontext types, so these mirror
 // libavutil/hwcontext_vulkan.h from FFmpeg 9.0 (avutil 61). FF_API_VULKAN_SYNC_QUEUES is still on
 // in avutil 61, so AVVulkanDeviceContext carries the deprecated lock_queue and unlock_queue. The
-// x64 offsets are checked by AvVulkanLayoutTests; a new FFmpeg major has to be read against the
-// header again.
+// layouts are the 64-bit ones, which x64 and arm64 share and every runtime FrameFlow ships uses;
+// the accessors refuse a 32-bit process. AvVulkanLayoutTests checks the offsets; a new FFmpeg
+// major has to be read against the header again.
 
 /// <summary>FFmpeg's <c>AVVulkanDeviceQueueFamily</c>: one queue family the device created queues on.</summary>
 [StructLayout(LayoutKind.Sequential)]
