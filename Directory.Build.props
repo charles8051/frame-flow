@@ -19,8 +19,9 @@
 
     <!--
       The Avalonia every project references, so one property moves them all. The packages
-      compile against 11; CI builds and tests the Avalonia projects again with
-      -p:FrameFlowAvaloniaVersion=12.* so a source break on 12 shows before an app on 12 finds it.
+      compile against 11. CI binds those DLLs against 12 (scripts/avalonia-binary-check.cs), and
+      builds and tests the Avalonia projects again with -p:FrameFlowAvaloniaVersion=12.*, so a
+      binary or source break on 12 shows before an app on 12 finds it.
     -->
     <FrameFlowAvaloniaVersion Condition="'$(FrameFlowAvaloniaVersion)' == ''">11.*</FrameFlowAvaloniaVersion>
 
