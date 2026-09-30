@@ -29,6 +29,14 @@ namespace FrameFlow.Face;
 /// declaration order, since community ONNX exports disagree.
 /// </para>
 /// <para>
+/// <b>Element types.</b> The input and each output are fp32 or fp16 as an
+/// <see cref="FrameFlow.Inference.IElementTypedSession"/> declares them,
+/// and fp32 for a session that declares none (ADR-0050 §3 Tier B). An
+/// fp16 output is converted to floats once per frame for the
+/// postprocessor. Any other element type is refused when the detector is
+/// built.
+/// </para>
+/// <para>
 /// <b>Not thread-safe.</b> One detector is for sequential use; the gaze
 /// seam runs a single instance over the <c>PRESENT</c> candidate crops.
 /// </para>
@@ -38,9 +46,10 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
     private readonly FrameFlow.Inference.IInferenceSession _session;
     private readonly BlazeFaceModelDescriptor _descriptor;
     private readonly CpuTensorPool _pool;
-    private readonly CpuTensor<float> _inputTensor;
-    private readonly CpuTensor<float> _boxTensor;
-    private readonly CpuTensor<float> _scoreTensor;
+    private readonly ICpuTensor _inputTensor;
+    private readonly ICpuTensor _boxTensor;
+    private readonly ICpuTensor _scoreTensor;
+    private readonly ImageToTensorOptions _input;
     private readonly string _inputName;
     private readonly string _boxName;
     private readonly string _scoreName;
@@ -53,6 +62,13 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
     private readonly Dictionary<string, ICpuTensor> _inputBinding;
     private readonly Dictionary<string, ICpuTensor> _outputBinding;
 
+    // The outputs as floats: readers for Detect and others for the operator's Decode, so the two
+    // never share a buffer.
+    private readonly FloatReader _boxes = new();
+    private readonly FloatReader _scores = new();
+    private readonly FloatReader _decodedBoxes = new();
+    private readonly FloatReader _decodedScores = new();
+
     private bool _disposed;
 
     private double _lastPreprocessMs = double.NaN;
@@ -63,9 +79,9 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
         FrameFlow.Inference.IInferenceSession session,
         BlazeFaceModelDescriptor descriptor,
         CpuTensorPool pool,
-        CpuTensor<float> inputTensor,
-        CpuTensor<float> boxTensor,
-        CpuTensor<float> scoreTensor,
+        ICpuTensor inputTensor,
+        ICpuTensor boxTensor,
+        ICpuTensor scoreTensor,
         string inputName,
         string boxName,
         string scoreName,
@@ -79,6 +95,7 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
         _inputTensor = inputTensor;
         _boxTensor = boxTensor;
         _scoreTensor = scoreTensor;
+        _input = preprocessor.Options with { Dtype = inputTensor.Dtype };
         _inputName = inputName;
         _boxName = boxName;
         _scoreName = scoreName;
@@ -101,6 +118,10 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
     /// <paramref name="descriptor"/> (default: the front-128 model) and
     /// warms up the EP before returning.
     /// </summary>
+    /// <exception cref="NotSupportedException">
+    /// The session declares an input or output element type other than Float32 or Float16. The
+    /// message names it. The session is disposed.
+    /// </exception>
     public static BlazeFaceDetector Create(
         FrameFlow.Inference.IInferenceSession session,
         ILoggerFactory? loggerFactory = null,
@@ -113,9 +134,9 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
         var log = factory.CreateLogger<BlazeFaceDetector>();
 
         CpuTensorPool? pool = null;
-        CpuTensor<float>? inputTensor = null;
-        CpuTensor<float>? boxTensor = null;
-        CpuTensor<float>? scoreTensor = null;
+        ICpuTensor? inputTensor = null;
+        ICpuTensor? boxTensor = null;
+        ICpuTensor? scoreTensor = null;
         try
         {
             // Resolve + validate inside the guarded region so a shape mismatch
@@ -132,12 +153,21 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
             string inputName = session.InputNames[0];
             string boxName = session.OutputNames[boxIdx];
             string scoreName = session.OutputNames[scoreIdx];
-            LogModelShape(log, shape.InputSize, shape.NumBoxes, shape.NumKeypoints, shape.InputLayout);
+            var typed = session as FrameFlow.Inference.IElementTypedSession;
+            var inputType = FrameFlow.Inference.Core.DeclaredElementTypes.Floating(
+                typed?.InputElementTypes, session.InputNames, 0, "input", nameof(BlazeFaceDetector));
+            var outputTypes = typed?.OutputElementTypes;
+            var boxType = FrameFlow.Inference.Core.DeclaredElementTypes.Floating(
+                outputTypes, session.OutputNames, boxIdx, "output", nameof(BlazeFaceDetector));
+            var scoreType = FrameFlow.Inference.Core.DeclaredElementTypes.Floating(
+                outputTypes, session.OutputNames, scoreIdx, "output", nameof(BlazeFaceDetector));
+            LogModelShape(
+                log, shape.InputSize, shape.NumBoxes, shape.NumKeypoints, shape.InputLayout, inputType, boxType, scoreType);
 
             pool = new CpuTensorPool();
-            inputTensor = pool.Rent<float>(InputTensorShape(shape));
-            boxTensor = pool.Rent<float>(new TensorShape(1, shape.NumBoxes, shape.NumCoords));
-            scoreTensor = pool.Rent<float>(new TensorShape(1, shape.NumBoxes, 1));
+            inputTensor = CpuTensors.Rent(pool, inputType, InputTensorShape(shape), "The input");
+            boxTensor = CpuTensors.Rent(pool, boxType, new TensorShape(1, shape.NumBoxes, shape.NumCoords), "The box output");
+            scoreTensor = CpuTensors.Rent(pool, scoreType, new TensorShape(1, shape.NumBoxes, 1), "The score output");
 
             var detector = new BlazeFaceDetector(
                 session,
@@ -238,15 +268,16 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
     public void Warmup()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _inputTensor.Span.Clear();
-        _boxTensor.Span.Clear();
-        _scoreTensor.Span.Clear();
+        CpuTensors.Clear(_inputTensor);
+        CpuTensors.Clear(_boxTensor);
+        CpuTensors.Clear(_scoreTensor);
         var sw = Stopwatch.StartNew();
         _session.Run(_inputBinding, _outputBinding);
         sw.Stop();
         LogWarmupCompleted(_logger, sw.Elapsed.TotalMilliseconds);
 
-        int nonFinite = CountNonFinite(_boxTensor.ReadOnlySpan) + CountNonFinite(_scoreTensor.ReadOnlySpan);
+        // An fp16 NaN or infinity converts to a float one, so this checks either output type.
+        int nonFinite = CountNonFinite(_boxes.Read(_boxTensor)) + CountNonFinite(_scores.Read(_scoreTensor));
         if (nonFinite > 0)
         {
             throw new InvalidOperationException(
@@ -279,7 +310,9 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         var swPre = Stopwatch.StartNew();
-        var transform = _preprocessor.Preprocess(frame, roi, _inputTensor.Span);
+        var transform = _inputTensor is CpuTensor<Half> halves
+            ? _preprocessor.Preprocess(frame, roi, halves.Span)
+            : _preprocessor.Preprocess(frame, roi, ((CpuTensor<float>)_inputTensor).Span);
         swPre.Stop();
 
         var swRun = Stopwatch.StartNew();
@@ -287,7 +320,7 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
         swRun.Stop();
 
         var swPost = Stopwatch.StartNew();
-        var faces = _postprocessor.Decode(_boxTensor.ReadOnlySpan, _scoreTensor.ReadOnlySpan, transform);
+        var faces = _postprocessor.Decode(_boxes.Read(_boxTensor), _scores.Read(_scoreTensor), transform);
         swPost.Stop();
 
         double preMs = swPre.Elapsed.TotalMilliseconds;
@@ -322,15 +355,15 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
 
     string IImageModel<IReadOnlyList<FaceDetection>>.InputName => _inputName;
 
-    ImageToTensorOptions IImageModel<IReadOnlyList<FaceDetection>>.Input => _preprocessor.Options;
+    ImageToTensorOptions IImageModel<IReadOnlyList<FaceDetection>>.Input => _input;
 
     RotatedRect IImageModel<IReadOnlyList<FaceDetection>>.CropFor(IVideoFrame frame) => RotatedRect.Whole(frame);
 
     IReadOnlyList<FaceDetection> IImageModel<IReadOnlyList<FaceDetection>>.Decode(
         IReadOnlyDictionary<string, ICpuTensor> outputs, TensorTransform transform, IVideoFrame frame) =>
         _postprocessor.Decode(
-            System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(outputs[_boxName].Bytes.Span),
-            System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(outputs[_scoreName].Bytes.Span),
+            _decodedBoxes.Read(outputs[_boxName]),
+            _decodedScores.Read(outputs[_scoreName]),
             transform);
 
     public void Dispose()
@@ -369,7 +402,15 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
 
     [LoggerMessage(
         Level = LogLevel.Information,
-        Message = "BlazeFace model shape: input {InputSize}px {Layout}, {NumBoxes} boxes, {NumKeypoints} keypoints")]
+        Message = "BlazeFace model shape: input {InputSize}px {Layout}, {NumBoxes} boxes, {NumKeypoints} keypoints, "
+            + "{InputType} in, {BoxType} boxes and {ScoreType} scores out")]
     private static partial void LogModelShape(
-        ILogger logger, int inputSize, int numBoxes, int numKeypoints, BlazeFaceInputLayout layout);
+        ILogger logger,
+        int inputSize,
+        int numBoxes,
+        int numKeypoints,
+        BlazeFaceInputLayout layout,
+        DType inputType,
+        DType boxType,
+        DType scoreType);
 }

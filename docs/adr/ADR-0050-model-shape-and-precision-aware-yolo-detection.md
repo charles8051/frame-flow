@@ -2,9 +2,10 @@
 
 **Status:** Accepted — §1 (descriptor), §2 (auto-inference), §4 (class
 allow-list / person-only decode), and §5 (head validation) implemented
-2026-05-28. §3 Tier B (true FP16-I/O tensors) is the remaining opt-in
-follow-up; §3 Tier A (FP32-I/O FP16-internal + INT8-dynamic) works on the
-existing path today.
+2026-05-28. §3 Tier A (FP32-I/O FP16-internal + INT8-dynamic) works on the
+existing path. §3 Tier B (true FP16-I/O tensors) implemented 2026-09-29
+(#10), driven by the session's declared element types (#520) rather than
+a descriptor field; see the amendment under §3.
 **Date:** 2026-05-28
 **Related:**
 - ADR-0049 (FrameFlow.Graph fork) — §3 created the EP-agnostic
@@ -133,6 +134,18 @@ that pass nothing get today's behavior (640 / 80-COCO) by default.
   Gated on `descriptor.IoDtype == Float16`. Pursued only if Tier A
   FP16 proves insufficient, since it adds a `Half` write path to the
   preprocessor hot loop.
+
+> **Amended 2026-09-29 (#10, #520).** Tier B was built for compatibility, not speed: an FP16-I/O
+> export such as Ultralytics' `half=True` could not load into either detector, and on a Gen9 Intel
+> GPU FP16 I/O measured no faster than Tier A
+> ([investigation](../investigations/2026-09-29-openvino-ep-on-intel-igpu.md), finding 6). It is
+> gated on the element types the session declares through `IElementTypedSession`, not on a
+> descriptor field: `YoloModelDescriptor` carries no precision, and a session that declares none
+> is bound as FP32. The input and each output take their own type, so FP16 in with FP32 out, and
+> the reverse, work. An FP16 output is converted to floats once per frame, and the postprocessors
+> still read `float`. `BlazeFaceDetector` has the same path, and `InferenceOperators` allocates
+> outputs by their declared type. The D3D12 stage still writes FP32 only, so an FP16-input model
+> prepares its input on the CPU.
 
 ### 4. Variable class count → person-only
 

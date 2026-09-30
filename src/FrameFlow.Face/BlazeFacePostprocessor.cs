@@ -59,7 +59,7 @@ public sealed class BlazeFacePostprocessor
     /// <summary>
     /// Decodes the raw box + score tensors into faces in source-image
     /// pixel coordinates. <paramref name="roi"/> is the same region handed
-    /// to <see cref="BlazeFacePreprocessor.Preprocess"/>, whose letterbox this
+    /// to <see cref="BlazeFacePreprocessor.Preprocess(FrameFlow.Media.IVideoFrame, FaceRoi, Span{float})"/>, whose letterbox this
     /// undoes.
     /// </summary>
     /// <exception cref="ArgumentException">The ROI has no area.</exception>
@@ -72,7 +72,7 @@ public sealed class BlazeFacePostprocessor
     /// <summary>
     /// Decodes the raw box + score tensors into faces in source-image
     /// pixel coordinates, through <paramref name="transform"/>: the mapping
-    /// <see cref="BlazeFacePreprocessor.Preprocess"/> or
+    /// <see cref="BlazeFacePreprocessor.Preprocess(FrameFlow.Media.IVideoFrame, FaceRoi, Span{float})"/> or
     /// <see cref="ImageToTensor"/> returned for the input. The crop it maps
     /// is expected unrotated, so a box stays axis-aligned.
     /// </summary>

@@ -6,12 +6,14 @@ FrameFlow.Inference.CpuInferenceSession.CpuInferenceSession(string! modelPath) -
 FrameFlow.Inference.CpuInferenceSession.CpuInferenceSession(string! modelPath, Microsoft.Extensions.Logging.ILogger<FrameFlow.Inference.CpuInferenceSession!>? logger) -> void
 FrameFlow.Inference.OrtInferenceSessionBase
 FrameFlow.Inference.OrtInferenceSessionBase.Dispose() -> void
+FrameFlow.Inference.OrtInferenceSessionBase.InputElementTypes.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Graph.DType>!
 FrameFlow.Inference.OrtInferenceSessionBase.InputNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
 FrameFlow.Inference.OrtInferenceSessionBase.InputShapes.get -> System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<long>!>!
 FrameFlow.Inference.OrtInferenceSessionBase.IsDisposed.get -> bool
 FrameFlow.Inference.OrtInferenceSessionBase.OrtInferenceSessionBase(byte[]! modelBytes, Microsoft.ML.OnnxRuntime.SessionOptions! sessionOptions) -> void
 FrameFlow.Inference.OrtInferenceSessionBase.OrtInferenceSessionBase(string! modelPath, Microsoft.ML.OnnxRuntime.SessionOptions! sessionOptions) -> void
 FrameFlow.Inference.OrtInferenceSessionBase.OutputDimensionNames.get -> System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<string!>!>!
+FrameFlow.Inference.OrtInferenceSessionBase.OutputElementTypes.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Graph.DType>!
 FrameFlow.Inference.OrtInferenceSessionBase.OutputNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
 FrameFlow.Inference.OrtInferenceSessionBase.OutputShapes.get -> System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<long>!>!
 FrameFlow.Inference.OrtInferenceSessionBase.Run(FrameFlow.Graph.ICpuTensor! input, FrameFlow.Graph.ICpuTensor! output) -> void

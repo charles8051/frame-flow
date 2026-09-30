@@ -68,6 +68,7 @@ FrameFlow.Yolo.Yolov8Preprocessor
 FrameFlow.Yolo.Yolov8Preprocessor.InputElementCount.get -> int
 FrameFlow.Yolo.Yolov8Preprocessor.InputSize.get -> int
 FrameFlow.Yolo.Yolov8Preprocessor.Preprocess(FrameFlow.Media.IVideoFrame! frame, System.Span<float> destination) -> (float ScaleX, float ScaleY)
+FrameFlow.Yolo.Yolov8Preprocessor.Preprocess(FrameFlow.Media.IVideoFrame! frame, System.Span<System.Half> destination) -> (float ScaleX, float ScaleY)
 FrameFlow.Yolo.Yolov8Preprocessor.Yolov8Preprocessor(int inputSize = 640) -> void
 const FrameFlow.Yolo.CocoClasses.Count = 80 -> int
 const FrameFlow.Yolo.Yolov8ModelDownloader.DefaultModelFileName = "yolov8n.onnx" -> string!

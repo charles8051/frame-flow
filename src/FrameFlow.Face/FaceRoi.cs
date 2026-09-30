@@ -33,7 +33,7 @@ public readonly record struct FaceRoi(float X, float Y, float Width, float Heigh
     /// Maps a point in the ROI's own normalized <c>[0,1]</c> space to a
     /// source-frame pixel coordinate. This is not the model's input space,
     /// which is letterboxed: use the transform
-    /// <see cref="BlazeFacePreprocessor.Preprocess"/> returns for that.
+    /// <see cref="BlazeFacePreprocessor.Preprocess(FrameFlow.Media.IVideoFrame, FaceRoi, Span{float})"/> returns for that.
     /// </summary>
     public (float X, float Y) ToSource(float normalizedX, float normalizedY)
         => (X + normalizedX * Width, Y + normalizedY * Height);

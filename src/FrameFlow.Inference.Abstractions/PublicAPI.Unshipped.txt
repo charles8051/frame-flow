@@ -29,6 +29,9 @@ FrameFlow.Inference.IAllocatingSession.RunAllocating(System.Collections.Generic.
 FrameFlow.Inference.IDeviceInputSession
 FrameFlow.Inference.IDeviceInputSession.CanBind(in FrameFlow.Inference.DeviceTensor tensor) -> bool
 FrameFlow.Inference.IDeviceInputSession.Run(System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Inference.DeviceTensor>! inputs, System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>! outputs) -> void
+FrameFlow.Inference.IElementTypedSession
+FrameFlow.Inference.IElementTypedSession.InputElementTypes.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Graph.DType>!
+FrameFlow.Inference.IElementTypedSession.OutputElementTypes.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Graph.DType>!
 FrameFlow.Inference.IInferenceSession
 FrameFlow.Inference.IInferenceSession.InputNames.get -> System.Collections.Generic.IReadOnlyList<string!>!
 FrameFlow.Inference.IInferenceSession.InputShapes.get -> System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<long>!>!

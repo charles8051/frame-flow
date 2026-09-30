@@ -202,6 +202,39 @@ public sealed class OrtStagingTests
     public void MapElementType_ATypeWithNoDType_IsNull(TensorElementType type) =>
         Assert.Null(OrtInferenceSessionBase.MapElementType(type));
 
+    // ── MapElementTypes: what a model declares → IElementTypedSession (#520) ──
+
+    [Fact]
+    public void MapElementTypes_MapsEachInModelOrder()
+    {
+        var mapped = OrtInferenceSessionBase.MapElementTypes(
+            ["images", "mask"], [TensorElementType.Float16, TensorElementType.Bool], "Input");
+
+        Assert.Equal([DType.Float16, DType.Bool], mapped.Types);
+        Assert.Null(mapped.Unmapped);
+    }
+
+    [Fact]
+    public void MapElementTypes_ATypeWithNoDType_ReportsNoTypes_AndNamesTheFirstSuch()
+    {
+        var mapped = OrtInferenceSessionBase.MapElementTypes(
+            ["scores", "labels", "ids"],
+            [TensorElementType.Float, TensorElementType.String, TensorElementType.Complex64],
+            "Output");
+
+        Assert.Null(mapped.Types);
+        Assert.Equal("Output 'labels' has element type String, which has no FrameFlow DType.", mapped.Unmapped);
+    }
+
+    [Fact]
+    public void MapElementTypes_AValueThatIsNotATensor_ReportsNoTypes_AndNamesIt()
+    {
+        var mapped = OrtInferenceSessionBase.MapElementTypes(["x", "sequence"], [TensorElementType.Float, null], "Input");
+
+        Assert.Null(mapped.Types);
+        Assert.Contains("Input 'sequence' is not a tensor", mapped.Unmapped, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ToTensorShape_InvertsToLongShape()
     {
