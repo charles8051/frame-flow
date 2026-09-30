@@ -26,6 +26,8 @@ namespace FrameFlow.Decoding;
 /// </remarks>
 public sealed unsafe class VulkanDevice : IDisposable
 {
+    // Guards _deviceCtxRef between reading it and taking a new reference from it, against Dispose.
+    private readonly Lock _gate = new();
     private nint _deviceCtxRef;
 
     /// <param name="deviceCtxRef">An <c>AVBufferRef*</c> to a Vulkan device context, which this object now owns.</param>
@@ -82,12 +84,10 @@ public sealed unsafe class VulkanDevice : IDisposable
     /// <param name="family">A queue family in <see cref="QueueFamilies"/>.</param>
     /// <param name="index">A queue index below that family's <see cref="VulkanQueueFamily.QueueCount"/>.</param>
     /// <exception cref="ArgumentOutOfRangeException">FFmpeg created no such queue.</exception>
+    /// <exception cref="InvalidOperationException">FFmpeg's device has no queue lock callbacks.</exception>
     /// <exception cref="ObjectDisposedException">This object is disposed.</exception>
     public VulkanQueueLock LockQueue(uint family, uint index)
     {
-        nint deviceCtxRef = Volatile.Read(ref _deviceCtxRef);
-        ObjectDisposedException.ThrowIf(deviceCtxRef == nint.Zero, this);
-
         bool known = false;
         foreach (var qf in QueueFamilies)
             known |= qf.Index == family && index < (uint)qf.QueueCount;
@@ -99,21 +99,37 @@ public sealed unsafe class VulkanDevice : IDisposable
 
         // The lock holds its own reference, so disposing this object first cannot free the
         // context before the queue is unlocked.
-        nint lockRef = FFAvUtil.av_buffer_ref(deviceCtxRef);
+        nint lockRef;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_deviceCtxRef == nint.Zero, this);
+            lockRef = FFAvUtil.av_buffer_ref(_deviceCtxRef);
+        }
         if (lockRef == nint.Zero)
             throw new InvalidOperationException("av_buffer_ref returned null (out of memory).");
 
+        // FFmpeg 9.0 fills both in at init, as no-ops where the driver synchronises its queues.
         var deviceCtx = (AVHWDeviceContext*)((AVBufferRef*)lockRef)->data;
         var vk = (AVVulkanDeviceContext*)deviceCtx->hwctx;
-        if (vk->lock_queue != null)
-            vk->lock_queue(deviceCtx, family, index);
+        if (vk->lock_queue == null || vk->unlock_queue == null)
+        {
+            FFAvUtil.av_buffer_unref(ref lockRef);
+            throw new InvalidOperationException("FFmpeg's device has no queue lock callbacks.");
+        }
+
+        vk->lock_queue(deviceCtx, family, index);
         return new VulkanQueueLock(lockRef, family, index);
     }
 
     /// <summary>Drops this object's reference to FFmpeg's device context.</summary>
     public void Dispose()
     {
-        nint deviceCtxRef = Interlocked.Exchange(ref _deviceCtxRef, nint.Zero);
+        nint deviceCtxRef;
+        lock (_gate)
+        {
+            deviceCtxRef = _deviceCtxRef;
+            _deviceCtxRef = nint.Zero;
+        }
         if (deviceCtxRef != nint.Zero)
             FFAvUtil.av_buffer_unref(ref deviceCtxRef);
     }
@@ -164,9 +180,7 @@ public sealed unsafe class VulkanQueueLock : IDisposable
             return;
 
         var deviceCtx = (AVHWDeviceContext*)((AVBufferRef*)deviceCtxRef)->data;
-        var vk = (AVVulkanDeviceContext*)deviceCtx->hwctx;
-        if (vk->unlock_queue != null)
-            vk->unlock_queue(deviceCtx, _family, _index);
+        ((AVVulkanDeviceContext*)deviceCtx->hwctx)->unlock_queue(deviceCtx, _family, _index);
         FFAvUtil.av_buffer_unref(ref deviceCtxRef);
     }
 }
