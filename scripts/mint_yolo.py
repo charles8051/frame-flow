@@ -3,8 +3,8 @@
 
 FrameFlow's detector (ADR-0050) is model-shape-aware: it runs any YOLOv8/v11
 transposed detect head (``[1, 4+C, A]``) at any 32-multiple square input size,
-with FP32 graph I/O. This tool *produces* such models and *validates* that they
-satisfy that contract before you ship them.
+with FP32 or FP16 graph I/O. This tool *produces* such models and *validates*
+that they satisfy that contract before you ship them.
 
 It encapsulates the export/convert footguns that otherwise cost a day:
 
@@ -12,9 +12,9 @@ It encapsulates the export/convert footguns that otherwise cost a day:
   onnxconverter-common FP16 pass -- we pin opset 17.
 * onnxslim bakes stale ``value_info`` into the graph; the FP16 pass does not
   update it, producing a model that fails to load -- we strip it.
-* FrameFlow's preprocessor feeds FP32, so FP16 models must keep FP32 graph I/O
-  (``keep_io_types=True``) with FP16 only internally. ultralytics ``half=True``
-  produces FP16 *I/O*, which needs ADR-0050 Tier B -- we deliberately avoid it.
+* FP16 models here keep FP32 graph I/O (``keep_io_types=True``) with FP16 only
+  internally (ADR-0050 Tier A). The detector also runs an FP16-I/O model, such as
+  ultralytics ``half=True`` produces (Tier B); on a Gen9 Intel GPU it ran no faster.
 
 Commands::
 
@@ -103,10 +103,8 @@ def describe_model(model_path: str) -> tuple[bool, str]:
             "output may be [1,A,4+C] (non-transposed) or a different architecture"
         )
 
-    # FrameFlow Tier A feeds FP32. FP16-I/O models need ADR-0050 Tier B.
-    if "float16" in inp.type:
-        notes.append("FP16 graph I/O -- needs ADR-0050 Tier B; not a Tier-A drop-in")
-    elif "float" not in inp.type:
+    # The detector binds FP32 or FP16 graph I/O (ADR-0050 Tier A and Tier B).
+    if "float" not in inp.type:
         notes.append(f"non-float input type {inp.type}")
 
     label = "COCO-80" if class_count == 80 else f"{class_count}-class"

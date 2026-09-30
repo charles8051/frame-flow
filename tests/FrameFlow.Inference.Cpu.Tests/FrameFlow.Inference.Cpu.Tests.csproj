@@ -21,8 +21,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The CPU package and nothing else, so the only native runtime is its own. -->
+    <!-- The CPU package, so the only native runtime is its own. The detectors bring none. -->
     <ProjectReference Include="..\..\src\FrameFlow.Inference.Cpu\FrameFlow.Inference.Cpu.csproj" />
+    <!-- The detectors, run end to end on models with fp16 inputs and outputs (#10). -->
+    <ProjectReference Include="..\..\src\FrameFlow.Yolo\FrameFlow.Yolo.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Face\FrameFlow.Face.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -14,8 +14,10 @@ namespace FrameFlow.Inference;
 /// <typeparam name="TResult">What one run produces, such as a list of detections.</typeparam>
 /// <remarks>
 /// The operator calls a model from one thread at a time. Outputs are allocated once from the
-/// session's static output shapes, as 32-bit floats, and reused on every run. The input on the CPU
-/// path is allocated once too, with the element type <see cref="ImageToTensorOptions.Dtype"/> names.
+/// session's static output shapes and reused on every run. Their element types are those an
+/// <see cref="IElementTypedSession"/> declares, and 32-bit floats for a session that declares none.
+/// The input on the CPU path is allocated once too, with the element type
+/// <see cref="ImageToTensorOptions.Dtype"/> names.
 /// </remarks>
 public interface IImageModel<TResult>
 {

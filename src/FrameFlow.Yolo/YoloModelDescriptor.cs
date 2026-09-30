@@ -21,11 +21,12 @@ namespace FrameFlow.Yolo;
 /// be a multiple of 32.
 /// </para>
 /// <para>
-/// <b>Precision is out of scope here.</b> Per ADR-0050 §3 Tier A, the
-/// detector's tensor path is FP32 host I/O; FP16-internal
-/// (<c>keep_io_types=True</c>) and INT8-dynamic models keep FP32 graph
-/// I/O and run on that path unchanged, so they need no descriptor field.
-/// True FP16 I/O (Tier B) is a separate, opt-in change.
+/// <b>Precision is not a descriptor field.</b> The detector binds the
+/// input and output as FP32 or FP16, as the session declares them through
+/// <see cref="IElementTypedSession"/>, and as FP32 when it declares none
+/// (ADR-0050 §3). FP16-internal (<c>keep_io_types=True</c>) and
+/// INT8-dynamic models keep FP32 graph I/O (Tier A); an FP16-I/O export,
+/// such as Ultralytics' <c>half=True</c>, takes FP16 tensors (Tier B).
 /// </para>
 /// </remarks>
 public sealed record YoloModelDescriptor
