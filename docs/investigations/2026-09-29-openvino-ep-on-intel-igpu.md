@@ -151,10 +151,12 @@ was level with DirectML at best and had a wide tail.
 ```bash
 dotnet publish spikes/OpenVinoProbe/OpenVino -c Release -o out/ov
 dotnet publish spikes/OpenVinoProbe/Dml -c Release -o out/dml
-out/dml/OpenVinoProbe.exe --csv results.csv --tag r1 yolov8n-320-fp16.onnx
-out/ov/OpenVinoProbe.exe --csv results.csv --tag r1 yolov8n-320-fp16.onnx
+out/dml/OpenVinoProbe.exe --runs 150 --budget 12 --csv results.csv --tag r1 yolov8n-320-fp16.onnx
+out/ov/OpenVinoProbe.exe --runs 150 --budget 12 --csv results.csv --tag r1 yolov8n-320-fp16.onnx
 ```
 
-Alternate the two builds over several rounds. `--configs` picks configurations; the OpenVINO build
+These are the first run's limits; the follow-up used `--runs 300 --budget 12`. The probe's own
+defaults (200 runs, 20 s) are not what the tables above used. Alternate the two builds over
+several rounds. `--configs` picks configurations; the OpenVINO build
 has `ort-cpu`, `ov-cpu`, `ov-gpu`, `ov-gpu-f32` and `ov-gpu-low`. The run holds the CPU and GPU
 flat out for its length, so don't run it on a machine doing other work that matters.
