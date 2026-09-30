@@ -84,7 +84,8 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         _audioConfigurator = audioConfigurator;
         _yieldHardwareFrames = yieldHardwareFrames;
         _hardwareDevice = hardwareDevice;
-        _preferredBackends = preferredBackends ?? [];
+        // Copied: a caller's array changed after Create would otherwise reorder later items.
+        _preferredBackends = preferredBackends is null ? [] : [.. preferredBackends];
     }
 
     public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks) =>

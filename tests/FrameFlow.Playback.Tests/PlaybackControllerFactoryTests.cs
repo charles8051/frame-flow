@@ -167,6 +167,17 @@ public sealed class PlaybackControllerFactoryTests
     }
 
     [Fact]
+    public async Task Create_PreferredBackends_AreCopied_SoALaterChangeDoesNotReachTheItems()
+    {
+        HardwareDecodeBackendKind[] order = [HardwareDecodeBackendKind.Vulkan];
+
+        await using var controller = PlaybackController.Create(preferredBackends: order);
+        order[0] = HardwareDecodeBackendKind.Cuda;
+
+        Assert.Equal([HardwareDecodeBackendKind.Vulkan], SessionFactory(controller).PreferredBackends);
+    }
+
+    [Fact]
     public async Task CreatePlaylist_PreferredBackends_ReachTheItemFactory()
     {
         HardwareDecodeBackendKind[] order = [HardwareDecodeBackendKind.Cuda];
