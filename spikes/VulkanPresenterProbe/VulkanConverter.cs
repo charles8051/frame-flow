@@ -330,7 +330,9 @@ internal sealed unsafe class VulkanConverter : IDisposable
         Volatile.Read(ref slot.State) switch
         {
             0 => true,
-            2 => slot.LastPresent is { IsCompleted: true } && _vk.GetFenceStatus(_device, slot.Fence) == Result.Success,
+            // Only a successful update submitted the compositor's signal. A faulted one did not, so
+            // waiting on its release semaphore would never return: the slot is retired.
+            2 => slot.LastPresent is { IsCompletedSuccessfully: true } && _vk.GetFenceStatus(_device, slot.Fence) == Result.Success,
             _ => false,
         };
 

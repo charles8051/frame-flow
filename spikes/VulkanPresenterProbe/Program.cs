@@ -161,56 +161,65 @@ internal sealed class Probe
                 builder = builder.WithHardwareDecode(HardwareDecodeMode.Disabled);
         }
 
-        await using var player = await builder.WithVideoSink(sink).BuildPlayerAsync();
-        var play = await player.PlayAsync();
-        Log($"play: {(play.IsSuccess ? "ok" : play.Error.Message)}");
-
-        using var dump = sink is VulkanPresenterSink stallSink
-            ? new Timer(_ =>
-            {
-                Log($"submitted {stallSink.Submitted} dropped {stallSink.Dropped} shown {_vulkanView!.Shown} completed {_vulkanView.Completed}");
-                foreach (var line in stallSink.DescribeSlots())
-                    Log("  " + line);
-            }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1))
-            : null;
-
-        // Render-loop liveness: animation frames are serviced from the compositor's render loop,
-        // so they stop when the render thread blocks.
-        var top = TopLevel.GetTopLevel(Content)!;
-        void Tick(TimeSpan _)
+        var player = await builder.WithVideoSink(sink).BuildPlayerAsync();
+        Timer? dump = null;
+        try
         {
-            Interlocked.Increment(ref _renderTicks);
-            top.RequestAnimationFrame(Tick);
+            var play = await player.PlayAsync();
+            Log($"play: {(play.IsSuccess ? "ok" : play.Error.Message)}");
+
+            dump = sink is VulkanPresenterSink stallSink
+                ? new Timer(_ =>
+                {
+                    Log($"submitted {stallSink.Submitted} dropped {stallSink.Dropped} shown {_vulkanView!.Shown} completed {_vulkanView.Completed}");
+                    foreach (var line in stallSink.DescribeSlots())
+                        Log("  " + line);
+                }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1))
+                : null;
+
+            // Render-loop liveness: animation frames are serviced from the compositor's render loop,
+            // so they stop when the render thread blocks.
+            var top = TopLevel.GetTopLevel(Content)!;
+            void Tick(TimeSpan _)
+            {
+                Interlocked.Increment(ref _renderTicks);
+                top.RequestAnimationFrame(Tick);
+            }
+            await Dispatcher.UIThread.InvokeAsync(() => top.RequestAnimationFrame(Tick));
+
+            await Task.Delay(_warmup);
+            var process = Process.GetCurrentProcess();
+            var ticksAtStart = Interlocked.Read(ref _renderTicks);
+            var start = Sample(process, sink);
+            var clock = Stopwatch.StartNew();
+            await Task.Delay(_run);
+            var end = Sample(process, sink);
+            var wall = clock.Elapsed.TotalSeconds;
+            var ticks = Interlocked.Read(ref _renderTicks) - ticksAtStart;
+            Log($"render loop: {ticks} animation frames ({ticks / wall:F1}/s)");
+
+            var decoder = player.GetDiagnostics().Pipeline.Stream.VideoDecoder;
+            Log($"decoder backend: {decoder.HardwareBackend?.ToString() ?? "software"}, decode errors {decoder.DecodeErrors}");
+
+            long frames = end.Presented - start.Presented;
+            double cpu = (end.Cpu - start.Cpu).TotalMilliseconds;
+            Log($"window {wall:F1}s: presented {frames} ({frames / wall:F1}/s), dropped {end.Dropped - start.Dropped}, committed {end.Committed - start.Committed}");
+            Log($"process CPU: {cpu:F0} ms ({cpu / wall / 10:F1}% of one core), {(frames > 0 ? cpu / frames : 0):F2} ms per presented frame");
+            if (sink is VulkanPresenterSink v)
+                Log($"vulkan sink: submitted {v.Submitted}, dropped {v.Dropped}, not vulkan {v.NotVulkan}, wrong format {v.WrongFormat}; "
+                    + $"view: shown {_vulkanView!.Shown}, completed {_vulkanView.Completed}, faulted {_vulkanView.Faulted}");
         }
-        await Dispatcher.UIThread.InvokeAsync(() => top.RequestAnimationFrame(Tick));
-
-        await Task.Delay(_warmup);
-        var process = Process.GetCurrentProcess();
-        var ticksAtStart = Interlocked.Read(ref _renderTicks);
-        var start = Sample(process, sink);
-        var clock = Stopwatch.StartNew();
-        await Task.Delay(_run);
-        var end = Sample(process, sink);
-        var wall = clock.Elapsed.TotalSeconds;
-        var ticks = Interlocked.Read(ref _renderTicks) - ticksAtStart;
-        Log($"render loop: {ticks} animation frames ({ticks / wall:F1}/s)");
-
-        var decoder = player.GetDiagnostics().Pipeline.Stream.VideoDecoder;
-        Log($"decoder backend: {decoder.HardwareBackend?.ToString() ?? "software"}, decode errors {decoder.DecodeErrors}");
-
-        long frames = end.Presented - start.Presented;
-        double cpu = (end.Cpu - start.Cpu).TotalMilliseconds;
-        Log($"window {wall:F1}s: presented {frames} ({frames / wall:F1}/s), dropped {end.Dropped - start.Dropped}, committed {end.Committed - start.Committed}");
-        Log($"process CPU: {cpu:F0} ms ({cpu / wall / 10:F1}% of one core), {(frames > 0 ? cpu / frames : 0):F2} ms per presented frame");
-        if (sink is VulkanPresenterSink v)
-            Log($"vulkan sink: submitted {v.Submitted}, dropped {v.Dropped}, not vulkan {v.NotVulkan}, wrong format {v.WrongFormat}; "
-                + $"view: shown {_vulkanView!.Shown}, completed {_vulkanView.Completed}, faulted {_vulkanView.Faulted}");
-
-        await player.PauseAsync();
-        await Task.Delay(300);
-        await Dispatcher.UIThread.InvokeAsync(() => { });
-        await sink.DisposeAsync();
-        device?.Dispose();
+        finally
+        {
+            // The player first: it presents into the sink and borrows the device. Then the UI
+            // thread, which may still hold a Show for a slot the sink is about to free.
+            if (dump is not null)
+                await dump.DisposeAsync();
+            await player.DisposeAsync();
+            await Dispatcher.UIThread.InvokeAsync(() => { });
+            await sink.DisposeAsync();
+            device?.Dispose();
+        }
     }
 
     private static (TimeSpan Cpu, long Presented, long Dropped, long Committed) Sample(Process process, IVideoSink sink)
