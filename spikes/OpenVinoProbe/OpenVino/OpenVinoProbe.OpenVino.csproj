@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>OpenVinoProbe</AssemblyName>
+    <RootNamespace>OpenVinoProbe</RootNamespace>
+    <DefineConstants>$(DefineConstants);OPENVINO</DefineConstants>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- Puts the package's natives (onnxruntime.dll, openvino*.dll, the plugins) at the app root. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <!-- Throwaway spike: not part of FrameFlow.slnx, not packed, not shipped. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../Program.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Intel's ONNX Runtime build with the OpenVINO provider: ORT 1.24.1 on OpenVINO 2025.4.1.
+      Pinned, because the numbers the probe produces belong to this exact runtime.
+      FrameFlow.Inference.Ort brings the managed API at 1.24.4, above this package's 1.24.1 floor.
+    -->
+    <PackageReference Include="Intel.ML.OnnxRuntime.OpenVino" Version="1.24.1" />
+    <ProjectReference Include="../../../src/FrameFlow.Inference.Ort/FrameFlow.Inference.Ort.csproj" />
+  </ItemGroup>
+
+</Project>
