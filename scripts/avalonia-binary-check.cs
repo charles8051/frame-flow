@@ -16,9 +16,9 @@
 // For FrameFlow.Avalonia and FrameFlow.Avalonia.Windows, the app loads every type the
 // assembly declares and binds every type, member and generic method instantiation it
 // references, through the runtime's own binder. A reference that names a type parameter binds
-// only with type arguments, so it is bound where the assembly uses it: in the method bodies
-// that name it, and in the base types, interfaces, explicit implementations and constraints of
-// the types that do, with that method's or type's own type parameters.
+// only with type arguments, so it is bound in each place the assembly uses it: the method
+// bodies that name it, and the base types, interfaces, explicit implementations and
+// constraints of the types that do, each with that method's or type's own type parameters.
 //
 //   dotnet run scripts/avalonia-binary-check.cs
 //   dotnet run scripts/avalonia-binary-check.cs -c Release    # reuses a Release build, as CI does
@@ -61,7 +61,12 @@ static int Check(Assembly assembly)
 
     var failed = new SortedDictionary<int, string>();
     var bound = new HashSet<int>();
-    var needContext = new HashSet<int>();
+
+    // References that name a type parameter, and each context one has been bound in. A token
+    // is shared by every use with the same signature, and the type parameters it names carry
+    // the constraints of whichever type or method it is used in, so each context is bound.
+    var generic = new HashSet<int>();
+    var bindings = new HashSet<(int Token, Type[] TypeArguments, Type[] MethodArguments)>();
 
     // A declared type fails to load when its base type or an interface it implements broke.
     try
@@ -85,7 +90,6 @@ static int Check(Assembly assembly)
         {
             module.ResolveMember(token, typeArguments, methodArguments);
             bound.Add(token);
-            needContext.Remove(token);
 
             // A member of a generic instantiation binds its parent type, in the same context.
             var handle = MetadataTokens.EntityHandle(token);
@@ -97,14 +101,13 @@ static int Check(Assembly assembly)
         }
         catch (ArgumentException ex) when (ex.InnerException is BadImageFormatException && typeArguments is null && methodArguments is null)
         {
-            needContext.Add(token);
+            generic.Add(token);
         }
         catch (Exception ex)
         {
             // A missing field arrives as ArgumentOutOfRangeException: ResolveField swallows the
             // MissingFieldException and retries the token as a literal.
-            failed[token] = $"{Describe(metadata, token)}: {ex.GetType().Name}: {ex.Message}";
-            needContext.Remove(token);
+            failed.TryAdd(token, $"{Describe(metadata, token)}: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -120,7 +123,7 @@ static int Check(Assembly assembly)
     void BindInContext(EntityHandle handle, Type[] typeArguments, Type[] methodArguments)
     {
         int token = MetadataTokens.GetToken(handle);
-        if (needContext.Contains(token))
+        if (generic.Contains(token) && bindings.Add((token, typeArguments, methodArguments)))
             Bind(token, typeArguments, methodArguments);
     }
 
@@ -160,12 +163,14 @@ static int Check(Assembly assembly)
         }
     }
 
-    Console.WriteLine($"{name} (compiled against Avalonia {built}): {bound.Count} references bound, {failed.Count + needContext.Count} not");
+    var unbound = generic.Where(t => !bound.Contains(t) && !failed.ContainsKey(t)).ToList();
+    Console.WriteLine($"{name} (compiled against Avalonia {built}): {bound.Count(t => !failed.ContainsKey(t))} references bound, "
+        + $"{bindings.Count} generic bindings in context, {failed.Count + unbound.Count} not bound");
     foreach (var failure in failed.Values)
         Console.Error.WriteLine($"  {failure}");
-    foreach (int token in needContext)
+    foreach (int token in unbound)
         Console.Error.WriteLine($"  {Describe(metadata, token)}: generic, and nothing in the assembly gives it a context to bind in");
-    return failed.Count + needContext.Count;
+    return failed.Count + unbound.Count;
 }
 
 static string Describe(MetadataReader metadata, int token)
