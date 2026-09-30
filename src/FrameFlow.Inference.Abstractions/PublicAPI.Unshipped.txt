@@ -22,6 +22,7 @@ FrameFlow.Inference.ExecutionProvider
 FrameFlow.Inference.ExecutionProvider.Cpu = 0 -> FrameFlow.Inference.ExecutionProvider
 FrameFlow.Inference.ExecutionProvider.Cuda = 2 -> FrameFlow.Inference.ExecutionProvider
 FrameFlow.Inference.ExecutionProvider.DirectML = 1 -> FrameFlow.Inference.ExecutionProvider
+FrameFlow.Inference.ExecutionProvider.OpenVino = 4 -> FrameFlow.Inference.ExecutionProvider
 FrameFlow.Inference.ExecutionProvider.WindowsML = 3 -> FrameFlow.Inference.ExecutionProvider
 FrameFlow.Inference.IAllocatingSession
 FrameFlow.Inference.IAllocatingSession.RunAllocating(System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>! inputs, System.Collections.Generic.IReadOnlyDictionary<string!, FrameFlow.Graph.ICpuTensor!>? outputs = null) -> FrameFlow.Inference.SessionOutputs<FrameFlow.Graph.ICpuTensor!>!

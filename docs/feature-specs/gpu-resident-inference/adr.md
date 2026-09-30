@@ -200,3 +200,49 @@ selection policy or an explicit device. Both reached the same steady-state speed
 - **First-open cost is unmeasured under the compile API.** ORT's `OrtModelCompilationOptions` may
   amortise the engine build; that is still open.
 
+## Decision 6: OpenVINO is its own execution-provider package, and refuses a partial graph
+
+**Date:** 2026-09-29
+**Status:** Accepted
+**Issue:** #523
+
+### Context
+
+The 2026-09-29 investigation ran ONNX Runtime's standalone OpenVINO build, Intel's
+`Intel.ML.OnnxRuntime.OpenVino`, through `OrtInferenceSessionBase` on a Gen9 Intel GPU below the
+Windows ML floor: about twice DirectML's speed, the whole graph on OpenVINO. #523 left open whether
+the session refuses a model OpenVINO can take only in part, where the provider ranks in the
+factory's default fallback, and how an app picks the device per model.
+
+### Decision
+
+- `FrameFlow.Inference.OpenVino` holds `OpenVinoInferenceSession`, on Intel's package pinned at
+  1.24.1 (ONNX Runtime 1.24.1, OpenVINO 2025.4.1), Windows x64 only. It brings its own
+  `onnxruntime.dll`, so an app picks it or one of the other execution-provider packages.
+- `OpenVinoInferenceSessionOptions` carries the investigation's defaults: the `GPU` device, a
+  compiled-model cache under local app data, the GPU queue throttle at `LOW`, and OpenVINO's own
+  precision hint, with `f32` the opt-out. The device is set per session, so per model.
+- A model OpenVINO takes only in part fails to open (`session.disable_cpu_ep_fallback`), unless
+  `AllowCpuFallback` is set. A split model copies tensors between OpenVINO and ONNX Runtime's CPU
+  provider at every boundary, and nothing reports the split. Refused at open, the failure is one
+  the factory handles per model: that model opens on the next provider, and the next model tries
+  OpenVINO first (#497). `DmlInferenceSession` allows fallback; this session does not follow it.
+- The mapping from options to the provider's options, `load_config` included, is a pure function
+  in `FrameFlow.Inference.OpenVino.Core`. The provider reads a device's properties by its name
+  without an index, so `GPU.1` takes the `GPU` entry.
+- `ExecutionProvider.OpenVino` ranks after CUDA and before Windows ML and DirectML in the default
+  fallback. It serves one vendor's hardware, as CUDA does; Windows ML chooses among vendors and
+  reaches OpenVINO only from 24H2; and it ran about twice as fast as DirectML.
+- ONNX Runtime reports a device OpenVINO does not have as "Failed to load provider", which the
+  factory now reads as the provider being unavailable, as it reads a missing library.
+
+### Consequences
+
+- **The meta devices are not accepted.** `AUTO`, `HETERO` and `MULTI` would need the throttle and
+  the other properties spread across the devices they name.
+- **One GPU among several is chosen by OpenVINO's index**, `GPU.1`, not by adapter LUID, which the
+  provider can also take.
+- **A consumer gets Intel's natives less TBB's debug DLLs and `onnxruntime.lib`**, which the
+  package's build target drops from the output and deps.json. OpenVINO's frontends for other model
+  formats (PyTorch, TensorFlow, Paddle), about 9 MB, stay: whether OpenVINO needs them when ONNX
+  Runtime hands it a graph was not checked.

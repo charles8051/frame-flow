@@ -18,6 +18,10 @@ internal static class OnnxModel
     /// <summary><see cref="Negate(long[])"/> with named, free dimensions where the shape says so.</summary>
     public static byte[] Negate(params Dim[] shape) => SingleNode("Neg", shape);
 
+    /// <summary><c>y = op(x)</c>, for an operator with one input, one output and no attributes set.</summary>
+    public static byte[] Unary(string opType, params long[] shape) =>
+        SingleNode(opType, Array.ConvertAll(shape, d => new Dim(d)));
+
     /// <summary>
     /// Three outputs of <c>x</c>: <c>indices = NonZero(x)</c>, int64 <c>[rank of x, count]</c> where
     /// count is the number of non-zero elements, so its shape depends on <c>x</c>'s values;

@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageTags>onnx;onnxruntime;inference;openvino;intel;gpu;npu;windows;machine-learning;dotnet</PackageTags>
+  </PropertyGroup>
+
+  <!--
+    FrameFlow.Inference.OpenVino: ONNX Runtime's OpenVINO execution provider, from Intel's build of
+    ONNX Runtime (#523). Per ADR-0049 §3 it binds host memory through OrtInferenceSessionBase,
+    unchanged. Windows ML reaches OpenVINO only on Windows 11 24H2 and later; this package reaches it
+    below that floor. docs/investigations/2026-09-29-openvino-ep-on-intel-igpu.md measured it at about
+    twice DirectML on a Gen9 Intel GPU.
+
+    Windows x64 only: Intel's package ships natives for win-x64 and nothing else. The assembly builds
+    on every OS so the solution does; a session refuses to open anywhere else.
+
+    One of the "pick exactly one" set with FrameFlow.Inference.Cpu, .Dml, .Cuda and .WinML: it
+    brings its own onnxruntime.dll, and two in one app conflict. It runs CpuInferenceSession too.
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="../FrameFlow.Inference.Ort/FrameFlow.Inference.Ort.csproj" />
+    <ProjectReference Include="../FrameFlow.Inference.Abstractions/FrameFlow.Inference.Abstractions.csproj" />
+    <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      ORT 1.24.1 on OpenVINO 2025.4.1. Exact, not floating: Intel's builds trail Microsoft's ONNX
+      Runtime releases, and the investigation's numbers belong to this runtime. The package requires
+      Microsoft.ML.OnnxRuntime.Managed 1.24.1 or above; FrameFlow.Inference.Ort's minimum makes that
+      1.24.4, which runs on this native because both are C API version 24 (#438). The spike ran that
+      pair.
+    -->
+    <PackageReference Include="Intel.ML.OnnxRuntime.OpenVino" Version="[1.24.1]" />
+  </ItemGroup>
+
+  <!--
+    Intel's package puts TBB's debug builds and onnxruntime.lib beside the runtime DLLs, and NuGet
+    copies all of runtimes/win-x64/native into an app. Nothing loads them. The targets drop them
+    from a consumer's output and deps.json; scripts/package-smoke.cs checks that from the packed
+    .nupkg.
+  -->
+  <ItemGroup>
+    <None Include="buildTransitive/FrameFlow.Inference.OpenVino.targets" Pack="true" PackagePath="buildTransitive/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FrameFlow.Graph" />
+    <Using Include="FrameFlow.Inference" />
+  </ItemGroup>
+</Project>

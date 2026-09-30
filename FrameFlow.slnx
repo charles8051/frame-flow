@@ -20,6 +20,7 @@
     <Project Path="src/FrameFlow.Inference.Cuda/FrameFlow.Inference.Cuda.csproj" />
     <Project Path="src/FrameFlow.Inference.D3D12/FrameFlow.Inference.D3D12.csproj" />
     <Project Path="src/FrameFlow.Inference.Dml/FrameFlow.Inference.Dml.csproj" />
+    <Project Path="src/FrameFlow.Inference.OpenVino/FrameFlow.Inference.OpenVino.csproj" />
     <Project Path="src/FrameFlow.Inference.WinML/FrameFlow.Inference.WinML.csproj" />
     <Project Path="src/FrameFlow.Media/FrameFlow.Media.csproj" />
     <Project Path="src/FrameFlow.MotionClip/FrameFlow.MotionClip.csproj" />
@@ -63,6 +64,7 @@
     <Project Path="tests/FrameFlow.Inference.Cuda.Tests/FrameFlow.Inference.Cuda.Tests.csproj" />
     <Project Path="tests/FrameFlow.Inference.D3D12.Tests/FrameFlow.Inference.D3D12.Tests.csproj" />
     <Project Path="tests/FrameFlow.Inference.Dml.Tests/FrameFlow.Inference.Dml.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Inference.OpenVino.Tests/FrameFlow.Inference.OpenVino.Tests.csproj" />
     <Project Path="tests/FrameFlow.Inference.WinML.Tests/FrameFlow.Inference.WinML.Tests.csproj" />
     <Project Path="tests/FrameFlow.Integration.Tests/FrameFlow.Integration.Tests.csproj" />
     <Project Path="tests/FrameFlow.Media.Tests/FrameFlow.Media.Tests.csproj" />

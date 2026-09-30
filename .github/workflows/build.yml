@@ -191,7 +191,9 @@ jobs:
       # copy files a package consumer never gets. This packs them and runs an app
       # built against each .nupkg: a CPU session on every OS (#437), and on
       # Windows the package's own DirectML.dll beside onnxruntime.dll in an app
-      # built without a runtime identifier (#433). See scripts/package-smoke.cs.
+      # built without a runtime identifier (#433), and OpenVINO's plugins and TBB
+      # beside Intel's onnxruntime.dll, running on OpenVINO's CPU device (#523).
+      # See scripts/package-smoke.cs.
       - name: Package smoke test
         run: dotnet run scripts/package-smoke.cs -- --no-build
 

@@ -1,0 +1,21 @@
+#nullable enable
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSession
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSession.OpenVinoInferenceSession(byte[]! modelBytes) -> void
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSession.OpenVinoInferenceSession(byte[]! modelBytes, FrameFlow.Inference.OpenVino.OpenVinoInferenceSessionOptions! options) -> void
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSession.OpenVinoInferenceSession(string! modelPath) -> void
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSession.OpenVinoInferenceSession(string! modelPath, FrameFlow.Inference.OpenVino.OpenVinoInferenceSessionOptions! options) -> void
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSessionOptions
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSessionOptions.AllowCpuFallback.get -> bool
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSessionOptions.AllowCpuFallback.init -> void
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSessionOptions.CacheDirectory.get -> string?
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSessionOptions.CacheDirectory.init -> void
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSessionOptions.Device.get -> string!
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSessionOptions.Device.init -> void
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSessionOptions.PrecisionHint.get -> string?
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSessionOptions.PrecisionHint.init -> void
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSessionOptions.QueueThrottle.get -> FrameFlow.Inference.OpenVino.OpenVinoQueueThrottle?
+FrameFlow.Inference.OpenVino.OpenVinoInferenceSessionOptions.QueueThrottle.init -> void
+FrameFlow.Inference.OpenVino.OpenVinoQueueThrottle
+FrameFlow.Inference.OpenVino.OpenVinoQueueThrottle.High = 2 -> FrameFlow.Inference.OpenVino.OpenVinoQueueThrottle
+FrameFlow.Inference.OpenVino.OpenVinoQueueThrottle.Low = 0 -> FrameFlow.Inference.OpenVino.OpenVinoQueueThrottle
+FrameFlow.Inference.OpenVino.OpenVinoQueueThrottle.Medium = 1 -> FrameFlow.Inference.OpenVino.OpenVinoQueueThrottle

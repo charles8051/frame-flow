@@ -17,7 +17,10 @@ internal enum ConstructFailureKind
     /// <summary>The GPU was reset or removed. The provider stays broken for the rest of the process.</summary>
     DeviceLost,
 
-    /// <summary>The provider cannot run here: its library, its entry point or an adapter is missing.</summary>
+    /// <summary>
+    /// The provider cannot run here: its library, its entry point, its platform or an adapter is
+    /// missing.
+    /// </summary>
     ProviderUnavailable,
 }
 
@@ -49,8 +52,10 @@ internal static partial class ConstructFailure
     ];
 
     // ONNX Runtime failing to load a provider's library, and Windows ML naming a provider it does
-    // not have.
-    private static readonly string[] UnavailableTexts = ["LoadLibrary failed", "No registered provider"];
+    // not have. ONNX Runtime also reports "Failed to load provider" when a provider library refuses
+    // its options, which is how OpenVINO's refuses a device it does not have.
+    private static readonly string[] UnavailableTexts =
+        ["LoadLibrary failed", "No registered provider", "Failed to load provider"];
 
     /// <summary>
     /// The kind of <paramref name="exception"/>. When it and the exceptions it wraps say different
@@ -98,6 +103,7 @@ internal static partial class ConstructFailure
         if (exception is OutOfMemoryException || exception.HResult == EOutOfMemory)
             return ConstructFailureKind.OutOfMemory;
         if (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException
+                or PlatformNotSupportedException
             || UnavailableCodes.Contains(exception.HResult))
             return ConstructFailureKind.ProviderUnavailable;
 

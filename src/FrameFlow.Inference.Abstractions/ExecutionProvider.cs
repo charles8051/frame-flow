@@ -42,4 +42,10 @@ public enum ExecutionProvider
     /// CPU and DirectML below that.
     /// </summary>
     WindowsML,
+
+    /// <summary>
+    /// ONNX Runtime's OpenVINO provider, from Intel's build — <c>FrameFlow.Inference.OpenVino</c>,
+    /// Windows x64 only. Runs Intel GPUs and NPUs, and the CPU, below Windows ML's 24H2 floor too.
+    /// </summary>
+    OpenVino,
 }

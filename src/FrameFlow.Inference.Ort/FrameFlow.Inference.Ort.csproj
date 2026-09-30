@@ -44,16 +44,18 @@
     <!-- Managed ORT API only: no native onnxruntime.dll ships from this
          package. The native runtime comes from the one EP package the app
          references: Microsoft.ML.OnnxRuntime (Cpu), .DirectML (Dml), .Gpu (Cuda),
-         or Windows ML's own (WinML).
+         Windows ML's own (WinML), or Intel.ML.OnnxRuntime.OpenVino (OpenVino).
 
          A minimum, not a floating range (#438). NuGet takes the lowest version
          every reference allows, and each native package requires Managed at
          its own version or above, so an app gets the managed layer that matches
          its native one. `1.*` took the newest managed release instead, over an
-         older native. 1.24.4 is the lowest native any EP package pins
+         older native. 1.24.4 is the lowest native any Microsoft EP package pins
          (DirectML's last release); Windows ML's own managed assembly is
          versioned 0.0.0.0, so this one wins over it and runs on its 1.27 native,
-         since the C API serves older callers. -->
+         since the C API serves older callers. Intel's OpenVINO build is 1.24.1
+         and takes Managed 1.24.1 or above, so it runs under this 1.24.4: a patch
+         release adds no C API, and both are API version 24 (#523). -->
     <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.24.4" />
   </ItemGroup>
 

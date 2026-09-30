@@ -406,6 +406,29 @@ public class InferenceSessionFactoryBuilderTests
         Assert.Equal(ExecutionProvider.Cpu, factory.ActiveProvider);
     }
 
+    [Fact]
+    public void DefaultFallback_PutsOpenVinoAfterCuda_AndBeforeWindowsMLAndDirectML()
+    {
+        // OpenVINO serves one vendor, as CUDA does, and ran about twice as fast as DirectML on an
+        // Intel GPU (#523).
+        var attempts = new List<ExecutionProvider>();
+        var factory = InferenceSessionFactoryBuilder.Create(
+            preferred: ExecutionProvider.Cpu,
+            providers: Recording(attempts, opens: ExecutionProvider.DirectML,
+                ExecutionProvider.Cpu, ExecutionProvider.DirectML, ExecutionProvider.Cuda, ExecutionProvider.WindowsML,
+                ExecutionProvider.OpenVino));
+
+        using var session = factory.Open("model.onnx");
+
+        Assert.Equal(
+            new[]
+            {
+                ExecutionProvider.Cpu, ExecutionProvider.Cuda, ExecutionProvider.OpenVino,
+                ExecutionProvider.WindowsML, ExecutionProvider.DirectML,
+            },
+            attempts);
+    }
+
     // ── A cached provider that stops opening ───────────────────────────
 
     [Fact]

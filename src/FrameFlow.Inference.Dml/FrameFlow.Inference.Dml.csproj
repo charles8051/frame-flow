@@ -19,9 +19,9 @@
     relying on it crashes session construction with SEHException.
     DX12-only — does not support Linux or Mac.
 
-    Conflicts with FrameFlow.Inference.Cuda's onnxruntime.dll in a
-    single process — apps pick exactly one inference EP package at
-    the executable boundary.
+    Conflicts with the onnxruntime.dll of FrameFlow.Inference.Cpu, .Cuda,
+    .WinML and .OpenVino in a single process — apps pick exactly one
+    inference EP package at the executable boundary.
   -->
 
   <ItemGroup>

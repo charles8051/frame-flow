@@ -21,10 +21,10 @@
     only from the DirectML or CUDA package, so a CPU-only app on Linux took the
     CUDA package and one on macOS had nothing.
 
-    One of the "pick exactly one" set with FrameFlow.Inference.Dml, .Cuda and
-    .WinML: each carries its own onnxruntime native, and two in one app
-    conflict. Each of those already runs CpuInferenceSession, so an app that
-    references one does not need this.
+    One of the "pick exactly one" set with FrameFlow.Inference.Dml, .Cuda,
+    .WinML and .OpenVino: each carries its own onnxruntime native, and two in
+    one app conflict. Each of those already runs CpuInferenceSession, so an
+    app that references one does not need this.
 
     Microsoft.ML.OnnxRuntime requires Microsoft.ML.OnnxRuntime.Managed at its own
     version or above, and FrameFlow.Inference.Ort's reference is a minimum, so
