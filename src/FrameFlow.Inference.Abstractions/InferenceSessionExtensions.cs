@@ -22,10 +22,11 @@ public static class InferenceSessionExtensions
     /// dynamic output dimension are ignored.
     /// </para>
     /// <para>
-    /// Every output is rented as <typeparamref name="T"/>. <see cref="IInferenceSession"/> does not
-    /// report output element types, so a <typeparamref name="T"/> that does not match an output
-    /// fails in <c>Run</c>. Rent the outputs of a model whose outputs differ in element type one at a
-    /// time with <see cref="CpuTensorPool.Rent{T}"/>.
+    /// Every output is rented as <typeparamref name="T"/>, and a <typeparamref name="T"/> that does
+    /// not match an output fails in <c>Run</c>. An <see cref="IElementTypedSession"/> reports each
+    /// output's type in <see cref="IElementTypedSession.OutputElementTypes"/>. Rent the outputs of a
+    /// model whose outputs differ in element type one at a time with
+    /// <see cref="CpuTensorPool.Rent{T}"/>.
     /// </para>
     /// <para>
     /// Every shape is resolved before anything is rented, and a rent that fails returns the tensors

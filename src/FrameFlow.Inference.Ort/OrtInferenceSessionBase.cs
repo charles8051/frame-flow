@@ -51,7 +51,7 @@ namespace FrameFlow.Inference;
 /// instance method that cannot run before <c>this</c> exists.
 /// </para>
 /// </remarks>
-public abstract class OrtInferenceSessionBase : IAllocatingSession
+public abstract class OrtInferenceSessionBase : IAllocatingSession, IElementTypedSession
 {
     private static readonly IReadOnlyDictionary<string, ICpuTensor> NoOutputs =
         new Dictionary<string, ICpuTensor>();
@@ -59,6 +59,8 @@ public abstract class OrtInferenceSessionBase : IAllocatingSession
     private readonly InferenceSession _session;
     private readonly SessionOptions _sessionOptions;
     private readonly RunOptions _runOptions;
+    private readonly ElementTypes _inputElementTypes;
+    private readonly ElementTypes _outputElementTypes;
 
     /// <summary>
     /// CPU memory info used to type host-memory <see cref="OrtValue"/>s
@@ -85,6 +87,22 @@ public abstract class OrtInferenceSessionBase : IAllocatingSession
     /// <inheritdoc />
     /// <remarks>The names are the model's <c>dim_param</c>s, as ONNX Runtime reports them.</remarks>
     public IReadOnlyList<IReadOnlyList<string>> OutputDimensionNames { get; }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The types are ONNX Runtime's metadata, each mapped to its <see cref="DType"/>. A model with an
+    /// input that has none, such as a string, loads and runs, and this throws.
+    /// </remarks>
+    public IReadOnlyList<DType> InputElementTypes =>
+        _inputElementTypes.Types ?? throw new NotSupportedException(_inputElementTypes.Unmapped);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The types are ONNX Runtime's metadata, each mapped to its <see cref="DType"/>. A model with an
+    /// output that has none, such as a string, loads and runs, and this throws.
+    /// </remarks>
+    public IReadOnlyList<DType> OutputElementTypes =>
+        _outputElementTypes.Types ?? throw new NotSupportedException(_outputElementTypes.Unmapped);
 
     /// <summary>
     /// The underlying ORT session. Exposed to derived EPs that need
@@ -178,6 +196,8 @@ public abstract class OrtInferenceSessionBase : IAllocatingSession
         InputShapes = BuildShapes(_session.InputMetadata, InputNames);
         OutputShapes = BuildShapes(_session.OutputMetadata, OutputNames);
         OutputDimensionNames = BuildDimensionNames(_session.OutputMetadata, OutputNames);
+        _inputElementTypes = BuildElementTypes(_session.InputMetadata, InputNames, "Input");
+        _outputElementTypes = BuildElementTypes(_session.OutputMetadata, OutputNames, "Output");
     }
 
     /// <summary>
@@ -197,6 +217,8 @@ public abstract class OrtInferenceSessionBase : IAllocatingSession
         InputShapes = BuildShapes(_session.InputMetadata, InputNames);
         OutputShapes = BuildShapes(_session.OutputMetadata, OutputNames);
         OutputDimensionNames = BuildDimensionNames(_session.OutputMetadata, OutputNames);
+        _inputElementTypes = BuildElementTypes(_session.InputMetadata, InputNames, "Input");
+        _outputElementTypes = BuildElementTypes(_session.OutputMetadata, OutputNames, "Output");
     }
 
     /// <summary>
@@ -775,6 +797,57 @@ public abstract class OrtInferenceSessionBase : IAllocatingSession
         }
         return new ReadOnlyCollection<IReadOnlyList<string>>(dimensionNames);
     }
+
+    /// <summary>
+    /// Each name's <see cref="NodeMetadata.ElementDataType"/>, mapped by <see cref="MapElementTypes"/>.
+    /// A value that is not a tensor has no element type.
+    /// </summary>
+    private static ElementTypes BuildElementTypes(
+        IReadOnlyDictionary<string, NodeMetadata> metadata,
+        IReadOnlyList<string> names,
+        string kind
+    )
+    {
+        var types = new TensorElementType?[names.Count];
+        for (int i = 0; i < names.Count; i++)
+        {
+            var node = metadata[names[i]];
+            types[i] = node.IsTensor ? node.ElementDataType : null;
+        }
+        return MapElementTypes(names, types, kind);
+    }
+
+    /// <summary>
+    /// The <see cref="DType"/> of each of <paramref name="names"/>, in order; or, when one has none,
+    /// the message that names the first such. A null type is a value that is not a tensor. Pure;
+    /// exposed <c>internal</c> for direct unit testing.
+    /// </summary>
+    /// <param name="names">The model's input or output names.</param>
+    /// <param name="types">The ONNX Runtime type of each, or null for one that is not a tensor.</param>
+    /// <param name="kind"><c>Input</c> or <c>Output</c>, for the message.</param>
+    internal static ElementTypes MapElementTypes(
+        IReadOnlyList<string> names,
+        IReadOnlyList<TensorElementType?> types,
+        string kind
+    )
+    {
+        var mapped = new DType[names.Count];
+        for (int i = 0; i < mapped.Length; i++)
+        {
+            if (types[i] is not { } type)
+                return new ElementTypes(null, $"{kind} '{names[i]}' is not a tensor, so it has no element type.");
+            if (MapElementType(type) is not { } dtype)
+                return new ElementTypes(null, $"{kind} '{names[i]}' has element type {type}, which has no FrameFlow DType.");
+            mapped[i] = dtype;
+        }
+        return new ElementTypes(new ReadOnlyCollection<DType>(mapped), null);
+    }
+
+    /// <summary>
+    /// A model's element types for its inputs or its outputs: <see cref="Types"/>, or, when one has
+    /// no <see cref="DType"/>, why not in <see cref="Unmapped"/>.
+    /// </summary>
+    internal readonly record struct ElementTypes(IReadOnlyList<DType>? Types, string? Unmapped);
 
     /// <summary>
     /// Converts one ORT metadata dimension array (<c>int[]</c>, with

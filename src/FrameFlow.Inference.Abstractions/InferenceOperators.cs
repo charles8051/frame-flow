@@ -184,24 +184,34 @@ internal sealed class InferenceRunner<TResult>(IImageModel<TResult> model, IDevi
         };
     }
 
+    /// <summary>
+    /// The outputs, at the model's static shapes, in the element types the session declares, or as
+    /// floats when it declares none (#520).
+    /// </summary>
     private Dictionary<string, ICpuTensor> Outputs()
     {
         if (_outputs is not null)
             return _outputs;
 
         var session = model.Session;
+        var declared = (session as IElementTypedSession)?.OutputElementTypes;
         var outputs = new Dictionary<string, ICpuTensor>(session.OutputNames.Count);
         for (int i = 0; i < session.OutputNames.Count; i++)
         {
+            string name = session.OutputNames[i];
             var dims = session.OutputShapes[i];
             if (dims.Any(d => d < 0))
             {
                 throw new NotSupportedException(
-                    $"Output '{session.OutputNames[i]}' has a dynamic dimension [{string.Join(", ", dims)}]; the operator "
+                    $"Output '{name}' has a dynamic dimension [{string.Join(", ", dims)}]; the operator "
                         + "allocates outputs from the model's static shapes.");
             }
 
-            outputs[session.OutputNames[i]] = _pool.Rent<float>(new TensorShape(dims.Select(d => checked((int)d)).ToArray()));
+            outputs[name] = CpuTensors.Rent(
+                _pool,
+                DeclaredElementTypes.OrFloat32(declared, session.OutputNames, i, "output"),
+                new TensorShape(dims.Select(d => checked((int)d)).ToArray()),
+                $"Output '{name}'");
         }
 
         return _outputs = outputs;

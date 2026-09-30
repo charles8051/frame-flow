@@ -109,6 +109,32 @@ public sealed class InferenceOperatorTests
         Assert.Throws<NotSupportedException>(() => runner.Run(frame));
     }
 
+    /// <summary>
+    /// The outputs take the element types the session declares (#520), so a model with an fp16 output
+    /// is not handed floats that ONNX Runtime refuses.
+    /// </summary>
+    [Fact]
+    public void TheOutputs_TakeTheElementTypesTheSessionDeclares()
+    {
+        var session = new TypedOutputsSession([DType.Float16, DType.Int64]);
+        var runner = new InferenceRunner<DType[]>(new OutputTypesModel(session), stage: null);
+        using var frame = Solid(0, 0, 0, TimeSpan.Zero);
+
+        Assert.Equal([DType.Float16, DType.Int64], runner.Run(frame).Result);
+    }
+
+    [Fact]
+    public void AnOutputTypeNoHostTensorHolds_IsRefusedByName()
+    {
+        var session = new TypedOutputsSession([DType.Float32, DType.BFloat16]);
+        var runner = new InferenceRunner<DType[]>(new OutputTypesModel(session), stage: null);
+        using var frame = Solid(0, 0, 0, TimeSpan.Zero);
+
+        var error = Assert.Throws<NotSupportedException>(() => runner.Run(frame));
+        Assert.Contains("'b'", error.Message, StringComparison.Ordinal);
+        Assert.Contains("BFloat16", error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void AModelWithADynamicOutput_IsRefusedByName()
     {
@@ -154,6 +180,22 @@ public sealed class InferenceOperatorTests
 
         var error = Assert.Throws<ArgumentException>(() => InferenceOperators.Infer("infer", model, other));
         Assert.Equal("deviceStage", error.ParamName);
+    }
+
+    /// <summary>
+    /// The D3D12 stage writes floats only, so a model that takes halves never gets its tensor on the
+    /// device route: the node refuses a float stage for it, and its input is prepared on the CPU.
+    /// </summary>
+    [Fact]
+    public void AFloatStage_IsRefusedForAModelThatTakesHalves()
+    {
+        var halves = new ImageToTensorOptions(2, 2) { Dtype = DType.Float16 };
+        var model = new InputRecordingModel(new InputRecordingSession(), halves);
+
+        var error = Assert.Throws<ArgumentException>(
+            () => InferenceOperators.Infer("infer", model, new FakeStage(halves with { Dtype = DType.Float32 })));
+        Assert.Equal("deviceStage", error.ParamName);
+        Assert.Contains("Float16", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -357,6 +399,45 @@ public sealed class InferenceOperatorTests
     }
 
     private sealed record RecordedInput(DType Dtype, TensorShape Shape, byte[] Bytes);
+
+    /// <summary>A model whose result is the element type of each output the operator allocated.</summary>
+    private sealed class OutputTypesModel(TypedOutputsSession session) : IImageModel<DType[]>
+    {
+        public IInferenceSession Session => session;
+
+        public string InputName => "x";
+
+        public ImageToTensorOptions Input { get; } = new(2, 2);
+
+        public RotatedRect CropFor(IVideoFrame frame) => RotatedRect.Whole(frame);
+
+        public DType[] Decode(IReadOnlyDictionary<string, ICpuTensor> outputs, TensorTransform transform, IVideoFrame frame) =>
+            [.. session.OutputNames.Select(name => outputs[name].Dtype)];
+    }
+
+    /// <summary>Two outputs, <c>a</c> and <c>b</c>, of the types it is given. A run writes nothing.</summary>
+    private sealed class TypedOutputsSession(DType[] outputTypes) : IElementTypedSession
+    {
+        public IReadOnlyList<string> InputNames => ["x"];
+
+        public IReadOnlyList<string> OutputNames => ["a", "b"];
+
+        public IReadOnlyList<IReadOnlyList<long>> InputShapes => [new long[] { 1, 3, 2, 2 }];
+
+        public IReadOnlyList<IReadOnlyList<long>> OutputShapes => [new long[] { 1, 2 }, new long[] { 3 }];
+
+        public IReadOnlyList<DType> InputElementTypes => [DType.Float32];
+
+        public IReadOnlyList<DType> OutputElementTypes => outputTypes;
+
+        public void Run(IReadOnlyDictionary<string, ICpuTensor> inputs, IReadOnlyDictionary<string, ICpuTensor> outputs)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+    }
 
     private sealed class FakeStage(ImageToTensorOptions options) : IDeviceImageToTensor
     {
