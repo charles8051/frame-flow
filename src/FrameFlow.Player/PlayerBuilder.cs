@@ -37,6 +37,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
     // Null: derived from the video path (#294).
     private bool? _yieldHardwareFrames;
     private HardwareDevice? _hardwareDevice;
+    private HardwareDecodeBackendKind[] _preferredBackends = [];
     private bool _activateAudioSink = true;
 
     public IPlayerBuilder WithMedia(string path)
@@ -153,6 +154,13 @@ internal sealed class PlayerBuilder : IPlayerBuilder
         return this;
     }
 
+    public IPlayerBuilder WithPreferredBackends(params HardwareDecodeBackendKind[] backends)
+    {
+        ArgumentNullException.ThrowIfNull(backends);
+        _preferredBackends = [.. backends];
+        return this;
+    }
+
     public IPlayerBuilder WithAudioActivation(bool activateAudioSink = true)
     {
         _activateAudioSink = activateAudioSink;
@@ -209,6 +217,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
             latenessRecovery: _latenessRecovery,
             timeProvider: _timeProvider,
             hardwareDevice: _hardwareDevice,
+            preferredBackends: _preferredBackends,
             cancellationToken: cancellationToken
         );
     }

@@ -155,6 +155,42 @@ public sealed class PlaybackControllerFactoryTests
     }
 
     [Fact]
+    public async Task Create_PreferredBackends_ReachTheItemFactory()
+    {
+        // #532: the player opened every decoder with a mode and no order, so a caller's order
+        // never reached one.
+        HardwareDecodeBackendKind[] order = [HardwareDecodeBackendKind.Vulkan, HardwareDecodeBackendKind.VaApi];
+
+        await using var controller = PlaybackController.Create(preferredBackends: order);
+
+        Assert.Equal(order, SessionFactory(controller).PreferredBackends);
+    }
+
+    [Fact]
+    public async Task Create_PreferredBackends_AreCopied_SoALaterChangeDoesNotReachTheItems()
+    {
+        HardwareDecodeBackendKind[] order = [HardwareDecodeBackendKind.Vulkan];
+
+        await using var controller = PlaybackController.Create(preferredBackends: order);
+        order[0] = HardwareDecodeBackendKind.Cuda;
+
+        Assert.Equal([HardwareDecodeBackendKind.Vulkan], SessionFactory(controller).PreferredBackends);
+    }
+
+    [Fact]
+    public async Task CreatePlaylist_PreferredBackends_ReachTheItemFactory()
+    {
+        HardwareDecodeBackendKind[] order = [HardwareDecodeBackendKind.Cuda];
+
+        await using var controller = PlaybackController.CreatePlaylist(
+            new PlaylistCoordinator(RepeatMode.Off),
+            preferredBackends: order
+        );
+
+        Assert.Equal(order, SessionFactory(controller).PreferredBackends);
+    }
+
+    [Fact]
     public void CreatePlaylist_InvertedHysteresis_ThrowsNamingTheParameter()
     {
         var inverted = new LatenessRecoveryOptions
