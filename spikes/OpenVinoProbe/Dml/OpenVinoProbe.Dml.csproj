@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>OpenVinoProbe</AssemblyName>
+    <RootNamespace>OpenVinoProbe</RootNamespace>
+    <DefineConstants>$(DefineConstants);DML</DefineConstants>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <!-- Throwaway spike: not part of FrameFlow.slnx, not packed, not shipped. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../Program.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The DirectML session as an app gets it, with the DirectML.dll the package carries. -->
+    <ProjectReference Include="../../../src/FrameFlow.Inference.Dml/FrameFlow.Inference.Dml.csproj" />
+  </ItemGroup>
+
+</Project>

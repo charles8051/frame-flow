@@ -221,6 +221,10 @@ using the DirectML package directly.
 default and by name and adapter on request, which is recommendation 2 settled on design grounds; see
 [decision 5](../feature-specs/gpu-resident-inference/adr.md). Recommendations 3 and 4 are still open.
 
+**Follow-up, 2026-09-29:** ONNX Runtime's standalone OpenVINO build runs on a Gen9 Intel GPU, whole
+graph, below the 24H2 floor. The 12th-generation floor in recommendation 4 does not apply to it. See
+[2026-09-29-openvino-ep-on-intel-igpu.md](2026-09-29-openvino-ep-on-intel-igpu.md).
+
 ## Reproducing / re-checking this
 
 `spikes/WinMlProbe` is a throwaway console app, deliberately **not** in
