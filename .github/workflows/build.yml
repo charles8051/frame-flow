@@ -197,10 +197,18 @@ jobs:
       - name: Package smoke test
         run: dotnet run scripts/package-smoke.cs -- --no-build
 
-      # The Avalonia packages compile against Avalonia 11, and an app on 12 resolves 12. This
-      # builds the Avalonia projects and their tests against 12 and runs the tests, so a source
-      # break on 12 fails here. It proves source compatibility only: a DLL built against 11 is
-      # not what runs. Last in the job, because it rebuilds those projects with other packages.
+      # The Avalonia packages compile against Avalonia 11, and an app on 12 runs that DLL on
+      # 12. This runs it the same way: an app on Avalonia 12 references the Avalonia projects
+      # as they ship and binds every type and member reference in FrameFlow.Avalonia and
+      # FrameFlow.Avalonia.Windows against 12, so a reference 12 removed or reshaped fails
+      # here, naming the member. Before the next step, which rebuilds those projects against
+      # 12. See scripts/avalonia-binary-check.cs.
+      - name: Avalonia 12 binary check
+        run: dotnet run scripts/avalonia-binary-check.cs -c Release -p:FrameFlowLocalFeedDisable=true
+
+      # This builds the Avalonia projects and their tests against 12 and runs the tests, so a
+      # source break on 12 fails here, and the tests run on 12's controls and Fluent theme.
+      # Last in the job, because it rebuilds those projects with other packages.
       - name: Avalonia 12
         shell: bash
         run: |
