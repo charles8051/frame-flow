@@ -30,19 +30,21 @@ namespace FrameFlow.Yolo;
 /// span at a host staging buffer and then upload it to a
 /// <c>CudaTensor&lt;float&gt;</c>; CPU/DML-backed callers point the
 /// span directly at a <c>CpuTensor&lt;float&gt;.Span</c>, skipping the
-/// intermediate buffer.
+/// intermediate buffer. A model with an fp16 input takes a
+/// <see cref="Span{Half}"/> instead (ADR-0050 §3 Tier B).
 /// </para>
 /// <para>
 /// <b>Input size is per-instance (ADR-0050 §1).</b> The side length is
 /// set at construction from the model's descriptor rather than a
 /// compile-time constant, so smaller-input models (416, 320) share this
-/// code. The scale factors returned by <see cref="Preprocess"/> are
+/// code. The scale factors returned by <see cref="Preprocess(IVideoFrame, Span{float})"/> are
 /// computed against the configured size.
 /// </para>
 /// </remarks>
 public sealed class Yolov8Preprocessor
 {
     private readonly ImageToTensorOptions _options;
+    private readonly ImageToTensorOptions _halfOptions;
 
     /// <summary>The input tensor, and how a frame fills it.</summary>
     internal ImageToTensorOptions Options => _options;
@@ -68,6 +70,7 @@ public sealed class Yolov8Preprocessor
             Sampling = ImageSampling.Nearest,
             Normalization = TensorNormalization.ZeroToOne,
         };
+        _halfOptions = _options with { Dtype = DType.Float16 };
     }
 
     /// <summary>
@@ -90,6 +93,22 @@ public sealed class Yolov8Preprocessor
         ArgumentNullException.ThrowIfNull(frame);
 
         ImageToTensor.Write(frame, RotatedRect.Whole(frame), _options, destination);
+
+        return ((float)frame.Width / InputSize, (float)frame.Height / InputSize);
+    }
+
+    /// <summary>
+    /// <see cref="Preprocess(IVideoFrame, Span{float})"/> for a model whose input is fp16: each
+    /// value rounded to the nearest <see cref="Half"/>.
+    /// </summary>
+    /// <returns>(scaleX, scaleY), as the float overload returns them.</returns>
+    /// <exception cref="NotSupportedException">The frame is not Bgra32 or Rgba32.</exception>
+    /// <exception cref="InvalidOperationException">The frame is not on the CPU.</exception>
+    public (float ScaleX, float ScaleY) Preprocess(IVideoFrame frame, Span<Half> destination)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+
+        ImageToTensor.Write(frame, RotatedRect.Whole(frame), _halfOptions, destination);
 
         return ((float)frame.Width / InputSize, (float)frame.Height / InputSize);
     }

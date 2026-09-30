@@ -31,17 +31,19 @@ namespace FrameFlow.Face;
 /// aspect and is centred in the square input between black bars, and
 /// anything past the frame's edge is black too. A stretched non-square ROI
 /// gives every box the ROI's aspect instead of the face's (#473).
-/// <see cref="Preprocess"/> returns the mapping back to the frame for
+/// <see cref="Preprocess(IVideoFrame, FaceRoi, Span{float})"/> returns the mapping back to the frame for
 /// <see cref="BlazeFacePostprocessor.Decode(ReadOnlySpan{float}, ReadOnlySpan{float}, TensorTransform)"/>.
 /// </para>
 /// <para>
 /// The pixel work is <see cref="ImageToTensor"/>'s: the ROI, letterboxed,
-/// nearest-neighbour, <c>[-1, 1]</c>, RGB, in the model's layout.
+/// nearest-neighbour, <c>[-1, 1]</c>, RGB, in the model's layout, as floats,
+/// or as halves for a model whose input is fp16.
 /// </para>
 /// </remarks>
 public sealed class BlazeFacePreprocessor
 {
     private readonly ImageToTensorOptions _options;
+    private readonly ImageToTensorOptions _halfOptions;
 
     /// <summary>The input tensor, and how a frame fills it.</summary>
     internal ImageToTensorOptions Options => _options;
@@ -66,6 +68,7 @@ public sealed class BlazeFacePreprocessor
         InputSize = inputSize;
         Layout = layout;
         _options = OptionsFor(inputSize, layout);
+        _halfOptions = _options with { Dtype = DType.Float16 };
     }
 
     /// <summary>The input tensor for a square model input of <paramref name="inputSize"/> px, and how a frame fills it.</summary>
@@ -96,5 +99,20 @@ public sealed class BlazeFacePreprocessor
         ArgumentNullException.ThrowIfNull(frame);
 
         return ImageToTensor.Write(frame, roi.ToCrop(), _options, destination);
+    }
+
+    /// <summary>
+    /// <see cref="Preprocess(IVideoFrame, FaceRoi, Span{float})"/> for a model whose input is fp16:
+    /// each value rounded to the nearest <see cref="Half"/>.
+    /// </summary>
+    /// <returns>The mapping from the model's normalized input coordinates to frame pixels.</returns>
+    /// <exception cref="ArgumentException">The ROI has no area.</exception>
+    /// <exception cref="NotSupportedException">The frame is not Bgra32 or Rgba32.</exception>
+    /// <exception cref="InvalidOperationException">The frame is not on the CPU.</exception>
+    public TensorTransform Preprocess(IVideoFrame frame, FaceRoi roi, Span<Half> destination)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+
+        return ImageToTensor.Write(frame, roi.ToCrop(), _halfOptions, destination);
     }
 }

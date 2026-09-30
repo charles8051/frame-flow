@@ -15,3 +15,9 @@ using System.Runtime.CompilerServices;
 // The DirectML handoff tests drive one operator run at a time to compare each result with the
 // tensor the stage wrote.
 [assembly: InternalsVisibleTo("FrameFlow.Inference.Dml.Tests")]
+
+// The detectors bind a model's fp16 or fp32 tensors as its session declares them and read either
+// as floats (#10), with the same element-type rule, rental and half-to-float kernel as the
+// inference operator.
+[assembly: InternalsVisibleTo("FrameFlow.Yolo")]
+[assembly: InternalsVisibleTo("FrameFlow.Face")]

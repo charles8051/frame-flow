@@ -37,6 +37,14 @@ namespace FrameFlow.Yolo;
 /// handles staging per ADR-0049 §3.
 /// </para>
 /// <para>
+/// <b>Element types.</b> The input and the output are fp32 or fp16 as an
+/// <see cref="FrameFlow.Inference.IElementTypedSession"/> declares them,
+/// and fp32 for a session that declares none (ADR-0050 §3 Tier B). An
+/// fp16 output is converted to floats once per frame for the
+/// postprocessor. Any other element type is refused when the detector is
+/// built.
+/// </para>
+/// <para>
 /// <b>Not thread-safe.</b> A single detector instance is for sequential
 /// use. Multi-consumer workloads instantiate per-consumer detectors.
 /// </para>
@@ -45,11 +53,17 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
 {
     private readonly FrameFlow.Inference.IInferenceSession _session;
     private readonly CpuTensorPool _pool;
-    private readonly CpuTensor<float> _inputTensor;
-    private readonly CpuTensor<float> _outputTensor;
+    private readonly ICpuTensor _inputTensor;
+    private readonly ICpuTensor _outputTensor;
+    private readonly ImageToTensorOptions _input;
     private readonly Yolov8Preprocessor _preprocessor;
     private readonly Yolov8Postprocessor _postprocessor;
     private readonly ILogger<Yolov8Detector> _logger;
+
+    // The output as floats: one reader for Detect and one for the operator's Decode, so the two
+    // never share a buffer.
+    private readonly FloatReader _output = new();
+    private readonly FloatReader _decodedOutput = new();
     private bool _disposed;
 
     // Per-stage wall-clock timing of the most recent Detect() call.
@@ -62,8 +76,8 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
     private Yolov8Detector(
         FrameFlow.Inference.IInferenceSession session,
         CpuTensorPool pool,
-        CpuTensor<float> inputTensor,
-        CpuTensor<float> outputTensor,
+        ICpuTensor inputTensor,
+        ICpuTensor outputTensor,
         Yolov8Preprocessor preprocessor,
         Yolov8Postprocessor postprocessor,
         ILogger<Yolov8Detector> logger
@@ -73,6 +87,7 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
         _pool = pool;
         _inputTensor = inputTensor;
         _outputTensor = outputTensor;
+        _input = preprocessor.Options with { Dtype = inputTensor.Dtype };
         _preprocessor = preprocessor;
         _postprocessor = postprocessor;
         _logger = logger;
@@ -94,6 +109,10 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
     /// behaviour (no reporting).
     /// </param>
     /// <param name="thresholds">Which candidate boxes to keep; <see cref="YoloThresholds.Default"/> when null.</param>
+    /// <exception cref="NotSupportedException">
+    /// The session declares an input or output element type other than Float32 or Float16. The
+    /// message names it. The session is disposed.
+    /// </exception>
     public static Yolov8Detector Create(
         FrameFlow.Inference.IInferenceSession session,
         ILoggerFactory? loggerFactory = null,
@@ -114,20 +133,26 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
         // models self-configure. Throws loudly on a head we can't read
         // (ADR-0050 §5).
         var shape = descriptor ?? YoloModelDescriptor.FromSession(session);
-        LogModelShape(log, shape.InputSize, shape.ClassCount, shape.AnchorCount);
 
         CpuTensorPool? pool = null;
-        CpuTensor<float>? inputTensor = null;
-        CpuTensor<float>? outputTensor = null;
+        ICpuTensor? inputTensor = null;
+        ICpuTensor? outputTensor = null;
         try
         {
+            // The element types the session declares (ADR-0050 §3 Tier B). Inside the guarded
+            // region, so a model refused for them disposes the session, as one that fails warmup does.
+            var typed = session as FrameFlow.Inference.IElementTypedSession;
+            var inputType = FrameFlow.Inference.Core.DeclaredElementTypes.Floating(
+                typed?.InputElementTypes, session.InputNames, 0, "input", nameof(Yolov8Detector));
+            var outputType = FrameFlow.Inference.Core.DeclaredElementTypes.Floating(
+                typed?.OutputElementTypes, session.OutputNames, 0, "output", nameof(Yolov8Detector));
+            LogModelShape(log, shape.InputSize, shape.ClassCount, shape.AnchorCount, inputType, outputType);
+
             pool = new CpuTensorPool();
-            inputTensor = pool.Rent<float>(
-                new TensorShape(1, 3, shape.InputSize, shape.InputSize)
-            );
-            outputTensor = pool.Rent<float>(
-                new TensorShape(1, shape.OutputChannelCount, shape.AnchorCount)
-            );
+            inputTensor = CpuTensors.Rent(
+                pool, inputType, new TensorShape(1, 3, shape.InputSize, shape.InputSize), "The input");
+            outputTensor = CpuTensors.Rent(
+                pool, outputType, new TensorShape(1, shape.OutputChannelCount, shape.AnchorCount), "The output");
 
             var detector = new Yolov8Detector(
                 session,
@@ -214,14 +239,15 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
     public void Warmup()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _inputTensor.Span.Clear();
-        _outputTensor.Span.Clear();
+        CpuTensors.Clear(_inputTensor);
+        CpuTensors.Clear(_outputTensor);
         var sw = Stopwatch.StartNew();
         _session.Run(_inputTensor, _outputTensor);
         sw.Stop();
         LogWarmupCompleted(_logger, sw.Elapsed.TotalMilliseconds);
 
-        int nonFinite = CountNonFinite(_outputTensor.ReadOnlySpan);
+        // An fp16 NaN or infinity converts to a float one, so this checks either output type.
+        int nonFinite = CountNonFinite(_output.Read(_outputTensor));
         if (nonFinite > 0)
         {
             throw new InvalidOperationException(
@@ -377,10 +403,12 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        // Preprocess writes directly into the input tensor's Span<float>.
-        // No host→device staging — the EP handles that internally.
+        // Preprocess writes directly into the input tensor's span, of floats
+        // or halves. No host→device staging — the EP handles that internally.
         var swPre = Stopwatch.StartNew();
-        var (scaleX, scaleY) = _preprocessor.Preprocess(frame, _inputTensor.Span);
+        var (scaleX, scaleY) = _inputTensor is CpuTensor<Half> halves
+            ? _preprocessor.Preprocess(frame, halves.Span)
+            : _preprocessor.Preprocess(frame, ((CpuTensor<float>)_inputTensor).Span);
         swPre.Stop();
 
         var swRun = Stopwatch.StartNew();
@@ -388,7 +416,7 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
         swRun.Stop();
 
         var swPost = Stopwatch.StartNew();
-        var detections = _postprocessor.Decode(_outputTensor.ReadOnlySpan, scaleX, scaleY);
+        var detections = _postprocessor.Decode(_output.Read(_outputTensor), scaleX, scaleY);
         swPost.Stop();
 
         var preMs = swPre.Elapsed.TotalMilliseconds;
@@ -436,14 +464,14 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
 
     string IImageModel<IReadOnlyList<Detection>>.InputName => _session.InputNames[0];
 
-    ImageToTensorOptions IImageModel<IReadOnlyList<Detection>>.Input => _preprocessor.Options;
+    ImageToTensorOptions IImageModel<IReadOnlyList<Detection>>.Input => _input;
 
     RotatedRect IImageModel<IReadOnlyList<Detection>>.CropFor(IVideoFrame frame) => RotatedRect.Whole(frame);
 
     IReadOnlyList<Detection> IImageModel<IReadOnlyList<Detection>>.Decode(
         IReadOnlyDictionary<string, ICpuTensor> outputs, TensorTransform transform, IVideoFrame frame) =>
         _postprocessor.Decode(
-            System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(outputs[_session.OutputNames[0]].Bytes.Span),
+            _decodedOutput.Read(outputs[_session.OutputNames[0]]),
             (float)frame.Width / _preprocessor.InputSize,
             (float)frame.Height / _preprocessor.InputSize);
 
@@ -509,12 +537,14 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
 
     [LoggerMessage(
         Level = LogLevel.Information,
-        Message = "YOLO model shape: input {InputSize}px, {ClassCount} class(es), {AnchorCount} anchors"
+        Message = "YOLO model shape: input {InputSize}px, {ClassCount} class(es), {AnchorCount} anchors, {InputType} in, {OutputType} out"
     )]
     private static partial void LogModelShape(
         ILogger logger,
         int inputSize,
         int classCount,
-        int anchorCount
+        int anchorCount,
+        DType inputType,
+        DType outputType
     );
 }
