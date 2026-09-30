@@ -132,6 +132,12 @@ public static class PlaybackController
     /// items. Owned by the caller, who disposes it after the controller. Null lets each decoder
     /// create its own.
     /// </param>
+    /// <param name="preferredBackends">
+    /// Hardware decode backends every item's decoder tries first, then the rest in the platform
+    /// default order. Null or empty defers to the video sink's
+    /// <see cref="IVideoSink.PreferredBackends"/> when frames stay on the GPU, then the platform
+    /// default (#532). A <paramref name="hardwareDevice"/> fixes the backend instead.
+    /// </param>
     public static IPlaybackController Create(
         IVideoSink? videoSink = null,
         IAudioSink? audioSink = null,
@@ -145,7 +151,8 @@ public static class PlaybackController
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? configureAudio = null,
         LatenessRecoveryOptions? latenessRecovery = null,
         TimeProvider? timeProvider = null,
-        HardwareDevice? hardwareDevice = null
+        HardwareDevice? hardwareDevice = null,
+        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null
     )
     {
         // One source at a time, as a queue of one on the playlist session. Each load makes the
@@ -164,7 +171,8 @@ public static class PlaybackController
                 yieldHardwareFrames,
                 latenessRecovery,
                 loadsSource: true,
-                hardwareDevice: hardwareDevice
+                hardwareDevice: hardwareDevice,
+                preferredBackends: preferredBackends
             ),
             initialRepeatMode,
             clock,
@@ -248,6 +256,12 @@ public static class PlaybackController
     /// items. Owned by the caller, who disposes it after the controller. Null lets each decoder
     /// create its own.
     /// </param>
+    /// <param name="preferredBackends">
+    /// Hardware decode backends every item's decoder tries first, then the rest in the platform
+    /// default order. Null or empty defers to the video sink's
+    /// <see cref="IVideoSink.PreferredBackends"/> when frames stay on the GPU, then the platform
+    /// default (#532). A <paramref name="hardwareDevice"/> fixes the backend instead.
+    /// </param>
     internal static IPlaybackController CreatePlaylist(
         PlaylistCoordinator coordinator,
         IVideoSink? videoSink = null,
@@ -262,7 +276,8 @@ public static class PlaybackController
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? configureAudio = null,
         LatenessRecoveryOptions? latenessRecovery = null,
         TimeProvider? timeProvider = null,
-        HardwareDevice? hardwareDevice = null
+        HardwareDevice? hardwareDevice = null,
+        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null
     )
     {
         ArgumentNullException.ThrowIfNull(coordinator);
@@ -279,7 +294,8 @@ public static class PlaybackController
                 configureAudio,
                 yieldHardwareFrames,
                 latenessRecovery,
-                hardwareDevice: hardwareDevice
+                hardwareDevice: hardwareDevice,
+                preferredBackends: preferredBackends
             ),
             initialRepeatMode,
             clock,

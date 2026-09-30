@@ -39,6 +39,7 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
     >? _audioConfigurator;
     private readonly bool? _yieldHardwareFrames;
     private readonly HardwareDevice? _hardwareDevice;
+    private readonly IReadOnlyList<HardwareDecodeBackendKind> _preferredBackends;
 
     private readonly LatenessRecoveryOptions? _latenessRecovery;
 
@@ -52,6 +53,9 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
     /// </summary>
     internal LatenessRecoveryOptions? LatenessRecovery => _latenessRecovery;
 
+    /// <summary>The caller's backend order every session this factory creates carries (#532).</summary>
+    internal IReadOnlyList<HardwareDecodeBackendKind> PreferredBackends => _preferredBackends;
+
     public SubstrateSessionFactory(
         IVideoSink? videoSink = null,
         IAudioSink? audioSink = null,
@@ -62,7 +66,8 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator = null,
         bool? yieldHardwareFrames = null,
         LatenessRecoveryOptions? latenessRecovery = null,
-        HardwareDevice? hardwareDevice = null
+        HardwareDevice? hardwareDevice = null,
+        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null
     )
     {
         // Checked here rather than in the worker: this runs on the caller's thread,
@@ -79,6 +84,7 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         _audioConfigurator = audioConfigurator;
         _yieldHardwareFrames = yieldHardwareFrames;
         _hardwareDevice = hardwareDevice;
+        _preferredBackends = preferredBackends ?? [];
     }
 
     public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks) =>
@@ -102,7 +108,8 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
             _videoConfigurator,
             _audioConfigurator,
             _yieldHardwareFrames,
-            _hardwareDevice
+            _hardwareDevice,
+            _preferredBackends
         )
         {
             LatenessRecovery = _latenessRecovery,

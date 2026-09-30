@@ -271,6 +271,24 @@ Rejected as premature. The cost-benefit of hwaccel depends on the
 consumer's CPU pressure, battery posture, and other pipelines that may
 also want the GPU. Let the user pick the mode; don't second-guess.
 
+## Amendment (2026-09-30): where a player's order comes from (#532)
+
+Step 5's `PreferredBackends` never reached a player: `PlayerBuilder` and `PassBuilder` opened the
+decoder with a mode and no order. The order a player's decoder sorts by now comes from, first to
+last:
+
+1. A borrowed `HardwareDevice`, which fixes the backend (#445). No order applies.
+2. `WithPreferredBackends` on `IPlayerBuilder` or `IPassBuilder`, or `preferredBackends` on
+   `PlaybackController.Create`.
+3. The video sink's `IVideoSink.PreferredBackends`, when hardware frames stay on the GPU on their
+   way to it. A path that downloads frames keeps the platform default, which puts first the
+   backends that read back fastest.
+4. The platform default order.
+
+`DecodeBackendOrder` decides it, as a pure function beside `HardwareFrameChoice`, and the player
+logs the reason whenever anything asked. The Linux default order also lists Vulkan and DRM after
+QSV, and the Windows one lists D3D12VA after D3D11VA, which step 5 above predates.
+
 ## References
 
 - ADR-0002: FFmpeg bootstrap strategy

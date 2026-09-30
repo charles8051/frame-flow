@@ -190,6 +190,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     private readonly bool? _yieldHardwareFrames;
     // Borrowed by this item's decoder; owned above the player, so it outlives the item.
     private readonly HardwareDevice? _hardwareDevice;
+    // The caller's order; empty defers to the sink's, then the platform's (#532).
+    private readonly IReadOnlyList<HardwareDecodeBackendKind> _preferredBackends;
 
     public SubstrateSession(
         IVideoSink? videoSink,
@@ -202,7 +204,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? videoConfigurator = null,
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator = null,
         bool? yieldHardwareFrames = null,
-        HardwareDevice? hardwareDevice = null
+        HardwareDevice? hardwareDevice = null,
+        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null
     )
     {
         ArgumentNullException.ThrowIfNull(clock);
@@ -214,6 +217,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         _hwCapabilities = hardwareDecodeCapabilities;
         _yieldHardwareFrames = yieldHardwareFrames;
         _hardwareDevice = hardwareDevice;
+        _preferredBackends = preferredBackends ?? [];
         _callbacks = callbacks;
         _videoConfigurator = videoConfigurator;
         _audioConfigurator = audioConfigurator;
@@ -500,9 +504,19 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                         hardwareFrames.Reason);
                 }
 
+                var backendOrder = DecodeBackendOrder.Decide(
+                    _preferredBackends,
+                    _videoSink!.PreferredBackends,
+                    hardwareFrames.Yield,
+                    _hardwareDevice?.Backend);
+                if (!hardwareDisabled && !backendOrder.IsDefault)
+                {
+                    _logger.LogInformation("Hardware decode order: {Reason}.", backendOrder.Reason);
+                }
+
                 var videoBudget = hardwareFrames.Yield ? pathBudget : null;
                 var videoFactory = DecoderFactories.CreateVideo(
-                    new HardwareDecodeOptions { Mode = _hwMode },
+                    new HardwareDecodeOptions { Mode = _hwMode, PreferredBackends = backendOrder.Preferred },
                     _hwCapabilities,
                     _loggerFactory,
                     videoBudget is null && _hardwareDevice is null
@@ -1618,6 +1632,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         public int? MaxHeldFrames => ClockSelectVideoSink.MaxHeldFramesOver(inner);
 
         public FrameMemoryDomains AcceptedDomains => inner.AcceptedDomains;
+
+        public IReadOnlyList<HardwareDecodeBackendKind> PreferredBackends => inner.PreferredBackends;
 
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct) =>
             throw new InvalidOperationException("A budget's stand-in sink is never run.");

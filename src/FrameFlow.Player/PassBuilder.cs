@@ -38,6 +38,7 @@ internal sealed class PassBuilder : IPassBuilder
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private VideoDecoderOptions? _videoDecoderOptions;
     private HardwareDevice? _hardwareDevice;
+    private HardwareDecodeBackendKind[] _preferredBackends = [];
     private DecodeDiscardLevel _discardLevel = DecodeDiscardLevel.None;
     private PassRange _range = PassRange.Whole;
     private AudioDecoderOptions? _audioDecoderOptions;
@@ -93,6 +94,13 @@ internal sealed class PassBuilder : IPassBuilder
     {
         ArgumentNullException.ThrowIfNull(device);
         _hardwareDevice = device;
+        return this;
+    }
+
+    public IPassBuilder WithPreferredBackends(params HardwareDecodeBackendKind[] backends)
+    {
+        ArgumentNullException.ThrowIfNull(backends);
+        _preferredBackends = [.. backends];
         return this;
     }
 
@@ -315,10 +323,21 @@ internal sealed class PassBuilder : IPassBuilder
                         hardwareFrames.Reason);
                 }
 
+                var backendOrder = DecodeBackendOrder.Decide(
+                    _preferredBackends,
+                    _videoSink.PreferredBackends,
+                    hardwareFrames.Yield,
+                    _hardwareDevice?.Backend);
+                if (!hardwareDisabled && !backendOrder.IsDefault)
+                {
+                    _loggerFactory.CreateLogger<PassBuilder>().LogInformation(
+                        "Hardware decode order: {Reason}.", backendOrder.Reason);
+                }
+
                 var videoBudget = hardwareFrames.Yield ? pathBudget : null;
                 videoDecoder =
                     DecoderFactories.CreateVideo(
-                        new HardwareDecodeOptions { Mode = _hwMode },
+                        new HardwareDecodeOptions { Mode = _hwMode, PreferredBackends = backendOrder.Preferred },
                         bootstrapResult.Capabilities,
                         _loggerFactory,
                         DecoderOptions(_videoDecoderOptions, _hardwareDevice, videoBudget)

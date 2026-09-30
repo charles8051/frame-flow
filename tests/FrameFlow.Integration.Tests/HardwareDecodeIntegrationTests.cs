@@ -330,6 +330,66 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
         Assert.All(videoSink.Seen, s => Assert.Equal(device.ContextPointer, s.Device));
     }
 
+    /// <summary>
+    /// A sink that prefers a backend gets its frames from it when they stay on the GPU (#532).
+    /// Vulkan is last in Linux's default order and absent from Windows', so without the sink's
+    /// preference this player decodes on another backend wherever one engages.
+    /// </summary>
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.Vulkan, PreferenceClip)]
+    public async Task ASinkThatPrefersABackend_GetsFramesFromIt()
+    {
+        var sink = new BackendRecordingSink(HardwareDecodeBackendKind.Vulkan);
+
+        var backend = await PlayAsync(sink, yieldHardwareFrames: null);
+
+        Assert.Equal(HardwareDecodeBackendKind.Vulkan, backend);
+        Assert.NotEmpty(sink.Seen);
+        Assert.All(sink.Seen, b => Assert.Equal(HardwareDecodeBackendKind.Vulkan, b));
+    }
+
+    /// <summary>
+    /// A sink's preference is for the frames it receives on the GPU. A player that downloads them
+    /// decodes on the backend it would have chosen with no preference at all (#532).
+    /// </summary>
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.Vulkan, PreferenceClip)]
+    public async Task ASinksPreference_IsSetAside_WhenFramesAreDownloaded()
+    {
+        var unasked = await PlayAsync(new BackendRecordingSink(), yieldHardwareFrames: false);
+
+        var preferring = await PlayAsync(
+            new BackendRecordingSink(HardwareDecodeBackendKind.Vulkan), yieldHardwareFrames: false);
+
+        Assert.Equal(unasked, preferring);
+    }
+
+    private const string PreferenceClip = "test-video-h264-yuv420p.mp4";
+
+    /// <summary>Plays <see cref="PreferenceClip"/> into <paramref name="sink"/> and returns the backend that decoded it.</summary>
+    private static async Task<HardwareDecodeBackendKind?> PlayAsync(BackendRecordingSink sink, bool? yieldHardwareFrames)
+    {
+        var controller = PlaybackController.Create(
+            videoSink: sink,
+            hardwareDecodeMode: HardwareDecodeMode.Required,
+            yieldHardwareFrames: yieldHardwareFrames
+        );
+
+        try
+        {
+            var (load, play) = await IntegrationTestHelper.RunToCompletionAsync(
+                controller,
+                MediaSource.FromFile(PlaybackHarness.ResolveCorpusPath(PreferenceClip))
+            );
+            Assert.True(load.IsSuccess, $"LoadAsync failed: {load.Error?.Message}");
+            Assert.True(play.IsSuccess, $"PlayAsync failed: {play.Error?.Message}");
+            return controller.GetDiagnostics().Pipeline.Stream.VideoDecoder.HardwareBackend;
+        }
+        finally
+        {
+            await IntegrationTestHelper.StabilizeForDisposeAsync(controller);
+            await controller.DisposeAsync();
+        }
+    }
+
     /// <summary>The first backend the probe initialised that FFmpeg can make a device for here.</summary>
     private HardwareDevice CreateAnyDevice()
     {

@@ -46,6 +46,10 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
     /// <param name="hardwareDevice">
     /// A device every item's video decoder borrows. Owned by the caller; the items only borrow it.
     /// </param>
+    /// <param name="preferredBackends">
+    /// Hardware decode backends every item's decoder tries first; null or empty defers to the video
+    /// sink's preference, then the platform default (#532).
+    /// </param>
     public PlaylistSessionFactory(
         PlaylistCoordinator coordinator,
         IVideoSink? videoSink = null,
@@ -58,7 +62,8 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
         bool? yieldHardwareFrames = null,
         LatenessRecoveryOptions? latenessRecovery = null,
         bool loadsSource = false,
-        HardwareDevice? hardwareDevice = null
+        HardwareDevice? hardwareDevice = null,
+        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null
     )
     {
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
@@ -76,7 +81,8 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
             audioConfigurator,
             yieldHardwareFrames,
             latenessRecovery,
-            hardwareDevice
+            hardwareDevice,
+            preferredBackends
         );
     }
 
@@ -90,6 +96,10 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
     /// </summary>
     internal LatenessRecoveryOptions? LatenessRecovery =>
         (_itemFactory as SubstrateSessionFactory)?.LatenessRecovery;
+
+    /// <summary>The caller's backend order the item factory carries, for the same tests (#532).</summary>
+    internal IReadOnlyList<HardwareDecodeBackendKind>? PreferredBackends =>
+        (_itemFactory as SubstrateSessionFactory)?.PreferredBackends;
 
     public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks)
     {

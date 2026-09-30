@@ -204,6 +204,18 @@ public interface IPlayerBuilder
     IPlayerBuilder WithHardwareDevice(HardwareDevice device);
 
     /// <summary>
+    /// Hardware decode backends every playlist item's video decoder tries first, in order, then
+    /// the rest in the platform default order (#532). An empty list clears a previous call.
+    /// </summary>
+    /// <remarks>
+    /// Unset, the decoder tries the video sink's <see cref="IVideoSink.PreferredBackends"/> first
+    /// when hardware frames stay on the GPU, and the platform default order otherwise. A device
+    /// from <see cref="WithHardwareDevice"/> fixes the backend, and this is not used. The player
+    /// logs the order when anything asked for one.
+    /// </remarks>
+    IPlayerBuilder WithPreferredBackends(params HardwareDecodeBackendKind[] backends);
+
+    /// <summary>
     /// Controls whether <see cref="IAudioSink.ActivateAsync"/> is called before the built player
     /// is handed back. Defaults to <see langword="true"/>; pass <see langword="false"/> to
     /// activate the sink yourself later.

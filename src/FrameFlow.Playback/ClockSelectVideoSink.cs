@@ -555,6 +555,9 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// <remarks>What the sink it paces takes: it presents each frame there unchanged.</remarks>
     public FrameMemoryDomains AcceptedDomains => _inner.AcceptedDomains;
 
+    /// <inheritdoc />
+    public IReadOnlyList<HardwareDecodeBackendKind> PreferredBackends => _inner.PreferredBackends;
+
     /// <summary>
     /// What a pacer of <paramref name="capacity"/> over <paramref name="inner"/> declares, for a
     /// caller that needs the count before the pacer exists.
