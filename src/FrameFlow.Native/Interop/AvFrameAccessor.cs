@@ -205,6 +205,20 @@ internal readonly unsafe ref struct AvFrameAccessor
     internal AVD3D12VAFrame* GetD3D12Frame() => (AVD3D12VAFrame*)GetDataPointer(0);
 
     /// <summary>
+    /// For a Vulkan hardware frame, the <c>AVVkFrame</c> that <c>data[0]</c> points to: the image,
+    /// its layout and last access, and the timeline semaphore that says when it is accessible.
+    /// Null when the frame has no plane 0. The caller has checked the frame is Vulkan.
+    /// </summary>
+    internal AVVkFrame* GetVulkanFrame() => (AVVkFrame*)GetDataPointer(0);
+
+    /// <summary>The frame's pool, <c>hw_frames_ctx → data</c>, or null for a software frame.</summary>
+    internal AVHWFramesContext* GetHwFramesContext()
+    {
+        ref AVFrame f = ref Unsafe.AsRef<AVFrame>((void*)_ptr);
+        return f.hw_frames_ctx is null ? null : (AVHWFramesContext*)f.hw_frames_ctx->data;
+    }
+
+    /// <summary>
     /// For a D3D11VA hardware frame, walks <c>hw_frames_ctx → device_ctx → hwctx
     /// (AVD3D11VADeviceContext) → device</c> and returns the underlying
     /// <c>ID3D11Device*</c> as a raw pointer. This is the decode device the frame's
