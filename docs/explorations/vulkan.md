@@ -16,7 +16,7 @@ named.
 | Decode | `HardwareDecodeBackendKind.Vulkan`. Fifth in the Linux default order, absent from the Windows one. |
 | Engagement | H.264, HEVC and VP9 decode on NVIDIA's Windows driver. AV1 reaches no hardware backend (#417). A device without `VK_KHR_video_decode_queue` opens and falls back to software (#74). |
 | Pool | Grows. Unguarded, like VideoToolbox (ADR-0081). |
-| Frame access | `GpuVideoFrame.ReadbackToCpuBgra32` works. Nothing exposes the `VkImage`. |
+| Frame access | `GpuVideoFrame.TryLockVulkanImage` surfaces the image and its synchronisation under FFmpeg's frame lock, and `TryGetVulkanDevice` the device (#535). |
 | Presentation | None in the library. `spikes/VulkanPresenterProbe` presents Vulkan frames through Avalonia on Linux with no read-back ([2026-09-30](../investigations/2026-09-30-vulkan-presenter.md)). |
 | Selection | A sink asks for it with `IVideoSink.PreferredBackends`, and a caller with `WithPreferredBackends` (#532). A device that opens without Vulkan decode falls back to software, not to the next backend (#533). |
 
