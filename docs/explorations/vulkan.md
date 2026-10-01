@@ -17,7 +17,7 @@ named.
 | Engagement | H.264, HEVC and VP9 decode on NVIDIA's Windows driver. AV1 reaches no hardware backend (#417). A device without `VK_KHR_video_decode_queue` opens and falls back to software (#74). |
 | Pool | Grows. Unguarded, like VideoToolbox (ADR-0081). |
 | Frame access | `GpuVideoFrame.ReadbackToCpuBgra32` works. Nothing exposes the `VkImage`. |
-| Presentation | None. The D3D11 presenter drops a Vulkan frame after one warning. |
+| Presentation | None in the library. `spikes/VulkanPresenterProbe` presents Vulkan frames through Avalonia on Linux with no read-back ([2026-09-30](../investigations/2026-09-30-vulkan-presenter.md)). |
 | Selection | A sink asks for it with `IVideoSink.PreferredBackends`, and a caller with `WithPreferredBackends` (#532). A device that opens without Vulkan decode falls back to software, not to the next backend (#533). |
 
 ## Benefits
@@ -181,8 +181,9 @@ In order, before a presenter is worth building:
 
 ## Open questions
 
-- Whether a converter-owned device can import FFmpeg's NV12 image, or has to borrow FFmpeg's device
-  against ADR-0064. Import across devices needs matching `deviceUUID` and `driverUUID`, and support
-  for exporting the decode image's format and usage, which is driver-specific.
+- ~~Whether a converter-owned device can import FFmpeg's NV12 image, or has to borrow FFmpeg's device
+  against ADR-0064.~~ Converting on FFmpeg's device, kept alive by a borrowed `HardwareDevice` as the
+  D3D12 presenter does, works and needs no import of FFmpeg's images
+  ([2026-09-30](../investigations/2026-09-30-vulkan-presenter.md)).
 - Whether Avalonia 12's native Wayland backend imports external memory on its GL path.
 - Whether FrameFlow's player sees the D3D11VA CPU cost that FFmpeg's CLI showed.

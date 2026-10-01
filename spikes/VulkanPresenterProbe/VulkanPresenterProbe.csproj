@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>VulkanPresenterProbe</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Throwaway spike: not part of FrameFlow.slnx, not packed, not shipped. -->
+    <IsPackable>false</IsPackable>
+    <!-- What FrameFlow.Avalonia resolves today; pinned, so a rerun tests the same version. -->
+    <AvaloniaVersion Condition="'$(AvaloniaVersion)' == ''">11.3.22</AvaloniaVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Desktop" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="Silk.NET.Vulkan" Version="2.23.0" />
+    <PackageReference Include="FFmpeg.AutoGen.Abstractions" Version="9.0.1.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\FrameFlow.Player\FrameFlow.Player.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- nv12_to_rgba.comp compiled with: glslangValidator -V nv12_to_rgba.comp -o nv12_to_rgba.spv -->
+    <EmbeddedResource Include="nv12_to_rgba.spv" LogicalName="nv12_to_rgba.spv" />
+  </ItemGroup>
+
+</Project>
