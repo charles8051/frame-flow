@@ -37,6 +37,7 @@ internal static class PlayerFactory
         LatenessRecoveryOptions? latenessRecovery,
         TimeProvider? timeProvider,
         HardwareDevice? hardwareDevice,
+        IReadOnlyList<HardwareDecodeBackendKind> preferredBackends,
         CancellationToken cancellationToken
     )
     {
@@ -69,7 +70,8 @@ internal static class PlayerFactory
             configureAudio: configureAudio,
             latenessRecovery: latenessRecovery,
             timeProvider: timeProvider,
-            hardwareDevice: hardwareDevice
+            hardwareDevice: hardwareDevice,
+            preferredBackends: preferredBackends
         );
 #pragma warning restore CA2000
 

@@ -18,7 +18,7 @@ named.
 | Pool | Grows. Unguarded, like VideoToolbox (ADR-0081). |
 | Frame access | `GpuVideoFrame.ReadbackToCpuBgra32` works. Nothing exposes the `VkImage`. |
 | Presentation | None in the library. `spikes/VulkanPresenterProbe` presents Vulkan frames through Avalonia on Linux with no read-back ([2026-09-30](../investigations/2026-09-30-vulkan-presenter.md)). |
-| Selection | The player cannot ask for it. `PlayerBuilder` and `PassBuilder` pass only a `HardwareDecodeMode`, so `PreferredBackends` reaches only the dependency-injection decoder factory and direct callers of `VideoDecoder.Open`. |
+| Selection | A sink asks for it with `IVideoSink.PreferredBackends`, and a caller with `WithPreferredBackends` (#532). A device that opens without Vulkan decode falls back to software, not to the next backend (#533). |
 
 ## Benefits
 
@@ -112,9 +112,9 @@ likely to fail silently, with torn or stale frames rather than an error.
 
 ### Backend selection
 
-A Vulkan presenter needs Vulkan frames, but the backend is chosen without knowing the sink. ADR-0025
-has the sink own a pool in the memory domain it prefers. The player would need either `PreferredBackends`
-passed through the builders, or the sink's preference driving the order.
+A Vulkan presenter needs Vulkan frames. Since #532 a sink names the backends it prefers, and a player
+tries them first when frames stay on the GPU. Until #533, a Vulkan-first order on a driver without
+Vulkan decode costs the hardware decode that VAAPI or CUDA would have given.
 
 ## Driver maturity
 
@@ -173,7 +173,7 @@ the WebGPU provider gains external memory import.
 In order, before a presenter is worth building:
 
 1. #417, so AV1 can reach hardware at all.
-2. A way for a sink or a caller to choose the backend through the player.
+2. A way for a sink or a caller to choose the backend through the player. Done in #532.
 3. Measurements on RADV, and on ANV with decode enabled: engagement, pool behaviour and readback
    cost.
 4. The cost of today's Linux readback path in the player at 1080p and 4K (readback, `sws_scale`, and

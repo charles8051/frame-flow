@@ -291,6 +291,132 @@ internal sealed class RequiresHardwareDecodeFactAttribute : FactAttribute
 }
 
 /// <summary>
+/// Skips unless <c>backend</c> decodes <c>clip</c> on hardware here, through a player.
+/// </summary>
+/// <remarks>
+/// The gate plays the clip on a device of that backend and checks the frames that arrive, because
+/// a device that initialises can still decode in software. A Vulkan device without
+/// <c>VK_KHR_video_decode_queue</c> opens and falls back (#74). A borrowed device fixes the
+/// backend without any order, so the gate does not depend on the order the tests it guards check.
+/// The attribute of this name in <c>FrameFlow.Decoding.Tests</c> asks the decoder directly; this
+/// project cannot read packets without <c>FrameFlow.Native</c>'s internals. The answer is cached
+/// for each backend and clip.
+/// </remarks>
+internal sealed class RequiresHardwareDecodeBackendFactAttribute : FactAttribute
+{
+    private static readonly Dictionary<(HardwareDecodeBackendKind, string), string?> Probes = [];
+
+    public RequiresHardwareDecodeBackendFactAttribute(HardwareDecodeBackendKind backend, string clip)
+    {
+        if (!IntegrationTestEnvironment.HasFfmpegSharedLibraries)
+        {
+            Skip = "FFmpeg shared libraries not available.";
+            return;
+        }
+
+        if (!IntegrationTestEnvironment.HasCorpusFiles)
+        {
+            Skip = "Test corpus not generated. Run scripts/generate-test-corpus.cs first.";
+            return;
+        }
+
+        lock (Probes)
+        {
+            if (!Probes.TryGetValue((backend, clip), out var reason))
+            {
+                reason = WhyItCannotDecode(backend, clip);
+                Probes[(backend, clip)] = reason;
+            }
+            Skip = reason;
+        }
+    }
+
+    private static string? WhyItCannotDecode(HardwareDecodeBackendKind backend, string clip)
+    {
+        if (IntegrationTestEnvironment.GetCorpusFile(clip) is not { } file)
+            return $"Corpus file '{clip}' not present.";
+
+        if (!FfmpegBootstrapFixture.ReadCapabilities().Available.Any(b => b.Kind == backend && b.Initialized))
+            return $"No {backend} device initialised on this machine.";
+
+        return Task.Run(async () =>
+            {
+                HardwareDevice device;
+                try
+                {
+                    device = HardwareDevice.Create(backend);
+                }
+                catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
+                {
+                    return $"FFmpeg could not create a {backend} device here.";
+                }
+
+                using (device)
+                {
+                    var sink = new BackendRecordingSink();
+                    var controller = Playback.PlaybackController.Create(
+                        videoSink: sink,
+                        hardwareDecodeMode: HardwareDecodeMode.Required,
+                        yieldHardwareFrames: true,
+                        hardwareDevice: device
+                    );
+                    try
+                    {
+                        var (load, play) = await Harness.IntegrationTestHelper.RunToCompletionAsync(
+                            controller, MediaSource.FromFile(file));
+                        if (!load.IsSuccess || !play.IsSuccess)
+                            return $"{clip} did not play on a {backend} device here.";
+                    }
+                    finally
+                    {
+                        await Harness.IntegrationTestHelper.StabilizeForDisposeAsync(controller);
+                        await controller.DisposeAsync();
+                    }
+
+                    return !sink.Seen.IsEmpty && sink.Seen.All(b => b == backend)
+                        ? null
+                        : $"A {backend} device opened but decoded {clip} in software, as a "
+                            + "device without a decode queue does (#74).";
+                }
+            })
+            .GetAwaiter()
+            .GetResult();
+    }
+}
+
+/// <summary>
+/// Records the backend of each hardware frame, reads no pixels and keeps none, and prefers the
+/// backends it was given.
+/// </summary>
+internal sealed class BackendRecordingSink(params HardwareDecodeBackendKind[] preferred) : IVideoSink
+{
+    /// <summary>The backend of each hardware frame, in arrival order. A CPU frame adds nothing.</summary>
+    public System.Collections.Concurrent.ConcurrentQueue<HardwareDecodeBackendKind> Seen { get; } = new();
+
+    public int? MaxHeldFrames => 0;
+
+    public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Any;
+
+    public IReadOnlyList<HardwareDecodeBackendKind> PreferredBackends => preferred;
+
+    public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
+    {
+        using (frame)
+        {
+            if (frame is GpuVideoFrame gpu)
+                Seen.Enqueue(gpu.Backend);
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) =>
+        ValueTask.CompletedTask;
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+/// <summary>
 /// Skips when one specific corpus file is absent, rather than only when the corpus as a whole
 /// is. For fixtures that the generator can legitimately decline to produce.
 /// </summary>

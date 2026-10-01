@@ -119,6 +119,17 @@ public interface IPassBuilder
     IPassBuilder WithHardwareDevice(HardwareDevice device);
 
     /// <summary>
+    /// Hardware decode backends the pass's video decoder tries first, in order, then the rest in
+    /// the platform default order (#532). An empty list clears a previous call.
+    /// </summary>
+    /// <remarks>
+    /// Unset, the decoder tries the video sink's <see cref="IVideoSink.PreferredBackends"/> first
+    /// when hardware frames stay on the GPU, and the platform default order otherwise. A device
+    /// from <see cref="WithHardwareDevice"/> fixes the backend, and this is not used.
+    /// </remarks>
+    IPassBuilder WithPreferredBackends(params HardwareDecodeBackendKind[] backends);
+
+    /// <summary>
     /// How much of the video the decoder skips, for the whole pass. Defaults to
     /// <see cref="DecodeDiscardLevel.None"/>, which decodes every frame.
     /// </summary>

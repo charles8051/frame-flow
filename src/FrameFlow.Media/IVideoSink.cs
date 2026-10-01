@@ -129,4 +129,16 @@ public interface IVideoSink : IAsyncDisposable
     /// <see cref="FrameMemoryDomains.Any"/>.
     /// </remarks>
     FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Cpu;
+
+    /// <summary>
+    /// The hardware decode backends whose frames the sink handles best, in order, or an empty list
+    /// when it has none (#532).
+    /// </summary>
+    /// <remarks>
+    /// A player or pass tries these first when hardware-decoded frames stay on the GPU on their
+    /// way to the sink, then the rest in the platform default order. A path that downloads frames
+    /// keeps the platform default. A caller's <c>WithPreferredBackends</c> wins over it, and a
+    /// borrowed <c>HardwareDevice</c> fixes the backend.
+    /// </remarks>
+    IReadOnlyList<HardwareDecodeBackendKind> PreferredBackends => [];
 }
