@@ -140,7 +140,11 @@ Three limits keep ADR-0063's hang out of reach:
 2. **One view per process.** A process-wide lease admits one view at a time to the video
    processor path. A second view that wants it stays on the shader path and reports
    `InUseByAnotherView`. A view takes the lease when it builds a video-processor converter and
-   releases it when it drops that converter or tears down.
+   releases it when it drops that converter or tears down. The GPU may still be running the
+   dropped converter's blits at that point, so the release also opens a drain. No holder blits
+   until an event query on the dropped converter's device reports its work complete. A view that
+   takes the lease in that interval fills its ring with the shader. The wait runs off the UI
+   thread and gives up after 2 s, the default GPU timeout (TDR).
 3. **Upscale only.** The shader path handles every frame the scale rule rejects.
 
 The lease is per process, not per adapter. Two views on two different GPUs in one process is

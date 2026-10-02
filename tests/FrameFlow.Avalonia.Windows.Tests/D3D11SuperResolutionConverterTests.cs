@@ -110,6 +110,7 @@ public sealed class D3D11SuperResolutionConverterTests
 
         Assert.True(converter.ConvertInto(0, texture, slice));
         Assert.False(converter.SuperResolutionFailed, "the blit failed");
+        Assert.True(converter.WaitForSubmittedBlits(TimeSpan.FromSeconds(5)), "the blit did not complete");
 
         using var compositor = new CompositorSide(texture);
         return compositor.Read(converter.GetSharedHandle(0), output.Width, output.Height);

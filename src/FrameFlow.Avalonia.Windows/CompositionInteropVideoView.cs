@@ -87,6 +87,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
 
     // How long a new output has to be wanted, unchanged, before the converter is rebuilt for it.
     private static readonly long OutputSettleTicks = Stopwatch.Frequency / 5;
+    // How long a dropped converter's blits may hold every view's blits back. Windows resets a GPU
+    // that runs this long (TDR), and a lost device ends the wait sooner.
+    private static readonly TimeSpan BlitDrainTimeout = TimeSpan.FromSeconds(2);
 
     // ── Two-stage present accounting (ADR-0064 §Observability) ────────────────
     // _framesPresented counts at ENQUEUE: the frame's UpdateWithKeyedMutexAsync hand-off was
@@ -919,7 +922,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                     _gpuConverter!.Output.Width,
                     _gpuConverter.Output.Height,
                     _gpuConverter.GetSharedHandle,
-                    i => _gpuConverter.ConvertInto(i, texture, slice),
+                    i => _gpuConverter.ConvertInto(i, texture, slice, SuperResolutionLease.Process.MayBlit(this)),
                     frame.Pts
                 );
             }
@@ -1454,7 +1457,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         _gpuConverter = null;
         _d3d12Converter = null;
         _cpuUploader = null;
-        SuperResolutionLease.Process.Release(this);
+        if (converter is { Output.SuperResolution: true })
+            FinishVideoProcessorHandOff(converter, BeginVideoProcessorHandOff()); // off the UI thread here
+        else
+            SuperResolutionLease.Process.Release(this);
 
         if (drained)
         {
@@ -1662,15 +1668,51 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         var d3d12 = _d3d12Converter;
         _gpuConverter = null;
         _d3d12Converter = null;
-        // No blits are issued from here on, so another view may take the video processor.
-        if (conv is { Output.SuperResolution: true })
-            SuperResolutionLease.Process.Release(this);
         // Dispose off the UI thread: a lost device's Release can still stall in the driver, and the
         // D3D12 converter waits for its GPU work before releasing anything.
-        if (conv is not null)
+        if (conv is { Output.SuperResolution: true })
+        {
+            var drain = BeginVideoProcessorHandOff();
+            Task.Run(() =>
+            {
+                FinishVideoProcessorHandOff(conv, drain);
+                conv.Dispose();
+            });
+        }
+        else if (conv is not null)
+        {
             Task.Run(conv.Dispose);
+        }
         if (d3d12 is not null)
             Task.Run(d3d12.Dispose);
+    }
+
+    /// <summary>
+    /// Releases the lease once this view has stopped issuing blits (#560). Another view may take it
+    /// at once, but the drain this returns keeps every holder from blitting until
+    /// <see cref="FinishVideoProcessorHandOff"/> has seen the dropped converter's blits complete.
+    /// </summary>
+    private SuperResolutionLease.Drain BeginVideoProcessorHandOff()
+    {
+        var drain = SuperResolutionLease.Process.BeginDrain();
+        SuperResolutionLease.Process.Release(this);
+        return drain;
+    }
+
+    /// <summary>
+    /// Waits for the blits <paramref name="converter"/> submitted, then ends
+    /// <paramref name="drain"/>. Blocks, so it runs off the UI thread, before the converter is
+    /// disposed.
+    /// </summary>
+    private void FinishVideoProcessorHandOff(D3D11Nv12SharedConverter converter, SuperResolutionLease.Drain drain)
+    {
+        if (!converter.WaitForSubmittedBlits(BlitDrainTimeout))
+            _logger.LogWarning(
+                "A dropped converter's video processor blits did not complete within {Timeout} s; letting other "
+                    + "views blit anyway (#560).",
+                BlitDrainTimeout.TotalSeconds
+            );
+        drain.End();
     }
 
     /// <summary>Drops the CPU uploader and its imported ring after a device-loss; a fresh
