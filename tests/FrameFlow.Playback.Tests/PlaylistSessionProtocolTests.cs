@@ -292,6 +292,22 @@ public sealed class PlaylistSessionProtocolTests
         Assert.Empty(second.Actions);
     }
 
+    [Theory]
+    [InlineData(Run.NotStarted)]
+    [InlineData(Run.Paused)]
+    [InlineData(Run.Ended)]
+    public void ABufferUnderrun_WhileNotPlaying_IsDropped(Run run)
+    {
+        // An underrun the pacer raised just before a pause can be handled after it. Taking it
+        // would mark one the controller, now Paused, never entered.
+        var (state, queue) = Setup(run, Slot.Played, Next.Other);
+
+        var (after, _, step) = Step(state, queue, new PlaylistSessionInput.BufferUnderrun(CurrentGeneration));
+
+        Assert.Empty(step.Actions);
+        Assert.False(after.UnderrunReported);
+    }
+
     [Fact]
     public void ABufferReady_IsReportedOnlyAfterAnUnderrun()
     {

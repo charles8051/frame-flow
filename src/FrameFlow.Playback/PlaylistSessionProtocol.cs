@@ -344,10 +344,15 @@ internal static class PlaylistSessionProtocol
         // ── Notifications and requests ──────────────────────────────────────
 
         // Only the current runtime's buffer notifications reach the controller (#547). One from a
-        // runtime an advance has replaced describes video nobody is waiting for any more.
+        // runtime an advance has replaced describes video nobody is waiting for any more. An
+        // underrun is taken only while playing: one raised before a pause and handled after it
+        // would mark an underrun the controller never entered, and swallow the one after resume.
         private void OnBufferUnderrun(int generation)
         {
-            if (!Stopping && generation == State.Generation && !State.UnderrunReported)
+            if (!Stopping
+                && State.Run == PlaylistRunState.Playing
+                && generation == State.Generation
+                && !State.UnderrunReported)
             {
                 State = State with { UnderrunReported = true };
                 Emit(new PlaylistSessionAction.ReportBufferUnderrun());
