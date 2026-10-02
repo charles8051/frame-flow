@@ -90,6 +90,12 @@ internal sealed record PlaylistSessionState
     public bool GaveUp { get; init; }
 
     /// <summary>
+    /// Whether the controller was told of an underrun it has not been told is over (#547). The
+    /// next item to start ends it, since the runtime that starved is gone.
+    /// </summary>
+    public bool UnderrunReported { get; init; }
+
+    /// <summary>
     /// Consecutive loops of the current item: the first loop is 1. A start that is not a loop sets it
     /// back to 0, and a new session starts at 0. Decision 5 of
     /// <c>docs/adr/ADR-0075-looping-on-both-players.md</c>.

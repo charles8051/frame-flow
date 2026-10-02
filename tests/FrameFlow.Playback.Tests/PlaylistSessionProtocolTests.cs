@@ -247,6 +247,12 @@ public sealed class PlaylistSessionProtocolTests
             CurrentGeneration,
             PlaylistRunState.Ended
         ),
+        ["buffer underrun from an older generation"] = new PlaylistSessionInput.BufferUnderrun(
+            CurrentGeneration - 1
+        ),
+        ["buffer ready from an older generation"] = new PlaylistSessionInput.BufferReady(
+            CurrentGeneration - 1
+        ),
     };
 
     public static TheoryData<string> StaleInputs => new(Stale.Keys);
@@ -270,6 +276,65 @@ public sealed class PlaylistSessionProtocolTests
                 Assert.Equal(state, after);
             }
         }
+    }
+
+    [Fact]
+    public void ABufferUnderrun_FromTheCurrentGeneration_IsReportedOnce()
+    {
+        // #547: the controller is told once, however many times the item's pacer reports it.
+        var (state, queue) = Setup(PlaylistRunState.Playing, Slot.Played, Next.Other);
+
+        var (starved, q1, first) = Step(state, queue, new PlaylistSessionInput.BufferUnderrun(CurrentGeneration));
+        var (_, _, second) = Step(starved, q1, new PlaylistSessionInput.BufferUnderrun(CurrentGeneration));
+
+        Assert.IsType<PlaylistSessionAction.ReportBufferUnderrun>(Assert.Single(first.Actions));
+        Assert.True(starved.UnderrunReported);
+        Assert.Empty(second.Actions);
+    }
+
+    [Theory]
+    [InlineData(Run.NotStarted)]
+    [InlineData(Run.Paused)]
+    [InlineData(Run.Ended)]
+    public void ABufferUnderrun_WhileNotPlaying_IsDropped(Run run)
+    {
+        // An underrun the pacer raised just before a pause can be handled after it. Taking it
+        // would mark one the controller, now Paused, never entered.
+        var (state, queue) = Setup(run, Slot.Played, Next.Other);
+
+        var (after, _, step) = Step(state, queue, new PlaylistSessionInput.BufferUnderrun(CurrentGeneration));
+
+        Assert.Empty(step.Actions);
+        Assert.False(after.UnderrunReported);
+    }
+
+    [Fact]
+    public void ABufferReady_IsReportedOnlyAfterAnUnderrun()
+    {
+        var (state, queue) = Setup(PlaylistRunState.Playing, Slot.Played, Next.Other);
+
+        var (_, _, unprompted) = Step(state, queue, new PlaylistSessionInput.BufferReady(CurrentGeneration));
+        var (fed, _, ready) = Step(
+            state with { UnderrunReported = true },
+            queue,
+            new PlaylistSessionInput.BufferReady(CurrentGeneration));
+
+        Assert.Empty(unprompted.Actions);
+        Assert.IsType<PlaylistSessionAction.ReportBufferReady>(Assert.Single(ready.Actions));
+        Assert.False(fed.UnderrunReported);
+    }
+
+    [Fact]
+    public void APause_ForgetsAnUnderrun_WithoutReportingReady()
+    {
+        // The controller leaves Rebuffering for Paused by itself. Forgetting it here is what lets a
+        // stall that outlasts the resume be reported again.
+        var (state, queue) = Setup(PlaylistRunState.Playing, Slot.Played, Next.Other);
+
+        var (paused, _, step) = Step(state with { UnderrunReported = true }, queue, new PlaylistSessionInput.Pause(Command));
+
+        Assert.False(paused.UnderrunReported);
+        Assert.DoesNotContain(step.Actions, a => a is PlaylistSessionAction.ReportBufferReady);
     }
 
     [Fact]

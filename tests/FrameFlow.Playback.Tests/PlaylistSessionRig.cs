@@ -350,6 +350,12 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
         /// <summary>Raises a worker fault.</summary>
         public void RaiseFault(Exception error) => callbacks.OnWorkerFaulted(error);
 
+        /// <summary>Raises an underrun, as the item's pacer does when its ring starves.</summary>
+        public void RaiseBufferUnderrun() => callbacks.OnBufferUnderrun();
+
+        /// <summary>Raises ready, as the item's pacer does when frames flow again.</summary>
+        public void RaiseBufferReady() => callbacks.OnBufferReady();
+
         public async ValueTask InitializeAsync(
             IMediaSource source,
             CancellationToken cancellationToken = default

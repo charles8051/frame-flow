@@ -622,7 +622,11 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                     _clockSource,
                     _loggerFactory.CreateLogger("FrameFlow.Playback.ClockSelect.Video"),
                     maxWait: PaceWaitCap,
-                    formatAnnouncer: FormatAnnouncer
+                    formatAnnouncer: FormatAnnouncer,
+                    // A source that stops delivering starves the ring; the controller reports
+                    // Rebuffering until frames flow again (#547).
+                    onStarved: _callbacks.OnBufferUnderrun,
+                    onFed: _callbacks.OnBufferReady
                 );
                 // Seat the cap on the gate state this pacer is born into — a session
                 // prepared while paused (a playlist advance mid-pause) must not arm the cap

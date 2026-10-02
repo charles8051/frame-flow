@@ -181,8 +181,8 @@ internal readonly record struct PlaybackInputs(bool HasSession = true);
 /// </para>
 /// <list type="bullet">
 /// <item><description>
-/// <b>end-of-stream:</b> <c>Playing × LastFrameRendered</c> and <c>Paused × LastFrameRendered</c>
-/// both go to <c>Ended</c>. The session runs the repeat mode, so an end-of-stream it reports
+/// <b>end-of-stream:</b> <c>Playing</c>, <c>Paused</c> and <c>Rebuffering × LastFrameRendered</c>
+/// all go to <c>Ended</c>. The session runs the repeat mode, so an end-of-stream it reports
 /// means it has finished.
 /// </description></item>
 /// <item><description>
@@ -332,6 +332,12 @@ internal static class PlaybackProtocol
 
             InternalPlaybackState.Rebuffering => trigger switch
             {
+                // End-of-stream while rebuffering: the input ran out rather than resuming. The
+                // ticker already stopped on the way in; Ended OnEntry freezes the clock (#547).
+                PlaybackTrigger.LastFrameRendered => PlaybackDecision.To(
+                    InternalPlaybackState.Ended,
+                    PlaybackAction.Of(PlaybackActionKind.FreezeClock)
+                ),
                 // BufferReady → Playing: Playing OnEntry starts the ticker. This is NOT
                 // the Play trigger, so EnterPlayingFromPlay (play the session) does not run.
                 PlaybackTrigger.BufferReady => PlaybackDecision.To(

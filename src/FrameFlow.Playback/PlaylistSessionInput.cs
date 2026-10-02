@@ -53,6 +53,14 @@ internal abstract record PlaylistSessionInput
     public sealed record Fault(int Generation, Exception Error, TimeSpan PlayedFor)
         : PlaylistSessionInput;
 
+    /// <summary>A runtime's video stopped arriving while it played (#547).</summary>
+    /// <param name="Generation">The generation the runtime's callbacks are tagged with.</param>
+    public sealed record BufferUnderrun(int Generation) : PlaylistSessionInput;
+
+    /// <summary>A runtime's video is arriving again after an underrun (#547).</summary>
+    /// <param name="Generation">The generation the runtime's callbacks are tagged with.</param>
+    public sealed record BufferReady(int Generation) : PlaylistSessionInput;
+
     // ── Requests from the coordinator ───────────────────────────────────────
 
     /// <summary>The caller skipped the current item.</summary>
@@ -168,6 +176,12 @@ internal abstract record PlaylistSessionAction
 
     /// <summary>Tell the controller the queue has ended.</summary>
     public sealed record ReportEndOfStream : PlaylistSessionAction;
+
+    /// <summary>Tell the controller the current item's video stopped arriving.</summary>
+    public sealed record ReportBufferUnderrun : PlaylistSessionAction;
+
+    /// <summary>Tell the controller video is arriving again, or that the starved item was replaced.</summary>
+    public sealed record ReportBufferReady : PlaylistSessionAction;
 
     /// <summary>
     /// Tell the controller the current item repeated after it played to its end, with the count of
