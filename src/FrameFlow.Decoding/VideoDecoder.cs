@@ -74,6 +74,11 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     private FrameHandle? _swFrame;
     private int _hwPixelFormat = -1;
 
+    // How the stream is meant to be shown (#542): the container's pixel shape, which wins over a
+    // frame's, and the display matrix's rotation. Set once by Open.
+    private (int Num, int Den) _containerSampleAspectRatio;
+    private VideoRotation _rotation;
+
     // The hwframe pool the latest frame came from (#229), or null before the first hardware
     // frame and after a switch to software. Its size is mirrored in _hwPoolSize for the
     // snapshot. Written by the decode worker and on dispose, both under _codecSync.
@@ -1099,7 +1104,9 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             pts: pts,
             duration: accessor.ComputeDuration(_timeBaseNum, _timeBaseDen),
             backend: HardwareBackend ?? HardwareDecodeBackendKind.Other,
-            pool: _pool
+            pool: _pool,
+            sampleAspectRatio: DisplayGeometry.Resolve(_containerSampleAspectRatio, accessor.SampleAspectRatio),
+            rotation: _rotation
         );
 
         if (managed is null)
@@ -1150,6 +1157,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 dst.pts = src.pts;
                 dst.time_base = src.time_base;
                 dst.duration = src.duration;
+                dst.sample_aspect_ratio = src.sample_aspect_ratio;
             }
 
             try
@@ -1208,7 +1216,9 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 presentationTime,
                 duration,
                 (SwsCtx: _swsCtx.DangerousGetHandle(), Source: framePtr),
-                static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source)
+                static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source),
+                sampleAspectRatio: DisplayGeometry.Resolve(_containerSampleAspectRatio, accessor.SampleAspectRatio),
+                rotation: _rotation
             );
         }
         catch (ScaleFailedException ex)

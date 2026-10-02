@@ -1,6 +1,8 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Media.Core;
+
 namespace FrameFlow.Media;
 
 /// <summary>
@@ -45,7 +47,24 @@ public sealed record VideoStreamInfo(
     int Width,
     int Height,
     double FrameRate
-);
+)
+{
+    /// <summary>
+    /// The shape of the stream's pixels, from the container or, failing that, the codec. Square
+    /// unless the source says otherwise. A frame can carry a different one: see
+    /// <see cref="IVideoFrame.SampleAspectRatio"/>.
+    /// </summary>
+    public SampleAspectRatio SampleAspectRatio { get; init; } = SampleAspectRatio.Square;
+
+    /// <summary>How far the stream's frames turn clockwise to display upright, from its display matrix.</summary>
+    public VideoRotation Rotation { get; init; }
+
+    /// <summary>The width to show the stream at: <see cref="Width"/> scaled by the pixel shape, then rotated.</summary>
+    public int DisplayWidth => DisplaySize.Of(Width, Height, SampleAspectRatio, Rotation).Width;
+
+    /// <summary>The height to show the stream at, after rotation.</summary>
+    public int DisplayHeight => DisplaySize.Of(Width, Height, SampleAspectRatio, Rotation).Height;
+}
 
 /// <summary>One audio stream in a source's container.</summary>
 /// <param name="StreamIndex">The stream's index in the container, as FFmpeg numbers them.</param>

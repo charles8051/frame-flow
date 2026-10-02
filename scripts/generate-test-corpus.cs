@@ -258,6 +258,35 @@ Gen(
     new(Width: 320, Height: 240, Fps: 24, DurationSec: 3.0)
 );
 
+// Non-square pixels (#542): 320x240 coded, shown at 128:81. The MP4 muxer writes the stream's
+// sample aspect ratio to the container's pasp box, which is what the demuxer reads back.
+Gen(
+    "test-video-h264-anamorphic.mp4",
+    "-f lavfi -i testsrc2=size=320x240:rate=24:duration=1",
+    "-vf setsar=32/27 -c:v libopenh264 -preset fast -pix_fmt yuv420p -an",
+    new(Width: 320, Height: 240, Fps: 24, DurationSec: 1.0)
+);
+
+// The container and the bitstream disagree (#542): the anamorphic fixture's bitstream says 32:27,
+// and this stream copy sets the container to 3:2. FFmpeg's av_guess_sample_aspect_ratio takes the
+// container's, so a decoder that read only the frame's would show this at the wrong shape.
+Gen(
+    "test-video-h264-container-aspect.mp4",
+    $"-i \"{Path.Combine(outputDir, "test-video-h264-anamorphic.mp4")}\"",
+    "-c copy -aspect 2:1",
+    new(Width: 320, Height: 240, Fps: 24, DurationSec: 1.0)
+);
+
+// A display matrix (#542): coded landscape, shown a quarter turn counterclockwise, as ffprobe's
+// rotation=90. -noautorotate keeps the encoder from turning the pixels instead, so the matrix
+// reaches the output unchanged.
+Gen(
+    "test-video-h264-rotated.mp4",
+    "-display_rotation 90 -noautorotate -f lavfi -i testsrc2=size=320x240:rate=24:duration=1",
+    "-c:v libopenh264 -preset fast -pix_fmt yuv420p -an",
+    new(Width: 320, Height: 240, Fps: 24, DurationSec: 1.0)
+);
+
 Gen(
     "test-subsecond.mp4",
     "-f lavfi -i testsrc2=size=320x240:rate=30:duration=0.5 -f lavfi -i sine=frequency=440:sample_rate=44100:duration=0.5",
@@ -749,12 +778,14 @@ void Gen(string fileName, string inputs, string options, MediaSpec spec, int tim
         if (wantPixFmt is not null)
         {
             var probe = FindFfprobe(ffmpeg!);
+            // Only the first field: a stream with side data, such as a display matrix, appends
+            // it to the row after a comma.
             var actual = probe is null
                 ? null
                 : FirstLine(RunProcess(
                     probe,
                     $"-v error -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0 \"{outPath}\""
-                ));
+                ))?.Split(',')[0];
 
             // An unverifiable output is treated as a failed one. Accepting it
             // would defeat the whole point of the check: the fixture would ship

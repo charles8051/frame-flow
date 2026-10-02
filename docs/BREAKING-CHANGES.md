@@ -248,6 +248,26 @@ that read `ActiveProvider` after a fallback past a failure the factory does not 
 again, open a smaller model, or open with a factory that prefers CPU. It derives from
 `InvalidOperationException`, so a catch of that still catches it.
 
+### 15. Presenters show anamorphic and rotated video at its display geometry
+
+**A change in results, and a binary change to `CpuVideoFrame.Create`.**
+
+Frames carry the sample aspect ratio and display rotation their source declares (#542), as
+`IVideoFrame.SampleAspectRatio` and `IVideoFrame.Rotation`. `FrameFlowVideoView` and
+`CompositionInteropVideoView` letterbox to the display shape and turn the picture upright. A DVD
+frame at 32:27 shows at 16:9, where it used to show at 3:2, and phone video shows portrait.
+`VideoStreamInfo` and `VideoFormatInfo` report both, with `DisplayWidth` and `DisplayHeight`.
+
+`CpuVideoFrame.Create` gained two optional parameters, `sampleAspectRatio` and `rotation`. Source
+that calls it compiles unchanged; a binary compiled against the old signature needs a rebuild.
+
+**Who hits this.** A host that corrected the layout itself, by rotating the view or stretching it to
+a known aspect, now corrects twice. So does an `IVideoFrame` implementation that wraps a decoded frame
+without forwarding the two properties: the defaults are square and upright.
+
+**What to write instead.** Drop the host-side correction. A wrapper forwards `SampleAspectRatio` and
+`Rotation` from the frame it wraps.
+
 ## `v0.12.0` — since `v0.11.0`
 
 ### 1. A join with a frame secondary must set `maxLead`

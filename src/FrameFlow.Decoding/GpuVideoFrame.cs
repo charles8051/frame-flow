@@ -101,6 +101,12 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// </summary>
     public HardwareDecodeBackendKind Backend { get; }
 
+    /// <inheritdoc />
+    public SampleAspectRatio SampleAspectRatio { get; }
+
+    /// <inheritdoc />
+    public VideoRotation Rotation { get; }
+
     /// <summary>
     /// The FFmpeg device context the frame's pool was made on: a borrowed
     /// <see cref="HardwareDevice"/>'s own, or the one its decoder created. Zero once disposed.
@@ -139,9 +145,13 @@ public sealed class GpuVideoFrame : IVideoFrame
         PixelFormat softwareFormat,
         TimeSpan pts,
         TimeSpan duration,
-        HardwareDecodeBackendKind backend
+        HardwareDecodeBackendKind backend,
+        SampleAspectRatio sampleAspectRatio,
+        VideoRotation rotation
     )
     {
+        SampleAspectRatio = sampleAspectRatio.IsKnown ? sampleAspectRatio : SampleAspectRatio.Square;
+        Rotation = rotation;
         _handle = handle;
         Width = width;
         Height = height;
@@ -189,14 +199,17 @@ public sealed class GpuVideoFrame : IVideoFrame
         TimeSpan pts,
         TimeSpan duration,
         HardwareDecodeBackendKind backend,
-        DecodePoolGeneration? pool = null
+        DecodePoolGeneration? pool = null,
+        SampleAspectRatio sampleAspectRatio = default,
+        VideoRotation rotation = VideoRotation.None
     )
     {
         nint cloned = FFAvUtil.av_frame_clone(sourceAvFrame);
         if (cloned == nint.Zero)
             return null;
 
-        var frame = FromOwnedAvFrame(cloned, width, height, softwareFormat, pts, duration, backend);
+        var frame = FromOwnedAvFrame(
+            cloned, width, height, softwareFormat, pts, duration, backend, sampleAspectRatio, rotation);
         pool?.AttachFrame();
         frame._pool = pool;
         return frame;
@@ -224,14 +237,17 @@ public sealed class GpuVideoFrame : IVideoFrame
         PixelFormat softwareFormat,
         TimeSpan pts,
         TimeSpan duration,
-        HardwareDecodeBackendKind backend
+        HardwareDecodeBackendKind backend,
+        SampleAspectRatio sampleAspectRatio = default,
+        VideoRotation rotation = VideoRotation.None
     )
     {
         var handle = new FrameHandle(ownedAvFrame);
         // One hwframe-pool slice is now pinned by this frame (perf survey §A1
         // pool-occupancy telemetry). Released at the final ref-drop in Dispose.
         DecodePoolMetrics.OnLeaseAcquired();
-        return new GpuVideoFrame(handle, width, height, softwareFormat, pts, duration, backend);
+        return new GpuVideoFrame(
+            handle, width, height, softwareFormat, pts, duration, backend, sampleAspectRatio, rotation);
     }
 
     /// <inheritdoc/>
@@ -315,7 +331,9 @@ public sealed class GpuVideoFrame : IVideoFrame
             Width,
             Height,
             Pts,
-            Duration
+            Duration,
+            SampleAspectRatio,
+            Rotation
         );
     }
 

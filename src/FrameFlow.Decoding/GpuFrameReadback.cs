@@ -41,7 +41,9 @@ internal static unsafe class GpuFrameReadback
         int width,
         int height,
         TimeSpan pts,
-        TimeSpan duration
+        TimeSpan duration,
+        SampleAspectRatio sampleAspectRatio = default,
+        VideoRotation rotation = VideoRotation.None
     )
     {
         // Allocate the intermediate CPU AVFrame for av_hwframe_transfer_data
@@ -97,7 +99,9 @@ internal static unsafe class GpuFrameReadback
                 pts,
                 duration,
                 (SwsCtx: swsCtx, Source: cpuPtr),
-                static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source)
+                static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source),
+                sampleAspectRatio: sampleAspectRatio,
+                rotation: rotation
             );
         }
         finally

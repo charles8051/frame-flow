@@ -3,6 +3,7 @@
 
 using System.Runtime.CompilerServices;
 using FFmpeg.AutoGen.Abstractions;
+using FrameFlow.Decoding.Core;
 using FrameFlow.Decoding.Internal;
 using FrameFlow.Media;
 using FrameFlow.Native;
@@ -264,6 +265,11 @@ public sealed partial class VideoDecoder
             packetQueueCapacity,
             logger
         );
+        decoder._containerSampleAspectRatio = stream.SampleAspectRatio;
+        Span<int> displayMatrix = stackalloc int[9];
+        decoder._rotation = codecPar.TryGetDisplayMatrix(displayMatrix)
+            ? DisplayGeometry.RotationOf(displayMatrix)
+            : VideoRotation.None;
 
         if (hwBinding is not null)
         {

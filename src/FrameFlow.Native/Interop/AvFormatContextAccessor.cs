@@ -114,6 +114,19 @@ internal readonly unsafe ref struct AvStreamAccessor
     }
 
     /// <summary>Numerator of the stream's time base.</summary>
+    /// <summary>
+    /// The container's sample aspect ratio for this stream, as numerator and denominator. Either
+    /// is zero when the container does not say (#542).
+    /// </summary>
+    internal (int Num, int Den) SampleAspectRatio
+    {
+        get
+        {
+            ref AVStream s = ref Unsafe.AsRef<AVStream>((void*)_ptr);
+            return (s.sample_aspect_ratio.num, s.sample_aspect_ratio.den);
+        }
+    }
+
     internal int TimeBaseNum
     {
         get
@@ -222,6 +235,41 @@ internal readonly unsafe ref struct AvCodecParAccessor
             ref AVCodecParameters p = ref Unsafe.AsRef<AVCodecParameters>((void*)_ptr);
             return p.height;
         }
+    }
+
+    /// <summary>
+    /// The codec's sample aspect ratio, as numerator and denominator. Either is zero when the
+    /// bitstream does not say (#542).
+    /// </summary>
+    internal (int Num, int Den) SampleAspectRatio
+    {
+        get
+        {
+            ref AVCodecParameters p = ref Unsafe.AsRef<AVCodecParameters>((void*)_ptr);
+            return (p.sample_aspect_ratio.num, p.sample_aspect_ratio.den);
+        }
+    }
+
+    /// <summary>
+    /// Copies the stream's display matrix, nine 16.16 and 2.30 fixed-point values, from its
+    /// coded side data into <paramref name="matrix"/>. Returns <see langword="false"/> when the
+    /// stream carries none (#542).
+    /// </summary>
+    internal bool TryGetDisplayMatrix(Span<int> matrix)
+    {
+        ref AVCodecParameters p = ref Unsafe.AsRef<AVCodecParameters>((void*)_ptr);
+        for (int i = 0; i < p.nb_coded_side_data; i++)
+        {
+            AVPacketSideData* entry = &p.coded_side_data[i];
+            if (entry->type != AVPacketSideDataType.AV_PKT_DATA_DISPLAYMATRIX)
+                continue;
+            if (entry->size < (ulong)(9 * sizeof(int)) || matrix.Length < 9)
+                return false;
+            new ReadOnlySpan<int>(entry->data, 9).CopyTo(matrix);
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>Sample rate in Hz (audio streams only).</summary>

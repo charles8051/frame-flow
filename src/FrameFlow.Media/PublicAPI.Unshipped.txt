@@ -77,6 +77,8 @@ FrameFlow.Media.CpuVideoFrame.Height.get -> int
 FrameFlow.Media.CpuVideoFrame.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Media.CpuVideoFrame.PresentationTime.get -> System.TimeSpan
 FrameFlow.Media.CpuVideoFrame.Pts.get -> System.TimeSpan
+FrameFlow.Media.CpuVideoFrame.Rotation.get -> FrameFlow.Media.VideoRotation
+FrameFlow.Media.CpuVideoFrame.SampleAspectRatio.get -> FrameFlow.Media.SampleAspectRatio
 FrameFlow.Media.CpuVideoFrame.Stride.get -> int
 FrameFlow.Media.CpuVideoFrame.ToCpu() -> FrameFlow.Media.CpuFrameData
 FrameFlow.Media.CpuVideoFrame.Width.get -> int
@@ -370,6 +372,8 @@ FrameFlow.Media.IVideoFrame.Duration.get -> System.TimeSpan
 FrameFlow.Media.IVideoFrame.Format.get -> FrameFlow.Media.PixelFormat
 FrameFlow.Media.IVideoFrame.MemoryDomain.get -> FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Media.IVideoFrame.Pts.get -> System.TimeSpan
+FrameFlow.Media.IVideoFrame.Rotation.get -> FrameFlow.Media.VideoRotation
+FrameFlow.Media.IVideoFrame.SampleAspectRatio.get -> FrameFlow.Media.SampleAspectRatio
 FrameFlow.Media.IVideoFrame.ToCpu() -> FrameFlow.Media.CpuFrameData
 FrameFlow.Media.IVideoSink
 FrameFlow.Media.IVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
@@ -487,6 +491,16 @@ FrameFlow.Media.Result<T>.IsSuccess.get -> bool
 FrameFlow.Media.Result<T>.Result() -> void
 FrameFlow.Media.Result<T>.TryGetValue(out T value, out FrameFlow.Media.PlaybackError? error) -> bool
 FrameFlow.Media.Result<T>.Value.get -> T
+FrameFlow.Media.SampleAspectRatio
+FrameFlow.Media.SampleAspectRatio.Denominator.get -> int
+FrameFlow.Media.SampleAspectRatio.Denominator.init -> void
+FrameFlow.Media.SampleAspectRatio.IsKnown.get -> bool
+FrameFlow.Media.SampleAspectRatio.IsSquare.get -> bool
+FrameFlow.Media.SampleAspectRatio.Numerator.get -> int
+FrameFlow.Media.SampleAspectRatio.Numerator.init -> void
+FrameFlow.Media.SampleAspectRatio.SampleAspectRatio() -> void
+FrameFlow.Media.SampleAspectRatio.SampleAspectRatio(int Numerator, int Denominator) -> void
+FrameFlow.Media.SampleAspectRatio.Value.get -> double
 FrameFlow.Media.ScrubSeekDispatcher
 FrameFlow.Media.ScrubSeekDispatcher.IsSeeking.get -> bool
 FrameFlow.Media.ScrubSeekDispatcher.LastRequested.get -> System.TimeSpan
@@ -505,21 +519,38 @@ FrameFlow.Media.StateTransition<T>.Previous.init -> void
 FrameFlow.Media.StateTransition<T>.StateTransition() -> void
 FrameFlow.Media.StateTransition<T>.StateTransition(T Previous, T Current) -> void
 FrameFlow.Media.VideoFormatInfo
+FrameFlow.Media.VideoFormatInfo.DisplayHeight.get -> int
+FrameFlow.Media.VideoFormatInfo.DisplayWidth.get -> int
 FrameFlow.Media.VideoFormatInfo.Format.get -> FrameFlow.Media.PixelFormat
 FrameFlow.Media.VideoFormatInfo.Format.init -> void
 FrameFlow.Media.VideoFormatInfo.Height.get -> int
 FrameFlow.Media.VideoFormatInfo.Height.init -> void
+FrameFlow.Media.VideoFormatInfo.Rotation.get -> FrameFlow.Media.VideoRotation
+FrameFlow.Media.VideoFormatInfo.Rotation.init -> void
+FrameFlow.Media.VideoFormatInfo.SampleAspectRatio.get -> FrameFlow.Media.SampleAspectRatio
+FrameFlow.Media.VideoFormatInfo.SampleAspectRatio.init -> void
 FrameFlow.Media.VideoFormatInfo.VideoFormatInfo(int Width, int Height, FrameFlow.Media.PixelFormat Format) -> void
 FrameFlow.Media.VideoFormatInfo.Width.get -> int
 FrameFlow.Media.VideoFormatInfo.Width.init -> void
 FrameFlow.Media.VideoFrameExtensions
+FrameFlow.Media.VideoRotation
+FrameFlow.Media.VideoRotation.Clockwise180 = 180 -> FrameFlow.Media.VideoRotation
+FrameFlow.Media.VideoRotation.Clockwise270 = 270 -> FrameFlow.Media.VideoRotation
+FrameFlow.Media.VideoRotation.Clockwise90 = 90 -> FrameFlow.Media.VideoRotation
+FrameFlow.Media.VideoRotation.None = 0 -> FrameFlow.Media.VideoRotation
 FrameFlow.Media.VideoStreamInfo
 FrameFlow.Media.VideoStreamInfo.CodecName.get -> string!
 FrameFlow.Media.VideoStreamInfo.CodecName.init -> void
+FrameFlow.Media.VideoStreamInfo.DisplayHeight.get -> int
+FrameFlow.Media.VideoStreamInfo.DisplayWidth.get -> int
 FrameFlow.Media.VideoStreamInfo.FrameRate.get -> double
 FrameFlow.Media.VideoStreamInfo.FrameRate.init -> void
 FrameFlow.Media.VideoStreamInfo.Height.get -> int
 FrameFlow.Media.VideoStreamInfo.Height.init -> void
+FrameFlow.Media.VideoStreamInfo.Rotation.get -> FrameFlow.Media.VideoRotation
+FrameFlow.Media.VideoStreamInfo.Rotation.init -> void
+FrameFlow.Media.VideoStreamInfo.SampleAspectRatio.get -> FrameFlow.Media.SampleAspectRatio
+FrameFlow.Media.VideoStreamInfo.SampleAspectRatio.init -> void
 FrameFlow.Media.VideoStreamInfo.StreamIndex.get -> int
 FrameFlow.Media.VideoStreamInfo.StreamIndex.init -> void
 FrameFlow.Media.VideoStreamInfo.VideoStreamInfo(int StreamIndex, string! CodecName, int Width, int Height, double FrameRate) -> void
@@ -527,12 +558,13 @@ FrameFlow.Media.VideoStreamInfo.Width.get -> int
 FrameFlow.Media.VideoStreamInfo.Width.init -> void
 const FrameFlow.Media.Diagnostics.PresenterStallEvaluator.DefaultRecoverySamples = 4 -> int
 override FrameFlow.Media.HighResolutionTimeProvider.CreateTimer(System.Threading.TimerCallback! callback, object? state, System.TimeSpan dueTime, System.TimeSpan period) -> System.Threading.ITimer!
+override FrameFlow.Media.SampleAspectRatio.ToString() -> string!
 static FrameFlow.Media.AudioClockAnchor.None.get -> FrameFlow.Media.AudioClockAnchor
 static FrameFlow.Media.AudioClockInterpolation.Read(FrameFlow.Media.AudioClockAnchor anchor, System.TimeSpan rawPosition, long nowTicks, long ticksPerSecond, System.TimeSpan maxExtrapolation, bool interpolate) -> (FrameFlow.Media.AudioClockAnchor Anchor, System.TimeSpan Position)
 static FrameFlow.Media.AudioClockRateAnchor.None.get -> FrameFlow.Media.AudioClockRateAnchor
 static FrameFlow.Media.AudioClockRateLimit.Apply(FrameFlow.Media.AudioClockRateAnchor anchor, System.TimeSpan raw, System.TimeSpan sessionElapsed, System.TimeSpan slack) -> (FrameFlow.Media.AudioClockRateAnchor Anchor, System.TimeSpan Position)
 static FrameFlow.Media.AudioClockState.Initial.get -> FrameFlow.Media.AudioClockState
-static FrameFlow.Media.CpuVideoFrame.Create<TState>(FrameFlow.Media.PixelFormat format, int width, int height, System.TimeSpan presentationTime, System.TimeSpan duration, TState state, FrameFlow.Media.CpuVideoFrameFill<TState>! fill, System.Buffers.ArrayPool<byte>? pool = null) -> FrameFlow.Media.CpuVideoFrame!
+static FrameFlow.Media.CpuVideoFrame.Create<TState>(FrameFlow.Media.PixelFormat format, int width, int height, System.TimeSpan presentationTime, System.TimeSpan duration, TState state, FrameFlow.Media.CpuVideoFrameFill<TState>! fill, System.Buffers.ArrayPool<byte>? pool = null, FrameFlow.Media.SampleAspectRatio sampleAspectRatio = default(FrameFlow.Media.SampleAspectRatio), FrameFlow.Media.VideoRotation rotation = FrameFlow.Media.VideoRotation.None) -> FrameFlow.Media.CpuVideoFrame!
 static FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot.Empty.get -> FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot!
 static FrameFlow.Media.Diagnostics.CpuFrameMetrics.HighWaterBytes.get -> long
 static FrameFlow.Media.Diagnostics.CpuFrameMetrics.OutstandingBytes.get -> long
@@ -546,6 +578,7 @@ static FrameFlow.Media.HighResolutionTimeProvider.IsSupported.get -> bool
 static FrameFlow.Media.HighResolutionTimeProvider.Preferred.get -> System.TimeProvider!
 static FrameFlow.Media.MediaSource.FromFile(string! path) -> FrameFlow.Media.MediaSource!
 static FrameFlow.Media.PcmAudioBuffer.Create<TState>(int capacity, int sampleRate, int channels, System.TimeSpan presentationTime, TState state, FrameFlow.Media.PcmAudioFill<TState>! fill, System.Buffers.ArrayPool<short>? pool = null) -> FrameFlow.Media.PcmAudioBuffer!
+static FrameFlow.Media.SampleAspectRatio.Square.get -> FrameFlow.Media.SampleAspectRatio
 static FrameFlow.Media.SinkAdapters.AsSinkNode(this FrameFlow.Media.IAudioSink! sink, string! id = "audio-sink") -> FrameFlow.Graph.SinkNode<FrameFlow.Media.PcmAudioBuffer!>!
 static FrameFlow.Media.SinkAdapters.AsSinkNode(this FrameFlow.Media.IVideoSink! sink, string! id = "video-sink") -> FrameFlow.Graph.SinkNode<FrameFlow.Media.IVideoFrame!>!
 static readonly FrameFlow.Media.MediaSource.MaximumStillDwell -> System.TimeSpan

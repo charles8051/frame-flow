@@ -631,6 +631,7 @@ public sealed class DemuxSession : IDemuxSession
 
         uint nbStreams = fmtCtx.nb_streams;
         AVStream** streamsArr = fmtCtx.streams;
+        Span<int> displayMatrix = stackalloc int[9];
 
         var videoStreams = new List<VideoStreamInfo>();
         var audioStreams = new List<AudioStreamInfo>();
@@ -661,7 +662,19 @@ public sealed class DemuxSession : IDemuxSession
                 int fpsDen = stream->avg_frame_rate.den;
                 double fps = fpsDen > 0 ? (double)fpsNum / fpsDen : 0.0;
 
-                videoStreams.Add(new VideoStreamInfo(streamIdx, codecName, width, height, fps));
+                var codecParameters = new AvCodecParAccessor((nint)codecPar);
+                videoStreams.Add(
+                    new VideoStreamInfo(streamIdx, codecName, width, height, fps)
+                    {
+                        // A frame can carry another pixel shape; this is the stream's (#542).
+                        SampleAspectRatio = DisplayGeometry.Resolve(
+                            (stream->sample_aspect_ratio.num, stream->sample_aspect_ratio.den),
+                            codecParameters.SampleAspectRatio),
+                        Rotation = codecParameters.TryGetDisplayMatrix(displayMatrix)
+                            ? DisplayGeometry.RotationOf(displayMatrix)
+                            : VideoRotation.None,
+                    }
+                );
             }
             else if (mediaType == FFAvUtil.AvMediaTypeAudio)
             {
