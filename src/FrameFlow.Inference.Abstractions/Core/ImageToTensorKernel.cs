@@ -50,6 +50,14 @@ internal enum ImageToTensorPath
 /// crop. Nearest sampling converts too little per pixel to repay the buffers, so a rotated nearest
 /// crop converts each pixel as it reads it.
 /// </para>
+/// <para>
+/// A video operator calls the kernel once a frame, so under tiered compilation its first frames
+/// run at tier 0, where <c>Vector&lt;T&gt;</c> operations are calls rather than instructions
+/// (#546). The methods that loop over a row or the image are therefore
+/// <see cref="MethodImplOptions.AggressiveOptimization"/>, and what they call per element or per
+/// row is <see cref="MethodImplOptions.AggressiveInlining"/>, so it compiles into an optimized
+/// caller. Code compiled this way gets no dynamic PGO.
+/// </para>
 /// </remarks>
 internal static class ImageToTensorKernel
 {
@@ -60,6 +68,7 @@ internal static class ImageToTensorKernel
     /// <paramref name="height"/> rows of <paramref name="stride"/> bytes, the last at least
     /// <c>4 · width</c> long, and that <paramref name="destination"/> holds the whole tensor.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     public static void Run<T>(
         ReadOnlySpan<byte> pixels,
         int width,
@@ -179,6 +188,7 @@ internal static class ImageToTensorKernel
     }
 
     /// <summary>Converts a row of values to a half or byte tensor's elements.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void Store<T>(ReadOnlySpan<float> values, Span<T> destination, bool vector)
         where T : unmanaged
     {
@@ -200,6 +210,7 @@ internal static class ImageToTensorKernel
     /// Each value clamped to 0 to 255 and rounded to the nearest integer, ties to even. The vector
     /// loop clamps, rounds and converts as <see cref="ToByte"/> does.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static void ToBytes(ReadOnlySpan<float> values, Span<byte> destination, bool vector)
     {
         int i = 0;
@@ -239,6 +250,7 @@ internal static class ImageToTensorKernel
     /// Each value converted to <see cref="Half"/>, rounding to nearest with ties to even. The vector
     /// loop is <see cref="HalfBits"/>, which gives <c>(Half)value</c>'s bits.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static void ToHalves(ReadOnlySpan<float> values, Span<Half> destination, bool vector)
     {
         int i = 0;
@@ -266,6 +278,7 @@ internal static class ImageToTensorKernel
     /// runtime's scalar conversion. <see cref="Vector.Min{T}"/> and <see cref="Vector.Max{T}"/>
     /// propagate NaN as <c>float.Min</c> and <c>float.Max</c> do, so a NaN lane matches too.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector<uint> HalfBits(Vector<float> value)
     {
         var sign = Vector.ShiftRightLogical(Vector.AsVectorUInt32(value) & new Vector<uint>(0x8000_0000u), 16);
@@ -288,6 +301,7 @@ internal static class ImageToTensorKernel
         return ((bits & real) + exponent) | nanExponent | sign;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void NearestRow(
         in Source source,
         in ImageToTensorPlan plan,
@@ -316,6 +330,7 @@ internal static class ImageToTensorKernel
         ConvertNearest(packed, channels, vector, r[first..end], g[first..end], b[first..end]);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void BilinearRow(
         in Source source,
         in ImageToTensorPlan plan,
@@ -364,6 +379,7 @@ internal static class ImageToTensorKernel
     /// buffers with its weights, then the row converted as the table path converts, and the pixels
     /// outside the fitted crop or the frame padded after.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void RotatedBilinearRow(
         in Source source,
         in ImageToTensorPlan plan,
@@ -425,11 +441,34 @@ internal static class ImageToTensorKernel
         }
     }
 
+    // One loop per sampling. A single loop that branched on it per pixel compiled, without a
+    // profile, with the bilinear work inlined into the nearest path, which was 16% slower (#546).
     private static void GeneralRow(
         in Source source,
         in ImageToTensorPlan plan,
         int dy,
         bool bilinear,
+        bool padOutside,
+        in Channels channels,
+        Span<float> r,
+        Span<float> g,
+        Span<float> b)
+    {
+        if (bilinear)
+        {
+            GeneralBilinearRow(source, plan, dy, padOutside, channels, r, g, b);
+        }
+        else
+        {
+            GeneralNearestRow(source, plan, dy, padOutside, channels, r, g, b);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void GeneralNearestRow(
+        in Source source,
+        in ImageToTensorPlan plan,
+        int dy,
         bool padOutside,
         in Channels channels,
         Span<float> r,
@@ -451,13 +490,37 @@ internal static class ImageToTensorKernel
                 continue;
             }
 
-            if (!bilinear)
+            uint p = source.Read(
+                source.RowOffset(NearestIndex(y, maxY)) + NearestIndex(x, maxX) * BytesPerPixel);
+            r[dx] = NearestValue(p, channels.ShiftRed, channels.ScaleRed, channels.OffsetRed);
+            g[dx] = NearestValue(p, channels.ShiftGreen, channels.ScaleGreen, channels.OffsetGreen);
+            b[dx] = NearestValue(p, channels.ShiftBlue, channels.ScaleBlue, channels.OffsetBlue);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void GeneralBilinearRow(
+        in Source source,
+        in ImageToTensorPlan plan,
+        int dy,
+        bool padOutside,
+        in Channels channels,
+        Span<float> r,
+        Span<float> g,
+        Span<float> b)
+    {
+        int maxX = source.Width - 1;
+        int maxY = source.Height - 1;
+        for (int dx = 0; dx < r.Length; dx++)
+        {
+            double x = plan.SourceX(dx, dy);
+            double y = plan.SourceY(dx, dy);
+            if (!plan.CoversColumn(dx)
+                || (padOutside && !(Inside(x, source.Width) && Inside(y, source.Height))))
             {
-                uint p = source.Read(
-                    source.RowOffset(NearestIndex(y, maxY)) + NearestIndex(x, maxX) * BytesPerPixel);
-                r[dx] = NearestValue(p, channels.ShiftRed, channels.ScaleRed, channels.OffsetRed);
-                g[dx] = NearestValue(p, channels.ShiftGreen, channels.ScaleGreen, channels.OffsetGreen);
-                b[dx] = NearestValue(p, channels.ShiftBlue, channels.ScaleBlue, channels.OffsetBlue);
+                r[dx] = channels.PadRed;
+                g[dx] = channels.PadGreen;
+                b[dx] = channels.PadBlue;
                 continue;
             }
 
@@ -475,6 +538,7 @@ internal static class ImageToTensorKernel
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void ConvertNearest(
         ReadOnlySpan<uint> packed,
         in Channels channels,
@@ -511,6 +575,7 @@ internal static class ImageToTensorKernel
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void ConvertBilinear(
         ReadOnlySpan<uint> p00,
         ReadOnlySpan<uint> p01,
@@ -606,6 +671,7 @@ internal static class ImageToTensorKernel
         return (top + (bottom - top) * wy) * scale + offset;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void Interleave(
         ReadOnlySpan<float> first,
         ReadOnlySpan<float> second,
@@ -621,12 +687,14 @@ internal static class ImageToTensorKernel
     }
 
     /// <summary>The pixel a position falls in, with the edge pixel repeated outside.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static int NearestIndex(double position, int max) => Clamp(Math.Floor(position), max);
 
     /// <summary>
     /// The two pixels whose centres straddle a position, and the weight of the second. Pixel
     /// <c>i</c>'s centre is at <c>i + ½</c>.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static (int I0, int I1, float Weight) LinearIndex(double position, int max)
     {
         double centred = position - 0.5;
@@ -634,6 +702,7 @@ internal static class ImageToTensorKernel
         return (Clamp(floor, max), Clamp(floor + 1, max), (float)(centred - floor));
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int Clamp(double index, int max)
         => !(index > 0) ? 0 : index >= max ? max : (int)index;
 
@@ -669,6 +738,7 @@ internal static class ImageToTensorKernel
     /// <paramref name="padOutside"/> is set, inside the frame. An unrotated crop's frame x rises
     /// with the column, so both ranges are contiguous and so is their overlap.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static (int First, int End) BuildColumns(
         in ImageToTensorPlan plan, int width, bool bilinear, bool padOutside, in Scratch scratch)
     {
