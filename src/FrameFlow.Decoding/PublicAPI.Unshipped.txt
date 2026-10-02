@@ -264,3 +264,5 @@ FrameFlow.Decoding.CudaFramePlanes.Context.init -> void
 FrameFlow.Decoding.CudaFramePlanes.Stream.get -> nint
 FrameFlow.Decoding.CudaFramePlanes.Stream.init -> void
 FrameFlow.Decoding.GpuVideoFrame.TryGetCudaPlanes(out FrameFlow.Decoding.CudaFramePlanes planes) -> bool
+FrameFlow.Decoding.GpuVideoFrame.Rotation.get -> FrameFlow.Media.VideoRotation
+FrameFlow.Decoding.GpuVideoFrame.SampleAspectRatio.get -> FrameFlow.Media.SampleAspectRatio

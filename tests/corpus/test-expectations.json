@@ -170,6 +170,39 @@
     "hasAudio": false
   },
   {
+    "filename": "test-video-h264-anamorphic.mp4",
+    "durationSeconds": 1,
+    "durationToleranceMs": 350,
+    "width": 320,
+    "height": 240,
+    "fps": 24,
+    "expectedVideoFrames": 24,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
+    "filename": "test-video-h264-container-aspect.mp4",
+    "durationSeconds": 1,
+    "durationToleranceMs": 350,
+    "width": 320,
+    "height": 240,
+    "fps": 24,
+    "expectedVideoFrames": 24,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
+    "filename": "test-video-h264-rotated.mp4",
+    "durationSeconds": 1,
+    "durationToleranceMs": 350,
+    "width": 320,
+    "height": 240,
+    "fps": 24,
+    "expectedVideoFrames": 24,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
     "filename": "test-subsecond.mp4",
     "durationSeconds": 0.5,
     "durationToleranceMs": 500,

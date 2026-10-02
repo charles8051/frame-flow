@@ -70,7 +70,11 @@ internal sealed class VideoFormatAnnouncer
     /// Describes the frame in the terms <see cref="IVideoSink.OnFormatChangedAsync"/> takes.
     /// </summary>
     internal static VideoFormatInfo FormatOf(IVideoFrame frame) =>
-        new(frame.Width, frame.Height, frame.Format);
+        new(frame.Width, frame.Height, frame.Format)
+        {
+            SampleAspectRatio = frame.SampleAspectRatio,
+            Rotation = frame.Rotation,
+        };
 
     /// <summary>
     /// Announces <paramref name="frame"/>'s format to <paramref name="sink"/> when it differs

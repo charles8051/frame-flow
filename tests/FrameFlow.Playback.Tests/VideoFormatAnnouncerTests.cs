@@ -57,6 +57,21 @@ public sealed class VideoFormatAnnouncerTests
     }
 
     [Fact]
+    public async Task AFrameThatOnlyTurns_IsAnnouncedWithItsRotation()
+    {
+        // #542: the presenter lays out from the announcement, so a change of rotation alone at
+        // the same size is a new shape to be told about.
+        var sink = new RecordingSink();
+        var announcer = new VideoFormatAnnouncer();
+
+        await announcer.PresentAsync(sink, new StubFrame(320, 240, PixelFormat.Bgra32), default);
+        await announcer.PresentAsync(
+            sink, new StubFrame(320, 240, PixelFormat.Bgra32, VideoRotation.Clockwise90), default);
+
+        Assert.Equal([Small, Small with { Rotation = VideoRotation.Clockwise90 }], sink.Announcements);
+    }
+
+    [Fact]
     public async Task AnUnchangedFormatIsAnnouncedOnce()
     {
         var sink = new RecordingSink();
@@ -243,8 +258,14 @@ public sealed class VideoFormatAnnouncerTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    private sealed class StubFrame(int width, int height, PixelFormat format) : IVideoFrame
+    private sealed class StubFrame(
+        int width,
+        int height,
+        PixelFormat format,
+        VideoRotation rotation = VideoRotation.None
+    ) : IVideoFrame
     {
+        public VideoRotation Rotation => rotation;
         public int Width => width;
         public int Height => height;
         public PixelFormat Format => format;

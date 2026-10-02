@@ -10,6 +10,7 @@ using Avalonia.Threading;
 using FrameFlow.Avalonia.Windows.Diagnostics;
 using FrameFlow.Decoding;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -74,6 +75,11 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     private int _nextBuffer;
     private int _videoWidth;
     private int _videoHeight;
+
+    // How the frames are meant to be shown (#542): the layout fits the display shape and turns
+    // the surface upright. UI thread only, like the size above.
+    private SampleAspectRatio _videoShape = SampleAspectRatio.Square;
+    private VideoRotation _videoRotation;
 
     // ── Two-stage present accounting (ADR-0064 §Observability) ────────────────
     // _framesPresented counts at ENQUEUE: the frame's UpdateWithKeyedMutexAsync hand-off was
@@ -751,9 +757,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     }
 
     /// <summary>
-    /// Sizes + centers the surface visual to a letterboxed rect that preserves the
-    /// video's aspect ratio within the control bounds (the black window background shows
-    /// in the bars). Called on attach, on resize, and when the video size is first known.
+    /// Sizes + centers the surface visual to a letterboxed rect at the video's display shape
+    /// within the control bounds (the black window background shows in the bars), turned
+    /// upright about its centre (#542). Called on attach, on resize, and when the video size,
+    /// pixel shape or rotation changes.
     /// </summary>
     private void UpdateSurfaceLayout()
     {
@@ -761,22 +768,21 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             return;
 
         var b = Bounds;
-        if (_videoWidth <= 0 || _videoHeight <= 0 || b.Width <= 0 || b.Height <= 0)
+        var placement = VideoPlacement.Fit(b.Width, b.Height, _videoWidth, _videoHeight, _videoShape, _videoRotation);
+        if (placement.IsEmpty)
         {
             _surfaceVisual.Size = new Vector(b.Width, b.Height);
             _surfaceVisual.Offset = new System.Numerics.Vector3(0f, 0f, 0f);
+            _surfaceVisual.RotationAngle = 0f;
             return;
         }
 
-        var scale = Math.Min(b.Width / _videoWidth, b.Height / _videoHeight);
-        var w = _videoWidth * scale;
-        var h = _videoHeight * scale;
-        _surfaceVisual.Size = new Vector(w, h);
-        _surfaceVisual.Offset = new System.Numerics.Vector3(
-            (float)((b.Width - w) / 2),
-            (float)((b.Height - h) / 2),
-            0f
-        );
+        // The imported texture is the frame as coded. The visual is the frame's rectangle before
+        // rotation, centred on the display area, so turning it about its centre fills the area.
+        _surfaceVisual.Size = new Vector(placement.DrawWidth, placement.DrawHeight);
+        _surfaceVisual.Offset = new System.Numerics.Vector3((float)placement.DrawX, (float)placement.DrawY, 0f);
+        _surfaceVisual.CenterPoint = new Vector3D(placement.DrawWidth / 2, placement.DrawHeight / 2, 0);
+        _surfaceVisual.RotationAngle = (float)placement.RotationRadians;
     }
 
     // ── Per-frame present (UI thread, from the render tick) ────────
@@ -786,6 +792,13 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         {
             if (_tornDown || _interop is null || _surface is null)
                 return; // teardown started, or interop not ready yet — drop.
+
+            if (frame.SampleAspectRatio != _videoShape || frame.Rotation != _videoRotation)
+            {
+                _videoShape = frame.SampleAspectRatio;
+                _videoRotation = frame.Rotation;
+                UpdateSurfaceLayout();
+            }
 
             if (frame is GpuVideoFrame gpu && gpu.TryGetD3D11Texture(out var texture, out var slice, out var device))
             {

@@ -62,6 +62,12 @@ public sealed class CpuVideoFrame : IVideoFrame
     /// <inheritdoc />
     public FrameMemoryDomain MemoryDomain => FrameMemoryDomain.Cpu;
 
+    /// <inheritdoc />
+    public SampleAspectRatio SampleAspectRatio { get; }
+
+    /// <inheritdoc />
+    public VideoRotation Rotation { get; }
+
     private CpuVideoFrame(
         byte[] storage,
         ArrayPool<byte> pool,
@@ -70,9 +76,13 @@ public sealed class CpuVideoFrame : IVideoFrame
         int width,
         int height,
         TimeSpan presentationTime,
-        TimeSpan duration
+        TimeSpan duration,
+        SampleAspectRatio sampleAspectRatio,
+        VideoRotation rotation
     )
     {
+        SampleAspectRatio = sampleAspectRatio.IsKnown ? sampleAspectRatio : SampleAspectRatio.Square;
+        Rotation = rotation;
         _storage = storage;
         _pool = pool;
         _layout = layout;
@@ -97,6 +107,8 @@ public sealed class CpuVideoFrame : IVideoFrame
     /// <param name="state">Passed to <paramref name="fill"/>, so it can be a static lambda that allocates nothing.</param>
     /// <param name="fill">Writes the pixels. It runs once, before the frame exists.</param>
     /// <param name="pool">Where the storage comes from. Defaults to <see cref="ArrayPool{T}.Shared"/>.</param>
+    /// <param name="sampleAspectRatio">The shape of the pixels. Unknown, the default, is square.</param>
+    /// <param name="rotation">How far the frame turns clockwise to display upright.</param>
     /// <returns>The frame, holding one reference.</returns>
     /// <remarks>
     /// If <paramref name="fill"/> throws, the storage goes back to <paramref name="pool"/> and
@@ -114,7 +126,9 @@ public sealed class CpuVideoFrame : IVideoFrame
         TimeSpan duration,
         TState state,
         CpuVideoFrameFill<TState> fill,
-        ArrayPool<byte>? pool = null
+        ArrayPool<byte>? pool = null,
+        SampleAspectRatio sampleAspectRatio = default,
+        VideoRotation rotation = VideoRotation.None
     )
     {
         ArgumentNullException.ThrowIfNull(fill);
@@ -141,7 +155,9 @@ public sealed class CpuVideoFrame : IVideoFrame
             width,
             height,
             presentationTime,
-            duration
+            duration,
+            sampleAspectRatio,
+            rotation
         );
     }
 

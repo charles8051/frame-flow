@@ -101,6 +101,12 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// </summary>
     public HardwareDecodeBackendKind Backend { get; }
 
+    /// <inheritdoc />
+    public SampleAspectRatio SampleAspectRatio { get; }
+
+    /// <inheritdoc />
+    public VideoRotation Rotation { get; }
+
     /// <summary>
     /// The FFmpeg device context the frame's pool was made on: a borrowed
     /// <see cref="HardwareDevice"/>'s own, or the one its decoder created. Zero once disposed.
@@ -139,9 +145,13 @@ public sealed class GpuVideoFrame : IVideoFrame
         PixelFormat softwareFormat,
         TimeSpan pts,
         TimeSpan duration,
-        HardwareDecodeBackendKind backend
+        HardwareDecodeBackendKind backend,
+        SampleAspectRatio sampleAspectRatio,
+        VideoRotation rotation
     )
     {
+        SampleAspectRatio = sampleAspectRatio.IsKnown ? sampleAspectRatio : SampleAspectRatio.Square;
+        Rotation = rotation;
         _handle = handle;
         Width = width;
         Height = height;
@@ -176,6 +186,8 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// The pool the frame's surface belongs to, which the frame holds until its final release, or
     /// <see langword="null"/> when the caller does not track pools.
     /// </param>
+    /// <param name="sampleAspectRatio">The pixel shape to carry (#542). Unknown, the default, is square.</param>
+    /// <param name="rotation">The turn to display the frame upright (#542).</param>
     /// <returns>
     /// A new <see cref="GpuVideoFrame"/> that owns the cloned
     /// reference, or <see langword="null"/> if <c>av_frame_clone</c>
@@ -189,14 +201,17 @@ public sealed class GpuVideoFrame : IVideoFrame
         TimeSpan pts,
         TimeSpan duration,
         HardwareDecodeBackendKind backend,
-        DecodePoolGeneration? pool = null
+        DecodePoolGeneration? pool = null,
+        SampleAspectRatio sampleAspectRatio = default,
+        VideoRotation rotation = VideoRotation.None
     )
     {
         nint cloned = FFAvUtil.av_frame_clone(sourceAvFrame);
         if (cloned == nint.Zero)
             return null;
 
-        var frame = FromOwnedAvFrame(cloned, width, height, softwareFormat, pts, duration, backend);
+        var frame = FromOwnedAvFrame(
+            cloned, width, height, softwareFormat, pts, duration, backend, sampleAspectRatio, rotation);
         pool?.AttachFrame();
         frame._pool = pool;
         return frame;
@@ -217,6 +232,8 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// <param name="pts">Presentation timestamp.</param>
     /// <param name="duration">Frame duration.</param>
     /// <param name="backend">The hardware backend that produced the frame.</param>
+    /// <param name="sampleAspectRatio">The pixel shape to carry (#542). Unknown, the default, is square.</param>
+    /// <param name="rotation">The turn to display the frame upright (#542).</param>
     internal static GpuVideoFrame FromOwnedAvFrame(
         nint ownedAvFrame,
         int width,
@@ -224,14 +241,17 @@ public sealed class GpuVideoFrame : IVideoFrame
         PixelFormat softwareFormat,
         TimeSpan pts,
         TimeSpan duration,
-        HardwareDecodeBackendKind backend
+        HardwareDecodeBackendKind backend,
+        SampleAspectRatio sampleAspectRatio = default,
+        VideoRotation rotation = VideoRotation.None
     )
     {
         var handle = new FrameHandle(ownedAvFrame);
         // One hwframe-pool slice is now pinned by this frame (perf survey §A1
         // pool-occupancy telemetry). Released at the final ref-drop in Dispose.
         DecodePoolMetrics.OnLeaseAcquired();
-        return new GpuVideoFrame(handle, width, height, softwareFormat, pts, duration, backend);
+        return new GpuVideoFrame(
+            handle, width, height, softwareFormat, pts, duration, backend, sampleAspectRatio, rotation);
     }
 
     /// <inheritdoc/>
@@ -315,7 +335,9 @@ public sealed class GpuVideoFrame : IVideoFrame
             Width,
             Height,
             Pts,
-            Duration
+            Duration,
+            SampleAspectRatio,
+            Rotation
         );
     }
 

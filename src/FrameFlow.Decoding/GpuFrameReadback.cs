@@ -32,6 +32,8 @@ internal static unsafe class GpuFrameReadback
     /// <param name="height">Frame height in pixels.</param>
     /// <param name="pts">Presentation timestamp for the output frame.</param>
     /// <param name="duration">Display duration for the output frame.</param>
+    /// <param name="sampleAspectRatio">The pixel shape to carry (#542). Unknown, the default, is square.</param>
+    /// <param name="rotation">The turn to display the frame upright (#542).</param>
     /// <returns>A new <see cref="CpuVideoFrame"/> owned by the caller.</returns>
     /// <exception cref="InvalidOperationException">
     /// Thrown when the native readback or scale call fails.
@@ -41,7 +43,9 @@ internal static unsafe class GpuFrameReadback
         int width,
         int height,
         TimeSpan pts,
-        TimeSpan duration
+        TimeSpan duration,
+        SampleAspectRatio sampleAspectRatio = default,
+        VideoRotation rotation = VideoRotation.None
     )
     {
         // Allocate the intermediate CPU AVFrame for av_hwframe_transfer_data
@@ -97,7 +101,9 @@ internal static unsafe class GpuFrameReadback
                 pts,
                 duration,
                 (SwsCtx: swsCtx, Source: cpuPtr),
-                static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source)
+                static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source),
+                sampleAspectRatio: sampleAspectRatio,
+                rotation: rotation
             );
         }
         finally
