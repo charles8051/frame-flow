@@ -965,7 +965,9 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     /// <summary>
     /// Waits, for at most <paramref name="timeout"/>, until every <c>VideoProcessorBlt</c> this
     /// converter submitted has completed on the GPU. Returns <see langword="true"/> when none is left
-    /// in flight: they completed, none was submitted, or the device is lost. The owner calls it off
+    /// in flight: they completed, none was submitted, or the device is lost. Returns
+    /// <see langword="false"/> after the whole timeout when they did not complete in it, or when the
+    /// event query failed and completion could not be observed. Never throws. The owner calls it off
     /// the UI thread once the converter is dropped, before ending its lease drain.
     /// </summary>
     public bool WaitForSubmittedBlits(TimeSpan timeout)
@@ -973,19 +975,19 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         if (!_blitsSubmitted || _deviceLost || _disposed)
             return true;
 
+        long deadline = Stopwatch.GetTimestamp() + (long)(timeout.TotalSeconds * Stopwatch.Frequency);
         try
         {
             using var query = _device.CreateQuery(new QueryDescription(QueryType.Event));
             _immediate.End(query);
             _immediate.Flush();
-            long deadline = Stopwatch.GetTimestamp() + (long)(timeout.TotalSeconds * Stopwatch.Frequency);
             while (true)
             {
                 var result = _immediate.GetData(query, nint.Zero, 0, AsyncGetDataFlags.None);
                 if (result.Code == 0) // S_OK: the event, and every command before it, has completed
                     return true;
                 if (result.Failure)
-                    return _deviceLost = D3D11DeviceLoss.IsDeviceLostCode(result.Code);
+                    result.CheckError(); // to the handlers below
                 if (Stopwatch.GetTimestamp() >= deadline)
                     return false;
                 Thread.Sleep(1);
@@ -995,6 +997,15 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         {
             _deviceLost = true;
             return true;
+        }
+        catch (Exception ex)
+        {
+            // Completion cannot be observed, so wait out the bound, as for blits that never finish.
+            _logger.LogWarning(ex, "The event query on the video processor's blits failed; waiting out the timeout instead.");
+            long remaining = deadline - Stopwatch.GetTimestamp();
+            if (remaining > 0)
+                Thread.Sleep(TimeSpan.FromSeconds((double)remaining / Stopwatch.Frequency));
+            return false;
         }
     }
 

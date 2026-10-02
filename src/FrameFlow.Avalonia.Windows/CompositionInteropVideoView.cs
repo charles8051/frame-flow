@@ -1675,8 +1675,14 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             var drain = BeginVideoProcessorHandOff();
             Task.Run(() =>
             {
-                FinishVideoProcessorHandOff(conv, drain);
-                conv.Dispose();
+                try
+                {
+                    FinishVideoProcessorHandOff(conv, drain);
+                }
+                finally
+                {
+                    conv.Dispose();
+                }
             });
         }
         else if (conv is not null)
@@ -1706,13 +1712,19 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// </summary>
     private void FinishVideoProcessorHandOff(D3D11Nv12SharedConverter converter, SuperResolutionLease.Drain drain)
     {
-        if (!converter.WaitForSubmittedBlits(BlitDrainTimeout))
-            _logger.LogWarning(
-                "A dropped converter's video processor blits did not complete within {Timeout} s; letting other "
-                    + "views blit anyway (#560).",
-                BlitDrainTimeout.TotalSeconds
-            );
-        drain.End();
+        try
+        {
+            if (!converter.WaitForSubmittedBlits(BlitDrainTimeout))
+                _logger.LogWarning(
+                    "A dropped converter's video processor blits were not seen to complete within {Timeout} s; "
+                        + "letting other views blit anyway (#560).",
+                    BlitDrainTimeout.TotalSeconds
+                );
+        }
+        finally
+        {
+            drain.End();
+        }
     }
 
     /// <summary>Drops the CPU uploader and its imported ring after a device-loss; a fresh
