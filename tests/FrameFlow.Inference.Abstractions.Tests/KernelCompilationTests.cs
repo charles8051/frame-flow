@@ -85,7 +85,10 @@ public sealed class KernelCompilationTests
         return methods;
     }
 
-    /// <summary>Whether the method's IL branches backwards, which is how C# compiles a loop.</summary>
+    /// <summary>
+    /// Whether the method's IL branches backwards, by a branch or a switch target, which is how C#
+    /// compiles a loop.
+    /// </summary>
     private static bool HasLoop(MethodInfo method)
     {
         var il = method.GetMethodBody()?.GetILAsByteArray();
@@ -111,7 +114,15 @@ public sealed class KernelCompilationTests
                     i += 4;
                     break;
                 case OperandType.InlineSwitch:
-                    i += 4 + 4 * BitConverter.ToInt32(il, i);
+                    int targets = BitConverter.ToInt32(il, i);
+                    int next = i + 4 + 4 * targets;
+                    for (int t = 0; t < targets; t++)
+                    {
+                        if (next + BitConverter.ToInt32(il, i + 4 + 4 * t) <= start)
+                            return true;
+                    }
+
+                    i = next;
                     break;
                 default:
                     i += OperandSize(op.OperandType);
