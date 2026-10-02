@@ -483,7 +483,9 @@ packets that can play out while the source has already stopped.
   starved report its end from `Playing`. `Rebuffering × LastFrameRendered` also goes to `Ended`.
 - **Pause.** A pause forgets the underrun without reporting ready. The controller leaves
   `Rebuffering` for `Paused` by itself, and after the resume the empty ring is timed again.
-- **Playlist.** Only the current item's buffer callbacks reach the controller.
+- **Playlist.** The buffer callbacks are posted to the playlist session's protocol tagged with the
+  item's generation, so one from a replaced item is dropped. An underrun the controller was told of
+  is ended when the next item starts, since the runtime that starved will not report ready.
 
 §7 stands: entering `Rebuffering` closes no gate and holds no clock. An item without video has no
 pacer, so its stalls are not reported yet.

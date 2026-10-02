@@ -71,7 +71,8 @@ public sealed class PlaylistSessionTranscriptTests
     public async Task ABufferCallbackFromAReplacedItem_DoesNotReachTheController()
     {
         // #547: an underrun from an item already handed off would leave the player Rebuffering
-        // over an item that is playing. Only the current item's buffer callbacks pass.
+        // over an item that is playing. The callbacks are tagged with the item's generation and
+        // dropped once it is replaced.
         await using var rig = PlaylistSessionRig.Create(RepeatMode.Off, "a", "b");
 
         await rig.Session.InitializeAsync(rig.PlaylistItem("a").Source);
@@ -79,6 +80,7 @@ public sealed class PlaylistSessionTranscriptTests
         await rig.Session.PlayAsync();
         rig.Runtime("a#1").RaiseBufferUnderrun();
         rig.Runtime("a#1").RaiseBufferReady();
+        await rig.SettleAsync();
         Assert.Equal(
             ["a#1.Open", "transition(a)", "a#1.WarmUp", "a#1.Play", "ctl.BufferUnderrun", "ctl.BufferReady"],
             rig.TakeLog()
@@ -89,9 +91,36 @@ public sealed class PlaylistSessionTranscriptTests
         rig.TakeLog();
 
         rig.Runtime("a#1").RaiseBufferUnderrun();
+        await rig.SettleAsync();
+        Assert.Empty(rig.TakeLog());
+
         rig.Runtime("b#1").RaiseBufferUnderrun();
         await rig.SettleAsync();
         Assert.Equal(["ctl.BufferUnderrun"], rig.TakeLog());
+    }
+
+    [Fact]
+    public async Task AnItemThatStarts_EndsAnUnderrunItsPredecessorReported()
+    {
+        // #547: the starved runtime is disposed and will never report ready, so the item that
+        // replaces it does, or the controller would stay Rebuffering over a playing item.
+        await using var rig = PlaylistSessionRig.Create(RepeatMode.Off, "a", "b");
+
+        await rig.Session.InitializeAsync(rig.PlaylistItem("a").Source);
+        await rig.Session.WarmUpAsync();
+        await rig.Session.PlayAsync();
+        rig.Runtime("a#1").RaiseBufferUnderrun();
+        await rig.SettleAsync();
+        rig.TakeLog();
+
+        rig.Runtime("a#1").RaiseEndOfStream();
+        await rig.SettleAsync();
+
+        var log = rig.TakeLog();
+        Assert.Equal(1, log.Count(entry => entry == "ctl.BufferReady"));
+        Assert.True(
+            log.IndexOf("b#1.Play") < log.IndexOf("ctl.BufferReady"),
+            string.Join(", ", log));
     }
 
     /// <summary>
