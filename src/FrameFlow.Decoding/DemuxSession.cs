@@ -631,7 +631,6 @@ public sealed class DemuxSession : IDemuxSession
 
         uint nbStreams = fmtCtx.nb_streams;
         AVStream** streamsArr = fmtCtx.streams;
-        Span<int> displayMatrix = stackalloc int[9];
 
         var videoStreams = new List<VideoStreamInfo>();
         var audioStreams = new List<AudioStreamInfo>();
@@ -670,9 +669,7 @@ public sealed class DemuxSession : IDemuxSession
                         SampleAspectRatio = DisplayGeometry.Resolve(
                             (stream->sample_aspect_ratio.num, stream->sample_aspect_ratio.den),
                             codecParameters.SampleAspectRatio),
-                        Rotation = codecParameters.TryGetDisplayMatrix(displayMatrix)
-                            ? DisplayGeometry.RotationOf(displayMatrix)
-                            : VideoRotation.None,
+                        Rotation = DisplayGeometry.RotationOf(codecParameters.DisplayRotationDegrees),
                     }
                 );
             }

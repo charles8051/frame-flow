@@ -21,43 +21,19 @@ public sealed class DisplayGeometryTests : IClassFixture<FfmpegBootstrapFixture>
 
     // ── Pure ────────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// A matrix whose <c>av_display_rotation_get</c> is <paramref name="degrees"/>, which is what
-    /// ffprobe reports as the rotation. At 90 it is the rotated fixture's matrix below.
-    /// </summary>
-    private static int[] MatrixFor(double degrees)
-    {
-        double radians = degrees * Math.PI / 180;
-        int Fixed(double v) => (int)Math.Round(v * 65536);
-        return [Fixed(Math.Cos(radians)), Fixed(-Math.Sin(radians)), 0, Fixed(Math.Sin(radians)), Fixed(Math.Cos(radians)), 0, 0, 0, 1 << 30];
-    }
-
     [Theory]
-    [InlineData(0, VideoRotation.None)]
-    [InlineData(90, VideoRotation.Clockwise270)] // ffprobe's rotation=90: a quarter turn counterclockwise
-    [InlineData(-90, VideoRotation.Clockwise90)] // what a phone held upright usually records
-    [InlineData(180, VideoRotation.Clockwise180)]
-    [InlineData(270, VideoRotation.Clockwise90)]
-    [InlineData(45, VideoRotation.None)] // not a quarter turn
-    public void RotationOf_ReadsTheQuarterTurnFFmpegsPlayerApplies(double ffprobeRotation, VideoRotation expected)
+    [InlineData(0.0, VideoRotation.None)]
+    [InlineData(90.0, VideoRotation.Clockwise270)] // ffprobe's rotation=90: a quarter turn counterclockwise
+    [InlineData(-90.0, VideoRotation.Clockwise90)] // what a phone held upright usually records
+    [InlineData(180.0, VideoRotation.Clockwise180)]
+    [InlineData(-180.0, VideoRotation.Clockwise180)]
+    [InlineData(270.0, VideoRotation.Clockwise90)]
+    [InlineData(89.6, VideoRotation.Clockwise270)] // rounded to a degree first, as ffplay does
+    [InlineData(45.0, VideoRotation.None)] // not a quarter turn
+    [InlineData(double.NaN, VideoRotation.None)] // no matrix, or a degenerate one
+    public void RotationOf_SnapsFFmpegsAngleToTheQuarterTurnItsPlayerApplies(double ffmpegDegrees, VideoRotation expected)
     {
-        Assert.Equal(expected, DisplayGeometry.RotationOf(MatrixFor(ffprobeRotation)));
-    }
-
-    [Fact]
-    public void RotationOf_TheMatrixInTheRotatedFixture_IsAQuarterTurnCounterclockwise()
-    {
-        // The matrix ffprobe prints for the fixture. ffmpeg's autorotate shows it with the
-        // top-left corner moved to the bottom-left.
-        int[] matrix = [0, -65536, 0, 65536, 0, 0, 0, 0, 1 << 30];
-        Assert.Equal(VideoRotation.Clockwise270, DisplayGeometry.RotationOf(matrix));
-    }
-
-    [Fact]
-    public void RotationOf_ADegenerateOrShortMatrix_IsNone()
-    {
-        Assert.Equal(VideoRotation.None, DisplayGeometry.RotationOf(new int[9]));
-        Assert.Equal(VideoRotation.None, DisplayGeometry.RotationOf([65536, 0, 0]));
+        Assert.Equal(expected, DisplayGeometry.RotationOf(ffmpegDegrees));
     }
 
     [Theory]
@@ -67,12 +43,25 @@ public sealed class DisplayGeometryTests : IClassFixture<FfmpegBootstrapFixture>
     [InlineData(64, 54, 0, 0, 32, 27)] // in lowest terms
     [InlineData(0, 0, 0, 0, 1, 1)] // square when neither says
     [InlineData(-1, 1, 0, 1, 1, 1)] // a negative term is no value
-    public void Resolve_PrefersTheContainer_ThenTheCodec_ThenSquare(
-        int containerNum, int containerDen, int codecNum, int codecDen, int expectedNum, int expectedDen)
+    public void Resolve_PrefersTheContainer_ThenTheFrame_ThenSquare(
+        int containerNum, int containerDen, int frameNum, int frameDen, int expectedNum, int expectedDen)
     {
         Assert.Equal(
             new SampleAspectRatio(expectedNum, expectedDen),
-            DisplayGeometry.Resolve((containerNum, containerDen), (codecNum, codecDen)));
+            DisplayGeometry.Resolve((containerNum, containerDen), (frameNum, frameDen)));
+    }
+
+    [Theory]
+    [InlineData(0, 0, 0, 1, 4, 3, 4, 3)] // a frame without one takes the codec parameters'
+    [InlineData(0, 0, 8, 9, 4, 3, 8, 9)] // a frame's own wins over them
+    [InlineData(3, 2, 8, 9, 4, 3, 3, 2)] // and the container's over both
+    public void Resolve_FallsBackToTheCodecParameters_Last(
+        int containerNum, int containerDen, int frameNum, int frameDen, int codecNum, int codecDen,
+        int expectedNum, int expectedDen)
+    {
+        Assert.Equal(
+            new SampleAspectRatio(expectedNum, expectedDen),
+            DisplayGeometry.Resolve((containerNum, containerDen), (frameNum, frameDen), (codecNum, codecDen)));
     }
 
     // ── The stream ──────────────────────────────────────────────────────────

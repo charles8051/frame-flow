@@ -266,10 +266,8 @@ public sealed partial class VideoDecoder
             logger
         );
         decoder._containerSampleAspectRatio = stream.SampleAspectRatio;
-        Span<int> displayMatrix = stackalloc int[9];
-        decoder._rotation = codecPar.TryGetDisplayMatrix(displayMatrix)
-            ? DisplayGeometry.RotationOf(displayMatrix)
-            : VideoRotation.None;
+        decoder._codecSampleAspectRatio = codecPar.SampleAspectRatio;
+        decoder._rotation = DisplayGeometry.RotationOf(codecPar.DisplayRotationDegrees);
 
         if (hwBinding is not null)
         {

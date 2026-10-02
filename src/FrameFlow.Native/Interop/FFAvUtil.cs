@@ -24,6 +24,14 @@ internal static partial class FFAvUtil
     [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
     internal static partial uint avutil_version();
 
+    /// <summary>
+    /// The counterclockwise rotation, in degrees, that a 3x3 display matrix applies, or NaN for a
+    /// degenerate one. FFmpeg's own reading of <c>AV_PKT_DATA_DISPLAYMATRIX</c> (#542).
+    /// </summary>
+    [LibraryImport("avutil")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static unsafe partial double av_display_rotation_get(int* matrix);
+
     /// <summary>Extracts the major component from a packed FFmpeg version integer.</summary>
     internal static int AvVersionMajor(uint version) => (int)(version >> 16);
 

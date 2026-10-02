@@ -251,25 +251,25 @@ internal readonly unsafe ref struct AvCodecParAccessor
     }
 
     /// <summary>
-    /// Copies the stream's display matrix, nine 16.16 and 2.30 fixed-point values, from its
-    /// coded side data into <paramref name="matrix"/>. Returns <see langword="false"/> when the
-    /// stream carries none (#542).
+    /// The counterclockwise rotation, in degrees, of the stream's display matrix as
+    /// <c>av_display_rotation_get</c> reads it, or NaN when the stream carries no matrix or a
+    /// degenerate one (#542).
     /// </summary>
-    internal bool TryGetDisplayMatrix(Span<int> matrix)
+    internal double DisplayRotationDegrees
     {
-        ref AVCodecParameters p = ref Unsafe.AsRef<AVCodecParameters>((void*)_ptr);
-        for (int i = 0; i < p.nb_coded_side_data; i++)
+        get
         {
-            AVPacketSideData* entry = &p.coded_side_data[i];
-            if (entry->type != AVPacketSideDataType.AV_PKT_DATA_DISPLAYMATRIX)
-                continue;
-            if (entry->size < (ulong)(9 * sizeof(int)) || matrix.Length < 9)
-                return false;
-            new ReadOnlySpan<int>(entry->data, 9).CopyTo(matrix);
-            return true;
-        }
+            ref AVCodecParameters p = ref Unsafe.AsRef<AVCodecParameters>((void*)_ptr);
+            for (int i = 0; i < p.nb_coded_side_data; i++)
+            {
+                AVPacketSideData* entry = &p.coded_side_data[i];
+                if (entry->type == AVPacketSideDataType.AV_PKT_DATA_DISPLAYMATRIX
+                    && entry->size >= (ulong)(9 * sizeof(int)))
+                    return FFAvUtil.av_display_rotation_get((int*)entry->data);
+            }
 
-        return false;
+            return double.NaN;
+        }
     }
 
     /// <summary>Sample rate in Hz (audio streams only).</summary>

@@ -12,32 +12,18 @@ namespace FrameFlow.Decoding.Core;
 /// </summary>
 internal static class DisplayGeometry
 {
-    private const double Fixed16 = 65536.0;
-
     /// <summary>
-    /// The quarter turn a display matrix asks for, read as FFmpeg's own player reads it: the
-    /// angle of the matrix's first column, rounded to a degree, taken clockwise. An angle that is
-    /// not within a degree of a quarter turn, a degenerate matrix, or a short one is
-    /// <see cref="VideoRotation.None"/>. A mirroring matrix is read for its rotation only.
+    /// The quarter turn a display matrix asks for, from FFmpeg's reading of it: the
+    /// counterclockwise degrees <c>av_display_rotation_get</c> returns, negated and rounded as
+    /// ffplay does, taken clockwise. An angle not within a degree of a quarter turn, or NaN for no
+    /// matrix, is <see cref="VideoRotation.None"/>.
     /// </summary>
-    /// <param name="matrix">
-    /// The nine values of <c>AV_PKT_DATA_DISPLAYMATRIX</c>, row-major; the first two columns are
-    /// 16.16 fixed point.
-    /// </param>
-    public static VideoRotation RotationOf(ReadOnlySpan<int> matrix)
+    public static VideoRotation RotationOf(double counterclockwiseDegrees)
     {
-        if (matrix.Length < 9)
+        if (double.IsNaN(counterclockwiseDegrees) || double.IsInfinity(counterclockwiseDegrees))
             return VideoRotation.None;
 
-        // av_display_rotation_get returns the counterclockwise angle; ffplay negates it. This is
-        // that negation, computed directly.
-        double scaleX = Math.Sqrt(Square(matrix[0] / Fixed16) + Square(matrix[3] / Fixed16));
-        double scaleY = Math.Sqrt(Square(matrix[1] / Fixed16) + Square(matrix[4] / Fixed16));
-        if (scaleX == 0 || scaleY == 0)
-            return VideoRotation.None;
-
-        double degrees = Math.Round(
-            Math.Atan2(matrix[1] / Fixed16 / scaleY, matrix[0] / Fixed16 / scaleX) * 180 / Math.PI);
+        double degrees = -Math.Round(counterclockwiseDegrees);
         double clockwise = degrees - 360 * Math.Floor(degrees / 360 + 0.9 / 360);
 
         return clockwise switch
@@ -51,15 +37,20 @@ internal static class DisplayGeometry
 
     /// <summary>
     /// The pixel shape to show a frame with: the container's when it gives one, otherwise the
-    /// codec's or the frame's, otherwise square. This is FFmpeg's
-    /// <c>av_guess_sample_aspect_ratio</c>, reduced to lowest terms.
+    /// frame's, otherwise the codec parameters', otherwise square, in lowest terms. The first two
+    /// are FFmpeg's <c>av_guess_sample_aspect_ratio</c>. The third keeps a frame that lost its
+    /// value in agreement with the stream it came from, which reports the codec's.
     /// </summary>
     /// <param name="container">The stream's <c>sample_aspect_ratio</c>.</param>
-    /// <param name="codec">The frame's, or before a frame exists the codec parameters'.</param>
-    public static SampleAspectRatio Resolve((int Num, int Den) container, (int Num, int Den) codec)
+    /// <param name="frame">The frame's, or before a frame exists the codec parameters'.</param>
+    /// <param name="codec">The codec parameters', the last resort.</param>
+    public static SampleAspectRatio Resolve(
+        (int Num, int Den) container, (int Num, int Den) frame, (int Num, int Den) codec = default)
     {
         if (Reduce(container) is { IsKnown: true } fromContainer)
             return fromContainer;
+        if (Reduce(frame) is { IsKnown: true } fromFrame)
+            return fromFrame;
         return Reduce(codec) is { IsKnown: true } fromCodec ? fromCodec : SampleAspectRatio.Square;
     }
 
@@ -77,8 +68,6 @@ internal static class DisplayGeometry
             (a, b) = (b, a % b);
         return a;
     }
-
-    private static double Square(double value) => value * value;
 
     private static bool Near(double degrees, double target) => Math.Abs(degrees - target) < 1.0;
 }

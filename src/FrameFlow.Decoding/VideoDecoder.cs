@@ -75,8 +75,10 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     private int _hwPixelFormat = -1;
 
     // How the stream is meant to be shown (#542): the container's pixel shape, which wins over a
-    // frame's, and the display matrix's rotation. Set once by Open.
+    // frame's, the codec parameters', which a frame without one falls back to, and the display
+    // matrix's rotation. Set once by Open.
     private (int Num, int Den) _containerSampleAspectRatio;
+    private (int Num, int Den) _codecSampleAspectRatio;
     private VideoRotation _rotation;
 
     // The hwframe pool the latest frame came from (#229), or null before the first hardware
@@ -1105,7 +1107,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             duration: accessor.ComputeDuration(_timeBaseNum, _timeBaseDen),
             backend: HardwareBackend ?? HardwareDecodeBackendKind.Other,
             pool: _pool,
-            sampleAspectRatio: DisplayGeometry.Resolve(_containerSampleAspectRatio, accessor.SampleAspectRatio),
+            sampleAspectRatio: DisplayGeometry.Resolve(_containerSampleAspectRatio, accessor.SampleAspectRatio, _codecSampleAspectRatio),
             rotation: _rotation
         );
 
@@ -1217,7 +1219,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 duration,
                 (SwsCtx: _swsCtx.DangerousGetHandle(), Source: framePtr),
                 static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source),
-                sampleAspectRatio: DisplayGeometry.Resolve(_containerSampleAspectRatio, accessor.SampleAspectRatio),
+                sampleAspectRatio: DisplayGeometry.Resolve(_containerSampleAspectRatio, accessor.SampleAspectRatio, _codecSampleAspectRatio),
                 rotation: _rotation
             );
         }

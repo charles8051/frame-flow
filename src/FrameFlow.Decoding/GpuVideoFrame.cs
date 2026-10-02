@@ -186,6 +186,8 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// The pool the frame's surface belongs to, which the frame holds until its final release, or
     /// <see langword="null"/> when the caller does not track pools.
     /// </param>
+    /// <param name="sampleAspectRatio">The pixel shape to carry (#542). Unknown, the default, is square.</param>
+    /// <param name="rotation">The turn to display the frame upright (#542).</param>
     /// <returns>
     /// A new <see cref="GpuVideoFrame"/> that owns the cloned
     /// reference, or <see langword="null"/> if <c>av_frame_clone</c>
@@ -230,6 +232,8 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// <param name="pts">Presentation timestamp.</param>
     /// <param name="duration">Frame duration.</param>
     /// <param name="backend">The hardware backend that produced the frame.</param>
+    /// <param name="sampleAspectRatio">The pixel shape to carry (#542). Unknown, the default, is square.</param>
+    /// <param name="rotation">The turn to display the frame upright (#542).</param>
     internal static GpuVideoFrame FromOwnedAvFrame(
         nint ownedAvFrame,
         int width,
