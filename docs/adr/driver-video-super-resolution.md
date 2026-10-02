@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-10-02). Draft pending number assignment.
+Accepted (2026-10-02) and implemented for #560. Draft pending number assignment.
 
 Reintroduces `VideoProcessorBlt` into the Windows zero-copy presenter as an opt-in path, under
 the limits below. [ADR-0063](ADR-0063-nv12-pixel-shader-color-conversion.md) removed it from the
@@ -175,6 +175,11 @@ failure once, and falls back to the shader path at the frame's size. The view re
 failure and the decision function returns `Unavailable` until the decode device changes or the
 property is toggled. A converter that fails this way releases the lease.
 
+A `VideoProcessorBlt` that fails with anything other than device loss turns the video processor
+off for that converter, and the shader fills the ring from then on. The view records the failure
+the same way, and the settle planner (§7) rebuilds the converter at the frame's size once the
+shader output has been wanted for the interval. Device loss goes to the existing device-loss path.
+
 ### 6. Status
 
 The view exposes `DriverSuperResolutionStatus`, updated on each present:
@@ -197,9 +202,11 @@ know whether the user's NVIDIA setting let the driver act on it (Context).
 
 In video-processor mode the target is the aspect-fit rectangle in physical pixels: the layout
 rectangle `UpdateSurfaceLayout` computes, multiplied by the top level's `RenderScaling`, rounded.
-A pure function computes both, so the layout and the ring cannot disagree. While the view shows a
-video-processor ring, the surface visual's offset and size are snapped to physical pixels, so the
-compositor draws the ring 1:1 rather than resampling it by a fraction of a pixel.
+One helper computes the fitted size for both, and `SuperResolutionPolicy.TargetSize` rounds it, so
+the layout and the ring cannot disagree. While the ring is exactly that size, the surface visual's
+offset and size are snapped to physical pixels, so the compositor draws the ring 1:1 rather than
+resampling it by a fraction of a pixel. Mid-resize, while the ring is still the old size, the
+visual follows the window and the compositor scales the ring as before.
 
 A change of target rebuilds the converter through the same drop path a resolution change uses.
 The ring is shared with the compositor, and that path already disposes it in the order the
@@ -223,6 +230,26 @@ the planner reads no clock.
   function and the converter's video-processor mode are where it would attach. Tracked as a
   follow-up issue.
 - **Reading the NVIDIA App setting.** No documented API for it was found.
+
+## Verification
+
+On an RTX 3080 Ti, driver 610.47, in a local session with Super Resolution on in the NVIDIA App:
+
+- **Colour parity.** The converter's video-processor mode, with the extension off, matches its
+  shader at the frame's size and at twice it in luma (under 0.5/255 on average) and in each
+  channel's average (under 0.5/255). The two reconstruct chroma differently at sharp colour
+  edges: up to 188/255 there on the test pattern, 2.6 on average, against 0.2 for luma. With a
+  BT.601 input matrix luma moves 17/255, and with full-range input 10/255, so both tests fail on
+  either mistake.
+- **The extension through the converter.** 1080p to 3840x2160 with the extension on differs from
+  the same blit with it off by 0.751/255 on average, worst 87. That test runs only when
+  `FRAMEFLOW_EXPECT_DRIVER_VSR=1` says the machine is set up for it, since the driver's upscale
+  is not observable otherwise.
+- **On screen.** The ZeroCopyInterop example, a 1280x720 still from real footage, fullscreen on a
+  2560x1440 display, `S` toggling the property while it plays: the converter rebuilt at
+  2560x1440 with the video processor, then back to 1280x720 with the shader. Screen captures with
+  it off were identical before and after; with it on they differed by 0.782/255 on average, and
+  the Laplacian variance, a measure of fine detail, rose from 1.14 to 6.2.
 
 ## Consequences
 

@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using FrameFlow.Avalonia;
@@ -57,12 +58,22 @@ public partial class MainWindow : Window
     /// <summary>Set by <c>--soak</c>: two players, sampled into a CSV.</summary>
     public SoakOptions? Soak { get; set; }
 
+    /// <summary>
+    /// Set by <c>--super-resolution</c>: start with the driver's video super resolution on (#560).
+    /// <c>S</c> toggles it while playing.
+    /// </summary>
+    public bool StartupSuperResolution { get; set; }
+
+    private DispatcherTimer? _statusTimer;
+    private string _presenting = "";
+
     public MainWindow(ILoggerFactory loggerFactory)
     {
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<MainWindow>();
         InitializeComponent();
         Closing += OnWindowClosing;
+        KeyDown += OnKeyDown;
     }
 
     protected override async void OnLoaded(RoutedEventArgs e)
@@ -136,8 +147,40 @@ public partial class MainWindow : Window
             return;
         }
 
-        StatusText.Text = $"Presenting {Path.GetFileName(StartupFilePath)} …";
+        _presenting = $"Presenting {Path.GetFileName(StartupFilePath)}";
+        StatusText.Text = _presenting + " …";
         await StartPlayerAsync(StartupFilePath, hwMode, Host(VideoHost, column: null));
+
+        // The status changes as frames are presented and the window is resized, so it is polled.
+        _statusTimer = new DispatcherTimer(
+            TimeSpan.FromMilliseconds(500),
+            DispatcherPriority.Background,
+            (_, _) => ShowSuperResolutionStatus()
+        );
+        _statusTimer.Start();
+    }
+
+    /// <summary>S toggles the driver's video super resolution on every pane (#560).</summary>
+    private void OnKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.S)
+            return;
+
+        foreach (var view in _surfaces.OfType<CompositionInteropVideoView>())
+            view.DriverSuperResolution = !view.DriverSuperResolution;
+        _logger.LogInformation(
+            "Driver super resolution toggled {State}.",
+            _surfaces.OfType<CompositionInteropVideoView>().FirstOrDefault()?.DriverSuperResolution == true ? "on" : "off"
+        );
+        ShowSuperResolutionStatus();
+    }
+
+    private void ShowSuperResolutionStatus()
+    {
+        var view = _surfaces.OfType<CompositionInteropVideoView>().FirstOrDefault();
+        if (view is null)
+            return;
+        StatusText.Text = $"{_presenting} · super resolution: {view.DriverSuperResolutionStatus}";
     }
 
     /// <summary>Starts both players, then samples them on the interval the options set.</summary>
@@ -231,7 +274,7 @@ public partial class MainWindow : Window
         // The surface joins the teardown list only once its player is built, so a teardown that
         // runs while it is being built cannot dispose a surface that build is still using. Until
         // then this method owns it.
-        IVideoSurface surface = new CompositionInteropVideoView();
+        IVideoSurface surface = new CompositionInteropVideoView { DriverSuperResolution = StartupSuperResolution };
         host.Children.Add(surface.Control);
         var videoSink = surface.AttachSink(_loggerFactory);
         _logger.LogInformation("Presentation surface: compositor interop (zero-copy).");
@@ -309,6 +352,7 @@ public partial class MainWindow : Window
     private async Task StopPlaybackAsync()
     {
         _sampleTimer?.Stop();
+        _statusTimer?.Stop();
         _sampler?.Dispose();
         _sampler = null;
 
@@ -339,6 +383,7 @@ public partial class MainWindow : Window
         Closing -= OnWindowClosing;
         _exitTimer?.Stop();
         _sampleTimer?.Stop();
+        _statusTimer?.Stop();
 
         // A last sample, so a run that ends mid-window still records what that window did.
         _sampler?.Sample();

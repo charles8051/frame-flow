@@ -302,7 +302,7 @@ land.
   feature needs the blit ADR-0063 removed. Brings it back behind a property that is off by default,
   for D3D11VA NV12 frames on an NVIDIA adapter in a local session, only while the view is larger
   than the frame, and for one view per process. The ring is sized to the view while it engages, and
-  a resize rebuilds the converter once the size has held for 200 ms.
+  a resize rebuilds the converter once the size has held for 200 ms. Accepted and implemented (#560).
 
 ## Recently numbered
 
