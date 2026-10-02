@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using FrameFlow.Media;
 
@@ -38,6 +39,13 @@ internal enum TensorToImagePath
 /// A planar tensor's rows are read in place. An interleaved (NHWC) tensor's row is first split
 /// into three planes, which copies floats without changing them.
 /// </para>
+/// <para>
+/// A video operator calls the kernel once a frame, so under tiered compilation its first frames
+/// run at tier 0, where <c>Vector&lt;T&gt;</c> operations are calls rather than instructions
+/// (#546). The methods that loop over a row or the image are therefore
+/// <see cref="MethodImplOptions.AggressiveOptimization"/>. What they call per element is small
+/// enough that the JIT inlines it. Code compiled this way gets no dynamic PGO.
+/// </para>
 /// </remarks>
 internal static class TensorToImageKernel
 {
@@ -49,6 +57,7 @@ internal static class TensorToImageKernel
     /// <paramref name="destination"/> holds <c>Height</c> rows of <paramref name="stride"/> bytes,
     /// the last at least <c>4 · Width</c> long.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     public static void Run(
         ReadOnlySpan<float> tensor,
         TensorToImageOptions options,
@@ -109,6 +118,7 @@ internal static class TensorToImageKernel
     /// <summary>The factor that undoes a channel's scale, computed in double and rounded to a float once.</summary>
     internal static float Reciprocal(float scale) => (float)(1.0 / scale);
 
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void ConvertRow(
         ReadOnlySpan<float> r,
         ReadOnlySpan<float> g,
@@ -166,6 +176,7 @@ internal static class TensorToImageKernel
         return (uint)(int)MathF.Round(clamped);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void Deinterleave(
         ReadOnlySpan<float> source,
         Span<float> first,
