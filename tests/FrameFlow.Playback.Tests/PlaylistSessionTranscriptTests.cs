@@ -67,6 +67,33 @@ public sealed class PlaylistSessionTranscriptTests
         Assert.Equal(["ctl.EndOfStream"], rig.TakeLog());
     }
 
+    [Fact]
+    public async Task ABufferCallbackFromAReplacedItem_DoesNotReachTheController()
+    {
+        // #547: an underrun from an item already handed off would leave the player Rebuffering
+        // over an item that is playing. Only the current item's buffer callbacks pass.
+        await using var rig = PlaylistSessionRig.Create(RepeatMode.Off, "a", "b");
+
+        await rig.Session.InitializeAsync(rig.PlaylistItem("a").Source);
+        await rig.Session.WarmUpAsync();
+        await rig.Session.PlayAsync();
+        rig.Runtime("a#1").RaiseBufferUnderrun();
+        rig.Runtime("a#1").RaiseBufferReady();
+        Assert.Equal(
+            ["a#1.Open", "transition(a)", "a#1.WarmUp", "a#1.Play", "ctl.BufferUnderrun", "ctl.BufferReady"],
+            rig.TakeLog()
+        );
+
+        rig.Runtime("a#1").RaiseEndOfStream();
+        await rig.SettleAsync();
+        rig.TakeLog();
+
+        rig.Runtime("a#1").RaiseBufferUnderrun();
+        rig.Runtime("b#1").RaiseBufferUnderrun();
+        await rig.SettleAsync();
+        Assert.Equal(["ctl.BufferUnderrun"], rig.TakeLog());
+    }
+
     /// <summary>
     /// #191 (#180): a first item that faulted before the first play was skipped while the
     /// controller was still loading. It goes to the controller as a single source's fault would.

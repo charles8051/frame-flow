@@ -5,6 +5,7 @@ using System.Diagnostics;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Media.Diagnostics;
+using FrameFlow.Playback.Core;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -126,6 +127,20 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     private readonly List<(long AfterGeneration, TaskCompletionSource Signal)> _parkWaiters = [];
 
     /// <summary>
+    /// How long the delivery loop's wait on an empty ring may last before it is an underrun, or
+    /// <see langword="null"/> when that wait is not timed (#547). Set before the wait parks, so a
+    /// test that has seen the park reads the decision for it.
+    /// </summary>
+    internal TimeSpan? StarvationWait
+    {
+        get
+        {
+            lock (_gate)
+                return _starvationWait;
+        }
+    }
+
+    /// <summary>
     /// The park generation, which increments each time the <b>delivery loop</b> suspends on one
     /// of its blocking waits. Capture before acting, then pass to
     /// <see cref="WaitForParkAfterAsync"/>.
@@ -155,13 +170,13 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// <para>
     /// <b>Only for actions that wake the loop.</b> Presenting a frame, advancing the clock,
     /// flushing, signalling input complete, and releasing a settle on the <i>current</i> run
-    /// all do. <see cref="Pause"/> on a loop parked for want of frames does not — the arrival
-    /// wait is not linked to the recheck token — and neither does a
-    /// <see cref="ReleaseSeekSettle"/> scoped to a superseded run. Awaiting this after one of
-    /// those never returns, because the generation never moves.
+    /// all do, and so do <see cref="Pause"/> and <see cref="Resume"/>, since the arrival wait is
+    /// linked to the recheck token (#547). A <see cref="ReleaseSeekSettle"/> scoped to a
+    /// superseded run does not. Awaiting this after one never returns, because the generation
+    /// never moves.
     /// </para>
     /// <para>
-    /// For those, park the loop first with a waking action, then act, then assert
+    /// For that, park the loop first with a waking action, then act, then assert
     /// synchronously: a loop that is already parked cannot present anything until something
     /// wakes it, so there is nothing to wait for.
     /// </para>
@@ -177,6 +192,21 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
             _parkWaiters.Add((generation, signal));
         }
         return signal.Task;
+    }
+
+    // A callback that throws must not end the delivery loop: it would stop the video.
+    private void Raise(Action? callback, string what)
+    {
+        if (callback is null)
+            return;
+        try
+        {
+            callback();
+        }
+        catch (Exception ex)
+        {
+            LogStarvationCallbackFailed(_logger, what, ex);
+        }
     }
 
     // Awaits one of the delivery loop's waits, counting it as a park only if the wait is still
@@ -433,6 +463,17 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     // a warning every maxWait for a non-fault (#127). Guarded by _gate.
     private bool _paused;
 
+    // Whether an empty ring has been reported as an underrun (#547), and the display interval
+    // of the last frame presented, which sets how long an empty ring waits before it is.
+    // Guarded by _gate.
+    private PacerStarvation _starvation;
+    private TimeSpan _lastPresentedDuration;
+    private TimeSpan? _starvationWait;
+
+    // Report an underrun and its end to the session. Raised on the delivery loop, outside _gate.
+    private readonly Action? _onStarved;
+    private readonly Action? _onFed;
+
     /// <summary>
     /// How long delivery may stay held waiting for a reseat that never comes. A backstop:
     /// every path that arms the hold has a matching release, and the reseat itself runs in
@@ -505,6 +546,12 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// <see cref="TimeProvider.System"/>, which is the production path. Inject a fake to
     /// drive those timers deterministically instead of waiting for them.
     /// </param>
+    /// <param name="formatAnnouncer">Shared across the pacers over one sink, so an unchanged format is announced once.</param>
+    /// <param name="onStarved">
+    /// Raised when the ring has stayed empty past <see cref="PacerStarvation.Threshold"/> while
+    /// playing, with more input to come (#547). Once per underrun.
+    /// </param>
+    /// <param name="onFed">Raised when a frame arrives, or the input completes, after <paramref name="onStarved"/>.</param>
     public ClockSelectVideoSink(
         IVideoSink inner,
         IClockSource clock,
@@ -512,7 +559,9 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         int capacity = DefaultCapacity,
         TimeSpan? maxWait = null,
         TimeProvider? timeProvider = null,
-        VideoFormatAnnouncer? formatAnnouncer = null
+        VideoFormatAnnouncer? formatAnnouncer = null,
+        Action? onStarved = null,
+        Action? onFed = null
     )
     {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
@@ -532,6 +581,8 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         _timeProvider = timeProvider ?? TimeProvider.System;
         _buffer = new ClockSelectBuffer(capacity);
         _space = new SemaphoreSlim(capacity, capacity);
+        _onStarved = onStarved;
+        _onFed = onFed;
 
         _deliveryLoop = Task.Run(() => RunDeliveryLoopAsync(_shutdownCts.Token));
     }
@@ -803,6 +854,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
             if (_paused)
                 return;
             _paused = true;
+            _starvation = _starvation.Forgotten();
             TriggerRecheckLocked();
         }
     }
@@ -1047,6 +1099,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                 TimeSpan lastFrameEnd;
                 bool held;
                 long heldRun;
+                bool fed = false;
                 lock (_gate)
                 {
                     // Read here rather than before the lock. Admission closes the gate
@@ -1064,6 +1117,13 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                     // true end-of-content rather than ~one frame early.
                     if (earliest is null && inputComplete && _clock.Latest >= lastFrameEnd)
                         _drained.TrySetResult();
+                    if (_starvation.Starved && (earliest is not null || inputComplete))
+                        (_starvation, fed) = _starvation.Resolved();
+                }
+                if (fed)
+                {
+                    LogFed(_logger);
+                    Raise(_onFed, "fed");
                 }
                 if (held)
                 {
@@ -1199,14 +1259,58 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                         }
                         continue;
                     }
-                    await ParkedAwaitAsync(_arrival.WaitAsync(ct)).ConfigureAwait(false);
+                    // Nothing buffered and more to come. The wait is timed while it can be an
+                    // underrun, so a source that stops delivering is reported rather than
+                    // playing on in silence (#547). It is linked to the recheck token so a
+                    // pause, resume or flush re-evaluates whether it is timed.
+                    TimeSpan? starveAfter;
+                    CancellationToken arrivalRecheck;
                     lock (_gate)
                     {
+                        arrivalRecheck = _recheck.Token;
+                        starveAfter = _starvation.Times(_paused, _inputComplete, _presentedEndPts is not null)
+                            ? PacerStarvation.Threshold(_lastPresentedDuration)
+                            : null;
+                        _starvationWait = starveAfter;
+                    }
+                    bool timedOut = false;
+                    using (var starveTimer = starveAfter is { } after
+                        ? new CancellationTokenSource(after, _timeProvider)
+                        : null)
+                    using (var arrivalCts = CancellationTokenSource.CreateLinkedTokenSource(
+                        ct,
+                        arrivalRecheck,
+                        starveTimer?.Token ?? CancellationToken.None))
+                    {
+                        try
+                        {
+                            await ParkedAwaitAsync(_arrival.WaitAsync(arrivalCts.Token)).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                        {
+                            timedOut = starveTimer is { IsCancellationRequested: true }
+                                && !arrivalRecheck.IsCancellationRequested;
+                        }
+                    }
+                    bool starved = false;
+                    lock (_gate)
+                    {
+                        // Re-checked under the lock: a frame, a pause or the end of input can
+                        // land as the timer fires.
+                        if (timedOut
+                            && _buffer.IsEmpty
+                            && _starvation.Times(_paused, _inputComplete, _presentedEndPts is not null))
+                            (_starvation, starved) = _starvation.TimedOut();
                         // Reset only if still empty — a frame may have landed
                         // between Set and here; we want the next iteration to see
                         // it, not to re-park.
                         if (_buffer.IsEmpty)
                             _arrival.Reset();
+                    }
+                    if (starved)
+                    {
+                        LogStarved(_logger, starveAfter!.Value.TotalMilliseconds);
+                        Raise(_onStarved, "starved");
                     }
                     continue;
                 }
@@ -1289,6 +1393,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                         if (end > _lastFrameEndPts)
                             _lastFrameEndPts = end;
                         _presentedEndPts = end;
+                        _lastPresentedDuration = present.Duration;
                     }
                 }
 
@@ -1406,6 +1511,18 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     }
 
     private static TimeSpan Max(TimeSpan a, TimeSpan b) => a >= b ? a : b;
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "ClockSelect starved: no frame for {WaitMs:F0}ms with more input to come; reporting an underrun."
+    )]
+    private static partial void LogStarved(ILogger logger, double waitMs);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "ClockSelect fed again after an underrun.")]
+    private static partial void LogFed(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "ClockSelect's {What} callback threw; delivery continues.")]
+    private static partial void LogStarvationCallbackFailed(ILogger logger, string what, Exception ex);
 
     [LoggerMessage(
         Level = LogLevel.Debug,

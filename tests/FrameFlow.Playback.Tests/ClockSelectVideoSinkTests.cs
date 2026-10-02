@@ -9,7 +9,7 @@ namespace FrameFlow.Playback.Tests;
 /// the shell decorator (<see cref="ClockSelectVideoSink"/>). No FFmpeg / corpus:
 /// a hand-driven fake clock and tracking frames make the timing exact.
 /// </summary>
-public sealed class ClockSelectVideoSinkTests
+public sealed partial class ClockSelectVideoSinkTests
 {
     // ── Pure core ─────────────────────────────────────────────────
 

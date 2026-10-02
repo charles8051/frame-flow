@@ -467,3 +467,23 @@ Considered for future work. A `WorkerBindingOptions.PauseOnExit` variant that ca
 ### Phase 4: Future workers (incremental)
 
 Add `IStateBoundWorker` implementations as orthogonal regions are built. Each is a `BindWorker` call on the appropriate state — no changes to the binding infrastructure.
+
+## Amendment (2026-10-02): the pacer raises the buffer triggers
+
+Nothing raised `BufferUnderrun` or `BufferReady` until #547, so `Rebuffering` was never entered.
+They are raised by the video pacer (`ClockSelectVideoSink`), not by a `BufferHealthMonitor`
+watching queue depths. The pacer is where a stall becomes visible: its ring is empty while the
+clock asks for a frame. Packet queue depth is a poor proxy, since the read-ahead holds seconds of
+packets that can play out while the source has already stopped.
+
+- **Underrun.** The ring has stayed empty for three of the last frame's display intervals, and at
+  least one second, while playing, after the run presented a frame, with more input to come. The
+  decision is the pure `PacerStarvation` in `FrameFlow.Playback.Core`.
+- **Ready.** A frame arrives, or the input completes. The second lets a stream that ends while
+  starved report its end from `Playing`. `Rebuffering × LastFrameRendered` also goes to `Ended`.
+- **Pause.** A pause forgets the underrun without reporting ready. The controller leaves
+  `Rebuffering` for `Paused` by itself, and after the resume the empty ring is timed again.
+- **Playlist.** Only the current item's buffer callbacks reach the controller.
+
+§7 stands: entering `Rebuffering` closes no gate and holds no clock. An item without video has no
+pacer, so its stalls are not reported yet.

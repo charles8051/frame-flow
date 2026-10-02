@@ -345,9 +345,10 @@ internal sealed class PlaylistSession : IPlaybackSession
     }
 
     /// <summary>
-    /// Callbacks handed to each item runtime. The buffer callbacks and recoverable errors bubble
-    /// straight to the controller. End-of-stream and faults are posted, tagged with the runtime's
-    /// generation so a notification from a replaced runtime is dropped. An end-of-stream also
+    /// Callbacks handed to each item runtime. Recoverable errors bubble straight to the controller,
+    /// and so do the buffer callbacks while their runtime is the current one, so a replaced
+    /// runtime cannot leave the player rebuffering (#547). End-of-stream and faults are posted,
+    /// tagged with the runtime's generation so a notification from a replaced runtime is dropped. An end-of-stream also
     /// carries the runtime's run number, read when it is raised, so one raised before a seek or
     /// rewind of the same item is dropped too.
     /// </summary>
@@ -359,8 +360,16 @@ internal sealed class PlaylistSession : IPlaybackSession
             // zero for each item and each in-place rewind, and stops while paused.
             OnWorkerFaulted: ex =>
                 Deliver(new PlaylistSessionInput.Fault(generation, ex, _clock.Position)),
-            OnBufferReady: _controllerCallbacks.OnBufferReady,
-            OnBufferUnderrun: _controllerCallbacks.OnBufferUnderrun,
+            OnBufferReady: () =>
+            {
+                if (generation == Volatile.Read(ref _publishedGeneration))
+                    _controllerCallbacks.OnBufferReady();
+            },
+            OnBufferUnderrun: () =>
+            {
+                if (generation == Volatile.Read(ref _publishedGeneration))
+                    _controllerCallbacks.OnBufferUnderrun();
+            },
             OnRecoverableError: _controllerCallbacks.OnRecoverableError,
             OnCurrentItemChanged: _controllerCallbacks.OnCurrentItemChanged,
             // An item runtime does not loop, and does not know the queue it sits in: this session
