@@ -11,6 +11,7 @@ using FrameFlow.Avalonia.Windows.Core;
 using FrameFlow.Avalonia.Windows.Diagnostics;
 using FrameFlow.Decoding;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -90,6 +91,11 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     // How long a dropped converter's blits may hold every view's blits back. Windows resets a GPU
     // that runs this long (TDR), and a lost device ends the wait sooner.
     private static readonly TimeSpan BlitDrainTimeout = TimeSpan.FromSeconds(2);
+
+    // How the frames are meant to be shown (#542): the layout fits the display shape and turns
+    // the surface upright. UI thread only, like the size above.
+    private SampleAspectRatio _videoShape = SampleAspectRatio.Square;
+    private VideoRotation _videoRotation;
 
     // ── Two-stage present accounting (ADR-0064 §Observability) ────────────────
     // _framesPresented counts at ENQUEUE: the frame's UpdateWithKeyedMutexAsync hand-off was
@@ -802,9 +808,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     }
 
     /// <summary>
-    /// Sizes + centers the surface visual to a letterboxed rect that preserves the
-    /// video's aspect ratio within the control bounds (the black window background shows
-    /// in the bars). Called on attach, on resize, and when the video size is first known.
+    /// Sizes + centers the surface visual to a letterboxed rect at the video's display shape
+    /// within the control bounds (the black window background shows in the bars), turned
+    /// upright about its centre (#542). Called on attach, on resize, and when the video size,
+    /// pixel shape or rotation changes.
     /// </summary>
     private void UpdateSurfaceLayout()
     {
@@ -812,22 +819,25 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             return;
 
         var b = Bounds;
-        if (_videoWidth <= 0 || _videoHeight <= 0 || b.Width <= 0 || b.Height <= 0)
+        var placement = VideoPlacement.Fit(b.Width, b.Height, _videoWidth, _videoHeight, _videoShape, _videoRotation);
+        if (placement.IsEmpty)
         {
             _surfaceVisual.Size = new Vector(b.Width, b.Height);
             _surfaceVisual.Offset = new System.Numerics.Vector3(0f, 0f, 0f);
+            _surfaceVisual.RotationAngle = 0f;
             return;
         }
 
-        var (w, h) = FitSize(b.Width, b.Height, _videoWidth, _videoHeight);
-        double x = (b.Width - w) / 2;
-        double y = (b.Height - h) / 2;
+        double x = placement.DrawX, y = placement.DrawY;
+        double w = placement.DrawWidth, h = placement.DrawHeight;
 
-        // While the ring is the size the frame is shown at (#560), snap the visual to physical
+        // While the ring is the size the frame is drawn at (#560), snap the visual to physical
         // pixels, so the compositor draws the upscaled ring 1:1 rather than resampling it by a
-        // fraction of a pixel. A ring of another size, mid-resize, is scaled as before.
+        // fraction of a pixel. A ring of another size, mid-resize, is scaled as before, and so is a
+        // quarter turn, which moves the corner the snap aligns.
         double scaling = RenderScaling;
-        if (_gpuConverter is { Output.SuperResolution: true } scaled
+        if (_videoRotation is VideoRotation.None or VideoRotation.Clockwise180
+            && _gpuConverter is { Output.SuperResolution: true } scaled
             && SuperResolutionPolicy.TargetSize(w, h, scaling) == (scaled.Output.Width, scaled.Output.Height))
         {
             w = scaled.Output.Width / scaling;
@@ -836,21 +846,12 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             y = Math.Round(y * scaling) / scaling;
         }
 
+        // The imported texture is the frame as coded. The visual is the frame's rectangle before
+        // rotation, centred on the display area, so turning it about its centre fills the area.
         _surfaceVisual.Size = new Vector(w, h);
         _surfaceVisual.Offset = new System.Numerics.Vector3((float)x, (float)y, 0f);
-    }
-
-    /// <summary>
-    /// The largest <paramref name="videoWidth"/> x <paramref name="videoHeight"/> rectangle that
-    /// fits <paramref name="boundsWidth"/> x <paramref name="boundsHeight"/> at the video's aspect.
-    /// </summary>
-    private static (double Width, double Height) FitSize(
-        double boundsWidth, double boundsHeight, int videoWidth, int videoHeight)
-    {
-        if (videoWidth <= 0 || videoHeight <= 0 || boundsWidth <= 0 || boundsHeight <= 0)
-            return (0, 0);
-        var scale = Math.Min(boundsWidth / videoWidth, boundsHeight / videoHeight);
-        return (videoWidth * scale, videoHeight * scale);
+        _surfaceVisual.CenterPoint = new Vector3D(w / 2, h / 2, 0);
+        _surfaceVisual.RotationAngle = (float)placement.RotationRadians;
     }
 
     // ── Per-frame present (UI thread, from the render tick) ────────
@@ -860,6 +861,13 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         {
             if (_tornDown || _interop is null || _surface is null)
                 return; // teardown started, or interop not ready yet — drop.
+
+            if (frame.SampleAspectRatio != _videoShape || frame.Rotation != _videoRotation)
+            {
+                _videoShape = frame.SampleAspectRatio;
+                _videoRotation = frame.Rotation;
+                UpdateSurfaceLayout();
+            }
 
             if (frame is GpuVideoFrame gpu && gpu.TryGetD3D11Texture(out var texture, out var slice, out var device))
             {
@@ -1045,8 +1053,11 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             }
         }
 
-        var (fitWidth, fitHeight) = FitSize(Bounds.Width, Bounds.Height, frame.Width, frame.Height);
-        var (targetWidth, targetHeight) = SuperResolutionPolicy.TargetSize(fitWidth, fitHeight, RenderScaling);
+        // The frame's rectangle as drawn, before rotation (#542): the ring holds the frame as coded.
+        var placement = VideoPlacement.Fit(
+            Bounds.Width, Bounds.Height, frame.Width, frame.Height, frame.SampleAspectRatio, frame.Rotation);
+        var (targetWidth, targetHeight) = SuperResolutionPolicy.TargetSize(
+            placement.DrawWidth, placement.DrawHeight, RenderScaling);
 
         return new SuperResolutionInputs(
             Enabled: true,

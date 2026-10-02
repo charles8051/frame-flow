@@ -345,6 +345,19 @@ public class PlaybackProtocolTests
     }
 
     [Fact]
+    public void Rebuffering_LastFrameRendered_EntersEnded_FreezesClock()
+    {
+        // The input can run out while the pacer is starved (#547). Dropping the end-of-stream
+        // here would leave the player Rebuffering with nothing left to play. The ticker
+        // stopped on the way into Rebuffering, so only the clock is frozen.
+        var d = Advance(InternalPlaybackState.Rebuffering, PlaybackTrigger.LastFrameRendered);
+
+        Assert.True(d.Handled);
+        Assert.Equal(InternalPlaybackState.Ended, d.NextState);
+        AssertActions(d, PlaybackActionKind.FreezeClock);
+    }
+
+    [Fact]
     public void Rebuffering_FatalError_RouteToError()
     {
         var d = Advance(InternalPlaybackState.Rebuffering, PlaybackTrigger.FatalError);
@@ -596,6 +609,7 @@ public class PlaybackProtocolTests
         [(InternalPlaybackState.Playing, PlaybackTrigger.FatalError)] = Always,
 
         [(InternalPlaybackState.Rebuffering, PlaybackTrigger.BufferReady)] = Always,
+        [(InternalPlaybackState.Rebuffering, PlaybackTrigger.LastFrameRendered)] = Always,
         [(InternalPlaybackState.Rebuffering, PlaybackTrigger.Pause)] = Always,
         [(InternalPlaybackState.Rebuffering, PlaybackTrigger.Unload)] = Always,
         [(InternalPlaybackState.Rebuffering, PlaybackTrigger.FatalError)] = Always,

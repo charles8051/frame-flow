@@ -114,6 +114,19 @@ internal readonly unsafe ref struct AvStreamAccessor
     }
 
     /// <summary>Numerator of the stream's time base.</summary>
+    /// <summary>
+    /// The container's sample aspect ratio for this stream, as numerator and denominator. Either
+    /// is zero when the container does not say (#542).
+    /// </summary>
+    internal (int Num, int Den) SampleAspectRatio
+    {
+        get
+        {
+            ref AVStream s = ref Unsafe.AsRef<AVStream>((void*)_ptr);
+            return (s.sample_aspect_ratio.num, s.sample_aspect_ratio.den);
+        }
+    }
+
     internal int TimeBaseNum
     {
         get
@@ -221,6 +234,41 @@ internal readonly unsafe ref struct AvCodecParAccessor
         {
             ref AVCodecParameters p = ref Unsafe.AsRef<AVCodecParameters>((void*)_ptr);
             return p.height;
+        }
+    }
+
+    /// <summary>
+    /// The codec's sample aspect ratio, as numerator and denominator. Either is zero when the
+    /// bitstream does not say (#542).
+    /// </summary>
+    internal (int Num, int Den) SampleAspectRatio
+    {
+        get
+        {
+            ref AVCodecParameters p = ref Unsafe.AsRef<AVCodecParameters>((void*)_ptr);
+            return (p.sample_aspect_ratio.num, p.sample_aspect_ratio.den);
+        }
+    }
+
+    /// <summary>
+    /// The counterclockwise rotation, in degrees, of the stream's display matrix as
+    /// <c>av_display_rotation_get</c> reads it, or NaN when the stream carries no matrix or a
+    /// degenerate one (#542).
+    /// </summary>
+    internal double DisplayRotationDegrees
+    {
+        get
+        {
+            ref AVCodecParameters p = ref Unsafe.AsRef<AVCodecParameters>((void*)_ptr);
+            for (int i = 0; i < p.nb_coded_side_data; i++)
+            {
+                AVPacketSideData* entry = &p.coded_side_data[i];
+                if (entry->type == AVPacketSideDataType.AV_PKT_DATA_DISPLAYMATRIX
+                    && entry->size >= (ulong)(9 * sizeof(int)))
+                    return FFAvUtil.av_display_rotation_get((int*)entry->data);
+            }
+
+            return double.NaN;
         }
     }
 

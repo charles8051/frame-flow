@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Media.Diagnostics;
 using FrameFlow.Native.Interop;
 
@@ -78,7 +79,11 @@ internal sealed unsafe class SwScaleVideoConverter : IVideoConverter
             source.Pts,
             source.Duration,
             (Sws: _sws!.DangerousGetHandle(), Source: cpuData, SrcHeight: srcHeight),
-            static (planes, s) => ScaleInto(planes, s.Sws, s.Source, s.SrcHeight)
+            static (planes, s) => ScaleInto(planes, s.Sws, s.Source, s.SrcHeight),
+            // The same picture on another grid shows at the same shape (#542).
+            sampleAspectRatio: DisplaySize.ScaledSampleAspectRatio(
+                source.SampleAspectRatio, srcWidth, srcHeight, dstWidth, dstHeight),
+            rotation: source.Rotation
         );
     }
 

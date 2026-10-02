@@ -73,6 +73,19 @@ internal readonly unsafe ref struct AvFrameAccessor
     }
 
     /// <summary>
+    /// The frame's sample aspect ratio, as numerator and denominator. Either is zero when the
+    /// decoder does not know it (#542).
+    /// </summary>
+    internal (int Num, int Den) SampleAspectRatio
+    {
+        get
+        {
+            ref AVFrame f = ref Unsafe.AsRef<AVFrame>((void*)_ptr);
+            return (f.sample_aspect_ratio.num, f.sample_aspect_ratio.den);
+        }
+    }
+
+    /// <summary>
     /// Pixel/sample format as an FFmpeg integer.
     /// For video: <c>AVPixelFormat</c>. For audio: <c>AVSampleFormat</c>.
     /// </summary>

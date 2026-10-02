@@ -204,13 +204,15 @@ know whether the user's NVIDIA setting let the driver act on it (Context).
 
 ### 7. The ring follows the view
 
-In video-processor mode the target is the aspect-fit rectangle in physical pixels: the layout
-rectangle `UpdateSurfaceLayout` computes, multiplied by the top level's `RenderScaling`, rounded.
-One helper computes the fitted size for both, and `SuperResolutionPolicy.TargetSize` rounds it, so
-the layout and the ring cannot disagree. While the ring is exactly that size, the surface visual's
-offset and size are snapped to physical pixels, so the compositor draws the ring 1:1 rather than
-resampling it by a fraction of a pixel. Mid-resize, while the ring is still the old size, the
-visual follows the window and the compositor scales the ring as before.
+In video-processor mode the target is the frame's drawn rectangle in physical pixels: the
+`VideoPlacement` draw rectangle `UpdateSurfaceLayout` uses (#542), multiplied by the top level's
+`RenderScaling`, rounded. It is the rectangle before rotation, at the display shape, so the ring
+holds the frame as coded and the visual turns it. The layout and the target both come from
+`VideoPlacement.Fit`, and `SuperResolutionPolicy.TargetSize` rounds it, so the layout and the ring
+cannot disagree. While the ring is exactly that size and the frame is not turned a quarter, the
+surface visual's offset and size are snapped to physical pixels, so the compositor draws the ring
+1:1 rather than resampling it by a fraction of a pixel. Mid-resize, while the ring is still the old
+size, the visual follows the window and the compositor scales the ring as before.
 
 A change of target rebuilds the converter through the same drop path a resolution change uses.
 The ring is shared with the compositor, and that path already disposes it in the order the

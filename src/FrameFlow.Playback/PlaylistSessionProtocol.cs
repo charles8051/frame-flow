@@ -159,6 +159,12 @@ internal static class PlaylistSessionProtocol
                 case PlaylistSessionInput.Fault f:
                     OnFault(f.Generation, f.Error, f.PlayedFor);
                     break;
+                case PlaylistSessionInput.BufferUnderrun u:
+                    OnBufferUnderrun(u.Generation);
+                    break;
+                case PlaylistSessionInput.BufferReady r:
+                    OnBufferReady(r.Generation);
+                    break;
                 case PlaylistSessionInput.SkipRequested s:
                     OnSkipRequested(s.Generation, s.RunAtRequest);
                     break;
@@ -276,6 +282,10 @@ internal static class PlaylistSessionProtocol
             if (State.Run == PlaylistRunState.Playing)
                 State = State with { Run = PlaylistRunState.Paused };
 
+            // The controller leaves Rebuffering for Paused by itself, and the item's pacer forgets
+            // its underrun on the pause, so a stall that outlasts the resume is reported again.
+            State = State with { UnderrunReported = false };
+
             if (State.Item is null)
             {
                 Complete(command, PlaylistCommandResult.Ok);
@@ -332,6 +342,40 @@ internal static class PlaylistSessionProtocol
         }
 
         // ── Notifications and requests ──────────────────────────────────────
+
+        // Only the current runtime's buffer notifications reach the controller (#547). One from a
+        // runtime an advance has replaced describes video nobody is waiting for any more. An
+        // underrun is taken only while playing: one raised before a pause and handled after it
+        // would mark an underrun the controller never entered, and swallow the one after resume.
+        private void OnBufferUnderrun(int generation)
+        {
+            if (!Stopping
+                && State.Run == PlaylistRunState.Playing
+                && generation == State.Generation
+                && !State.UnderrunReported)
+            {
+                State = State with { UnderrunReported = true };
+                Emit(new PlaylistSessionAction.ReportBufferUnderrun());
+            }
+
+            Done();
+        }
+
+        private void OnBufferReady(int generation)
+        {
+            if (generation == State.Generation)
+                EndUnderrun();
+            Done();
+        }
+
+        // Tells the controller an underrun it was told of is over.
+        private void EndUnderrun()
+        {
+            if (!State.UnderrunReported)
+                return;
+            State = State with { UnderrunReported = false };
+            Emit(new PlaylistSessionAction.ReportBufferReady());
+        }
 
         private void OnEndOfStream(int generation, int run)
         {
@@ -1044,6 +1088,10 @@ internal static class PlaylistSessionProtocol
             bool wrapped
         )
         {
+            // An item that starts ends an underrun its predecessor reported: that runtime will not
+            // report ready now (#547).
+            EndUnderrun();
+
             // Read before ReportCurrent moves it: the reason describes how THIS item ended, and
             // every other field of the transition describes the item that started.
             var previous = advance.Previous ?? Queue.Reported;

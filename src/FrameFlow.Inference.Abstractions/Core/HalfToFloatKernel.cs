@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace FrameFlow.Inference.Core;
@@ -10,6 +11,11 @@ namespace FrameFlow.Inference.Core;
 /// Converts halves to floats, the reverse of <see cref="ImageToTensorKernel.ToHalves"/>. A model
 /// with fp16 outputs is read through it, so its decoders keep reading floats (#10). Pure.
 /// </summary>
+/// <remarks>
+/// The conversion loop is <see cref="MethodImplOptions.AggressiveOptimization"/> and
+/// <see cref="FloatBits"/> is <see cref="MethodImplOptions.AggressiveInlining"/>, for the reason
+/// <see cref="ImageToTensorKernel"/> gives (#546).
+/// </remarks>
 internal static class HalfToFloatKernel
 {
     /// <summary>
@@ -25,6 +31,7 @@ internal static class HalfToFloatKernel
     /// <see cref="FloatBits"/>, which gives <c>(float)value</c>'s bits.
     /// </summary>
     /// <exception cref="ArgumentException"><paramref name="destination"/> is shorter than <paramref name="values"/>.</exception>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     internal static void ToFloats(ReadOnlySpan<Half> values, Span<float> destination, bool vector)
     {
         if (destination.Length < values.Length)
@@ -58,6 +65,7 @@ internal static class HalfToFloatKernel
     /// <c>(float)value</c>'s bits for each lane's half, held in its low 16 bits, by the same
     /// branch-free steps as the runtime's scalar conversion.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector<uint> FloatBits(Vector<uint> half)
     {
         var sign = Vector.ShiftLeft(half & new Vector<uint>(0x8000u), 16);

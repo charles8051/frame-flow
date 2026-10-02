@@ -91,7 +91,8 @@ internal sealed unsafe class GpuFrameUpload
             Check(FFAvUtil.av_hwframe_transfer_data(hardware, software, 0), "av_hwframe_transfer_data");
             FrameCopyMetrics.Record(FrameCopySite.Upload);
             var uploaded = GpuVideoFrame.FromOwnedAvFrame(
-                hardware, width, height, PixelFormat.Nv12, frame.Pts, frame.Duration, _device.Backend);
+                hardware, width, height, PixelFormat.Nv12, frame.Pts, frame.Duration, _device.Backend,
+                frame.SampleAspectRatio, frame.Rotation);
             hardware = nint.Zero;
             return uploaded;
         }

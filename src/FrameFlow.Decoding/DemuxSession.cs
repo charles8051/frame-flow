@@ -661,7 +661,17 @@ public sealed class DemuxSession : IDemuxSession
                 int fpsDen = stream->avg_frame_rate.den;
                 double fps = fpsDen > 0 ? (double)fpsNum / fpsDen : 0.0;
 
-                videoStreams.Add(new VideoStreamInfo(streamIdx, codecName, width, height, fps));
+                var codecParameters = new AvCodecParAccessor((nint)codecPar);
+                videoStreams.Add(
+                    new VideoStreamInfo(streamIdx, codecName, width, height, fps)
+                    {
+                        // A frame can carry another pixel shape; this is the stream's (#542).
+                        SampleAspectRatio = DisplayGeometry.Resolve(
+                            (stream->sample_aspect_ratio.num, stream->sample_aspect_ratio.den),
+                            codecParameters.SampleAspectRatio),
+                        Rotation = DisplayGeometry.RotationOf(codecParameters.DisplayRotationDegrees),
+                    }
+                );
             }
             else if (mediaType == FFAvUtil.AvMediaTypeAudio)
             {

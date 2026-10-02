@@ -62,7 +62,9 @@ public static class VideoFrameExtensions
                 CopyPlane(source.PlaneY.Span, source.StrideY, planes.Y, planes.StrideY, "Y");
                 CopyPlane(source.PlaneU.Span, source.StrideU, planes.U, planes.StrideU, "U");
                 CopyPlane(source.PlaneV.Span, source.StrideV, planes.V, planes.StrideV, "V");
-            }
+            },
+            sampleAspectRatio: frame.SampleAspectRatio,
+            rotation: frame.Rotation
         );
     }
 

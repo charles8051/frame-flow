@@ -52,6 +52,15 @@ public interface IVideoFrame : IFrame, IRefCounted
     FrameMemoryDomain MemoryDomain { get; }
 
     /// <summary>
+    /// The shape of the frame's pixels. Square unless the source says otherwise: a frame of
+    /// <see cref="IFrame.Width"/> pixels shows <see cref="SampleAspectRatio.Value"/> times as wide (#542).
+    /// </summary>
+    SampleAspectRatio SampleAspectRatio => SampleAspectRatio.Square;
+
+    /// <summary>How far the frame turns clockwise to display upright (#542).</summary>
+    VideoRotation Rotation => VideoRotation.None;
+
+    /// <summary>
     /// The substrate-level timestamp, aliased to <see cref="Pts"/>
     /// via a default interface implementation. Implementations that have
     /// a more precise distinction between presentation timestamp and

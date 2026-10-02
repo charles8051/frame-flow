@@ -9,6 +9,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Media.Diagnostics;
 using FrameFlow.Playback;
 using Microsoft.Extensions.Logging;
@@ -90,6 +91,12 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     private int _stagedHeight;
     private TimeSpan _stagedPts;
     private SinkBinding? _stagedBinding;
+
+    // How each buffer's frame is meant to be shown (#542). They travel with the pixels: staged,
+    // copied into _back, and swapped with _front. Under _lock.
+    private (SampleAspectRatio Shape, VideoRotation Rotation) _stagedGeometry;
+    private (SampleAspectRatio Shape, VideoRotation Rotation) _backGeometry;
+    private (SampleAspectRatio Shape, VideoRotation Rotation) _frontGeometry;
 
     private AvaloniaVideoSink? _sink;
 
@@ -416,7 +423,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                         _stagedBinding?.Sink.RecordPreSwapDrop();
                     }
 
-                    StagePixelsLocked(data, frame.Pts, binding);
+                    StagePixelsLocked(data, frame.Pts, (frame.SampleAspectRatio, frame.Rotation), binding);
                     RequestBuffersForStagedFrame();
                     return;
                 }
@@ -433,6 +440,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                 FrameCopyMetrics.Record(FrameCopySite.PresenterUpload);
 
                 _backPts = frame.Pts;
+                _backGeometry = (frame.SampleAspectRatio, frame.Rotation);
                 _backBinding = binding;
                 _backPending = true;
 
@@ -522,7 +530,11 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     /// frame past the present call, and its buffer returns to the pool when that call ends. The
     /// array is reused across resizes and only grows.
     /// </remarks>
-    private void StagePixelsLocked(CpuFrameData data, TimeSpan pts, SinkBinding binding)
+    private void StagePixelsLocked(
+        CpuFrameData data,
+        TimeSpan pts,
+        (SampleAspectRatio Shape, VideoRotation Rotation) geometry,
+        SinkBinding binding)
     {
         var needed = data.StrideY * data.Height;
         if (_staged is null || _staged.Length < needed)
@@ -535,6 +547,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
         _stagedWidth = data.Width;
         _stagedHeight = data.Height;
         _stagedPts = pts;
+        _stagedGeometry = geometry;
         _stagedBinding = binding;
     }
 
@@ -580,6 +593,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             FrameCopyMetrics.Record(FrameCopySite.PresenterUpload);
 
             _backPts = pts;
+            _backGeometry = _stagedGeometry;
             _backBinding = binding;
             _backPending = true;
             return true;
@@ -618,6 +632,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                 return;
 
             (_front, _back) = (_back, _front);
+            (_frontGeometry, _backGeometry) = (_backGeometry, _frontGeometry);
             _backPending = false;
             pts = _backPts;
             producer = _backBinding;
@@ -706,8 +721,12 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     public override void Render(DrawingContext context)
     {
         WriteableBitmap? bitmapToRender;
+        (SampleAspectRatio Shape, VideoRotation Rotation) geometry;
         lock (_lock)
+        {
             bitmapToRender = _front;
+            geometry = _frontGeometry;
+        }
 
         if (bitmapToRender is null)
         {
@@ -715,13 +734,27 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             return;
         }
 
-        // Compute destination rect preserving aspect ratio (letterboxed)
+        // Letterboxed at the frame's display shape, and turned upright (#542).
         var srcW = bitmapToRender.PixelSize.Width;
         var srcH = bitmapToRender.PixelSize.Height;
-        var destRect = ComputeLetterboxRect(srcW, srcH, Bounds.Width, Bounds.Height);
-        var srcRect = new Rect(0, 0, srcW, srcH);
+        var placement = VideoPlacement.Fit(Bounds.Width, Bounds.Height, srcW, srcH, geometry.Shape, geometry.Rotation);
+        if (placement.IsEmpty)
+            return;
 
-        context.DrawImage(bitmapToRender, srcRect, destRect);
+        var srcRect = new Rect(0, 0, srcW, srcH);
+        var drawRect = new Rect(placement.DrawX, placement.DrawY, placement.DrawWidth, placement.DrawHeight);
+        if (placement.RotationRadians == 0)
+        {
+            context.DrawImage(bitmapToRender, srcRect, drawRect);
+            return;
+        }
+
+        var centre = drawRect.Center;
+        var turn = Matrix.CreateTranslation(-centre.X, -centre.Y)
+            * Matrix.CreateRotation(placement.RotationRadians)
+            * Matrix.CreateTranslation(centre.X, centre.Y);
+        using (context.PushTransform(turn))
+            context.DrawImage(bitmapToRender, srcRect, drawRect);
     }
 
     /// <summary>
@@ -856,19 +889,6 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                 }
             }
         }
-    }
-
-    private static Rect ComputeLetterboxRect(double srcW, double srcH, double dstW, double dstH)
-    {
-        if (srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0)
-            return default;
-
-        double scale = Math.Min(dstW / srcW, dstH / srcH);
-        double w = srcW * scale;
-        double h = srcH * scale;
-        double x = (dstW - w) / 2;
-        double y = (dstH - h) / 2;
-        return new Rect(x, y, w, h);
     }
 
     [LoggerMessage(
