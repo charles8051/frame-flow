@@ -36,6 +36,7 @@ public class App : Application
             var hwMode = GetArg(args, "--hw-mode");
             var hwDevice = GetArg(args, "--hw-device");
             var fullscreen = args.Contains("--fullscreen");
+            var superResolution = args.Contains("--super-resolution");
             var soak = args.Contains("--soak") ? ParseSoak(args) : null;
 
             // Build the logger here (before the window shows) so the bootstrap
@@ -63,6 +64,7 @@ public class App : Application
                 StartupHwMode = hwMode,
                 StartupHwDevice = hwDevice,
                 StartupFullscreen = fullscreen,
+                StartupSuperResolution = superResolution,
                 Soak = soak,
             };
             if (logFailure is not null)

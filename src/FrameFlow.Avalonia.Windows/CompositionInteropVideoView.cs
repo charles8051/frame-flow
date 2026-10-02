@@ -7,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Platform;
 using Avalonia.Rendering.Composition;
 using Avalonia.Threading;
+using FrameFlow.Avalonia.Windows.Core;
 using FrameFlow.Avalonia.Windows.Diagnostics;
 using FrameFlow.Decoding;
 using FrameFlow.Media;
@@ -33,10 +34,10 @@ namespace FrameFlow.Avalonia.Windows;
 /// <see cref="EnsureSink"/> to get the <see cref="IVideoSink"/> to hand to the player.
 /// </para>
 /// <para>
-/// Windows / D3D11 only. Spike-grade scope: single video size, latest-frame-wins,
-/// VideoProcessor Blt on the UI thread. Remaining follow-ups: off-thread Blt, P010/HDR,
-/// mid-stream resolution change. Device-lost handling and ordered imported-image teardown
-/// are implemented (investigation 2026-06-12).
+/// Windows / D3D11 only. Latest-frame-wins, converted on the UI thread with a pixel shader
+/// (ADR-0063), or through the video processor while <see cref="DriverSuperResolution"/> engages
+/// (#560). Remaining follow-ups: P010/HDR. Device-lost handling and ordered imported-image
+/// teardown are implemented (investigation 2026-06-12).
 /// </para>
 /// <para>
 /// <b>Teardown ordering (investigation 2026-06-12).</b> The producer's shared keyed-mutex
@@ -75,6 +76,21 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     private int _nextBuffer;
     private int _videoWidth;
     private int _videoHeight;
+
+    // ── Driver super resolution (#560). UI thread only, except the status. ──
+    private bool _driverSuperResolution;
+    private bool _superResolutionToggled;
+    private bool _superResolutionFailed;
+    private OutputSettle _outputSettle;
+    private int _superResolutionStatus; // a SuperResolutionStatus, read from any thread
+    private nint _vendorDevice;
+    private uint _vendorId;
+
+    // How long a new output has to be wanted, unchanged, before the converter is rebuilt for it.
+    private static readonly long OutputSettleTicks = Stopwatch.Frequency / 5;
+    // How long a dropped converter's blits may hold every view's blits back. Windows resets a GPU
+    // that runs this long (TDR), and a lost device ends the wait sooner.
+    private static readonly TimeSpan BlitDrainTimeout = TimeSpan.FromSeconds(2);
 
     // How the frames are meant to be shown (#542): the layout fits the display shape and turns
     // the surface upright. UI thread only, like the size above.
@@ -244,6 +260,41 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// <c>BuildSinkDiagnostics</c>.
     /// </remarks>
     public int FramesDropped => Volatile.Read(ref _framesDropped);
+
+    /// <summary>
+    /// Asks the GPU driver to upscale the video with its learned model, NVIDIA's RTX Video Super
+    /// Resolution (#560). Off by default. While on, a D3D11VA NV12 frame shown larger than its own
+    /// size is scaled through the video processor to the size it is shown at, with the driver's
+    /// extension on; otherwise the view converts as it does with this off.
+    /// </summary>
+    /// <remarks>
+    /// The upscale costs several milliseconds of GPU time a frame, more while the GPU clocks down
+    /// between frames. It applies only on an NVIDIA RTX GPU, in a local session, with the driver's
+    /// own super-resolution setting on, and in one view per process at a time.
+    /// <see cref="DriverSuperResolutionStatus"/> says whether the view asked, and if not, why.
+    /// Changing it rebuilds the converter on the next frame.
+    /// </remarks>
+    public bool DriverSuperResolution
+    {
+        get => _driverSuperResolution;
+        set
+        {
+            if (_driverSuperResolution == value)
+                return;
+            _driverSuperResolution = value;
+            _superResolutionToggled = true;
+            if (!value)
+                Volatile.Write(ref _superResolutionStatus, (int)SuperResolutionStatus.Off);
+        }
+    }
+
+    /// <summary>
+    /// Whether the view asks the driver to upscale the frames it presents, and if not, the first
+    /// condition that keeps it from asking. Updated on each presented frame; readable from any
+    /// thread.
+    /// </summary>
+    public SuperResolutionStatus DriverSuperResolutionStatus =>
+        (SuperResolutionStatus)Volatile.Read(ref _superResolutionStatus);
 
     /// <summary>
     /// Raised on the rising edge of a detected present stall (the UI-thread <c>VideoProcessorBlt</c>
@@ -777,11 +828,29 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             return;
         }
 
+        double x = placement.DrawX, y = placement.DrawY;
+        double w = placement.DrawWidth, h = placement.DrawHeight;
+
+        // While the ring is the size the frame is drawn at (#560), snap the visual to physical
+        // pixels, so the compositor draws the upscaled ring 1:1 rather than resampling it by a
+        // fraction of a pixel. A ring of another size, mid-resize, is scaled as before, and so is a
+        // quarter turn, which moves the corner the snap aligns.
+        double scaling = RenderScaling;
+        if (_videoRotation is VideoRotation.None or VideoRotation.Clockwise180
+            && _gpuConverter is { Output.SuperResolution: true } scaled
+            && SuperResolutionPolicy.TargetSize(w, h, scaling) == (scaled.Output.Width, scaled.Output.Height))
+        {
+            w = scaled.Output.Width / scaling;
+            h = scaled.Output.Height / scaling;
+            x = Math.Round(x * scaling) / scaling;
+            y = Math.Round(y * scaling) / scaling;
+        }
+
         // The imported texture is the frame as coded. The visual is the frame's rectangle before
         // rotation, centred on the display area, so turning it about its centre fills the area.
-        _surfaceVisual.Size = new Vector(placement.DrawWidth, placement.DrawHeight);
-        _surfaceVisual.Offset = new System.Numerics.Vector3((float)placement.DrawX, (float)placement.DrawY, 0f);
-        _surfaceVisual.CenterPoint = new Vector3D(placement.DrawWidth / 2, placement.DrawHeight / 2, 0);
+        _surfaceVisual.Size = new Vector(w, h);
+        _surfaceVisual.Offset = new System.Numerics.Vector3((float)x, (float)y, 0f);
+        _surfaceVisual.CenterPoint = new Vector3D(w / 2, h / 2, 0);
         _surfaceVisual.RotationAngle = (float)placement.RotationRadians;
     }
 
@@ -853,18 +922,21 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                         }
                         break;
                 }
-                _gpuConverter ??= new D3D11Nv12SharedConverter(texture, frame.Width, frame.Height, _logger);
+                EnsureConverterOutput(frame, texture, device);
                 PresentRing(
                     PresentSource.D3D11,
                     frame.Width,
                     frame.Height,
+                    _gpuConverter!.Output.Width,
+                    _gpuConverter.Output.Height,
                     _gpuConverter.GetSharedHandle,
-                    i => _gpuConverter.ConvertInto(i, texture, slice),
+                    i => _gpuConverter.ConvertInto(i, texture, slice, SuperResolutionLease.Process.MayBlit(this)),
                     frame.Pts
                 );
             }
             else if (frame is GpuVideoFrame d3d12 && d3d12.TryGetD3D12Texture(out var d3d12Texture, out _, out _, out _))
             {
+                ReportUnsupportedFrames();
                 PresentD3D12(d3d12, d3d12Texture);
             }
             else if (frame.Format == FrameFlow.Media.PixelFormat.Bgra32 && frame.AsCpu() is { } cpu)
@@ -872,9 +944,12 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                 // Upload fallback: software-decoded BGRA frame (no D3D11VA).
                 if (_cpuUploader is { IsDeviceLost: true })
                     DropCpuUploader();
+                ReportUnsupportedFrames();
                 _cpuUploader ??= new D3D11BgraUploader(frame.Width, frame.Height, _logger);
                 PresentRing(
                     PresentSource.Cpu,
+                    frame.Width,
+                    frame.Height,
                     frame.Width,
                     frame.Height,
                     _cpuUploader.GetSharedHandle,
@@ -911,6 +986,101 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     }
 
     /// <summary>
+    /// Builds the D3D11 converter for <paramref name="frame"/> with the output the super-resolution
+    /// decision wants (#560), rebuilding it when that output has been wanted for the settle
+    /// interval, and records the status. Runs after the device-loss, resolution and rebind decisions,
+    /// so a converter they dropped is built here at once.
+    /// </summary>
+    private void EnsureConverterOutput(IVideoFrame frame, nint texture, nint device)
+    {
+        if (_superResolutionToggled)
+        {
+            _superResolutionToggled = false;
+            _superResolutionFailed = false;
+            if (_gpuConverter is not null)
+                DropGpuConverter(GpuConverterDropReason.SuperResolutionToggled);
+        }
+
+        var (wanted, decided) = SuperResolutionPolicy.Decide(SuperResolutionInputsFor(frame, texture, device));
+        var (settle, apply) = (_outputSettle with { Applied = _gpuConverter?.Output })
+            .Advance(wanted, Stopwatch.GetTimestamp(), OutputSettleTicks);
+        _outputSettle = settle;
+
+        if (apply && _gpuConverter is not null)
+            DropGpuConverter(GpuConverterDropReason.OutputChange);
+
+        if (_gpuConverter is null)
+        {
+            var output = wanted;
+            if (output.SuperResolution && !SuperResolutionLease.Process.TryAcquire(this))
+                output = PresenterOutput.Shader(frame.Width, frame.Height);
+            _gpuConverter = new D3D11Nv12SharedConverter(texture, frame.Width, frame.Height, output, _logger);
+            if (!_gpuConverter.Output.SuperResolution)
+                SuperResolutionLease.Process.Release(this);
+            UpdateSurfaceLayout();
+        }
+
+        // A converter that could not set the video processor up, or lost it to a failed blit, is
+        // not retried until the property is toggled or the decode device changes.
+        if (_gpuConverter.SuperResolutionFailed)
+            _superResolutionFailed = true;
+
+        bool scaling = _gpuConverter.Output.SuperResolution && !_gpuConverter.SuperResolutionFailed;
+        var status = scaling
+            ? SuperResolutionStatus.Requested
+            : decided == SuperResolutionStatus.Requested
+                ? DriverSuperResolutionStatus // wanted, not applied yet: report what is on screen
+                : decided;
+        Volatile.Write(ref _superResolutionStatus, (int)status);
+    }
+
+    private SuperResolutionInputs SuperResolutionInputsFor(IVideoFrame frame, nint texture, nint device)
+    {
+        // Off, only the frame's size matters: the wanted output is the shader at it.
+        if (!_driverSuperResolution)
+            return new SuperResolutionInputs { FrameWidth = frame.Width, FrameHeight = frame.Height };
+
+        // Read once per decode device: a COM round trip to the adapter. A device whose identity is
+        // unknown (0) is read each time and never counts as a change.
+        if (device == nint.Zero || device != _vendorDevice)
+        {
+            _vendorId = D3D11Nv12SharedConverter.AdapterVendorOf(texture);
+            if (device != nint.Zero)
+            {
+                if (_vendorDevice != nint.Zero)
+                    _superResolutionFailed = false; // a new decode device gets a fresh attempt
+                _vendorDevice = device;
+            }
+        }
+
+        // The frame's rectangle as drawn, before rotation (#542): the ring holds the frame as coded.
+        var placement = VideoPlacement.Fit(
+            Bounds.Width, Bounds.Height, frame.Width, frame.Height, frame.SampleAspectRatio, frame.Rotation);
+        var (targetWidth, targetHeight) = SuperResolutionPolicy.TargetSize(
+            placement.DrawWidth, placement.DrawHeight, RenderScaling);
+
+        return new SuperResolutionInputs(
+            Enabled: true,
+            D3D11Nv12Frame: frame.Format == FrameFlow.Media.PixelFormat.Nv12,
+            FrameWidth: frame.Width,
+            FrameHeight: frame.Height,
+            TargetWidth: targetWidth,
+            TargetHeight: targetHeight,
+            AdapterVendorId: _vendorId,
+            RemoteSession: RemoteSession.IsActive,
+            LeaseAvailable: SuperResolutionLease.Process.IsAvailableTo(this),
+            Failed: _superResolutionFailed);
+    }
+
+    private void ReportUnsupportedFrames()
+    {
+        if (_driverSuperResolution)
+            Volatile.Write(ref _superResolutionStatus, (int)SuperResolutionStatus.UnsupportedFrames);
+    }
+
+    private double RenderScaling => TopLevel.GetTopLevel(this)?.RenderScaling ?? 1.0;
+
+    /// <summary>
     /// Presents a D3D12VA frame (#429): the same converter decisions as the D3D11VA path, except
     /// that a new decode device rebuilds the converter. Its D3D12 half lives on that device, and
     /// decoders on one adapter share a device unless it came from <c>ID3D12DeviceFactory</c>, so a
@@ -945,6 +1115,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         var converter = _d3d12Converter ??= new D3D12YuvSharedConverter(texture, frame.Width, frame.Height, _logger);
         PresentRing(
             PresentSource.D3D12,
+            frame.Width,
+            frame.Height,
             frame.Width,
             frame.Height,
             converter.GetSharedHandle,
@@ -1014,6 +1186,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         PresentSource source,
         int width,
         int height,
+        int ringWidth,
+        int ringHeight,
         Func<int, nint> getSharedHandle,
         Func<int, bool> fill,
         TimeSpan pts
@@ -1078,8 +1252,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             ),
             new PlatformGraphicsExternalImageProperties
             {
-                Width = width,
-                Height = height,
+                // The ring's size, which is the frame's except while the driver upscales (#560).
+                Width = ringWidth,
+                Height = ringHeight,
                 Format = PlatformGraphicsExternalImageFormat.B8G8R8A8UNorm,
                 // Our D3D11 textures are top-left origin (row 0 = top), like every D3D
                 // surface. Avalonia defaults this flag to false (bottom-left / GL
@@ -1293,6 +1468,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         _gpuConverter = null;
         _d3d12Converter = null;
         _cpuUploader = null;
+        if (converter is { Output.SuperResolution: true })
+            FinishVideoProcessorHandOff(converter, BeginVideoProcessorHandOff()); // off the UI thread here
+        else
+            SuperResolutionLease.Process.Release(this);
 
         if (drained)
         {
@@ -1431,6 +1610,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         BackendChange,
         /// <summary>A D3D12VA frame came from another device; the D3D12 converter rebuilds rather than rebinds.</summary>
         DecodeDeviceChange,
+        /// <summary>The output the super-resolution decision wants has settled on another one (#560).</summary>
+        OutputChange,
+        /// <summary><see cref="DriverSuperResolution"/> changed (#560).</summary>
+        SuperResolutionToggled,
     }
 
     /// <summary>Drops the GPU converter, D3D11 or D3D12, and its imported ring; a fresh converter is built on the
@@ -1467,6 +1650,20 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                     "Presenter D3D12VA frames come from a new decode device; rebuilding the D3D12 converter on it."
                 );
                 break;
+            case GpuConverterDropReason.OutputChange:
+                _logger.LogInformation(
+                    "Presenter output settled on {Mode} at {W}x{H}; rebuilding the converter for it (#560).",
+                    _outputSettle.Applied is { SuperResolution: true } ? "driver super resolution" : "the shader",
+                    _outputSettle.Applied?.Width ?? 0,
+                    _outputSettle.Applied?.Height ?? 0
+                );
+                break;
+            case GpuConverterDropReason.SuperResolutionToggled:
+                _logger.LogInformation(
+                    "Presenter driver super resolution turned {State}; rebuilding the converter (#560).",
+                    _driverSuperResolution ? "on" : "off"
+                );
+                break;
             default: // DeviceLost
                 _logger.LogWarning(
                     "Presenter GPU converter device-loss (TDR / DEVICE_REMOVED) detected; dropping it and "
@@ -1484,10 +1681,61 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         _d3d12Converter = null;
         // Dispose off the UI thread: a lost device's Release can still stall in the driver, and the
         // D3D12 converter waits for its GPU work before releasing anything.
-        if (conv is not null)
+        if (conv is { Output.SuperResolution: true })
+        {
+            var drain = BeginVideoProcessorHandOff();
+            Task.Run(() =>
+            {
+                try
+                {
+                    FinishVideoProcessorHandOff(conv, drain);
+                }
+                finally
+                {
+                    conv.Dispose();
+                }
+            });
+        }
+        else if (conv is not null)
+        {
             Task.Run(conv.Dispose);
+        }
         if (d3d12 is not null)
             Task.Run(d3d12.Dispose);
+    }
+
+    /// <summary>
+    /// Releases the lease once this view has stopped issuing blits (#560). Another view may take it
+    /// at once, but the drain this returns keeps every holder from blitting until
+    /// <see cref="FinishVideoProcessorHandOff"/> has seen the dropped converter's blits complete.
+    /// </summary>
+    private SuperResolutionLease.Drain BeginVideoProcessorHandOff()
+    {
+        var drain = SuperResolutionLease.Process.BeginDrain();
+        SuperResolutionLease.Process.Release(this);
+        return drain;
+    }
+
+    /// <summary>
+    /// Waits for the blits <paramref name="converter"/> submitted, then ends
+    /// <paramref name="drain"/>. Blocks, so it runs off the UI thread, before the converter is
+    /// disposed.
+    /// </summary>
+    private void FinishVideoProcessorHandOff(D3D11Nv12SharedConverter converter, SuperResolutionLease.Drain drain)
+    {
+        try
+        {
+            if (!converter.WaitForSubmittedBlits(BlitDrainTimeout))
+                _logger.LogWarning(
+                    "A dropped converter's video processor blits were not seen to complete within {Timeout} s; "
+                        + "letting other views blit anyway (#560).",
+                    BlitDrainTimeout.TotalSeconds
+                );
+        }
+        finally
+        {
+            drain.End();
+        }
     }
 
     /// <summary>Drops the CPU uploader and its imported ring after a device-loss; a fresh

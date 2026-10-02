@@ -1,7 +1,9 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using FrameFlow.Avalonia.Windows.Core;
 using FrameFlow.Media.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Vortice.D3DCompiler;
@@ -80,6 +82,19 @@ namespace FrameFlow.Avalonia.Windows;
 /// <see cref="Format.R8G8_UNorm"/>. (Making the decoder emit shareable shader-readable
 /// textures to drop this copy is a deferred follow-up — investigation 2026-06-12 §6 step 5.)
 /// </para>
+/// <para>
+/// <b>The video processor mode (#560).</b> Built with a <see cref="PresenterOutput"/> whose
+/// <see cref="PresenterOutput.SuperResolution"/> is set, the converter scales the staging texture
+/// into a ring at the output's size with <c>VideoProcessorBlt</c> on its own device, with NVIDIA's
+/// super-resolution stream extension on. That mode needs the staging texture bound
+/// <c>RenderTarget | ShaderResource</c>: the driver refuses a video-processor input view on one
+/// bound <c>ShaderResource</c> only. If any video-processor object fails to set up, the converter
+/// falls back to the shader at the frame's size and reports <see cref="SuperResolutionFailed"/>.
+/// <see cref="ConvertInto"/> blits only when its caller allows it, and
+/// <see cref="WaitForSubmittedBlits"/> waits for the blits already submitted: the owner's
+/// <see cref="SuperResolutionLease"/> needs both to keep two converters' blits from overlapping.
+/// Built without it, the converter is exactly the shader converter ADR-0063 describes.
+/// </para>
 /// </remarks>
 internal sealed class D3D11Nv12SharedConverter : IDisposable
 {
@@ -147,6 +162,19 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     // frame can never strand the mutex at a key the next frame's first acquire would block on.
     private const ulong StagingKey = 0;
 
+    // NVIDIA's post-processing extension interface and its super-resolution method (#560), the
+    // call Chromium's swap_chain_presenter.cc and mpv's vf_d3d11vpp.c make.
+    private static readonly Guid NvidiaPpeInterface = new("d43ce1b3-1f4b-48ac-baee-c3c25375e6f7");
+    private const uint NvidiaSuperResolutionMethod = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NvidiaStreamExtension
+    {
+        public uint Version;
+        public uint Method;
+        public uint Enable;
+    }
+
     private readonly ILogger _logger;
 
     // ── The converter's OWN device (ADR-0064 Decision 2) — stable across decode-device swaps ──
@@ -162,7 +190,16 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     private readonly nint _sampleSharedHandle; // global shared handle, opened on each decode device
     private readonly ID3D11ShaderResourceView _srvY; // R8_UNORM   luma view of _sampleNv12
     private readonly ID3D11ShaderResourceView _srvUV; // R8G8_UNORM chroma view of _sampleNv12
-    private readonly RingBuffer[] _buffers;
+    private RingBuffer[] _buffers;
+
+    // ── The video processor mode (#560) — null in the shader mode ──
+    private ID3D11VideoDevice? _videoDevice;
+    private ID3D11VideoContext1? _videoContext;
+    private ID3D11VideoProcessorEnumerator? _processorEnumerator;
+    private ID3D11VideoProcessor? _videoProcessor;
+    private ID3D11VideoProcessorInputView? _processorInput;
+    private VideoProcessorStream[]? _processorStreams;
+    private bool _blitsSubmitted;
 
     // ── Per-decode-device bridge — rebound (not rebuilt) when the decode device changes ──
     // Independent QI'd references to the CURRENT decode device + its multithread-protected
@@ -177,8 +214,27 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     private bool _disposed;
     private bool _deviceLost;
 
+    /// <summary>The frame's width: the staging texture's, and the per-frame copy's.</summary>
     public int Width { get; }
+
+    /// <summary>The frame's height.</summary>
     public int Height { get; }
+
+    /// <summary>
+    /// What the ring was built for: the requested output, or the shader at the frame's size when the
+    /// video processor failed to set up. A later blit failure leaves it as built and sets
+    /// <see cref="SuperResolutionFailed"/>.
+    /// </summary>
+    public PresenterOutput Output { get; private set; }
+
+    /// <summary>
+    /// True when the video processor mode was requested and could not be used: it failed to set up,
+    /// or a blit failed with something other than device loss, after which the shader fills the ring.
+    /// </summary>
+    public bool SuperResolutionFailed { get; private set; }
+
+    /// <summary>The PCI vendor ID of the adapter the converter's device is on.</summary>
+    public uint AdapterVendorId { get; }
 
     /// <summary>
     /// The native <c>ID3D11Device*</c> of the decode device this converter is <b>currently
@@ -217,13 +273,30 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         public required ID3D11CommandList CommandList;
         public required IDXGIKeyedMutex KeyedMutex;
         public nint SharedHandle;
+        public ID3D11VideoProcessorOutputView? ProcessorOutput;
     }
 
-    public D3D11Nv12SharedConverter(nint nv12TexturePtr, int width, int height, ILogger logger)
+    /// <param name="nv12TexturePtr">The first frame's decode texture.</param>
+    /// <param name="width">The frame's width.</param>
+    /// <param name="height">The frame's height.</param>
+    /// <param name="output">How to fill the ring, and at what size.</param>
+    /// <param name="logger">The logger.</param>
+    /// <param name="superResolutionExtension">
+    /// Whether the video processor mode turns the driver's extension on. Tests turn it off to
+    /// compare the video processor's colours with the shader's.
+    /// </param>
+    public D3D11Nv12SharedConverter(
+        nint nv12TexturePtr,
+        int width,
+        int height,
+        PresenterOutput output,
+        ILogger logger,
+        bool superResolutionExtension = true)
     {
         _logger = logger;
         Width = width;
         Height = height;
+        Output = output;
 
         // Borrow the first frame's texture: AddRef so disposing our wrapper is balanced
         // and FFmpeg's own reference is untouched. We use it only to (a) read the decode
@@ -246,13 +319,8 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             dxgiDevice.GetAdapter(out var adapter).CheckError();
             using (adapter)
             {
-                D3D11.D3D11CreateDevice(
-                    adapter,
-                    DriverType.Unknown,
-                    DeviceCreationFlags.BgraSupport,
-                    null,
-                    out _device!
-                ).CheckError();
+                AdapterVendorId = adapter.Description.VendorId;
+                _device = CreateOwnDevice(adapter, output.SuperResolution);
             }
         }
         // The own device lives for the converter's lifetime, so its cached immediate-context
@@ -303,7 +371,11 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
                 Format = srcFormat,
                 SampleDescription = new SampleDescription(1, 0),
                 Usage = ResourceUsage.Default,
-                BindFlags = BindFlags.ShaderResource,
+                // The video processor needs RenderTarget for its input view; the shader mode keeps
+                // the binding it always had.
+                BindFlags = output.SuperResolution
+                    ? BindFlags.RenderTarget | BindFlags.ShaderResource
+                    : BindFlags.ShaderResource,
                 CPUAccessFlags = CpuAccessFlags.None,
                 MiscFlags = ResourceOptionFlags.SharedKeyedMutex,
             }
@@ -333,13 +405,178 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
 
         _deferred = _device.CreateDeferredContext();
 
-        _buffers = new RingBuffer[BufferCount];
+        if (output.SuperResolution && !TrySetUpVideoProcessor(output, superResolutionExtension))
+        {
+            SuperResolutionFailed = true;
+            Output = PresenterOutput.Shader(width, height);
+        }
+
+        _buffers = CreateRing();
+
+        // One output view per ring buffer. If they fail, the ring is rebuilt at the frame's size for
+        // the shader, as when the video processor fails to set up.
+        if (_videoProcessor is not null && !TryCreateProcessorOutputs())
+        {
+            SuperResolutionFailed = true;
+            ReleaseVideoProcessor();
+            ReleaseRing();
+            Output = PresenterOutput.Shader(width, height);
+            _buffers = CreateRing();
+        }
+
+        // Seed the decode-device bridge for the first frame's decode device. After this the
+        // converter is ready; subsequent frames on the same device reuse it, and a different
+        // device triggers a rebind (not a rebuild).
+        RebindDecodeBridge(decodeDevice);
+
+        if (_videoProcessor is not null)
+        {
+            _logger.LogInformation(
+                "D3D11 NV12->BGRA converter ready (own device, ADR-0064) with driver super resolution (#560): "
+                    + "{W}x{H} frames scaled to a {OW}x{OH} {N}-buffer shared keyed-mutex ring by VideoProcessorBlt; "
+                    + "bound to decode device 0x{Dev:X}.",
+                width, height, Output.Width, Output.Height, BufferCount, _boundDecodeDevicePointer
+            );
+        }
+        else
+        {
+            _logger.LogInformation(
+                "D3D11 NV12->BGRA shader converter ready (own device, ADR-0064): {W}x{H}, {N}-buffer shared "
+                    + "keyed-mutex ring at {OW}x{OH}; bound to decode device 0x{Dev:X} via a shareable NV12 staging "
+                    + "bridge (pixel-shader convert on the 3D pipeline, no VideoProcessorBlt).",
+                width, height, BufferCount, Output.Width, Output.Height, _boundDecodeDevicePointer
+            );
+        }
+    }
+
+    /// <summary>
+    /// The PCI vendor ID of the adapter <paramref name="texturePtr"/>'s device is on, read before a
+    /// converter exists so the presenter can decide how to build one.
+    /// </summary>
+    public static uint AdapterVendorOf(nint texturePtr)
+    {
+        Marshal.AddRef(texturePtr);
+        using var texture = new ID3D11Texture2D(texturePtr);
+        using var dxgiDevice = texture.Device.QueryInterface<IDXGIDevice>();
+        dxgiDevice.GetAdapter(out var adapter).CheckError();
+        using (adapter)
+            return adapter.Description.VendorId;
+    }
+
+    /// <summary>
+    /// The converter's own device on <paramref name="adapter"/>. The video processor mode asks for
+    /// video support, and falls back to a device without it when the adapter refuses the flag.
+    /// </summary>
+    private ID3D11Device CreateOwnDevice(IDXGIAdapter adapter, bool videoProcessor)
+    {
+        if (videoProcessor)
+        {
+            var withVideo = D3D11.D3D11CreateDevice(
+                adapter,
+                DriverType.Unknown,
+                DeviceCreationFlags.BgraSupport | DeviceCreationFlags.VideoSupport,
+                null,
+                out ID3D11Device? videoDevice);
+            if (withVideo.Success && videoDevice is not null)
+                return videoDevice;
+            videoDevice?.Dispose();
+            _logger.LogDebug("The adapter refused a video-support device (0x{Hr:X8}); creating one without.", withVideo.Code);
+        }
+
+        D3D11.D3D11CreateDevice(adapter, DriverType.Unknown, DeviceCreationFlags.BgraSupport, null, out ID3D11Device? device)
+            .CheckError();
+        return device!;
+    }
+
+    /// <summary>
+    /// Creates the video processor that scales the staging texture to <paramref name="output"/>,
+    /// with the colour spaces the shader implements and, when <paramref name="extension"/> is set,
+    /// NVIDIA's super-resolution extension on. Returns <see langword="false"/>, with every
+    /// partly created object released, if any step fails.
+    /// </summary>
+    private unsafe bool TrySetUpVideoProcessor(PresenterOutput output, bool extension)
+    {
+        try
+        {
+            _videoDevice = _device.QueryInterface<ID3D11VideoDevice>();
+            _videoContext = _immediate.QueryInterface<ID3D11VideoContext1>();
+            _processorEnumerator = _videoDevice.CreateVideoProcessorEnumerator(new VideoProcessorContentDescription
+            {
+                InputFrameFormat = VideoFrameFormat.Progressive,
+                InputFrameRate = new Rational(30, 1),
+                InputWidth = (uint)Width,
+                InputHeight = (uint)Height,
+                OutputFrameRate = new Rational(30, 1),
+                OutputWidth = (uint)output.Width,
+                OutputHeight = (uint)output.Height,
+                Usage = VideoUsage.PlaybackNormal,
+            });
+
+            var input = _processorEnumerator.CheckVideoProcessorFormat(Format.NV12);
+            var bgra = _processorEnumerator.CheckVideoProcessorFormat(Format.B8G8R8A8_UNorm);
+            if ((input & VideoProcessorFormatSupport.Input) == 0 || (bgra & VideoProcessorFormatSupport.Output) == 0)
+                throw new NotSupportedException($"The video processor reports NV12 input {input} and BGRA output {bgra}.");
+
+            _videoDevice.CreateVideoProcessor(_processorEnumerator, 0, out _videoProcessor).CheckError();
+            _processorInput = _videoDevice.CreateVideoProcessorInputView(
+                _sampleNv12,
+                _processorEnumerator,
+                new VideoProcessorInputViewDescription
+                {
+                    FourCC = 0,
+                    ViewDimension = VideoProcessorInputViewDimension.Texture2D,
+                    Texture2D = new Texture2DVideoProcessorInputView { MipSlice = 0, ArraySlice = 0 },
+                });
+
+            // The conversion the shader implements: BT.709 studio-range YCbCr to full-range RGB, both
+            // G22, so the only difference between the modes is the scaler.
+            var processor = _videoProcessor!;
+            _videoContext.VideoProcessorSetStreamColorSpace1(processor, 0, ColorSpaceType.YcbcrStudioG22LeftP709);
+            _videoContext.VideoProcessorSetOutputColorSpace1(processor, ColorSpaceType.RgbFullG22NoneP709);
+            _videoContext.VideoProcessorSetStreamFrameFormat(processor, 0, VideoFrameFormat.Progressive);
+            _videoContext.VideoProcessorSetStreamAutoProcessingMode(processor, 0, false);
+            _videoContext.VideoProcessorSetStreamSourceRect(processor, 0, true, new Vortice.RawRect(0, 0, Width, Height));
+            _videoContext.VideoProcessorSetStreamDestRect(processor, 0, true, new Vortice.RawRect(0, 0, output.Width, output.Height));
+            _videoContext.VideoProcessorSetOutputTargetRect(processor, true, new Vortice.RawRect(0, 0, output.Width, output.Height));
+
+            if (extension)
+            {
+                var payload = new NvidiaStreamExtension
+                {
+                    Version = 1,
+                    Method = NvidiaSuperResolutionMethod,
+                    Enable = 1,
+                };
+                _videoContext.VideoProcessorSetStreamExtension(
+                    processor, 0, NvidiaPpeInterface, (uint)sizeof(NvidiaStreamExtension), (nint)(&payload))
+                    .CheckError();
+            }
+
+            _processorStreams = [new VideoProcessorStream { Enable = true, InputSurface = _processorInput }];
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "The video processor could not be set up for driver super resolution; converting with the shader at "
+                    + "the frame's size instead."
+            );
+            ReleaseVideoProcessor();
+            return false;
+        }
+    }
+
+    /// <summary>The BGRA ring at <see cref="Output"/>'s size, each buffer with its shader pass recorded.</summary>
+    private RingBuffer[] CreateRing()
+    {
+        var buffers = new RingBuffer[BufferCount];
         for (var i = 0; i < BufferCount; i++)
         {
             var desc = new Texture2DDescription
             {
-                Width = (uint)width,
-                Height = (uint)height,
+                Width = (uint)Output.Width,
+                Height = (uint)Output.Height,
                 MipLevels = 1,
                 ArraySize = 1,
                 Format = Format.B8G8R8A8_UNorm,
@@ -357,7 +594,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
 
             var rtv = _device.CreateRenderTargetView(tex, null);
 
-            _buffers[i] = new RingBuffer
+            buffers[i] = new RingBuffer
             {
                 Texture = tex,
                 RenderTargetView = rtv,
@@ -366,18 +603,75 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
                 SharedHandle = handle,
             };
         }
+        return buffers;
+    }
 
-        // Seed the decode-device bridge for the first frame's decode device. After this the
-        // converter is ready; subsequent frames on the same device reuse it, and a different
-        // device triggers a rebind (not a rebuild).
-        RebindDecodeBridge(decodeDevice);
+    private bool TryCreateProcessorOutputs()
+    {
+        try
+        {
+            foreach (var buffer in _buffers)
+            {
+                buffer.ProcessorOutput = _videoDevice!.CreateVideoProcessorOutputView(
+                    buffer.Texture,
+                    _processorEnumerator!,
+                    new VideoProcessorOutputViewDescription
+                    {
+                        ViewDimension = VideoProcessorOutputViewDimension.Texture2D,
+                        Texture2D = new Texture2DVideoProcessorOutputView { MipSlice = 0 },
+                    });
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "The video processor could not view the ring; converting with the shader at the frame's size "
+                    + "instead (super resolution off)."
+            );
+            return false;
+        }
+    }
 
-        _logger.LogInformation(
-            "D3D11 NV12->BGRA shader converter ready (own device, ADR-0064): {W}x{H}, {N}-buffer shared "
-                + "keyed-mutex ring; bound to decode device 0x{Dev:X} via a shareable NV12 staging bridge "
-                + "(pixel-shader convert on the 3D pipeline, no VideoProcessorBlt).",
-            width, height, BufferCount, _boundDecodeDevicePointer
-        );
+    private void ReleaseRing()
+    {
+        foreach (var b in _buffers)
+        {
+            if (b is null)
+                continue;
+            Release(() => b.CommandList.Dispose());
+            Release(() => b.RenderTargetView.Dispose());
+            Release(() => b.KeyedMutex.Dispose());
+            Release(() => b.Texture.Dispose());
+        }
+    }
+
+    private void ReleaseVideoProcessor()
+    {
+        if (_buffers is not null)
+        {
+            foreach (var buffer in _buffers)
+            {
+                if (buffer is null)
+                    continue;
+                var view = buffer.ProcessorOutput;
+                buffer.ProcessorOutput = null;
+                Release(() => view?.Dispose());
+            }
+        }
+
+        Release(() => _processorInput?.Dispose());
+        Release(() => _videoProcessor?.Dispose());
+        Release(() => _processorEnumerator?.Dispose());
+        Release(() => _videoContext?.Dispose());
+        Release(() => _videoDevice?.Dispose());
+        _processorStreams = null;
+        _processorInput = null;
+        _videoProcessor = null;
+        _processorEnumerator = null;
+        _videoContext = null;
+        _videoDevice = null;
     }
 
     /// <summary>
@@ -426,7 +720,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         _deferred.PSSetShaderResources(0, new[] { _srvY, _srvUV });
         _deferred.PSSetSampler(0, _sampler);
         _deferred.RSSetState(_rasterizer);
-        _deferred.RSSetViewport(new Viewport(0, 0, Width, Height, 0.0f, 1.0f));
+        _deferred.RSSetViewport(new Viewport(0, 0, Output.Width, Output.Height, 0.0f, 1.0f));
         _deferred.OMSetRenderTargets(rtv, null);
         _deferred.Draw(3, 0);
         // restoreDeferredContextState: false — each command list sets all of its own state,
@@ -536,6 +830,13 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     /// The caller must only target a ring buffer whose previous present has completed, so the ring
     /// <c>AcquireSync(0)</c> never contends.
     /// </summary>
+    /// <param name="index">The ring buffer to fill.</param>
+    /// <param name="nv12TexturePtr">The frame's decode texture.</param>
+    /// <param name="arraySlice">The frame's slice of the decode texture.</param>
+    /// <param name="videoProcessor">
+    /// Whether a converter in the video processor mode may blit for this frame. When it may not, the
+    /// shader fills the buffer at <see cref="Output"/>'s size.
+    /// </param>
     /// <returns>
     /// <see langword="true"/> if the buffer was filled and is ready to present;
     /// <see langword="false"/> if a GPU device-loss / TDR was observed mid-convert (in which case
@@ -543,7 +844,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     /// frame's device — in either case the caller should drop this frame and rebuild the converter
     /// rather than presenting (step 6). Any non-device-loss GPU failure still throws.
     /// </returns>
-    public bool ConvertInto(int index, nint nv12TexturePtr, int arraySlice)
+    public bool ConvertInto(int index, nint nv12TexturePtr, int arraySlice, bool videoProcessor = true)
     {
         // Short-circuit if a previous call already saw the device go away: the keyed-mutex
         // AcquireSync below would otherwise block / throw on a dead device.
@@ -594,7 +895,11 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             sampleAcquired = true;
             buf.KeyedMutex.AcquireSync(0, 1000);
             ringAcquired = true;
-            _immediate.ExecuteCommandList(buf.CommandList, true);
+            // The video processor when this converter has one and may use it; the shader otherwise,
+            // or after a blit failure turned the video processor off.
+            bool scaled = videoProcessor && buf.ProcessorOutput is not null && TryProcessorBlt(buf);
+            if (!scaled)
+                _immediate.ExecuteCommandList(buf.CommandList, true);
             FrameCopyMetrics.Record(FrameCopySite.PresenterGpuConvert);
             buf.KeyedMutex.ReleaseSync(1);
             ringAcquired = false;
@@ -632,6 +937,76 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Scales the staging texture into <paramref name="buffer"/> through the video processor.
+    /// Returns <see langword="false"/> after a failure that is not device loss, having turned the
+    /// video processor off for good, so the caller fills the buffer with the shader instead. A
+    /// device-loss failure throws to the caller's device-loss handling.
+    /// </summary>
+    private bool TryProcessorBlt(RingBuffer buffer)
+    {
+        try
+        {
+            _blitsSubmitted = true; // a failing call may still have queued work
+            _videoContext!.VideoProcessorBlt(_videoProcessor!, buffer.ProcessorOutput!, 0, 1, _processorStreams!).CheckError();
+            return true;
+        }
+        catch (Exception ex) when (!D3D11DeviceLoss.IsDeviceLost(ex))
+        {
+            _logger.LogWarning(ex, "VideoProcessorBlt failed; the shader fills the ring from now on (super resolution off).");
+            SuperResolutionFailed = true;
+            ReleaseVideoProcessor();
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Waits, for at most <paramref name="timeout"/>, until every <c>VideoProcessorBlt</c> this
+    /// converter submitted has completed on the GPU. Returns <see langword="true"/> when none is left
+    /// in flight: they completed, none was submitted, or the device is lost. Returns
+    /// <see langword="false"/> after the whole timeout when they did not complete in it, or when the
+    /// event query failed and completion could not be observed. Never throws. The owner calls it off
+    /// the UI thread once the converter is dropped, before ending its lease drain.
+    /// </summary>
+    public bool WaitForSubmittedBlits(TimeSpan timeout)
+    {
+        if (!_blitsSubmitted || _deviceLost || _disposed)
+            return true;
+
+        long deadline = Stopwatch.GetTimestamp() + (long)(timeout.TotalSeconds * Stopwatch.Frequency);
+        try
+        {
+            using var query = _device.CreateQuery(new QueryDescription(QueryType.Event));
+            _immediate.End(query);
+            _immediate.Flush();
+            while (true)
+            {
+                var result = _immediate.GetData(query, nint.Zero, 0, AsyncGetDataFlags.None);
+                if (result.Code == 0) // S_OK: the event, and every command before it, has completed
+                    return true;
+                if (result.Failure)
+                    result.CheckError(); // to the handlers below
+                if (Stopwatch.GetTimestamp() >= deadline)
+                    return false;
+                Thread.Sleep(1);
+            }
+        }
+        catch (Exception ex) when (D3D11DeviceLoss.IsDeviceLost(ex))
+        {
+            _deviceLost = true;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            // Completion cannot be observed, so wait out the bound, as for blits that never finish.
+            _logger.LogWarning(ex, "The event query on the video processor's blits failed; waiting out the timeout instead.");
+            long remaining = deadline - Stopwatch.GetTimestamp();
+            if (remaining > 0)
+                Thread.Sleep(TimeSpan.FromSeconds((double)remaining / Stopwatch.Frequency));
+            return false;
+        }
     }
 
     private void TryReleaseMutex(IDXGIKeyedMutex mutex, ulong key)
@@ -677,16 +1052,9 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         // the decoder still backs the device so this is not its final release.
         ReleaseDecodeBridge();
 
-        // Objects we created on the own device.
-        foreach (var b in _buffers)
-        {
-            if (b is null)
-                continue;
-            Release(() => b.CommandList.Dispose());
-            Release(() => b.RenderTargetView.Dispose());
-            Release(() => b.KeyedMutex.Dispose());
-            Release(() => b.Texture.Dispose());
-        }
+        // The video processor's objects, then the rest we created on the own device.
+        ReleaseVideoProcessor();
+        ReleaseRing();
         Release(() => _srvUV.Dispose());
         Release(() => _srvY.Dispose());
         Release(() => _sampleMutex.Dispose());

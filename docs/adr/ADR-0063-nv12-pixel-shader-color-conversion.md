@@ -1,5 +1,10 @@
 # ADR-0063: NV12 to BGRA via pixel shader (replacing VideoProcessorBlt)
 
+> **Amended 2026-10-02 by [opt-in driver video super resolution](driver-video-super-resolution.md).**
+> `VideoProcessorBlt` returns as an opt-in path, off by default, limited to one view per process
+> on an NVIDIA adapter and only while the view is larger than the frame. The default path is
+> still this ADR's pixel shader.
+
 ## Status
 
 **Accepted (2026-06-12).** Implemented on `feat/nv12-pixel-shader-converter`. Supersedes the

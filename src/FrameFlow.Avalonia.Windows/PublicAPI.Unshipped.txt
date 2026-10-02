@@ -67,3 +67,15 @@ static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordSta
 static FrameFlow.Avalonia.Windows.PresentPlanner.Advance(in FrameFlow.Avalonia.Windows.PresentState state, in FrameFlow.Avalonia.Windows.FrameDescriptor frame, System.Func<int, bool>! slotFree) -> FrameFlow.Avalonia.Windows.PresentPlan
 static FrameFlow.Avalonia.Windows.PresentState.Initial(int ringSize) -> FrameFlow.Avalonia.Windows.PresentState
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.AcceptedDomains.get -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.DriverSuperResolution.get -> bool
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.DriverSuperResolution.set -> void
+FrameFlow.Avalonia.Windows.CompositionInteropVideoView.DriverSuperResolutionStatus.get -> FrameFlow.Avalonia.Windows.SuperResolutionStatus
+FrameFlow.Avalonia.Windows.SuperResolutionStatus
+FrameFlow.Avalonia.Windows.SuperResolutionStatus.InUseByAnotherView = 6 -> FrameFlow.Avalonia.Windows.SuperResolutionStatus
+FrameFlow.Avalonia.Windows.SuperResolutionStatus.NotUpscaling = 2 -> FrameFlow.Avalonia.Windows.SuperResolutionStatus
+FrameFlow.Avalonia.Windows.SuperResolutionStatus.Off = 0 -> FrameFlow.Avalonia.Windows.SuperResolutionStatus
+FrameFlow.Avalonia.Windows.SuperResolutionStatus.RemoteSession = 5 -> FrameFlow.Avalonia.Windows.SuperResolutionStatus
+FrameFlow.Avalonia.Windows.SuperResolutionStatus.Requested = 1 -> FrameFlow.Avalonia.Windows.SuperResolutionStatus
+FrameFlow.Avalonia.Windows.SuperResolutionStatus.Unavailable = 7 -> FrameFlow.Avalonia.Windows.SuperResolutionStatus
+FrameFlow.Avalonia.Windows.SuperResolutionStatus.UnsupportedAdapter = 3 -> FrameFlow.Avalonia.Windows.SuperResolutionStatus
+FrameFlow.Avalonia.Windows.SuperResolutionStatus.UnsupportedFrames = 4 -> FrameFlow.Avalonia.Windows.SuperResolutionStatus

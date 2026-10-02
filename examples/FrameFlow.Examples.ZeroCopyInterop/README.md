@@ -90,6 +90,11 @@ use it for headless/autonomous runs. No file argument → the window explains wh
 to pass. `--hw-device d3d12va` decodes on one D3D12VA device, which the presenter
 converts on and copies across to D3D11 (#429); `d3d11va` pins D3D11VA the same way.
 
+`--super-resolution` starts with `CompositionInteropVideoView.DriverSuperResolution` on (#560),
+and `S` toggles it while playing. The corner shows `DriverSuperResolutionStatus`. To see the
+driver's upscale, play a clip smaller than the window, on an NVIDIA RTX GPU, in a local session,
+with Super Resolution on in the NVIDIA App (System → Video → RTX Video Enhancements).
+
 Generate a quick test clip:
 
 ```bash
