@@ -1,8 +1,8 @@
-# ADR-XXXX: Opt-in driver video super resolution on the D3D11 presenter
+# ADR-0082: Opt-in driver video super resolution on the D3D11 presenter
 
 ## Status
 
-Accepted (2026-10-02) and implemented for #560. Draft pending number assignment.
+Accepted (2026-10-02) and implemented (2026-10-02, #561) for #560.
 
 Reintroduces `VideoProcessorBlt` into the Windows zero-copy presenter as an opt-in path, under
 the limits below. [ADR-0063](ADR-0063-nv12-pixel-shader-color-conversion.md) removed it from the
