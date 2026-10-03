@@ -76,6 +76,9 @@ public sealed class D3D11VideoProcessorSoakTests(ITestOutputHelper testOutput)
 
         long start = Stopwatch.GetTimestamp();
         control.Start = start;
+        // Streams open one after another, so the stall clock starts here, not at each open.
+        foreach (var s in streams)
+            Volatile.Write(ref s.LastProgress, start);
         var threads = streams.Select(s => new Thread(() => Run(s, control)) { IsBackground = true, Name = $"soak-{s.Name}" }).ToArray();
         foreach (var t in threads)
             t.Start();
@@ -265,7 +268,6 @@ public sealed class D3D11VideoProcessorSoakTests(ITestOutputHelper testOutput)
             Reference = reference;
             Adapter = adapter;
             DecodeDevice = decodeDevice;
-            LastProgress = Stopwatch.GetTimestamp();
         }
 
         public string Name { get; }
