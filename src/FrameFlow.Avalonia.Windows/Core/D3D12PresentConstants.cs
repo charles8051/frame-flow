@@ -5,16 +5,6 @@ using System.Runtime.InteropServices;
 
 namespace FrameFlow.Avalonia.Windows.Core;
 
-/// <summary>How a D3D12VA texture stores its YUV samples.</summary>
-internal enum YuvSampleFormat
-{
-    /// <summary>NV12: 8-bit samples, read through a UNORM view as <c>code / 255</c>.</summary>
-    Nv12,
-
-    /// <summary>P010: 10-bit codes in the high bits of 16-bit samples, read as <c>code · 64 / 65535</c>.</summary>
-    P010,
-}
-
 /// <summary>
 /// The root constants the D3D12 presenter's pixel shader reads for one frame: where the frame sits
 /// in its texture, and how a sample becomes limited-range BT.709 luma and chroma. Pure: sizes and a
@@ -48,13 +38,7 @@ internal readonly record struct D3D12PresentConstants(
         ArgumentOutOfRangeException.ThrowIfLessThan(textureWidth, frameWidth);
         ArgumentOutOfRangeException.ThrowIfLessThan(textureHeight, frameHeight);
 
-        // A code's value as the shader reads it, and the studio-range levels in codes.
-        var (codeValue, black, luma, neutral, chroma) = samples switch
-        {
-            YuvSampleFormat.Nv12 => (1.0 / 255, 16.0, 219.0, 128.0, 224.0),
-            YuvSampleFormat.P010 => (64.0 / 65535, 64.0, 876.0, 512.0, 896.0),
-            _ => throw new ArgumentOutOfRangeException(nameof(samples), samples, "Undefined sample format."),
-        };
+        var levels = YuvLevels.For(samples);
 
         // The chroma plane is half the texture in each direction; the frame's last chroma sample
         // is the centre of chroma texel ceil(frame / 2) - 1.
@@ -68,10 +52,10 @@ internal readonly record struct D3D12PresentConstants(
             VScale: (float)((double)frameHeight / textureHeight),
             ChromaUMax: (float)((frameChromaWidth - 0.5) / chromaWidth),
             ChromaVMax: (float)((frameChromaHeight - 0.5) / chromaHeight),
-            YOffset: (float)(black * codeValue),
-            YScale: (float)(1 / (luma * codeValue)),
-            COffset: (float)(neutral * codeValue),
-            CScale: (float)(1 / (chroma * codeValue)));
+            YOffset: levels.YOffset,
+            YScale: levels.YScale,
+            COffset: levels.COffset,
+            CScale: levels.CScale);
     }
 }
 

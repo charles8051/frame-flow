@@ -36,8 +36,9 @@ namespace FrameFlow.Avalonia.Windows;
 /// <para>
 /// Windows / D3D11 only. Latest-frame-wins, converted on the UI thread with a pixel shader
 /// (ADR-0063), or through the video processor while <see cref="DriverSuperResolution"/> engages
-/// (#560). Remaining follow-ups: P010/HDR. Device-lost handling and ordered imported-image
-/// teardown are implemented (investigation 2026-06-12).
+/// (#560). NV12 and P010 frames are converted on either path (#559); HDR is not (#548).
+/// Device-lost handling and ordered imported-image teardown are implemented (investigation
+/// 2026-06-12).
 /// </para>
 /// <para>
 /// <b>Teardown ordering (investigation 2026-06-12).</b> The producer's shared keyed-mutex
@@ -712,6 +713,12 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         /// mixed-resolution playlist swap changes both at once.
         /// </summary>
         RebuildForResolutionChange = 3,
+        /// <summary>
+        /// The incoming frame's sample format differs from the one the converter was built for, as
+        /// when an 8-bit item follows a 10-bit one (#559). The staging texture and its plane views
+        /// are built for one format, so the converter is rebuilt. Takes priority over a device change.
+        /// </summary>
+        RebuildForFormatChange = 4,
     }
 
     /// <summary>
@@ -721,12 +728,15 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// then resolution change (must rebuild — the ring/staging are fixed-size), then a same-size
     /// device change (rebind in place). A <paramref name="frameDevice"/> of <see cref="nint.Zero"/>
     /// means the frame's device identity is unknown (chain unavailable) and is never treated as a
-    /// mismatch — reuse rather than thrash on missing telemetry. Extracted as a static so the
-    /// swap-detection logic is unit-testable without a GPU.
+    /// mismatch — reuse rather than thrash on missing telemetry. A format change rebuilds after a
+    /// resolution change; a null format, as the D3D12 converter passes since it reads the format
+    /// per frame, is never a change. Extracted as a static so the swap-detection logic is
+    /// unit-testable without a GPU.
     /// </summary>
     internal static ConverterAction EvaluateConverterAction(
         bool hasCached, nint cachedDevice, bool cachedDeviceLost, nint frameDevice,
-        int cachedWidth, int cachedHeight, int frameWidth, int frameHeight)
+        int cachedWidth, int cachedHeight, int frameWidth, int frameHeight,
+        FrameFlow.Media.PixelFormat? cachedFormat = null, FrameFlow.Media.PixelFormat? frameFormat = null)
     {
         if (!hasCached)
             return ConverterAction.Reuse;
@@ -738,6 +748,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         // rebuilds rather than rebinding onto a wrong-sized ring.
         if (frameWidth != cachedWidth || frameHeight != cachedHeight)
             return ConverterAction.RebuildForResolutionChange;
+        if (cachedFormat is { } built && frameFormat is { } arriving && built != arriving)
+            return ConverterAction.RebuildForFormatChange;
         if (frameDevice != nint.Zero && cachedDevice != frameDevice)
             return ConverterAction.RebindDecodeDevice;
         return ConverterAction.Reuse;
@@ -895,13 +907,18 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                     cachedWidth: _gpuConverter?.Width ?? 0,
                     cachedHeight: _gpuConverter?.Height ?? 0,
                     frameWidth: frame.Width,
-                    frameHeight: frame.Height))
+                    frameHeight: frame.Height,
+                    cachedFormat: _gpuConverter?.InputFormat,
+                    frameFormat: frame.Format))
                 {
                     case ConverterAction.RebuildForDeviceLoss:
                         DropGpuConverter(GpuConverterDropReason.DeviceLost);
                         break;
                     case ConverterAction.RebuildForResolutionChange:
                         DropGpuConverter(GpuConverterDropReason.ResolutionChange);
+                        break;
+                    case ConverterAction.RebuildForFormatChange:
+                        DropGpuConverter(GpuConverterDropReason.FormatChange);
                         break;
                     case ConverterAction.RebindDecodeDevice:
                         if (_gpuConverter!.TryRebindDecodeDevice(texture))
@@ -1318,7 +1335,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         {
             _loggedGpuLive = true;
             _logger.LogInformation(
-                "ZERO-COPY PATH LIVE: D3D11VA NV12 → pixel-shader BGRA ({N}-buffer shared keyed-mutex "
+                "ZERO-COPY PATH LIVE: D3D11VA NV12/P010 → pixel-shader BGRA ({N}-buffer shared keyed-mutex "
                     + "ring) → ICompositionGpuInterop.ImportImage → compositor. No CPU round-trip.",
                 D3D11Nv12SharedConverter.BufferCount
             );
@@ -1605,6 +1622,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         ResolutionChange,
         /// <summary>The frames switched between D3D11VA and D3D12VA, which have different converters.</summary>
         BackendChange,
+        /// <summary>A D3D11VA frame's sample format differs from the one the converter was built for (#559).</summary>
+        FormatChange,
         /// <summary>A D3D12VA frame came from another device; the D3D12 converter rebuilds rather than rebinds.</summary>
         DecodeDeviceChange,
         /// <summary>The output the super-resolution decision wants has settled on another one (#560).</summary>
@@ -1640,6 +1659,11 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                 _logger.LogInformation(
                     "Presenter frames switched between D3D11VA and D3D12VA; dropping the GPU converter and building "
                         + "the other one."
+                );
+                break;
+            case GpuConverterDropReason.FormatChange:
+                _logger.LogInformation(
+                    "Presenter D3D11VA frames changed sample format; rebuilding the converter for it (#559)."
                 );
                 break;
             case GpuConverterDropReason.DecodeDeviceChange:

@@ -15,9 +15,9 @@ using Vortice.Mathematics;
 namespace FrameFlow.Avalonia.Windows;
 
 /// <summary>
-/// Bridges an FFmpeg D3D11VA NV12 decode texture to a <b>ring of shared,
+/// Bridges an FFmpeg D3D11VA decode texture, NV12 or P010 (#559), to a <b>ring of shared,
 /// keyed-mutex BGRA textures</b> that Avalonia's compositor can import. Color-converts
-/// NV12 → BGRA on the GPU with an <b>HLSL pixel shader on the general 3D pipeline</b>
+/// YUV → BGRA on the GPU with an <b>HLSL pixel shader on the general 3D pipeline</b>
 /// (a fullscreen-triangle draw), not the fixed-function <c>VideoProcessorBlt</c> block,
 /// and owns <see cref="BufferCount"/> shared output textures. Created lazily once the
 /// first frame's device + dimensions are known. Windows / D3D11 only.
@@ -79,7 +79,9 @@ namespace FrameFlow.Avalonia.Windows;
 /// staging texture's keyed mutex, which fences the write so the own device sees it. The
 /// shader then samples <see cref="_sampleNv12"/> on the own device via two SRVs: the Y plane
 /// as <see cref="Format.R8_UNorm"/> and the interleaved UV plane as
-/// <see cref="Format.R8G8_UNorm"/>. (Making the decoder emit shareable shader-readable
+/// <see cref="Format.R8G8_UNorm"/>, or <see cref="Format.R16_UNorm"/> and
+/// <see cref="Format.R16G16_UNorm"/> for P010, with the sample levels in a constant buffer
+/// from <see cref="YuvLevels"/>, as the D3D12 converter takes them. (Making the decoder emit shareable shader-readable
 /// textures to drop this copy is a deferred follow-up — investigation 2026-06-12 §6 step 5.)
 /// </para>
 /// <para>
@@ -106,8 +108,13 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     // output share G22 transfer + P709 primaries, so there is no gamma/primary conversion —
     // only the YCbCr→RGB matrix with the limited→full range expansion folded in.
     private const string Hlsl = """
-        Texture2D    LumaTex   : register(t0);   // R8_UNORM   view of the NV12 Y plane
-        Texture2D    ChromaTex : register(t1);   // R8G8_UNORM view of the NV12 UV plane
+        cbuffer Levels : register(b0)
+        {
+            float YOffset, YScale, COffset, CScale;
+        };
+
+        Texture2D    LumaTex   : register(t0);   // R8_UNORM or R16_UNORM view of the Y plane
+        Texture2D    ChromaTex : register(t1);   // R8G8_UNORM or R16G16_UNORM view of the UV plane
         SamplerState Samp      : register(s0);
 
         struct VSOut
@@ -132,10 +139,10 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             float  yX   = LumaTex.Sample(Samp, input.uv).r;
             float2 cbcr = ChromaTex.Sample(Samp, input.uv).rg;
 
-            // Studio (limited) range bias + scale: Y in [16,235], CbCr in [16,240] over 8-bit.
-            float Y = (yX     - 16.0  / 255.0) * (255.0 / 219.0);
-            float U = (cbcr.x - 128.0 / 255.0) * (255.0 / 224.0);
-            float V = (cbcr.y - 128.0 / 255.0) * (255.0 / 224.0);
+            // Studio (limited) range bias + scale for the texture's sample format (YuvLevels).
+            float Y = (yX     - YOffset) * YScale;
+            float U = (cbcr.x - COffset) * CScale;
+            float V = (cbcr.y - COffset) * CScale;
 
             // BT.709 inverse matrix (Kr=0.2126, Kb=0.0722).
             float3 rgb;
@@ -185,8 +192,9 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     private readonly ID3D11Texture2D _sampleNv12; // SHAREABLE shader-readable copy target for the decode slice
     private readonly IDXGIKeyedMutex _sampleMutex; // own-device view of _sampleNv12's keyed mutex
     private readonly nint _sampleSharedHandle; // global shared handle, opened on each decode device
-    private readonly ID3D11ShaderResourceView _srvY; // R8_UNORM   luma view of _sampleNv12
-    private readonly ID3D11ShaderResourceView _srvUV; // R8G8_UNORM chroma view of _sampleNv12
+    private readonly ID3D11ShaderResourceView _srvY; // R8_UNORM or R16_UNORM luma view of _sampleNv12
+    private readonly ID3D11ShaderResourceView _srvUV; // R8G8_UNORM or R16G16_UNORM chroma view of _sampleNv12
+    private readonly ID3D11Buffer _levels; // the shader's YuvLevels for the texture's sample format
     private RingBuffer[] _buffers;
 
     // ── The video processor mode (#560) — null in the shader mode ──
@@ -216,6 +224,9 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
 
     /// <summary>The frame's height.</summary>
     public int Height { get; }
+
+    /// <summary>The decode texture's format, NV12 or P010, which the staging texture and views are built for.</summary>
+    public FrameFlow.Media.PixelFormat InputFormat { get; }
 
     /// <summary>
     /// What the ring was built for: the requested output, or the shader at the frame's size when the
@@ -308,6 +319,8 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         // and QI independent references inside RebindDecodeBridge.
         var decodeDevice = nv12.Device;
         var srcFormat = nv12.Description.Format;
+        var (samples, lumaFormat, chromaFormat) = YuvTextureFormats.For(srcFormat);
+        InputFormat = samples == YuvSampleFormat.P010 ? FrameFlow.Media.PixelFormat.P010 : FrameFlow.Media.PixelFormat.Nv12;
 
         // OWN DEVICE on the decoder's adapter. DriverType.Unknown is required when an explicit
         // adapter is supplied. BgraSupport so the compositor can import our B8G8R8A8 ring.
@@ -385,7 +398,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             _sampleNv12,
             new ShaderResourceViewDescription
             {
-                Format = Format.R8_UNorm,
+                Format = lumaFormat,
                 ViewDimension = ShaderResourceViewDimension.Texture2D,
                 Texture2D = new Texture2DShaderResourceView { MostDetailedMip = 0, MipLevels = 1 },
             }
@@ -394,12 +407,13 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             _sampleNv12,
             new ShaderResourceViewDescription
             {
-                Format = Format.R8G8_UNorm,
+                Format = chromaFormat,
                 ViewDimension = ShaderResourceViewDimension.Texture2D,
                 Texture2D = new Texture2DShaderResourceView { MostDetailedMip = 0, MipLevels = 1 },
             }
         );
 
+        _levels = CreateLevelsBuffer(_device, YuvLevels.For(samples));
         _deferred = _device.CreateDeferredContext();
 
         if (output.SuperResolution && !TrySetUpVideoProcessor(output, superResolutionExtension))
@@ -429,19 +443,19 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         if (_videoProcessor is not null)
         {
             _logger.LogInformation(
-                "D3D11 NV12->BGRA converter ready (own device, ADR-0064) with driver super resolution (#560): "
+                "D3D11 {Format}->BGRA converter ready (own device, ADR-0064) with driver super resolution (#560): "
                     + "{W}x{H} frames scaled to a {OW}x{OH} {N}-buffer shared keyed-mutex ring by VideoProcessorBlt; "
                     + "bound to decode device 0x{Dev:X}.",
-                width, height, Output.Width, Output.Height, BufferCount, _boundDecodeDevicePointer
+                InputFormat, width, height, Output.Width, Output.Height, BufferCount, _boundDecodeDevicePointer
             );
         }
         else
         {
             _logger.LogInformation(
-                "D3D11 NV12->BGRA shader converter ready (own device, ADR-0064): {W}x{H}, {N}-buffer shared "
-                    + "keyed-mutex ring at {OW}x{OH}; bound to decode device 0x{Dev:X} via a shareable NV12 staging "
+                "D3D11 {Format}->BGRA shader converter ready (own device, ADR-0064): {W}x{H}, {N}-buffer shared "
+                    + "keyed-mutex ring at {OW}x{OH}; bound to decode device 0x{Dev:X} via a shareable staging "
                     + "bridge (pixel-shader convert on the 3D pipeline, no VideoProcessorBlt).",
-                width, height, BufferCount, Output.Width, Output.Height, _boundDecodeDevicePointer
+                InputFormat, width, height, BufferCount, Output.Width, Output.Height, _boundDecodeDevicePointer
             );
         }
     }
@@ -509,10 +523,11 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
                 Usage = VideoUsage.PlaybackNormal,
             });
 
-            var input = _processorEnumerator.CheckVideoProcessorFormat(Format.NV12);
+            var inputFormat = _sampleNv12.Description.Format;
+            var input = _processorEnumerator.CheckVideoProcessorFormat(inputFormat);
             var bgra = _processorEnumerator.CheckVideoProcessorFormat(Format.B8G8R8A8_UNorm);
             if ((input & VideoProcessorFormatSupport.Input) == 0 || (bgra & VideoProcessorFormatSupport.Output) == 0)
-                throw new NotSupportedException($"The video processor reports NV12 input {input} and BGRA output {bgra}.");
+                throw new NotSupportedException($"The video processor reports {inputFormat} input {input} and BGRA output {bgra}.");
 
             _videoDevice.CreateVideoProcessor(_processorEnumerator, 0, out _videoProcessor).CheckError();
             _processorInput = _videoDevice.CreateVideoProcessorInputView(
@@ -671,6 +686,12 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         _videoDevice = null;
     }
 
+    /// <summary>The shader's sample levels, as an immutable constant buffer on <paramref name="device"/>.</summary>
+    private static unsafe ID3D11Buffer CreateLevelsBuffer(ID3D11Device device, YuvLevels levels) =>
+        device.CreateBuffer(
+            new BufferDescription((uint)sizeof(YuvLevels), BindFlags.ConstantBuffer, ResourceUsage.Immutable),
+            new SubresourceData(&levels));
+
     /// <summary>
     /// Compiles one entry point of <see cref="Hlsl"/> at runtime via <c>D3DCompile</c> and
     /// returns the bytecode. Throws with the compiler's diagnostics on failure.
@@ -716,6 +737,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         _deferred.PSSetShader(_pixelShader);
         _deferred.PSSetShaderResources(0, new[] { _srvY, _srvUV });
         _deferred.PSSetSampler(0, _sampler);
+        _deferred.PSSetConstantBuffer(0, _levels);
         _deferred.RSSetState(_rasterizer);
         _deferred.RSSetViewport(new Viewport(0, 0, Output.Width, Output.Height, 0.0f, 1.0f));
         _deferred.OMSetRenderTargets(rtv, null);
@@ -905,7 +927,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             // which never sets a device-loss HRESULT). Mark lost and let the caller drop
             // the ring; do not rethrow into the per-frame present path.
             _deviceLost = true;
-            _logger.LogWarning(ex, "GPU device lost during NV12->BGRA convert; dropping ring for rebuild.");
+            _logger.LogWarning(ex, "GPU device lost during YUV->BGRA convert; dropping ring for rebuild.");
             return false;
         }
         finally
@@ -1050,6 +1072,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         ReleaseRing();
         Release(() => _srvUV.Dispose());
         Release(() => _srvY.Dispose());
+        Release(() => _levels.Dispose());
         Release(() => _sampleMutex.Dispose());
         Release(() => _sampleNv12.Dispose());
         Release(() => _rasterizer.Dispose());

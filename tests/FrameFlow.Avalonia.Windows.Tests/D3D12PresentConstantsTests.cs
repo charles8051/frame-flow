@@ -65,6 +65,24 @@ public sealed class D3D12PresentConstantsTests
         Assert.Equal(0.5f, (Read(chromaTop) - c.COffset) * c.CScale, 1e-6f);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TheLevels_AreTheOnesTheD3D11ConverterTakes(bool p010)
+    {
+        var samples = p010 ? YuvSampleFormat.P010 : YuvSampleFormat.Nv12;
+        var c = D3D12PresentConstants.Create(samples, 64, 64, 64, 64);
+
+        Assert.Equal(YuvLevels.For(samples), new YuvLevels(c.YOffset, c.YScale, c.COffset, c.CScale));
+    }
+
+    [Fact]
+    public void TheLevels_FillOneConstantBufferRegister()
+    {
+        // D3D11 sizes a constant buffer in 16-byte registers.
+        Assert.Equal(16, Marshal.SizeOf<YuvLevels>());
+    }
+
     [Fact]
     public void ATextureSmallerThanTheFrame_IsRefused()
     {

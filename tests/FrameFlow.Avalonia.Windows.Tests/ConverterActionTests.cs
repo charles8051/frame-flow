@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using FrameFlow.Avalonia.Windows;
 using FrameFlow.Avalonia.Windows.Diagnostics;
+using FrameFlow.Media;
 
 namespace FrameFlow.Avalonia.Windows.Tests;
 
@@ -152,6 +153,45 @@ public sealed class ConverterActionTests
 
         Assert.Equal(2, rebinds); // DevA->DevB and DevB->DevC
         Assert.Equal(0, rebuilds); // ADR-0064 acceptance: a same-size warm swap never rebuilds
+    }
+
+    [Fact]
+    public void AFormatChange_Rebuilds_EvenOnANewDevice()
+    {
+        // An 8-bit item after a 10-bit one, at one size (#559): the staging texture and its plane
+        // views are built for P010, and a rebind cannot change them.
+        var sameDevice = CompositionInteropVideoView.EvaluateConverterAction(
+            hasCached: true, cachedDevice: DevA, cachedDeviceLost: false, frameDevice: DevA,
+            cachedWidth: W, cachedHeight: H, frameWidth: W, frameHeight: H,
+            cachedFormat: PixelFormat.P010, frameFormat: PixelFormat.Nv12);
+        var newDevice = CompositionInteropVideoView.EvaluateConverterAction(
+            hasCached: true, cachedDevice: DevA, cachedDeviceLost: false, frameDevice: DevB,
+            cachedWidth: W, cachedHeight: H, frameWidth: W, frameHeight: H,
+            cachedFormat: PixelFormat.P010, frameFormat: PixelFormat.Nv12);
+
+        Assert.Equal(CompositionInteropVideoView.ConverterAction.RebuildForFormatChange, sameDevice);
+        Assert.Equal(CompositionInteropVideoView.ConverterAction.RebuildForFormatChange, newDevice);
+    }
+
+    [Fact]
+    public void AResolutionChange_IsReportedBeforeAFormatChange()
+    {
+        var r = CompositionInteropVideoView.EvaluateConverterAction(
+            hasCached: true, cachedDevice: DevA, cachedDeviceLost: false, frameDevice: DevA,
+            cachedWidth: W, cachedHeight: H, frameWidth: 1280, frameHeight: 720,
+            cachedFormat: PixelFormat.Nv12, frameFormat: PixelFormat.P010);
+        Assert.Equal(CompositionInteropVideoView.ConverterAction.RebuildForResolutionChange, r);
+    }
+
+    [Fact]
+    public void AnUntrackedFormat_IsNeverAChange()
+    {
+        // The D3D12 converter reads the format per frame and passes none.
+        var r = CompositionInteropVideoView.EvaluateConverterAction(
+            hasCached: true, cachedDevice: DevA, cachedDeviceLost: false, frameDevice: DevA,
+            cachedWidth: W, cachedHeight: H, frameWidth: W, frameHeight: H,
+            cachedFormat: null, frameFormat: PixelFormat.P010);
+        Assert.Equal(CompositionInteropVideoView.ConverterAction.Reuse, r);
     }
 
     [Fact]

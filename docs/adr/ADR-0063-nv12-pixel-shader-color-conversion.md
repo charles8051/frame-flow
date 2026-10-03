@@ -109,3 +109,22 @@ the OS `d3dcompiler_47`).
   D3D11VA pool with `D3D11_BIND_SHADER_RESOURCE` (a `get_format` / `hw_frames_ctx` change in
   `FrameFlow.Decoding`). Out of scope for a converter-local change; the copy keeps the edit inside
   `D3D11Nv12SharedConverter` and off the churny decoder. Tracked as the zero-copy follow-up above.
+
+## Amended 2026-10-03
+
+**The shader converts P010 as well as NV12 (#559).** D3D11VA decodes a 10-bit stream, such as VP9
+profile 2, into a P010 texture. The converter copied the decode texture's format into its staging
+texture and still viewed it as `R8_UNorm` and `R8G8_UNorm`, which D3D11 refuses on P010, so a 10-bit
+stream presented nothing.
+
+- The plane views follow the texture: `R8`/`R8G8` for NV12, `R16`/`R16G16` for P010
+  (`YuvTextureFormats`, shared with the D3D12 converter). Any other format is refused when the
+  converter is built, naming the format.
+- The studio-range levels are a constant buffer from `YuvLevels`, the pure function the D3D12
+  presenter's root constants already take theirs from, instead of 8-bit constants in the HLSL. The
+  matrix is unchanged: BT.709, as above.
+- The video processor mode asks for the staging texture's format as its input.
+- The view rebuilds the converter when a frame's format differs from the one it was built for,
+  as it does for a size change, since the staging texture and its views are built for one format.
+
+HDR transfer functions are still converted as SDR (#548).
