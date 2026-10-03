@@ -88,7 +88,9 @@ public sealed class ToGpuTests
 
         Assert.Same(uploaded, await toDevice.Body(uploaded, CancellationToken.None));
         await Assert.ThrowsAsync<NotSupportedException>(async () => await toOther.Body(uploaded, CancellationToken.None));
-        Assert.Equal(FrameDomainRule.Accepting(FrameMemoryDomains.Any, emits: FrameMemoryDomains.Gpu), toDevice.Domains);
+        Assert.Equal(
+            FrameDomainRule.Accepting(FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D12, emits: FrameMemoryDomains.D3D12),
+            toDevice.Domains);
     }
 
     private static double MeanDifference(CpuVideoFrame expected, CpuVideoFrame actual)

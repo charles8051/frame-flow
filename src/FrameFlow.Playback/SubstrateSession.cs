@@ -488,21 +488,21 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                     ? VideoProbe(_videoConfigurator, _videoSink!)
                     : default;
                 var pathBudget = videoProbe.Graph?.FrameBudgetFor(videoProbe.Source!);
+
+                // Frames stay on the GPU only in a domain the whole path takes, and which domain
+                // they are in depends on the backend the decoder binds (#566). Before it opens,
+                // the decision is whether any GPU domain gets through.
+                var gpuAccepted = _yieldHardwareFrames is null && videoProbe.Graph is { } probeGraph
+                    ? probeGraph.FrameDomainsAcceptedFrom(videoProbe.Source!, FrameMemoryDomains.Gpu, FrameDomainRule.CpuOnly)
+                    : FrameMemoryDomains.None;
                 var hardwareFrames = HardwareFrameChoice.Decide(
                     _yieldHardwareFrames,
                     hardwareDisabled,
-                    _yieldHardwareFrames is null
+                    _yieldHardwareFrames is null && gpuAccepted == FrameMemoryDomains.None
                         ? videoProbe.Graph?.FrameDomainMismatchFor(
-                            videoProbe.Source!, FrameMemoryDomains.Any, FrameDomainRule.CpuOnly)
+                            videoProbe.Source!, FrameMemoryDomains.Gpu, FrameDomainRule.CpuOnly)
                         : null,
                     pathBudget);
-                if (!hardwareDisabled)
-                {
-                    _logger.LogInformation(
-                        "Hardware-decoded video frames {Where}: {Reason}.",
-                        hardwareFrames.Yield ? "stay on the GPU" : "are downloaded to system memory",
-                        hardwareFrames.Reason);
-                }
 
                 var backendOrder = DecodeBackendOrder.Decide(
                     _preferredBackends,
@@ -528,6 +528,26 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                         }
                 );
                 videoDecoder = videoFactory(demux) as VideoDecoder;
+                if (videoDecoder?.BoundBackend is { } bound)
+                {
+                    hardwareFrames = HardwareFrameChoice.ForBackend(
+                        hardwareFrames,
+                        _yieldHardwareFrames,
+                        bound,
+                        hardwareFrames.Yield
+                            ? videoProbe.Graph?.FrameDomainMismatchFor(
+                                videoProbe.Source!, HardwareFrameDomains.Of(bound), FrameDomainRule.CpuOnly)
+                            : null);
+                }
+
+                if (!hardwareDisabled)
+                {
+                    _logger.LogInformation(
+                        "Hardware-decoded video frames {Where}: {Reason}.",
+                        hardwareFrames.Yield ? "stay on the GPU" : "are downloaded to system memory",
+                        hardwareFrames.Reason);
+                }
+
                 if (videoDecoder is not null)
                 {
                     videoDecoder.YieldHardwareFrames = hardwareFrames.Yield;

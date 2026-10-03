@@ -362,6 +362,66 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
         Assert.Equal(unasked, preferring);
     }
 
+    /// <summary>
+    /// A decode on a backend the sink cannot read reaches it as CPU frames, and the player still
+    /// decodes on that backend (#566). The sink reads D3D11 and D3D12 frames, as the composition
+    /// interop view does; before, it was handed CUDA frames and presented nothing.
+    /// </summary>
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.Cuda, PreferenceClip)]
+    public async Task ABackendTheSinkCannotRead_HasItsFramesDownloaded()
+    {
+        using var device = HardwareDevice.Create(HardwareDecodeBackendKind.Cuda);
+        var sink = new DomainRecordingSink(ReadsD3D);
+
+        var backend = await PlayOnAsync(sink, device);
+
+        Assert.Equal(HardwareDecodeBackendKind.Cuda, backend);
+        Assert.NotEmpty(sink.Domains);
+        Assert.All(sink.Domains, domain => Assert.Equal(FrameMemoryDomain.Cpu, domain));
+    }
+
+    /// <summary>The same sink keeps the frames of a backend it reads on the GPU (#566).</summary>
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D11Va, PreferenceClip)]
+    public async Task ABackendTheSinkReads_KeepsItsFramesOnTheGpu()
+    {
+        using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D11Va);
+        var sink = new DomainRecordingSink(ReadsD3D);
+
+        await PlayOnAsync(sink, device);
+
+        Assert.NotEmpty(sink.Domains);
+        Assert.All(sink.Domains, domain => Assert.Equal(FrameMemoryDomain.Gpu, domain));
+    }
+
+    private const FrameMemoryDomains ReadsD3D =
+        FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D11 | FrameMemoryDomains.D3D12;
+
+    /// <summary>Plays <see cref="PreferenceClip"/> on <paramref name="device"/> and returns the backend that decoded it.</summary>
+    private static async Task<HardwareDecodeBackendKind?> PlayOnAsync(IVideoSink sink, HardwareDevice device)
+    {
+        var controller = PlaybackController.Create(
+            videoSink: sink,
+            hardwareDecodeMode: HardwareDecodeMode.Required,
+            hardwareDevice: device
+        );
+
+        try
+        {
+            var (load, play) = await IntegrationTestHelper.RunToCompletionAsync(
+                controller,
+                MediaSource.FromFile(PlaybackHarness.ResolveCorpusPath(PreferenceClip))
+            );
+            Assert.True(load.IsSuccess, $"LoadAsync failed: {load.Error?.Message}");
+            Assert.True(play.IsSuccess, $"PlayAsync failed: {play.Error?.Message}");
+            return controller.GetDiagnostics().Pipeline.Stream.VideoDecoder.HardwareBackend;
+        }
+        finally
+        {
+            await IntegrationTestHelper.StabilizeForDisposeAsync(controller);
+            await controller.DisposeAsync();
+        }
+    }
+
     private const string PreferenceClip = "test-video-h264-yuv420p.mp4";
 
     /// <summary>Plays <see cref="PreferenceClip"/> into <paramref name="sink"/> and returns the backend that decoded it.</summary>
@@ -424,6 +484,28 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
                     Seen.Enqueue((gpu.HwDeviceContext, gpu.HwFramesContext));
             }
 
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) =>
+            ValueTask.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    /// <summary>Records each frame's memory domain, declares <paramref name="accepts"/>, and keeps none.</summary>
+    private sealed class DomainRecordingSink(FrameMemoryDomains accepts) : IVideoSink
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<FrameMemoryDomain> Domains { get; } = new();
+
+        public int? MaxHeldFrames => 0;
+
+        public FrameMemoryDomains AcceptedDomains => accepts;
+
+        public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
+        {
+            using (frame)
+                Domains.Enqueue(frame.MemoryDomain);
             return ValueTask.CompletedTask;
         }
 

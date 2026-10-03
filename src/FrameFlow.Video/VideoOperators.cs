@@ -242,8 +242,13 @@ public static class VideoOperators
             // A frame already on the device is forwarded as itself, so this is not a storage
             // boundary for it.
             holding: FrameHolding.InFlight,
-            // Takes either domain and hands on GPU frames (#293).
-            domains: FrameDomainRule.Accepting(FrameMemoryDomains.Any, emits: FrameMemoryDomains.Gpu)
+            // Takes CPU frames and the device's own domain, and hands on frames in the device's
+            // domain (#293, #566). A GPU frame from another backend has no way in, so a path that
+            // would hand it one downloads it first; one on another device of the same backend is
+            // still refused at run time.
+            domains: FrameDomainRule.Accepting(
+                FrameMemoryDomains.Cpu | HardwareFrameDomains.Of(device.Backend),
+                emits: HardwareFrameDomains.Of(device.Backend))
         );
     }
 

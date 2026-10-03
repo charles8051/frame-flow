@@ -456,3 +456,31 @@ GPU frame already on the device is forwarded; one on another device is refused, 
 needs a readback. The node declares that it takes either domain and emits GPU frames (#435).
 `AsDomain(target)` was never built and is not needed: `ToCpu` and `ToGpu` are the two directions.
 
+
+## Amended 2026-10-03
+
+**Decision: the GPU domain is one domain per API (#566).** `FrameMemoryDomains` had one GPU
+value, so a declaration could not say which GPU memory a node reads. `CompositionInteropVideoSink`
+declared `Any` and reads D3D11 and D3D12 frames only. On an NVIDIA GPU, VP8 and MPEG-4 Part 2
+decode on CUDA, since FFmpeg has no D3D11VA or D3D12VA hwaccel for them; the check passed, and the
+view dropped every frame.
+
+- **The enum.** `FrameMemoryDomains` names one GPU domain per hardware decode backend: `D3D11`,
+  `D3D12`, `Cuda`, `Vulkan`, and the rest, with `OtherGpu` for a backend FFmpeg reports and
+  FrameFlow does not name. `Gpu` is their union, and `Any` is `Cpu | Gpu`.
+  `HardwareFrameDomains.Of` maps a backend to its domain. A frame's own `FrameMemoryDomain` stays
+  CPU or GPU, since `GpuVideoFrame.Backend` already says which.
+- **The declarations.** The interop sink takes `Cpu | D3D11 | D3D12`. `Infer` with a device stage
+  takes CPU frames and the stage's `AcceptedDomains`, which is `D3D12` for `D3D12ImageToTensor`
+  and no GPU domain for a stage that does not say. `ToGpu` takes CPU frames and its device's
+  domain, and emits that domain. A decoder that yields hardware frames emits CPU and its bound
+  backend's domain.
+- **The automatic choice.** Before the decoder opens, a player or pass keeps frames on the GPU
+  when at least one GPU domain gets through the path (`Graph.FrameDomainsAcceptedFrom`). Once the
+  decoder has bound, `HardwareFrameChoice.ForBackend` downloads its frames when the path refuses
+  that backend's domain. The download is the one the decoder already does for a CPU-only path,
+  so nothing is inserted into the graph and the ADR-0012 rule stands. `WithHardwareFrames(true)`
+  is not narrowed; the path check refuses it at load, naming the node.
+
+The broader questions, which are a declaration that names pixel format and device, and
+download points chosen per edge rather than at the decoder, are #567.

@@ -115,9 +115,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     internal void CheckFrameBudget(FrameBudget budget)
     {
         ArgumentNullException.ThrowIfNull(budget);
-        var backend = _boundBackend == NoHardwareBackend
-            ? (HardwareDecodeBackendKind?)null
-            : (HardwareDecodeBackendKind)_boundBackend;
+        var backend = BoundBackend;
 
         // A growable pool is guarded at this count once its first frame arrives (#416). The
         // configurator's contract is to wire the same path for every graph, so every run's
@@ -149,14 +147,21 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     }
 
     /// <summary>
-    /// The memory domains this decoder's frames can be in (#435). CPU and GPU when it yields
-    /// hardware frames and a hardware backend bound, because it can still decode a frame in
-    /// software after a renegotiation; CPU otherwise.
+    /// The memory domains this decoder's frames can be in (#435). CPU and the bound backend's GPU
+    /// domain (#566) when it yields hardware frames and a hardware backend bound, because it can
+    /// still decode a frame in software after a renegotiation; CPU otherwise.
     /// </summary>
     internal FrameMemoryDomains EmittedDomains =>
-        YieldHardwareFrames && _boundBackend != NoHardwareBackend
-            ? FrameMemoryDomains.Any
+        YieldHardwareFrames && BoundBackend is { } backend
+            ? FrameMemoryDomains.Cpu | HardwareFrameDomains.Of(backend)
             : FrameMemoryDomains.Cpu;
+
+    /// <summary>
+    /// The backend the decoder opened on, or null when it opened for software decode. Unlike
+    /// <see cref="HardwareBackend"/>, it does not follow a renegotiation to software.
+    /// </summary>
+    internal HardwareDecodeBackendKind? BoundBackend =>
+        _boundBackend == NoHardwareBackend ? null : (HardwareDecodeBackendKind)_boundBackend;
 
     [LoggerMessage(
         Level = LogLevel.Warning,

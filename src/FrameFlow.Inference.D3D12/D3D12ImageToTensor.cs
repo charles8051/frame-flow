@@ -173,6 +173,9 @@ public sealed unsafe class D3D12ImageToTensor : IDisposable, IDeviceImageToTenso
 
     int IDeviceImageToTensor.MaxHeldFrames => InFlight;
 
+    /// <summary>D3D12 frames: what D3D12VA decodes into and <c>ToGpu</c> uploads to on a D3D12 device (#566).</summary>
+    FrameMemoryDomains IDeviceImageToTensor.AcceptedDomains => FrameMemoryDomains.D3D12;
+
     /// <summary>
     /// True when <paramref name="frame"/> is a D3D12VA frame on this stage's device, which
     /// <see cref="Write(GpuVideoFrame, RotatedRect)"/> reads.

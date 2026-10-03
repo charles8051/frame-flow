@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Graph;
 using FrameFlow.Media;
 
 namespace FrameFlow.Inference;
@@ -23,6 +24,13 @@ public interface IDeviceImageToTensor
     /// them. The operator declares it, so a player sizes a hardware pool for it.
     /// </summary>
     int MaxHeldFrames { get; }
+
+    /// <summary>
+    /// The GPU domains whose frames it reads (#566). The operator takes CPU frames and these, so a
+    /// path that would hand it another GPU domain downloads the frames or is refused before it
+    /// runs. None unless the stage says, as a sink that says nothing is taken to read CPU frames.
+    /// </summary>
+    FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.None;
 
     /// <summary>True when <paramref name="frame"/> is in GPU memory this stage can read.</summary>
     bool CanWrite(IVideoFrame frame);

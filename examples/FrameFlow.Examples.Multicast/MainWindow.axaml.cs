@@ -394,8 +394,11 @@ public partial class MainWindow : Window
                         // Each of the three panes keeps up to two frames: GPU presenters and CPU
                         // views alike hold a slot and the frame they are drawing (ADR-0081).
                         maxHeldFrames: 3 * 2,
-                        // GPU mode fans GpuVideoFrames out to the presenters.
-                        acceptedDomains: _useGpu ? FrameMemoryDomains.Any : FrameMemoryDomains.Cpu
+                        // GPU mode fans GpuVideoFrames out to the presenters, which read D3D11
+                        // and D3D12 frames (#566).
+                        acceptedDomains: _useGpu
+                            ? FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D11 | FrameMemoryDomains.D3D12
+                            : FrameMemoryDomains.Cpu
                     )
                 )
                 .ConfigureVideo(chain =>

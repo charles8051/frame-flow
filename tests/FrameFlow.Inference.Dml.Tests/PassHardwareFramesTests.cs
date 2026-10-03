@@ -120,6 +120,49 @@ public sealed class PassHardwareFramesTests
         Assert.All(sink.Domains, domain => Assert.Equal(FrameMemoryDomain.Cpu, domain));
     }
 
+    /// <summary>
+    /// Unasked, a pass on a backend its sink does not read downloads the frames (#566). The sink
+    /// reads D3D11 and D3D12 frames; before, it was handed CUDA ones.
+    /// </summary>
+    [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.Cuda, Clip)]
+    public async Task APassUnasked_DownloadsFrames_FromABackendItsSinkDoesNotRead()
+    {
+        var sink = new RecordingSink(maxHeldFrames: 0, ReadsD3D);
+        using var device = HardwareDevice.Create(HardwareDecodeBackendKind.Cuda);
+
+        await RunOnAsync(device, sink);
+
+        Assert.NotEmpty(sink.Domains);
+        Assert.All(sink.Domains, domain => Assert.Equal(FrameMemoryDomain.Cpu, domain));
+    }
+
+    /// <summary>The same sink keeps the frames of a backend it reads on the GPU (#566).</summary>
+    [RequiresHardwareDecodeFact(HardwareDecodeBackendKind.D3D12Va, Clip)]
+    public async Task APassUnasked_KeepsFramesOnTheGpu_FromABackendItsSinkReads()
+    {
+        var sink = new RecordingSink(maxHeldFrames: 0, ReadsD3D);
+        using var device = HardwareDevice.Create(HardwareDecodeBackendKind.D3D12Va);
+
+        await RunOnAsync(device, sink);
+
+        Assert.NotEmpty(sink.Domains);
+        Assert.All(sink.Domains, domain => Assert.Equal(FrameMemoryDomain.Gpu, domain));
+    }
+
+    private const FrameMemoryDomains ReadsD3D =
+        FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D11 | FrameMemoryDomains.D3D12;
+
+    /// <summary>A pass on <paramref name="device"/> over <paramref name="sink"/> with no <c>WithHardwareFrames</c>.</summary>
+    private static async Task RunOnAsync(HardwareDevice device, IVideoSink sink)
+    {
+        await using var pass = await FrameFlowPass
+            .Create(TestEnvironment.CorpusFile(Clip)!)
+            .WithHardwareDevice(device)
+            .WithVideoSink(sink)
+            .BuildAsync();
+        await pass.RunToCompletionAsync();
+    }
+
     /// <summary>A D3D12VA pass over <paramref name="sink"/> with no <c>WithHardwareFrames</c>.</summary>
     private static async Task RunUnaskedAsync(IVideoSink sink, bool undeclaredNode)
     {
@@ -268,8 +311,11 @@ public sealed class PassHardwareFramesTests
     private static OperatorNode<IVideoFrame, IVideoFrame> Passing(string id, FrameDomainRule domains) =>
         new(id, (frame, _) => ValueTask.FromResult<IVideoFrame?>(frame), holding: FrameHolding.InFlight, domains: domains);
 
-    /// <summary>Records each frame's memory domain and timestamp. It reads no pixels, so it takes either.</summary>
-    private sealed class RecordingSink(int? maxHeldFrames) : IVideoSink
+    /// <summary>
+    /// Records each frame's memory domain and timestamp. It reads no pixels, so it takes either
+    /// unless told <paramref name="accepts"/>.
+    /// </summary>
+    private sealed class RecordingSink(int? maxHeldFrames, FrameMemoryDomains accepts = FrameMemoryDomains.Any) : IVideoSink
     {
         public ConcurrentQueue<FrameMemoryDomain> Domains { get; } = new();
 
@@ -277,7 +323,7 @@ public sealed class PassHardwareFramesTests
 
         public int? MaxHeldFrames => maxHeldFrames;
 
-        public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Any;
+        public FrameMemoryDomains AcceptedDomains => accepts;
 
         public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {

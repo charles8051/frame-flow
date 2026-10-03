@@ -315,13 +315,6 @@ internal sealed class PassBuilder : IPassBuilder
                     hardwareDisabled,
                     _yieldHardwareFrames is null ? videoProbe?.UndeclaredGpuConsumer() : null,
                     pathBudget);
-                if (!hardwareDisabled)
-                {
-                    _loggerFactory.CreateLogger<PassBuilder>().LogInformation(
-                        "Hardware-decoded video frames {Where}: {Reason}.",
-                        hardwareFrames.Yield ? "stay on the GPU" : "are downloaded to system memory",
-                        hardwareFrames.Reason);
-                }
 
                 var backendOrder = DecodeBackendOrder.Decide(
                     _preferredBackends,
@@ -342,6 +335,26 @@ internal sealed class PassBuilder : IPassBuilder
                         _loggerFactory,
                         DecoderOptions(_videoDecoderOptions, _hardwareDevice, videoBudget)
                     )(demux) as VideoDecoder;
+
+                // Which domain the frames are in depends on the backend the decoder bound: they
+                // stay on the GPU only when the path takes that backend's frames (#566).
+                if (videoDecoder?.BoundBackend is { } bound)
+                {
+                    hardwareFrames = HardwareFrameChoice.ForBackend(
+                        hardwareFrames,
+                        _yieldHardwareFrames,
+                        bound,
+                        hardwareFrames.Yield ? videoProbe?.RefusalOf(bound) : null);
+                }
+
+                if (!hardwareDisabled)
+                {
+                    _loggerFactory.CreateLogger<PassBuilder>().LogInformation(
+                        "Hardware-decoded video frames {Where}: {Reason}.",
+                        hardwareFrames.Yield ? "stay on the GPU" : "are downloaded to system memory",
+                        hardwareFrames.Reason);
+                }
+
                 if (videoDecoder is not null)
                 {
                     videoDecoder.YieldHardwareFrames = hardwareFrames.Yield;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using FrameFlow.Graph;
+using FrameFlow.Media;
 
 namespace FrameFlow.Playback.Core;
 
@@ -32,8 +33,9 @@ internal static class HardwareFrameChoice
     /// <param name="requested">The caller's <c>WithHardwareFrames</c>, or null when it gave none.</param>
     /// <param name="hardwareDecodeDisabled">True when the decoder never decodes on hardware.</param>
     /// <param name="undeclared">
-    /// The first node that GPU frames reach and that has not said it takes them, from the path's
-    /// check with an undeclared node taking CPU frames; null when there is none.
+    /// When no GPU domain gets through the path, the first node that GPU frames reach and that has
+    /// not said it takes them, from the path's check with an undeclared node taking CPU frames;
+    /// null when one domain does (#566).
     /// </param>
     /// <param name="budget">The most frames the path holds.</param>
     public static HardwareFrameDecision Decide(
@@ -56,5 +58,28 @@ internal static class HardwareFrameChoice
         if (budget is { UnboundedHolder: { } holder })
             return new HardwareFrameDecision(false, $"'{holder}' holds frames without a bound");
         return new HardwareFrameDecision(true, "every node on the video path takes GPU frames");
+    }
+
+    /// <summary>
+    /// Narrows <paramref name="decision"/> to the backend the decoder bound (#566): its frames stay
+    /// on the GPU only when the path takes that backend's domain. A request still wins, and the
+    /// path's check refuses a requested backend it cannot take.
+    /// </summary>
+    /// <param name="decision">The decision made before the decoder opened.</param>
+    /// <param name="requested">The caller's <c>WithHardwareFrames</c>, or null when it gave none.</param>
+    /// <param name="bound">The backend the decoder bound, or null when it decodes in software.</param>
+    /// <param name="refusal">
+    /// The first node that refuses the bound backend's domain, from the path's check with an
+    /// undeclared node taking CPU frames; null when none does.
+    /// </param>
+    public static HardwareFrameDecision ForBackend(
+        HardwareFrameDecision decision,
+        bool? requested,
+        HardwareDecodeBackendKind? bound,
+        FrameDomainMismatch? refusal)
+    {
+        if (!decision.Yield || requested is not null || bound is null || refusal is null)
+            return decision;
+        return new HardwareFrameDecision(false, $"the decoder bound {bound}, and '{refusal.Node}' does not take its frames");
     }
 }

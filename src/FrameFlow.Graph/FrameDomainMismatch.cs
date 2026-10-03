@@ -14,18 +14,41 @@ public sealed record FrameDomainMismatch(string Node, FrameMemoryDomains Refused
     /// <summary>What is wrong, naming the node, for an exception or a log line.</summary>
     public string Message =>
         $"'{Node}' takes {Describe(Accepts)} frames, and {Describe(Refused)} frames can reach it. "
-            + (Refused.HasFlag(FrameMemoryDomains.Gpu)
+            + ((Refused & FrameMemoryDomains.Gpu) != FrameMemoryDomains.None
                 ? "Put a node that downloads them to system memory, such as VideoOperators.ToCpu, before it, "
                     + "or give it a GPU path."
                 : "Put a node that uploads them to the GPU before it.");
 
-    private static string Describe(FrameMemoryDomains domains) =>
-        domains switch
-        {
-            FrameMemoryDomains.Cpu => "CPU",
-            FrameMemoryDomains.Gpu => "GPU",
-            _ => "CPU and GPU",
-        };
+    private static readonly (FrameMemoryDomains Domain, string Name)[] Names =
+    [
+        (FrameMemoryDomains.Cpu, "CPU"),
+        (FrameMemoryDomains.D3D11, "D3D11"),
+        (FrameMemoryDomains.D3D12, "D3D12"),
+        (FrameMemoryDomains.Cuda, "CUDA"),
+        (FrameMemoryDomains.Vulkan, "Vulkan"),
+        (FrameMemoryDomains.VaApi, "VA-API"),
+        (FrameMemoryDomains.Dxva2, "DXVA2"),
+        (FrameMemoryDomains.VideoToolbox, "VideoToolbox"),
+        (FrameMemoryDomains.Qsv, "QSV"),
+        (FrameMemoryDomains.MediaCodec, "MediaCodec"),
+        (FrameMemoryDomains.Drm, "DRM"),
+        (FrameMemoryDomains.Vdpau, "VDPAU"),
+        (FrameMemoryDomains.OpenCl, "OpenCL"),
+        (FrameMemoryDomains.OtherGpu, "other GPU"),
+    ];
+
+    private static string Describe(FrameMemoryDomains domains)
+    {
+        if (domains == FrameMemoryDomains.Gpu)
+            return "GPU";
+        if (domains == FrameMemoryDomains.Any)
+            return "CPU and GPU";
+
+        var named = Names.Where(n => (domains & n.Domain) != FrameMemoryDomains.None).Select(n => n.Name).ToArray();
+        return named.Length <= 1
+            ? named.FirstOrDefault() ?? "no"
+            : $"{string.Join(", ", named[..^1])} and {named[^1]}";
+    }
 }
 
 /// <summary>
@@ -96,6 +119,32 @@ internal static class FrameDomainChecks
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The domains in <paramref name="candidates"/> that no node walking from
+    /// <paramref name="source"/> refuses, each taken on its own (#566).
+    /// </summary>
+    /// <remarks>
+    /// A node refuses a set of domains when it refuses one of them, and passes each on, or
+    /// replaces it with what it emits, independently of the rest. So a domain is accepted from a
+    /// set exactly when it is accepted alone.
+    /// </remarks>
+    public static FrameMemoryDomains Accepted(
+        IPort source,
+        FrameMemoryDomains candidates,
+        IReadOnlyList<EdgeSpec> edges,
+        FrameDomainRule? undeclared = null)
+    {
+        var accepted = FrameMemoryDomains.None;
+        for (var bit = 1; bit <= (int)FrameMemoryDomains.Any; bit <<= 1)
+        {
+            var domain = (FrameMemoryDomains)bit & candidates;
+            if (domain != FrameMemoryDomains.None && For(source, domain, edges, undeclared) is null)
+                accepted |= domain;
+        }
+
+        return accepted;
     }
 
     private static FrameDomainRule RuleAt(IPort input, FrameDomainRule undeclared) =>

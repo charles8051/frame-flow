@@ -146,8 +146,12 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     public int? MaxHeldFrames => 2 + D3D12YuvSharedConverter.InFlight;
 
     /// <inheritdoc />
-    /// <remarks>Either: a D3D11VA or D3D12VA frame is converted on the GPU, and a CPU frame is uploaded.</remarks>
-    public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Any;
+    /// <remarks>
+    /// A D3D11 or D3D12 frame is converted on the GPU, and a CPU frame is uploaded. Frames from
+    /// another backend, such as CUDA, are downloaded before they get here (#566).
+    /// </remarks>
+    public FrameMemoryDomains AcceptedDomains =>
+        FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D11 | FrameMemoryDomains.D3D12;
 
     /// <inheritdoc/>
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)

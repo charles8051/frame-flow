@@ -11,6 +11,38 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## Unreleased — since `v0.14.0`
+
+### 1. `FrameMemoryDomains` names each GPU API, and `Gpu` is their union
+
+**A binary change, and a change in results for `HasFlag(FrameMemoryDomains.Gpu)`.** Source that
+names `Cpu`, `Gpu` or `Any` compiles unchanged.
+
+`FrameMemoryDomains` had one GPU value, 2. It now has one per hardware decode backend (#566):
+`D3D11`, `D3D12`, `Cuda`, `Vulkan`, `VaApi` and the rest, with `OtherGpu` for a backend FrameFlow
+does not name. `Gpu` is the union of them, and `Any` is `Cpu | Gpu`. A binary compiled against
+`v0.14.0` has `Gpu` and `Any` baked in as 2 and 3, which now mean `D3D11` and `Cpu | D3D11`.
+`HasFlag(FrameMemoryDomains.Gpu)` asks for every GPU API at once, so it is false for a single one.
+
+Declarations narrowed with it. `CompositionInteropVideoSink` takes `Cpu | D3D11 | D3D12`, `Infer`
+with a `D3D12ImageToTensor` stage takes `Cpu | D3D12`, and `ToGpu` takes CPU frames and its
+device's domain and emits that domain. `IDeviceImageToTensor.AcceptedDomains` is new and defaults to
+no GPU domain, so `Infer` with a stage that does not declare it takes CPU frames only. A
+player or pass now downloads the frames of a backend its path does not take, where before it
+handed them on: VP8 decoded on CUDA reaches the interop view as CPU frames and plays.
+`WithHardwareFrames(true)` is not narrowed, so the same player with it now fails to load, naming
+the sink, where before it loaded and presented nothing.
+
+**Who hits this.** An assembly that uses `FrameMemoryDomains` and is not rebuilt. Code that tests
+for a GPU domain with `HasFlag(FrameMemoryDomains.Gpu)`. A host that sets `WithHardwareFrames(true)`
+on a backend its sink cannot read. A custom `IDeviceImageToTensor`, whose node now gets CPU frames
+until it declares the GPU domains it reads.
+
+**What to write instead.** Rebuild. Test for a GPU domain with
+`(domains & FrameMemoryDomains.Gpu) != 0`. A sink or node that reads GPU frames names the APIs it
+reads rather than `Any`. A custom `IDeviceImageToTensor` implements `AcceptedDomains` with the
+domains its `CanWrite` accepts.
+
 ## `v0.14.0` — since `v0.13.0`
 
 ### 1. Presenters show anamorphic and rotated video at its display geometry
