@@ -50,11 +50,11 @@ internal readonly record struct SuperResolutionInputs(
 /// first condition that failed, in the order checked here.
 /// </para>
 /// <para>
-/// The video processor runs only on an NVIDIA adapter and only while the view is larger than the
-/// frame, and a process-wide lease admits one view at a time. Those three limits keep ADR-0063's
-/// hang, two concurrent blits on one fixed-function unit, out of reach. Downscaling with the
-/// extension on leaves the output unchanged, and 1:1 costs the full price for a small sharpening,
-/// so neither engages.
+/// The video processor runs only on an NVIDIA adapter, whose driver the extension belongs to, and
+/// only while the view is larger than the frame. A process-wide lease admits one view at a time,
+/// because the driver upscales one stream at a time (ADR-0082, amendment of 2026-10-03).
+/// Downscaling with the extension on leaves the output unchanged, and 1:1 costs the full price for
+/// a small sharpening, so neither engages.
 /// </para>
 /// </remarks>
 internal static class SuperResolutionPolicy

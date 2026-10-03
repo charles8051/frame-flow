@@ -4,19 +4,18 @@
 namespace FrameFlow.Avalonia.Windows;
 
 /// <summary>
-/// Admits one holder at a time to the video processor path (#560). <see cref="Process"/> is the
-/// lease every <see cref="CompositionInteropVideoView"/> in the process shares, so two views can
-/// never issue concurrent <c>VideoProcessorBlt</c>s (ADR-0063).
-/// <para>
-/// The GPU runs a blit after the call that submitted it returns, so a converter that is dropped
-/// can still have blits in flight. Its owner opens a drain with <see cref="BeginDrain"/> before
-/// releasing, and <see cref="MayBlit"/> refuses every holder until the drain ends.
-/// </para>
+/// Admits one view at a time to the video processor path (#560). <see cref="Process"/> is the
+/// lease every <see cref="CompositionInteropVideoView"/> in the process shares.
 /// </summary>
+/// <remarks>
+/// The driver upscales one video processor stream at a time across the system, and gives the
+/// others plain scaling without saying so (ADR-0082, amendment of 2026-10-03). A second view on
+/// the video processor path would pay for a ring at the size it is shown and get nothing for it,
+/// so it stays on the shader path and reports <see cref="SuperResolutionStatus.InUseByAnotherView"/>.
+/// </remarks>
 internal sealed class SuperResolutionLease
 {
     private object? _holder;
-    private int _draining;
 
     /// <summary>The lease shared by every view in the process.</summary>
     public static SuperResolutionLease Process { get; } = new();
@@ -37,34 +36,4 @@ internal sealed class SuperResolutionLease
 
     /// <summary>Releases the lease if <paramref name="owner"/> holds it. Idempotent.</summary>
     public void Release(object owner) => Interlocked.CompareExchange(ref _holder, null, owner);
-
-    /// <summary>
-    /// Whether <paramref name="owner"/> may submit a blit now: it holds the lease and no dropped
-    /// converter's blits are still draining.
-    /// </summary>
-    public bool MayBlit(object owner) =>
-        ReferenceEquals(Volatile.Read(ref _holder), owner) && Volatile.Read(ref _draining) == 0;
-
-    /// <summary>
-    /// Holds every holder's blits back until the returned drain is ended, once the blits it stands
-    /// for have completed.
-    /// </summary>
-    public Drain BeginDrain()
-    {
-        Interlocked.Increment(ref _draining);
-        return new Drain(this);
-    }
-
-    /// <summary>One dropped converter's blits, holding the lease's blits back until it ends.</summary>
-    internal sealed class Drain(SuperResolutionLease lease)
-    {
-        private int _ended;
-
-        /// <summary>Ends the drain. Ending it twice ends it once.</summary>
-        public void End()
-        {
-            if (Interlocked.Exchange(ref _ended, 1) == 0)
-                Interlocked.Decrement(ref lease._draining);
-        }
-    }
 }

@@ -88,9 +88,6 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
 
     // How long a new output has to be wanted, unchanged, before the converter is rebuilt for it.
     private static readonly long OutputSettleTicks = Stopwatch.Frequency / 5;
-    // How long a dropped converter's blits may hold every view's blits back. Windows resets a GPU
-    // that runs this long (TDR), and a lost device ends the wait sooner.
-    private static readonly TimeSpan BlitDrainTimeout = TimeSpan.FromSeconds(2);
 
     // How the frames are meant to be shown (#542): the layout fits the display shape and turns
     // the surface upright. UI thread only, like the size above.
@@ -270,7 +267,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// <remarks>
     /// The upscale costs several milliseconds of GPU time a frame, more while the GPU clocks down
     /// between frames. It applies only on an NVIDIA RTX GPU, in a local session, with the driver's
-    /// own super-resolution setting on, and in one view per process at a time.
+    /// own super-resolution setting on. The driver upscales one video at a time across the system:
+    /// a second view in this process stays on the shader path, and a view in another process that
+    /// got there first leaves this one with plain scaling while it reports
+    /// <see cref="SuperResolutionStatus.Requested"/>.
     /// <see cref="DriverSuperResolutionStatus"/> says whether the view asked, and if not, why.
     /// Changing it rebuilds the converter on the next frame.
     /// </remarks>
@@ -930,7 +930,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                     _gpuConverter!.Output.Width,
                     _gpuConverter.Output.Height,
                     _gpuConverter.GetSharedHandle,
-                    i => _gpuConverter.ConvertInto(i, texture, slice, SuperResolutionLease.Process.MayBlit(this)),
+                    i => _gpuConverter.ConvertInto(i, texture, slice),
                     frame.Pts
                 );
             }
@@ -1468,10 +1468,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         _gpuConverter = null;
         _d3d12Converter = null;
         _cpuUploader = null;
-        if (converter is { Output.SuperResolution: true })
-            FinishVideoProcessorHandOff(converter, BeginVideoProcessorHandOff()); // off the UI thread here
-        else
-            SuperResolutionLease.Process.Release(this);
+        SuperResolutionLease.Process.Release(this);
 
         if (drained)
         {
@@ -1679,63 +1676,13 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         var d3d12 = _d3d12Converter;
         _gpuConverter = null;
         _d3d12Converter = null;
+        SuperResolutionLease.Process.Release(this);
         // Dispose off the UI thread: a lost device's Release can still stall in the driver, and the
         // D3D12 converter waits for its GPU work before releasing anything.
-        if (conv is { Output.SuperResolution: true })
-        {
-            var drain = BeginVideoProcessorHandOff();
-            Task.Run(() =>
-            {
-                try
-                {
-                    FinishVideoProcessorHandOff(conv, drain);
-                }
-                finally
-                {
-                    conv.Dispose();
-                }
-            });
-        }
-        else if (conv is not null)
-        {
+        if (conv is not null)
             Task.Run(conv.Dispose);
-        }
         if (d3d12 is not null)
             Task.Run(d3d12.Dispose);
-    }
-
-    /// <summary>
-    /// Releases the lease once this view has stopped issuing blits (#560). Another view may take it
-    /// at once, but the drain this returns keeps every holder from blitting until
-    /// <see cref="FinishVideoProcessorHandOff"/> has seen the dropped converter's blits complete.
-    /// </summary>
-    private SuperResolutionLease.Drain BeginVideoProcessorHandOff()
-    {
-        var drain = SuperResolutionLease.Process.BeginDrain();
-        SuperResolutionLease.Process.Release(this);
-        return drain;
-    }
-
-    /// <summary>
-    /// Waits for the blits <paramref name="converter"/> submitted, then ends
-    /// <paramref name="drain"/>. Blocks, so it runs off the UI thread, before the converter is
-    /// disposed.
-    /// </summary>
-    private void FinishVideoProcessorHandOff(D3D11Nv12SharedConverter converter, SuperResolutionLease.Drain drain)
-    {
-        try
-        {
-            if (!converter.WaitForSubmittedBlits(BlitDrainTimeout))
-                _logger.LogWarning(
-                    "A dropped converter's video processor blits were not seen to complete within {Timeout} s; "
-                        + "letting other views blit anyway (#560).",
-                    BlitDrainTimeout.TotalSeconds
-                );
-        }
-        finally
-        {
-            drain.End();
-        }
     }
 
     /// <summary>Drops the CPU uploader and its imported ring after a device-loss; a fresh

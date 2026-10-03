@@ -471,7 +471,8 @@ ADR-0082 was numbered and accepted on 2026-10-02, and implemented under #561.
   NVIDIA's driver upscales video inside `VideoProcessorBlt` when a stream extension is on, so the
   feature needs the blit ADR-0063 removed. Brings it back behind a property that is off by default,
   for D3D11VA NV12 frames on an NVIDIA adapter in a local session, only while the view is larger
-  than the frame, and for one view per process. A process-wide lease admits one view, and holds
-  every view's blits back until a dropped converter's blits have completed. The ring is sized to
-  the frame's drawn rectangle while it engages, and a resize rebuilds the converter once the size
-  has held for 200 ms.
+  than the frame, and for one view per process. A process-wide lease admits one view. The ring is
+  sized to the frame's drawn rectangle while it engages, and a resize rebuilds the converter once
+  the size has held for 200 ms. Amended 2026-10-03: a soak of two converters found that the driver
+  upscales one stream at a time and that concurrent blits did not hang, so the drain that held
+  blits back after a hand-off is gone and the lease stands for the driver's limit.

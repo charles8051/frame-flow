@@ -90,9 +90,6 @@ namespace FrameFlow.Avalonia.Windows;
 /// <c>RenderTarget | ShaderResource</c>: the driver refuses a video-processor input view on one
 /// bound <c>ShaderResource</c> only. If any video-processor object fails to set up, the converter
 /// falls back to the shader at the frame's size and reports <see cref="SuperResolutionFailed"/>.
-/// <see cref="ConvertInto"/> blits only when its caller allows it, and
-/// <see cref="WaitForSubmittedBlits"/> waits for the blits already submitted: the owner's
-/// <see cref="SuperResolutionLease"/> needs both to keep two converters' blits from overlapping.
 /// Built without it, the converter is exactly the shader converter ADR-0063 describes.
 /// </para>
 /// </remarks>
@@ -833,10 +830,6 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     /// <param name="index">The ring buffer to fill.</param>
     /// <param name="nv12TexturePtr">The frame's decode texture.</param>
     /// <param name="arraySlice">The frame's slice of the decode texture.</param>
-    /// <param name="videoProcessor">
-    /// Whether a converter in the video processor mode may blit for this frame. When it may not, the
-    /// shader fills the buffer at <see cref="Output"/>'s size.
-    /// </param>
     /// <returns>
     /// <see langword="true"/> if the buffer was filled and is ready to present;
     /// <see langword="false"/> if a GPU device-loss / TDR was observed mid-convert (in which case
@@ -844,7 +837,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     /// frame's device — in either case the caller should drop this frame and rebuild the converter
     /// rather than presenting (step 6). Any non-device-loss GPU failure still throws.
     /// </returns>
-    public bool ConvertInto(int index, nint nv12TexturePtr, int arraySlice, bool videoProcessor = true)
+    public bool ConvertInto(int index, nint nv12TexturePtr, int arraySlice)
     {
         // Short-circuit if a previous call already saw the device go away: the keyed-mutex
         // AcquireSync below would otherwise block / throw on a dead device.
@@ -895,9 +888,9 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             sampleAcquired = true;
             buf.KeyedMutex.AcquireSync(0, 1000);
             ringAcquired = true;
-            // The video processor when this converter has one and may use it; the shader otherwise,
-            // or after a blit failure turned the video processor off.
-            bool scaled = videoProcessor && buf.ProcessorOutput is not null && TryProcessorBlt(buf);
+            // The video processor when this converter has one; the shader otherwise, or after a
+            // blit failure turned the video processor off.
+            bool scaled = buf.ProcessorOutput is not null && TryProcessorBlt(buf);
             if (!scaled)
                 _immediate.ExecuteCommandList(buf.CommandList, true);
             FrameCopyMetrics.Record(FrameCopySite.PresenterGpuConvert);
@@ -967,8 +960,8 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     /// converter submitted has completed on the GPU. Returns <see langword="true"/> when none is left
     /// in flight: they completed, none was submitted, or the device is lost. Returns
     /// <see langword="false"/> after the whole timeout when they did not complete in it, or when the
-    /// event query failed and completion could not be observed. Never throws. The owner calls it off
-    /// the UI thread once the converter is dropped, before ending its lease drain.
+    /// event query failed and completion could not be observed. Never throws. Tests use it to bound
+    /// the blits in flight and to see a blit that never completes.
     /// </summary>
     public bool WaitForSubmittedBlits(TimeSpan timeout)
     {
