@@ -31,7 +31,10 @@ public enum SuperResolutionStatus
     /// <summary>The process runs in a remote session, where the driver does not upscale.</summary>
     RemoteSession,
 
-    /// <summary>Another view in this process holds the video processor.</summary>
+    /// <summary>
+    /// Another view in this process holds the video processor. The driver upscales one video at a
+    /// time, so this view stays on the shader path.
+    /// </summary>
     InUseByAnotherView,
 
     /// <summary>The video processor failed to set up on this adapter.</summary>

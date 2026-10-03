@@ -4,6 +4,9 @@
 
 Accepted (2026-10-02) and implemented (2026-10-02, #561) for #560.
 
+> **Amended 2026-10-03 ([below](#amendment-2026-10-03-the-driver-upscales-one-stream-and-concurrent-blits-did-not-hang)).** §3's drain is removed. The one-view lease stays,
+> as the driver's own limit rather than a guard against a hang.
+
 Reintroduces `VideoProcessorBlt` into the Windows zero-copy presenter as an opt-in path, under
 the limits below. [ADR-0063](ADR-0063-nv12-pixel-shader-color-conversion.md) removed it from the
 default path, and the default path does not change. Builds on
@@ -291,3 +294,68 @@ On an RTX 3080 Ti, driver 610.47, in a local session with Super Resolution on in
 - **Default the staging texture to `RenderTarget | ShaderResource` on the shader path too.** It
   would remove one difference between the two converters, at the price of changing the default
   path's resources for no benefit to it.
+
+## Amendment (2026-10-03): the driver upscales one stream, and concurrent blits did not hang
+
+### What was measured
+
+`D3D11VideoProcessorSoakTests` runs two converters in the video processor mode on one adapter.
+Each has its own decoder, its own device (ADR-0064), its own compositor-side reader and its own
+thread. Each blits 1920x1080 to 3840x2160 with the extension on, unpaced. A blit or ring that does
+not finish within 10 s fails the run. A 20 s hold injected into one stream showed that the check
+fires. The test runs only when `FRAMEFLOW_VP_SOAK_MINUTES` is set.
+
+On an RTX 3080 Ti with driver 610.47, in a local session, for 30 minutes:
+
+| | Stream A | Stream B |
+|---|---|---|
+| Blits | 188,367 | 346,461 |
+| Slowest ring of three blits | 45 ms | 17 ms |
+| Upscaled by the driver | 30 of 30 checks | 0 of 30 checks |
+
+There was no stall, no failed blit, no device loss, and no display-driver event in the System
+log.
+
+Each check blits frame 0 and compares the result with plain video processor scaling of the same
+frame. Stream A differed by 0.751 to 0.763 levels on average, as a single converter does. Stream B
+was byte-identical to plain scaling every time.
+
+Two processes with one stream each split the same way. The second process got plain scaling until
+the first exited, and was upscaled on its next check.
+
+From these runs:
+
+- **The driver upscales one stream at a time across the system.** The first stream to blit with
+  the extension gets the upscale and the others get plain scaling. Nothing in the API says which.
+  When the holder is released, another stream gets it.
+- **Concurrent blits did not hang.** Two converters blitting at once on one NVIDIA GPU ran 30
+  minutes without a stall. ADR-0063's mechanism, concurrent blits wedging the one fixed-function
+  unit, did not reproduce here. The soak says nothing about other vendors' drivers, or about a
+  display-mode change during a blit.
+
+VLC calls `VideoProcessorBlt` on every frame in its video processor and super resolution upscale
+modes (`modules/video_output/win32/d3d11_scaler.cpp`), with NVIDIA's extension, Intel's VPE and
+AMD's AMF, and sets no limit on how many videos use it.
+
+### Decision
+
+1. **The drain goes.** §3's drain held every view's blits back until a dropped converter's blits
+   had completed, for up to 2 s. It guarded against the overlap the soak ran for 30 minutes.
+   `SuperResolutionLease.BeginDrain` and `MayBlit` go with it, and so does `ConvertInto`'s
+   `videoProcessor` argument, which existed for the drain. A view releases the lease when it drops
+   its video processor converter, and disposes the converter off the UI thread like any other.
+2. **The lease stays, for the driver's limit.** A second view on the video processor path would pay
+   for a ring at the size it is shown and still get plain scaling. It stays on the shader path and
+   reports `InUseByAnotherView`, as before.
+3. **NVIDIA only stays**, because the extension is NVIDIA's. It is no longer a safety argument.
+   Intel's equivalent (#562) needs a soak of its own on Intel hardware: the hang ADR-0063 describes
+   was on an Intel iGPU.
+4. **Upscale only stays.** It rests on the measurements under Context, not on the hang.
+
+### Consequences
+
+- A view in another process can hold the driver's upscale. This view then reports `Requested` and
+  gets plain scaling at the size it is shown, paying for the larger ring. The status already could
+  not confirm the upscale, and this is one more case it cannot see.
+- `WaitForSubmittedBlits` has no caller outside tests. It stays for them: the soak uses it to bound
+  the blits in flight and to catch one that never completes.

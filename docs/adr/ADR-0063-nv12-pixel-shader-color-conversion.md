@@ -4,6 +4,11 @@
 > `VideoProcessorBlt` returns as an opt-in path, off by default, limited to one view per process
 > on an NVIDIA adapter and only while the view is larger than the frame. The default path is
 > still this ADR's pixel shader.
+>
+> **Amended 2026-10-03 by [ADR-0082's amendment](ADR-0082-driver-video-super-resolution.md#amendment-2026-10-03-the-driver-upscales-one-stream-and-concurrent-blits-did-not-hang).**
+> Two converters blitting concurrently on an NVIDIA GPU ran 30 minutes without a stall, so the
+> contention described under Context is not a property of the video processor in general. The
+> pixel shader stays the default converter.
 
 ## Status
 

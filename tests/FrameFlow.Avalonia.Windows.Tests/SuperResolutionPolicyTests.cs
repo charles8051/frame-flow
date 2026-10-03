@@ -195,30 +195,4 @@ public sealed class SuperResolutionPolicyTests
         lease.Release(first);
         Assert.True(lease.TryAcquire(second));
     }
-
-    [Fact]
-    public void ADroppedConvertersDrain_HoldsTheNextHoldersBlitsBack_UntilItEnds()
-    {
-        var lease = new SuperResolutionLease();
-        object first = new(), second = new();
-
-        Assert.True(lease.TryAcquire(first));
-        Assert.True(lease.MayBlit(first));
-        Assert.False(lease.MayBlit(second));
-
-        var drain = lease.BeginDrain();
-        lease.Release(first);
-        Assert.True(lease.IsAvailableTo(second)); // the lease passes on at once
-        Assert.True(lease.TryAcquire(second));
-        Assert.False(lease.MayBlit(second)); // its blits wait for the drain
-
-        var other = lease.BeginDrain();
-        drain.End();
-        drain.End(); // ends once
-        Assert.False(lease.MayBlit(second));
-
-        other.End();
-        Assert.True(lease.MayBlit(second));
-        Assert.False(lease.MayBlit(first));
-    }
 }
