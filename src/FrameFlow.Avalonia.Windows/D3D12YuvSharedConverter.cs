@@ -336,12 +336,7 @@ internal sealed unsafe class D3D12YuvSharedConverter : IDisposable
         using var texture = Borrow<ID3D12Resource>(textureHandle);
         using var decoded = Borrow<ID3D12Fence>(fenceHandle);
         var description = texture.Description;
-        var (samples, lumaFormat, chromaFormat) = description.Format switch
-        {
-            Format.NV12 => (YuvSampleFormat.Nv12, Format.R8_UNorm, Format.R8G8_UNorm),
-            Format.P010 => (YuvSampleFormat.P010, Format.R16_UNorm, Format.R16G16_UNorm),
-            var other => throw new NotSupportedException($"The frame's texture is {other}; NV12 and P010 are supported."),
-        };
+        var (samples, lumaFormat, chromaFormat) = YuvTextureFormats.For(description.Format);
         var constants = D3D12PresentConstants.Create(
             samples, (int)description.Width, (int)description.Height, Width, Height);
 

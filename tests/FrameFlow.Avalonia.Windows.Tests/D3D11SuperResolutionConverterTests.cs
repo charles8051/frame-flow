@@ -26,6 +26,7 @@ public sealed class D3D11SuperResolutionConverterTests
 {
     private const string Small = "test-video-h264-yuv420p.mp4"; // 320x240
     private const string FullHd = "test-1080p-h264-aac.mp4";
+    private const string TenBit = "test-video-vp9-yuv420p10.webm"; // P010 on D3D11VA
 
     [RequiresNvidiaD3D11VaFact(Small)]
     public async Task TheVideoProcessor_WithoutTheExtension_MatchesTheShader_AtTheFramesSize()
@@ -34,6 +35,30 @@ public sealed class D3D11SuperResolutionConverterTests
         try
         {
             var frame = (GpuVideoFrame)frames[0];
+            var (shader, processor) = Convert(
+                frame,
+                PresenterOutput.Shader(frame.Width, frame.Height),
+                new PresenterOutput(true, frame.Width, frame.Height),
+                extension: false);
+
+            AssertSameColours(shader, processor);
+        }
+        finally
+        {
+            foreach (var f in frames)
+                f.Dispose();
+        }
+    }
+
+    /// <summary>A P010 frame takes the video processor's P010 input, in the shader's colours (#559).</summary>
+    [RequiresNvidiaD3D11VaFact(TenBit)]
+    public async Task TheVideoProcessor_WithoutTheExtension_MatchesTheShader_ForATenBitFrame()
+    {
+        var frames = await Decode.FramesAsync(TenBit, HardwareDecodeBackendKind.D3D11Va, yieldHardware: true, count: 1);
+        try
+        {
+            var frame = (GpuVideoFrame)frames[0];
+            Assert.Equal(PixelFormat.P010, frame.Format);
             var (shader, processor) = Convert(
                 frame,
                 PresenterOutput.Shader(frame.Width, frame.Height),
@@ -112,7 +137,7 @@ public sealed class D3D11SuperResolutionConverterTests
         Assert.False(converter.SuperResolutionFailed, "the blit failed");
         Assert.True(converter.WaitForSubmittedBlits(TimeSpan.FromSeconds(5)), "the blit did not complete");
 
-        using var compositor = new CompositorSide(texture);
+        using var compositor = new D3D11CompositorSide(texture);
         return compositor.Read(converter.GetSharedHandle(0), output.Width, output.Height);
     }
 
@@ -157,85 +182,6 @@ public sealed class D3D11SuperResolutionConverterTests
         }
 
         return (worst, total / (a.Length * 0.75));
-    }
-
-    /// <summary>
-    /// A D3D11 device on the decoder's adapter that opens a ring buffer by its shared handle, as the
-    /// compositor does, takes key 1, copies it out and hands key 0 back.
-    /// </summary>
-    private sealed class CompositorSide : IDisposable
-    {
-        private readonly ID3D11Device _device;
-        private readonly ID3D11DeviceContext _context;
-
-        public CompositorSide(nint decodeTexture)
-        {
-            Marshal.AddRef(decodeTexture);
-            using var texture = new ID3D11Texture2D(decodeTexture);
-            using var dxgi = texture.Device.QueryInterface<IDXGIDevice>();
-            dxgi.GetAdapter(out var adapter).CheckError();
-            using (adapter)
-            {
-                D3D11.D3D11CreateDevice(adapter, DriverType.Unknown, DeviceCreationFlags.BgraSupport, null, out ID3D11Device? device)
-                    .CheckError();
-                _device = device!;
-            }
-
-            _context = _device.ImmediateContext;
-        }
-
-        public unsafe byte[] Read(nint sharedHandle, int width, int height)
-        {
-            using var shown = _device.OpenSharedResource<ID3D11Texture2D>(sharedHandle);
-            using var mutex = shown.QueryInterface<IDXGIKeyedMutex>();
-            using var staging = _device.CreateTexture2D(new Texture2DDescription
-            {
-                Width = (uint)width,
-                Height = (uint)height,
-                MipLevels = 1,
-                ArraySize = 1,
-                Format = Format.B8G8R8A8_UNorm,
-                SampleDescription = new SampleDescription(1, 0),
-                Usage = ResourceUsage.Staging,
-                CPUAccessFlags = CpuAccessFlags.Read,
-            });
-
-            // WAIT_TIMEOUT is a success code, which Vortice's AcquireSync does not surface.
-            Assert.Equal(0, AcquireSync(mutex, 1, 5000));
-            _context.CopyResource(staging, shown);
-            mutex.ReleaseSync(0);
-
-            var mapped = _context.Map(staging, 0, MapMode.Read);
-            try
-            {
-                var pixels = new byte[width * height * 4];
-                for (int y = 0; y < height; y++)
-                {
-                    new ReadOnlySpan<byte>((byte*)mapped.DataPointer + y * mapped.RowPitch, width * 4)
-                        .CopyTo(pixels.AsSpan(y * width * 4));
-                }
-
-                return pixels;
-            }
-            finally
-            {
-                _context.Unmap(staging, 0);
-            }
-        }
-
-        public void Dispose()
-        {
-            _context.Dispose();
-            _device.Dispose();
-        }
-
-        /// <summary><c>IDXGIKeyedMutex::AcquireSync</c>, vtable slot 8, for its HRESULT.</summary>
-        private static unsafe int AcquireSync(IDXGIKeyedMutex mutex, ulong key, uint milliseconds)
-        {
-            nint* vtable = *(nint**)mutex.NativePointer;
-            var acquire = (delegate* unmanaged[Stdcall]<nint, ulong, uint, int>)vtable[8];
-            return acquire(mutex.NativePointer, key, milliseconds);
-        }
     }
 }
 
