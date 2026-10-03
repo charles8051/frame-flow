@@ -159,7 +159,7 @@ public sealed class InferenceOperatorTests
     }
 
     [Fact]
-    public void WithoutADeviceStage_TheNodeTakesCpuFramesOnly()
+    public void WithoutADeviceStage_OrWithOneThatSaysNothing_TheNodeTakesCpuFramesOnly()
     {
         var model = new ChannelMeanModel(new ChannelMeanSession());
 
@@ -167,8 +167,9 @@ public sealed class InferenceOperatorTests
         Assert.Equal(
             FrameDomainRule.Accepting(FrameMemoryDomains.Cpu, emits: FrameMemoryDomains.None),
             InferenceOperators.Infer("infer", model).Domains);
+        // A stage that does not say which GPU domains it reads gets none (#566).
         Assert.Equal(
-            FrameDomainRule.Accepting(FrameMemoryDomains.Any, emits: FrameMemoryDomains.None),
+            FrameDomainRule.Accepting(FrameMemoryDomains.Cpu, emits: FrameMemoryDomains.None),
             InferenceOperators.Infer("infer", model, new FakeStage(model.Input)).Domains);
     }
 

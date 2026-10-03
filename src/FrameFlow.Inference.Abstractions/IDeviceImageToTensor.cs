@@ -27,10 +27,10 @@ public interface IDeviceImageToTensor
 
     /// <summary>
     /// The GPU domains whose frames it reads (#566). The operator takes CPU frames and these, so a
-    /// path that would hand it another GPU domain is refused before it runs. Every GPU domain
-    /// unless the stage says otherwise.
+    /// path that would hand it another GPU domain downloads the frames or is refused before it
+    /// runs. None unless the stage says, as a sink that says nothing is taken to read CPU frames.
     /// </summary>
-    FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Gpu;
+    FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.None;
 
     /// <summary>True when <paramref name="frame"/> is in GPU memory this stage can read.</summary>
     bool CanWrite(IVideoFrame frame);

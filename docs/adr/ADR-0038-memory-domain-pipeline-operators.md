@@ -471,8 +471,9 @@ view dropped every frame.
   `HardwareFrameDomains.Of` maps a backend to its domain. A frame's own `FrameMemoryDomain` stays
   CPU or GPU, since `GpuVideoFrame.Backend` already says which.
 - **The declarations.** The interop sink takes `Cpu | D3D11 | D3D12`. `Infer` with a device stage
-  takes CPU frames and the stage's `AcceptedDomains`, which is `D3D12` for `D3D12ImageToTensor`.
-  `ToGpu` emits its device's domain. A decoder that yields hardware frames emits CPU and its bound
+  takes CPU frames and the stage's `AcceptedDomains`, which is `D3D12` for `D3D12ImageToTensor`
+  and no GPU domain for a stage that does not say. `ToGpu` takes CPU frames and its device's
+  domain, and emits that domain. A decoder that yields hardware frames emits CPU and its bound
   backend's domain.
 - **The automatic choice.** Before the decoder opens, a player or pass keeps frames on the GPU
   when at least one GPU domain gets through the path (`Graph.FrameDomainsAcceptedFrom`). Once the
