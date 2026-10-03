@@ -125,8 +125,9 @@ public interface IVideoSink : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// The default is <see cref="FrameMemoryDomains.Cpu"/>: a sink that does not say is taken to
-    /// read pixels on the CPU. A sink that handles GPU frames, or never reads pixels, says
-    /// <see cref="FrameMemoryDomains.Any"/>.
+    /// read pixels on the CPU. A sink that reads GPU frames names the APIs it reads, such as
+    /// <c>Cpu | D3D11 | D3D12</c>, and a decoder on another backend then hands it CPU frames
+    /// (#566). A sink that never reads pixels says <see cref="FrameMemoryDomains.Any"/>.
     /// </remarks>
     FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Cpu;
 

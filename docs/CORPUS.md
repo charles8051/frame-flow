@@ -183,7 +183,7 @@ option 2 without the downloads: the corpus is generated locally, not fetched.
   `PATH` or in `runtimes/{rid}/native/` — run `scripts/fetch-ffmpeg.cs` first.
 - **Output:** `tests/corpus/files/`, gitignored. Nothing media-shaped is
   committed, so Git LFS was never needed.
-- **`tests/corpus/manifest.json`:** checked in. A flat JSON array of 26 entries
+- **`tests/corpus/manifest.json`:** checked in. A flat JSON array of 27 entries
   describing what the generator should produce — `filename`, `category`
   (`basic-video`, `basic-audio`, `combined-av`, `pixel-format`, `edge-case`,
   `decode-pressure`, `benchmark`),

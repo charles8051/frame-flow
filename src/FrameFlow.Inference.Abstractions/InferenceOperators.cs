@@ -109,10 +109,13 @@ public static class InferenceOperators
             // output carries no frame.
             FrameHolding.AtMost(Math.Max(1, deviceStage?.MaxHeldFrames ?? 1), forwardsStorage: false),
             // Without a device stage the input is prepared on the CPU, so a GPU frame has no way in
-            // (#435). With one, a GPU frame the stage cannot read still fails at run time. The
-            // results carry no frame, so nothing after the node is reached by a memory domain.
+            // (#435). With one, the GPU frames are those the stage reads (#566); a frame on another
+            // device still fails at run time. The results carry no frame, so nothing after the
+            // node is reached by a memory domain.
             FrameDomainRule.Accepting(
-                deviceStage is null ? FrameMemoryDomains.Cpu : FrameMemoryDomains.Any,
+                deviceStage is null
+                    ? FrameMemoryDomains.Cpu
+                    : FrameMemoryDomains.Cpu | (deviceStage.AcceptedDomains & FrameMemoryDomains.Gpu),
                 emits: FrameMemoryDomains.None));
     }
 }

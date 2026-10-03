@@ -113,6 +113,15 @@ Gen(
     new(Width: 320, Height: 240, Fps: 24, DurationSec: 3.0)
 );
 
+// VP8 has an NVDEC hwaccel in FFmpeg and no D3D11VA or D3D12VA one, so on an NVIDIA GPU it is
+// the codec that decodes on CUDA by default (#566).
+Gen(
+    "test-video-vp8-yuv420p.webm",
+    "-f lavfi -i testsrc2=size=320x240:rate=24:duration=3",
+    "-c:v libvpx -b:v 200k -pix_fmt yuv420p -an",
+    new(Width: 320, Height: 240, Fps: 24, DurationSec: 3.0)
+);
+
 Gen(
     "test-video-av1-yuv420p.mkv",
     "-f lavfi -i testsrc2=size=320x240:rate=24:duration=3",

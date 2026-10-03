@@ -333,6 +333,7 @@ FrameFlow.Media.HardwareDecodeOptions.Mode.get -> FrameFlow.Media.HardwareDecode
 FrameFlow.Media.HardwareDecodeOptions.Mode.set -> void
 FrameFlow.Media.HardwareDecodeOptions.PreferredBackends.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Media.HardwareDecodeBackendKind>!
 FrameFlow.Media.HardwareDecodeOptions.PreferredBackends.set -> void
+FrameFlow.Media.HardwareFrameDomains
 FrameFlow.Media.HeadlessVideoSink
 FrameFlow.Media.HeadlessVideoSink.AbandonedCount.get -> long
 FrameFlow.Media.HeadlessVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
@@ -574,6 +575,7 @@ static FrameFlow.Media.Diagnostics.PresenterStallEvaluator.Create(System.TimeSpa
 static FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot.Empty.get -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
 static FrameFlow.Media.FrameFlowServiceCollectionExtensions.AddFrameFlow(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<FrameFlow.Media.FrameFlowOptions!>? configure = null) -> FrameFlow.Media.IFrameFlowBuilder!
 static FrameFlow.Media.HardwareDecodeCapabilities.Empty.get -> FrameFlow.Media.HardwareDecodeCapabilities!
+static FrameFlow.Media.HardwareFrameDomains.Of(FrameFlow.Media.HardwareDecodeBackendKind backend) -> FrameFlow.Graph.FrameMemoryDomains
 static FrameFlow.Media.HighResolutionTimeProvider.IsSupported.get -> bool
 static FrameFlow.Media.HighResolutionTimeProvider.Preferred.get -> System.TimeProvider!
 static FrameFlow.Media.MediaSource.FromFile(string! path) -> FrameFlow.Media.MediaSource!

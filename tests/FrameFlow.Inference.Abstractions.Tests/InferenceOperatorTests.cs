@@ -173,6 +173,17 @@ public sealed class InferenceOperatorTests
     }
 
     [Fact]
+    public void WithADeviceStage_TheNodeTakesCpuFrames_AndTheGpuDomainsTheStageReads()
+    {
+        var model = new ChannelMeanModel(new ChannelMeanSession());
+
+        // A stage that reads D3D12 frames does not make the node take CUDA ones (#566).
+        Assert.Equal(
+            FrameDomainRule.Accepting(FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D12, emits: FrameMemoryDomains.None),
+            InferenceOperators.Infer("infer", model, new D3D12OnlyStage(model.Input)).Domains);
+    }
+
+    [Fact]
     public void AStageThatWritesAnotherTensor_IsRefused()
     {
         var model = new ChannelMeanModel(new ChannelMeanSession());
@@ -457,6 +468,24 @@ public sealed class InferenceOperatorTests
             LastCrop = crop;
             return new TensorTransform(Matrix3x2.Identity);
         }
+    }
+
+    /// <summary>A <see cref="FakeStage"/> that says it reads D3D12 frames only.</summary>
+    private sealed class D3D12OnlyStage(ImageToTensorOptions options) : IDeviceImageToTensor
+    {
+        private readonly FakeStage _inner = new(options);
+
+        public ImageToTensorOptions Options => options;
+
+        public int MaxHeldFrames => _inner.MaxHeldFrames;
+
+        public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.D3D12;
+
+        public DeviceTensor DeviceTensor => _inner.DeviceTensor;
+
+        public bool CanWrite(IVideoFrame frame) => _inner.CanWrite(frame);
+
+        public TensorTransform Write(IVideoFrame frame, RotatedRect crop) => _inner.Write(frame, crop);
     }
 
     private sealed class FakeGpuFrame(TimeSpan pts) : IVideoFrame

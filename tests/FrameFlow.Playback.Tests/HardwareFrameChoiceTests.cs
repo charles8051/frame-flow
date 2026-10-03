@@ -100,6 +100,58 @@ public sealed class HardwareFrameChoiceTests
             graph!.FrameDomainMismatchFor(source!, FrameMemoryDomains.Any, FrameDomainRule.CpuOnly)?.Node);
     }
 
+    private const FrameMemoryDomains ReadsD3D =
+        FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D11 | FrameMemoryDomains.D3D12;
+
+    private static readonly HardwareFrameDecision OnTheGpu = new(true, "every node on the video path takes GPU frames");
+
+    private static readonly FrameDomainMismatch RefusesCuda = new("video-sink", FrameMemoryDomains.Cuda, ReadsD3D);
+
+    [Fact]
+    public void ABackendThePathDoesNotTake_IsDownloaded_NamingTheBackendAndTheNode()
+    {
+        var decision = HardwareFrameChoice.ForBackend(OnTheGpu, requested: null, HardwareDecodeBackendKind.Cuda, RefusesCuda);
+
+        Assert.False(decision.Yield);
+        Assert.Equal("the decoder bound Cuda, and 'video-sink' does not take its frames", decision.Reason);
+    }
+
+    [Fact]
+    public void ABackendThePathTakes_KeepsTheDecision()
+    {
+        Assert.Equal(OnTheGpu, HardwareFrameChoice.ForBackend(OnTheGpu, null, HardwareDecodeBackendKind.D3D11Va, refusal: null));
+    }
+
+    [Fact]
+    public void ARequest_IsNotNarrowed_SoThePathCheckRefusesIt()
+    {
+        var requested = new HardwareFrameDecision(true, "WithHardwareFrames(true)");
+
+        Assert.Equal(requested, HardwareFrameChoice.ForBackend(requested, true, HardwareDecodeBackendKind.Cuda, RefusesCuda));
+    }
+
+    [Fact]
+    public void ADownload_OrASoftwareDecode_KeepsTheDecision()
+    {
+        var download = new HardwareFrameDecision(false, "'tag' has not said it takes GPU frames");
+
+        Assert.Equal(download, HardwareFrameChoice.ForBackend(download, null, HardwareDecodeBackendKind.Cuda, RefusesCuda));
+        Assert.Equal(OnTheGpu, HardwareFrameChoice.ForBackend(OnTheGpu, null, bound: null, RefusesCuda));
+    }
+
+    [Fact]
+    public void ThePlayersOwnPath_OverASinkThatReadsD3D_TakesD3D11AndD3D12Frames_AndRefusesCuda()
+    {
+        var (graph, source) = SubstrateSession.VideoProbe(configurator: null, new Sink(ReadsD3D));
+
+        Assert.Equal(
+            FrameMemoryDomains.D3D11 | FrameMemoryDomains.D3D12,
+            graph!.FrameDomainsAcceptedFrom(source!, FrameMemoryDomains.Gpu, FrameDomainRule.CpuOnly));
+        Assert.Equal(
+            "video-sink",
+            graph.FrameDomainMismatchFor(source!, FrameMemoryDomains.Cuda, FrameDomainRule.CpuOnly)?.Node);
+    }
+
     /// <summary>A bounded sink that declares <paramref name="accepts"/>, or nothing when it is null.</summary>
     private sealed class Sink(FrameMemoryDomains? accepts) : IVideoSink
     {

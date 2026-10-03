@@ -137,6 +137,61 @@ public sealed class FrameDomainTests
         Assert.Contains("uploads", mismatch!.Message, StringComparison.Ordinal);
     }
 
+    private const FrameMemoryDomains ReadsD3D =
+        FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D11 | FrameMemoryDomains.D3D12;
+
+    [Fact]
+    public void ANodeThatReadsSomeGpuApis_IsNamed_ForAnother_AndTheApisAreSpelledOut()
+    {
+        var graph = new GraphRunner();
+        var source = Source();
+        graph.Pipeline(source).To(Sink("present", FrameDomainRule.Accepting(ReadsD3D)));
+
+        var mismatch = graph.FrameDomainMismatchFor(source.Output, FrameMemoryDomains.Cpu | FrameMemoryDomains.Cuda);
+
+        Assert.Equal(new FrameDomainMismatch("present", FrameMemoryDomains.Cuda, ReadsD3D), mismatch);
+        Assert.StartsWith(
+            "'present' takes CPU, D3D11 and D3D12 frames, and CUDA frames can reach it. Put a node that downloads",
+            mismatch!.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheGpuDomainsAPathTakes_AreThoseEveryBranchTakes()
+    {
+        var graph = new GraphRunner();
+        var source = Source();
+        var head = graph.Pipeline(source).Then(Op("tag", FrameDomainRule.Any));
+        head.Branch(EdgeOptions.LatestWins(1))
+            .To(Sink("infer", FrameDomainRule.Accepting(FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D12)));
+        head.To(Sink("present", FrameDomainRule.Accepting(ReadsD3D)));
+
+        Assert.Equal(
+            FrameMemoryDomains.D3D12,
+            graph.FrameDomainsAcceptedFrom(source.Output, FrameMemoryDomains.Gpu, FrameDomainRule.CpuOnly));
+    }
+
+    [Fact]
+    public void ADownload_LetsEveryGpuDomainThrough_AndANodeThatSaysNothingLetsNone()
+    {
+        var downloading = new GraphRunner();
+        var first = Source();
+        downloading.Pipeline(first).Then(Op("to-cpu", FrameDomainRule.ToCpu)).To(Sink("scale", FrameDomainRule.CpuOnly));
+        var undeclared = new GraphRunner();
+        var second = Source();
+        undeclared.Pipeline(second).Then(Op("tag", null)).To(Sink("present", FrameDomainRule.Accepting(ReadsD3D)));
+
+        Assert.Equal(
+            FrameMemoryDomains.Gpu,
+            downloading.FrameDomainsAcceptedFrom(first.Output, FrameMemoryDomains.Gpu, FrameDomainRule.CpuOnly));
+        Assert.Equal(
+            FrameMemoryDomains.None,
+            undeclared.FrameDomainsAcceptedFrom(second.Output, FrameMemoryDomains.Gpu, FrameDomainRule.CpuOnly));
+        Assert.Equal(
+            FrameMemoryDomains.D3D11 | FrameMemoryDomains.D3D12,
+            undeclared.FrameDomainsAcceptedFrom(second.Output, FrameMemoryDomains.Gpu, FrameDomainRule.Any));
+    }
+
     [Fact]
     public void ARuleThatAcceptsNothing_IsRefused()
     {

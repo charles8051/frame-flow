@@ -25,6 +25,15 @@ public sealed class CompositionInteropVideoSinkDiagnosticsTests
     }
 
     [Fact]
+    public void AcceptedDomains_AreCpuAndTheTwoGpuApisTheViewReads()
+    {
+        // A CUDA or Vulkan frame has no path through the view, so a player downloads it (#566).
+        Assert.Equal(
+            FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D11 | FrameMemoryDomains.D3D12,
+            new CompositionInteropVideoSink().AcceptedDomains);
+    }
+
+    [Fact]
     public void GetDiagnostics_WithoutSource_ReturnsEmpty()
     {
         var sink = new CompositionInteropVideoSink();

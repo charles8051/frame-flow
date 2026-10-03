@@ -33,6 +33,17 @@
     "hasAudio": false
   },
   {
+    "filename": "test-video-vp8-yuv420p.webm",
+    "durationSeconds": 3,
+    "durationToleranceMs": 350,
+    "width": 320,
+    "height": 240,
+    "fps": 24,
+    "expectedVideoFrames": 72,
+    "hasVideo": true,
+    "hasAudio": false
+  },
+  {
     "filename": "test-video-av1-yuv420p.mkv",
     "durationSeconds": 3,
     "durationToleranceMs": 350,

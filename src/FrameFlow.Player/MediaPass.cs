@@ -344,11 +344,20 @@ public sealed class MediaPass : IAsyncDisposable
         public FrameDomainMismatch? MismatchFor(FrameMemoryDomains emitted) => Graph.FrameDomainMismatchFor(Source, emitted);
 
         /// <summary>
-        /// The first node that GPU frames would reach and that has not said it takes them, or null
-        /// when every one has (#294).
+        /// When no GPU domain gets through the path, the first node that GPU frames would reach and
+        /// that has not said it takes them; null when one domain does (#294, #566).
         /// </summary>
         public FrameDomainMismatch? UndeclaredGpuConsumer() =>
-            Graph.FrameDomainMismatchFor(Source, FrameMemoryDomains.Any, FrameDomainRule.CpuOnly);
+            Graph.FrameDomainsAcceptedFrom(Source, FrameMemoryDomains.Gpu, FrameDomainRule.CpuOnly) == FrameMemoryDomains.None
+                ? Graph.FrameDomainMismatchFor(Source, FrameMemoryDomains.Gpu, FrameDomainRule.CpuOnly)
+                : null;
+
+        /// <summary>
+        /// The first node that refuses <paramref name="backend"/>'s frames, with a node that says
+        /// nothing taking CPU frames, or null when every node takes them (#566).
+        /// </summary>
+        public FrameDomainMismatch? RefusalOf(HardwareDecodeBackendKind backend) =>
+            Graph.FrameDomainMismatchFor(Source, HardwareFrameDomains.Of(backend), FrameDomainRule.CpuOnly);
     }
 
     public async ValueTask DisposeAsync()

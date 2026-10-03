@@ -64,12 +64,28 @@ FrameFlow.Graph.FrameBudget.UnboundedHolder.get -> string?
 FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Graph.FrameMemoryDomain.Cpu = 0 -> FrameFlow.Graph.FrameMemoryDomain
 FrameFlow.Graph.FrameMemoryDomain.Gpu = 1 -> FrameFlow.Graph.FrameMemoryDomain
+FrameFlow.Graph.FrameMemoryDomains.Any = FrameFlow.Graph.FrameMemoryDomains.Cpu | FrameFlow.Graph.FrameMemoryDomains.Gpu -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.Cuda = 8 -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.D3D11 = 2 -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.D3D12 = 4 -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.Drm = 1024 -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.Dxva2 = 64 -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.Gpu = FrameFlow.Graph.FrameMemoryDomains.D3D11 | FrameFlow.Graph.FrameMemoryDomains.D3D12 | FrameFlow.Graph.FrameMemoryDomains.Cuda | FrameFlow.Graph.FrameMemoryDomains.Vulkan | FrameFlow.Graph.FrameMemoryDomains.VaApi | FrameFlow.Graph.FrameMemoryDomains.Dxva2 | FrameFlow.Graph.FrameMemoryDomains.VideoToolbox | FrameFlow.Graph.FrameMemoryDomains.Qsv | FrameFlow.Graph.FrameMemoryDomains.MediaCodec | FrameFlow.Graph.FrameMemoryDomains.Drm | FrameFlow.Graph.FrameMemoryDomains.Vdpau | FrameFlow.Graph.FrameMemoryDomains.OpenCl | FrameFlow.Graph.FrameMemoryDomains.OtherGpu -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.MediaCodec = 512 -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.OpenCl = 4096 -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.OtherGpu = 8192 -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.Qsv = 256 -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.VaApi = 32 -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.Vdpau = 2048 -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.VideoToolbox = 128 -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Graph.FrameMemoryDomains.Vulkan = 16 -> FrameFlow.Graph.FrameMemoryDomains
 FrameFlow.Graph.Graph
 FrameFlow.Graph.Graph.Add<T>(T node) -> T
 FrameFlow.Graph.Graph.BeforeEachRun(System.Action! beforeRun) -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.Graph.Connect<T>(FrameFlow.Graph.OutputPort<T!>! from, FrameFlow.Graph.InputPort<T!>! to, FrameFlow.Graph.EdgeOptions? options = null) -> FrameFlow.Graph.Graph!
 FrameFlow.Graph.Graph.Discards.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Graph.NodeDiscards!>!
 FrameFlow.Graph.Graph.FrameBudgetFor<T>(FrameFlow.Graph.OutputPort<T!>! source) -> FrameFlow.Graph.FrameBudget!
+FrameFlow.Graph.Graph.FrameDomainsAcceptedFrom<T>(FrameFlow.Graph.OutputPort<T!>! source, FrameFlow.Graph.FrameMemoryDomains candidates, FrameFlow.Graph.FrameDomainRule! undeclared) -> FrameFlow.Graph.FrameMemoryDomains
 FrameFlow.Graph.Graph.Graph() -> void
 FrameFlow.Graph.Graph.RunAsync(System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
 FrameFlow.Graph.GraphChain<T>
@@ -264,9 +280,7 @@ FrameFlow.Graph.FrameDomainRule
 FrameFlow.Graph.FrameDomainRule.Accepts.get -> FrameFlow.Graph.FrameMemoryDomains
 FrameFlow.Graph.FrameDomainRule.Emits.get -> FrameFlow.Graph.FrameMemoryDomains?
 FrameFlow.Graph.FrameMemoryDomains
-FrameFlow.Graph.FrameMemoryDomains.Any = FrameFlow.Graph.FrameMemoryDomains.Cpu | FrameFlow.Graph.FrameMemoryDomains.Gpu -> FrameFlow.Graph.FrameMemoryDomains
 FrameFlow.Graph.FrameMemoryDomains.Cpu = 1 -> FrameFlow.Graph.FrameMemoryDomains
-FrameFlow.Graph.FrameMemoryDomains.Gpu = 2 -> FrameFlow.Graph.FrameMemoryDomains
 FrameFlow.Graph.FrameMemoryDomains.None = 0 -> FrameFlow.Graph.FrameMemoryDomains
 FrameFlow.Graph.Graph.FrameDomainMismatchFor<T>(FrameFlow.Graph.OutputPort<T!>! source, FrameFlow.Graph.FrameMemoryDomains emitted) -> FrameFlow.Graph.FrameDomainMismatch?
 FrameFlow.Graph.Graph.FrameDomainMismatchFor<T>(FrameFlow.Graph.OutputPort<T!>! source, FrameFlow.Graph.FrameMemoryDomains emitted, FrameFlow.Graph.FrameDomainRule! undeclared) -> FrameFlow.Graph.FrameDomainMismatch?

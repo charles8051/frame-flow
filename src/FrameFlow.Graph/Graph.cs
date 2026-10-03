@@ -265,6 +265,27 @@ public sealed class Graph
     }
 
     /// <summary>
+    /// The domains in <paramref name="candidates"/> that every node walking from
+    /// <paramref name="source"/> accepts, with a node that declares nothing taking
+    /// <paramref name="undeclared"/> (#566).
+    /// </summary>
+    /// <remarks>
+    /// With <see cref="FrameMemoryDomains.Gpu"/> and <see cref="FrameDomainRule.CpuOnly"/>, this is
+    /// the GPU domains whose frames the path can take: a builder keeps a decoder's frames on the
+    /// GPU when the backend it binds decodes into one of them.
+    /// </remarks>
+    public FrameMemoryDomains FrameDomainsAcceptedFrom<T>(
+        OutputPort<T> source,
+        FrameMemoryDomains candidates,
+        FrameDomainRule undeclared)
+        where T : class, IRefCounted
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(undeclared);
+        return FrameDomainChecks.Accepted(source, candidates, _edges, undeclared);
+    }
+
+    /// <summary>
     /// Runs the graph to completion. Returns when every node's pump
     /// loop has terminated (EOS propagated, cancellation requested,
     /// or a pump failed).
