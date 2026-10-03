@@ -11,6 +11,72 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## `v0.14.0` — since `v0.13.0`
+
+### 1. Presenters show anamorphic and rotated video at its display geometry
+
+**A change in results, and a binary change to `CpuVideoFrame.Create`.**
+
+Frames carry the sample aspect ratio and display rotation their source declares (#542), as
+`IVideoFrame.SampleAspectRatio` and `IVideoFrame.Rotation`. `FrameFlowVideoView` and
+`CompositionInteropVideoView` letterbox to the display shape and turn the picture upright. A DVD
+frame at 32:27 shows at 16:9, where it used to show at 3:2, and phone video shows portrait.
+`VideoStreamInfo` and `VideoFormatInfo` report both, with `DisplayWidth` and `DisplayHeight`.
+
+`CpuVideoFrame.Create` gained two optional parameters, `sampleAspectRatio` and `rotation`. Source
+that calls it compiles unchanged; a binary compiled against the old signature needs a rebuild.
+
+**Who hits this.** A host that corrected the layout itself, by rotating the view or stretching it to
+a known aspect, now corrects twice. So does an `IVideoFrame` implementation that wraps a decoded frame
+without forwarding the two properties: the defaults are square and upright.
+
+**What to write instead.** Drop the host-side correction. A wrapper forwards `SampleAspectRatio` and
+`Rotation` from the frame it wraps.
+
+### 2. A stalled source reports `Rebuffering`
+
+**A change in results.** Nothing fails to compile.
+
+The player enters `PlaybackState.Rebuffering` when video frames stop arriving while it plays
+(#547): after three of the last frame's display intervals, and at least 1 s. It returns to
+`Playing` when a frame arrives or the input completes. Before, nothing invoked the buffer
+callbacks, so a stalled source reported `Playing` throughout and `Rebuffering` was never entered.
+A pause leaves `Rebuffering` for `Paused`, and a stream that ends while starved goes from
+`Rebuffering` to `Ended`. `Rebuffering` holds no clock (ADR-0026 §7).
+
+**Who hits this.** A host that switches on the playback state and treats `Rebuffering` as
+unreachable, or as an error. An item with no video does not report a stall yet (#550).
+
+**What to write instead.** Treat `Rebuffering` as a transient state that leads back to `Playing`,
+or on to `Paused` or `Ended`.
+
+### 3. `IPlayerBuilder` and `IPassBuilder` gained `WithPreferredBackends`
+
+**A compile error for a type that implements either builder, and a binary change to
+`PlaybackController.Create`.** Code that calls them compiles unchanged.
+
+A caller or a video sink can set the order hardware decode backends are tried in (#532). A type
+outside FrameFlow that implements `IPlayerBuilder` or `IPassBuilder`, such as a test double or a
+decorator, stops compiling until it adds the member. One compiled against `v0.13.0` and not rebuilt
+fails to load with `TypeLoadException` when the application uses the type.
+`PlaybackController.Create` gained an optional `preferredBackends` parameter: source that calls it
+compiles unchanged, and a binary compiled against the old signature needs a rebuild.
+`IVideoSink.PreferredBackends` is a default member and breaks nothing.
+
+**Who hits this.** An implementer of either builder, and an assembly that calls
+`PlaybackController.Create` and is not rebuilt. FrameFlow's own builders come from
+`FrameFlowPlayer.Create` and `FrameFlowPass.Create`.
+
+**What to write instead.** Implement it, or forward it to the builder you wrap:
+
+```csharp
+public IPlayerBuilder WithPreferredBackends(params HardwareDecodeBackendKind[] backends)
+{
+    _inner.WithPreferredBackends(backends);
+    return this;
+}
+```
+
 ## `v0.13.0` — since `v0.12.0`
 
 ### 1. BlazeFace letterboxes its input
@@ -247,26 +313,6 @@ that read `ActiveProvider` after a fallback past a failure the factory does not 
 **What to write instead.** Catch `ProviderOutOfMemoryException` and decide: free memory and open
 again, open a smaller model, or open with a factory that prefers CPU. It derives from
 `InvalidOperationException`, so a catch of that still catches it.
-
-### 15. Presenters show anamorphic and rotated video at its display geometry
-
-**A change in results, and a binary change to `CpuVideoFrame.Create`.**
-
-Frames carry the sample aspect ratio and display rotation their source declares (#542), as
-`IVideoFrame.SampleAspectRatio` and `IVideoFrame.Rotation`. `FrameFlowVideoView` and
-`CompositionInteropVideoView` letterbox to the display shape and turn the picture upright. A DVD
-frame at 32:27 shows at 16:9, where it used to show at 3:2, and phone video shows portrait.
-`VideoStreamInfo` and `VideoFormatInfo` report both, with `DisplayWidth` and `DisplayHeight`.
-
-`CpuVideoFrame.Create` gained two optional parameters, `sampleAspectRatio` and `rotation`. Source
-that calls it compiles unchanged; a binary compiled against the old signature needs a rebuild.
-
-**Who hits this.** A host that corrected the layout itself, by rotating the view or stretching it to
-a known aspect, now corrects twice. So does an `IVideoFrame` implementation that wraps a decoded frame
-without forwarding the two properties: the defaults are square and upright.
-
-**What to write instead.** Drop the host-side correction. A wrapper forwards `SampleAspectRatio` and
-`Rotation` from the frame it wraps.
 
 ## `v0.12.0` — since `v0.11.0`
 
