@@ -5,14 +5,17 @@
 which is withdrawn: an application builds generative-model features from FrameFlow's public API, and
 FrameFlow adds no operator for them. This document keeps the evidence.
 
-**Date:** 2026-09-29
+**Date:** 2026-09-29. [TensorSharp](#tensorsharp) added 2026-10-04.
 
 **Related:** #489, a graph bug this exploration found.
 
 **Sources:** [ONNX Runtime GenAI](https://github.com/microsoft/onnxruntime-genai) (GenAI below) was
 read from source at tag `v0.17.0`. The 0.17.1 NuGet packages are `v0.17.0` plus one unrelated fix,
 built from a branch with no tag. A result marked *(tested)* comes from loading the win-x64 binaries
-of 0.17.1; everything else is read from source, package metadata or documentation.
+of 0.17.1; everything else is read from source, package metadata or documentation. TensorSharp was
+read from source at commit
+[`2cef684`](https://github.com/zhongkaifu/TensorSharp/tree/2cef684fb70585fda22cc83679119b77bc41289a),
+the 2026.10.03 release, and nothing of it was run.
 
 ## Question
 
@@ -368,6 +371,128 @@ The app adds the native GenAI package that matches its FrameFlow EP package. `Fr
   placeholders expanded. Only Gemma 3's fixed-size input is close to what `ImageToTensor` produces.
 - **llama.cpp through LLamaSharp.** No ORT coupling, one GGUF file across backends, and Vulkan on
   integrated GPUs. Not evaluated.
+- **TensorSharp.** A .NET engine for GGUF models, evaluated in [TensorSharp](#tensorsharp).
+
+## TensorSharp
+
+[TensorSharp](https://github.com/zhongkaifu/TensorSharp) is a .NET 10 inference engine for GGUF
+models. It runs on managed CPU kernels, its own CUDA kernels, and GGML's CPU, CUDA, Vulkan and Metal
+backends. The question here is whether a VLM could run in the player's process, on frames from the
+graph, through TensorSharp instead of GenAI.
+
+Links in this section point into commit `2cef684`.
+
+### Against GenAI
+
+- **No ORT.** GGML is linked statically into TensorSharp's own `GgmlOps` library
+  ([CMakeLists.txt](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.GGML.Native/CMakeLists.txt#L84)).
+  It can sit beside every FrameFlow EP package, `Inference.Dml` included. `FrameFlow.Whisper` ships
+  its ggml as `ggml-whisper.dll` and siblings, so the native names do not collide.
+- **Prefix reuse for a VLM.** The engine's radix cache keys each image by a content id at its
+  position, and reuse stops at the first image that differs
+  ([PromptMediaSpan.cs](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.Runtime/Scheduling/PromptMediaSpan.cs#L28)).
+  The leading system messages are reused across requests from different cache scopes
+  ([paged attention](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/docs/PAGED_ATTENTION_AND_CONTINUOUS_BATCHING.md#L451-L455)).
+  Instructions in the system message are prefilled once. GenAI prefills them on every request
+  ([Prompt prefix](#prompt-prefix)).
+- **Constrained output.** `SamplingConfig.Grammar` takes a constraint built from
+  `GrammarLibrary.ForJsonSchema`, `ForJsonObject` or `ForGbnf`
+  ([GrammarLibrary.cs](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.Runtime/Grammar/GrammarLibrary.cs#L69)).
+  Each sequence needs its own constraint instance.
+- **An asynchronous engine.** `InferenceEngine.SubmitRequest(SequenceState, CancellationToken)`
+  returns a handle with a `ChannelReader<int>` of tokens and a `Completion` task
+  ([InferenceEngine.cs](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.Runtime/Scheduling/InferenceEngine.cs#L166)).
+  Several threads may call it, and the engine batches sequences itself without the HTTP server.
+
+### Image input
+
+- Images go in as file paths, in `ChatMessage.ImagePaths`
+  ([ChatTemplate.cs](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.Runtime/ChatTemplate.cs#L26)).
+  The model's image processor reads the file and decodes it on the CPU: its own codec for PNG,
+  StbImageSharp for JPEG, Magick.NET for anything else
+  ([ImageProcessorUtils.cs](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.Models/ImageProcessorUtils.cs#L29-L37)).
+  Resizing and normalizing run in managed code.
+- `Qwen35VisionEncoder.Encode(float[] pixelValues, int resizedH, int resizedW)` is public and takes
+  preprocessed pixels
+  ([Qwen35VisionEncoder.cs](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.Models/Models/Qwen35/Qwen35VisionEncoder.cs#L169)).
+  The injector that places an encoder's output in a prompt is internal, and it identifies media by
+  hashing the file
+  ([ModelMultimodalInjector.cs](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.Models/ModelMultimodalInjector.cs#L1294)).
+  Calling `Encode` directly gives up the engine and its prefix cache.
+- No API takes a device buffer. The direct CUDA backend retains the device's primary context and
+  creates its own streams
+  ([CudaContext.cs](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.Backends.Cuda/CudaContext.cs#L31)).
+  GGML creates its own CUDA and Vulkan devices. Nothing in the tree imports external memory or
+  interoperates with D3D11 or D3D12.
+
+A frame for TensorSharp is read back, encoded and written to a file. As with GenAI, the
+[GPU-resident path](#gpu-resident-input) does not apply. PNG keeps Magick.NET off the decode.
+
+### Costs in the player's process
+
+- **Process-wide state.** One GGML backend type per process
+  ([ggml_ops_core.cpp](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.GGML.Native/ggml_ops_core.cpp#L721-L727)).
+  The CUDA resolver prepends CUDA directories to `PATH`
+  ([CudaLibraryResolver.cs](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.Backends.Cuda/Interop/CudaLibraryResolver.cs#L64-L82)).
+  A module initializer installs the desktop media codecs, GGML's static constructor can set native
+  environment variables, and model creation writes to the console.
+- **Cancellation.** The token aborts a request between engine steps
+  ([InferenceEngine.cs](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.Runtime/Scheduling/InferenceEngine.cs#L297-L301)).
+  A step is one decode, or one prefill chunk of 256 tokens when batching and 8192 when running alone.
+  The vision encode runs before submission, under the model's `GpuComputeLock`, and takes no token
+  ([ChatGenerationPipeline.cs](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.Chat/ChatGenerationPipeline.cs#L474-L479)).
+  Only Gemma 4's encoders release that lock mid-encode. The same comment puts an image encode at
+  100 ms to 2 s.
+- **Disposal.** `InferenceEngine.Dispose` waits up to 60 s for the worker to leave its step, then
+  fails pending requests with `ObjectDisposedException`.
+- **Dependencies.** `TensorSharp.Models` references the GGML, CUDA and MLX backend assemblies,
+  Magick.NET, OpenCvSharp4 with native runtimes, PdfPig, NLayer and NVorbis
+  ([TensorSharp.Models.csproj](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/TensorSharp.Models/TensorSharp.Models.csproj#L35-L61)).
+  Its OpenCV runtimes cover win-x64, Ubuntu 24.04 x64 and arm64, and macOS, with no win-arm64. The
+  NuGet packages carry no native code
+  ([publish-nuget.yml](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/.github/workflows/publish-nuget.yml#L11-L13)).
+  An app builds `GgmlOps` or takes it from TensorSharp's release archives.
+- **Windows GPUs.** The release archives are CPU builds and CUDA 12.6 builds. Vulkan is forced off
+  in them
+  ([release-binaries.yml](https://github.com/zhongkaifu/TensorSharp/blob/2cef684fb70585fda22cc83679119b77bc41289a/.github/workflows/release-binaries.yml#L204-L210)),
+  so an AMD or Intel GPU needs a source build. There is no DirectML or D3D12 backend. The CUDA build
+  bundles `cublas64_12.dll`, a name `FrameFlow.Inference.Cuda` also loads. Whether the two copies
+  coexist in one process is untested.
+- **Native AOT.** No project carries trimming or AOT annotations, and the op registry is built by
+  reflection.
+- **Maintenance.** One author wrote about 860 of roughly 1,000 commits (GitHub contributors API,
+  2026-10-04). nuget.org lists three date-versioned releases in five weeks: 2026.9.1, 2026.9.29 and
+  2026.10.3. No API-stability policy is stated.
+
+### Video
+
+TensorSharp decodes video through OpenCvSharp's `VideoCapture`, samples one frame per second by
+default, writes each sampled frame to a temporary PNG, and passes the paths with `IsVideo` and
+`ImageTimestamps` set. The Qwen-VL family pairs frames into temporal patches labelled with their
+time. Gemma 4 takes one image per frame, stamped mm:ss. An application on FrameFlow can build the
+same request from frames FrameFlow already decoded, and ask one question over a window of frames
+rather than one frame per call.
+
+### In the graph
+
+TensorSharp needs no FrameFlow operator. For a live source an application uses the shape the
+withdrawn record names: a `Branch(EdgeOptions.LatestWins(1))` ending in a `SinkNode` declared
+`FrameHolding.InFlight`. The sink drops a frame while the model is busy. Otherwise it encodes the
+frame, writes the file and hands the path to the application's worker, which submits it to
+`InferenceEngine` on its own task. Stopping the graph then never waits on a vision encode it cannot
+cancel.
+
+`TensorSharp.Server.Host` serves the same engine behind OpenAI- and Ollama-compatible APIs, so it
+also fits the out-of-process route. That keeps the process-wide state, OpenCV and Magick.NET out of
+the player. It listens on all interfaces with no authentication.
+
+### Verdict
+
+An application can run TensorSharp in process with no change to FrameFlow. TensorSharp has no ORT
+version coupling, runs beside `Inference.Dml`, and reuses a VLM prompt's prefix. It does not give
+the player's process GPU-resident input, the one thing in-process running could offer. That needs a
+change in TensorSharp: a public engine input that takes decoded pixels or a tensor with a
+caller-supplied content id. The withdrawn record's conclusion stands.
 
 ## Order of work
 
