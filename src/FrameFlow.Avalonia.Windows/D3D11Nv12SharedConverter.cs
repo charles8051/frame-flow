@@ -39,6 +39,13 @@ namespace FrameFlow.Avalonia.Windows;
 /// converter rebuild + compositor re-import.
 /// </para>
 /// <para>
+/// <b>Resizing.</b> Three parts are sized by the frame: the staging texture, the ring, and the
+/// decode bridge that opens the staging texture by its handle. The own device and the shader
+/// pipeline are not. <see cref="TryResize"/> replaces the three sized parts and keeps the rest, so
+/// a playlist item of another size costs new textures and a re-import of the ring, not a new
+/// device and a shader compile.
+/// </para>
+/// <para>
 /// <b>Why a pixel shader, not <c>VideoProcessorBlt</c> (ADR-0063).</b> The previous
 /// implementation converted via <c>ID3D11VideoContext.VideoProcessorBlt</c> — the
 /// fixed-function VideoProcessor unit, the same single hardware block DWM uses for
@@ -70,14 +77,14 @@ namespace FrameFlow.Avalonia.Windows;
 /// created <c>D3D11_BIND_DECODER</c>-only (FrameFlow lets FFmpeg auto-allocate it), so its
 /// slices cannot be bound as a shader resource and cannot be opened on another device. So
 /// the converter owns a single <b>shareable</b> <c>D3D11_BIND_SHADER_RESOURCE</c> NV12
-/// texture (<see cref="_sampleNv12"/>, <see cref="ResourceOptionFlags.SharedKeyedMutex"/>) on
+/// texture (<see cref="Staging.Texture"/>, <see cref="ResourceOptionFlags.SharedKeyedMutex"/>) on
 /// its own device, and opens it <i>by shared handle on the current decode device</i>
-/// (<see cref="_decodeSideNv12"/>). Each frame the chosen decode array slice is
+/// (<see cref="DecodeBridge.Nv12"/>). Each frame the chosen decode array slice is
 /// <c>CopySubresourceRegion</c>'d into that decode-side handle — a cheap same-device
 /// copy-engine blit on the decoder's <c>ID3D11Multithread</c>-protected immediate context
 /// (the serialization-with-decode the old <c>VideoProcessorBlt</c> relied on) — under the
 /// staging texture's keyed mutex, which fences the write so the own device sees it. The
-/// shader then samples <see cref="_sampleNv12"/> on the own device via two SRVs: the Y plane
+/// shader then samples <see cref="Staging.Texture"/> on the own device via two SRVs: the Y plane
 /// as <see cref="Format.R8_UNorm"/> and the interleaved UV plane as
 /// <see cref="Format.R8G8_UNorm"/>, or <see cref="Format.R16_UNorm"/> and
 /// <see cref="Format.R16G16_UNorm"/> for P010, with the sample levels in a constant buffer
@@ -156,7 +163,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         }
         """;
 
-    // Keyed-mutex key for the cross-device NV12 staging texture (_sampleNv12). Unlike the
+    // Keyed-mutex key for the cross-device NV12 staging texture (_staging). Unlike the
     // BGRA ring's 0→1 producer→compositor ping-pong, the staging texture's two users — the
     // decode device (writes the copy) and the own device (samples it) — run strictly
     // sequenced inside a single ConvertInto call, so one key suffices: each side acquires it,
@@ -181,7 +188,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
 
     private readonly ILogger _logger;
 
-    // ── The converter's OWN device (ADR-0064 Decision 2) — stable across decode-device swaps ──
+    // ── The converter's OWN device (ADR-0064 Decision 2) — stable across decode-device swaps and resizes ──
     private readonly ID3D11Device _device;
     private readonly ID3D11DeviceContext _immediate; // own immediate context (sample + draw)
     private readonly ID3D11DeviceContext _deferred; // records the shader-pass command lists
@@ -189,12 +196,10 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     private readonly ID3D11PixelShader _pixelShader;
     private readonly ID3D11SamplerState _sampler;
     private readonly ID3D11RasterizerState _rasterizer;
-    private readonly ID3D11Texture2D _sampleNv12; // SHAREABLE shader-readable copy target for the decode slice
-    private readonly IDXGIKeyedMutex _sampleMutex; // own-device view of _sampleNv12's keyed mutex
-    private readonly nint _sampleSharedHandle; // global shared handle, opened on each decode device
-    private readonly ID3D11ShaderResourceView _srvY; // R8_UNORM or R16_UNORM luma view of _sampleNv12
-    private readonly ID3D11ShaderResourceView _srvUV; // R8G8_UNORM or R16G16_UNORM chroma view of _sampleNv12
     private readonly ID3D11Buffer _levels; // the shader's YuvLevels for the texture's sample format
+
+    // ── Sized by the frame — replaced together by TryResize ──
+    private Staging _staging; // SHAREABLE shader-readable copy target for the decode slice
     private RingBuffer[] _buffers;
 
     // ── The video processor mode (#560) — null in the shader mode ──
@@ -208,22 +213,19 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
 
     // ── Per-decode-device bridge — rebound (not rebuilt) when the decode device changes ──
     // Independent QI'd references to the CURRENT decode device + its multithread-protected
-    // immediate context, plus _sampleNv12 opened by shared handle on that device (the copy
-    // destination). All four are released + reopened by RebindDecodeBridge on a device change.
-    private ID3D11Device? _decodeDevice;
-    private ID3D11DeviceContext? _decodeContext;
-    private ID3D11Texture2D? _decodeSideNv12;
-    private IDXGIKeyedMutex? _decodeSideMutex;
-    private nint _boundDecodeDevicePointer;
+    // immediate context, plus the staging texture opened by shared handle on that device (the copy
+    // destination). Replaced whole by RebindDecodeBridge on a device change, and by TryResize, whose
+    // staging texture is a new one with a new handle.
+    private DecodeBridge? _bridge;
 
     private bool _disposed;
     private bool _deviceLost;
 
     /// <summary>The frame's width: the staging texture's, and the per-frame copy's.</summary>
-    public int Width { get; }
+    public int Width { get; private set; }
 
     /// <summary>The frame's height.</summary>
-    public int Height { get; }
+    public int Height { get; private set; }
 
     /// <summary>The decode texture's format, NV12 or P010, which the staging texture and views are built for.</summary>
     public FrameFlow.Media.PixelFormat InputFormat { get; }
@@ -252,10 +254,10 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     /// (<see cref="FrameFlow.Decoding.GpuVideoFrame.TryGetD3D11Texture"/>'s <c>device</c> out): when they differ,
     /// a warm-sink player swap brought a new decode device and the converter must rebind its
     /// decode bridge (ADR-0064). While bound, the converter holds COM references to this
-    /// device (via <see cref="_decodeSideNv12"/> / <see cref="_decodeContext"/>), so its
+    /// device (via <see cref="DecodeBridge.Nv12"/> / <see cref="DecodeBridge.Context"/>), so its
     /// pointer cannot be reused by a new device — the comparison is reuse-safe.
     /// </summary>
-    public nint SourceDevicePointer => _boundDecodeDevicePointer;
+    public nint SourceDevicePointer => _bridge?.DevicePointer ?? nint.Zero;
 
     /// <summary>The legacy global shared handle for ring buffer <paramref name="index"/>,
     /// imported as <c>D3D11TextureGlobalSharedHandle</c>.</summary>
@@ -284,6 +286,49 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         public ID3D11VideoProcessorOutputView? ProcessorOutput;
     }
 
+    /// <summary>
+    /// The shareable, shader-readable texture the decode slice is copied into each frame, at the
+    /// frame's size: its own-device keyed mutex, the global shared handle each decode device opens it
+    /// by, and the two plane views the shader samples.
+    /// </summary>
+    private sealed class Staging
+    {
+        public required ID3D11Texture2D Texture;
+        public required IDXGIKeyedMutex Mutex;
+        public required nint SharedHandle;
+        public required ID3D11ShaderResourceView Luma; // R8_UNORM or R16_UNORM view of the Y plane
+        public required ID3D11ShaderResourceView Chroma; // R8G8_UNORM or R16G16_UNORM view of the UV plane
+    }
+
+    /// <summary>
+    /// The staging texture opened on one decode device: independent references to that device and its
+    /// <c>ID3D11Multithread</c>-protected immediate context, and the decode-side view of the staging
+    /// texture with its keyed mutex.
+    /// </summary>
+    private sealed class DecodeBridge
+    {
+        public required ID3D11Device Device;
+        public required ID3D11DeviceContext Context;
+        public required ID3D11Texture2D Nv12;
+        public required IDXGIKeyedMutex Mutex;
+        public required nint DevicePointer;
+    }
+
+    /// <summary>
+    /// The sized parts a resize replaced. The caller disposes it off the UI thread, as it disposes a
+    /// dropped converter, after detaching the old ring's compositor imports.
+    /// </summary>
+    private sealed class Retired(D3D11Nv12SharedConverter owner, DecodeBridge? bridge, RingBuffer[] ring, Staging staging)
+        : IDisposable
+    {
+        public void Dispose()
+        {
+            owner.ReleaseDecodeBridge(bridge);
+            owner.ReleaseRing(ring);
+            owner.ReleaseStaging(staging);
+        }
+    }
+
     /// <param name="nv12TexturePtr">The first frame's decode texture.</param>
     /// <param name="width">The frame's width.</param>
     /// <param name="height">The frame's height.</param>
@@ -301,6 +346,9 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         ILogger logger,
         bool superResolutionExtension = true)
     {
+        // Each step is timed for the ready line. A rebuild runs on the presenter's UI thread, so what it
+        // costs, and where, is worth seeing next to what a resize costs.
+        long started = Stopwatch.GetTimestamp();
         _logger = logger;
         Width = width;
         Height = height;
@@ -319,7 +367,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         // and QI independent references inside RebindDecodeBridge.
         var decodeDevice = nv12.Device;
         var srcFormat = nv12.Description.Format;
-        var (samples, lumaFormat, chromaFormat) = YuvTextureFormats.For(srcFormat);
+        var (samples, _, _) = YuvTextureFormats.For(srcFormat);
         InputFormat = samples == YuvSampleFormat.P010 ? FrameFlow.Media.PixelFormat.P010 : FrameFlow.Media.PixelFormat.Nv12;
 
         // OWN DEVICE on the decoder's adapter. DriverType.Unknown is required when an explicit
@@ -338,10 +386,12 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         // forced QI'd references in the old borrowed-device design does not apply to a device
         // WE own and keep). Mirrors D3D11BgraUploader, which also owns its device + context.
         _immediate = _device.ImmediateContext;
+        long deviceDone = Stopwatch.GetTimestamp();
 
         // ── Shader pipeline objects (shared across all ring buffers) on the own device ──
         _vertexShader = _device.CreateVertexShader(CompileShader("VSMain", "vs_4_0"), null);
         _pixelShader = _device.CreatePixelShader(CompileShader("PSMain", "ps_4_0"), null);
+        long shadersDone = Stopwatch.GetTimestamp();
 
         _sampler = _device.CreateSamplerState(
             new SamplerDescription
@@ -368,50 +418,9 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             }
         );
 
-        // SHAREABLE private shader-readable NV12 the decode slice is copied into each frame.
-        // SharedKeyedMutex makes it openable by handle on the (changing) decode device so the
-        // copy can run there; BindFlags.ShaderResource lets the own device's shader sample it.
-        _sampleNv12 = _device.CreateTexture2D(
-            new Texture2DDescription
-            {
-                Width = (uint)width,
-                Height = (uint)height,
-                MipLevels = 1,
-                ArraySize = 1,
-                Format = srcFormat,
-                SampleDescription = new SampleDescription(1, 0),
-                Usage = ResourceUsage.Default,
-                // The video processor needs RenderTarget for its input view; the shader mode keeps
-                // the binding it always had.
-                BindFlags = output.SuperResolution
-                    ? BindFlags.RenderTarget | BindFlags.ShaderResource
-                    : BindFlags.ShaderResource,
-                CPUAccessFlags = CpuAccessFlags.None,
-                MiscFlags = ResourceOptionFlags.SharedKeyedMutex,
-            }
-        );
-        _sampleMutex = _sampleNv12.QueryInterface<IDXGIKeyedMutex>();
-        using (var dxgi = _sampleNv12.QueryInterface<IDXGIResource>())
-            _sampleSharedHandle = dxgi.SharedHandle;
-
-        _srvY = _device.CreateShaderResourceView(
-            _sampleNv12,
-            new ShaderResourceViewDescription
-            {
-                Format = lumaFormat,
-                ViewDimension = ShaderResourceViewDimension.Texture2D,
-                Texture2D = new Texture2DShaderResourceView { MostDetailedMip = 0, MipLevels = 1 },
-            }
-        );
-        _srvUV = _device.CreateShaderResourceView(
-            _sampleNv12,
-            new ShaderResourceViewDescription
-            {
-                Format = chromaFormat,
-                ViewDimension = ShaderResourceViewDimension.Texture2D,
-                Texture2D = new Texture2DShaderResourceView { MostDetailedMip = 0, MipLevels = 1 },
-            }
-        );
+        // The staging texture is built with the binding the video processor needs for its input view
+        // when that mode was asked for; the shader mode keeps the binding it always had.
+        _staging = CreateStaging(width, height, srcFormat, videoProcessorInput: output.SuperResolution);
 
         _levels = CreateLevelsBuffer(_device, YuvLevels.For(samples));
         _deferred = _device.CreateDeferredContext();
@@ -422,7 +431,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             Output = PresenterOutput.Shader(width, height);
         }
 
-        _buffers = CreateRing();
+        _buffers = CreateRing(Output.Width, Output.Height, _staging);
 
         // One output view per ring buffer. If they fail, the ring is rebuilt at the frame's size for
         // the shader, as when the video processor fails to set up.
@@ -430,23 +439,33 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         {
             SuperResolutionFailed = true;
             ReleaseVideoProcessor();
-            ReleaseRing();
+            ReleaseRing(_buffers);
             Output = PresenterOutput.Shader(width, height);
-            _buffers = CreateRing();
+            _buffers = CreateRing(Output.Width, Output.Height, _staging);
         }
+        long resourcesDone = Stopwatch.GetTimestamp();
 
         // Seed the decode-device bridge for the first frame's decode device. After this the
         // converter is ready; subsequent frames on the same device reuse it, and a different
         // device triggers a rebind (not a rebuild).
         RebindDecodeBridge(decodeDevice);
+        long bridgeDone = Stopwatch.GetTimestamp();
+
+        double totalMs = Stopwatch.GetElapsedTime(started, bridgeDone).TotalMilliseconds;
+        double deviceMs = Stopwatch.GetElapsedTime(started, deviceDone).TotalMilliseconds;
+        double shaderMs = Stopwatch.GetElapsedTime(deviceDone, shadersDone).TotalMilliseconds;
+        double resourceMs = Stopwatch.GetElapsedTime(shadersDone, resourcesDone).TotalMilliseconds;
+        double bridgeMs = Stopwatch.GetElapsedTime(resourcesDone, bridgeDone).TotalMilliseconds;
 
         if (_videoProcessor is not null)
         {
             _logger.LogInformation(
                 "D3D11 {Format}->BGRA converter ready (own device, ADR-0064) with driver super resolution (#560): "
                     + "{W}x{H} frames scaled to a {OW}x{OH} {N}-buffer shared keyed-mutex ring by VideoProcessorBlt; "
-                    + "bound to decode device 0x{Dev:X}.",
-                InputFormat, width, height, Output.Width, Output.Height, BufferCount, _boundDecodeDevicePointer
+                    + "bound to decode device 0x{Dev:X}. Built in {BuildMs:F1} ms: device {DeviceMs:F1}, shaders "
+                    + "{ShaderMs:F1}, resources {ResourceMs:F1}, bridge {BridgeMs:F1}.",
+                InputFormat, width, height, Output.Width, Output.Height, BufferCount, SourceDevicePointer,
+                totalMs, deviceMs, shaderMs, resourceMs, bridgeMs
             );
         }
         else
@@ -454,10 +473,91 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             _logger.LogInformation(
                 "D3D11 {Format}->BGRA shader converter ready (own device, ADR-0064): {W}x{H}, {N}-buffer shared "
                     + "keyed-mutex ring at {OW}x{OH}; bound to decode device 0x{Dev:X} via a shareable staging "
-                    + "bridge (pixel-shader convert on the 3D pipeline, no VideoProcessorBlt).",
-                InputFormat, width, height, BufferCount, Output.Width, Output.Height, _boundDecodeDevicePointer
+                    + "bridge (pixel-shader convert on the 3D pipeline, no VideoProcessorBlt). Built in {BuildMs:F1} ms: "
+                    + "device {DeviceMs:F1}, shaders {ShaderMs:F1}, resources {ResourceMs:F1}, bridge {BridgeMs:F1}.",
+                InputFormat, width, height, BufferCount, Output.Width, Output.Height, SourceDevicePointer,
+                totalMs, deviceMs, shaderMs, resourceMs, bridgeMs
             );
         }
+    }
+
+    /// <summary>
+    /// Resizes the converter in place for a frame of another size, as when a playlist moves to an item
+    /// of another resolution. Only the parts the frame's size fixes are replaced: the staging texture
+    /// and its plane views, the ring and its recorded passes, and the decode bridge, which opens the new
+    /// staging texture on <paramref name="frameTexturePtr"/>'s decode device. The own device, the
+    /// shaders, the sampler, the rasterizer and the levels buffer are kept. The ring is new, so the
+    /// caller imports it again.
+    /// </summary>
+    /// <param name="frameTexturePtr">The new frame's decode texture.</param>
+    /// <param name="width">The new frame's width.</param>
+    /// <param name="height">The new frame's height.</param>
+    /// <returns>
+    /// The parts the resize replaced, for the caller to dispose off the UI thread once it has detached
+    /// their compositor imports. <see langword="null"/> when the converter cannot be resized for this
+    /// frame or allocating the new parts failed; the converter is then unchanged, and the caller
+    /// rebuilds it.
+    /// </returns>
+    public IDisposable? TryResize(nint frameTexturePtr, int width, int height)
+    {
+        // The video processor mode is not resized: its processor and output views are built for one
+        // input and output size, and the presenter picks that output per frame (#560). A converter
+        // that fell back to the shader when it was built is in the shader mode.
+        if (_disposed || _deviceLost || Output.SuperResolution)
+            return null;
+
+        long started = Stopwatch.GetTimestamp();
+        Marshal.AddRef(frameTexturePtr);
+        using var nv12 = new ID3D11Texture2D(frameTexturePtr);
+
+        // The plane views and the kept levels buffer are built for one sample format (#559).
+        var format = nv12.Description.Format;
+        if (format != _staging.Texture.Description.Format)
+            return null;
+
+        Staging? staging = null;
+        RingBuffer[]? ring = null;
+        DecodeBridge bridge;
+        long resourcesDone;
+        try
+        {
+            staging = CreateStaging(width, height, format, videoProcessorInput: false);
+            ring = CreateRing(width, height, staging);
+            resourcesDone = Stopwatch.GetTimestamp();
+            bridge = OpenDecodeBridge(nv12.Device, staging.SharedHandle);
+        }
+        catch (Exception ex)
+        {
+            if (D3D11DeviceLoss.IsDeviceLost(ex))
+                _deviceLost = true;
+            _logger.LogWarning(
+                ex, "Converter could not resize to {W}x{H}; the presenter rebuilds it instead.", width, height);
+            if (ring is not null)
+                ReleaseRing(ring);
+            if (staging is not null)
+                ReleaseStaging(staging);
+            return null;
+        }
+
+        var retired = new Retired(this, _bridge, _buffers, _staging);
+        _staging = staging;
+        _buffers = ring;
+        _bridge = bridge;
+        Width = width;
+        Height = height;
+        Output = PresenterOutput.Shader(width, height);
+
+        long done = Stopwatch.GetTimestamp();
+        _logger.LogInformation(
+            "Converter resized in place to {W}x{H} in {ResizeMs:F1} ms: resources {ResourceMs:F1}, bridge "
+                + "{BridgeMs:F1}. Device and shader pipeline kept; bound to decode device 0x{Dev:X}.",
+            width, height,
+            Stopwatch.GetElapsedTime(started, done).TotalMilliseconds,
+            Stopwatch.GetElapsedTime(started, resourcesDone).TotalMilliseconds,
+            Stopwatch.GetElapsedTime(resourcesDone, done).TotalMilliseconds,
+            SourceDevicePointer
+        );
+        return retired;
     }
 
     /// <summary>
@@ -523,7 +623,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
                 Usage = VideoUsage.PlaybackNormal,
             });
 
-            var inputFormat = _sampleNv12.Description.Format;
+            var inputFormat = _staging.Texture.Description.Format;
             var input = _processorEnumerator.CheckVideoProcessorFormat(inputFormat);
             var bgra = _processorEnumerator.CheckVideoProcessorFormat(Format.B8G8R8A8_UNorm);
             if ((input & VideoProcessorFormatSupport.Input) == 0 || (bgra & VideoProcessorFormatSupport.Output) == 0)
@@ -531,7 +631,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
 
             _videoDevice.CreateVideoProcessor(_processorEnumerator, 0, out _videoProcessor).CheckError();
             _processorInput = _videoDevice.CreateVideoProcessorInputView(
-                _sampleNv12,
+                _staging.Texture,
                 _processorEnumerator,
                 new VideoProcessorInputViewDescription
                 {
@@ -579,43 +679,131 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         }
     }
 
-    /// <summary>The BGRA ring at <see cref="Output"/>'s size, each buffer with its shader pass recorded.</summary>
-    private RingBuffer[] CreateRing()
+    /// <summary>
+    /// The shareable, shader-readable staging texture for frames of <paramref name="width"/> x
+    /// <paramref name="height"/> in <paramref name="format"/>, with its keyed mutex, shared handle and
+    /// plane views. <see cref="ResourceOptionFlags.SharedKeyedMutex"/> makes it openable by handle on the
+    /// (changing) decode device so the copy can run there; <see cref="BindFlags.ShaderResource"/> lets
+    /// the own device's shader sample it. Releases what it made if a step fails.
+    /// </summary>
+    private Staging CreateStaging(int width, int height, Format format, bool videoProcessorInput)
     {
-        var buffers = new RingBuffer[BufferCount];
-        for (var i = 0; i < BufferCount; i++)
+        var (_, lumaFormat, chromaFormat) = YuvTextureFormats.For(format);
+        ID3D11Texture2D? texture = null;
+        IDXGIKeyedMutex? mutex = null;
+        ID3D11ShaderResourceView? luma = null;
+        try
         {
-            var desc = new Texture2DDescription
-            {
-                Width = (uint)Output.Width,
-                Height = (uint)Output.Height,
-                MipLevels = 1,
-                ArraySize = 1,
-                Format = Format.B8G8R8A8_UNorm,
-                SampleDescription = new SampleDescription(1, 0),
-                Usage = ResourceUsage.Default,
-                BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
-                CPUAccessFlags = CpuAccessFlags.None,
-                MiscFlags = ResourceOptionFlags.SharedKeyedMutex,
-            };
-            var tex = _device.CreateTexture2D(desc);
-
+            texture = _device.CreateTexture2D(
+                new Texture2DDescription
+                {
+                    Width = (uint)width,
+                    Height = (uint)height,
+                    MipLevels = 1,
+                    ArraySize = 1,
+                    Format = format,
+                    SampleDescription = new SampleDescription(1, 0),
+                    Usage = ResourceUsage.Default,
+                    // The video processor needs RenderTarget for its input view.
+                    BindFlags = videoProcessorInput
+                        ? BindFlags.RenderTarget | BindFlags.ShaderResource
+                        : BindFlags.ShaderResource,
+                    CPUAccessFlags = CpuAccessFlags.None,
+                    MiscFlags = ResourceOptionFlags.SharedKeyedMutex,
+                }
+            );
+            mutex = texture.QueryInterface<IDXGIKeyedMutex>();
             nint handle;
-            using (var dxgi = tex.QueryInterface<IDXGIResource>())
+            using (var dxgi = texture.QueryInterface<IDXGIResource>())
                 handle = dxgi.SharedHandle;
 
-            var rtv = _device.CreateRenderTargetView(tex, null);
-
-            buffers[i] = new RingBuffer
+            luma = CreatePlaneView(texture, lumaFormat);
+            var chroma = CreatePlaneView(texture, chromaFormat);
+            return new Staging
             {
-                Texture = tex,
-                RenderTargetView = rtv,
-                CommandList = RecordConvertCommandList(rtv),
-                KeyedMutex = tex.QueryInterface<IDXGIKeyedMutex>(),
+                Texture = texture,
+                Mutex = mutex,
                 SharedHandle = handle,
+                Luma = luma,
+                Chroma = chroma,
             };
         }
-        return buffers;
+        catch
+        {
+            Release(() => luma?.Dispose());
+            Release(() => mutex?.Dispose());
+            Release(() => texture?.Dispose());
+            throw;
+        }
+    }
+
+    private ID3D11ShaderResourceView CreatePlaneView(ID3D11Texture2D texture, Format format) =>
+        _device.CreateShaderResourceView(
+            texture,
+            new ShaderResourceViewDescription
+            {
+                Format = format,
+                ViewDimension = ShaderResourceViewDimension.Texture2D,
+                Texture2D = new Texture2DShaderResourceView { MostDetailedMip = 0, MipLevels = 1 },
+            }
+        );
+
+    /// <summary>
+    /// A BGRA ring at <paramref name="width"/> x <paramref name="height"/>, each buffer with its shader
+    /// pass over <paramref name="staging"/> recorded. Releases what it made if a step fails.
+    /// </summary>
+    private RingBuffer[] CreateRing(int width, int height, Staging staging)
+    {
+        var buffers = new RingBuffer[BufferCount];
+        var made = new List<IDisposable>();
+        try
+        {
+            for (var i = 0; i < BufferCount; i++)
+            {
+                var desc = new Texture2DDescription
+                {
+                    Width = (uint)width,
+                    Height = (uint)height,
+                    MipLevels = 1,
+                    ArraySize = 1,
+                    Format = Format.B8G8R8A8_UNorm,
+                    SampleDescription = new SampleDescription(1, 0),
+                    Usage = ResourceUsage.Default,
+                    BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
+                    CPUAccessFlags = CpuAccessFlags.None,
+                    MiscFlags = ResourceOptionFlags.SharedKeyedMutex,
+                };
+                var tex = _device.CreateTexture2D(desc);
+                made.Add(tex);
+
+                nint handle;
+                using (var dxgi = tex.QueryInterface<IDXGIResource>())
+                    handle = dxgi.SharedHandle;
+
+                var rtv = _device.CreateRenderTargetView(tex, null);
+                made.Add(rtv);
+                var commandList = RecordConvertCommandList(rtv, width, height, staging);
+                made.Add(commandList);
+                var keyedMutex = tex.QueryInterface<IDXGIKeyedMutex>();
+                made.Add(keyedMutex);
+
+                buffers[i] = new RingBuffer
+                {
+                    Texture = tex,
+                    RenderTargetView = rtv,
+                    CommandList = commandList,
+                    KeyedMutex = keyedMutex,
+                    SharedHandle = handle,
+                };
+            }
+            return buffers;
+        }
+        catch
+        {
+            for (var i = made.Count - 1; i >= 0; i--)
+                Release(made[i].Dispose);
+            throw;
+        }
     }
 
     private bool TryCreateProcessorOutputs()
@@ -646,9 +834,9 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         }
     }
 
-    private void ReleaseRing()
+    private void ReleaseRing(RingBuffer[] buffers)
     {
-        foreach (var b in _buffers)
+        foreach (var b in buffers)
         {
             if (b is null)
                 continue;
@@ -657,6 +845,14 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             Release(() => b.KeyedMutex.Dispose());
             Release(() => b.Texture.Dispose());
         }
+    }
+
+    private void ReleaseStaging(Staging staging)
+    {
+        Release(() => staging.Chroma.Dispose());
+        Release(() => staging.Luma.Dispose());
+        Release(() => staging.Mutex.Dispose());
+        Release(() => staging.Texture.Dispose());
     }
 
     private void ReleaseVideoProcessor()
@@ -723,23 +919,24 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     /// <summary>
     /// Pre-records the NV12 → BGRA shader pass for one ring buffer into a deferred-context
     /// command list: bind the fixed pipeline (shaders, the two plane SRVs over
-    /// <see cref="_sampleNv12"/>, sampler, rasterizer, viewport) with <paramref name="rtv"/>
-    /// as the render target and draw the fullscreen triangle. Only the destination RTV varies
-    /// per buffer (the SRVs are constant — they always view <see cref="_sampleNv12"/>, which
-    /// <see cref="ConvertInto"/> re-copies each frame), so recording once at construction and
-    /// replaying with <c>ExecuteCommandList</c> keeps the per-frame path allocation-free.
+    /// <paramref name="staging"/>, sampler, rasterizer, a <paramref name="width"/> x
+    /// <paramref name="height"/> viewport) with <paramref name="rtv"/> as the render target and draw
+    /// the fullscreen triangle. Only the destination RTV varies per buffer (the SRVs are constant —
+    /// they always view the staging texture, which <see cref="ConvertInto"/> re-copies each frame),
+    /// so recording once per ring and replaying with <c>ExecuteCommandList</c> keeps the per-frame
+    /// path allocation-free.
     /// </summary>
-    private ID3D11CommandList RecordConvertCommandList(ID3D11RenderTargetView rtv)
+    private ID3D11CommandList RecordConvertCommandList(ID3D11RenderTargetView rtv, int width, int height, Staging staging)
     {
         _deferred.IASetInputLayout(null); // no vertex buffers — SV_VertexID synthesizes the triangle
         _deferred.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
         _deferred.VSSetShader(_vertexShader);
         _deferred.PSSetShader(_pixelShader);
-        _deferred.PSSetShaderResources(0, new[] { _srvY, _srvUV });
+        _deferred.PSSetShaderResources(0, new[] { staging.Luma, staging.Chroma });
         _deferred.PSSetSampler(0, _sampler);
         _deferred.PSSetConstantBuffer(0, _levels);
         _deferred.RSSetState(_rasterizer);
-        _deferred.RSSetViewport(new Viewport(0, 0, Output.Width, Output.Height, 0.0f, 1.0f));
+        _deferred.RSSetViewport(new Viewport(0, 0, width, height, 0.0f, 1.0f));
         _deferred.OMSetRenderTargets(rtv, null);
         _deferred.Draw(3, 0);
         // restoreDeferredContextState: false — each command list sets all of its own state,
@@ -781,7 +978,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
     private bool EnsureDecodeBridge(ID3D11Texture2D nv12)
     {
         var devicePtr = nv12.Device.NativePointer;
-        if (devicePtr == _boundDecodeDevicePointer && _decodeSideNv12 is not null)
+        if (_bridge is { } bound && bound.DevicePointer == devicePtr)
             return true;
 
         try
@@ -790,7 +987,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             _logger.LogInformation(
                 "Converter rebound its decode bridge to device 0x{Dev:X} (warm-sink player swap, ADR-0064); "
                     + "ring + compositor imports kept warm, no converter rebuild.",
-                _boundDecodeDevicePointer
+                SourceDevicePointer
             );
             return true;
         }
@@ -802,42 +999,73 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
                     + "to a full converter rebuild on the new device.",
                 devicePtr
             );
-            ReleaseDecodeBridge();
+            DropDecodeBridge();
             return false;
         }
     }
 
     /// <summary>
-    /// Releases the current decode-side bridge and opens a fresh one on <paramref name="decodeDevice"/>:
-    /// independent QI'd references to the device + its <c>ID3D11Multithread</c>-protected immediate
-    /// context, and <see cref="_sampleNv12"/> opened by its global shared handle (the per-frame copy
-    /// destination) plus that handle's decode-side keyed mutex.
+    /// Releases the current decode-side bridge and opens a fresh one on <paramref name="decodeDevice"/>
+    /// for the current staging texture.
     /// </summary>
     private void RebindDecodeBridge(ID3D11Device decodeDevice)
     {
-        ReleaseDecodeBridge();
+        DropDecodeBridge();
+        _bridge = OpenDecodeBridge(decodeDevice, _staging.SharedHandle);
+    }
 
+    /// <summary>
+    /// Opens the staging texture with <paramref name="stagingHandle"/> on <paramref name="decodeDevice"/>:
+    /// independent QI'd references to the device + its <c>ID3D11Multithread</c>-protected immediate
+    /// context, and the staging texture opened by its global shared handle (the per-frame copy
+    /// destination) plus that handle's decode-side keyed mutex. Releases what it opened if a step fails.
+    /// </summary>
+    private DecodeBridge OpenDecodeBridge(ID3D11Device decodeDevice, nint stagingHandle)
+    {
         // Independent references we own and release ourselves. The decode-device wrapper handed
         // in is FFmpeg's (cached on the frame texture); QI gives us a ref whose lifetime we
         // control, which also pins the device so SourceDevicePointer stays reuse-safe while bound.
-        _decodeDevice = decodeDevice.QueryInterface<ID3D11Device>();
-        _decodeContext = _decodeDevice.ImmediateContext.QueryInterface<ID3D11DeviceContext>();
-        _decodeSideNv12 = _decodeDevice.OpenSharedResource<ID3D11Texture2D>(_sampleSharedHandle);
-        _decodeSideMutex = _decodeSideNv12.QueryInterface<IDXGIKeyedMutex>();
-        _boundDecodeDevicePointer = _decodeDevice.NativePointer;
+        ID3D11Device? device = null;
+        ID3D11DeviceContext? context = null;
+        ID3D11Texture2D? nv12 = null;
+        try
+        {
+            device = decodeDevice.QueryInterface<ID3D11Device>();
+            context = device.ImmediateContext.QueryInterface<ID3D11DeviceContext>();
+            nv12 = device.OpenSharedResource<ID3D11Texture2D>(stagingHandle);
+            return new DecodeBridge
+            {
+                Device = device,
+                Context = context,
+                Nv12 = nv12,
+                Mutex = nv12.QueryInterface<IDXGIKeyedMutex>(),
+                DevicePointer = device.NativePointer,
+            };
+        }
+        catch
+        {
+            Release(() => nv12?.Dispose());
+            Release(() => context?.Dispose());
+            Release(() => device?.Dispose());
+            throw;
+        }
     }
 
-    private void ReleaseDecodeBridge()
+    private void DropDecodeBridge()
     {
-        Release(() => _decodeSideMutex?.Dispose());
-        Release(() => _decodeSideNv12?.Dispose());
-        Release(() => _decodeContext?.Dispose());
-        Release(() => _decodeDevice?.Dispose());
-        _decodeSideMutex = null;
-        _decodeSideNv12 = null;
-        _decodeContext = null;
-        _decodeDevice = null;
-        _boundDecodeDevicePointer = nint.Zero;
+        var bridge = _bridge;
+        _bridge = null;
+        ReleaseDecodeBridge(bridge);
+    }
+
+    private void ReleaseDecodeBridge(DecodeBridge? bridge)
+    {
+        if (bridge is null)
+            return;
+        Release(() => bridge.Mutex.Dispose());
+        Release(() => bridge.Nv12.Dispose());
+        Release(() => bridge.Context.Dispose());
+        Release(() => bridge.Device.Dispose());
     }
 
     /// <summary>
@@ -877,9 +1105,11 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
         if (!EnsureDecodeBridge(nv12))
             return false;
 
-        var decodeContext = _decodeContext!;
-        var decodeSideNv12 = _decodeSideNv12!;
-        var decodeSideMutex = _decodeSideMutex!;
+        var bridge = _bridge!;
+        var decodeContext = bridge.Context;
+        var decodeSideNv12 = bridge.Nv12;
+        var decodeSideMutex = bridge.Mutex;
+        var sampleMutex = _staging.Mutex;
 
         var decodeAcquired = false;
         var sampleAcquired = false;
@@ -906,7 +1136,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             // pass into its RTV, then hand the ring buffer to the compositor (release key 1) and
             // re-arm the staging texture. restoreContextState: true isolates the own immediate
             // context's 3D pipeline state around the execute.
-            _sampleMutex.AcquireSync(StagingKey, 1000);
+            sampleMutex.AcquireSync(StagingKey, 1000);
             sampleAcquired = true;
             buf.KeyedMutex.AcquireSync(0, 1000);
             ringAcquired = true;
@@ -918,7 +1148,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             FrameCopyMetrics.Record(FrameCopySite.PresenterGpuConvert);
             buf.KeyedMutex.ReleaseSync(1);
             ringAcquired = false;
-            _sampleMutex.ReleaseSync(StagingKey);
+            sampleMutex.ReleaseSync(StagingKey);
             sampleAcquired = false;
         }
         catch (Exception ex) when (D3D11DeviceLoss.IsDeviceLost(ex))
@@ -946,7 +1176,7 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
             if (ringAcquired)
                 TryReleaseMutex(buf.KeyedMutex, 0); // aborted draw: re-arm for the next producer
             if (sampleAcquired)
-                TryReleaseMutex(_sampleMutex, StagingKey); // re-arm staging for the next frame
+                TryReleaseMutex(sampleMutex, StagingKey); // re-arm staging for the next frame
             if (decodeAcquired)
                 TryReleaseMutex(decodeSideMutex, StagingKey); // re-arm staging for the next frame
         }
@@ -1065,16 +1295,13 @@ internal sealed class D3D11Nv12SharedConverter : IDisposable
 
         // Decode-side bridge first — references to the decode device (FFmpeg's), released while
         // the decoder still backs the device so this is not its final release.
-        ReleaseDecodeBridge();
+        DropDecodeBridge();
 
         // The video processor's objects, then the rest we created on the own device.
         ReleaseVideoProcessor();
-        ReleaseRing();
-        Release(() => _srvUV.Dispose());
-        Release(() => _srvY.Dispose());
+        ReleaseRing(_buffers);
+        ReleaseStaging(_staging);
         Release(() => _levels.Dispose());
-        Release(() => _sampleMutex.Dispose());
-        Release(() => _sampleNv12.Dispose());
         Release(() => _rasterizer.Dispose());
         Release(() => _sampler.Dispose());
         Release(() => _pixelShader.Dispose());

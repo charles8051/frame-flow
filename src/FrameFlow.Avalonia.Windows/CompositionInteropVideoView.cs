@@ -706,11 +706,12 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         /// </summary>
         RebindDecodeDevice = 2,
         /// <summary>
-        /// The incoming frame's dimensions differ from the cached converter's. The ring + staging
-        /// textures are sized at construction, so a resolution change <b>cannot</b> be an in-place
-        /// rebind (the per-frame copy Box and the BGRA ring would be the wrong size) — the converter
-        /// must be dropped and rebuilt at the new size. Takes priority over a device change, since a
-        /// mixed-resolution playlist swap changes both at once.
+        /// The incoming frame's dimensions differ from the cached converter's, and the converter
+        /// cannot be resized: it is in the video processor mode, or the sample format changed too.
+        /// The ring + staging textures are sized by the frame, so a resolution change <b>cannot</b>
+        /// be an in-place rebind (the per-frame copy Box and the BGRA ring would be the wrong size).
+        /// Takes priority over a device change, since a mixed-resolution playlist swap changes both
+        /// at once.
         /// </summary>
         RebuildForResolutionChange = 3,
         /// <summary>
@@ -719,14 +720,23 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         /// are built for one format, so the converter is rebuilt. Takes priority over a device change.
         /// </summary>
         RebuildForFormatChange = 4,
+        /// <summary>
+        /// The incoming frame's dimensions differ from the cached converter's, in the same sample
+        /// format, and the converter is in the shader mode. It replaces its staging texture, ring and
+        /// decode bridge at the new size and keeps its device and shader pipeline. A device change
+        /// at the same boundary is covered, since the new bridge opens on the frame's device.
+        /// </summary>
+        ResizeInPlace = 5,
     }
 
     /// <summary>
     /// Pure decision for how to handle the cached zero-copy converter for an incoming frame
-    /// (ADR-0064): reuse it, rebuild it after device-loss, rebuild it on a resolution change, or
-    /// rebind its decode bridge after a same-size warm-sink player swap. Priority is device-loss,
-    /// then resolution change (must rebuild — the ring/staging are fixed-size), then a same-size
-    /// device change (rebind in place). A <paramref name="frameDevice"/> of <see cref="nint.Zero"/>
+    /// (ADR-0064): reuse it, rebuild it after device-loss, resize or rebuild it on a resolution
+    /// change, or rebind its decode bridge after a same-size warm-sink player swap. Priority is
+    /// device-loss, then resolution change (the ring/staging are sized by the frame, so a rebind
+    /// cannot serve it), then a same-size device change (rebind in place). A resolution change
+    /// resizes in place when <paramref name="cachedResizable"/> and the format is unchanged, and
+    /// rebuilds otherwise. A <paramref name="frameDevice"/> of <see cref="nint.Zero"/>
     /// means the frame's device identity is unknown (chain unavailable) and is never treated as a
     /// mismatch — reuse rather than thrash on missing telemetry. A format change rebuilds after a
     /// resolution change; a null format, as the D3D12 converter passes since it reads the format
@@ -736,19 +746,25 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     internal static ConverterAction EvaluateConverterAction(
         bool hasCached, nint cachedDevice, bool cachedDeviceLost, nint frameDevice,
         int cachedWidth, int cachedHeight, int frameWidth, int frameHeight,
-        FrameFlow.Media.PixelFormat? cachedFormat = null, FrameFlow.Media.PixelFormat? frameFormat = null)
+        FrameFlow.Media.PixelFormat? cachedFormat = null, FrameFlow.Media.PixelFormat? frameFormat = null,
+        bool cachedResizable = false)
     {
         if (!hasCached)
             return ConverterAction.Reuse;
         if (cachedDeviceLost)
             return ConverterAction.RebuildForDeviceLoss;
-        // A resolution change forces a rebuild regardless of device: the converter's ring + staging
-        // textures and the per-frame copy Box are sized at construction and a rebind cannot resize
-        // them. Checked before the device change so a mixed-resolution swap (new device AND new size)
-        // rebuilds rather than rebinding onto a wrong-sized ring.
+        bool formatChanged = cachedFormat is { } built && frameFormat is { } arriving && built != arriving;
+        // A resolution change cannot be served by a rebind, whatever the device: the converter's ring
+        // + staging textures and the per-frame copy Box are sized by the frame. Checked before the
+        // device change so a mixed-resolution swap (new device AND new size) resizes or rebuilds
+        // rather than rebinding onto a wrong-sized ring.
         if (frameWidth != cachedWidth || frameHeight != cachedHeight)
-            return ConverterAction.RebuildForResolutionChange;
-        if (cachedFormat is { } built && frameFormat is { } arriving && built != arriving)
+        {
+            return cachedResizable && !formatChanged
+                ? ConverterAction.ResizeInPlace
+                : ConverterAction.RebuildForResolutionChange;
+        }
+        if (formatChanged)
             return ConverterAction.RebuildForFormatChange;
         if (frameDevice != nint.Zero && cachedDevice != frameDevice)
             return ConverterAction.RebindDecodeDevice;
@@ -898,7 +914,12 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                 //       do we fall back to the full rebuild that
                 //       predates ADR-0064. device == 0 means "identity
                 //       unknown" (chain unavailable) — never treat that as a mismatch. A resolution
-                //       change always rebuilds (the ring/staging are fixed-size — a rebind can't resize).
+                //       change resizes the shader-mode converter in place, keeping its device and
+                //       shader pipeline, and rebuilds it otherwise (a rebind can't resize).
+                //
+                //       Not while driver super resolution is on: there the output is chosen per frame
+                //       (#560), and a rebuild picks it at once, where a resize would build the shader's
+                //       ring only for the output settle to replace it.
                 switch (EvaluateConverterAction(
                     hasCached: _gpuConverter is not null,
                     cachedDevice: _gpuConverter?.SourceDevicePointer ?? nint.Zero,
@@ -909,13 +930,17 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                     frameWidth: frame.Width,
                     frameHeight: frame.Height,
                     cachedFormat: _gpuConverter?.InputFormat,
-                    frameFormat: frame.Format))
+                    frameFormat: frame.Format,
+                    cachedResizable: _gpuConverter is { Output.SuperResolution: false } && !_driverSuperResolution))
                 {
                     case ConverterAction.RebuildForDeviceLoss:
                         DropGpuConverter(GpuConverterDropReason.DeviceLost);
                         break;
                     case ConverterAction.RebuildForResolutionChange:
                         DropGpuConverter(GpuConverterDropReason.ResolutionChange);
+                        break;
+                    case ConverterAction.ResizeInPlace:
+                        ResizeGpuConverter(frame, texture);
                         break;
                     case ConverterAction.RebuildForFormatChange:
                         DropGpuConverter(GpuConverterDropReason.FormatChange);
@@ -1707,6 +1732,29 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             Task.Run(conv.Dispose);
         if (d3d12 is not null)
             Task.Run(d3d12.Dispose);
+    }
+
+    /// <summary>
+    /// Resizes the D3D11 converter in place for a frame of another size, and rebuilds it when it
+    /// cannot be resized. Either way its ring is new, so the old ring's imports are detached and the
+    /// replaced parts are disposed off the UI thread, as a dropped converter is.
+    /// </summary>
+    private void ResizeGpuConverter(IVideoFrame frame, nint texture)
+    {
+        // CA2000 is a false positive: the replaced parts are disposed on the thread pool below.
+#pragma warning disable CA2000
+        if (_gpuConverter!.TryResize(texture, frame.Width, frame.Height) is not { } retired)
+#pragma warning restore CA2000
+        {
+            DropGpuConverter(GpuConverterDropReason.ResolutionChange);
+            return;
+        }
+
+        PresenterTeardownMetrics.RecordResolutionChangeResize();
+        DetachImported();
+        _nextBuffer = 0;
+        _activeIsGpu = null;
+        Task.Run(retired.Dispose);
     }
 
     /// <summary>Drops the CPU uploader and its imported ring after a device-loss; a fresh

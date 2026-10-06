@@ -107,9 +107,19 @@ public static class PresenterTeardownMetrics
         "frameflow.presenter.device_resolution_rebuilds",
         unit: "{rebuild}",
         description: "Times the presenter rebuilt the GPU converter because an incoming frame's dimensions "
-            + "differed from the cached converter's (a mixed-resolution playlist item boundary). The converter's "
-            + "ring + staging textures are sized at construction, so a resolution change requires a rebuild, not an "
-            + "in-place decode-bridge rebind — distinct from device_change_rebinds (same-size warm swap)."
+            + "differed from the cached converter's (a mixed-resolution playlist item boundary) and the converter "
+            + "could not be resized in place: the video processor mode, a sample-format change at the same "
+            + "boundary, or a failed resize. Distinct from resolution_resizes and from device_change_rebinds "
+            + "(same-size warm swap)."
+    );
+
+    private static readonly Counter<long> ResolutionChangeResizes = Meter.CreateCounter<long>(
+        "frameflow.presenter.resolution_resizes",
+        unit: "{resize}",
+        description: "Times the presenter resized the GPU converter in place because an incoming frame's "
+            + "dimensions differed from the cached converter's. The staging texture, ring and decode bridge were "
+            + "replaced; the converter's device and shader pipeline were kept, so no device was created and no "
+            + "shader compiled. The ring is new, so it was imported into the compositor again."
     );
 
     private static readonly Counter<long> Stalls = Meter.CreateCounter<long>(
@@ -182,11 +192,17 @@ public static class PresenterTeardownMetrics
 
     /// <summary>
     /// Records a converter rebuild forced by an incoming frame whose dimensions differ from the
-    /// cached converter's — a mixed-resolution playlist swap (increments
-    /// <c>device_resolution_rebuilds</c>). The ring + staging textures are fixed-size, so a
-    /// resolution change cannot be a rebind; it must rebuild. Distinct from a warm same-size swap.
+    /// cached converter's — a mixed-resolution playlist swap the converter could not be resized for
+    /// (increments <c>device_resolution_rebuilds</c>). Distinct from a warm same-size swap.
     /// </summary>
     public static void RecordResolutionChangeRebuild() => ResolutionChangeRebuilds.Add(1);
+
+    /// <summary>
+    /// Records a converter resized in place for an incoming frame of another size (increments
+    /// <c>resolution_resizes</c>): new staging texture, ring and decode bridge, same device and shader
+    /// pipeline.
+    /// </summary>
+    public static void RecordResolutionChangeResize() => ResolutionChangeResizes.Add(1);
 
     /// <summary>
     /// Records a detected present-stall (increments <c>stalls</c>) — the presenter frozen in a hung

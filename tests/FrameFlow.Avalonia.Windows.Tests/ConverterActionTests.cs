@@ -8,8 +8,8 @@ namespace FrameFlow.Avalonia.Windows.Tests;
 /// <summary>
 /// Unit tests for the pure converter-action decision (ADR-0064): given the cached
 /// zero-copy converter's bound decode device + dimensions and an incoming frame's decode-device
-/// identity + dimensions, decide whether to reuse it, rebuild it after device-loss, rebuild it on a
-/// resolution change, or <b>rebind its decode bridge in place</b> after a same-size warm-sink player
+/// identity + dimensions, decide whether to reuse it, rebuild it after device-loss, resize or rebuild
+/// it on a resolution change, or <b>rebind its decode bridge in place</b> after a same-size warm-sink player
 /// swap. Since ADR-0064 Decision 2 the converter owns its own device, so a same-size swap rebinds
 /// (ring + compositor imports stay warm) instead of rebuilding — the change that makes a video→video
 /// transition over a warm presenter gapless. The GPU mechanics of the rebind require a real D3D11
@@ -89,8 +89,9 @@ public sealed class ConverterActionTests
     [Fact]
     public void SameDevice_ResolutionChange_Rebuilds()
     {
-        // The fixed-size ring + staging textures and the per-frame copy Box cannot be resized by an
-        // in-place rebind, so a resolution change must rebuild — even on the same decode device.
+        // The ring + staging textures and the per-frame copy Box cannot be resized by an in-place
+        // rebind, so a converter that cannot be resized (the video processor mode) rebuilds on a
+        // resolution change — even on the same decode device.
         // (Pre-fix this same-size assumption was silently violated; the rebind path made it worse for
         // a different-device swap. The decision now catches both.)
         var r = CompositionInteropVideoView.EvaluateConverterAction(
@@ -184,6 +185,114 @@ public sealed class ConverterActionTests
     }
 
     [Fact]
+    public void AResolutionChange_ResizesInPlace_WhenTheConverterCanBeResized()
+    {
+        // The shader-mode converter keeps its device and shader pipeline across a size change and
+        // replaces its staging texture, ring and bridge. The new bridge opens on the frame's device,
+        // so a boundary that changes the device as well resizes too.
+        var sameDevice = CompositionInteropVideoView.EvaluateConverterAction(
+            hasCached: true, cachedDevice: DevA, cachedDeviceLost: false, frameDevice: DevA,
+            cachedWidth: W, cachedHeight: H, frameWidth: 1280, frameHeight: 720,
+            cachedResizable: true);
+        var newDevice = CompositionInteropVideoView.EvaluateConverterAction(
+            hasCached: true, cachedDevice: DevA, cachedDeviceLost: false, frameDevice: DevB,
+            cachedWidth: W, cachedHeight: H, frameWidth: 1280, frameHeight: 720,
+            cachedResizable: true);
+
+        Assert.Equal(CompositionInteropVideoView.ConverterAction.ResizeInPlace, sameDevice);
+        Assert.Equal(CompositionInteropVideoView.ConverterAction.ResizeInPlace, newDevice);
+    }
+
+    [Fact]
+    public void AResolutionAndFormatChange_Rebuilds_EvenWhenTheConverterCanBeResized()
+    {
+        // A resize keeps the plane views' formats and the levels buffer, which are built for one
+        // sample format (#559).
+        var r = CompositionInteropVideoView.EvaluateConverterAction(
+            hasCached: true, cachedDevice: DevA, cachedDeviceLost: false, frameDevice: DevB,
+            cachedWidth: W, cachedHeight: H, frameWidth: 1280, frameHeight: 720,
+            cachedFormat: PixelFormat.Nv12, frameFormat: PixelFormat.P010,
+            cachedResizable: true);
+        Assert.Equal(CompositionInteropVideoView.ConverterAction.RebuildForResolutionChange, r);
+    }
+
+    [Fact]
+    public void ALostDevice_IsRebuilt_EvenWhenTheConverterCouldBeResized()
+    {
+        var r = CompositionInteropVideoView.EvaluateConverterAction(
+            hasCached: true, cachedDevice: DevA, cachedDeviceLost: true, frameDevice: DevA,
+            cachedWidth: W, cachedHeight: H, frameWidth: 1280, frameHeight: 720,
+            cachedResizable: true);
+        Assert.Equal(CompositionInteropVideoView.ConverterAction.RebuildForDeviceLoss, r);
+    }
+
+    [Fact]
+    public void ASameSizeFrame_IsNeverResized()
+    {
+        var sameDevice = CompositionInteropVideoView.EvaluateConverterAction(
+            hasCached: true, cachedDevice: DevA, cachedDeviceLost: false, frameDevice: DevA,
+            cachedWidth: W, cachedHeight: H, frameWidth: W, frameHeight: H,
+            cachedResizable: true);
+        var newDevice = CompositionInteropVideoView.EvaluateConverterAction(
+            hasCached: true, cachedDevice: DevA, cachedDeviceLost: false, frameDevice: DevB,
+            cachedWidth: W, cachedHeight: H, frameWidth: W, frameHeight: H,
+            cachedResizable: true);
+
+        Assert.Equal(CompositionInteropVideoView.ConverterAction.Reuse, sameDevice);
+        Assert.Equal(CompositionInteropVideoView.ConverterAction.RebindDecodeDevice, newDevice);
+    }
+
+    [Fact]
+    public void MixedResolutionPlaylist_ResizesAtEachSizeChange_NeverRebuilds()
+    {
+        // A warm presenter playing items of two sizes, each item on its own decode device. Modelled
+        // as the converter behaves: a resize moves it to the frame's size and device, a rebind to
+        // the frame's device. Every boundary that changes size resizes, every one that keeps it
+        // rebinds, and nothing is rebuilt.
+        var frames = new (nint Device, int Width, int Height)[]
+        {
+            (DevA, W, H), (DevA, W, H),
+            (DevB, 1280, 720), (DevB, 1280, 720),
+            (DevC, 1280, 720),
+            (DevA, W, H),
+        };
+
+        var hasConverter = false;
+        (nint Device, int Width, int Height) bound = default;
+        var resizes = 0;
+        var rebinds = 0;
+        var rebuilds = 0;
+
+        foreach (var frame in frames)
+        {
+            switch (CompositionInteropVideoView.EvaluateConverterAction(
+                hasCached: hasConverter, cachedDevice: bound.Device, cachedDeviceLost: false,
+                frameDevice: frame.Device, cachedWidth: bound.Width, cachedHeight: bound.Height,
+                frameWidth: frame.Width, frameHeight: frame.Height, cachedResizable: true))
+            {
+                case CompositionInteropVideoView.ConverterAction.Reuse:
+                    break;
+                case CompositionInteropVideoView.ConverterAction.ResizeInPlace:
+                    resizes++;
+                    break;
+                case CompositionInteropVideoView.ConverterAction.RebindDecodeDevice:
+                    rebinds++;
+                    break;
+                default:
+                    rebuilds++;
+                    break;
+            }
+
+            hasConverter = true;
+            bound = frame;
+        }
+
+        Assert.Equal(2, resizes); // DevA->DevB at 1280x720, and DevC->DevA back at 1920x1080
+        Assert.Equal(1, rebinds); // DevB->DevC at one size
+        Assert.Equal(0, rebuilds);
+    }
+
+    [Fact]
     public void AnUntrackedFormat_IsNeverAChange()
     {
         // The D3D12 converter reads the format per frame and passes none.
@@ -239,6 +348,18 @@ public sealed class ConverterActionTests
             "frameflow.presenter.device_resolution_rebuilds");
 
         Assert.Equal(1, captured["frameflow.presenter.device_resolution_rebuilds"]);
+    }
+
+    [Fact]
+    public void ResolutionChangeResize_RecordsTheResizeCounter_NotTheRebuildCounter()
+    {
+        var captured = CaptureMeter(
+            PresenterTeardownMetrics.RecordResolutionChangeResize,
+            "frameflow.presenter.resolution_resizes",
+            "frameflow.presenter.device_resolution_rebuilds");
+
+        Assert.Equal(1, captured["frameflow.presenter.resolution_resizes"]);
+        Assert.Equal(0, captured["frameflow.presenter.device_resolution_rebuilds"]);
     }
 
     /// <summary>

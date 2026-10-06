@@ -8,6 +8,14 @@
 > `HardwareDevice`, for inference that reads decoded textures in place. The presenter keeps
 > Decision 2's own device.
 
+> **Amended 2026-10-06: a mixed-resolution swap resizes in place.** In the shader mode the
+> converter replaces only the parts the frame's size fixes, which are the staging texture, the
+> ring and the decode bridge, and keeps its device and shader pipeline
+> (`D3D11Nv12SharedConverter.TryResize`, `ConverterAction.ResizeInPlace`, counted by
+> `frameflow.presenter.resolution_resizes`). The ring is new, so it is still imported again. The
+> video processor mode, and a swap that also changes the sample format, still rebuild as the
+> paragraph on mixed-resolution swaps below describes.
+
 ## Status
 
 Accepted. Decision 1 (interim) **implemented** (2026-06-16). Decision 2 (durable —
