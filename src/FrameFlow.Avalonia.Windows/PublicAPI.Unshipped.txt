@@ -63,6 +63,7 @@ static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordDev
 static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordDeviceLostRebuild() -> void
 static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordReaperCompleted() -> void
 static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordResolutionChangeRebuild() -> void
+static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordResolutionChangeResize() -> void
 static FrameFlow.Avalonia.Windows.Diagnostics.PresenterTeardownMetrics.RecordStall() -> void
 static FrameFlow.Avalonia.Windows.PresentPlanner.Advance(in FrameFlow.Avalonia.Windows.PresentState state, in FrameFlow.Avalonia.Windows.FrameDescriptor frame, System.Func<int, bool>! slotFree) -> FrameFlow.Avalonia.Windows.PresentPlan
 static FrameFlow.Avalonia.Windows.PresentState.Initial(int ringSize) -> FrameFlow.Avalonia.Windows.PresentState
