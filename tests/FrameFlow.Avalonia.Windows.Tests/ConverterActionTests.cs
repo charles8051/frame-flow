@@ -293,6 +293,19 @@ public sealed class ConverterActionTests
     }
 
     [Fact]
+    public void AResizeThatLostTheDevice_IsDroppedAsADeviceLoss()
+    {
+        // TryResize marks the converter lost when its allocation fails on device loss. That drop
+        // belongs to the device-loss log line and counter, not the resolution-change ones.
+        Assert.Equal(
+            CompositionInteropVideoView.GpuConverterDropReason.DeviceLost,
+            CompositionInteropVideoView.ResizeFallbackReason(converterDeviceLost: true));
+        Assert.Equal(
+            CompositionInteropVideoView.GpuConverterDropReason.ResolutionChange,
+            CompositionInteropVideoView.ResizeFallbackReason(converterDeviceLost: false));
+    }
+
+    [Fact]
     public void AnUntrackedFormat_IsNeverAChange()
     {
         // The D3D12 converter reads the format per frame and passes none.

@@ -1635,7 +1635,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     }
 
     /// <summary>Why the cached GPU converter is being dropped + rebuilt (ADR-0064).</summary>
-    private enum GpuConverterDropReason
+    internal enum GpuConverterDropReason
     {
         /// <summary>Device-loss (TDR / DEVICE_REMOVED) was observed on it (step 6 guard).</summary>
         DeviceLost,
@@ -1746,7 +1746,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         if (_gpuConverter!.TryResize(texture, frame.Width, frame.Height) is not { } retired)
 #pragma warning restore CA2000
         {
-            DropGpuConverter(GpuConverterDropReason.ResolutionChange);
+            DropGpuConverter(ResizeFallbackReason(_gpuConverter.IsDeviceLost));
             return;
         }
 
@@ -1756,6 +1756,14 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         _activeIsGpu = null;
         Task.Run(retired.Dispose);
     }
+
+    /// <summary>
+    /// Why a converter that could not be resized is dropped. A resize that failed on device loss
+    /// has marked the converter lost, and that drop is a device-loss rebuild, logged and counted as
+    /// one; any other failure is a resolution-change rebuild.
+    /// </summary>
+    internal static GpuConverterDropReason ResizeFallbackReason(bool converterDeviceLost) =>
+        converterDeviceLost ? GpuConverterDropReason.DeviceLost : GpuConverterDropReason.ResolutionChange;
 
     /// <summary>Drops the CPU uploader and its imported ring after a device-loss; a fresh
     /// uploader is built on the next frame (step 6).</summary>
