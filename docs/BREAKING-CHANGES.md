@@ -11,7 +11,7 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
-## Unreleased — since `v0.14.0`
+## `v0.15.0` — since `v0.14.0`
 
 ### 1. `FrameMemoryDomains` names each GPU API, and `Gpu` is their union
 
@@ -42,6 +42,22 @@ until it declares the GPU domains it reads.
 `(domains & FrameMemoryDomains.Gpu) != 0`. A sink or node that reads GPU frames names the APIs it
 reads rather than `Any`. A custom `IDeviceImageToTensor` implements `AcceptedDomains` with the
 domains its `CanWrite` accepts.
+
+### 2. `device_resolution_rebuilds` counts only the converter rebuilds a resize could not avoid
+
+**Not a compile error.** A metric's meaning narrowed.
+
+`CompositionInteropVideoView` rebuilt its D3D11 converter whenever a frame arrived at another size,
+and `frameflow.presenter.device_resolution_rebuilds` counted each one. In the shader mode the
+converter now resizes in place, keeping its device and shader pipeline (#571), and that is counted
+by the new `frameflow.presenter.resolution_resizes`. `device_resolution_rebuilds` now counts only
+the size changes that still rebuild: the driver super-resolution mode, a size change that also
+changes the sample format, and a resize that failed.
+
+**Who hits this.** A dashboard or alert that reads `device_resolution_rebuilds` as "how often the
+video size changed". On a mixed-resolution playlist it drops to near zero.
+
+**What to write instead.** Count size changes as `resolution_resizes + device_resolution_rebuilds`.
 
 ## `v0.14.0` — since `v0.13.0`
 
