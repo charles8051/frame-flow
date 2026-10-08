@@ -166,8 +166,15 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// The backend the decoder opened on, or null when it opened for software decode. Unlike
     /// <see cref="HardwareBackend"/>, it does not follow a renegotiation to software.
     /// </summary>
-    internal HardwareDecodeBackendKind? BoundBackend =>
-        _boundBackend == NoHardwareBackend ? null : (HardwareDecodeBackendKind)_boundBackend;
+    internal HardwareDecodeBackendKind? BoundBackend => BackendOf(_boundBackend);
+
+    /// <summary>
+    /// The backend a raw <c>_boundBackend</c> value names, or null for the software sentinel.
+    /// Takes the value as an argument so a caller reads the field once: comparing it and then
+    /// casting it is two reads, and the fallback can clear it between them (#579).
+    /// </summary>
+    internal static HardwareDecodeBackendKind? BackendOf(int raw) =>
+        raw == NoHardwareBackend ? null : (HardwareDecodeBackendKind)raw;
 
     [LoggerMessage(
         Level = LogLevel.Warning,
