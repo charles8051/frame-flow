@@ -52,7 +52,10 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     // Stall-detection state: when the most recent PresentAsync frame arrived and how long it is
     // meant to show. Used to flag a frame arriving > 500 ms after the previous one finished showing
     // as a Warning, so post-mortem log inspection can see when the sink stopped receiving frames.
-    // PresentAsync is called by one player at a time (IVideoSink), so nothing else writes it.
+    // Only PresentAsync touches it, and its calls do not overlap: a graph's sink pump awaits each
+    // one before taking the next frame, a player's pacers present through one VideoFormatAnnouncer
+    // whose semaphore serializes them even while two items overlap at a queue boundary, and
+    // IVideoSink leaves two players driving one sink at once undefined.
     private PresentGapTracker _gapTracker;
 
     /// <summary>Gets the total number of frames that reached the screen via this sink.</summary>
