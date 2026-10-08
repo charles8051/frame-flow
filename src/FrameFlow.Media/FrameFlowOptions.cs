@@ -35,7 +35,8 @@ public sealed class FrameFlowVideoOptions
     /// <summary>
     /// Hardware-decode selection policy (ADR-0033). Defaults to
     /// <see cref="HardwareDecodeMode.Auto"/> — hwaccel is attempted, with
-    /// transparent fallback to software when no backend binds.
+    /// transparent fallback to software when no backend binds, or when the one
+    /// that binds rejects the stream's first packet.
     /// </summary>
     public HardwareDecodeOptions HardwareDecode { get; set; } = new();
 }
@@ -73,8 +74,17 @@ public enum HardwareDecodeMode
 
     /// <summary>
     /// Try the configured hwaccel backends in order; fall back to the software
-    /// decoder transparently if none binds. This is the default.
+    /// decoder transparently if none binds, or if the one that binds rejects the
+    /// stream's first packet. This is the default.
     /// </summary>
+    /// <remarks>
+    /// A backend can bind and still refuse a stream: the CUDA MJPEG decoder
+    /// refused a progressive JPEG at its first packet (#572). The decoder then
+    /// reopens the stream in software and sends that packet again. A fault after
+    /// the hardware decoder has accepted a packet stands, because a software
+    /// decoder opened mid-stream starts without the reference frames the packets
+    /// after it are predicted from (ADR-0033, amendment of 2026-10-08).
+    /// </remarks>
     Auto,
 
     /// <summary>
@@ -82,7 +92,8 @@ public enum HardwareDecodeMode
     /// playback controller's <c>LoadAsync</c> returns
     /// <c>Result.Fail(ErrorCategory.InvalidOperation, ...)</c>. Use when the
     /// pipeline cannot tolerate the software path (e.g., perf-critical decode
-    /// at high resolutions).
+    /// at high resolutions). A decoder that binds and then rejects the stream's
+    /// first packet faults rather than falling back.
     /// </summary>
     Required,
 }
