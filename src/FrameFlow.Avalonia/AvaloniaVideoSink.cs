@@ -1,7 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-using System.Diagnostics;
+using FrameFlow.Avalonia.Core;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Media.Diagnostics;
@@ -45,12 +45,15 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     private readonly ILogger<AvaloniaVideoSink> _logger;
     private readonly LatestWinsFrameSlot _slot = new();
     private readonly VideoSinkTelemetry _telemetry;
+    private readonly TimeProvider _timeProvider;
+    private readonly long _createdTimestamp;
     private volatile bool _disposed;
 
-    // Stall-detection state: timestamp of the most recent PresentAsync
-    // call. Used to flag gaps > 500 ms as Warning logs so post-mortem
-    // log inspection can see when the sink stopped receiving frames.
-    private long _lastPresentTimestamp;
+    // Stall-detection state: when the most recent PresentAsync frame arrived and how long it is
+    // meant to show. Used to flag a frame arriving > 500 ms after the previous one finished showing
+    // as a Warning, so post-mortem log inspection can see when the sink stopped receiving frames.
+    // PresentAsync is called by one player at a time (IVideoSink), so nothing else writes it.
+    private PresentGapTracker _gapTracker;
 
     /// <summary>Gets the total number of frames that reached the screen via this sink.</summary>
     public int RenderedFrameCount => (int)_telemetry.PresentedCount;
@@ -156,7 +159,16 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     /// </summary>
     /// <param name="logger">Optional logger for diagnostics.</param>
     public AvaloniaVideoSink(ILogger<AvaloniaVideoSink>? logger = null)
+        : this(logger, TimeProvider.System) { }
+
+    /// <summary>
+    /// Initializes a sink that reads when frames arrive from <paramref name="timeProvider"/>, which
+    /// is what its stall detection measures.
+    /// </summary>
+    internal AvaloniaVideoSink(ILogger<AvaloniaVideoSink>? logger, TimeProvider timeProvider)
     {
+        _timeProvider = timeProvider;
+        _createdTimestamp = timeProvider.GetTimestamp();
         _telemetry = new VideoSinkTelemetry(Meters, _slot);
         _logger = logger ?? NullLogger<AvaloniaVideoSink>.Instance;
         LogSinkCreated(_logger);
@@ -185,22 +197,30 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
         // and ClockSelectVideoSink ultimately deliver here at clock cadence.
         PresentCadenceMetrics.RecordPresent();
 
-        // Stall-detection: log a Warning if the gap between consecutive
-        // PresentAsync calls exceeds 500 ms. That gap means the chain
-        // upstream of this sink stopped delivering frames — the
-        // diagnostic that pins where a video freeze actually lives.
-        var nowTicks = Stopwatch.GetTimestamp();
-        var prevTicks = Interlocked.Exchange(ref _lastPresentTimestamp, nowTicks);
-        if (prevTicks != 0)
+        // Stall-detection: log a Warning if a frame arrives more than 500 ms
+        // after the previous one finished showing. That gap means the chain
+        // upstream of this sink stopped delivering frames — the diagnostic
+        // that pins where a video freeze actually lives. The previous frame's
+        // own duration is not part of the gap: a still is one frame held for
+        // its whole dwell, and the next item's frame follows it by design (#576).
+        (_gapTracker, var gap) = _gapTracker.Observe(
+            _timeProvider.GetElapsedTime(_createdTimestamp),
+            frame.Duration
+        );
+        if (gap is { } g)
         {
-            var gapMs = (nowTicks - prevTicks) * 1000.0 / Stopwatch.Frequency;
-            if (gapMs > 500)
+            if (g.IsStall)
             {
-                LogPresentGap(_logger, gapMs, frame.Pts.TotalSeconds);
+                LogPresentGap(
+                    _logger,
+                    g.Interval.TotalMilliseconds,
+                    g.Held.TotalMilliseconds,
+                    frame.Pts.TotalSeconds
+                );
             }
             else
             {
-                LogPresentArrived(_logger, gapMs, frame.Pts.TotalSeconds);
+                LogPresentArrived(_logger, g.Interval.TotalMilliseconds, frame.Pts.TotalSeconds);
             }
         }
 
@@ -336,9 +356,14 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
 
     [LoggerMessage(
         Level = LogLevel.Warning,
-        Message = "AvaloniaVideoSink PRESENT GAP {GapMs:F0}ms (this frame pts={PtsSec:F3}s) — upstream stopped delivering frames"
+        Message = "AvaloniaVideoSink PRESENT GAP {GapMs:F0}ms after a frame meant to show for {HeldMs:F0}ms (this frame pts={PtsSec:F3}s) — upstream stopped delivering frames"
     )]
-    private static partial void LogPresentGap(ILogger logger, double gapMs, double ptsSec);
+    private static partial void LogPresentGap(
+        ILogger logger,
+        double gapMs,
+        double heldMs,
+        double ptsSec
+    );
 
     [LoggerMessage(
         Level = LogLevel.Debug,
