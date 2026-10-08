@@ -304,10 +304,12 @@ in this is specific to MJPEG or CUDA: any backend that refuses the first packet 
 
 Three cases keep the fault:
 
-- **A later packet.** The fallback is spent once the hardware decoder accepts a packet. A software
-  decoder opened mid-stream starts without the reference frames the following packets are predicted
-  from, so it would show a corrupt picture until the next keyframe, or fail in turn. The item
-  fails as it did before.
+- **A later packet.** The fallback is spent once the hardware decoder accepts a packet: the
+  prepared software context is released there, whatever the codec, and the item fails as it did
+  before. For an inter-coded stream, a software decoder opened mid-stream would start without the
+  reference frames the following packets are predicted from, and show a corrupt picture until the
+  next keyframe. An intra-only codec such as MJPEG would not have that problem, but the rule does
+  not distinguish them.
 - **A refusal at receive.** The trigger is the send. A hardware decoder that accepts the first
   packet and then fails to return its frame has already spent the fallback.
 - **`Required`.** It promises a hardware decoder, and a software one would break that without

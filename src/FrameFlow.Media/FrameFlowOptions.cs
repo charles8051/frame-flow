@@ -81,9 +81,10 @@ public enum HardwareDecodeMode
     /// A backend can bind and still refuse a stream: the CUDA MJPEG decoder
     /// refused a progressive JPEG at its first packet (#572). The decoder then
     /// reopens the stream in software and sends that packet again. A fault after
-    /// the hardware decoder has accepted a packet stands, because a software
-    /// decoder opened mid-stream starts without the reference frames the packets
-    /// after it are predicted from (ADR-0033, amendment of 2026-10-08).
+    /// the hardware decoder has accepted a packet stands, for every codec: in an
+    /// inter-coded stream, a software decoder opened there would start without
+    /// the reference frames the packets after it are predicted from (ADR-0033,
+    /// amendment of 2026-10-08).
     /// </remarks>
     Auto,
 
