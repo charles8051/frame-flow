@@ -26,9 +26,11 @@ public sealed partial class VideoDecoder
     /// <summary>
     /// The backend that <c>Open</c> bound, kept so engagement can be restored if
     /// FFmpeg renegotiates back onto it. Written at open, and cleared under <c>_codecSync</c>
-    /// if an Auto decoder falls back to software on its first packet (#572).
+    /// if an Auto decoder falls back to software on its first packet (#572). Read by the graph
+    /// thread through <see cref="BoundBackend"/> while the decode worker can clear it, so it is
+    /// <see langword="volatile"/> and read once.
     /// </summary>
-    private int _boundBackend = NoHardwareBackend;
+    private volatile int _boundBackend = NoHardwareBackend;
 
     /// <summary>
     /// The backend currently producing frames, as an <see cref="int"/> so it can be
