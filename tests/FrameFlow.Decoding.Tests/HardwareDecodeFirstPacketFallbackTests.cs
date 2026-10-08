@@ -25,7 +25,7 @@ public sealed class HardwareDecodeFirstPacketFallbackTests(FfmpegBootstrapFixtur
         await using var decoder = OpenOnCuda(demux, HardwareDecodeMode.Auto);
         Assert.Equal(HardwareDecodeBackendKind.Cuda, decoder.BoundBackend);
 
-        var frames = await DecodeAllAsync(demux, decoder);
+        using var frames = await DecodeAllAsync(demux, decoder);
 
         Assert.Single(frames);
         Assert.IsNotType<GpuVideoFrame>(frames[0]);
@@ -42,9 +42,10 @@ public sealed class HardwareDecodeFirstPacketFallbackTests(FfmpegBootstrapFixtur
         await using var demux = await OpenAsync(file.Path);
         await using var decoder = OpenOnCuda(demux, HardwareDecodeMode.Required);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            DecodeAllAsync(demux, decoder)
-        );
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            using var frames = await DecodeAllAsync(demux, decoder);
+        });
 
         Assert.Contains("avcodec_send_packet", ex.Message);
     }
@@ -56,7 +57,7 @@ public sealed class HardwareDecodeFirstPacketFallbackTests(FfmpegBootstrapFixtur
         await using var demux = await OpenAsync(file.Path);
         await using var decoder = OpenOnCuda(demux, HardwareDecodeMode.Auto);
 
-        var frames = await DecodeAllAsync(demux, decoder);
+        using var frames = await DecodeAllAsync(demux, decoder);
 
         Assert.Single(frames);
         Assert.Equal(HardwareDecodeBackendKind.Cuda, decoder.HardwareBackend);
@@ -80,7 +81,7 @@ public sealed class HardwareDecodeFirstPacketFallbackTests(FfmpegBootstrapFixtur
         (DemuxSession)await new DemuxSessionFactory().OpenAsync(MediaSource.FromFile(path));
 
     /// <summary>Queues every video packet, completes the queue, and collects the decoded frames.</summary>
-    private static async Task<List<IVideoFrame>> DecodeAllAsync(
+    private static async Task<FrameList> DecodeAllAsync(
         DemuxSession demux,
         VideoDecoder decoder
     )
@@ -108,10 +109,29 @@ public sealed class HardwareDecodeFirstPacketFallbackTests(FfmpegBootstrapFixtur
 
         decoder.CompletePacketQueue();
 
-        var frames = new List<IVideoFrame>();
-        await foreach (var frame in decoder.DecodeAsync())
-            frames.Add(frame);
+        var frames = new FrameList();
+        try
+        {
+            await foreach (var frame in decoder.DecodeAsync())
+                frames.Add(frame);
+        }
+        catch
+        {
+            frames.Dispose();
+            throw;
+        }
+
         return frames;
+    }
+
+    /// <summary>The decoded frames, released with the test's scope.</summary>
+    private sealed class FrameList : List<IVideoFrame>, IDisposable
+    {
+        public void Dispose()
+        {
+            foreach (var frame in this)
+                frame.Dispose();
+        }
     }
 
     private sealed class TempFile : IDisposable
