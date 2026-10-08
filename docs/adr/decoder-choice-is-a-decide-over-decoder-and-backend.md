@@ -179,10 +179,17 @@ cost.
 table. The #573 tests pass none, so they keep exercising a CUDA first-packet refusal on a
 progressive JPEG.
 
-### 6. No public API changes
+### 6. One public option, in slice 2
 
-`HardwareDecodeOptions`, `HardwareDecodeMode`, `PreferredBackends`, `HardwareDecodeAttempt`,
-`HardwareBackend` and `BoundBackend` keep their meaning and shape. Every new type is internal.
+Everything else is internal. `HardwareDecodeOptions`, `HardwareDecodeMode`, `PreferredBackends`,
+`HardwareDecodeAttempt`, `HardwareBackend` and `BoundBackend` keep their meaning and shape.
+
+Slice 2 adds `HardwareDecodeOptions.ExcludedCodecs`, a list of codec names as
+`VideoStreamInfo.CodecName` reports them, empty by default. A codec on it decodes in software under
+`Auto`. Under `Required` it fails as if no backend bound, because the two requests contradict each
+other. The option exists so that moving AV1 to hardware does not force a caller that needs software
+AV1 beside hardware H.264 to turn hardware decode off for the whole player. It is also the way out
+of any later hardware regression for one codec.
 
 ### 7. Slices
 
@@ -191,8 +198,9 @@ Each ships on its own and keeps the suite green.
 1. **Extract `Decide`.** No behaviour change. Tests pin `Decide` with the orders passed as data for
    Windows, Linux and macOS, because nothing pins the order today. The fallback context is built
    from the software candidate, which is the decoder that bound today, so nothing moves.
-2. **Add the native AV1 decoder as a hardware candidate (#417).** A behaviour change for AV1, in
-   its own slice so it can ship with its own entry in `BREAKING-CHANGES.md`. A test covers the
+2. **Add `ExcludedCodecs`, then the native AV1 decoder as a hardware candidate (#417).** The option
+   lands first in the same slice, so the behaviour change never ships without its way out. A
+   behaviour change for AV1, with its own entry in `BREAKING-CHANGES.md`. A test covers the
    fallback context being `libdav1d` for AV1.
 3. **Add `KnownRefusal` and the CUDA MJPEG row (#574).** A behaviour change for MJPEG.
 4. **Extract `FirstPacketFallback`.** Optional. It moves a condition and changes no behaviour.
@@ -225,10 +233,9 @@ Each ships on its own and keeps the suite green.
   AV1 stream takes the hardware paths: a pool with a budget, unbounded holders refused
   (`CheckFrameBudget`, with its existing load-time message) and GPU frames by default when the path
   takes them. A player that loaded AV1 in software before can fail to load or change its frame
-  domain. The migration is `WithHardwareDecode(Disabled)` on the player that needs software AV1,
-  which also turns off hardware for its other codecs. FrameFlow is before 1.0, where the minor
-  position is the breaking one, and the entry goes in `BREAKING-CHANGES.md` as a behaviour change.
-  A per-codec opt-out would be a public option and is an open question.
+  domain. The migration is `ExcludedCodecs = ["av1"]` on the player that needs software AV1,
+  which leaves hardware on for its other codecs. FrameFlow is before 1.0, where the minor position
+  is the breaking one, and the entry goes in `BREAKING-CHANGES.md` as a behaviour change.
 - Slice 3 changes behaviour: `Auto` stops picking CUDA for MJPEG, whatever `PreferredBackends`
   says, and uses software or the next backend with a config.
 
@@ -290,14 +297,11 @@ Rejected in ADR-0033 and unchanged. It ties choice to one vendor's wrapper.
 1. **`Required` and software frames.** `Required` promises hardware. Today it returns software
    frames when the bind succeeds and `get_format` refuses. Failing the item matches the promise and
    changes behaviour for callers who rely on it not failing. This ADR does not change it.
-2. **A per-codec opt-out.** A caller who needs software AV1 beside hardware H.264 has only
-   `Disabled` for the whole player. A public option to exclude a codec from hardware decode would
-   serve that, and would also be a public API addition.
-3. **What a refusal is keyed on.** The D3D12VA HEVC refusal is not frame size alone, and no row
+2. **What a refusal is keyed on.** The D3D12VA HEVC refusal is not frame size alone, and no row
    exists for it. Whether one can be written, and with which key, is not settled by one sweep.
-4. **Linux and macOS.** VAAPI and VideoToolbox rows are unmeasured, and on Linux VAAPI outranks
+3. **Linux and macOS.** VAAPI and VideoToolbox rows are unmeasured, and on Linux VAAPI outranks
    CUDA, so the MJPEG row may not describe the default there.
-5. **Receive-side refusals.** A native `av1` decoder that refuses at receive rather than at send
+4. **Receive-side refusals.** A native `av1` decoder that refuses at receive rather than at send
    would fault under `Auto`, as the amendment says. The bundled build refuses at send.
 
 ## References
