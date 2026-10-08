@@ -289,6 +289,32 @@ last:
 logs the reason whenever anything asked. The Linux default order also lists Vulkan and DRM after
 QSV, and the Windows one lists D3D12VA after D3D11VA, which step 5 above predates.
 
+## Amendment (2026-10-08): a decoder that binds and then refuses the stream (#572)
+
+Step 7 falls back only when no candidate opens. A backend can open and still refuse the stream at
+its first packet: the CUDA MJPEG decoder binds for any JPEG, and on the card #572 was reported on it
+accepts a baseline one and fails `avcodec_send_packet` on a progressive one. Under `Auto` that
+faulted the item, on every pass of a playlist.
+
+`Auto` now falls back there too (#573). A decoder that bound a backend under `Auto` prepares an
+unopened software context when it opens. If its first `avcodec_send_packet` fails, it opens that
+context, carries the discard level across, drops the hardware state, logs a `Warning`, and sends the
+same packet again. `HardwareBackend` reads `null` afterwards, as it does after a failed bind. Nothing
+in this is specific to MJPEG or CUDA: any backend that refuses the first packet takes the same path.
+
+Three cases keep the fault:
+
+- **A later packet.** The fallback is spent once the hardware decoder accepts a packet: the
+  prepared software context is released there, whatever the codec, and the item fails as it did
+  before. For an inter-coded stream, a software decoder opened mid-stream would start without the
+  reference frames the following packets are predicted from, and show a corrupt picture until the
+  next keyframe. An intra-only codec such as MJPEG would not have that problem, but the rule does
+  not distinguish them.
+- **A refusal at receive.** The trigger is the send. A hardware decoder that accepts the first
+  packet and then fails to return its frame has already spent the fallback.
+- **`Required`.** It promises a hardware decoder, and a software one would break that without
+  saying so.
+
 ## References
 
 - ADR-0002: FFmpeg bootstrap strategy
