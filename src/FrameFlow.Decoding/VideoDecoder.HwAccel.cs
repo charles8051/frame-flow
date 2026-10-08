@@ -25,7 +25,8 @@ public sealed partial class VideoDecoder
 
     /// <summary>
     /// The backend that <c>Open</c> bound, kept so engagement can be restored if
-    /// FFmpeg renegotiates back onto it. Written once, before any frame is decoded.
+    /// FFmpeg renegotiates back onto it. Written at open, and cleared under <c>_codecSync</c>
+    /// if an Auto decoder falls back to software on its first packet (#572).
     /// </summary>
     private int _boundBackend = NoHardwareBackend;
 
@@ -254,6 +255,14 @@ public sealed partial class VideoDecoder
 #pragma warning restore CA2000
         }
 
+        // Auto falls back to software when the bound hardware decoder rejects the first packet
+        // (#572). Required keeps the fault, and a decoder already on software has nothing to
+        // fall back from.
+        CodecContextHandle? softwareFallback =
+            hwBinding is not null && options.Mode == HardwareDecodeMode.Auto
+                ? TryPrepareSoftwareFallback(codec, codecParPtr, logger)
+                : null;
+
         var decoder = new VideoDecoder(
             codecCtx,
             frame,
@@ -277,6 +286,8 @@ public sealed partial class VideoDecoder
             decoder._hwPixelFormat = hwBinding.HwPixelFormat;
             decoder._extraHwFrames = hwBinding.ExtraHwFrames;
             decoder._swFrame = swFrame;
+            decoder._softwareFallbackCtx = softwareFallback;
+            decoder._softwareFallbackCodec = codec;
         }
 
         LogVideoDecoderOpened(decoder._logger, streamIndex, width, height, codecId);
@@ -651,6 +662,24 @@ public sealed partial class VideoDecoder
     /// </summary>
     private static CodecContextHandle OpenSoftwareCodecContext(nint codec, nint codecParPtr)
     {
+        var codecCtx = PrepareSoftwareCodecContext(codec, codecParPtr);
+        int ret = FFAvCodec.avcodec_open2(codecCtx.DangerousGetHandle(), codec, nint.Zero);
+        if (ret < 0)
+        {
+            codecCtx.Dispose();
+            throw new InvalidOperationException($"avcodec_open2 failed with code {ret}.");
+        }
+
+        return codecCtx;
+    }
+
+    /// <summary>
+    /// Allocates a software codec context and copies the stream's parameters into it, without
+    /// opening it. The context holds the parameters (extradata included), so a later
+    /// <c>avcodec_open2</c> needs nothing from the demuxer.
+    /// </summary>
+    private static CodecContextHandle PrepareSoftwareCodecContext(nint codec, nint codecParPtr)
+    {
         nint ctxPtr = FFAvCodec.avcodec_alloc_context3(codec);
         if (ctxPtr == nint.Zero)
             throw new InvalidOperationException(
@@ -668,14 +697,91 @@ public sealed partial class VideoDecoder
             );
         }
 
-        ret = FFAvCodec.avcodec_open2(ctxPtr, codec, nint.Zero);
+        return codecCtx;
+    }
+
+    /// <summary>
+    /// Prepares the software context an <see cref="HardwareDecodeMode.Auto"/> decoder falls back
+    /// to when its hardware decoder rejects the first packet (#572). Returns
+    /// <see langword="null"/> when it cannot be prepared, which leaves the decoder without a
+    /// fallback and no worse off than before.
+    /// </summary>
+    private static CodecContextHandle? TryPrepareSoftwareFallback(
+        nint codec,
+        nint codecParPtr,
+        ILogger logger
+    )
+    {
+        try
+        {
+            return PrepareSoftwareCodecContext(codec, codecParPtr);
+        }
+        catch (InvalidOperationException ex)
+        {
+            LogSoftwareFallbackUnavailable(logger, ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Replaces the hardware codec context with the prepared software one after the hardware
+    /// decoder rejected the first packet (#572). Called under <c>_codecSync</c> by
+    /// <c>SendCurrentInput</c>, which then resends the same packet.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when the decoder now decodes in software;
+    /// <see langword="false"/> when the fallback would not open, in which case the decoder is
+    /// unchanged and the fault stands.
+    /// </returns>
+    private bool TryFallBackToSoftware()
+    {
+        if (_softwareFallbackCtx is not { } fallback)
+            return false;
+
+        _softwareFallbackCtx = null;
+
+        int ret = FFAvCodec.avcodec_open2(
+            fallback.DangerousGetHandle(),
+            _softwareFallbackCodec,
+            nint.Zero
+        );
         if (ret < 0)
         {
-            codecCtx.Dispose();
-            throw new InvalidOperationException($"avcodec_open2 failed with code {ret}.");
+            fallback.Dispose();
+            LogSoftwareFallbackUnavailable(_logger, $"avcodec_open2 failed with code {ret}.");
+            return false;
         }
 
-        return codecCtx;
+        // The discard level lives on the context and nowhere else, so it is carried across.
+        unsafe
+        {
+            ref AVCodecContext oldCtx = ref Unsafe.AsRef<AVCodecContext>(
+                (void*)_codecCtx.DangerousGetHandle()
+            );
+            ref AVCodecContext newCtx = ref Unsafe.AsRef<AVCodecContext>(
+                (void*)fallback.DangerousGetHandle()
+            );
+            newCtx.skip_frame = oldCtx.skip_frame;
+        }
+
+        var backend = ((HardwareDecodeBackendKind)_boundBackend).ToString();
+
+        _codecCtx.Dispose();
+        _codecCtx = fallback;
+
+        _swFrame?.Dispose();
+        _swFrame = null;
+        if (_hwDeviceCtxRef != nint.Zero)
+            FFAvUtil.av_buffer_unref(ref _hwDeviceCtxRef);
+        _hwPixelFormat = -1;
+        _extraHwFrames = 0;
+
+        // The bound backend is the one the decoder opened on, and it no longer is on it.
+        _boundBackend = NoHardwareBackend;
+        _hardwareBackend = NoHardwareBackend;
+
+        LogHwFellBackToSoftware(_logger, backend);
+        return true;
     }
 
     private static void DisposeBinding(HwAccelBinding? binding)
@@ -712,6 +818,18 @@ public sealed partial class VideoDecoder
         int frameFormat,
         int hwFormat
     );
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Hardware decoder on {Backend} rejected the first packet; reopened on the software decoder."
+    )]
+    private static partial void LogHwFellBackToSoftware(ILogger logger, string backend);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "No software fallback for the hardware decoder: {Reason}"
+    )]
+    private static partial void LogSoftwareFallbackUnavailable(ILogger logger, string reason);
 
     [LoggerMessage(
         Level = LogLevel.Information,

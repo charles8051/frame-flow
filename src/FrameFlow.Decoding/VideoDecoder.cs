@@ -60,7 +60,7 @@ namespace FrameFlow.Decoding;
 /// </remarks>
 public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFrame>, IPoolWaiter
 {
-    private readonly CodecContextHandle _codecCtx;
+    private CodecContextHandle _codecCtx;
     private readonly FrameHandle _frame;
     private readonly PacketHandle _packet;
     private SwsContextHandle? _swsCtx;
@@ -73,6 +73,12 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     private nint _hwDeviceCtxRef;
     private FrameHandle? _swFrame;
     private int _hwPixelFormat = -1;
+
+    // The unopened software context an Auto decoder reopens on if the hardware decoder rejects
+    // the first packet (#572), with the codec it opens for. Null once the hardware decoder has
+    // accepted a packet or the fallback has been taken. Touched under _codecSync.
+    private CodecContextHandle? _softwareFallbackCtx;
+    private nint _softwareFallbackCodec;
 
     // How the stream is meant to be shown (#542): the container's pixel shape, which wins over a
     // frame's, the codec parameters', which a frame without one falls back to, and the display
@@ -546,11 +552,29 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             if (_disposed)
                 return CodecReturn.EndOfStream;
 
-            nint ctxPtr = _codecCtx.DangerousGetHandle();
             nint pktArg = _inFlushMode ? nint.Zero : _pendingRetryPacketPtr;
             CodecReturn result = DecodeDriver.Classify(
-                FFAvCodec.avcodec_send_packet(ctxPtr, pktArg)
+                FFAvCodec.avcodec_send_packet(_codecCtx.DangerousGetHandle(), pktArg)
             );
+
+            // A hardware decoder can bind and then refuse the stream at its first packet (a
+            // progressive JPEG on the CUDA MJPEG decoder, #572). Under Auto the same packet goes
+            // to the software decoder. The fallback is spent once the hardware decoder accepts a
+            // packet: a later fault is mid-stream, and a new decoder has lost the references.
+            if (!_inFlushMode && _softwareFallbackCtx is not null)
+            {
+                if (result == CodecReturn.Fault && TryFallBackToSoftware())
+                {
+                    result = DecodeDriver.Classify(
+                        FFAvCodec.avcodec_send_packet(_codecCtx.DangerousGetHandle(), pktArg)
+                    );
+                }
+                else if (result == CodecReturn.Ok)
+                {
+                    _softwareFallbackCtx.Dispose();
+                    _softwareFallbackCtx = null;
+                }
+            }
 
             if (
                 !_inFlushMode
@@ -1429,6 +1453,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             _packet.Dispose();
             _frame.Dispose();
             _codecCtx.Dispose();
+            _softwareFallbackCtx?.Dispose();
+            _softwareFallbackCtx = null;
 
             if (_hwDeviceCtxRef != nint.Zero)
             {
