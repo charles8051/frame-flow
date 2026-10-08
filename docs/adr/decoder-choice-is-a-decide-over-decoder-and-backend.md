@@ -57,8 +57,9 @@ VideoToolbox were not measured.
   D3D12VA, and so does a 1920x1080 clip, so the cause is not frame size alone.
 - **The decoder is chosen before the backend.** `avcodec_find_decoder` returns `libdav1d` for AV1,
   which has no hardware configs, so AV1 has no candidate on any backend. FFmpeg's native `av1`
-  decoder engages NVDEC on the same build. It has no software path: without a hardware config it
-  fails `avcodec_send_packet`. H.264, HEVC, VP8 and VP9 are unaffected because their native decoders
+  decoder engages NVDEC on the same build. It has no software path: `ffmpeg -c:v av1` without a hardware
+  config fails with "Your platform doesn't support hardware accelerated AV1 decoding", where
+  `-c:v libdav1d` decodes the same file. H.264, HEVC, VP8 and VP9 are unaffected because their native decoders
   are registered first.
 - **Some pairs give wrong output.** CUDA MJPEG expands full-range data as limited range (#574), for
   video and for stills. `Auto` picks CUDA for MJPEG because it is the only backend with a config.
@@ -70,7 +71,7 @@ VideoToolbox were not measured.
 
 - **A candidate is the wrong size.** `HwAccelCandidate` names a backend. The sweep shows the unit is
   a decoder paired with a backend (#417, #355).
-- **A fact about a stream and a backend has nowhere to live.** "Not CUDA for MJPEG" and "the native
+- **A fact about a codec and a backend has nowhere to live.** "Not CUDA for MJPEG" and "the native
   AV1 decoder when hardware is wanted" would each be a special case inside `Open`. ADR-0033 rejected
   an automatic "too cheap to accelerate" rule because cost depends on the consumer. A backend that
   gives wrong output is a correctness fact, and that rejection does not cover it.
@@ -101,7 +102,7 @@ internal readonly record struct DecoderChoiceDecision(
 internal static class DecoderChoice
 {
     public static DecoderChoiceDecision Decide(
-        StreamShape stream,
+        int codecId,
         string softwareDecoder,
         IReadOnlyList<HwAccelCandidate> configs,
         HardwareDecodeMode mode,
@@ -116,12 +117,12 @@ internal static class DecoderChoice
   which binding needs.
 - `configs` is what `EnumerateCandidates` produces today, from every eligible decoder, already
   intersected with the initialised devices.
-- `StreamShape` is built from `VideoStreamInfo` and the codec parameters. It adds the profile,
-  chroma format, bit depth and whether the source is a still.
 - `preferred` is `DecodeBackendOrder.Decide`'s result and `platformDefault` is a value the shell
   supplies. The core ranks preferred, then platform default, then the rest, as `SortByPolicy` does,
   with a stable order. It never reads the operating system.
 - `borrowed` keeps today's rule: a borrowed device fixes the backend, and no order applies.
+- The codec ID is the whole key. Nothing measured so far needs more of the stream, and a row that
+  does can add it when it exists.
 
 ### 2. The decoder is part of the candidate
 
@@ -162,14 +163,21 @@ A refusal at receive stays a fault, as the amendment says.
 
 ### 5. A known refusal is a row
 
-Add `KnownRefusal`: a backend, a codec ID, a predicate over `StreamShape` and a `Reason` that cites
-an issue. `Decide` drops a refused candidate and says so in the `Reason`.
+Add `KnownRefusal`: a backend, a codec ID and a `Reason` that cites an issue. `Decide` drops a
+refused candidate under `Auto` and says so in the `Reason`.
 
-A refusal applies under `Auto` when the backend was not asked for. A backend in `PreferredBackends`,
-a borrowed device and `Required` keep the candidate: a caller who names a backend gets it, and
-`Required` keeps its binding, as #574 describes. The first row is CUDA with MJPEG, for video and
-stills, citing #574. It leaves with that issue. A row records a backend that gives wrong output or
-none for a stream shape, and never a judgement about cost.
+`PreferredBackends` does not override a refusal. It is a ranking, and a player fills it from the
+video sink's preference as well as from the caller (`DecodeBackendOrder`), so a backend named there
+is not a request. `Required` and a borrowed device keep the candidate: they name a backend, and
+`Required` keeps its binding, as #574 describes.
+
+The first row is CUDA with MJPEG, for video and stills, citing #574. It leaves with that issue. A
+row records a backend that gives wrong output or none for a codec, and never a judgement about
+cost.
+
+`VideoDecoder.Open` takes the refusals as an internal parameter that defaults to the built-in
+table. The #573 tests pass none, so they keep exercising a CUDA first-packet refusal on a
+progressive JPEG.
 
 ### 6. No public API changes
 
@@ -180,13 +188,14 @@ none for a stream shape, and never a judgement about cost.
 
 Each ships on its own and keeps the suite green.
 
-1. **Extract `Decide` and add the decoder to the candidate.** Tests pin `Decide` with the orders
-   passed as data for Windows, Linux and macOS, because nothing pins the order today. Build the
-   fallback context from the software candidate (Decision 3), with a test for it. AV1 on hardware
-   (#417) is the first visible change.
-2. **Add `KnownRefusal` and the CUDA MJPEG row (#574).** The #573 tests use `Auto` with
-   `PreferredBackends = [Cuda]`, which Decision 5 keeps, so they pass unchanged.
-3. **Extract `FirstPacketFallback`.** Optional. It moves a condition and changes no behaviour.
+1. **Extract `Decide`.** No behaviour change. Tests pin `Decide` with the orders passed as data for
+   Windows, Linux and macOS, because nothing pins the order today. The fallback context is built
+   from the software candidate, which is the decoder that bound today, so nothing moves.
+2. **Add the native AV1 decoder as a hardware candidate (#417).** A behaviour change for AV1, in
+   its own slice so it can ship with its own entry in `BREAKING-CHANGES.md`. A test covers the
+   fallback context being `libdav1d` for AV1.
+3. **Add `KnownRefusal` and the CUDA MJPEG row (#574).** A behaviour change for MJPEG.
+4. **Extract `FirstPacketFallback`.** Optional. It moves a condition and changes no behaviour.
 
 ## Consequences
 
@@ -195,15 +204,15 @@ Each ships on its own and keeps the suite green.
 - Ordering, the decoder dimension and refusals are values. A test asserts them with no FFmpeg, no
   GPU and no media, and the `Reason` goes to the log.
 - #417 and #574 become a decoder list and a row, not special cases in `Open`.
-- The sweep's matrix becomes test data: each row is a `StreamShape` and the candidates expected.
+- The sweep's matrix becomes test data: each row is a codec and the candidates expected.
 
 ### Negative
 
 - The core cannot know what a backend does with a stream. It orders candidates, and the answers
   still come from running the decoder. The matrix was measured on one machine, so a row describes
   that hardware generation.
-- It adds a small vocabulary (`StreamShape`, `KnownRefusal`, the decision record, one predicate) and
-  moves enumeration out of `Open`, which is hot code with native ownership.
+- It adds a small vocabulary (`KnownRefusal`, the decision record, one predicate) and moves
+  enumeration out of `Open`, which is hot code with native ownership.
 - A table of refusals goes stale unless rows are removed. Each names an issue and leaves with it.
 - The design does not give the four moments one owner. Engagement and output remain unwatched by
   policy, and `Required` can still return software frames.
@@ -212,12 +221,16 @@ Each ships on its own and keeps the suite green.
 
 - Only the sequencing becomes pure, as in ADR-0055. Decoding stays in the native decoder.
 - Audio has no hardware path and is unaffected.
-- Slice 1 changes behaviour for AV1. A hardware-decoded AV1 stream takes the hardware paths: a
-  fixed or growable pool with a budget, unbounded holders refused (`CheckFrameBudget`) and GPU
-  frames by default when the path takes them. A player that loaded AV1 in software before can fail
-  to load, or change its frame domain. This goes in `BREAKING-CHANGES.md` as a behaviour change.
-- Slice 2 changes behaviour: `Auto` stops picking CUDA for MJPEG and uses software, or the next
-  backend with a config.
+- Slice 2 changes behaviour for AV1, and ships only in a release that says so. A hardware-decoded
+  AV1 stream takes the hardware paths: a pool with a budget, unbounded holders refused
+  (`CheckFrameBudget`, with its existing load-time message) and GPU frames by default when the path
+  takes them. A player that loaded AV1 in software before can fail to load or change its frame
+  domain. The migration is `WithHardwareDecode(Disabled)` on the player that needs software AV1,
+  which also turns off hardware for its other codecs. FrameFlow is before 1.0, where the minor
+  position is the breaking one, and the entry goes in `BREAKING-CHANGES.md` as a behaviour change.
+  A per-codec opt-out would be a public option and is an open question.
+- Slice 3 changes behaviour: `Auto` stops picking CUDA for MJPEG, whatever `PreferredBackends`
+  says, and uses software or the next backend with a config.
 
 ## Alternatives considered
 
@@ -227,6 +240,12 @@ A decoder-name lookup in `Open` and a skip for MJPEG on CUDA under `Auto` are ea
 fix both reported symptoms. This is a fair choice, and the cost shows only later. The decoder
 dimension and the refusal rows would be special cases inside the hot path, with no test that pins
 ordering today. This ADR is that same work with a home for the rules.
+
+### Key refusals by stream shape
+
+A predicate over profile, chroma format, bit depth and size would let a row say "4:4:4 only". The
+only row today is the whole codec, and the one refusal that looked shape-dependent (D3D12VA HEVC)
+is not explained by size. The key grows when a measured refusal needs it.
 
 ### A bind protocol over the four moments
 
@@ -252,7 +271,7 @@ source kind that belongs with #575.
 `cuvidGetDecoderCaps`, the D3D11 and D3D12 decode profile queries and VAAPI surface attributes could
 fill a per-codec table. Separate code per backend, outside FFmpeg, on the platforms hardest to test,
 and it answers whether the hardware can decode and not whether FFmpeg's hwaccel accepts this stream.
-A probe can later feed `StreamShape` rules.
+A probe can later feed rows keyed on more than the codec.
 
 ### Decode a trial packet at open
 
@@ -271,11 +290,14 @@ Rejected in ADR-0033 and unchanged. It ties choice to one vendor's wrapper.
 1. **`Required` and software frames.** `Required` promises hardware. Today it returns software
    frames when the bind succeeds and `get_format` refuses. Failing the item matches the promise and
    changes behaviour for callers who rely on it not failing. This ADR does not change it.
-2. **What a refusal is keyed on.** The D3D12VA HEVC refusal is not frame size alone. Whether a row
-   can be written for it, and with which predicate, is not settled by one sweep.
-3. **Linux and macOS.** VAAPI and VideoToolbox rows are unmeasured, and on Linux VAAPI outranks
+2. **A per-codec opt-out.** A caller who needs software AV1 beside hardware H.264 has only
+   `Disabled` for the whole player. A public option to exclude a codec from hardware decode would
+   serve that, and would also be a public API addition.
+3. **What a refusal is keyed on.** The D3D12VA HEVC refusal is not frame size alone, and no row
+   exists for it. Whether one can be written, and with which key, is not settled by one sweep.
+4. **Linux and macOS.** VAAPI and VideoToolbox rows are unmeasured, and on Linux VAAPI outranks
    CUDA, so the MJPEG row may not describe the default there.
-4. **Receive-side refusals.** A native `av1` decoder that refuses at receive rather than at send
+5. **Receive-side refusals.** A native `av1` decoder that refuses at receive rather than at send
    would fault under `Auto`, as the amendment says. The bundled build refuses at send.
 
 ## References
