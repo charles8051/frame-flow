@@ -2384,3 +2384,20 @@ almost all of them.
   reason, for a codec that cannot decode on hardware without having failed to bind. It is the way
   out for a codec a driver decodes wrongly, and `WithHardwareDecode(Disabled)` turns hardware off for
   every codec instead.
+- **AV1 decodes on hardware.** `avcodec_find_decoder` returns `libdav1d` for AV1, which has no
+  hardware configs, so no backend was ever a candidate and AV1 always decoded in software (#417).
+  The decoder now looks past the default for a registered decoder that can run on hardware when the
+  default has no config, and finds FFmpeg's own `av1` decoder. `libdav1d` stays the software
+  candidate, and `Disabled` is unchanged. Other codecs are untouched: their default decoder already
+  has configs. On the five Windows backends tried (CUDA, D3D11VA, D3D12VA, DXVA2, Vulkan) 8-bit and
+  10-bit 4:2:0 AV1 engages, and `Auto` picks D3D11VA first. An AV1 stream the hardware refuses at
+  its first packet, such as 4:4:4 on NVDEC, decodes in software under `Auto` and faults under
+  `Required`.
+  What changes for a caller: an AV1 stream takes the paths a hardware-decoded stream takes. The
+  decoder holds a surface pool with a budget, `CheckFrameBudget` refuses a path that holds frames
+  without a bound, and the frames are GPU frames by default where the whole path takes them. A
+  player that loaded AV1 in software before can fail to load, or present in another frame domain.
+  `HardwareBackend` reads the backend where it read `null`. To keep AV1 on software while the
+  other codecs use hardware, name it: `WithExcludedCodecs("av1")`, or
+  `HardwareDecodeOptions.ExcludedCodecs`. `WithHardwareDecode(Disabled)` turns hardware off for
+  every codec instead.

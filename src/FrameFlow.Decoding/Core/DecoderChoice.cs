@@ -165,7 +165,11 @@ internal static class DecoderChoice
         // OrderBy is stable, so backends of one rank keep the order the decoder lists them in.
         var ordered = usable.OrderBy(c => Rank(c.Kind, preferred, platformDefault)).ToList();
 
-        return new(ordered, softwareDecoder, refused, Describe(ordered, preferred, refused));
+        return new(
+            ordered,
+            softwareDecoder,
+            refused,
+            Describe(ordered, softwareDecoder, preferred, refused));
     }
 
     // Preferred backends rank below 1000 in the order given, then the platform default from 1000,
@@ -192,13 +196,17 @@ internal static class DecoderChoice
 
     private static string Describe(
         IReadOnlyList<HwAccelCandidate> ordered,
+        string softwareDecoder,
         IReadOnlyList<HardwareDecodeBackendKind> preferred,
         IReadOnlyList<KnownRefusal> refused)
     {
         string order =
             ordered.Count == 0
                 ? "no hardware backend with a device and a config"
-                : string.Join(", ", ordered.Select(c => c.Kind))
+                : string.Join(
+                    ", ",
+                    ordered.Select(c =>
+                        c.Decoder == softwareDecoder ? $"{c.Kind}" : $"{c.Kind} ({c.Decoder})"))
                     + (preferred.Count > 0 ? ", preference first" : ", platform default");
 
         return refused.Count == 0

@@ -29,6 +29,30 @@ internal static partial class FFAvCodec
     [LibraryImport("avcodec")]
     [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
     internal static partial nint avcodec_get_hw_config(nint codec, int index);
+
+    /// <summary>
+    /// Iterates every codec FFmpeg has registered, decoders and encoders alike. Start with
+    /// <paramref name="opaque"/> at <see cref="nint.Zero"/> and call until the result is
+    /// <see cref="nint.Zero"/>. Each result is an <c>AVCodec*</c> owned by FFmpeg.
+    /// </summary>
+    [LibraryImport("avcodec")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial nint av_codec_iterate(ref nint opaque);
+
+    /// <summary>Whether <paramref name="codec"/> is a decoder. Non-zero when it is.</summary>
+    [LibraryImport("avcodec")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial int av_codec_is_decoder(nint codec);
+
+    /// <summary>
+    /// Finds a registered decoder by name (<c>av1</c>, <c>libdav1d</c>). Returns the
+    /// <c>AVCodec*</c>, owned by FFmpeg, or <see cref="nint.Zero"/> if there is none.
+    /// </summary>
+    [LibraryImport("avcodec")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial nint avcodec_find_decoder_by_name(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name
+    );
 }
 
 /// <summary>

@@ -183,12 +183,18 @@ public sealed partial class VideoDecoder
         var codecName = FFAvCodec.avcodec_get_name(codecId);
 
         // Which hardware candidates to try, and in what order, is a pure decision.
+        //
+        // codec is the software candidate: what avcodec_find_decoder returns, and what Auto falls
+        // back to. The hardware candidates can come from another decoder (#417): for AV1 that call
+        // returns libdav1d, which has no hardware configs, and FFmpeg's own av1 decoder has them.
         string decoderName = DecoderNameOf(codec);
+        var hardwareDecoders =
+            options.Mode == HardwareDecodeMode.Disabled ? [] : HardwareDecoders(codecId, codec);
         var decision = DecoderChoice.Decide(
             codecId,
             codecName,
             decoderName,
-            options.Mode == HardwareDecodeMode.Disabled ? [] : ReadHwConfigs(codec, decoderName),
+            hardwareDecoders.SelectMany(d => ReadHwConfigs(d.Codec, d.Name)).ToList(),
             options.Mode,
             options.PreferredBackends,
             DecoderChoice.PlatformDefault(CurrentOs()),
@@ -225,7 +231,7 @@ public sealed partial class VideoDecoder
         {
             hwBinding = TryBindHwAccel(
                 decision.Hardware,
-                codec,
+                hardwareDecoders,
                 codecParPtr,
                 heldHardwareFrames,
                 videoOptions?.Device,
@@ -300,7 +306,8 @@ public sealed partial class VideoDecoder
 
         // Auto falls back to software when the bound hardware decoder rejects the first packet
         // (#572). Required keeps the fault, and a decoder already on software has nothing to
-        // fall back from.
+        // fall back from. It is opened from the software candidate, never from the decoder that
+        // bound: FFmpeg's native av1 decoder has no software path to fall back to.
 #pragma warning disable CA2000 // Ownership transfers to the decoder via the field assignment below.
         CodecContextHandle? softwareFallback =
             hwBinding is not null && options.Mode == HardwareDecodeMode.Auto
@@ -346,7 +353,7 @@ public sealed partial class VideoDecoder
     /// </summary>
     private static HwAccelBinding? TryBindHwAccel(
         IReadOnlyList<HwAccelCandidate> candidates,
-        nint codec,
+        IReadOnlyList<HardwareDecoder> decoders,
         nint codecParPtr,
         int heldHardwareFrames,
         HardwareDevice? device,
@@ -372,7 +379,7 @@ public sealed partial class VideoDecoder
         {
             var binding = TryBindSingle(
                 candidate,
-                codec,
+                decoders.First(d => d.Name == candidate.Decoder).Codec,
                 codecParPtr,
                 heldHardwareFrames,
                 device,
@@ -419,7 +426,80 @@ public sealed partial class VideoDecoder
             return false;
 
         var initialised = InitialisedBackends(capabilities);
-        return ReadHwConfigs(codec, DecoderNameOf(codec)).Any(c => initialised.Contains(c.Kind));
+        return HardwareDecoders(codecId, codec)
+            .SelectMany(d => ReadHwConfigs(d.Codec, d.Name))
+            .Any(c => initialised.Contains(c.Kind));
+    }
+
+    /// <summary>
+    /// The names of the registered decoders for <paramref name="codecId"/> that can run on hardware
+    /// (#417), for the tests that check which decoder a codec's hardware candidates come from.
+    /// </summary>
+    internal static IReadOnlyList<string> HardwareDecoderNames(int codecId)
+    {
+        nint codec = FFAvCodec.avcodec_find_decoder(codecId);
+        return codec == nint.Zero
+            ? []
+            : HardwareDecoders(codecId, codec).Select(d => d.Name).ToList();
+    }
+
+    /// <summary>A registered decoder that can run on hardware, and the name it is registered under.</summary>
+    private readonly record struct HardwareDecoder(string Name, nint Codec);
+
+    // AV_CODEC_CAP_* bits from libavcodec/codec.h that mark a decoder not to offer as a hardware
+    // candidate: one that is experimental, and the wrappers around a vendor's own decoder
+    // (h264_cuvid, h264_qsv), which ADR-0033 rejected in favour of the hwaccel configs.
+    private const int CodecCapExperimental = 1 << 9;
+    private const int CodecCapHardware = 1 << 18;
+    private const int CodecCapHybrid = 1 << 19;
+
+    /// <summary>
+    /// The registered decoders for <paramref name="codecId"/> that can run on hardware: the default
+    /// decoder when it has a hardware config, otherwise the others that have one (#417).
+    /// </summary>
+    /// <remarks>
+    /// <c>avcodec_find_decoder</c> returns the first decoder registered for a codec, and for AV1
+    /// that is <c>libdav1d</c>, which has no hardware configs. FFmpeg's own <c>av1</c> decoder has
+    /// them. Looking past the default only when it has none leaves every codec whose default decoder
+    /// already has configs (H.264, HEVC, VP8, VP9) exactly as it was.
+    /// </remarks>
+    private static unsafe List<HardwareDecoder> HardwareDecoders(int codecId, nint defaultCodec)
+    {
+        if (HasHwConfig(defaultCodec))
+            return [new HardwareDecoder(DecoderNameOf(defaultCodec), defaultCodec)];
+
+        var result = new List<HardwareDecoder>();
+        nint opaque = nint.Zero;
+        while (FFAvCodec.av_codec_iterate(ref opaque) is var candidate && candidate != nint.Zero)
+        {
+            if (candidate == defaultCodec || FFAvCodec.av_codec_is_decoder(candidate) == 0)
+                continue;
+
+            var codec = (AVCodec*)candidate;
+            if ((int)codec->id != codecId)
+                continue;
+            if ((codec->capabilities & (CodecCapExperimental | CodecCapHardware | CodecCapHybrid)) != 0)
+                continue;
+            if (!HasHwConfig(candidate))
+                continue;
+
+            result.Add(new HardwareDecoder(DecoderNameOf(candidate), candidate));
+        }
+
+        return result;
+    }
+
+    private static bool HasHwConfig(nint codec)
+    {
+        for (int i = 0; ; i++)
+        {
+            nint cfgPtr = FFAvCodec.avcodec_get_hw_config(codec, i);
+            if (cfgPtr == nint.Zero)
+                return false;
+
+            if ((new AvCodecHwConfigAccessor(cfgPtr).Methods & FFAvUtil.AvCodecHwConfigMethodHwDeviceCtx) != 0)
+                return true;
+        }
     }
 
     /// <summary>

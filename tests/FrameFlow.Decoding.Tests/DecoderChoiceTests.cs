@@ -401,6 +401,44 @@ public sealed class DecoderChoiceTests
         Assert.Contains("disabled", decision.Reason);
     }
 
+    // ── A hardware decoder other than the software one (#417) ─────────────────
+
+    [Fact]
+    public void AHardwareDecoderThatIsNotTheSoftwareOneIsNamedInTheReason()
+    {
+        var native = new HwAccelCandidate("av1", HardwareDecodeBackendKind.D3D11Va, D3D11Type, 101);
+
+        var decision = DecoderChoice.Decide(
+            225,
+            "av1",
+            "libdav1d",
+            [native],
+            HardwareDecodeMode.Auto,
+            None,
+            DecoderChoice.PlatformDefault(OsFamily.Windows),
+            [HardwareDecodeBackendKind.D3D11Va],
+            null,
+            [],
+            []
+        );
+
+        Assert.Equal("av1", Assert.Single(decision.Hardware).Decoder);
+        Assert.Equal("libdav1d", decision.SoftwareDecoder);
+        Assert.Contains("D3D11Va (av1)", decision.Reason);
+    }
+
+    [Fact]
+    public void CandidatesFromTwoDecodersOrderByBackendThenByTheOrderListed()
+    {
+        var first = new HwAccelCandidate("av1", HardwareDecodeBackendKind.OpenCl, 12, 1);
+        var second = new HwAccelCandidate("other", HardwareDecodeBackendKind.OpenCl, 12, 2);
+        var cuda = new HwAccelCandidate("other", HardwareDecodeBackendKind.Cuda, CudaType, 3);
+
+        var decision = Decide([first, second, cuda]);
+
+        Assert.Equal([cuda, first, second], decision.Hardware);
+    }
+
     // ── The reason, for a log ────────────────────────────────────────────────
 
     [Fact]
