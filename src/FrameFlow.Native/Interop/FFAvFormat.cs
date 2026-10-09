@@ -81,6 +81,19 @@ internal static partial class FFAvFormat
     );
 
     /// <summary>
+    /// Allocates an empty <c>AVFormatContext</c>, for a caller that sets a field on it before
+    /// <see cref="avformat_open_input"/> (such as <c>video_codec_id</c>). Returns
+    /// <see cref="nint.Zero"/> on out of memory.
+    /// </summary>
+    /// <remarks>
+    /// Ownership: <see cref="avformat_open_input"/> takes the context it is given, and frees it
+    /// when the open fails. On success the caller owns it as for any opened input.
+    /// </remarks>
+    [LibraryImport("avformat")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial nint avformat_alloc_context();
+
+    /// <summary>
     /// Reads packets of a media file to get stream information. Should be called
     /// after <see cref="avformat_open_input"/> and before any packet reading.
     /// </summary>
