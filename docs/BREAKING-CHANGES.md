@@ -2375,9 +2375,12 @@ almost all of them.
   `HardwareDecodeOptions.ExcludedCodecs` lists codecs, named as `VideoStreamInfo.CodecName`
   reports them (`"av1"`, `"h264"`), that decode in software under `Auto` and fail as unbound
   under `Required`. `IPlayerBuilder.WithExcludedCodecs` and `IPassBuilder.WithExcludedCodecs` set it
-  on a player or a pass, and `PlaybackController.Create` takes an `excludedCodecs` parameter.
-  Additive, and empty by default. Breaking only if you implement `IPlayerBuilder` or
-  `IPassBuilder` yourself. `HardwareDecodeUnavailableException` gained a constructor that takes the
+  on a player or a pass, and `PlaybackController.Create` takes an
+  `excludedCodecs` parameter. Empty by default. Source that calls it compiles unchanged, and a
+  binary compiled against the old `Create` signature needs a rebuild, as it did when
+  `preferredBackends` was added. A type that implements `IPlayerBuilder` or `IPassBuilder` itself
+  no longer compiles until it adds the method.
+  `HardwareDecodeUnavailableException` gained a constructor that takes the
   reason, for a codec that cannot decode on hardware without having failed to bind. It is the way
   out for a codec a driver decodes wrongly, and `WithHardwareDecode(Disabled)` turns hardware off for
   every codec instead.
