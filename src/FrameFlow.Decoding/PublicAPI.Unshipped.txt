@@ -129,6 +129,7 @@ FrameFlow.Decoding.HardwareDecodeUnavailableException.Attempts.get -> System.Col
 FrameFlow.Decoding.HardwareDecodeUnavailableException.CodecId.get -> int
 FrameFlow.Decoding.HardwareDecodeUnavailableException.CodecName.get -> string!
 FrameFlow.Decoding.HardwareDecodeUnavailableException.HardwareDecodeUnavailableException(int codecId, string! codecName, System.Collections.Generic.IReadOnlyList<FrameFlow.Decoding.HardwareDecodeAttempt!>! attempts) -> void
+FrameFlow.Decoding.HardwareDecodeUnavailableException.HardwareDecodeUnavailableException(int codecId, string! codecName, System.Collections.Generic.IReadOnlyList<FrameFlow.Decoding.HardwareDecodeAttempt!>! attempts, string! reason) -> void
 FrameFlow.Decoding.IAudioDecoder
 FrameFlow.Decoding.IAudioDecoder.CompletePacketQueue() -> void
 FrameFlow.Decoding.IAudioDecoder.DecodeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<FrameFlow.Media.PcmAudioBuffer!>!

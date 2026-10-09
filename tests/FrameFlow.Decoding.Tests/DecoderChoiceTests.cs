@@ -40,10 +40,13 @@ public sealed class DecoderChoiceTests
         IReadOnlyCollection<HardwareDecodeBackendKind>? initialised = null,
         int? borrowedDeviceType = null,
         int codecId = H264,
-        IReadOnlyList<KnownRefusal>? refusals = null
+        IReadOnlyList<KnownRefusal>? refusals = null,
+        IReadOnlyList<string>? excluded = null,
+        string codecName = "h264"
     ) =>
         DecoderChoice.Decide(
             codecId,
+            codecName,
             "h264",
             configs,
             mode,
@@ -51,7 +54,8 @@ public sealed class DecoderChoiceTests
             DecoderChoice.PlatformDefault(os),
             initialised ?? configs.Select(c => c.Kind).ToHashSet(),
             borrowedDeviceType,
-            refusals ?? KnownRefusals.Builtin
+            refusals ?? KnownRefusals.Builtin,
+            excluded ?? []
         );
 
     // ── The platform orders ──────────────────────────────────────────────────
@@ -230,6 +234,7 @@ public sealed class DecoderChoiceTests
     {
         var decision = DecoderChoice.Decide(
             H264,
+            "h264",
             "libdav1d",
             [D3D11],
             HardwareDecodeMode.Auto,
@@ -237,6 +242,7 @@ public sealed class DecoderChoiceTests
             [],
             [HardwareDecodeBackendKind.D3D11Va],
             null,
+            [],
             []
         );
 
@@ -335,6 +341,64 @@ public sealed class DecoderChoiceTests
         var decision = Decide([Cuda], codecId: Mjpeg, refusals: []);
 
         Assert.Equal([HardwareDecodeBackendKind.Cuda], Kinds(decision));
+    }
+
+    // ── Excluded codecs ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void AnExcludedCodecHasNoHardwareCandidate()
+    {
+        var decision = Decide([D3D11, Cuda], excluded: ["h264"]);
+
+        Assert.Empty(decision.Hardware);
+        Assert.True(decision.Excluded);
+        Assert.Contains("ExcludedCodecs", decision.Reason);
+    }
+
+    [Theory]
+    [InlineData("H264")]
+    [InlineData("h264")]
+    public void ExclusionIgnoresCase(string listed)
+    {
+        var decision = Decide([D3D11], excluded: [listed]);
+
+        Assert.True(decision.Excluded);
+    }
+
+    [Fact]
+    public void AnotherCodecInTheListLeavesThisOneOnHardware()
+    {
+        var decision = Decide([D3D11], excluded: ["av1", "mjpeg"]);
+
+        Assert.False(decision.Excluded);
+        Assert.Equal([HardwareDecodeBackendKind.D3D11Va], Kinds(decision));
+    }
+
+    [Fact]
+    public void ABorrowedDeviceDoesNotOverrideAnExclusion()
+    {
+        var decision = Decide([Cuda], borrowedDeviceType: CudaType, excluded: ["h264"]);
+
+        Assert.Empty(decision.Hardware);
+        Assert.True(decision.Excluded);
+    }
+
+    [Fact]
+    public void RequiredAlsoSeesTheExclusion()
+    {
+        var decision = Decide([D3D11], HardwareDecodeMode.Required, excluded: ["h264"]);
+
+        Assert.Empty(decision.Hardware);
+        Assert.True(decision.Excluded);
+    }
+
+    [Fact]
+    public void DisabledIsNotReportedAsExcluded()
+    {
+        var decision = Decide([D3D11], HardwareDecodeMode.Disabled, excluded: ["h264"]);
+
+        Assert.False(decision.Excluded);
+        Assert.Contains("disabled", decision.Reason);
     }
 
     // ── The reason, for a log ────────────────────────────────────────────────

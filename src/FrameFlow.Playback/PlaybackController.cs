@@ -138,6 +138,11 @@ public static class PlaybackController
     /// <see cref="IVideoSink.PreferredBackends"/> when frames stay on the GPU, then the platform
     /// default (#532). A <paramref name="hardwareDevice"/> fixes the backend instead.
     /// </param>
+    /// <param name="excludedCodecs">
+    /// Codecs every item's decoder decodes in software, named as
+    /// <see cref="VideoStreamInfo.CodecName"/> reports them, such as <c>"av1"</c>. Null or empty
+    /// excludes none. Under <see cref="HardwareDecodeMode.Required"/> an excluded codec fails to load.
+    /// </param>
     public static IPlaybackController Create(
         IVideoSink? videoSink = null,
         IAudioSink? audioSink = null,
@@ -152,7 +157,8 @@ public static class PlaybackController
         LatenessRecoveryOptions? latenessRecovery = null,
         TimeProvider? timeProvider = null,
         HardwareDevice? hardwareDevice = null,
-        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null
+        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
+        IReadOnlyList<string>? excludedCodecs = null
     )
     {
         // One source at a time, as a queue of one on the playlist session. Each load makes the
@@ -172,7 +178,8 @@ public static class PlaybackController
                 latenessRecovery,
                 loadsSource: true,
                 hardwareDevice: hardwareDevice,
-                preferredBackends: preferredBackends
+                preferredBackends: preferredBackends,
+                excludedCodecs: excludedCodecs
             ),
             initialRepeatMode,
             clock,
@@ -262,6 +269,11 @@ public static class PlaybackController
     /// <see cref="IVideoSink.PreferredBackends"/> when frames stay on the GPU, then the platform
     /// default (#532). A <paramref name="hardwareDevice"/> fixes the backend instead.
     /// </param>
+    /// <param name="excludedCodecs">
+    /// Codecs every item's decoder decodes in software, named as
+    /// <see cref="VideoStreamInfo.CodecName"/> reports them, such as <c>"av1"</c>. Null or empty
+    /// excludes none. Under <see cref="HardwareDecodeMode.Required"/> an excluded codec fails to load.
+    /// </param>
     internal static IPlaybackController CreatePlaylist(
         PlaylistCoordinator coordinator,
         IVideoSink? videoSink = null,
@@ -277,7 +289,8 @@ public static class PlaybackController
         LatenessRecoveryOptions? latenessRecovery = null,
         TimeProvider? timeProvider = null,
         HardwareDevice? hardwareDevice = null,
-        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null
+        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
+        IReadOnlyList<string>? excludedCodecs = null
     )
     {
         ArgumentNullException.ThrowIfNull(coordinator);
@@ -295,7 +308,8 @@ public static class PlaybackController
                 yieldHardwareFrames,
                 latenessRecovery,
                 hardwareDevice: hardwareDevice,
-                preferredBackends: preferredBackends
+                preferredBackends: preferredBackends,
+                excludedCodecs: excludedCodecs
             ),
             initialRepeatMode,
             clock,

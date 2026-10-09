@@ -46,6 +46,7 @@ FrameFlow.Player.IPassBuilder.WithDecodeDiscard(FrameFlow.Decoding.DecodeDiscard
 FrameFlow.Player.IPassBuilder.WithHardwareDecode(FrameFlow.Media.HardwareDecodeMode mode) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithHardwareDevice(FrameFlow.Decoding.HardwareDevice! device) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithPreferredBackends(params FrameFlow.Media.HardwareDecodeBackendKind[]! backends) -> FrameFlow.Player.IPassBuilder!
+FrameFlow.Player.IPassBuilder.WithExcludedCodecs(params string![]! codecs) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithLogger(Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithRange(System.TimeSpan start, System.TimeSpan? end) -> FrameFlow.Player.IPassBuilder!
 FrameFlow.Player.IPassBuilder.WithVideoSink(FrameFlow.Media.IVideoSink! sink) -> FrameFlow.Player.IPassBuilder!
@@ -59,6 +60,7 @@ FrameFlow.Player.IPlayerBuilder.WithClock(FrameFlow.Playback.IPlaybackClock! clo
 FrameFlow.Player.IPlayerBuilder.WithHardwareDecode(FrameFlow.Media.HardwareDecodeMode mode) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithHardwareDevice(FrameFlow.Decoding.HardwareDevice! device) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithPreferredBackends(params FrameFlow.Media.HardwareDecodeBackendKind[]! backends) -> FrameFlow.Player.IPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.WithExcludedCodecs(params string![]! codecs) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithHardwareFrames(bool yieldHardwareFrames = true) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithLatenessRecovery(FrameFlow.Playback.LatenessRecoveryOptions! options) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithLogger(Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory) -> FrameFlow.Player.IPlayerBuilder!

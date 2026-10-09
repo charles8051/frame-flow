@@ -38,6 +38,7 @@ internal static class PlayerFactory
         TimeProvider? timeProvider,
         HardwareDevice? hardwareDevice,
         IReadOnlyList<HardwareDecodeBackendKind> preferredBackends,
+        IReadOnlyList<string> excludedCodecs,
         CancellationToken cancellationToken
     )
     {
@@ -71,7 +72,8 @@ internal static class PlayerFactory
             latenessRecovery: latenessRecovery,
             timeProvider: timeProvider,
             hardwareDevice: hardwareDevice,
-            preferredBackends: preferredBackends
+            preferredBackends: preferredBackends,
+            excludedCodecs: excludedCodecs
         );
 #pragma warning restore CA2000
 

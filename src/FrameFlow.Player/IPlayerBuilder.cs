@@ -216,6 +216,20 @@ public interface IPlayerBuilder
     IPlayerBuilder WithPreferredBackends(params HardwareDecodeBackendKind[] backends);
 
     /// <summary>
+    /// Codecs every playlist item's video decoder decodes in software even where a hardware backend
+    /// could decode them, named as <see cref="VideoStreamInfo.CodecName"/> reports them (<c>"av1"</c>,
+    /// <c>"h264"</c>) and compared without regard to case. An empty list clears a previous call.
+    /// </summary>
+    /// <remarks>
+    /// Other codecs stay on hardware, which <see cref="WithHardwareDecode"/> with
+    /// <see cref="HardwareDecodeMode.Disabled"/> does not do. A device from
+    /// <see cref="WithHardwareDevice"/> does not override it. Under
+    /// <see cref="HardwareDecodeMode.Required"/> an excluded codec fails to load, because the two
+    /// requests contradict each other.
+    /// </remarks>
+    IPlayerBuilder WithExcludedCodecs(params string[] codecs);
+
+    /// <summary>
     /// Controls whether <see cref="IAudioSink.ActivateAsync"/> is called before the built player
     /// is handed back. Defaults to <see langword="true"/>; pass <see langword="false"/> to
     /// activate the sink yourself later.

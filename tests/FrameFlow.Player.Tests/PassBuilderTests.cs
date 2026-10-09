@@ -29,6 +29,22 @@ public sealed class PassBuilderTests
     }
 
     [Fact]
+    public void WithExcludedCodecs_Null_Throws()
+    {
+        var builder = FrameFlowPass.Create("any.mp4");
+        Assert.Throws<ArgumentNullException>(() => builder.WithExcludedCodecs(null!));
+    }
+
+    [Fact]
+    public void WithExcludedCodecs_ReturnsSameBuilderForChaining()
+    {
+        var builder = FrameFlowPass.Create("any.mp4");
+
+        Assert.Same(builder, builder.WithExcludedCodecs("av1"));
+        Assert.Same(builder, builder.WithExcludedCodecs());
+    }
+
+    [Fact]
     public void WithVideoSink_Null_Throws()
     {
         var builder = FrameFlowPass.Create("any.mp4");

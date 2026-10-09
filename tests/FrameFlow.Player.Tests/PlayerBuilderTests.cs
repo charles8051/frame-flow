@@ -137,6 +137,22 @@ public sealed class PlayerBuilderTests
     }
 
     [Fact]
+    public void WithExcludedCodecs_Null_Throws()
+    {
+        var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");
+        Assert.Throws<ArgumentNullException>(() => builder.WithExcludedCodecs(null!));
+    }
+
+    [Fact]
+    public void WithExcludedCodecs_ReturnsSameBuilderForChaining()
+    {
+        var builder = FrameFlowPlayer.Create().WithMedia("any.mp4");
+
+        Assert.Same(builder, builder.WithExcludedCodecs("av1"));
+        Assert.Same(builder, builder.WithExcludedCodecs());
+    }
+
+    [Fact]
     public void EveryOption_KeepsTheOneBuilder()
     {
         // The narrowing is gone. The player's builder has one terminal and every option means
@@ -153,6 +169,7 @@ public sealed class PlayerBuilderTests
             .WithClock(new PlaybackClock())
             .WithVideoSink(sink)
             .WithHardwareDecode(HardwareDecodeMode.Disabled)
+            .WithExcludedCodecs("av1")
             .WithLogger(null);
 
         Assert.Same(builder, same);

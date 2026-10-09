@@ -59,6 +59,21 @@ public sealed class HardwareDecodeOptions
     /// </summary>
     public IReadOnlyList<HardwareDecodeBackendKind> PreferredBackends { get; set; } =
         Array.Empty<HardwareDecodeBackendKind>();
+
+    /// <summary>
+    /// Codecs that decode in software even where a hardware backend could decode them, named as
+    /// <see cref="VideoStreamInfo.CodecName"/> reports them (<c>"av1"</c>, <c>"h264"</c>) and
+    /// compared without regard to case. Empty (the default) excludes none.
+    /// </summary>
+    /// <remarks>
+    /// Under <see cref="HardwareDecodeMode.Auto"/> a listed codec decodes in software. Under
+    /// <see cref="HardwareDecodeMode.Required"/> it fails as if no backend bound, because the two
+    /// requests contradict each other. A borrowed <c>HardwareDevice</c> does not override it. This
+    /// keeps one codec on software while the others stay on hardware, for a codec a driver decodes
+    /// wrongly or a caller that needs the software decoder's output.
+    /// <see cref="HardwareDecodeMode.Disabled"/> turns hardware decode off for every codec.
+    /// </remarks>
+    public IReadOnlyList<string> ExcludedCodecs { get; set; } = Array.Empty<string>();
 }
 
 /// <summary>
