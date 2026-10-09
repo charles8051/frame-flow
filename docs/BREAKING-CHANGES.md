@@ -2357,3 +2357,11 @@ almost all of them.
 - **The OpenAL start log gained a field.** It reads `OpenAL audio sink started
   on {Device}. BufferPoolSize=...` where it used to begin `OpenAL audio sink
   started. BufferPoolSize=...`. Only breaking if you parse that line.
+- **`Auto` no longer binds CUDA for MJPEG.** The CUDA MJPEG decoder maps a full-range JPEG as
+  if it were limited range, so a gray ramp comes back with 0 to 16 as 0 and 235 to 255 as 255, and
+  a video from an MJPEG camera or a baseline JPEG still loses its shadows and highlights (#574).
+  `Auto` picked CUDA for MJPEG wherever it was the only backend with a config, as it was on the
+  Windows machine this was measured on. It now decodes in software, or on the next backend with a config, whatever
+  `PreferredBackends` says. `Required` and a borrowed `HardwareDevice` still bind CUDA, because
+  they name the backend. `HardwareBackend` reads `null` for MJPEG where it read `Cuda`. Nothing to
+  change; the picture just stops being wrong.

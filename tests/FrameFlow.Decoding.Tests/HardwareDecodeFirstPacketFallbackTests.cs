@@ -1,4 +1,4 @@
-using FrameFlow.Native.Interop;
+using static FrameFlow.Decoding.Tests.JpegHarness;
 
 namespace FrameFlow.Decoding.Tests;
 
@@ -9,14 +9,13 @@ namespace FrameFlow.Decoding.Tests;
 /// </summary>
 /// <remarks>
 /// The CUDA MJPEG decoder accepts a baseline JPEG and refuses a progressive one, which is the
-/// smallest stream that binds and then faults.
+/// smallest stream that binds and then faults. <c>Auto</c> does not bind CUDA for MJPEG at all
+/// (#574), so these tests open the decoder with no known refusals to reach it.
 /// </remarks>
 [Collection(DecodePoolCollection.Name)]
 public sealed class HardwareDecodeFirstPacketFallbackTests(FfmpegBootstrapFixture fixture)
     : IClassFixture<FfmpegBootstrapFixture>
 {
-    private const int MjpegCodecId = 7;
-
     [RequiresCudaMjpegFact]
     public async Task Auto_AProgressiveJpegTheHardwareDecoderRefuses_DecodesInSoftware()
     {
@@ -74,84 +73,10 @@ public sealed class HardwareDecodeFirstPacketFallbackTests(FfmpegBootstrapFixtur
                 PreferredBackends = [HardwareDecodeBackendKind.Cuda],
             },
             fixture.Capabilities,
-            loggerFactory: null
+            videoOptions: null,
+            logger: null,
+            refusals: []
         );
-
-    private static async Task<DemuxSession> OpenAsync(string path) =>
-        (DemuxSession)await new DemuxSessionFactory().OpenAsync(MediaSource.FromFile(path));
-
-    /// <summary>Queues every video packet, completes the queue, and collects the decoded frames.</summary>
-    private static async Task<FrameList> DecodeAllAsync(
-        DemuxSession demux,
-        VideoDecoder decoder
-    )
-    {
-        int streamIndex = demux.MediaInfo.VideoStreams[0].StreamIndex;
-        nint read = FFAvCodec.av_packet_alloc();
-        try
-        {
-            while (FFAvFormat.av_read_frame(demux.FormatContextPtr, read) >= 0)
-            {
-                if (new AvPacketAccessor(read).StreamIndex == streamIndex)
-                {
-                    nint clone = FFAvCodec.av_packet_alloc();
-                    FFAvCodec.av_packet_ref(clone, read);
-                    await decoder.SendPacketAsync(clone);
-                }
-
-                FFAvCodec.av_packet_unref(read);
-            }
-        }
-        finally
-        {
-            FFAvCodec.av_packet_free(ref read);
-        }
-
-        decoder.CompletePacketQueue();
-
-        var frames = new FrameList();
-        try
-        {
-            await foreach (var frame in decoder.DecodeAsync())
-                frames.Add(frame);
-        }
-        catch
-        {
-            frames.Dispose();
-            throw;
-        }
-
-        return frames;
-    }
-
-    /// <summary>The decoded frames, released with the test's scope.</summary>
-    private sealed class FrameList : List<IVideoFrame>, IDisposable
-    {
-        public void Dispose()
-        {
-            foreach (var frame in this)
-                frame.Dispose();
-        }
-    }
-
-    private sealed class TempFile : IDisposable
-    {
-        public string Path { get; }
-
-        private TempFile(string path) => Path = path;
-
-        public static TempFile With(byte[] bytes)
-        {
-            var path = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(),
-                $"frameflow-{Guid.NewGuid():N}.jpg"
-            );
-            File.WriteAllBytes(path, bytes);
-            return new TempFile(path);
-        }
-
-        public void Dispose() => File.Delete(Path);
-    }
 }
 
 /// <summary>Skipped unless a CUDA device initialised here and its MJPEG decoder advertises a hardware config.</summary>

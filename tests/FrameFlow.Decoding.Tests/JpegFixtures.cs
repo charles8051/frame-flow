@@ -3,13 +3,17 @@ namespace FrameFlow.Decoding.Tests;
 /// <summary>
 /// Two JPEGs of the same 256x144 gradient, written with Pillow at quality 90. One is baseline
 /// (SOF0), one is progressive (SOF2). The CUDA MJPEG decoder accepts the first and refuses the
-/// second at its first packet (#572).
+/// second at its first packet (#572). A third is a full-range gray ramp, for the range the CUDA
+/// decoder gets wrong (#574).
 /// </summary>
 internal static class JpegFixtures
 {
     public static byte[] Baseline => Convert.FromBase64String(BaselineBase64);
 
     public static byte[] Progressive => Convert.FromBase64String(ProgressiveBase64);
+
+    /// <summary>A 256x64 gray JPEG at quality 100 whose column x holds the value x (full range).</summary>
+    public static byte[] Ramp => Convert.FromBase64String(RampBase64);
 
     private const string BaselineBase64 =
             "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQ" +
@@ -101,4 +105,33 @@ internal static class JpegFixtures
             "jjjjjjjjgiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiigiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiijjjjjjjjjjjjjjjjjjjjjjjj" +
             "jjjjjjjj45dVVXVVVdVVP/nr/wD/AP55f/8A5++ccccccccccccccccccccccccccccccccUUUUUUUUUUUUUUUUUUUUUUUUU" +
             "UUUUUUUEUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUV//9k=";
+
+    private const string RampBase64 =
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB" +
+            "AQEBAQEBAQEBAQEBAQEBAQH/wAALCABAAQABAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgED" +
+            "AwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RF" +
+            "RkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJ" +
+            "ytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/AP4G9N/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQ" +
+            "NN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQ" +
+            "NN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQ" +
+            "NN/h/CvQNN/h/CvQNN/h/Cv8D/Tf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr" +
+            "0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr" +
+            "0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr/A/03+H8" +
+            "K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8" +
+            "K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8" +
+            "K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K/wP9N/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h" +
+            "/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h" +
+            "/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h" +
+            "/CvQNN/h/CvQNN/h/CvQNN/h/Cv8D/Tf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf" +
+            "4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf" +
+            "4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr/A/0" +
+            "3+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A0" +
+            "3+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A0" +
+            "3+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K9A03+H8K/wP9N/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQ" +
+            "NN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQ" +
+            "NN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQNN/h/CvQ" +
+            "NN/h/CvQNN/h/CvQNN/h/CvQNN/h/Cv8D/Tf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr" +
+            "0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr" +
+            "0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr0DTf4fwr" +
+            "/9k=";
 }
