@@ -2,7 +2,9 @@
 
 ## Status
 
-**Proposed (2026-10-08).** Not implemented. Assign the number at merge.
+**Proposed (2026-10-08).** Assign the number at merge. Partly implemented: the CUDA MJPEG
+refusal (#574) landed ahead of `Decide` as `KnownRefusals` in `Decoding.Core`, applied in
+`TryBindHwAccel`. The rest is not.
 
 Amends the selection algorithm in [ADR-0033](ADR-0033-hardware-decode-selection.md) (step 7 and the
 2026-10-08 amendment). Follows the shape of `DecodeBackendOrder` (#532) and the pure-core pattern of

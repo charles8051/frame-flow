@@ -120,13 +120,19 @@ public sealed partial class VideoDecoder
     /// Internal overload taking a logger rather than a factory. Used by tests and the
     /// production factory.
     /// </summary>
+    /// <param name="refusals">
+    /// The backends <see cref="HardwareDecodeMode.Auto"/> does not bind for a codec (#574).
+    /// <see langword="null"/> uses <see cref="KnownRefusals.Builtin"/>. A test passes none to reach
+    /// a backend that is known to decode the codec wrongly.
+    /// </param>
     internal static VideoDecoder Open(
         nint formatContextPtr,
         int streamIndex,
         HardwareDecodeOptions? options,
         HardwareDecodeCapabilities? capabilities,
         VideoDecoderOptions? videoOptions = null,
-        ILogger? logger = null
+        ILogger? logger = null,
+        IReadOnlyList<KnownRefusal>? refusals = null
     )
     {
         logger ??= NullLogger.Instance;
@@ -188,6 +194,7 @@ public sealed partial class VideoDecoder
                 capabilities,
                 heldHardwareFrames,
                 videoOptions?.Device,
+                refusals ?? KnownRefusals.Builtin,
                 attempts,
                 logger
             );
@@ -311,6 +318,7 @@ public sealed partial class VideoDecoder
         HardwareDecodeCapabilities capabilities,
         int heldHardwareFrames,
         HardwareDevice? device,
+        IReadOnlyList<KnownRefusal> refusals,
         List<HardwareDecodeAttempt> attempts,
         ILogger logger
     )
@@ -320,6 +328,27 @@ public sealed partial class VideoDecoder
         var candidates = device is null
             ? EnumerateCandidates(codec, capabilities)
             : EnumerateCandidates(codec, capabilities: null, onlyDeviceType: device.AvHwDeviceType);
+
+        // A backend known to decode this codec wrongly is not a candidate under Auto (#574). It is
+        // not an attempt either: nothing failed, so Required's exception and the "no backend bound"
+        // warning do not describe it.
+        if (KnownRefusals.Governs(options.Mode, borrowedDevice: device is not null))
+        {
+            candidates.RemoveAll(candidate =>
+            {
+                if (KnownRefusals.Find(refusals, candidate.Kind, codecId) is not { } refusal)
+                    return false;
+
+                LogHwRefused(
+                    logger,
+                    candidate.Kind.ToString(),
+                    FFAvCodec.avcodec_get_name(codecId),
+                    refusal.Reason
+                );
+                return true;
+            });
+        }
+
         if (candidates.Count == 0)
         {
             if (device is not null)
@@ -819,6 +848,17 @@ public sealed partial class VideoDecoder
         string backend,
         int frameFormat,
         int hwFormat
+    );
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Hardware decode on {Backend} skipped for codec '{Codec}': {Reason}."
+    )]
+    private static partial void LogHwRefused(
+        ILogger logger,
+        string backend,
+        string codec,
+        string reason
     );
 
     [LoggerMessage(
