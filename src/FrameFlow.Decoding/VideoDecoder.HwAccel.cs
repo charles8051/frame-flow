@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using FFmpeg.AutoGen.Abstractions;
 using FrameFlow.Decoding.Core;
 using FrameFlow.Decoding.Internal;
@@ -120,11 +121,11 @@ public sealed partial class VideoDecoder
     /// Internal overload taking a logger rather than a factory. Used by tests and the
     /// production factory.
     /// </summary>
-    /// <param name="refusals">
-    /// The backends <see cref="HardwareDecodeMode.Auto"/> does not bind for a codec (#574).
-    /// <see langword="null"/> uses <see cref="KnownRefusals.Builtin"/>. A test passes none to reach
-    /// a backend that is known to decode the codec wrongly.
-    /// </param>
+    /// <remarks>
+    /// <paramref name="refusals"/> are the backends <see cref="HardwareDecodeMode.Auto"/> does not
+    /// bind for a codec (#574). <see langword="null"/> uses <see cref="KnownRefusals.Builtin"/>. A
+    /// test passes none to reach a backend that is known to decode the codec wrongly.
+    /// </remarks>
     internal static VideoDecoder Open(
         nint formatContextPtr,
         int streamIndex,
@@ -181,20 +182,39 @@ public sealed partial class VideoDecoder
 
         var codecName = FFAvCodec.avcodec_get_name(codecId);
 
+        // Which hardware candidates to try, and in what order, is a pure decision.
+        string decoderName = DecoderNameOf(codec);
+        var decision = DecoderChoice.Decide(
+            codecId,
+            decoderName,
+            options.Mode == HardwareDecodeMode.Disabled ? [] : ReadHwConfigs(codec, decoderName),
+            options.Mode,
+            options.PreferredBackends,
+            DecoderChoice.PlatformDefault(CurrentOs()),
+            InitialisedBackends(capabilities),
+            videoOptions?.Device?.AvHwDeviceType,
+            refusals ?? KnownRefusals.Builtin
+        );
+        if (options.Mode != HardwareDecodeMode.Disabled)
+        {
+            // A refusal is not an attempt: nothing failed, so Required's exception and the "no
+            // backend bound" warning do not describe it.
+            foreach (var refusal in decision.Refused)
+                LogHwRefused(logger, refusal.Backend.ToString(), codecName, refusal.Reason);
+            LogHwChoice(logger, codecName, decision.Reason);
+        }
+
         // Try hwaccel first (if requested), tracking attempts for diagnostics.
         var attempts = new List<HardwareDecodeAttempt>();
         HwAccelBinding? hwBinding = null;
         if (options.Mode != HardwareDecodeMode.Disabled)
         {
             hwBinding = TryBindHwAccel(
+                decision.Hardware,
                 codec,
-                codecId,
                 codecParPtr,
-                options,
-                capabilities,
                 heldHardwareFrames,
                 videoOptions?.Device,
-                refusals ?? KnownRefusals.Builtin,
                 attempts,
                 logger
             );
@@ -267,10 +287,12 @@ public sealed partial class VideoDecoder
         // Auto falls back to software when the bound hardware decoder rejects the first packet
         // (#572). Required keeps the fault, and a decoder already on software has nothing to
         // fall back from.
+#pragma warning disable CA2000 // Ownership transfers to the decoder via the field assignment below.
         CodecContextHandle? softwareFallback =
             hwBinding is not null && options.Mode == HardwareDecodeMode.Auto
                 ? TryPrepareSoftwareFallback(codec, codecParPtr, logger)
                 : null;
+#pragma warning restore CA2000
 
         var decoder = new VideoDecoder(
             codecCtx,
@@ -304,51 +326,20 @@ public sealed partial class VideoDecoder
     }
 
     /// <summary>
-    /// Iterates the codec's <c>AVCodecHWConfig</c> table, intersects with the
-    /// initialised host capabilities, sorts by user preference and platform
-    /// default order, and tries each candidate in turn. Returns the first
-    /// binding that opens successfully, or <see langword="null"/> if none did.
-    /// Mutates <paramref name="attempts"/> with one entry per attempt.
+    /// Tries each of the decision's hardware candidates in turn. Returns the first binding that
+    /// opens successfully, or <see langword="null"/> if none did. Mutates
+    /// <paramref name="attempts"/> with one entry per attempt.
     /// </summary>
     private static HwAccelBinding? TryBindHwAccel(
+        IReadOnlyList<HwAccelCandidate> candidates,
         nint codec,
-        int codecId,
         nint codecParPtr,
-        HardwareDecodeOptions options,
-        HardwareDecodeCapabilities capabilities,
         int heldHardwareFrames,
         HardwareDevice? device,
-        IReadOnlyList<KnownRefusal> refusals,
         List<HardwareDecodeAttempt> attempts,
         ILogger logger
     )
     {
-        // Build the candidate list: (kind, avDeviceType, hwPixelFormat). A borrowed device fixes
-        // the backend, and it opened already, so the probe's view of the host does not apply.
-        var candidates = device is null
-            ? EnumerateCandidates(codec, capabilities)
-            : EnumerateCandidates(codec, capabilities: null, onlyDeviceType: device.AvHwDeviceType);
-
-        // A backend known to decode this codec wrongly is not a candidate under Auto (#574). It is
-        // not an attempt either: nothing failed, so Required's exception and the "no backend bound"
-        // warning do not describe it.
-        if (KnownRefusals.Governs(options.Mode, borrowedDevice: device is not null))
-        {
-            candidates.RemoveAll(candidate =>
-            {
-                if (KnownRefusals.Find(refusals, candidate.Kind, codecId) is not { } refusal)
-                    return false;
-
-                LogHwRefused(
-                    logger,
-                    candidate.Kind.ToString(),
-                    FFAvCodec.avcodec_get_name(codecId),
-                    refusal.Reason
-                );
-                return true;
-            });
-        }
-
         if (candidates.Count == 0)
         {
             if (device is not null)
@@ -363,9 +354,7 @@ public sealed partial class VideoDecoder
             return null;
         }
 
-        var sorted = device is null ? SortByPolicy(candidates, options.PreferredBackends) : candidates;
-
-        foreach (var candidate in sorted)
+        foreach (var candidate in candidates)
         {
             var binding = TryBindSingle(
                 candidate,
@@ -412,27 +401,19 @@ public sealed partial class VideoDecoder
     )
     {
         nint codec = FFAvCodec.avcodec_find_decoder(codecId);
-        return codec != nint.Zero && EnumerateCandidates(codec, capabilities).Count > 0;
+        if (codec == nint.Zero)
+            return false;
+
+        var initialised = InitialisedBackends(capabilities);
+        return ReadHwConfigs(codec, DecoderNameOf(codec)).Any(c => initialised.Contains(c.Kind));
     }
 
-    private static List<HwAccelCandidate> EnumerateCandidates(
-        nint codec,
-        HardwareDecodeCapabilities? capabilities,
-        int? onlyDeviceType = null
-    )
+    /// <summary>
+    /// Every device-context hardware config of <paramref name="codec"/>, whether or not its device
+    /// initialised. Choosing among them is <see cref="DecoderChoice.Decide"/>.
+    /// </summary>
+    private static List<HwAccelCandidate> ReadHwConfigs(nint codec, string decoderName)
     {
-        // Build a lookup of which (kind) values have an initialised device on
-        // this host. A backend listed in the bootstrap capabilities but with
-        // Initialized=false is excluded — we already know the device wouldn't
-        // open even if the codec advertises it. With onlyDeviceType, the one
-        // device type named is the only candidate, and the capabilities are unused.
-        var initializedKinds = new HashSet<HardwareDecodeBackendKind>();
-        foreach (var backend in capabilities?.Available ?? [])
-        {
-            if (backend.Initialized)
-                initializedKinds.Add(backend.Kind);
-        }
-
         var result = new List<HwAccelCandidate>();
         for (int i = 0; ; i++)
         {
@@ -448,84 +429,47 @@ public sealed partial class VideoDecoder
             if ((cfg.Methods & FFAvUtil.AvCodecHwConfigMethodHwDeviceCtx) == 0)
                 continue;
 
-            var kind = HardwareDecodeProbeBridge.ClassifyBackend(cfg.DeviceType);
-            bool usable = onlyDeviceType is { } only
-                ? cfg.DeviceType == only
-                : initializedKinds.Contains(kind);
-            if (!usable)
-                continue;
-
-            result.Add(new HwAccelCandidate(kind, cfg.DeviceType, cfg.PixelFormat));
+            result.Add(
+                new HwAccelCandidate(
+                    decoderName,
+                    HardwareDecodeProbeBridge.ClassifyBackend(cfg.DeviceType),
+                    cfg.DeviceType,
+                    cfg.PixelFormat
+                )
+            );
         }
 
         return result;
     }
 
     /// <summary>
-    /// Sorts the candidate set by user preference first, then platform default
-    /// priority. Stable within each priority bucket so duplicate preferences
-    /// are tolerated.
+    /// The backends whose device initialised on this host. A backend listed in the bootstrap
+    /// capabilities with Initialized=false is excluded: the device would not open even if the codec
+    /// advertises it.
     /// </summary>
-    private static List<HwAccelCandidate> SortByPolicy(
-        List<HwAccelCandidate> candidates,
-        IReadOnlyList<HardwareDecodeBackendKind> preferred
+    private static HashSet<HardwareDecodeBackendKind> InitialisedBackends(
+        HardwareDecodeCapabilities capabilities
     )
     {
-        var defaultOrder = PlatformDefaultOrder();
-        int Rank(HardwareDecodeBackendKind kind)
+        var kinds = new HashSet<HardwareDecodeBackendKind>();
+        foreach (var backend in capabilities.Available)
         {
-            // Preferred backends rank below 1000 in the order the user gave.
-            for (int i = 0; i < preferred.Count; i++)
-            {
-                if (preferred[i] == kind)
-                    return i;
-            }
-            // Then platform default order.
-            for (int i = 0; i < defaultOrder.Length; i++)
-            {
-                if (defaultOrder[i] == kind)
-                    return 1000 + i;
-            }
-            // Everything else (including Other) lands at the bottom.
-            return 10_000;
+            if (backend.Initialized)
+                kinds.Add(backend.Kind);
         }
 
-        var sorted = new List<HwAccelCandidate>(candidates);
-        sorted.Sort((a, b) => Rank(a.Kind).CompareTo(Rank(b.Kind)));
-        return sorted;
+        return kinds;
     }
 
-    private static HardwareDecodeBackendKind[] PlatformDefaultOrder()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return
-            [
-                HardwareDecodeBackendKind.D3D11Va,
-                HardwareDecodeBackendKind.D3D12Va,
-                HardwareDecodeBackendKind.Dxva2,
-                HardwareDecodeBackendKind.Cuda,
-                HardwareDecodeBackendKind.Qsv,
-            ];
-        }
-        if (OperatingSystem.IsMacOS())
-        {
-            return [HardwareDecodeBackendKind.VideoToolbox];
-        }
-        if (OperatingSystem.IsLinux())
-        {
-            return
-            [
-                HardwareDecodeBackendKind.VaApi,
-                HardwareDecodeBackendKind.Cuda,
-                HardwareDecodeBackendKind.Vdpau,
-                HardwareDecodeBackendKind.Qsv,
-                HardwareDecodeBackendKind.Vulkan,
-                HardwareDecodeBackendKind.Drm,
-            ];
-        }
-        return [];
-    }
+    private static OsFamily CurrentOs() =>
+        OperatingSystem.IsWindows() ? OsFamily.Windows
+        : OperatingSystem.IsMacOS() ? OsFamily.MacOs
+        : OperatingSystem.IsLinux() ? OsFamily.Linux
+        : OsFamily.Other;
+
+    /// <summary>The name FFmpeg registers <paramref name="codec"/> under, such as <c>libdav1d</c>.</summary>
+    private static unsafe string DecoderNameOf(nint codec) =>
+        Marshal.PtrToStringUTF8((nint)((AVCodec*)codec)->name) ?? "unknown";
 
     /// <summary>
     /// Allocates a codec context, attaches the chosen hwaccel device context,
@@ -852,6 +796,12 @@ public sealed partial class VideoDecoder
 
     [LoggerMessage(
         Level = LogLevel.Debug,
+        Message = "Hardware decode candidates for codec '{Codec}': {Reason}."
+    )]
+    private static partial void LogHwChoice(ILogger logger, string codec, string reason);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
         Message = "Hardware decode on {Backend} skipped for codec '{Codec}': {Reason}."
     )]
     private static partial void LogHwRefused(
@@ -878,15 +828,6 @@ public sealed partial class VideoDecoder
         Message = "Hardware decode on {Backend} engaged; frames are arriving in format {HwFormat}."
     )]
     private static partial void LogHwEngaged(ILogger logger, string backend, int hwFormat);
-
-    /// <summary>
-    /// Internal candidate descriptor for hwaccel binding.
-    /// </summary>
-    private sealed record HwAccelCandidate(
-        HardwareDecodeBackendKind Kind,
-        int AvHwDeviceType,
-        int HwPixelFormat
-    );
 
     /// <summary>
     /// Successful hwaccel bind: holds the device context ref (owned, must be
