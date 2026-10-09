@@ -448,7 +448,10 @@ public sealed partial class VideoDecoder
 
     // AV_CODEC_CAP_* bits from libavcodec/codec.h that mark a decoder not to offer as a hardware
     // candidate: one that is experimental, and the wrappers around a vendor's own decoder
-    // (h264_cuvid, h264_qsv), which ADR-0033 rejected in favour of the hwaccel configs.
+    // (h264_cuvid, h264_qsv), which ADR-0033 rejected in favour of the hwaccel configs. The flags
+    // are what identifies the wrappers: on the bundled 9.0 build every decoder carrying HARDWARE or
+    // HYBRID is a _cuvid, _qsv or _amf wrapper (23 of them), and every one of them also has a
+    // device-context config, so the config check alone would admit av1_cuvid for AV1.
     private const int CodecCapExperimental = 1 << 9;
     private const int CodecCapHardware = 1 << 18;
     private const int CodecCapHybrid = 1 << 19;
@@ -461,7 +464,8 @@ public sealed partial class VideoDecoder
     /// <c>avcodec_find_decoder</c> returns the first decoder registered for a codec, and for AV1
     /// that is <c>libdav1d</c>, which has no hardware configs. FFmpeg's own <c>av1</c> decoder has
     /// them. Looking past the default only when it has none leaves every codec whose default decoder
-    /// already has configs (H.264, HEVC, VP8, VP9) exactly as it was.
+    /// already has configs (H.264, HEVC, VP8, VP9) exactly as it was. On the bundled build AV1 is the
+    /// only codec whose answer differs from its default decoder.
     /// </remarks>
     private static unsafe List<HardwareDecoder> HardwareDecoders(int codecId, nint defaultCodec)
     {
