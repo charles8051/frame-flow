@@ -566,21 +566,26 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
 
             // A hardware decoder can bind and then refuse the stream at its first packet (a
             // progressive JPEG on the CUDA MJPEG decoder, #572). Under Auto the same packet goes
-            // to the software decoder. The fallback is spent once the hardware decoder accepts a
-            // packet: a later fault is mid-stream, and a new decoder has lost the references.
-            if (!_inFlushMode && _softwareFallbackCtx is not null)
+            // to the software decoder. FirstPacketFallback says when: not after the hardware
+            // decoder has accepted a packet, because a later fault is mid-stream and a new decoder
+            // has lost the references.
+            switch (
+                FirstPacketFallback.After(_inFlushMode, _softwareFallbackCtx is not null, result)
+            )
             {
-                if (result == CodecReturn.Fault && TryFallBackToSoftware())
-                {
-                    result = DecodeDriver.Classify(
-                        FFAvCodec.avcodec_send_packet(_codecCtx.DangerousGetHandle(), pktArg)
-                    );
-                }
-                else if (result == CodecReturn.Ok)
-                {
-                    _softwareFallbackCtx.Dispose();
+                case FirstPacketAction.ReopenOnSoftware:
+                    if (TryFallBackToSoftware())
+                    {
+                        result = DecodeDriver.Classify(
+                            FFAvCodec.avcodec_send_packet(_codecCtx.DangerousGetHandle(), pktArg)
+                        );
+                    }
+                    break;
+
+                case FirstPacketAction.ReleaseFallback:
+                    _softwareFallbackCtx?.Dispose();
                     _softwareFallbackCtx = null;
-                }
+                    break;
             }
 
             if (
