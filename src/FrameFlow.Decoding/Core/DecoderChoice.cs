@@ -44,7 +44,8 @@ internal readonly record struct DecoderChoiceDecision(
     bool Excluded = false);
 
 /// <summary>
-/// Decides which hardware candidates a video decoder tries, and in what order (ADR-0033). Pure: the
+/// Decides which hardware candidates a video decoder tries, and in what order (ADR-0033,
+/// ADR-0083). Pure: the
 /// decoder's hardware configs, the mode and the backend orders in, a decision out.
 /// </summary>
 /// <remarks>

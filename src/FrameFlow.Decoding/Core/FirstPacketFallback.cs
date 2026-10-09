@@ -20,7 +20,7 @@ internal enum FirstPacketAction
 
 /// <summary>
 /// When a hardware decoder that refused a stream's first packet is replaced by the software
-/// decoder (ADR-0033, #572). Pure.
+/// decoder (ADR-0033, ADR-0083, #572). Pure.
 /// </summary>
 /// <remarks>
 /// <para>

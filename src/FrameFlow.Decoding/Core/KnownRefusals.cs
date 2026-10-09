@@ -18,7 +18,7 @@ internal readonly record struct KnownRefusal(
 
 /// <summary>
 /// The backends <see cref="HardwareDecodeMode.Auto"/> does not bind for a codec because they are
-/// known to decode it wrongly (#574). Pure.
+/// known to decode it wrongly (#574, ADR-0083). Pure.
 /// </summary>
 /// <remarks>
 /// A row records a backend that gives wrong output for a codec, and never a judgement about cost
