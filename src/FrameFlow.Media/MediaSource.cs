@@ -68,9 +68,18 @@ public sealed record MediaSource : IMediaSource
     /// <b>This does not look at the extension, and does not refuse any format.</b> Whether a file is
     /// one image is a fact about the content, and the caller generally knows it from something
     /// better than the path: a declared content type, a manifest, a database column. A
-    /// content-addressed store has no extension to read at all. Applied to a format that can be
-    /// animated, such as <c>.gif</c> or <c>.webp</c>, <c>image2</c> yields the first frame and
-    /// reports it as the whole file, so decide before you call this rather than after.
+    /// content-addressed store has no extension to read at all. Applied to a GIF, which can be
+    /// animated, <c>image2</c> yields the first frame and reports it as the whole file, so decide
+    /// before you call this rather than after.
+    /// </para>
+    /// <para>
+    /// <b>What opens.</b> A bare image: JPEG, PNG, WebP (a single image), BMP, TIFF, TGA, QOI, JPEG XL
+    /// and the rest <c>image2</c> reads, and GIF. <c>image2</c> names a decoder from the
+    /// extension and the FFmpeg 9.0 build has none for GIF, so a GIF is recognised from its first
+    /// bytes and the decoder is named for it (#575). <b>What does not:</b> AVIF and ICO are
+    /// containers, which <c>image2</c> cannot read, and so is an animated WebP on the bundled build.
+    /// They fail at open with a message that names <see cref="FromFile"/>, which opens them but
+    /// cannot give them a dwell.
     /// </para>
     /// <para>
     /// <c>pattern_type=none</c> because <c>image2</c> otherwise reads the path as a printf sequence

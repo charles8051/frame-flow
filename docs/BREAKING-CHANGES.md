@@ -2365,3 +2365,9 @@ almost all of them.
   `PreferredBackends` says. `Required` and a borrowed `HardwareDevice` still bind CUDA, because
   they name the backend. `HardwareBackend` reads `null` for MJPEG where it read `Cuda`. Nothing to
   change; the picture just stops being wrong.
+- **`MediaSource.FromStill` opens a GIF again.** The FFmpeg 9.0 build has no decoder `image2` can
+  name for GIF from its extension, so a GIF opened with a stream and no codec and the load failed
+  with "no stream has resolved codec parameters" (#575). The factory now reads the file's first six
+  bytes when an `image2` source resolves nothing, and names the GIF decoder. An animated GIF is its
+  first frame for the dwell, as the remarks always said. AVIF and ICO are containers `image2` cannot
+  read and still fail, now with a message that names `MediaSource.FromFile`.

@@ -78,11 +78,11 @@ internal static class JpegHarness
 
         private TempFile(string path) => Path = path;
 
-        public static TempFile With(byte[] bytes)
+        public static TempFile With(byte[] bytes, string extension = ".jpg")
         {
             var path = System.IO.Path.Combine(
                 System.IO.Path.GetTempPath(),
-                $"frameflow-{Guid.NewGuid():N}.jpg"
+                $"frameflow-{Guid.NewGuid():N}{extension}"
             );
             File.WriteAllBytes(path, bytes);
             return new TempFile(path);

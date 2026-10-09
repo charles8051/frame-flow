@@ -4,6 +4,7 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using FFmpeg.AutoGen.Abstractions;
+using FrameFlow.Decoding.Core;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
@@ -93,6 +94,24 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
         ArgumentNullException.ThrowIfNull(source);
         cancellationToken.ThrowIfCancellationRequested();
 
+        try
+        {
+            return OpenCore(source, forcedVideoCodec: null);
+        }
+        catch (ReopenWithCodecException reopen)
+        {
+            return OpenCore(source, reopen.CodecId);
+        }
+    }
+
+    /// <param name="source">The source to open.</param>
+    /// <param name="forcedVideoCodec">
+    /// An <c>AVCodecID</c> to set as the format context's <c>video_codec_id</c> before the open,
+    /// which <c>image2</c> uses as the decoder where it cannot name one from the extension (#575).
+    /// <see langword="null"/> for none.
+    /// </param>
+    private ValueTask<IDemuxSession> OpenCore(IMediaSource source, int? forcedVideoCodec)
+    {
         // Resolve the URL string FFmpeg will open.
         string url = ResolveUrl(source);
 
@@ -114,6 +133,18 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
         int openResult;
         try
         {
+            if (forcedVideoCodec is { } codecId)
+            {
+                // avformat_open_input takes this context, and frees it if the open fails.
+                ctx = FFAvFormat.avformat_alloc_context();
+                if (ctx == nint.Zero)
+                    throw new OutOfMemoryException("FFmpeg avformat_alloc_context returned null.");
+                unsafe
+                {
+                    Unsafe.AsRef<AVFormatContext>((void*)ctx).video_codec_id = (AVCodecID)codecId;
+                }
+            }
+
             openResult = FFAvFormat.avformat_open_input(ref ctx, url, inputFormat, ref options);
 
             if (openResult >= 0 && ctx != nint.Zero)
@@ -223,15 +254,35 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
                     _ => "it offers no playable stream",
                 };
 
+                // image2 names a bare image's decoder from its extension and found none (#575).
+                // The file's own first bytes can name it, and the open is tried once more with it.
+                if (forcedVideoCodec is null && StillCodecFor(source) is { } sniffed)
+                {
+                    _logger.LogInformation(
+                        "Media source {DisplayName} opened on image2 without a decoder for its "
+                            + "format; reopening with codec {CodecId} named",
+                        source.DisplayName,
+                        sniffed
+                    );
+                    throw new ReopenWithCodecException(sniffed);
+                }
+
                 _logger.LogError(
                     "Opened media source {DisplayName} but resolved no playable stream: {Detail}",
                     source.DisplayName,
                     detail
                 );
 
+                // image2 reads one bare image. A container image format has no decoder it can name.
+                string hint =
+                    source.InputFormat == "image2"
+                        ? " image2 reads one bare image and cannot open a container image format "
+                            + "such as AVIF or ICO; open those with MediaSource.FromFile."
+                        : "";
+
                 throw new InvalidOperationException(
                     $"FFmpeg opened media source '{source.DisplayName}' but resolved no playable "
-                        + $"stream: {detail}."
+                        + $"stream: {detail}.{hint}"
                 );
             }
 
@@ -279,6 +330,38 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// The decoder the first bytes of an <c>image2</c> source's file name, or null when the
+    /// source is not one, is not a file, cannot be read, or is a format this does not know.
+    /// </summary>
+    private static int? StillCodecFor(IMediaSource source)
+    {
+        if (source.InputFormat != "image2" || source.FilePath is not { } path)
+            return null;
+
+        try
+        {
+            using var file = File.OpenRead(path);
+            Span<byte> header = stackalloc byte[StillCodec.HeaderLength];
+            int read = file.ReadAtLeast(header, header.Length, throwOnEndOfStream: false);
+            return StillCodec.ForHeader(header[..read]);
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Carries the decoder to open again with, out of <see cref="OpenCore"/>'s cleanup.</summary>
+    private sealed class ReopenWithCodecException(int codecId) : Exception
+    {
+        public int CodecId { get; } = codecId;
+    }
 
     /// <summary>
     /// Looks up the demuxer named by <see cref="IMediaSource.InputFormat"/>, or
