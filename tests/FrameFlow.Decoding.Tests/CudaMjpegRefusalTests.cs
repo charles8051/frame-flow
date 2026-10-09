@@ -64,6 +64,19 @@ public sealed class CudaMjpegRefusalTests(FfmpegBootstrapFixture fixture)
     }
 
     /// <summary>
+    /// Only CUDA, so that a host with another backend that has an MJPEG config does not bind it
+    /// under <c>Auto</c> and make "binds nothing" the wrong thing to assert.
+    /// </summary>
+    private HardwareDecodeCapabilities CudaOnly() =>
+        new(
+            fixture
+                .Capabilities.Available.Where(b =>
+                    b.Kind == HardwareDecodeBackendKind.Cuda && b.Initialized
+                )
+                .ToList()
+        );
+
+    /// <summary>
     /// Decodes the ramp as a still and returns the backend the decoder bound and the green
     /// channel at <see cref="Columns"/>.
     /// </summary>
@@ -79,7 +92,7 @@ public sealed class CudaMjpegRefusalTests(FfmpegBootstrapFixture fixture)
             demux.FormatContextPtr,
             demux.MediaInfo.VideoStreams[0].StreamIndex,
             new HardwareDecodeOptions { Mode = mode, PreferredBackends = preferred ?? [] },
-            fixture.Capabilities,
+            CudaOnly(),
             loggerFactory: null,
             videoOptions: device is null ? null : new VideoDecoderOptions { Device = device }
         );
