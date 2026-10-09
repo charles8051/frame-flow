@@ -33,18 +33,23 @@ internal enum OsFamily
 /// <param name="SoftwareDecoder">The software decoder, which is what <c>Auto</c> falls back to.</param>
 /// <param name="Refused">The known refusals that dropped a candidate.</param>
 /// <param name="Reason">Why, in a line.</param>
+/// <param name="Excluded">
+/// True when the codec is in <c>ExcludedCodecs</c>, which is why <paramref name="Hardware"/> is empty.
+/// </param>
 internal readonly record struct DecoderChoiceDecision(
     IReadOnlyList<HwAccelCandidate> Hardware,
     string SoftwareDecoder,
     IReadOnlyList<KnownRefusal> Refused,
-    string Reason);
+    string Reason,
+    bool Excluded = false);
 
 /// <summary>
 /// Decides which hardware candidates a video decoder tries, and in what order (ADR-0033). Pure: the
 /// decoder's hardware configs, the mode and the backend orders in, a decision out.
 /// </summary>
 /// <remarks>
-/// A borrowed device fixes the backend, and it opened already, so the probe's view of the host
+/// A codec in <c>ExcludedCodecs</c> has no hardware candidate, whatever else is asked. A borrowed
+/// device fixes the backend, and it opened already, so the probe's view of the host
 /// and the order do not apply and nothing is refused. Otherwise only backends whose device
 /// initialised are candidates, ordered by the caller's preference, then the platform default, then
 /// the rest in the order the decoder lists them. Under <see cref="HardwareDecodeMode.Auto"/> a
@@ -81,6 +86,7 @@ internal static class DecoderChoice
         };
 
     /// <param name="codecId">The FFmpeg <c>AVCodecID</c>, which keys <paramref name="refusals"/>.</param>
+    /// <param name="codecName">The codec's name, which <paramref name="excludedCodecs"/> names.</param>
     /// <param name="softwareDecoder">The software decoder's name.</param>
     /// <param name="configs">
     /// Every device-context hardware config of the decoder, whether or not its device initialised.
@@ -93,8 +99,10 @@ internal static class DecoderChoice
     /// The <c>AVHWDeviceType</c> of a borrowed device, or <see langword="null"/> for none.
     /// </param>
     /// <param name="refusals">The backends not to bind for a codec under <c>Auto</c>.</param>
+    /// <param name="excludedCodecs">Codec names that decode in software, compared without regard to case.</param>
     public static DecoderChoiceDecision Decide(
         int codecId,
+        string codecName,
         string softwareDecoder,
         IReadOnlyList<HwAccelCandidate> configs,
         HardwareDecodeMode mode,
@@ -102,17 +110,30 @@ internal static class DecoderChoice
         IReadOnlyList<HardwareDecodeBackendKind> platformDefault,
         IReadOnlyCollection<HardwareDecodeBackendKind> initialised,
         int? borrowedDeviceType,
-        IReadOnlyList<KnownRefusal> refusals)
+        IReadOnlyList<KnownRefusal> refusals,
+        IReadOnlyList<string> excludedCodecs)
     {
+        ArgumentNullException.ThrowIfNull(codecName);
         ArgumentNullException.ThrowIfNull(softwareDecoder);
         ArgumentNullException.ThrowIfNull(configs);
         ArgumentNullException.ThrowIfNull(preferred);
         ArgumentNullException.ThrowIfNull(platformDefault);
         ArgumentNullException.ThrowIfNull(initialised);
         ArgumentNullException.ThrowIfNull(refusals);
+        ArgumentNullException.ThrowIfNull(excludedCodecs);
 
         if (mode == HardwareDecodeMode.Disabled)
             return new(Hardware: [], softwareDecoder, Refused: [], "hardware decode is disabled");
+
+        if (excludedCodecs.Contains(codecName, StringComparer.OrdinalIgnoreCase))
+        {
+            return new(
+                Hardware: [],
+                softwareDecoder,
+                Refused: [],
+                $"'{codecName}' is in ExcludedCodecs",
+                Excluded: true);
+        }
 
         if (borrowedDeviceType is { } deviceType)
         {

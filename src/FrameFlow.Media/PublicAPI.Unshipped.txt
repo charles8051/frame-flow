@@ -333,6 +333,8 @@ FrameFlow.Media.HardwareDecodeOptions.Mode.get -> FrameFlow.Media.HardwareDecode
 FrameFlow.Media.HardwareDecodeOptions.Mode.set -> void
 FrameFlow.Media.HardwareDecodeOptions.PreferredBackends.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Media.HardwareDecodeBackendKind>!
 FrameFlow.Media.HardwareDecodeOptions.PreferredBackends.set -> void
+FrameFlow.Media.HardwareDecodeOptions.ExcludedCodecs.get -> System.Collections.Generic.IReadOnlyList<string!>!
+FrameFlow.Media.HardwareDecodeOptions.ExcludedCodecs.set -> void
 FrameFlow.Media.HardwareFrameDomains
 FrameFlow.Media.HeadlessVideoSink
 FrameFlow.Media.HeadlessVideoSink.AbandonedCount.get -> long

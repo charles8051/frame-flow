@@ -50,6 +50,10 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
     /// Hardware decode backends every item's decoder tries first; null or empty defers to the video
     /// sink's preference, then the platform default (#532).
     /// </param>
+    /// <param name="excludedCodecs">
+    /// Codecs every item's decoder decodes in software, named as
+    /// <see cref="VideoStreamInfo.CodecName"/> reports them; null or empty excludes none.
+    /// </param>
     public PlaylistSessionFactory(
         PlaylistCoordinator coordinator,
         IVideoSink? videoSink = null,
@@ -63,7 +67,8 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
         LatenessRecoveryOptions? latenessRecovery = null,
         bool loadsSource = false,
         HardwareDevice? hardwareDevice = null,
-        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null
+        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
+        IReadOnlyList<string>? excludedCodecs = null
     )
     {
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
@@ -82,7 +87,8 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
             yieldHardwareFrames,
             latenessRecovery,
             hardwareDevice,
-            preferredBackends
+            preferredBackends,
+            excludedCodecs
         );
     }
 
@@ -100,6 +106,10 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
     /// <summary>The caller's backend order the item factory carries, for the same tests (#532).</summary>
     internal IReadOnlyList<HardwareDecodeBackendKind>? PreferredBackends =>
         (_itemFactory as SubstrateSessionFactory)?.PreferredBackends;
+
+    /// <summary>The caller's codec exclusions the item factory carries, for the same tests.</summary>
+    internal IReadOnlyList<string>? ExcludedCodecs =>
+        (_itemFactory as SubstrateSessionFactory)?.ExcludedCodecs;
 
     public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks)
     {

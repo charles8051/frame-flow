@@ -186,6 +186,7 @@ public sealed partial class VideoDecoder
         string decoderName = DecoderNameOf(codec);
         var decision = DecoderChoice.Decide(
             codecId,
+            codecName,
             decoderName,
             options.Mode == HardwareDecodeMode.Disabled ? [] : ReadHwConfigs(codec, decoderName),
             options.Mode,
@@ -193,7 +194,8 @@ public sealed partial class VideoDecoder
             DecoderChoice.PlatformDefault(CurrentOs()),
             InitialisedBackends(capabilities),
             videoOptions?.Device?.AvHwDeviceType,
-            refusals ?? KnownRefusals.Builtin
+            refusals ?? KnownRefusals.Builtin,
+            options.ExcludedCodecs
         );
         if (options.Mode != HardwareDecodeMode.Disabled)
         {
@@ -204,10 +206,22 @@ public sealed partial class VideoDecoder
             LogHwChoice(logger, codecName, decision.Reason);
         }
 
+        // An excluded codec has no hardware candidate. Required cannot be met, and says why.
+        if (decision.Excluded && options.Mode == HardwareDecodeMode.Required)
+        {
+            throw new HardwareDecodeUnavailableException(
+                codecId,
+                codecName,
+                attempts: [],
+                reason: $"codec '{codecName}' is in HardwareDecodeOptions.ExcludedCodecs, so it "
+                    + "does not decode on hardware."
+            );
+        }
+
         // Try hwaccel first (if requested), tracking attempts for diagnostics.
         var attempts = new List<HardwareDecodeAttempt>();
         HwAccelBinding? hwBinding = null;
-        if (options.Mode != HardwareDecodeMode.Disabled)
+        if (options.Mode != HardwareDecodeMode.Disabled && !decision.Excluded)
         {
             hwBinding = TryBindHwAccel(
                 decision.Hardware,

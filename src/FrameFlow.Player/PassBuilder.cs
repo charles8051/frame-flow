@@ -39,6 +39,7 @@ internal sealed class PassBuilder : IPassBuilder
     private VideoDecoderOptions? _videoDecoderOptions;
     private HardwareDevice? _hardwareDevice;
     private HardwareDecodeBackendKind[] _preferredBackends = [];
+    private string[] _excludedCodecs = [];
     private DecodeDiscardLevel _discardLevel = DecodeDiscardLevel.None;
     private PassRange _range = PassRange.Whole;
     private AudioDecoderOptions? _audioDecoderOptions;
@@ -101,6 +102,13 @@ internal sealed class PassBuilder : IPassBuilder
     {
         ArgumentNullException.ThrowIfNull(backends);
         _preferredBackends = [.. backends];
+        return this;
+    }
+
+    public IPassBuilder WithExcludedCodecs(params string[] codecs)
+    {
+        ArgumentNullException.ThrowIfNull(codecs);
+        _excludedCodecs = [.. codecs];
         return this;
     }
 
@@ -330,7 +338,12 @@ internal sealed class PassBuilder : IPassBuilder
                 var videoBudget = hardwareFrames.Yield ? pathBudget : null;
                 videoDecoder =
                     DecoderFactories.CreateVideo(
-                        new HardwareDecodeOptions { Mode = _hwMode, PreferredBackends = backendOrder.Preferred },
+                        new HardwareDecodeOptions
+                        {
+                            Mode = _hwMode,
+                            PreferredBackends = backendOrder.Preferred,
+                            ExcludedCodecs = _excludedCodecs,
+                        },
                         bootstrapResult.Capabilities,
                         _loggerFactory,
                         DecoderOptions(_videoDecoderOptions, _hardwareDevice, videoBudget)

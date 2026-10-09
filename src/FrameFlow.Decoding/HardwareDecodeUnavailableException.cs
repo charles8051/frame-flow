@@ -52,6 +52,27 @@ public sealed class HardwareDecodeUnavailableException : Exception
         Attempts = attempts;
     }
 
+    /// <summary>
+    /// For a codec that cannot decode on hardware for a reason that is not a failed bind, such as
+    /// being in <see cref="FrameFlow.Media.HardwareDecodeOptions.ExcludedCodecs"/>.
+    /// </summary>
+    /// <param name="codecId">The FFmpeg codec ID (<c>AVCodecID</c>) of the stream.</param>
+    /// <param name="codecName">Human-readable codec name (e.g. <c>"av1"</c>).</param>
+    /// <param name="attempts">The backends attempted, if any.</param>
+    /// <param name="reason">Why hardware decode is not available for the codec.</param>
+    public HardwareDecodeUnavailableException(
+        int codecId,
+        string codecName,
+        IReadOnlyList<HardwareDecodeAttempt> attempts,
+        string reason
+    )
+        : base($"HardwareDecodeMode.Required: {reason}")
+    {
+        CodecId = codecId;
+        CodecName = codecName;
+        Attempts = attempts;
+    }
+
     private static string BuildMessage(
         string codecName,
         IReadOnlyList<HardwareDecodeAttempt> attempts

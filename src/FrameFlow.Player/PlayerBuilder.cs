@@ -38,6 +38,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
     private bool? _yieldHardwareFrames;
     private HardwareDevice? _hardwareDevice;
     private HardwareDecodeBackendKind[] _preferredBackends = [];
+    private string[] _excludedCodecs = [];
     private bool _activateAudioSink = true;
 
     public IPlayerBuilder WithMedia(string path)
@@ -161,6 +162,13 @@ internal sealed class PlayerBuilder : IPlayerBuilder
         return this;
     }
 
+    public IPlayerBuilder WithExcludedCodecs(params string[] codecs)
+    {
+        ArgumentNullException.ThrowIfNull(codecs);
+        _excludedCodecs = [.. codecs];
+        return this;
+    }
+
     public IPlayerBuilder WithAudioActivation(bool activateAudioSink = true)
     {
         _activateAudioSink = activateAudioSink;
@@ -218,6 +226,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
             timeProvider: _timeProvider,
             hardwareDevice: _hardwareDevice,
             preferredBackends: _preferredBackends,
+            excludedCodecs: _excludedCodecs,
             cancellationToken: cancellationToken
         );
     }

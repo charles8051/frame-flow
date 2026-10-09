@@ -130,6 +130,19 @@ public interface IPassBuilder
     IPassBuilder WithPreferredBackends(params HardwareDecodeBackendKind[] backends);
 
     /// <summary>
+    /// Codecs the pass's video decoder decodes in software even where a hardware backend could
+    /// decode them, named as <see cref="VideoStreamInfo.CodecName"/> reports them (<c>"av1"</c>,
+    /// <c>"h264"</c>) and compared without regard to case. An empty list clears a previous call.
+    /// </summary>
+    /// <remarks>
+    /// Other codecs stay on hardware, which <see cref="WithHardwareDecode"/> with
+    /// <see cref="HardwareDecodeMode.Disabled"/> does not do. A device from
+    /// <see cref="WithHardwareDevice"/> does not override it. Under
+    /// <see cref="HardwareDecodeMode.Required"/> an excluded codec fails to load.
+    /// </remarks>
+    IPassBuilder WithExcludedCodecs(params string[] codecs);
+
+    /// <summary>
     /// How much of the video the decoder skips, for the whole pass. Defaults to
     /// <see cref="DecodeDiscardLevel.None"/>, which decodes every frame.
     /// </summary>

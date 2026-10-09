@@ -192,6 +192,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     private readonly HardwareDevice? _hardwareDevice;
     // The caller's order; empty defers to the sink's, then the platform's (#532).
     private readonly IReadOnlyList<HardwareDecodeBackendKind> _preferredBackends;
+    private readonly IReadOnlyList<string> _excludedCodecs;
 
     public SubstrateSession(
         IVideoSink? videoSink,
@@ -205,7 +206,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? audioConfigurator = null,
         bool? yieldHardwareFrames = null,
         HardwareDevice? hardwareDevice = null,
-        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null
+        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
+        IReadOnlyList<string>? excludedCodecs = null
     )
     {
         ArgumentNullException.ThrowIfNull(clock);
@@ -218,6 +220,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         _yieldHardwareFrames = yieldHardwareFrames;
         _hardwareDevice = hardwareDevice;
         _preferredBackends = preferredBackends ?? [];
+        _excludedCodecs = excludedCodecs ?? [];
         _callbacks = callbacks;
         _videoConfigurator = videoConfigurator;
         _audioConfigurator = audioConfigurator;
@@ -516,7 +519,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
                 var videoBudget = hardwareFrames.Yield ? pathBudget : null;
                 var videoFactory = DecoderFactories.CreateVideo(
-                    new HardwareDecodeOptions { Mode = _hwMode, PreferredBackends = backendOrder.Preferred },
+                    new HardwareDecodeOptions
+                    {
+                        Mode = _hwMode,
+                        PreferredBackends = backendOrder.Preferred,
+                        ExcludedCodecs = _excludedCodecs,
+                    },
                     _hwCapabilities,
                     _loggerFactory,
                     videoBudget is null && _hardwareDevice is null

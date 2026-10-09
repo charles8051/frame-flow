@@ -2371,3 +2371,13 @@ almost all of them.
   bytes when an `image2` source resolves nothing, and names the GIF decoder. An animated GIF is its
   first frame for the dwell, as the remarks always said. AVIF and ICO are containers `image2` cannot
   read and still fail, now with a message that names `MediaSource.FromFile`.
+- **A codec can be kept on software while the others use hardware.**
+  `HardwareDecodeOptions.ExcludedCodecs` lists codecs, named as `VideoStreamInfo.CodecName`
+  reports them (`"av1"`, `"h264"`), that decode in software under `Auto` and fail as unbound
+  under `Required`. `IPlayerBuilder.WithExcludedCodecs` and `IPassBuilder.WithExcludedCodecs` set it
+  on a player or a pass, and `PlaybackController.Create` takes an `excludedCodecs` parameter.
+  Additive, and empty by default. Breaking only if you implement `IPlayerBuilder` or
+  `IPassBuilder` yourself. `HardwareDecodeUnavailableException` gained a constructor that takes the
+  reason, for a codec that cannot decode on hardware without having failed to bind. It is the way
+  out for a codec a driver decodes wrongly, and `WithHardwareDecode(Disabled)` turns hardware off for
+  every codec instead.

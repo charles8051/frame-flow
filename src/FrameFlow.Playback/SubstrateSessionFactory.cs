@@ -40,6 +40,7 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
     private readonly bool? _yieldHardwareFrames;
     private readonly HardwareDevice? _hardwareDevice;
     private readonly IReadOnlyList<HardwareDecodeBackendKind> _preferredBackends;
+    private readonly IReadOnlyList<string> _excludedCodecs;
 
     private readonly LatenessRecoveryOptions? _latenessRecovery;
 
@@ -56,6 +57,9 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
     /// <summary>The caller's backend order every session this factory creates carries (#532).</summary>
     internal IReadOnlyList<HardwareDecodeBackendKind> PreferredBackends => _preferredBackends;
 
+    /// <summary>The caller's codec exclusions every session this factory creates carries.</summary>
+    internal IReadOnlyList<string> ExcludedCodecs => _excludedCodecs;
+
     public SubstrateSessionFactory(
         IVideoSink? videoSink = null,
         IAudioSink? audioSink = null,
@@ -67,7 +71,8 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         bool? yieldHardwareFrames = null,
         LatenessRecoveryOptions? latenessRecovery = null,
         HardwareDevice? hardwareDevice = null,
-        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null
+        IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
+        IReadOnlyList<string>? excludedCodecs = null
     )
     {
         // Checked here rather than in the worker: this runs on the caller's thread,
@@ -86,6 +91,7 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         _hardwareDevice = hardwareDevice;
         // Copied: a caller's array changed after Create would otherwise reorder later items.
         _preferredBackends = preferredBackends is null ? [] : [.. preferredBackends];
+        _excludedCodecs = excludedCodecs is null ? [] : [.. excludedCodecs];
     }
 
     public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks) =>
@@ -110,7 +116,8 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
             _audioConfigurator,
             _yieldHardwareFrames,
             _hardwareDevice,
-            _preferredBackends
+            _preferredBackends,
+            _excludedCodecs
         )
         {
             LatenessRecovery = _latenessRecovery,

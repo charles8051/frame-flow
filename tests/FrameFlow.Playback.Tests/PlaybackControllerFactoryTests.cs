@@ -191,6 +191,50 @@ public sealed class PlaybackControllerFactoryTests
     }
 
     [Fact]
+    public async Task Create_ExcludedCodecs_ReachTheItemFactory()
+    {
+        // A caller's exclusions must reach every item's decoder options, as #532 had to for the
+        // backend order.
+        string[] excluded = ["av1", "mjpeg"];
+
+        await using var controller = PlaybackController.Create(excludedCodecs: excluded);
+
+        Assert.Equal(excluded, SessionFactory(controller).ExcludedCodecs);
+    }
+
+    [Fact]
+    public async Task Create_ExcludedCodecs_AreCopied_SoALaterChangeDoesNotReachTheItems()
+    {
+        string[] excluded = ["av1"];
+
+        await using var controller = PlaybackController.Create(excludedCodecs: excluded);
+        excluded[0] = "h264";
+
+        Assert.Equal(["av1"], SessionFactory(controller).ExcludedCodecs);
+    }
+
+    [Fact]
+    public async Task Create_NoExcludedCodecs_ExcludesNone()
+    {
+        await using var controller = PlaybackController.Create();
+
+        Assert.Empty(SessionFactory(controller).ExcludedCodecs!);
+    }
+
+    [Fact]
+    public async Task CreatePlaylist_ExcludedCodecs_ReachTheItemFactory()
+    {
+        string[] excluded = ["av1"];
+
+        await using var controller = PlaybackController.CreatePlaylist(
+            new PlaylistCoordinator(RepeatMode.Off),
+            excludedCodecs: excluded
+        );
+
+        Assert.Equal(excluded, SessionFactory(controller).ExcludedCodecs);
+    }
+
+    [Fact]
     public void CreatePlaylist_InvertedHysteresis_ThrowsNamingTheParameter()
     {
         var inverted = new LatenessRecoveryOptions
