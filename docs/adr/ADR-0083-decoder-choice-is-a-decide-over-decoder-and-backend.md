@@ -1,25 +1,28 @@
-# ADR-XXXX: Decoder choice is a Decide over decoder and backend
+# ADR-0083: Decoder choice is a Decide over decoder and backend
 
 ## Status
 
-**Proposed (2026-10-08).** Assign the number at merge. Partly implemented: the CUDA MJPEG
-refusal (#574) landed ahead of `Decide` as `KnownRefusals` in `Decoding.Core`, applied in
-`TryBindHwAccel`. The rest is not.
+**Accepted (2026-10-09) and implemented (2026-10-09)** in #582, #585, #586, #587 and #588, for #417,
+#572 and #574. [Implementation](#implementation) lists what shipped, what differs from the
+proposal, and what was measured. #355 asked for a per-codec dimension on the public capabilities
+surface. This gives the decoder an internal answer, the candidates for a codec, and leaves that
+surface as it was.
 
-Amends the selection algorithm in [ADR-0033](ADR-0033-hardware-decode-selection.md) (step 7 and the
-2026-10-08 amendment). Follows the shape of `DecodeBackendOrder` (#532) and the pure-core pattern of
+Amends the selection algorithm in [ADR-0033](ADR-0033-hardware-decode-selection.md) (see its
+2026-10-09 amendment). Follows the shape of `DecodeBackendOrder` (#532) and the pure-core pattern of
 [ADR-0055](ADR-0055-decode-protocol-as-a-pure-mealy-core.md).
 
 Motivating issues: #417 (AV1 never decodes on hardware), #572 and #573 (a backend binds, then
 refuses the first packet), #574 (CUDA MJPEG clips full-range JPEGs), #355 (capabilities have no
-per-codec dimension). Not covered: #388 (frames carry no colour range) and #575 (`FromStill` cannot
-open GIF, ICO or AVIF).
+per-codec dimension). Not covered: #388 (frames carry no colour range) and #583 (holding AVIF, ICO
+or an animated WebP as a still for a dwell). #575, the source-side counterpart where `FromStill`
+could not open a GIF, was fixed separately in #584.
 
 ## Context
 
 ### Choice is made once, and the answers arrive later
 
-`VideoDecoder.Open` chooses a decoder and a backend in one pass:
+Before this ADR, `VideoDecoder.Open` chose a decoder and a backend in one pass:
 
 1. `avcodec_find_decoder(codecId)` returns one decoder.
 2. `EnumerateCandidates` reads its `AVCodecHWConfig` table and keeps the `HwAccelCandidate`s whose
@@ -99,60 +102,74 @@ record that carries a `Reason` for the log.
 internal readonly record struct DecoderChoiceDecision(
     IReadOnlyList<HwAccelCandidate> Hardware,
     string SoftwareDecoder,
-    string Reason);
+    IReadOnlyList<KnownRefusal> Refused,
+    string Reason,
+    bool Excluded = false);
 
 internal static class DecoderChoice
 {
     public static DecoderChoiceDecision Decide(
         int codecId,
+        string codecName,
         string softwareDecoder,
         IReadOnlyList<HwAccelCandidate> configs,
         HardwareDecodeMode mode,
         IReadOnlyList<HardwareDecodeBackendKind> preferred,
         IReadOnlyList<HardwareDecodeBackendKind> platformDefault,
-        HardwareDecodeBackendKind? borrowed,
-        IReadOnlyList<KnownRefusal> refusals);
+        IReadOnlyCollection<HardwareDecodeBackendKind> initialised,
+        int? borrowedDeviceType,
+        IReadOnlyList<KnownRefusal> refusals,
+        IReadOnlyList<string> excludedCodecs);
+
+    public static IReadOnlyList<HardwareDecodeBackendKind> PlatformDefault(OsFamily os);
 }
 ```
 
-- `HwAccelCandidate` gains a `Decoder` name. It keeps `Kind`, `AvHwDeviceType` and `HwPixelFormat`,
+- `HwAccelCandidate` has a `Decoder` name besides `Kind`, `AvHwDeviceType` and `HwPixelFormat`,
   which binding needs.
-- `configs` is what `EnumerateCandidates` produces today, from every eligible decoder, already
-  intersected with the initialised devices.
-- `preferred` is `DecodeBackendOrder.Decide`'s result and `platformDefault` is a value the shell
-  supplies. The core ranks preferred, then platform default, then the rest, as `SortByPolicy` does,
-  with a stable order. It never reads the operating system.
-- `borrowed` keeps today's rule: a borrowed device fixes the backend, and no order applies.
-- The codec ID is the whole key. Nothing measured so far needs more of the stream, and a row that
-  does can add it when it exists.
+- `configs` is every device-context config of the hardware-capable decoders, whether or not its
+  device initialised. `Decide` intersects it with `initialised`.
+- `preferred` is `DecodeBackendOrder.Decide`'s result. `platformDefault` comes from
+  `PlatformDefault(OsFamily)`, which holds the three orders as data; the shell supplies the
+  `OsFamily`, so the core never reads the operating system. The core ranks preferred, then platform
+  default, then the rest, in a stable order.
+- `borrowedDeviceType` keeps today's rule: a borrowed device fixes the backend, and no order applies.
+- `Excluded` is true when the codec is in `excludedCodecs`, which is why `Hardware` is empty.
+- The codec ID is the whole key of a refusal. Nothing measured so far needs more of the stream, and
+  a row that does can add it when it exists.
 
 ### 2. The decoder is part of the candidate
 
-The shell lists the registered decoders for the codec and offers a decoder as a hardware candidate
-when it is a decoder, is not experimental, is not itself a hardware wrapper (`*_cuvid`, `*_qsv`,
-`*_amf`, rejected in ADR-0033), and has configs of the device-context kind. Names are unique, so
-`mpegvideo` does not duplicate `mpeg2video`.
+The shell looks for hardware decoders in two steps. The decoder `avcodec_find_decoder` returns is
+the only one when it has a device-context hardware config, which leaves H.264, HEVC, VP8, VP9,
+MPEG-2 and MJPEG exactly as they were. When it has none, the shell takes the other registered
+decoders for the codec that are decoders, are not experimental, are not a vendor wrapper
+(`*_cuvid`, `*_qsv`, `*_amf`, rejected in ADR-0033), and have a config. The wrappers are identified
+by `AV_CODEC_CAP_HARDWARE` and `AV_CODEC_CAP_HYBRID`: on the bundled build 23 decoders carry them,
+every one a wrapper, and every one also has a device-context config, so the config check alone
+would admit them.
 
-The software candidate stays what `avcodec_find_decoder` returns today. `Disabled` is unchanged, and
-for AV1 the software decoder stays `libdav1d`. For AV1 the hardware candidates are `av1` on each
-backend with a config.
+The software candidate stays what `avcodec_find_decoder` returns. `Disabled` is unchanged, and for
+AV1 the software decoder stays `libdav1d`. The hardware candidates for AV1 are `av1` on each backend
+with a config.
 
 This needs `av_codec_iterate`, `av_codec_is_decoder` and a read of `AVCodec.capabilities` in
-`FFAvCodec`.
+`FFAvCodec`, and each candidate binds with its own decoder.
 
 ### 3. The fallback context is built from the software candidate
 
-Today `Open` prepares the first-packet fallback from whichever decoder bound. With AV1 that would be
-the native `av1` decoder, which has no software path, so a host with a device and no AV1 engine
-would move from working `libdav1d` playback to a fault. The prepared context is built from the
-software candidate only.
+`Open` prepares the first-packet fallback (#573) from the software candidate and never from the
+decoder that bound. With AV1 the decoder that bound is the native `av1` decoder, which has no software path, so a host with a device and no AV1 engine
+would move from working `libdav1d` playback to a fault.
 
 ### 4. First-packet fallback is a predicate, and replaces only to software
 
-Add `FirstPacketFallback.Applies(mode, hasPreparedContext, anyPacketAccepted, CodecReturn)` in
-`Decoding.Core`. It states the rule from the ADR-0033 amendment: under `Auto`, a faulted send before
-any packet was accepted reopens on the software candidate, and nothing else does. `SendCurrentInput`
-calls it in place of the inline condition. It reuses `CodecReturn` and adds no state machine.
+`FirstPacketFallback.After(flushing, hasPreparedFallback, send)` in `Decoding.Core` states the rule
+from the ADR-0033 amendment: under `Auto`, a faulted send before any packet was accepted reopens on
+the software candidate, and nothing else does. It returns `Continue`, `ReopenOnSoftware` or
+`ReleaseFallback`. "Any packet accepted" is remembered by releasing the prepared fallback when the
+hardware decoder accepts one, and `Required` never prepares one. `SendCurrentInput` switches on it in
+place of the inline condition. It reuses `CodecReturn` and adds no state machine.
 
 A replacement after `Open` is always to software, never to another hardware backend. The player and
 the pass read `BoundBackend` once, right after `Open`, and fix the frame domain, `YieldHardwareFrames`
@@ -181,31 +198,67 @@ cost.
 table. The #573 tests pass none, so they keep exercising a CUDA first-packet refusal on a
 progressive JPEG.
 
-### 6. One public option, in slice 2
+### 6. One public option
 
-Everything else is internal. `HardwareDecodeOptions`, `HardwareDecodeMode`, `PreferredBackends`,
-`HardwareDecodeAttempt`, `HardwareBackend` and `BoundBackend` keep their meaning and shape.
+Everything else is internal. `HardwareDecodeMode`, `PreferredBackends`, `HardwareDecodeAttempt`,
+`HardwareBackend` and `BoundBackend` keep their meaning and shape.
 
-Slice 2 adds `HardwareDecodeOptions.ExcludedCodecs`, a list of codec names as
-`VideoStreamInfo.CodecName` reports them, empty by default. A codec on it decodes in software under
-`Auto`. Under `Required` it fails as if no backend bound, because the two requests contradict each
-other. The option exists so that moving AV1 to hardware does not force a caller that needs software
-AV1 beside hardware H.264 to turn hardware decode off for the whole player. It is also the way out
-of any later hardware regression for one codec.
+`HardwareDecodeOptions.ExcludedCodecs` is a list of codec names as `VideoStreamInfo.CodecName`
+reports them, empty by default. A codec on it decodes in software under `Auto`. Under `Required` it
+fails as if no backend bound, because the two requests contradict each other, through a new
+`HardwareDecodeUnavailableException` constructor that takes the reason. A borrowed device does not
+override it. The option exists so that moving AV1 to hardware does not force a caller that needs
+software AV1 beside hardware H.264 to turn hardware decode off for the whole player. It is also the
+way out of any later hardware regression for one codec. `IPlayerBuilder` and `IPassBuilder` gained
+`WithExcludedCodecs`, and `PlaybackController.Create` an `excludedCodecs` parameter; the list is
+threaded where `PreferredBackends` already goes.
 
 ### 7. Slices
 
-Each ships on its own and keeps the suite green.
+Each shipped on its own and kept the suite green.
 
-1. **Extract `Decide`.** No behaviour change. Tests pin `Decide` with the orders passed as data for
-   Windows, Linux and macOS, because nothing pins the order today. The fallback context is built
-   from the software candidate, which is the decoder that bound today, so nothing moves.
-2. **Add `ExcludedCodecs`, then the native AV1 decoder as a hardware candidate (#417).** The option
-   lands first in the same slice, so the behaviour change never ships without its way out. A
-   behaviour change for AV1, with its own entry in `BREAKING-CHANGES.md`. A test covers the
-   fallback context being `libdav1d` for AV1.
-3. **Add `KnownRefusal` and the CUDA MJPEG row (#574).** A behaviour change for MJPEG.
-4. **Extract `FirstPacketFallback`.** Optional. It moves a condition and changes no behaviour.
+1. **Extract `Decide`** (#585). No behaviour change. Tests pin `Decide` with the orders passed as data
+   for Windows, Linux and macOS, because nothing pinned the order before.
+2. **Add `ExcludedCodecs`** (#586), **then the native AV1 decoder as a hardware candidate** (#587).
+   The option landed first, so the behaviour change never shipped without its way out.
+3. **Add `KnownRefusal` and the CUDA MJPEG row** (#582). A behaviour change for MJPEG. It landed
+   before slice 1, as `KnownRefusals` applied inside `TryBindHwAccel`, and moved into `Decide` with
+   slice 1.
+4. **Extract `FirstPacketFallback`** (#588). It moved a condition and changed no behaviour.
+
+## Implementation
+
+| Slice | Change | Shipped in |
+| ----- | ------ | ---------- |
+| 3 | `KnownRefusals`; `Auto` does not bind CUDA for MJPEG (#574) | #582 |
+| 1 | `DecoderChoice.Decide`, `PlatformDefault`, `HwAccelCandidate` in `Decoding.Core` | #585 |
+| 2 | `ExcludedCodecs`, `WithExcludedCodecs`, the exception constructor | #586 |
+| 2 | Native `av1` as a hardware candidate (#417) | #587 |
+| 4 | `FirstPacketFallback` | #588 |
+
+What differs from the proposal:
+
+- Slice 3 landed first, because #574 was the smallest of the four and a user-visible defect.
+- Decision 2 gained the rule "the default decoder alone when it has a config". The proposal listed
+  every eligible registered decoder, which would have offered `mpegvideo` beside `mpeg2video`.
+- `FirstPacketFallback.After(flushing, hasPreparedFallback, send)` replaced the proposed
+  `Applies(mode, hasPreparedContext, anyPacketAccepted, CodecReturn)`. The mode and the accepted-packet
+  flag are both implied by whether a fallback is still prepared.
+- `VideoDecoder.Open` takes the refusals as an internal parameter, so the first-packet tests can
+  reach a backend that `Auto` would no longer bind.
+
+What was measured, on one Windows machine with an NVIDIA RTX 30-series GPU and the bundled FFmpeg
+9.0 build, with a sweep of 88 fixtures through software and five hardware backends (616 rows):
+
+- Slice 1 changed no row. Slice 2's AV1 change differed from `main` in 23 rows and every one was AV1.
+- 8-bit and 10-bit 4:2:0 AV1 engages on CUDA, D3D11VA, D3D12VA, DXVA2 and Vulkan, with CPU frames
+  and with GPU frames, and `Auto` picks D3D11VA. 4:4:4 AV1, which NVDEC refuses at its first packet,
+  decodes with `libdav1d` under `Auto` and faults under `Required`.
+- Of every codec the build has a decoder for, AV1 is the only one whose hardware decoder differs from
+  its default.
+- CUDA MJPEG no longer clips full-range JPEGs under `Auto`.
+
+Not measured: Linux (VAAPI), macOS (VideoToolbox) and QSV.
 
 ## Consequences
 
@@ -231,14 +284,14 @@ Each ships on its own and keeps the suite green.
 
 - Only the sequencing becomes pure, as in ADR-0055. Decoding stays in the native decoder.
 - Audio has no hardware path and is unaffected.
-- Slice 2 changes behaviour for AV1, and ships only in a release that says so. A hardware-decoded
+- Slice 2 changed behaviour for AV1, and ships only in a release that says so. A hardware-decoded
   AV1 stream takes the hardware paths: a pool with a budget, unbounded holders refused
   (`CheckFrameBudget`, with its existing load-time message) and GPU frames by default when the path
   takes them. A player that loaded AV1 in software before can fail to load or change its frame
-  domain. The migration is `ExcludedCodecs = ["av1"]` on the player that needs software AV1,
+  domain. The migration is `WithExcludedCodecs("av1")` on the player that needs software AV1,
   which leaves hardware on for its other codecs. FrameFlow is before 1.0, where the minor position
   is the breaking one, and the entry goes in `BREAKING-CHANGES.md` as a behaviour change.
-- Slice 3 changes behaviour: `Auto` stops picking CUDA for MJPEG, whatever `PreferredBackends`
+- Slice 3 changed behaviour: `Auto` stops picking CUDA for MJPEG, whatever `PreferredBackends`
   says, and uses software or the next backend with a config.
 
 ## Alternatives considered

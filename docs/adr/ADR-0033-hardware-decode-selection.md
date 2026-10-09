@@ -315,6 +315,22 @@ Three cases keep the fault:
 - **`Required`.** It promises a hardware decoder, and a software one would break that without
   saying so.
 
+## Amendment (2026-10-09): candidate selection is a pure decision (ADR-0083)
+
+The selection algorithm above (enumerate the decoder's hardware configs, intersect them with the
+initialised devices, sort by preference and then platform order, bind each in turn) is now
+`DecoderChoice.Decide`, a pure function in `Decoding.Core`, and the first-packet rule from the
+2026-10-08 amendment is `FirstPacketFallback.After` ([ADR-0083](ADR-0083-decoder-choice-is-a-decide-over-decoder-and-backend.md)).
+Three behaviours changed with it:
+
+- The hardware candidates can come from a decoder other than the one `avcodec_find_decoder` returns,
+  when that one has no hardware config. AV1 decodes on hardware through the native `av1` decoder
+  (#417), and `libdav1d` stays the software candidate.
+- `HardwareDecodeOptions.ExcludedCodecs` keeps a codec on software under `Auto` and fails it as
+  unbound under `Required`.
+- `Auto` does not bind a backend known to decode a codec wrongly, which is CUDA with MJPEG (#574).
+  `Required` and a borrowed device keep it, and `PreferredBackends` does not override it.
+
 ## References
 
 - ADR-0002: FFmpeg bootstrap strategy
