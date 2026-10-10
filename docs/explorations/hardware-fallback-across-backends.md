@@ -112,10 +112,15 @@ Decide on the first packet, hold it, and walk `Decide`'s candidates.
    or an `Ok` with a software `pix_fmt` and no `hw_frames_ctx`, means this candidate is refused. Take the
    next hardware candidate from the ordered list `Decide` returned, and software when none is left.
    `FirstPacketFallback.After` gains the observation as an input, and `ReopenOnSoftware` becomes
-   `TryNextCandidate`. If `pix_fmt` is still unset the decision waits for the first frame, as today.
+   `TryNextCandidate`. The rule covers a refusal settled on the first send. If `pix_fmt` is still unset
+   after it, nothing is swapped and the decoder behaves as it does today: a later answer would have
+   to carry the packets sent so far, because sequence headers and reorder state may sit in them, and
+   that is open question 2.
 2. **Reopen.** Bind the candidate with `TryBindSingle`, as `Open` did, close the old context and send the
-   held packet again. The packet is the only state to carry, and nothing has been emitted. The discard
-   level carries across, as it does for the software fallback.
+   held packet again. On the first send the packet is the only state to carry, and nothing has been
+   emitted. The discard level carries across, as it does for the software fallback. The candidate binds
+   with no held frames, so `extra_hw_frames` is zero: it downloads, and a download releases each surface
+   as it copies. The original count was sized for the backend `Open` chose and does not carry over.
 3. **Frames.** The graph was built for the backend `Open` bound. If the candidate that holds is another
    backend, the decoder sets a private flag and downloads its frames, whatever `YieldHardwareFrames` says.
    `BoundBackend` stays the backend the decoder opened on, because that is what the graph was checked
