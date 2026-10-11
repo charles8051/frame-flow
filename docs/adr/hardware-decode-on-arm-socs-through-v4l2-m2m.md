@@ -185,10 +185,10 @@ covers them. The policy has three parts, and a packet count is not one of them. 
 stalled node from codec startup or frame reordering, so it is not used as a signal.
 
 1. **An error before the first frame.** The decoder keeps the packets it has sent until the first
-   frame is received. A receive error before then reopens on the prepared software context and sends
-   the kept packets again. The keep is bounded by the node's input queue (`-num_output_buffers`,
-   default 16), because a node cannot hold more than that unanswered. If a send blocks or fails at that
-   bound with no frame, that is a refusal too.
+   frame is received, the whole prefix, so a replay is complete. A receive error before then, or a send
+   that returns an error, reopens on the prepared software context and sends the kept packets again.
+   A send that blocks is ordinary backpressure and is not a refusal. The size of the keep is bounded by
+   the deadline in part 2 and the stream's bitrate, not by the node's queue depth.
 2. **Silence before the first frame.** A shell-owned deadline, read from an injected `TimeProvider`
    and counted from the first send, treats a node that has produced nothing as refusing, with the same
    reopen. The core holds no clock: it receives "deadline passed" as an input, as the other cadence
