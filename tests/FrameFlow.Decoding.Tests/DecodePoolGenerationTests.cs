@@ -96,11 +96,14 @@ public sealed class DecodePoolGenerationTests
         var pool = new DecodePoolGeneration(1, size: 20, budget: 1, logger, "D3D11Va");
         pool.AttachFrame();
 
+        // Taken before the clock advances: the report can land between Advance and a read of
+        // NextWarning, and a read after it would wait on the report that comes after this one.
+        var warning = logger.NextWarning;
         var wait = pool.WaitForRoomAsync(clock, Watchdog, null, CancellationToken.None).AsTask();
         await clock.Armed(1).WaitAsync(FailureBound);
 
         clock.Advance(Watchdog);
-        var report = await logger.NextWarning.WaitAsync(FailureBound);
+        var report = await warning.WaitAsync(FailureBound);
         Assert.Contains("D3D11Va", report);
         Assert.Contains("budget of 1", report);
 
