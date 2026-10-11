@@ -8,16 +8,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Two independent players in ONE process. The example references the
-         Layer-2 player API (FrameFlow.Player.MediaPlayer) as its primary
-         surface, plus FrameFlow.Avalonia / FrameFlow.Audio.OpenAL for the
-         concrete sink implementations. FrameFlow.Playback is referenced
-         directly for the WallClockSource type used by the clock-source
-         decorator (the wall-clock pane suppresses the audio sink's
-         IClockSource so video paces off the wallclock fallback, ADR-0003). -->
-    <ProjectReference Include="..\..\src\FrameFlow.Media\FrameFlow.Media.csproj" />
-    <ProjectReference Include="..\..\src\FrameFlow.Native\FrameFlow.Native.csproj" />
-    <ProjectReference Include="..\..\src\FrameFlow.Playback\FrameFlow.Playback.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Player\FrameFlow.Player.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Audio.OpenAL\FrameFlow.Audio.OpenAL.csproj" />
@@ -28,19 +18,12 @@
     <PackageReference Include="Avalonia" Version="$(FrameFlowAvaloniaVersion)" />
     <PackageReference Include="Avalonia.Desktop" Version="$(FrameFlowAvaloniaVersion)" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="$(FrameFlowAvaloniaVersion)" />
-    <!--
-      FrameFlow.Native.Runtime ships the FFmpeg natives as NuGet runtime
-      assets under runtimes/<rid>/native/. REQUIRED for any self-contained
-      publish: the dev-time Directory.Build.targets copy is
-      CopyToPublishDirectory="Never", so without this package a published app
-      reaches the target with no FFmpeg (ADR-0014 / ADR-0046). Mirrors the
-      AvaloniaPlayer / Multicast.Dml examples.
-    -->
+    <!-- The FFmpeg natives. A published app has none without this package. -->
     <PackageReference Include="FrameFlow.Native.Runtime" Version="$(FrameFlowNativeRuntimeVersion)" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Shared examples support (FileLoggerProvider). -->
+    <!-- Shared examples support (ExampleLogging, RepoRoot). -->
     <ProjectReference Include="..\FrameFlow.Examples.Common\FrameFlow.Examples.Common.csproj" />
     <Using Include="FrameFlow.Examples.Common" />
   </ItemGroup>

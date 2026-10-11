@@ -11,46 +11,225 @@ using Microsoft.Extensions.Logging;
 namespace FrameFlow.Examples.AvaloniaPlayer;
 
 /// <summary>
-/// FrameFlow Avalonia player.
+/// A media player. One FrameFlow player is built on the first open and kept: every file or
+/// folder opened replaces its queue, and the sidebar draws that queue.
 /// </summary>
-/// <remarks>
-/// <para>
-/// <see cref="FrameFlow.Avalonia.FrameFlowPlayerView"/> supplies the video
-/// surface, transport bar, seek bar, volume control, status badge, stream
-/// summary, position label, file picker, drag-drop and keyboard shortcuts.
-/// The window is left with two jobs: build a player when a file or folder is
-/// opened, and keep the playlist sidebar in step with playback.
-/// </para>
-/// <para>
-/// A single file and a folder are both built with
-/// <c>FrameFlowPlayer.Create().WithMedia(...).BuildPlayerAsync()</c>; the folder passes every
-/// source at once and plays them over one warm presenter.
-/// </para>
-/// <para>
-/// Presenter selection, hardware-decode A/B, running without audio and
-/// self-terminating runs are diagnostics, and live in
-/// <c>tools/FrameFlow.TestBench</c> (ADR-0068).
-/// </para>
-/// </remarks>
 public partial class MainWindow : Window
 {
-    private ILoggerFactory? _loggerFactory;
-    private ILogger<MainWindow>? _logger;
-    private IMediaTransport? _player;
+    private readonly ILoggerFactory _loggerFactory;
+    private readonly ILogger _logger;
+    private readonly IVideoSink _videoSink;
+    private readonly OpenAlAudioSink _audioSink;
 
-    // Folder mode: the same instance as _player, kept typed for the
-    // playlist-specific surface (transition stream, jump). Null for a single file.
-    private IMediaPlayer? _playlistPlayer;
-    private IDisposable? _transitionSub;
-    private IReadOnlyList<PlaylistEntry> _playlistEntries = [];
+    private IMediaPlayer? _player;
+    private IDisposable? _queueSubscription;
+    private Task _opening = Task.CompletedTask;
+    private bool _closing;
+    private bool _closed;
 
-    private OpenAlAudioSink? _audioSink;
-    private bool _isClosing;
+    /// <summary>A media file or folder to open on startup.</summary>
+    public string? StartupPath { get; init; }
 
-    /// <summary>One file in the open folder: its display name + the source to play.</summary>
-    private sealed record PlaylistEntry(string Name, IMediaSource Source);
+    public MainWindow()
+    {
+        InitializeComponent();
 
-    /// <summary>Extensions enumerated as playable when a folder is opened.</summary>
+        _loggerFactory = ExampleLogging.CreateFactory(
+            "avalonia-player.log",
+            onFailure: ex => StatusText.Text = $"Logging to file is off ({ex.Message})."
+        );
+        _logger = _loggerFactory.CreateLogger<MainWindow>();
+
+        // Before the view joins the visual tree, so the sink it creates logs here as well.
+        _videoSink = PlayerView.AttachSink(_loggerFactory);
+        _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
+
+        PlayerView.FileOpenRequested += async (_, e) => await OpenAsync(e.FilePath);
+        OpenFolderButton.Click += async (_, _) => await PickFolderAsync();
+        PlaylistBox.DoubleTapped += async (_, _) => await JumpToSelectedAsync();
+        Closing += OnWindowClosing;
+    }
+
+    /// <summary>Builds the player with no media: its sinks are warm and its queue is empty.</summary>
+    private async Task<IMediaPlayer> BuildPlayerAsync()
+    {
+        var player = await FrameFlowPlayer
+            .Create()
+            .WithVideoSink(_videoSink)
+            .WithAudioSink(_audioSink)
+            .WithLogger(_loggerFactory)
+            .BuildPlayerAsync();
+
+        _queueSubscription = player.PlaylistChanged.ObserveOnUiThread().Subscribe(ShowQueue);
+        PlayerView.Transport = player;
+        return player;
+    }
+
+    protected override async void OnLoaded(RoutedEventArgs e)
+    {
+        base.OnLoaded(e);
+        if (StartupPath is null)
+            return;
+        // A leading '-' is a stale option, never a path, even if a file has that name.
+        if (!StartupPath.StartsWith('-') && (File.Exists(StartupPath) || Directory.Exists(StartupPath)))
+            await OpenAsync(StartupPath);
+        else
+            StatusText.Text = $"Not a media file or folder: {StartupPath}";
+    }
+
+    /// <summary>Opens a media file, or every media file in a folder, after any open before it.</summary>
+    private async Task OpenAsync(string path)
+    {
+        if (_closing)
+            return;
+        _opening = OpenCoreAsync(_opening, path);
+        await _opening;
+    }
+
+    private async Task OpenCoreAsync(Task previous, string path)
+    {
+        await previous;
+        if (_closing)
+            return;
+
+        var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(path));
+        try
+        {
+            var isFolder = Directory.Exists(path);
+            List<string> files = isFolder ? MediaFilesIn(path) : [path];
+            if (files.Count == 0)
+            {
+                StatusText.Text = $"No media files in {name}.";
+                return;
+            }
+
+            // A player whose first item failed to load stays in Error and refuses new media.
+            if (_player?.State == PlaybackState.Error)
+                await DisposePlayerAsync();
+            _player ??= await BuildPlayerAsync();
+
+            var repeat = isFolder ? RepeatMode.All : RepeatMode.Off;
+            var repeated = await _player.SetRepeatModeAsync(repeat);
+            if (!repeated.IsSuccess)
+            {
+                ShowError(name, repeated.Error);
+                return;
+            }
+
+            var replaced = await _player.ReplaceAsync(files.Select(SourceFor));
+            if (!replaced.IsSuccess)
+            {
+                ShowError(name, replaced.Error);
+                return;
+            }
+
+            // A playing player moves to the new queue on its own, and refuses Play.
+            if (_player.State is not (PlaybackState.Playing or PlaybackState.Rebuffering))
+            {
+                var played = await _player.PlayAsync();
+                if (!played.IsSuccess)
+                {
+                    ShowError(name, played.Error);
+                    return;
+                }
+            }
+
+            StatusText.Text = isFolder ? $"{files.Count} file(s) · {name} · looping" : name;
+        }
+        catch (Exception ex)
+        {
+            ShowError($"Could not open {name}: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>Draws the player's queue. It fires again as each item starts.</summary>
+    private void ShowQueue(PlaylistSnapshot queue)
+    {
+        PlaylistBox.ItemsSource = queue.Playlist;
+        PlaylistBox.SelectedItem = queue.Current;
+        Title = queue.Current is { } item ? $"FrameFlow Player — {item}" : "FrameFlow Player";
+    }
+
+    private async Task JumpToSelectedAsync()
+    {
+        if (_player is null || PlaylistBox.SelectedItem is not PlaylistItem item)
+            return;
+
+        var jumped = await _player.JumpToAsync(item);
+        if (!jumped.IsSuccess)
+            ShowError(item.ToString(), jumped.Error);
+    }
+
+    private async Task PickFolderAsync()
+    {
+        try
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(
+                new FolderPickerOpenOptions { Title = "Open a media folder" }
+            );
+            if (folders is [var folder] && folder.TryGetLocalPath() is { } path)
+                await OpenAsync(path);
+        }
+        catch (Exception ex)
+        {
+            ShowError($"Could not pick a folder: {ex.Message}", ex);
+        }
+    }
+
+    private void ShowError(string name, PlaybackError error) =>
+        ShowError($"{name}: {error.Category}: {error.Message}", error.Inner);
+
+    private void ShowError(string message, Exception? ex)
+    {
+        _logger.LogError(ex, "{Message}", message);
+        StatusText.Text = message;
+    }
+
+    private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
+    {
+        // Hold every close until teardown has run; only the Close() at the end gets through.
+        if (_closed)
+            return;
+        e.Cancel = true;
+        if (_closing)
+            return;
+        _closing = true;
+
+        // Let the opens finish, so a player one is still building is disposed too.
+        await _opening;
+        await DisposePlayerAsync();
+
+        // The audio sink is ours, so it goes after the player. The view disposes its own sink.
+        await DisposeLoggedAsync(_audioSink);
+        _loggerFactory.Dispose();
+        _closed = true;
+        Close();
+    }
+
+    private async Task DisposePlayerAsync()
+    {
+        if (_player is not { } player)
+            return;
+
+        _player = null;
+        PlayerView.Transport = null;
+        _queueSubscription?.Dispose();
+        await DisposeLoggedAsync(player);
+    }
+
+    /// <summary>Disposes one resource and logs a failure, so the next one is still disposed.</summary>
+    private async Task DisposeLoggedAsync(IAsyncDisposable resource)
+    {
+        try
+        {
+            await resource.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Disposing {Resource} failed", resource.GetType().Name);
+        }
+    }
+
     private static readonly HashSet<string> MediaExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".ts", ".m2ts",
@@ -60,329 +239,25 @@ public partial class MainWindow : Window
     };
 
     /// <summary>
-    /// Extensions opened as a still rather than probed. Only formats that are unambiguously
-    /// one image: .gif and .webp are left out because they may be animated, and naming
-    /// image2 on an animated one would show the first frame and call it the whole file.
+    /// Opened as a held still. .gif and .webp are left out: they may be animated, and a still
+    /// would show only the first frame.
     /// </summary>
     private static readonly HashSet<string> StillExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff",
     };
 
-    /// <summary>How long a still holds the screen before the playlist moves on.</summary>
     private static readonly TimeSpan StillDwell = TimeSpan.FromSeconds(5);
 
-    /// <summary>A media file or a folder to open on startup, from the command line.</summary>
-    public string? StartupPath { get; set; }
-
-    public MainWindow()
-    {
-        InitializeComponent();
-        PlayerView.FileOpenRequested += async (_, e) => await OpenFileAsync(e.FilePath);
-        OpenFolderButton.Click += async (_, _) => await OpenFolderAsync();
-        OpenFileButton.Click += async (_, _) => await OpenFilePickerAsync();
-        PlaylistBox.DoubleTapped += async (_, _) => await JumpToSelectedAsync();
-        Closing += OnWindowClosing;
-    }
-
-    protected override async void OnLoaded(RoutedEventArgs e)
-    {
-        base.OnLoaded(e);
-
-        _loggerFactory = ExampleLogging.CreateFactory(
-            "avalonia-player.log",
-            onFailure: ex =>
-                StatusText.Text = $"Logging to file is off ({ex.Message}). Playback still works."
-        );
-        _logger = _loggerFactory.CreateLogger<MainWindow>();
-
-        // Materialize the hosted surface's sink now that it is in the tree.
-        PlayerView.AttachSink(_loggerFactory);
-
-        if (Directory.Exists(StartupPath))
-            await PlayFolderAsync(StartupPath);
-        else if (File.Exists(StartupPath))
-            await OpenFileAsync(StartupPath);
-    }
-
-    /// <summary>
-    /// Builds the source for a path, opening it as a held still when this example's extension
-    /// list says the file is one image.
-    /// </summary>
-    /// <remarks>
-    /// The demuxer recipe lives in <see cref="MediaSource.FromStill"/>. What stays here is the
-    /// judgement it deliberately does not make: which files in a folder are one image. That is a
-    /// question about a file picker's content, which this example has an answer for and the
-    /// library does not.
-    /// </remarks>
-    private static IMediaSource SourceFor(string path) =>
-        StillExtensions.Contains(Path.GetExtension(path))
-            ? MediaSource.FromStill(path, StillDwell)
-            : MediaSource.FromFile(path);
-
-    /// <summary>Builds a player for one file and hands it to the view.</summary>
-    private async Task OpenFileAsync(string path)
-    {
-        if (_loggerFactory is null)
-            return;
-
-        await TeardownPlayerAsync();
-
-        PlaylistBox.ItemsSource = null;
-        _playlistEntries = [];
-        StatusText.Text = Path.GetFileName(path);
-
-        try
-        {
-            // The heart of the example: construct the sinks, wire them through
-            // the builder, hand the player to the view.
-            var videoSink = PlayerView.AttachSink(_loggerFactory);
-            _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
-
-            _player = await FrameFlowPlayer
-                .Create()
-                .WithMedia(SourceFor(path))
-                .WithVideoSink(videoSink)
-                .WithAudioSink(_audioSink)
-                .WithLogger(_loggerFactory)
-                .BuildPlayerAsync();
-
-            PlayerView.Transport = _player;
-            Title = $"FrameFlow Player — {Path.GetFileName(path)}";
-
-            // ADR-0069: a refused command comes back as a Result. The catch
-            // below still covers what genuinely throws.
-            var played = await _player.PlayAsync();
-            if (!played.IsSuccess)
-                ShowError(
-                    played.Error.Inner,
-                    $"{Path.GetFileName(path)}: {played.Error.Category}: {played.Error.Message}"
-                );
-        }
-        catch (Exception ex)
-        {
-            ShowError(ex, $"Could not open {Path.GetFileName(path)}: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Builds a playlist player over every media file in a folder. One video sink and
-    /// one audio sink serve the whole folder, so the presenter stays warm across each
-    /// boundary and only the decode source is swapped.
-    /// </summary>
-    private async Task PlayFolderAsync(string folderPath)
-    {
-        if (_loggerFactory is null || _logger is null)
-            return;
-
-        await TeardownPlayerAsync();
-
-        var files = Directory
-            .EnumerateFiles(folderPath)
+    private static List<string> MediaFilesIn(string folder) =>
+        Directory
+            .EnumerateFiles(folder)
             .Where(f => MediaExtensions.Contains(Path.GetExtension(f)))
             .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        if (files.Count == 0)
-        {
-            _logger.LogWarning("No media files found in {Folder}.", folderPath);
-            StatusText.Text = $"No media files in {Path.GetFileName(folderPath)}.";
-            PlaylistBox.ItemsSource = null;
-            _playlistEntries = [];
-            return;
-        }
-
-        _playlistEntries = files
-            .Select(f => new PlaylistEntry(Path.GetFileName(f), SourceFor(f)))
-            .ToList();
-        PlaylistBox.ItemsSource = _playlistEntries;
-        StatusText.Text =
-            $"{_playlistEntries.Count} file(s) · {Path.GetFileName(folderPath)} · looping";
-
-        try
-        {
-            var videoSink = PlayerView.AttachSink(_loggerFactory);
-            _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
-
-            var playlist = await FrameFlowPlayer
-                .Create()
-                .WithMedia(_playlistEntries.Select(e => e.Source))
-                .WithVideoSink(videoSink)
-                .WithAudioSink(_audioSink)
-                .WithRepeatMode(RepeatMode.All)
-                .WithLogger(_loggerFactory)
-                .BuildPlayerAsync();
-
-            _playlistPlayer = playlist;
-            _player = playlist;
-
-            // Follow the now-playing file in the list as the presenter advances.
-            _transitionSub = playlist
-                .SourceTransitioned.ObserveOnUiThread()
-                .Subscribe(OnSourceTransitioned);
-
-            PlayerView.Transport = playlist;
-            UpdateSelection(playlist.CurrentSource);
-            Title =
-                $"FrameFlow Player — {Path.GetFileName(folderPath)} ({_playlistEntries.Count} files)";
-
-            var played = await playlist.PlayAsync();
-            if (!played.IsSuccess)
-                ShowError(
-                    played.Error.Inner,
-                    $"{Path.GetFileName(folderPath)}: {played.Error.Category}: {played.Error.Message}"
-                );
-        }
-        catch (Exception ex)
-        {
-            ShowError(ex, $"Could not play {Path.GetFileName(folderPath)}: {ex.Message}");
-        }
-    }
-
-    private async Task OpenFolderAsync()
-    {
-        var top = TopLevel.GetTopLevel(this);
-        if (top is null)
-            return;
-
-        var folders = await top.StorageProvider.OpenFolderPickerAsync(
-            new FolderPickerOpenOptions { Title = "Open a media folder", AllowMultiple = false }
-        );
-        if (folders.Count == 0)
-            return;
-
-        var folderPath = folders[0].TryGetLocalPath();
-        if (string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath))
-        {
-            _logger?.LogWarning("Selected folder has no usable local path.");
-            return;
-        }
-
-        await PlayFolderAsync(folderPath);
-    }
-
-    private async Task OpenFilePickerAsync()
-    {
-        var top = TopLevel.GetTopLevel(this);
-        if (top is null)
-            return;
-
-        var files = await top.StorageProvider.OpenFilePickerAsync(
-            new FilePickerOpenOptions { Title = "Open a media file", AllowMultiple = false }
-        );
-        if (files.Count == 0)
-            return;
-
-        var path = files[0].TryGetLocalPath();
-        if (!string.IsNullOrEmpty(path))
-            await OpenFileAsync(path);
-    }
-
-    /// <summary>Highlights the currently playing file in the playlist (UI thread).</summary>
-    private void OnSourceTransitioned(PlaylistTransition transition)
-    {
-        UpdateSelection(transition.Item.Source);
-        Title = $"FrameFlow Player — {transition.Item.Source.DisplayName}";
-    }
-
-    private void UpdateSelection(IMediaSource? source)
-    {
-        if (source is null)
-            return;
-        var entry = _playlistEntries.FirstOrDefault(e => ReferenceEquals(e.Source, source));
-        if (entry is not null)
-            PlaylistBox.SelectedItem = entry;
-    }
-
-    private async Task JumpToSelectedAsync()
-    {
-        if (_playlistPlayer is null || PlaylistBox.SelectedItem is not PlaylistEntry entry)
-            return;
-
-        // Each file's source object is the one the playlist was created with, so it names
-        // the file's item in the player's playlist.
-        var item = _playlistPlayer
-            .GetPlaylist()
-            .Playlist.FirstOrDefault(i => ReferenceEquals(i.Source, entry.Source));
-        if (item is null)
-            return;
-
-        try
-        {
-            // Move the playlist to the picked file. The presenter stays warm across the
-            // jump, and the loop carries on from there. A jump to the file already playing
-            // does nothing.
-            var jumped = await _playlistPlayer.JumpToAsync(item);
-            if (!jumped.IsSuccess)
-                _logger?.LogWarning(
-                    "Jump to {Name} refused: {Message}",
-                    entry.Name,
-                    jumped.Error.Message
-                );
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogWarning(ex, "Jump to {Name} failed", entry.Name);
-        }
-    }
-
-    /// <summary>Puts a failure where the user can see it, and in the log.</summary>
-    private void ShowError(Exception? ex, string message)
-    {
-        _logger?.LogError(ex, "{Message}", message);
-        StatusText.Text = message;
-        Title = "FrameFlow Player — error";
-    }
-
-    private async Task TeardownPlayerAsync()
-    {
-        // Unbind from the view so the sub-controls dispose their observable
-        // subscriptions before the player itself dies.
-        PlayerView.Transport = null;
-
-        _transitionSub?.Dispose();
-        _transitionSub = null;
-        _playlistPlayer = null;
-
-        if (_player is not null)
-        {
-            try
-            {
-                await _player.DisposeAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "Player teardown threw");
-            }
-            _player = null;
-        }
-
-        // The audio sink is caller-owned. The controller already deactivated it
-        // during its dispose; this releases the native OpenAL device handle.
-        if (_audioSink is not null)
-        {
-            try
-            {
-                await _audioSink.DisposeAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "Audio sink teardown threw");
-            }
-            _audioSink = null;
-        }
-    }
-
-    private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
-    {
-        if (_isClosing)
-            return;
-        e.Cancel = true;
-        _isClosing = true;
-        Closing -= OnWindowClosing;
-
-        await TeardownPlayerAsync();
-        _loggerFactory?.Dispose();
-        Close();
-    }
+    private static IMediaSource SourceFor(string path) =>
+        StillExtensions.Contains(Path.GetExtension(path))
+            ? MediaSource.FromStill(path, StillDwell)
+            : MediaSource.FromFile(path);
 }
