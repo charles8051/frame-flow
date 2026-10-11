@@ -3,7 +3,7 @@ name: Build and Test
 # Two entry points with different matrices, because they answer different
 # questions.
 #
-# A pull request gets ubuntu-latest + windows-latest, always. Until 2026-09-11
+# A pull request gets ubuntu-latest, ubuntu-24.04-arm + windows-latest, always. Until 2026-09-11
 # this workflow was dispatch-only and nothing built a PR at all — the only
 # check on one was the Peanut Gallery reviewer, whose pass means "the panel
 # ran", not "it compiles". #110 merged on that alone.
@@ -53,6 +53,10 @@ on:
         description: 'Run on macos-latest'
         type: boolean
         default: true
+      linux-arm64:
+        description: 'Run on ubuntu-24.04-arm'
+        type: boolean
+        default: true
 
 # Supersede a PR's in-flight run when the branch is pushed again; never cancel a
 # dispatch, which someone asked for deliberately.
@@ -96,15 +100,16 @@ jobs:
           # Not a dispatch: the inputs do not exist, and reading them would make
           # every OS false and trip the "no OS selected" error below.
           if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
-            echo 'matrix={"os":["ubuntu-latest","windows-latest"]}' >> "$GITHUB_OUTPUT"
+            echo 'matrix={"os":["ubuntu-latest","ubuntu-24.04-arm","windows-latest"]}' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           OSES=()
           [ "${{ inputs.windows }}" = "true" ] && OSES+=('"windows-latest"')
           [ "${{ inputs.linux }}" = "true" ] && OSES+=('"ubuntu-latest"')
           [ "${{ inputs.macos }}" = "true" ] && OSES+=('"macos-latest"')
+          [ "${{ inputs.linux-arm64 }}" = "true" ] && OSES+=('"ubuntu-24.04-arm"')
           if [ ${#OSES[@]} -eq 0 ]; then
-            echo "::error::No OS selected — tick at least one of windows / linux / macos."
+            echo "::error::No OS selected — tick at least one of windows / linux / macos / linux-arm64."
             exit 1
           fi
           ( IFS=,; echo "matrix={\"os\":[${OSES[*]}]}" >> "$GITHUB_OUTPUT" )
