@@ -51,8 +51,8 @@ public sealed class DetectionOverlay : Control
         if (_frame.Width <= 0 || _frame.Height <= 0)
             return;
 
-        // The view fits the frame inside its bounds, centred; FrameFlow does not expose where it
-        // drew, so this fits the same way to map frame pixels onto the picture.
+        // The view fits the picture inside its bounds, centred. FrameFlow does not expose where it
+        // drew, so this fits the frame the same way, which holds for a camera's square, upright pixels.
         double scale = Math.Min(Bounds.Width / _frame.Width, Bounds.Height / _frame.Height);
         var origin = new Point(
             (Bounds.Width - (_frame.Width * scale)) / 2,

@@ -60,8 +60,9 @@ public partial class MainWindow : Window
             },
             loggerFactory: _loggerFactory);
 
-        // Opening a session compiles the model for the GPU, so it runs off the UI thread. Results
-        // arrive before their frame is on screen; PresentedResults hands each on when it is.
+        // CreateAsync opens the session, and compiles the model for the GPU, on the calling thread,
+        // so it runs on the pool. PresentedResults hands each result on as the view presents a
+        // frame at or after the one it came from, so the boxes change with the picture.
         if (FaceModelPath is null)
         {
             var yolo = await Task.Run(() => Yolov8Detector.CreateAsync(
@@ -175,7 +176,7 @@ public partial class MainWindow : Window
         if (DevicePicker.SelectedItem is not DeviceInfo camera || _runModel is null)
             return;
 
-        // Each capture starts once the one before it has stopped, so two never share the model.
+        // Each capture starts once the one before it has stopped, so two never run at once.
         _captureCts?.Cancel();
         _captureCts = new CancellationTokenSource();
         var ct = _captureCts.Token;
