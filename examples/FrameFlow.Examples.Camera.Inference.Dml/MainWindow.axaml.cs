@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     private IDisposable? _onScreen;
     private Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? _runModel;
     private string _modelLabel = "";
+    private Task _starting = Task.CompletedTask;
     private CancellationTokenSource? _captureCts;
     private Task _capture = Task.CompletedTask;
     private bool _closing;
@@ -48,6 +49,87 @@ public partial class MainWindow : Window
         _videoSink = VideoView.EnsureSink();
     }
 
+    private async Task CaptureAsync(DeviceInfo camera, CancellationToken ct)
+    {
+        CameraSession? session = null;
+        try
+        {
+            session = await CameraSession.For(camera)
+                .PreferPixelFormat(CameraPixelFormat.Bgra32)
+                // The formats FrameFlow.Camera turns into frames.
+                .AllowOnlyPixelFormats(
+                    CameraPixelFormat.Bgra32, CameraPixelFormat.Rgba32, CameraPixelFormat.Nv12,
+                    CameraPixelFormat.Yuy2, CameraPixelFormat.Uyvy)
+                .MaxResolution(1280, 720)
+                .WithSessionOptions(o => o with { BufferCount = CameraBufferCount() ?? o.BufferCount })
+                .WithLogger(_loggerFactory.CreateLogger<CameraSession>())
+                .OpenAsync(ct);
+
+            // Cancelled when the graph ends, so the camera's pump stops even if the graph failed.
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            await using var source = session.AsPushVideoFrameSource(stop.Token, _loggerFactory);
+            Dispatcher.UIThread.Post(() => StatusText.Text = $"{camera.Name}: {_modelLabel}");
+            try
+            {
+                await BuildGraph(source.Source).RunAsync(stop.Token);
+            }
+            finally
+            {
+                stop.Cancel();
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Capture from {Camera} failed.", camera.Name);
+            Overlay.Clear();
+            Dispatcher.UIThread.Post(() => StatusText.Text = $"Capture from {camera.Name} failed: {ex.Message}");
+        }
+        finally
+        {
+            if (session is not null)
+                await CloseCameraAsync(session);
+        }
+    }
+
+    // Camera, converted to BGRA, to the view. _runModel is chain.Infer(id, model, onScreen.Post),
+    // which runs the model on a branch that takes the newest frame.
+    private FrameFlow.Graph.Graph BuildGraph(SourceNode<IVideoFrame> camera)
+    {
+        var graph = new FrameFlow.Graph.Graph();
+        var bgra = graph.Pipeline(camera).Then(VideoOperators.ConvertPixelFormat("to-bgra", PixelFormat.Bgra32));
+        _runModel!(bgra).To(_videoSink.AsSinkNode());
+        return graph;
+    }
+
+    // As many buffers as the graph holds of the camera's frames, and one for the frame the push
+    // source keeps ahead of it, lets the session hand every frame over without a copy.
+    private int? CameraBufferCount()
+    {
+        var standIn = new SourceNode<IVideoFrame>("camera-source", static _ => default);
+        return BuildGraph(standIn).FrameBudgetFor(standIn.Output).Frames + 1;
+    }
+
+    // Closing a camera can hang after an unclean unplug, so give up after two seconds rather
+    // than hold up the next capture or the window closing.
+    private async Task CloseCameraAsync(CameraSession session)
+    {
+        try
+        {
+            await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (TimeoutException)
+        {
+            _logger.LogWarning("The camera did not close within two seconds; abandoning it.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Closing the camera failed.");
+        }
+    }
+
     private async Task LoadModelAsync()
     {
         // DirectML, and the CPU when DirectML cannot open the model.
@@ -60,89 +142,53 @@ public partial class MainWindow : Window
             },
             loggerFactory: _loggerFactory);
 
-        // CreateAsync opens the session, and compiles the model for the GPU, on the calling thread,
-        // so it runs on the pool. PresentedResults hands each result on as the view presents a
-        // frame at or after the one it came from, so the boxes change with the picture.
+        // CreateAsync opens the session, and compiles the model for the GPU, on the calling
+        // thread, so it runs on the pool.
         if (FaceModelPath is null)
         {
             var yolo = await Task.Run(() => Yolov8Detector.CreateAsync(
                 factory, ModelPath, _closingCts.Token, _loggerFactory));
             _model = yolo;
-            var onScreen = new PresentedResults<IReadOnlyList<Detection>>(_videoSink);
-            _onScreen = onScreen;
-            onScreen.Presented += (_, result) => Overlay.Show(result);
-            _runModel = chain => chain.Infer("yolo", yolo, onScreen.Post);
-            _modelLabel = $"YOLOv8 on {factory.ActiveProvider}";
+            Use(yolo, "yolo", $"YOLOv8 on {factory.ActiveProvider}", Overlay.Show);
         }
         else
         {
             var faces = await Task.Run(() => BlazeFaceDetector.CreateAsync(factory, FaceModelPath, _loggerFactory));
             _model = faces;
-            var onScreen = new PresentedResults<IReadOnlyList<FaceDetection>>(_videoSink);
-            _onScreen = onScreen;
-            onScreen.Presented += (_, result) => Overlay.Show(result);
-            _runModel = chain => chain.Infer("blazeface", faces, onScreen.Post);
-            _modelLabel = $"BlazeFace on {factory.ActiveProvider}";
+            Use(faces, "blazeface", $"BlazeFace on {factory.ActiveProvider}", Overlay.Show);
         }
 
         _logger.LogInformation("{Model} ready.", _modelLabel);
     }
 
-    // Camera, converted to BGRA, to the view, with the model on a branch that takes the newest frame.
-    private FrameFlow.Graph.Graph BuildGraph(SourceNode<IVideoFrame> camera)
+    // PresentedResults hands each result on as the view presents a frame at or after the one it
+    // came from, so the boxes change with the picture.
+    private void Use<T>(IImageModel<T> model, string id, string label, Action<InferenceResult<T>> show)
     {
-        var graph = new FrameFlow.Graph.Graph();
-        var bgra = graph.Pipeline(camera).Then(VideoOperators.ConvertPixelFormat("to-bgra", PixelFormat.Bgra32));
-        _runModel!(bgra).To(_videoSink.AsSinkNode());
-        return graph;
+        var onScreen = new PresentedResults<T>(_videoSink);
+        onScreen.Presented += (_, result) => show(result);
+        onScreen.Cleared += (_, _) => Overlay.Clear();
+        _onScreen = onScreen;
+        _runModel = chain => chain.Infer(id, model, onScreen.Post);
+        _modelLabel = label;
     }
 
-    private async Task CaptureAsync(DeviceInfo camera, CancellationToken ct)
-    {
-        try
-        {
-            await using var session = await CameraSession.For(camera)
-                .PreferPixelFormat(CameraPixelFormat.Bgra32)
-                // The formats FrameFlow.Camera turns into frames.
-                .AllowOnlyPixelFormats(
-                    CameraPixelFormat.Bgra32, CameraPixelFormat.Rgba32, CameraPixelFormat.Nv12,
-                    CameraPixelFormat.Yuy2, CameraPixelFormat.Uyvy)
-                .MaxResolution(1280, 720)
-                .WithSessionOptions(o => o with { BufferCount = CameraBufferCount() ?? o.BufferCount })
-                .WithLogger(_loggerFactory.CreateLogger<CameraSession>())
-                .OpenAsync(ct);
-            await using var source = session.AsPushVideoFrameSource(ct, _loggerFactory);
-
-            Dispatcher.UIThread.Post(() => StatusText.Text = $"{camera.Name}: {_modelLabel}");
-            await BuildGraph(source.Source).RunAsync(ct);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Capture from {Camera} failed.", camera.Name);
-            Dispatcher.UIThread.Post(() => StatusText.Text = $"Capture from {camera.Name} failed: {ex.Message}");
-        }
-    }
-
-    // As many buffers as the graph holds of the camera's frames, and one for the frame the push
-    // source keeps ahead of it, lets the session hand every frame over without a copy.
-    private int? CameraBufferCount()
-    {
-        var standIn = new SourceNode<IVideoFrame>("camera-source", static _ => default);
-        return BuildGraph(standIn).FrameBudgetFor(standIn.Output).Frames + 1;
-    }
-
-    protected override async void OnLoaded(RoutedEventArgs e)
+    protected override void OnLoaded(RoutedEventArgs e)
     {
         base.OnLoaded(e);
+        _starting = StartAsync();
+    }
+
+    private async Task StartAsync()
+    {
         try
         {
             await LoadModelAsync();
         }
         catch (Exception ex)
         {
+            if (_closing)
+                return;
             _logger.LogError(ex, "The model failed to load.");
             StatusText.Text = $"The model failed to load: {ex.Message}";
             return;
@@ -151,11 +197,16 @@ public partial class MainWindow : Window
         await RefreshCamerasAsync();
     }
 
+    // Nothing starts once the window is closing: it would outlive the model and the log.
     private async Task RefreshCamerasAsync()
     {
+        if (_closing)
+            return;
         try
         {
             var cameras = await CameraDevice.EnumerateAsync(_closingCts.Token);
+            if (_closing)
+                return;
             DevicePicker.ItemsSource = cameras;
             if (cameras.Count == 0)
                 StatusText.Text = "No cameras found.";
@@ -164,6 +215,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            if (_closing)
+                return;
             _logger.LogError(ex, "Camera enumeration failed.");
             StatusText.Text = $"Camera enumeration failed: {ex.Message}";
         }
@@ -173,10 +226,11 @@ public partial class MainWindow : Window
 
     private void OnCameraSelected(object? sender, SelectionChangedEventArgs e)
     {
-        if (DevicePicker.SelectedItem is not DeviceInfo camera || _runModel is null)
+        if (_closing || DevicePicker.SelectedItem is not DeviceInfo camera || _runModel is null)
             return;
 
         // Each capture starts once the one before it has stopped, so two never run at once.
+        Overlay.Clear();
         _captureCts?.Cancel();
         _captureCts = new CancellationTokenSource();
         var ct = _captureCts.Token;
@@ -202,12 +256,13 @@ public partial class MainWindow : Window
 
         _closingCts.Cancel();
         _captureCts?.Cancel();
+        await _starting;
         await _capture;
         _onScreen?.Dispose();
         _model?.Dispose();
 
         _closed = true;
-        Close();
+        Dispatcher.UIThread.Post(Close);
     }
 
     // After the view has released its sink, which logs as it goes.

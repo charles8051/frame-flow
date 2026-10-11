@@ -16,7 +16,7 @@ public class App : Application
             desktop.MainWindow = new MainWindow
             {
                 // --model <path.onnx>: a YOLOv8 export to run instead of the downloaded yolov8n.
-                // The detector reads the input size and classes from the model.
+                // The detector reads the input size and class count from the model.
                 ModelPath = ValueAfter(args, "--model"),
                 // --face <path.onnx>: a BlazeFace model to run instead of YOLO. FrameFlow does
                 // not download one.

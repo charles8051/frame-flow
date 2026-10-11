@@ -34,7 +34,9 @@ public sealed class DetectionOverlay : Control
                 $"face {f.Confidence:F2}",
                 f.Keypoints.Select(k => new Point(k.X, k.Y)).ToArray())));
 
-    // Called on the thread that presented the frame; drawn on the UI thread.
+    public void Clear() => Show(0, 0, []);
+
+    // Called from any thread; drawn on the UI thread.
     private void Show(int width, int height, IEnumerable<Shape> shapes)
     {
         var frame = new Size(width, height);
