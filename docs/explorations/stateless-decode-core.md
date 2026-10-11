@@ -271,12 +271,20 @@ without committing to them (see [Other stateless APIs](#other-stateless-apis)).
 ### The accelerator shell
 
 `V4l2RequestAccelerator` opens the video node and its media device, sets the formats, allocates
-buffers and starts streaming. For each `Decode` it fills an output buffer, sets the controls on a
-request, queues both and queues the request. It polls for completion and turns a finished capture
-buffer into an `IVideoFrame`. It owns the file descriptors, the mapped memory and the wait.
+buffers and starts streaming. On a frame-based node, a `Decode` becomes one request: it fills an
+output buffer with the access unit, sets the controls on the request, queues the buffer and queues the
+request. On a slice-based node, a `Decode` becomes one request per slice. Each carries that slice's
+data and slice parameters, all share the picture's timestamp, and every output buffer but the last
+sets `V4L2_BUF_FLAG_M2M_HOLD_CAPTURE_BUF`, so the slices land in one capture buffer. The shell polls
+for completion and turns a finished capture buffer into an `IVideoFrame`. It owns the file
+descriptors, the mapped memory and the wait.
 
-The surface ledger is pure: a surface is free when the core has unreferenced it and no frame built
-from it is alive. If frames are copied out to CPU memory, no frame pins a surface. The capture buffer
+The surface ledger is pure. A surface is free when three things hold: the core has unreferenced it,
+no queued request names it as a reference or a target, and no frame built from it is alive. The
+second condition matters because the core runs ahead of the node. It can unreference a picture while
+an earlier request that predicts from it is still queued, and reusing that surface would corrupt the
+earlier decode. A request's pins are released when it completes, and a reset or format-change drain
+waits for them. If frames are copied out to CPU memory, no frame pins a surface. The capture buffer
 count is then `MinSurfaces` plus the requests in flight. If frames alias capture buffers, the count
 adds the held-frame budget the player already computes (ADR-0081).
 `DecodePoolGuard.ExtraSurfacesFor` does that arithmetic for `extra_hw_frames` today, and the new
@@ -296,8 +304,15 @@ backend would be a row in `SpareSurfaces` with no spare.
 
 The candidate is a decoder and backend pair, as ADR-0083 made it. The new decoder is the managed core
 for the codec, and the new backend kind is the V4L2 request path. The V4L2 ADR draft's probe
-(Decision 2) already reads every mem2mem node, and its classifier already separates the slice-only
-nodes. That output is this candidate's availability. The draft's slices 1 and 2 serve both routes.
+(Decision 2) already reads every mem2mem node. Its classifier returns, per node, the codec IDs the
+node takes only as slice data (`S264`, `S265`, `VP9F` and the others), so availability is per codec,
+not per node. The draft's slices 1 and 2 serve both routes.
+
+A coded format says the node takes the codec. It does not say the node takes this stream. Decode mode
+and start code do not narrow it, because the core handles both modes. Profile, bit depth and chroma
+format do. The probe can read the node's profile and level menus for the codec (for H.264,
+`V4L2_CID_MPEG_VIDEO_H264_PROFILE`), and the core refuses what they exclude before its first `Decode`.
+A refusal there falls back to software at the first packet, which costs a reopen and not a failure.
 
 ## What FFmpeg can back
 
@@ -424,15 +439,19 @@ obligations FrameFlow already meets for the bundled build.
 | Parser | Totality fuzzing. Syntax values against FFmpeg's `trace_headers` output for the same stream. | Nothing |
 | Core | Conformance bitstreams through `Step`. Output order and frame count against FFmpeg's decode of the same file. Command transcripts as golden files. | The bitstreams |
 | Mapper | Struct sizes against the kernel header. Control payloads field by field against a `v4l2-tracer` trace of GStreamer's v4l2codecs on `visl`, after normalising reference timestamps. | A Linux VM, once per golden trace |
-| Shell | The real request flow against `visl` | A Linux VM with the module |
+| Shell | The real request flow against `visl`: buffer and request sequence, reference resolution, no pixels | A Linux VM with the module |
 | End to end | One MD5 per conformance vector through Fluster, and corpus checksums against a software decode | A board |
 
 [`visl`](https://docs.kernel.org/admin-guide/media/visl.html) is the kernel's virtual stateless
 decoder, merged in 6.2, with AV1 since 6.8. It accepts every stateless control in both decode modes,
 and the hold flag. It does not decode. It writes a test pattern carrying the sequence number, the
 timestamp and each reference's resolved buffer into the capture buffer. It logs the control payloads to
-ftrace. GStreamer's CI runs Fluster against it in a virtme-ng VM. A container on the shared CI runner
-cannot load a kernel module, so this needs a VM.
+ftrace. GStreamer's CI runs Fluster against it in a virtme-ng VM (`tests/virtme/virtme-run.sh`), with
+its own suites in `ci/fluster/visl_references`. Those checksums are of `visl`'s test pattern, not of
+decoded pictures. They test that the client sends the same request sequence and resolves the same
+references, and they say nothing about pixels. The script also loads `visl` with `stable_output` and
+`codec_variability`, which the mainline driver documentation does not list. Pixel conformance needs a
+board. A container on the shared CI runner cannot load a kernel module, so the `visl` tests need a VM.
 
 [`v4l2-tracer`](https://www.mankier.com/1/v4l2-tracer) records the stateless ioctls and control
 payloads as JSON, field by field, and can replay a trace onto another node. Reserved bytes are not
