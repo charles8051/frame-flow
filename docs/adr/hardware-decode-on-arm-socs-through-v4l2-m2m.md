@@ -104,7 +104,11 @@ decoder node beside VAAPI or CUDA in no case measured, so the position decides n
 ### 2. The probe reads the nodes, and a pure function classifies them
 
 The probe does not call `av_hwdevice_ctx_create`. It lists `/dev/video*` and runs `VIDIOC_QUERYCAP` and
-`VIDIOC_ENUM_FMT` on each node that reports a mem2mem capability. It does not start streaming. The
+`VIDIOC_ENUM_FMT` on each node that reports a mem2mem capability, which is `V4L2_CAP_VIDEO_M2M` or
+`V4L2_CAP_VIDEO_M2M_MPLANE` in `device_caps` when `V4L2_CAP_DEVICE_CAPS` is set in `capabilities`, and
+in `capabilities` otherwise. The H6 shows why: `capabilities` is `0x84208000` and `device_caps` is
+`0x04208000` on Cedrus, which is single-planar, and `0x84204000` and `0x04204000` on Hantro, which is
+multi-planar. It does not start streaming. The
 result is a list of `V4l2Node` values (path, driver, card, coded formats the node takes, formats it
 returns). It runs only on Linux, through the same `LibraryImport` pattern as the other native calls.
 
@@ -172,9 +176,17 @@ takes a DRM frame (#594, #595).
 
 A wrapper that fails to open falls to the next candidate and then to software, as every backend does.
 The first-packet fallback of ADR-0083 Decision 4 applies, and `Required` throws
-`HardwareDecodeUnavailableException` with the attempt list. A refusal that surfaces at receive, which
-a wrapper can do because it decodes asynchronously, is the receive-side refusal ADR-0083 left open. It
-stays open here, and the first stateful device decides whether it needs handling.
+`HardwareDecodeUnavailableException` with the attempt list.
+
+A wrapper decodes asynchronously, so a refusal can surface at receive, or as a stall that returns no
+error at all. ADR-0083 left receive-side refusals open because the bundled hardware refused at send.
+For this backend they are expected, and the candidate is not offered under `Auto` until a policy
+covers them. The proposed policy is bounded and uses what the fallback already has. Until the first
+frame is received, the decoder keeps the packets it has sent, up to the wrapper's output buffer count
+(`-num_output_buffers`, default 16). A receive error before the first frame, or no frame after that
+many packets, reopens on the prepared software context and sends the kept packets again. After the
+first frame, a receive error is a fault, as for any other backend. The merge gate for slice 3 includes
+a stream the node refuses, which must fall back to software, and not only a clip that decodes.
 
 ### 7. Stateless decoders are not part of this decision
 
@@ -194,7 +206,8 @@ the existing candidate path would take with no change, or as an internal config,
    uninitialised without an error.
 3. **The candidate, the bind, engagement, the frame copy and the `ForBackend` row.** This slice has a
    success path that the H6 cannot exercise. It does not merge as supported until a stateful device
-   decodes a corpus clip. The bench for that is a Raspberry Pi 4, or any board with a stateful
+   decodes a corpus clip and falls back to software on a stream the node refuses, under the
+   receive-side policy of Decision 6. The bench for that is a Raspberry Pi 4, or any board with a stateful
    decoder node.
 4. **Documentation.** `BREAKING-CHANGES.md` for the enum member, and the epic's issues updated with
    the stateful and stateless split.
@@ -224,7 +237,8 @@ the existing candidate path would take with no change, or as an internal config,
 ### Neutral
 
 - Windows and macOS see no change.
-- `Decide` and `FirstPacketFallback` keep their shapes.
+- `Decide` keeps its shape. `FirstPacketFallback` gains a receive-side input for this backend, under
+  the policy in Decision 6.
 - Audio has no hardware path and is unaffected.
 
 ## Alternatives considered
@@ -241,6 +255,19 @@ silent about why. It is what slices 1 and 2 give alone if slice 3 never lands.
 A caller sets `DecoderName = "h264_v4l2m2m"` on the options. It needs no probe and no `Decide` change.
 It is the explicit name ADR-0033 rejected, it fails the same way as the H6 on any stateless board, and
 the failure reads as a bug in the caller's configuration. A probe knows before the bind.
+
+### Offer the wrapper and rely on the bind loop
+
+Skip the probe, the classifier and the capabilities entry. Offer `<codec>_v4l2m2m` as a candidate on
+Linux ARM and let `avcodec_open2` fail where there is no stateful node. It is the smaller change, and
+slice 3 does not depend on slices 1 and 2 to be correct. Three things argue against making it the
+whole design. The record the bind loop keeps for a failure is `avcodec_open2 returned -22`, which does
+not say that the node is stateless. A host that is not an SoC but has a webcam would have the wrapper
+open every video node at each decoder open, unless the candidate is gated on the architecture, and an
+ARM board with CSI cameras has the same nodes. And `HardwareDecodeCapabilities` lists every backend
+with its reason, so a backend missing from it is a gap. Slices 1 and 2 are also the part that can be
+verified on the H6 now. If the probe is judged too much before a stateful device exists, slice 3 can
+go first behind an architecture gate and the probe can follow.
 
 ### Probe by opening each wrapper
 
@@ -271,7 +298,8 @@ selection change.
 1. **What a stateful device returns.** The format of the wrapper's frames (NV12 or YUV420P), whether
    they alias capture buffers, and whether the copy in Decision 5 is needed. The Raspberry Pi 4 is the
    bench.
-2. **Receive-side refusals.** A wrapper that opened and then returns an error at receive, or stalls.
+2. **The receive-side policy in Decision 6.** Whether 16 kept packets is the right bound, and whether
+   a stall is observable without a clock in the core.
 3. **Seek and loop.** Whether `avcodec_flush_buffers` on a wrapper restarts the node cleanly in
    FrameFlow's seek and loop paths.
 4. **The stateless hwaccel's config shape** in a patched build (Decision 7).
