@@ -12,9 +12,6 @@ using Silk.NET.SDL;
 using PlayerCommand = System.Func<FrameFlow.Player.IMediaPlayer, System.Threading.Tasks.Task>;
 
 // FrameFlow SDL Player: plays media files in an SDL window, with OpenAL audio.
-//
-//   [O] open   [Space] pause/resume   [S] stop   [L] loop   [Q]/[Esc] quit
-//   Drop a media file onto the window to play it.
 
 if (!TryReadArgs(args, out var startFile, out var repeat))
     return 1;
@@ -30,11 +27,7 @@ if (startFile is not null)
 
 // SDL wants its window and event loop on the OS main thread (on macOS, AppKit's), so this thread
 // runs SDL and never awaits. The player runs beside it on the thread pool.
-return RunWindow(
-    loggerFactory,
-    commands.Writer,
-    video => RunPlayerAsync(video, commands.Reader, repeat, loggerFactory)
-);
+return RunWindow(commands, repeat, loggerFactory);
 
 // ── The player ───────────────────────────────────────────────────────
 
@@ -136,12 +129,12 @@ static bool Check(string command, Result result)
 // ── The window ───────────────────────────────────────────────────────
 
 static int RunWindow(
-    ILoggerFactory loggerFactory,
-    ChannelWriter<PlayerCommand> commands,
-    Func<SdlVideoSink, Task> runPlayer
+    Channel<PlayerCommand> commands,
+    RepeatMode repeat,
+    ILoggerFactory loggerFactory
 )
 {
-    var bootstrapper = new SdlBootstrapper();
+    var bootstrapper = new SdlBootstrapper(new SdlNativeOptions(), loggerFactory);
     var bootstrap = bootstrapper.Initialize();
     if (!bootstrap.IsSuccess)
     {
@@ -169,7 +162,7 @@ static int RunWindow(
 #pragma warning restore CA2000
         try
         {
-            RunEventLoop(sdl, video, commands, runPlayer);
+            RunEventLoop(sdl, video, commands, repeat, loggerFactory);
         }
         finally
         {
@@ -191,8 +184,9 @@ static int RunWindow(
 static void RunEventLoop(
     Sdl sdl,
     SdlVideoSink video,
-    ChannelWriter<PlayerCommand> commands,
-    Func<SdlVideoSink, Task> runPlayer
+    Channel<PlayerCommand> commands,
+    RepeatMode repeat,
+    ILoggerFactory loggerFactory
 )
 {
     using var closeWindow = new CancellationTokenSource();
@@ -200,7 +194,7 @@ static void RunEventLoop(
     {
         try
         {
-            await runPlayer(video);
+            await RunPlayerAsync(video, commands.Reader, repeat, loggerFactory);
         }
         finally
         {
@@ -208,42 +202,43 @@ static void RunEventLoop(
         }
     });
 
-    Console.WriteLine("[O] open  [Space] pause/resume  [S] stop  [L] loop  [Q]/[Esc] quit");
+    Console.WriteLine(
+        "[O] open (or drop a file)  [Space] pause/resume  [S] stop  [L] loop  [Q]/[Esc] quit"
+    );
     try
     {
         SdlEventLoop.Run(
             sdl,
             video,
-            onEvent: (ref Event e) => HandleEvent(sdl, ref e, commands),
+            onEvent: (ref Event e) => HandleEvent(sdl, ref e, commands.Writer),
             ct: closeWindow.Token
         );
     }
     finally
     {
         // The player is disposed before its window goes.
-        commands.Complete();
+        commands.Writer.Complete();
         playerLoop.GetAwaiter().GetResult();
     }
 }
 
-// Runs on the SDL thread, so it only posts commands and returns.
+// Runs on the SDL thread: it never waits on the player, it posts a command and returns.
+// [O]'s dialog is modal, so the video stops repainting while it is open.
 static bool HandleEvent(Sdl sdl, ref Event e, ChannelWriter<PlayerCommand> commands)
 {
     switch ((EventType)e.Type)
     {
         case EventType.Dropfile:
-            if (ReadDroppedFile(sdl, ref e) is { } dropped)
-                commands.TryWrite(player => OpenAsync(player, dropped));
+            PostOpen(commands, ReadDroppedFile(sdl, ref e));
             break;
 
-        case EventType.Keydown:
+        case EventType.Keydown when e.Key.Repeat == 0:
             switch ((KeyCode)e.Key.Keysym.Sym)
             {
                 case KeyCode.KQ or KeyCode.KEscape:
                     return false;
                 case KeyCode.KO:
-                    if (FileDialogHelper.ShowOpenFileDialog() is { } picked)
-                        commands.TryWrite(player => OpenAsync(player, picked));
+                    PostOpen(commands, FileDialogHelper.ShowOpenFileDialog());
                     break;
                 case KeyCode.KSpace:
                     commands.TryWrite(TogglePauseAsync);
@@ -258,6 +253,18 @@ static bool HandleEvent(Sdl sdl, ref Event e, ChannelWriter<PlayerCommand> comma
             break;
     }
     return true;
+}
+
+static void PostOpen(ChannelWriter<PlayerCommand> commands, string? path)
+{
+    if (path is null)
+        return;
+    if (!File.Exists(path))
+    {
+        Console.Error.WriteLine($"File not found: {path}");
+        return;
+    }
+    commands.TryWrite(player => OpenAsync(player, path));
 }
 
 static unsafe string? ReadDroppedFile(Sdl sdl, ref Event e)
