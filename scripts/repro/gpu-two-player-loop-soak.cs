@@ -22,7 +22,7 @@
 //
 //   --clip <path>                  the left player's clip (tests/corpus/files/test-1080p-h264-aac.mp4)
 //   --second <path>                the right player's clip (the left one's)
-//   --duration <d>                 how long to run (10m)
+//   --duration <d>                 how long to run, a whole number of --sample windows (10m)
 //   --sample <d>                   time between samples (60s)
 //   --csv <path>                   append the samples here
 //   --label <name>                 the run column in the CSV (soak)
@@ -67,9 +67,10 @@ if (
 )
     return 2;
 
-if (sample <= TimeSpan.Zero || sample > duration)
+// A whole number of windows, so the run lasts --duration and every window is as long as the others.
+if (sample <= TimeSpan.Zero || duration < sample || duration.Ticks % sample.Ticks != 0)
 {
-    Console.Error.WriteLine($"--sample must be above zero and no longer than --duration ({duration}).");
+    Console.Error.WriteLine($"--duration ({duration}) must be a whole number of --sample windows ({sample}).");
     return 2;
 }
 
