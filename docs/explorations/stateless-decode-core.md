@@ -309,10 +309,23 @@ node takes only as slice data (`S264`, `S265`, `VP9F` and the others), so availa
 not per node. The draft's slices 1 and 2 serve both routes.
 
 A coded format says the node takes the codec. It does not say the node takes this stream. Decode mode
-and start code do not narrow it, because the core handles both modes. Profile, bit depth and chroma
-format do. The probe can read the node's profile and level menus for the codec (for H.264,
-`V4L2_CID_MPEG_VIDEO_H264_PROFILE`), and the core refuses what they exclude before its first `Decode`.
-A refusal there falls back to software at the first packet, which costs a reopen and not a failure.
+and start code do not narrow it, because the core handles both modes. Profile, bit depth, chroma
+format and frame size do. What a node reports narrows them, and does not prove them:
+
+- **The profile menu** for the codec (for H.264, `V4L2_CID_MPEG_VIDEO_H264_PROFILE`, which `cedrus`,
+  `hantro` and `rkvdec` expose). It is the driver's own statement, and it can be coarser than what
+  the hardware decodes.
+- **The frame size range** from `VIDIOC_ENUM_FRAMESIZES` on the coded format.
+- **The capture formats** offered after the output format is set, which show whether a 10-bit
+  surface exists.
+
+The core refuses what these exclude before its first `Decode`, and that falls back to software at the
+first packet. A stream they admit can still fail on the node. The node then reports the error when a
+request completes, after the core accepted the packet. That is the receive-side refusal of the V4L2 ADR
+draft's Decision 6, and its policy fits here: keep the packets sent until the first frame arrives, and
+replay them on the software decoder if a request fails before then. After the first frame, a failed
+request is a fault, as for any backend. A mismatch that is measured on a board becomes a
+`KnownRefusal` row for that backend and codec.
 
 ## What FFmpeg can back
 
@@ -360,8 +373,11 @@ hardware backend already has.
 The bootstrap probe cannot rely on `av_hwdevice_ctx_create` for this device type. It would succeed on
 any Linux host, with or without a stateless decoder. The V4L2 ADR draft's probe and classifier (its
 slices 1 and 2) already find the slice-only nodes, and they would decide whether the backend is
-initialised. A decoder that is still not found surfaces at the first packet, as a refused format or a
-refused packet. `FirstPacketFallback` and the engagement check already handle both.
+initialised. The probe answers per codec, not per stream. A decoder that is not found, or a stream the
+node rejects, surfaces at the first packet as a refused format or a refused packet, which
+`FirstPacketFallback` and the engagement check already handle. A rejection reported only when a request
+completes is a receive-side refusal, with the same exposure as in
+[How it enters `Decide`](#how-it-enters-decide). Where FFmpeg reports it is not measured.
 
 The upstream request has moved past this. Its review moved device probing into libavutil, and on
 2026-03-13 its author reported support for the Raspberry Pi HEVC decoder posted for mainline. Whether
