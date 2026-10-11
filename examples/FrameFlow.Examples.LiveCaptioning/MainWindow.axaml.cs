@@ -83,7 +83,9 @@ public partial class MainWindow : Window
                     .WithAudioSink(_audioSink)
                     .WithAvaloniaVideoView(VideoView)
                     .WithLogger(_loggerFactory)
-                    .ConfigureAudio(chain => chain.Then(SendToWhisper(_captionAudio.Writer)))
+                    .ConfigureAudio(chain =>
+                        chain.Then(SendToWhisper(_captionAudio.Writer, Interlocked.Increment(ref _audioGraph)))
+                    )
                     .ConfigureVideo(chain =>
                         detector is null ? chain : chain.Infer("yolo", detector, _onScreen.Post)
                     )
@@ -202,10 +204,19 @@ public partial class MainWindow : Window
     // rebuilds its graph after every seek, and Whisper on an audio branch would restart with it.
 
     // When Whisper falls behind, the oldest buffer is dropped rather than holding up playback.
-    private readonly Channel<PcmAudioBuffer> _captionAudio = Channel.CreateBounded<PcmAudioBuffer>(
+    private readonly Channel<TappedAudio> _captionAudio = Channel.CreateBounded<TappedAudio>(
         new BoundedChannelOptions(32) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true },
-        static dropped => dropped.Dispose()
+        static dropped => dropped.Buffer.Dispose()
     );
+
+    // Counts the player's audio graphs: one per load, seek or file. Audio tapped from an older
+    // graph never reaches Whisper, and captions still waiting are dropped once a newer graph's
+    // frame is on screen. Whisper's own window can still hold up to 2.5 s from before; it has no reset.
+    private int _audioGraph;
+    private int _presentedGraph;
+
+    private readonly record struct TappedAudio(int Graph, PcmAudioBuffer Buffer);
+
     private readonly ConcurrentQueue<Caption> _newCaptions = new();
     private Task _captionGraph = Task.CompletedTask;
     private CaptionTimeline _captions = NewCaptionTimeline();
@@ -216,14 +227,15 @@ public partial class MainWindow : Window
 
     /// <summary>Passes each audio buffer on to the speakers and sends a reference to it to Whisper.</summary>
     private static OperatorNode<PcmAudioBuffer, PcmAudioBuffer> SendToWhisper(
-        ChannelWriter<PcmAudioBuffer> whisper
+        ChannelWriter<TappedAudio> whisper,
+        int graph
     ) =>
         new(
             "whisper-tap",
             (buffer, _) =>
             {
                 buffer.AddRef();
-                if (!whisper.TryWrite(buffer))
+                if (!whisper.TryWrite(new TappedAudio(graph, buffer)))
                     buffer.Dispose(); // the window is closing
                 return ValueTask.FromResult<PcmAudioBuffer?>(buffer);
             }
@@ -238,7 +250,18 @@ public partial class MainWindow : Window
                 new SourceNode<PcmAudioBuffer>(
                     "whisper-audio",
                     async token =>
-                        await audio.WaitToReadAsync(token) && audio.TryRead(out var buffer) ? buffer : null
+                    {
+                        while (await audio.WaitToReadAsync(token))
+                        {
+                            while (audio.TryRead(out var tapped))
+                            {
+                                if (tapped.Graph == Volatile.Read(ref _audioGraph))
+                                    return tapped.Buffer;
+                                tapped.Buffer.Dispose();
+                            }
+                        }
+                        return null;
+                    }
                 )
             )
             .Then(AudioOperators.Resample("whisper-resample", targetSampleRate: 16_000, targetChannels: 1))
@@ -281,11 +304,13 @@ public partial class MainWindow : Window
     private void OnFramePresented(object? sender, FramePresentedInfo frame)
     {
         var pts = frame.PresentationTime;
-        if (pts < _lastPresented)
+        var graph = Volatile.Read(ref _audioGraph);
+        if (pts < _lastPresented || graph != _presentedGraph)
         {
             // A seek, a loop or the next file: a timeline only runs forward.
             _captions = NewCaptionTimeline();
             _newCaptions.Clear();
+            _presentedGraph = graph;
         }
         _lastPresented = pts;
 
@@ -347,6 +372,8 @@ public partial class MainWindow : Window
             _onScreen.Dispose();
             _captionAudio.Writer.TryComplete();
             await _captionGraph;
+            while (_captionAudio.Reader.TryRead(out var unread))
+                unread.Buffer.Dispose();
             _detector?.Dispose();
         }
         catch (Exception ex)
