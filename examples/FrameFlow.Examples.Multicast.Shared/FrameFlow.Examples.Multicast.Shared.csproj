@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
     What the three multicast examples share: the three panes one frame is shown in, the file
-    player window, and the Avalonia app. It references no ONNX Runtime package; each example
-    brings its own, because two in one process conflict.
+    player window, and the Avalonia app. It references no ONNX Runtime native package; each
+    example brings its own, because two in one process conflict.
   -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -14,6 +14,8 @@
     <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Audio.OpenAL\FrameFlow.Audio.OpenAL.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Yolo\FrameFlow.Yolo.csproj" />
+    <!-- CpuInferenceSession, which every ONNX Runtime package can run. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Inference.Ort\FrameFlow.Inference.Ort.csproj" />
     <ProjectReference Include="..\FrameFlow.Examples.Common\FrameFlow.Examples.Common.csproj" />
   </ItemGroup>
 

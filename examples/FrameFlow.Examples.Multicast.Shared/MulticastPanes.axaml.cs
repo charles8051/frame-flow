@@ -19,6 +19,7 @@ public partial class MulticastPanes : UserControl
     private readonly AvaloniaVideoSink _detection;
     private readonly AvaloniaVideoSink _filtered;
     private int _filter;
+    private int _shownCount = -1;
 
     public MulticastPanes()
     {
@@ -35,7 +36,11 @@ public partial class MulticastPanes : UserControl
         Detections.Presented += (_, shown) =>
         {
             Overlay.Show(shown);
-            Logger.LogDebug("Pane 2 shows {Count} object(s) at {Timestamp}.", shown.Result.Count, shown.Timestamp);
+            if (shown.Result.Count != _shownCount)
+            {
+                _shownCount = shown.Result.Count;
+                Logger.LogDebug("The second pane now shows {Count} object(s).", _shownCount);
+            }
         };
         Detections.Cleared += (_, _) => Overlay.Show(null);
 

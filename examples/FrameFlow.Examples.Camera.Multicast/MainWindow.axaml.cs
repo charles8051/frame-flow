@@ -124,14 +124,14 @@ public partial class MainWindow : Window
     /// <summary>The detector, or null when it cannot load: the other panes run on without it.</summary>
     private async Task<Yolov8Detector?> LoadDetectorAsync()
     {
-        // CUDA first, and the CPU when there is no NVIDIA GPU.
         var inference = InferenceSessionFactoryBuilder.Create(
             ExecutionProvider.Cuda,
             new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
             {
                 [ExecutionProvider.Cuda] = path => new CudaInferenceSession(path),
                 [ExecutionProvider.Cpu] = path => new CpuInferenceSession(path),
-            }
+            },
+            loggerFactory: _loggerFactory
         );
 
         Panes.SetDetectionStatus("loading YOLOv8");
@@ -141,8 +141,7 @@ public partial class MainWindow : Window
             var detector = await Task.Run(() =>
                 Yolov8Detector.CreateAsync(inference, ct: _closing.Token, loggerFactory: _loggerFactory)
             );
-            _logger.LogInformation("YOLOv8 runs on {Provider}.", inference.ActiveProvider);
-            Panes.SetDetectionStatus($"YOLOv8 on {inference.ActiveProvider}");
+            Panes.SetDetectionStatus("YOLOv8");
             return detector;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

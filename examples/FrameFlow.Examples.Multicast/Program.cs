@@ -10,15 +10,8 @@ internal static class Program
     public static void Main(string[] args) =>
         MulticastApp.Run(args, () => new PlayerWindow
         {
-            // CUDA first, and the CPU when there is no NVIDIA GPU.
-            Inference = InferenceSessionFactoryBuilder.Create(
-                ExecutionProvider.Cuda,
-                new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
-                {
-                    [ExecutionProvider.Cuda] = path => new CudaInferenceSession(path),
-                    [ExecutionProvider.Cpu] = path => new CpuInferenceSession(path),
-                }
-            ),
+            GpuProvider = ExecutionProvider.Cuda,
+            OpenOnGpu = path => new CudaInferenceSession(path),
             StartupFile = args.FirstOrDefault(),
             LogFileName = "avalonia-multicast.log",
         });

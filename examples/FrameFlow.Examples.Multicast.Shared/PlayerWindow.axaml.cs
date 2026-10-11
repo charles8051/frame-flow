@@ -32,8 +32,11 @@ public partial class PlayerWindow : Window
         Chrome.FileOpenRequested += async (_, e) => await OpenAsync(e.FilePath);
     }
 
-    /// <summary>Opens the YOLOv8 model on the example's execution provider, or on the CPU.</summary>
-    public required IInferenceSessionFactory Inference { get; init; }
+    /// <summary>The GPU execution provider YOLOv8 tries before the CPU.</summary>
+    public required ExecutionProvider GpuProvider { get; init; }
+
+    /// <summary>Opens a model on <see cref="GpuProvider"/>.</summary>
+    public required Func<string, IInferenceSession> OpenOnGpu { get; init; }
 
     /// <summary>The file to play on start, if any.</summary>
     public string? StartupFile { get; init; }
@@ -84,15 +87,24 @@ public partial class PlayerWindow : Window
     /// <summary>The detector, or null when it cannot load: the other panes play on without it.</summary>
     private async Task<Yolov8Detector?> LoadDetectorAsync()
     {
+        var inference = InferenceSessionFactoryBuilder.Create(
+            GpuProvider,
+            new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+            {
+                [GpuProvider] = OpenOnGpu,
+                [ExecutionProvider.Cpu] = path => new CpuInferenceSession(path),
+            },
+            loggerFactory: _loggerFactory
+        );
+
         Panes.SetDetectionStatus("loading YOLOv8");
         try
         {
             // A cached model opens synchronously, so load it off the UI thread.
             var detector = await Task.Run(() =>
-                Yolov8Detector.CreateAsync(Inference, ct: _closing.Token, loggerFactory: _loggerFactory)
+                Yolov8Detector.CreateAsync(inference, ct: _closing.Token, loggerFactory: _loggerFactory)
             );
-            _logger.LogInformation("YOLOv8 runs on {Provider}.", Inference.ActiveProvider);
-            Panes.SetDetectionStatus($"YOLOv8 on {Inference.ActiveProvider}");
+            Panes.SetDetectionStatus("YOLOv8");
             return detector;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
