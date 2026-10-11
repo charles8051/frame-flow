@@ -70,7 +70,8 @@ public partial class MainWindow : Window
         base.OnLoaded(e);
         if (StartupPath is null)
             return;
-        if (File.Exists(StartupPath) || Directory.Exists(StartupPath))
+        // A leading '-' is a stale option, never a path, even if a file has that name.
+        if (!StartupPath.StartsWith('-') && (File.Exists(StartupPath) || Directory.Exists(StartupPath)))
             await OpenAsync(StartupPath);
         else
             StatusText.Text = $"Not a media file or folder: {StartupPath}";
