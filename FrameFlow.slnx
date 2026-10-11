@@ -36,6 +36,7 @@
     <Project Path="examples/FrameFlow.Examples.Common/FrameFlow.Examples.Common.csproj" />
     <Project Path="examples/FrameFlow.Examples.AudioOnlyPlayer/FrameFlow.Examples.AudioOnlyPlayer.csproj" />
     <Project Path="examples/FrameFlow.Examples.Multicast/FrameFlow.Examples.Multicast.csproj" />
+    <Project Path="examples/FrameFlow.Examples.Multicast.Shared/FrameFlow.Examples.Multicast.Shared.csproj" />
     <Project Path="examples/FrameFlow.Examples.Camera.Multicast/FrameFlow.Examples.Camera.Multicast.csproj" />
     <Project Path="examples/FrameFlow.Examples.Multicast.Dml/FrameFlow.Examples.Multicast.Dml.csproj" />
     <Project Path="examples/FrameFlow.Examples.Camera.Inference.Dml/FrameFlow.Examples.Camera.Inference.Dml.csproj" />
