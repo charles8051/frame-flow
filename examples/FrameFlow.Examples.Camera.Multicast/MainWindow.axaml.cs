@@ -219,6 +219,10 @@ public partial class MainWindow : Window
             // The detector ran inside the graph, so it goes after it.
             _detector?.Dispose();
         }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Teardown failed.");
+        }
         finally
         {
             _loggerFactory.Dispose();
