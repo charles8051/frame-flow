@@ -1,7 +1,7 @@
 // Plays the audio of a media file from a BackgroundService in a Generic Host.
 //
-// The container owns the environment: the FFmpeg bootstrap and the audio sink. The playback is
-// built per file, from the sink the container resolves, and is not a service itself.
+// The container owns the environment: the FFmpeg bootstrap and the audio sink. The pass is built
+// for the file from the sink the container resolves, and is not a service itself.
 
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Media;

@@ -16,17 +16,17 @@ public static class ExampleLogPaths
     /// absolute path is returned unchanged; a relative path or bare file name is placed under
     /// <c>&lt;repo&gt;/logs/</c>.
     /// </summary>
-    [return: NotNullIfNotNull(nameof(logFileArg))]
-    public static string? Resolve(string? logFileArg)
+    [return: NotNullIfNotNull(nameof(fileName))]
+    public static string? Resolve(string? fileName)
     {
-        if (string.IsNullOrWhiteSpace(logFileArg))
+        if (string.IsNullOrWhiteSpace(fileName))
             return null;
 
-        if (Path.IsPathRooted(logFileArg))
-            return logFileArg;
+        if (Path.IsPathRooted(fileName))
+            return fileName;
 
         return Path.GetFullPath(
-            Path.Combine(RepoRoot.Find(), LogsDirectoryName, logFileArg)
+            Path.Combine(RepoRoot.Find(), LogsDirectoryName, fileName)
         );
     }
 }
