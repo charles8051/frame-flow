@@ -365,8 +365,47 @@ refused packet. `FirstPacketFallback` and the engagement check already handle bo
 
 The upstream request has moved past this. Its review moved device probing into libavutil, and on
 2026-03-13 its author reported support for the Raspberry Pi HEVC decoder posted for mainline. Whether
-the device opens and frames transfer on a board is not measured for either version. The libudev
-dependency is a question for a portable build.
+the device opens and frames transfer on a board is not measured for either version.
+
+### Distributing the patched FFmpeg
+
+LibreELEC publishes no standalone FFmpeg. Its FFmpeg is built inside the OS image, and those binaries
+cannot be FrameFlow's runtime:
+
+- **They are GPL.** The package configures `--enable-gpl --enable-version3`, and its license is
+  `GPL-3.0-or-later`. [ADR-0046](../adr/ADR-0046-native-runtime-acquisition-strategy.md) keeps
+  FrameFlow's runtime LGPL, and the bundled linux-arm64 build is BtbN's `lgpl-shared`.
+- **They are linked against LibreELEC's own libraries:** its toolchain's glibc, openssl, speex,
+  libxml2, dav1d and systemd. They are built to load on LibreELEC, not on Debian or Armbian.
+
+The patch itself is FFmpeg code under FFmpeg's license. FrameFlow can apply it to the FFmpeg 9 tag it
+pins and build linux-arm64 LGPL shared libraries in CI, as `scripts/build-ffmpeg-macos.sh` does for
+macOS, then point the linux-arm64 entry in `scripts/runtime-manifest.json` at that artifact instead of
+BtbN's. The sonames are unchanged, so `FFmpegLibraryResolver` and `FfmpegAbiCheck` need nothing new.
+Linux x64 can stay on BtbN, since stateless decoders are on ARM SoCs. A patched x64 build is worth
+having only to run the hwaccel against `visl` on an x86 VM.
+
+**libudev.** The patched frames context calls `udev_new` to enumerate media devices when the first
+packet arrives. The build can link libudev in one of two ways:
+
+- **As an ordinary dependency.** `libavutil` then fails to load on a host without `libudev.so.1`, and
+  FrameFlow loses software decode with it.
+- **Through an `implib.so` stub**, as the Linux builds already bind their optional driver libraries.
+  The libraries load everywhere, and a host without libudev aborts the process at the first packet
+  decoded on this backend. `HardwareDecodeProbe` documents the same abort for `libva-drm.so.2`. The
+  guard is the one it already uses: `DriverLibrariesFor` lists `libudev.so.1` and `libdrm.so.2` for
+  the new backend kind, and a backend whose libraries do not load is never offered.
+
+The stub is consistent with the rest of the Linux build and keeps software decode on every host.
+
+**A build the application brings.** `FrameFlowNativeOptions.CustomFfmpegPath` and
+`ProbeSystemLibraries` already load any FFmpeg build that passes `FfmpegAbiCheck`. An application that
+ships its own patched FFmpeg 9, or runs on an OS image that has one, can point FrameFlow at it with no
+new bootstrap path. The FrameFlow side is the same for either build: the backend kind, the driver
+catalogue entry and the node probe. The device type is not upstream, so its enum value is fixed only
+within one patch set. The bootstrap should resolve it by name with `av_hwdevice_find_type_by_name("v4l2request")`,
+which FrameFlow does not bind yet, rather than map a constant. A build without the type then reports
+the backend as absent.
 
 ## Other stateless APIs
 
@@ -474,8 +513,9 @@ normalising timestamps, not byte for byte.
 
 ## Recommendation
 
-1. **Take the patched FFmpeg for hardware coverage.** Build linux-arm64 FFmpeg 9 with LibreELEC's
-   v4l2-request patch, following the macOS build. Land the V4L2 ADR draft's probe and classifier to
+1. **Take the patched FFmpeg for hardware coverage.** Build linux-arm64 LGPL FFmpeg 9 from source with
+   LibreELEC's v4l2-request patch, following the macOS build (see
+   [Distributing the patched FFmpeg](#distributing-the-patched-ffmpeg)). Land the V4L2 ADR draft's probe and classifier to
    gate the backend. Add the backend kind and the mapping, and decode to CPU frames first. On the H6
    this covers H.264, HEVC and VP9 with no new codec logic in FrameFlow.
    It amends #596, which assumed the patch set's FFmpeg 9 status was unknown. It also settles Decision 7
@@ -499,7 +539,8 @@ codec by codec beside the patched hwaccel and be ranked above it where it passes
 
 1. Whether the patched hwaccel finds `cedrus` and `hantro` on the H6 under FrameFlow's build, and what
    `av_hwframe_transfer_data` returns for their capture formats.
-2. Whether a portable linux-arm64 build can link libudev, or needs it from the host.
+2. Whether BtbN's build scripts can carry the patch and an `implib.so` stub for libudev, or the
+   linux-arm64 build needs a script of its own like the macOS one.
 3. How soon LibreELEC's patch follows an FFmpeg 9 point release, and who rebases it if LibreELEC
    stops.
 4. The capture buffer count a node accepts, and whether it covers the DPB, the held-frame budget and
