@@ -187,7 +187,9 @@ stalled node from codec startup or frame reordering, so it is not used as a sign
 1. **An error before the first frame.** The decoder keeps the packets it has sent until the first
    frame is received, the whole prefix, so a replay is complete. A receive error before then, or a send
    that returns an error, reopens on the prepared software context and sends the kept packets again.
-   A send that blocks is ordinary backpressure and is not a refusal. The size of the keep is bounded by
+   `AVERROR(EAGAIN)` is flow control in the send and receive cycle, which `DecodeProtocol` already
+   handles, and is not an error here. A send that blocks is ordinary backpressure. Neither is a
+   refusal. The size of the keep is bounded by
    the deadline in part 2 and the stream's bitrate, not by the node's queue depth.
 2. **Silence before the first frame.** A shell-owned deadline, read from an injected `TimeProvider`
    and counted from the first send, treats a node that has produced nothing as refusing, with the same
