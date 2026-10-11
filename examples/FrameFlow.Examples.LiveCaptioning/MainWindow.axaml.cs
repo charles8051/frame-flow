@@ -20,7 +20,7 @@ using Microsoft.Extensions.Logging;
 namespace FrameFlow.Examples.LiveCaptioning;
 
 /// <summary>
-/// Plays a file with YOLOv8 boxes drawn over the picture and Whisper captions under it.
+/// Plays a file with YOLOv8 boxes drawn over the picture and Whisper captions along its bottom edge.
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -32,8 +32,10 @@ public partial class MainWindow : Window
 
     // One player for the window: each file opened replaces its queue.
     private readonly SemaphoreSlim _openGate = new(1, 1);
-    private OpenAlAudioSink? _audioSink;
     private IMediaPlayer? _player;
+
+    // Ours, not the player's: it serves each player built here and is disposed after the last.
+    private readonly OpenAlAudioSink _audioSink;
 
     public string? StartupFilePath { get; init; }
 
@@ -45,6 +47,7 @@ public partial class MainWindow : Window
             onFailure: ex => Title += $"  [no log file: {ex.Message}]"
         );
         _logger = _loggerFactory.CreateLogger<MainWindow>();
+        _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
         VideoView.LoggerFactory = _loggerFactory;
 
         // Detections arrive before their frame is on screen; this hands each on when it is.
@@ -63,10 +66,17 @@ public partial class MainWindow : Window
         await _openGate.WaitAsync();
         try
         {
+            if (_player is { State: PlaybackState.Error })
+            {
+                // A player in Error refuses ReplaceAsync, so start again with a new one.
+                PlayerChrome.Transport = null;
+                await _player.DisposeAsync();
+                _player = null;
+            }
+
             if (_player is null)
             {
                 var detector = _detector;
-                _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
                 _player = await FrameFlowPlayer
                     .Create()
                     .WithMedia(path)
@@ -97,7 +107,8 @@ public partial class MainWindow : Window
 
             Title = $"FrameFlow — Live Captioning + Detection — {Path.GetFileName(path)}";
 
-            // A replace while playing moves to the new file at once; paused or ended, it waits for Play.
+            // A new player, or a replace while paused or ended, waits for Play; a replace while
+            // playing moves to the new file at once.
             if (_player.State is PlaybackState.Paused or PlaybackState.Ended)
             {
                 var played = await _player.PlayAsync(_windowCts.Token);
@@ -127,6 +138,10 @@ public partial class MainWindow : Window
         {
             whisperModel = await WhisperModelDownloader.EnsureModelAvailableAsync(_logger, _windowCts.Token);
         }
+        catch (OperationCanceledException) when (_windowCts.IsCancellationRequested)
+        {
+            return;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get the Whisper model.");
@@ -135,7 +150,13 @@ public partial class MainWindow : Window
         }
 
         _captionGraph = Task.Run(() => RunCaptionGraphAsync(whisperModel, _windowCts.Token));
-        _detector = await LoadDetectorAsync();
+        var detector = await LoadDetectorAsync();
+        if (_windowCts.IsCancellationRequested)
+        {
+            detector?.Dispose(); // the window closed while it loaded
+            return;
+        }
+        _detector = detector;
 
         PlayerChrome.HasOpenButton = true;
         if (StartupFilePath is not null)
@@ -164,6 +185,10 @@ public partial class MainWindow : Window
                 Yolov8Detector.CreateAsync(sessions, ct: _windowCts.Token, loggerFactory: _loggerFactory)
             );
         }
+        catch (OperationCanceledException) when (_windowCts.IsCancellationRequested)
+        {
+            return null;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "YOLOv8 unavailable; playing with captions only.");
@@ -185,6 +210,7 @@ public partial class MainWindow : Window
     private Task _captionGraph = Task.CompletedTask;
     private CaptionTimeline _captions = NewCaptionTimeline();
     private TimeSpan _lastPresented;
+    private string _shownCaption = "";
 
     private static CaptionTimeline NewCaptionTimeline() => new(displayDuration: TimeSpan.FromSeconds(6));
 
@@ -244,6 +270,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Captioning stopped.");
+            Dispatcher.UIThread.Post(() => SetStatus("⚠ captioning stopped (see log)", Warning));
         }
     }
 
@@ -255,13 +282,20 @@ public partial class MainWindow : Window
     {
         var pts = frame.PresentationTime;
         if (pts < _lastPresented)
-            _captions = NewCaptionTimeline(); // a seek, a loop or the next file: a timeline only runs forward
+        {
+            // A seek, a loop or the next file: a timeline only runs forward.
+            _captions = NewCaptionTimeline();
+            _newCaptions.Clear();
+        }
         _lastPresented = pts;
 
         while (_newCaptions.TryDequeue(out var caption))
             _captions.Add(caption, pts);
 
         var text = string.Join('\n', _captions.GetActive(pts).Select(c => c.Text));
+        if (text == _shownCaption)
+            return;
+        _shownCaption = text;
         Dispatcher.UIThread.Post(() =>
         {
             CaptionText.Text = text;
@@ -305,11 +339,11 @@ public partial class MainWindow : Window
 
         try
         {
+            // Held from here on, so no open can start after the player is gone.
             await _openGate.WaitAsync();
             if (_player is not null)
                 await _player.DisposeAsync();
-            if (_audioSink is not null)
-                await _audioSink.DisposeAsync(); // after the player that drives it
+            await _audioSink.DisposeAsync(); // after the player that drives it
             _onScreen.Dispose();
             _captionAudio.Writer.TryComplete();
             await _captionGraph;

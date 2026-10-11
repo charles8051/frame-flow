@@ -3,8 +3,8 @@ using Microsoft.Extensions.Logging;
 namespace FrameFlow.Examples.LiveCaptioning;
 
 /// <summary>
-/// Downloads the whisper.cpp <c>ggml-base.en</c> model on first run and caches it under
-/// <c>%LOCALAPPDATA%\FrameFlow.Examples.LiveCaptioning\models\</c>. FrameFlow.Whisper takes a
+/// Downloads the whisper.cpp <c>ggml-base.en</c> model on first run and caches it in the local
+/// application data folder, under <c>FrameFlow.Examples.LiveCaptioning/models</c>. FrameFlow.Whisper takes a
 /// model path and does not fetch one; FrameFlow.Yolo's <c>Yolov8ModelDownloader</c> does the
 /// same for YOLO.
 /// </summary>

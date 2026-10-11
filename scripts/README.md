@@ -58,11 +58,10 @@ dotnet run scripts/fetch-cuda.cs -- --force
 
 ### Why this exists (vs. requiring the system CUDA install)
 
-LiveCaptioning's YOLO detector now gracefully falls back to
-captioning-only mode when CUDA isn't available, so this script is
-opt-in convenience rather than a hard requirement. Without the
-script you still have a working captioning demo; with the script
-you also get GPU object detection.
+LiveCaptioning's YOLO detector falls back to the CPU when CUDA isn't
+available, so this script is opt-in convenience rather than a hard
+requirement. Without the script, object detection runs on the CPU;
+with it, detection runs on the GPU.
 
 The layout the resolver expects is per-app
 (`AppContext.BaseDirectory`), so the redists have to land in each
