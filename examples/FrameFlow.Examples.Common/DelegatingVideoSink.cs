@@ -12,10 +12,9 @@ namespace FrameFlow.Examples.Common;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A configurator returns its chain open and the builder terminates it at the registered sink,
-/// so an example that used to end its chain with a <c>SinkNode</c> body registers that body
-/// here instead. The frames then arrive through the clock-select pacer like any other sink's,
-/// rather than at decode rate.
+/// Register it with <c>WithVideoSink</c> and return the configurator's chain open: the builder
+/// ends the chain at this sink, and a player hands it each frame at the frame's presentation
+/// time, as it would any other sink.
 /// </para>
 /// <para>
 /// The delegate takes ownership of each frame, as <see cref="IVideoSink.PresentAsync"/> does:
@@ -32,13 +31,13 @@ public sealed class DelegatingVideoSink(
         present ?? throw new ArgumentNullException(nameof(present));
 
     /// <summary>
-    /// What the delegate's presenters keep after it returns, as the caller declares it
-    /// (ADR-0081). <see langword="null"/> when the caller does not say.
+    /// How many frames the delegate keeps after it returns, as the caller declares it.
+    /// <see langword="null"/> when the caller does not say, which is read as unbounded.
     /// </summary>
     public int? MaxHeldFrames => maxHeldFrames;
 
     /// <summary>
-    /// The memory domains the delegate's presenters take, as the caller declares them (#435).
+    /// The memory domains of the frames the delegate takes, as the caller declares them.
     /// CPU when the caller does not say.
     /// </summary>
     public FrameMemoryDomains AcceptedDomains => acceptedDomains;

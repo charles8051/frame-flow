@@ -3,46 +3,30 @@ using System.Diagnostics.CodeAnalysis;
 namespace FrameFlow.Examples.Common;
 
 /// <summary>
-/// Resolves the <c>--log-file</c> argument to a concrete path for the
-/// FrameFlow examples.
+/// Places the examples' files under <c>&lt;repo&gt;/logs/</c>, whatever directory an example
+/// was started from.
 /// </summary>
-/// <remarks>
-/// <para>
-/// Examples pass a <b>bare filename</b> (e.g. <c>dual-player.log</c>) on the
-/// command line rather than an absolute path. That keeps
-/// <c>launchSettings.json</c> free of any one machine's workspace location —
-/// the file always lands in a single <c>logs/</c> directory at the repository
-/// root (<see cref="RepoRoot.Find"/>), regardless of the working directory the
-/// example was launched from. So every example's log is at a predictable,
-/// consistent <c>&lt;repo&gt;/logs/&lt;name&gt;.log</c>.
-/// </para>
-/// <para>
-/// An absolute path is still honoured verbatim, so an operator can redirect a
-/// single run elsewhere without changing code.
-/// </para>
-/// </remarks>
 public static class ExampleLogPaths
 {
-    /// <summary>The repo-relative directory all example logs land in.</summary>
+    /// <summary>The directory under the repository root that example logs land in.</summary>
     public const string LogsDirectoryName = "logs";
 
     /// <summary>
-    /// Resolves <paramref name="logFileArg"/>: <see langword="null"/>/empty
-    /// returns <see langword="null"/> (no file sink); an absolute path is
-    /// returned unchanged; a relative path or bare filename is placed under
+    /// Resolves a file name: <see langword="null"/> or empty returns <see langword="null"/>; an
+    /// absolute path is returned unchanged; a relative path or bare file name is placed under
     /// <c>&lt;repo&gt;/logs/</c>.
     /// </summary>
-    [return: NotNullIfNotNull(nameof(logFileArg))]
-    public static string? Resolve(string? logFileArg)
+    [return: NotNullIfNotNull(nameof(fileName))]
+    public static string? Resolve(string? fileName)
     {
-        if (string.IsNullOrWhiteSpace(logFileArg))
+        if (string.IsNullOrWhiteSpace(fileName))
             return null;
 
-        if (Path.IsPathRooted(logFileArg))
-            return logFileArg;
+        if (Path.IsPathRooted(fileName))
+            return fileName;
 
         return Path.GetFullPath(
-            Path.Combine(RepoRoot.Find(), LogsDirectoryName, logFileArg)
+            Path.Combine(RepoRoot.Find(), LogsDirectoryName, fileName)
         );
     }
 }

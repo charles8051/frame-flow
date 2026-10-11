@@ -1,97 +1,61 @@
+// Plays the audio of a media file through OpenAL, with no video, and exits at the end.
+//
+// FrameFlowPass runs a file through once. It holds no clock, but an audio device takes samples
+// only as fast as it plays them, so a pass into an audio sink plays in real time. For pause,
+// seek, a queue or video, use FrameFlowPlayer.
+
+using System.Runtime.InteropServices;
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Player;
 using Microsoft.Extensions.Logging;
 
-namespace FrameFlow.Examples.AudioOnlyPlayer;
+const string Usage = "FrameFlow.Examples.AudioOnlyPlayer <audio-or-media-file>";
+if (!ExampleArgs.TryReadInputPath(args, Usage, out var inputPath))
+    return 2;
 
-/// <summary>
-/// Console audio player — plays audio from a media file through
-/// OpenAL with no video output. Demonstrates the player surface
-/// (<see cref="FrameFlowPlayer"/>) used in the minimal
-/// "open + play to EOS" shape.
-/// </summary>
-internal static class Program
+using var loggerFactory = ExampleLogging.CreateFactory("audio-only-player.log");
+
+await using var audio = new OpenAlAudioSink(loggerFactory.CreateLogger<OpenAlAudioSink>());
+await using var pass = await FrameFlowPass.Create(inputPath)
+    .WithAudioSink(audio)
+    .WithLogger(loggerFactory)
+    .BuildAsync();
+
+if (pass.Info.AudioStreams.Count == 0)
 {
-    public static async Task<int> Main(string[] args)
-    {
-        // Exactly one argument: the file to play. An option, or a second path, is
-        // an error rather than a guess — taking the first path-shaped argument is
-        // what let a stale `--log-file <name>` invocation play its own log.
-        if (
-            !ExampleArgs.TryReadInputPath(
-                args,
-                "FrameFlow.Examples.AudioOnlyPlayer <audio-or-media-file>",
-                out var inputPath
-            )
-        )
-        {
-            return 2;
-        }
-        using var loggerFactory = ExampleLogging.CreateFactory(
-            "audio-only-player.log",
-            onFailure: ex => Console.Error.WriteLine($"File logging is off: {ex.Message}")
-        );
-
-        Console.WriteLine($"Audio playback: {inputPath}");
-
-        // OpenAlAudioSink is the production audio sink — implements
-        // IAudioSink + IClockSource. MediaPass only consumes
-        // the IAudioSink data plane; clock-source wiring would be
-        // needed when video joins the pipeline for sync. Audio-only
-        // playback doesn't need the clock fed back anywhere.
-        await using var sink = new OpenAlAudioSink();
-
-        // No ActivateAsync here: MediaPass activates the sink it was
-        // given, the same way SubstrateSession and BuildPlayerAsync do.
-        // Pre-activating would rebase the sink's sample counter twice —
-        // see the contract on IAudioSink.ActivateAsync.
-
-        try
-        {
-            await using var player = await FrameFlowPass
-                .Create(inputPath)
-                .WithAudioSink(sink)
-                .WithLogger(loggerFactory)
-                .BuildAsync();
-
-            if (player.Info.AudioStreams.Count == 0)
-            {
-                Console.Error.WriteLine($"No audio streams found in {inputPath}.");
-                return 1;
-            }
-
-            var a = player.Info.AudioStreams[0];
-            Console.WriteLine(
-                $"Decoding audio stream [{a.StreamIndex}]: {a.CodecName} "
-                    + $"{a.SampleRate} Hz, {a.Channels} ch"
-            );
-            Console.WriteLine($"Duration: {player.Info.Duration:hh\\:mm\\:ss\\.fff}");
-            Console.WriteLine();
-            Console.WriteLine("Playing… press Ctrl+C to stop.");
-
-            using var ctrlC = new CancellationTokenSource();
-            Console.CancelKeyPress += (_, e) =>
-            {
-                e.Cancel = true;
-                ctrlC.Cancel();
-            };
-
-            try
-            {
-                await player.RunToCompletionAsync(ctrlC.Token);
-            }
-            catch (OperationCanceledException) when (ctrlC.IsCancellationRequested)
-            {
-                Console.WriteLine();
-                Console.WriteLine("Cancelled.");
-            }
-        }
-        finally
-        {
-            await sink.DeactivateAsync();
-        }
-
-        Console.WriteLine("Done.");
-        return 0;
-    }
+    Console.Error.WriteLine($"No audio stream in {inputPath}.");
+    return 1;
 }
+
+var stream = pass.Info.AudioStreams[0];
+Console.WriteLine(
+    $"{inputPath}: {stream.CodecName}, {stream.SampleRate} Hz, {stream.Channels} ch, "
+        + $"{pass.Info.Duration:hh\\:mm\\:ss\\.fff}"
+);
+Console.WriteLine("Playing. Press Ctrl+C to stop.");
+
+using var stop = new CancellationTokenSource();
+using var ctrlC = PosixSignalRegistration.Create(
+    PosixSignal.SIGINT,
+    signal =>
+    {
+        signal.Cancel = true;
+        stop.Cancel();
+    }
+);
+
+try
+{
+    await pass.RunToCompletionAsync(stop.Token);
+}
+catch (OperationCanceledException) when (stop.IsCancellationRequested)
+{
+    Console.WriteLine("Stopped.");
+}
+finally
+{
+    // A pass starts the audio sink and leaves it running.
+    await audio.DeactivateAsync();
+}
+
+return 0;

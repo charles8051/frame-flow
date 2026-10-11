@@ -12,10 +12,8 @@ public static class ExampleArgs
     /// returning <see langword="false"/> when the command line is not exactly that.
     /// </summary>
     /// <remarks>
-    /// Strict on purpose. Scanning for the first path-shaped argument is what let
-    /// <c>--log-file &lt;name&gt; &lt;clip&gt;</c> play the log instead of the clip, and the
-    /// flag being gone removes today's instance of that rather than the shape. An
-    /// option here is a stale invocation, so it is an error and not a guess.
+    /// An option, or a second path, is an error rather than a guess: taking the first
+    /// path-shaped argument would play whatever file followed an unknown option.
     /// </remarks>
     public static bool TryReadInputPath(
         string[] args,
@@ -30,32 +28,27 @@ public static class ExampleArgs
         {
             Console.Error.WriteLine($"Unexpected option: {option}");
             Console.Error.WriteLine($"Usage: {usage}");
-            Console.Error.WriteLine(
-                "Diagnostic switches live in tools/FrameFlow.TestBench (ADR-0068);"
-                    + $" the log is written to {ExampleLogPaths.LogsDirectoryName}/ with no flag."
-            );
             return false;
         }
 
-        var positional = args.Where(a => !a.StartsWith('-')).ToList();
-        if (positional.Count != 1)
+        if (args.Length != 1)
         {
             Console.Error.WriteLine(
-                positional.Count == 0
+                args.Length == 0
                     ? "No media file given."
-                    : $"Expected one media file, got {positional.Count}."
+                    : $"Expected one media file, got {args.Length}."
             );
             Console.Error.WriteLine($"Usage: {usage}");
             return false;
         }
 
-        if (!File.Exists(positional[0]))
+        if (!File.Exists(args[0]))
         {
-            Console.Error.WriteLine($"Input file not found: {positional[0]}");
+            Console.Error.WriteLine($"Input file not found: {args[0]}");
             return false;
         }
 
-        inputPath = positional[0];
+        inputPath = args[0];
         return true;
     }
 }
