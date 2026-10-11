@@ -11,8 +11,9 @@ dotnet run scripts/repro/signage-gpu-noaudio.cs
 |---|---|---|
 | `signage-gpu-noaudio.cs` | GPU zero-copy presenter, no audio sink, one 3s clip | seconds |
 | `signage-gpu-noaudio-soak.cs` | the same, looping a 45s clip, measured in two windows | ~6 minutes |
+| `gpu-two-player-loop-soak.cs` | two players looping side by side, each on its own GPU presenter, sampled into an optional CSV | `--duration`, 10 minutes by default |
 
-Both are **Windows only**. They pin the zero-copy compositor presenter, which is
+All three are **Windows only**. They pin the zero-copy compositor presenter, which is
 `FrameFlow.Avalonia.Windows`, and exit 2 elsewhere rather than quietly measuring
 the software path.
 
@@ -77,7 +78,8 @@ side of that trade.
 
 ## Fixtures
 
-Both need the generated corpus, which is gitignored:
+All three need the generated corpus, which is gitignored. The two-player soak
+plays `test-1080p-h264-aac.mp4` unless `--clip` names another file:
 
 ```bash
 dotnet run scripts/generate-test-corpus.cs
