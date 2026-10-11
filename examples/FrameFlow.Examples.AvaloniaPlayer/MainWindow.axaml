@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ff="clr-namespace:FrameFlow.Avalonia;assembly=FrameFlow.Avalonia"
+        xmlns:pb="clr-namespace:FrameFlow.Playback;assembly=FrameFlow.Playback"
         x:Class="FrameFlow.Examples.AvaloniaPlayer.MainWindow"
         Title="FrameFlow Player"
         Width="1280" Height="800"
@@ -8,10 +9,8 @@
         Background="#1a1a1a">
 
   <!--
-    Video surface, transport bar, seek bar, volume, status badge, stream
-    summary, position label, file picker, drag-drop and keyboard shortcuts
-    all come from FrameFlow.Avalonia's FrameFlowPlayerView. What is left in
-    this window is the playlist sidebar and the handler that builds a player.
+    FrameFlowPlayerView brings the video surface, transport, seek bar, volume,
+    Open button, drag-drop and keyboard shortcuts. This window adds the playlist.
   -->
   <Window.Styles>
     <Style Selector="Button">
@@ -30,7 +29,6 @@
       <Setter Property="Background" Value="#222"/>
       <Setter Property="BorderBrush" Value="#333"/>
     </Style>
-    <!-- Playlist list: dark rows, green highlight on the now-playing item. -->
     <Style Selector="ListBoxItem">
       <Setter Property="Padding" Value="2,1"/>
       <Setter Property="Margin" Value="0"/>
@@ -47,16 +45,11 @@
 
   <Grid ColumnDefinitions="300,4,*">
 
-    <!-- Playlist sidebar: open a folder, list its files, follow playback. -->
     <Grid Grid.Column="0" RowDefinitions="Auto,*,Auto" Background="#161616">
       <StackPanel Grid.Row="0" Margin="10" Spacing="8">
         <TextBlock Text="PLAYLIST" Foreground="#888" FontSize="11" FontWeight="SemiBold"/>
         <Button x:Name="OpenFolderButton"
                 Content="Open Folder…"
-                HorizontalAlignment="Stretch"
-                HorizontalContentAlignment="Left"/>
-        <Button x:Name="OpenFileButton"
-                Content="Open File…"
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Left"/>
         <TextBlock x:Name="StatusText"
@@ -69,20 +62,17 @@
                Background="Transparent"
                BorderThickness="0">
         <ListBox.ItemTemplate>
-          <DataTemplate>
-            <TextBlock Text="{Binding Name}"
+          <DataTemplate x:DataType="pb:PlaylistItem">
+            <TextBlock Text="{Binding Source.DisplayName}"
                        Foreground="#ddd" FontSize="12"
                        TextTrimming="CharacterEllipsis"
-                       ToolTip.Tip="{Binding Name}"
+                       ToolTip.Tip="{Binding Source.DisplayName}"
                        Padding="4,3"/>
           </DataTemplate>
         </ListBox.ItemTemplate>
       </ListBox>
 
-      <!--
-        The shortcuts are bound in FrameFlowPlayerView.OnKeyDown; this strip
-        publishes them, because nothing on screen shows what they are.
-      -->
+      <!-- FrameFlowPlayerChrome binds these keys; nothing else on screen lists them. -->
       <Border Grid.Row="2"
               Background="#0d0d0d"
               BorderBrush="#222"

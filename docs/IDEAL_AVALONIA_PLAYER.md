@@ -26,6 +26,15 @@ Crossbar-shaping roadmap.
 > and loop stalls stay observables, because they are discrete events a
 > poll can miss. The samples below are updated to match.
 
+> **Update 2026-10-11.** The Layer 2 builder exists, and the example
+> below is written against it: `FrameFlowPlayer.Create()` ...
+> `BuildPlayerAsync()` returns an `IMediaPlayer`, sinks attach with
+> `WithAvaloniaVideoView(view)` and `WithAudioSink(sink)`, and state and
+> position arrive as `StateChanged` and `PositionTick`. The shapes under
+> *What about advanced needs?* are still ideals. The builder spells
+> their `WithVideo` / `WithAudio` as `ConfigureVideo` / `ConfigureAudio`,
+> and running a model landed as `chain.Infer(id, model, onResult)`.
+
 This document rebuilds the AvaloniaPlayer example from first
 principles, assuming an idealized Crossbar-esque pipeline API. Some
 of the components don't exist yet; they're called out inline as
@@ -55,9 +64,9 @@ The ideal player has three layers, each Crossbar-shaped:
 │  Knows about file paths, controls, user gestures.               │
 ├─────────────────────────────────────────────────────────────────┤
 │  Layer 2 — Player builder                                       │
-│  FrameFlowPlayer.Create().WithMedia(path).WithVideo(...).WithAudio(...).Build().  │
+│  FrameFlowPlayer.Create().WithMedia(path)...BuildPlayerAsync(). │
 │  Declarative description of the data flow. Compiles to an       │
-│  IMediaTransport that owns the underlying state + pipelines.       │
+│  IMediaPlayer that owns the underlying state + pipelines.       │
 ├─────────────────────────────────────────────────────────────────┤
 │  Layer 1 — Substrate                                            │
 │  IDecodedMediaStream, FramePipeline<T>, pipeline operators      │
@@ -91,12 +100,17 @@ internal static class Program
 ### `MainWindow.axaml.cs`
 
 ```csharp
+using FrameFlow.Audio.OpenAL;
+using FrameFlow.Avalonia;
+using FrameFlow.Media;
+using FrameFlow.Playback;
 using FrameFlow.Player;
-using FrameFlow.Player.Diagnostics;
 
 public partial class MainWindow : Window
 {
-    private IMediaTransport? _player;
+    // The sink is the app's: it constructs it and disposes it after the player.
+    private readonly OpenAlAudioSink _audio = new();
+    private IMediaPlayer? _player;
     private DispatcherTimer? _diagnosticsTimer;
 
     public MainWindow()
@@ -110,38 +124,44 @@ public partial class MainWindow : Window
         var path = await PickFileAsync();
         if (path is null) return;
 
-        await TeardownAsync();
+        // One player, built on the first open and kept. Each file opened
+        // replaces its queue; the sinks stay warm across all of them.
+        _player ??= await BuildPlayerAsync();
+        await _player.ReplaceAsync([MediaSource.FromFile(path)]);
 
+        var played = await _player.PlayAsync();
+        if (!played.IsSuccess)
+            StatusBadge.Text = played.Error.Message;
+    }
+
+    private async Task<IMediaPlayer> BuildPlayerAsync()
+    {
         // ── This is the heart of the example. ─────────────────────────
-        // Declarative pipeline description. Each call returns a new
-        // builder; nothing actually runs until the terminal resolves.
-        _player = await FrameFlowPlayer
+        // Declarative pipeline description. Nothing runs until the
+        // terminal resolves.
+        var player = await FrameFlowPlayer
             .Create()
-            .WithMedia(path)
-            .WithVideo(video => video
-                .ConvertPixelFormat(PixelFormat.Bgra32)
-                .ToSink(VideoCanvas))                // [gap] AvaloniaVideoSink as IFrameSink
-            .WithAudio(audio => audio
-                .ToSink(OpenAlSink.Default))         // [gap] OpenAlSink.Default static
+            .WithAvaloniaVideoView(VideoView)
+            .WithAudioSink(_audio)          // also the master clock
             .BuildPlayerAsync();
 
         // ── Reactive UI bindings — one observable per concern. ────────
-        _player.State.Subscribe(s => StatusBadge.Text = s.ToString());
-        _player.Position.Subscribe(p => SeekBar.Value = p.TotalSeconds);
+        player.StateChanged.ObserveOnUiThread().Subscribe(s => StatusBadge.Text = s.ToString());
+        player.PositionTick.ObserveOnUiThread().Subscribe(p => SeekBar.Value = p.TotalSeconds);
         // Diagnostics are polled at the app's own rate (ADR-0034).
         _diagnosticsTimer = new DispatcherTimer(
             TimeSpan.FromMilliseconds(500),
             DispatcherPriority.Background,
-            (_, _) => DiagnosticsPanel.Render(_player.GetDiagnostics()));
+            (_, _) => DiagnosticsPanel.Render(player.GetDiagnostics()));
         _diagnosticsTimer.Start();
 
-        await _player.PlayAsync();
+        return player;
     }
 
     private async void OnPlayPauseClick(object? sender, RoutedEventArgs e)
     {
         if (_player is null) return;
-        if (_player.State.Current == PlaybackState.Playing)
+        if (_player.State == PlaybackState.Playing)
             await _player.PauseAsync();
         else
             await _player.PlayAsync();
@@ -153,36 +173,29 @@ public partial class MainWindow : Window
     private async void OnClosing(object? sender, WindowClosingEventArgs e)
     {
         e.Cancel = true;
-        await TeardownAsync();
-        Close();
-    }
+        Closing -= OnClosing;
 
-    private async Task TeardownAsync()
-    {
         _diagnosticsTimer?.Stop();
-        _diagnosticsTimer = null;
-
         if (_player is not null)
-        {
             await _player.DisposeAsync();
-            _player = null;
-        }
+        await _audio.DisposeAsync();
+        Close();
     }
 }
 ```
 
-That's it. ~50 lines.
+That's it. About 80 lines.
 
 **Things this example demonstrates the ideal API should make easy:**
 
 1. **One line per concern.** Video pipeline, audio pipeline, state
    observable, position observable — each is one line.
-2. **No DI ceremony for a simple app.** `FrameFlowPlayer.Create().WithMedia(path)` is
+2. **No DI ceremony for a simple app.** `FrameFlowPlayer.Create()` is
    the entry point; the builder pulls FFmpeg bootstrap, decoders,
    sinks lazily.
-3. **Pipelines are composable in place.** The video pipeline is
-   "convert pixel format then sink." Adding a resize or an overlay
-   is `video.ConvertPixelFormat(...).Resize(...).ToSink(...)`.
+3. **Pipelines are composable in place.** `ConfigureVideo(chain => ...)`
+   adds stages ahead of the sink, such as
+   `chain.Infer("yolo", detector, onResult)`.
 4. **Events are observable; counters are polled.** State changes,
    position and errors arrive as streams, so nothing is missed between
    samples. Diagnostics counters are read with `GetDiagnostics()` at
@@ -277,7 +290,9 @@ is sized and mapped to the roadmap.
 
 ### Layer 2 — the player builder
 
-The biggest gap. Needs:
+**Closed.** `FrameFlowPlayer.Create()` returns an `IPlayerBuilder`, and
+`BuildPlayerAsync()` returns an `IMediaPlayer`. `.WithVideo` / `.WithAudio`
+shipped as `.ConfigureVideo` / `.ConfigureAudio`. What was asked for:
 
 - `FrameFlowPlayer.Create().WithMedia(path)` static entry point.
 - `IPlayerBuilder` with `.WithVideo(Func<...>)`, `.WithAudio(Func<...>)`,
