@@ -10,18 +10,23 @@
       <Setter Property="Padding" Value="6"/>
       <Setter Property="Margin" Value="4"/>
     </Style>
-    <Style Selector="TextBlock.title">
+    <Style Selector="DockPanel.header">
+      <Setter Property="Height" Value="32"/>
+      <Setter Property="Margin" Value="0,0,0,6"/>
+    </Style>
+    <Style Selector="DockPanel.header > TextBlock">
       <Setter Property="Foreground" Value="#dddddd"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
       <Setter Property="VerticalAlignment" Value="Center"/>
-      <Setter Property="Margin" Value="0,0,0,6"/>
     </Style>
   </UserControl.Styles>
 
   <Grid ColumnDefinitions="*,*,*">
     <Border Classes="pane" Grid.Column="0">
       <DockPanel>
-        <TextBlock Classes="title" DockPanel.Dock="Top" Text="As decoded"/>
+        <DockPanel Classes="header" DockPanel.Dock="Top">
+          <TextBlock Text="As decoded"/>
+        </DockPanel>
         <Panel Background="Black">
           <ff:FrameFlowVideoView Name="DirectView"/>
         </Panel>
@@ -30,7 +35,9 @@
 
     <Border Classes="pane" Grid.Column="1">
       <DockPanel>
-        <TextBlock Classes="title" DockPanel.Dock="Top" Name="DetectionTitle" Text="Object detection"/>
+        <DockPanel Classes="header" DockPanel.Dock="Top">
+          <TextBlock Name="DetectionTitle" Text="Object detection"/>
+        </DockPanel>
         <Panel Background="Black">
           <ff:FrameFlowVideoView Name="DetectionView"/>
           <local:DetectionOverlay Name="Overlay"/>
@@ -40,9 +47,9 @@
 
     <Border Classes="pane" Grid.Column="2">
       <DockPanel>
-        <DockPanel DockPanel.Dock="Top">
-          <ComboBox Name="FilterPicker" DockPanel.Dock="Right" MinWidth="120" Margin="8,0,0,6"/>
-          <TextBlock Classes="title" Text="Color filter"/>
+        <DockPanel Classes="header" DockPanel.Dock="Top">
+          <ComboBox Name="FilterPicker" DockPanel.Dock="Right" MinWidth="120" VerticalAlignment="Center"/>
+          <TextBlock Text="Color filter"/>
         </DockPanel>
         <Panel Background="Black">
           <ff:FrameFlowVideoView Name="FilteredView"/>
