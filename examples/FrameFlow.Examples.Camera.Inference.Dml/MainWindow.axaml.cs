@@ -113,7 +113,8 @@ public partial class MainWindow : Window
     }
 
     // Closing a camera can hang after an unclean unplug, so give up after two seconds rather
-    // than hold up the next capture or the window closing.
+    // than hold up the next capture or the window closing. Opening that camera again can then
+    // fail until the OS lets go of it, and Refresh tries again.
     private async Task CloseCameraAsync(CameraSession session)
     {
         try
@@ -161,8 +162,9 @@ public partial class MainWindow : Window
         _logger.LogInformation("{Model} ready.", _modelLabel);
     }
 
-    // PresentedResults hands each result on as the view presents a frame at or after the one it
-    // came from, so the boxes change with the picture.
+    // PresentedResults hands each result on when the view presents a frame at or after the one it
+    // came from, and the boxes stay until the next, so on a moving object they trail by about one
+    // inference.
     private void Use<T>(IImageModel<T> model, string id, string label, Action<InferenceResult<T>> show)
     {
         var onScreen = new PresentedResults<T>(_videoSink);
