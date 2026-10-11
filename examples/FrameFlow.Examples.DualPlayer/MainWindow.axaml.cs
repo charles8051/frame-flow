@@ -100,24 +100,30 @@ public partial class MainWindow : Window
         await _starting;
         foreach (var pane in new[] { _left, _right })
         {
-            try
-            {
-                pane.Chrome.Transport = null;
-                if (pane.Player is not null)
-                    await pane.Player.DisposeAsync();
+            pane.Chrome.Transport = null;
+            if (pane.Player is not null)
+                await DisposeLoggedAsync(pane.Player);
 
-                // The audio sink is ours, so it goes after its player. The view disposes its own sink.
-                await pane.Audio.DisposeAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Teardown failed");
-            }
+            // The audio sink is ours, so it goes after its player. The view disposes its own sink.
+            await DisposeLoggedAsync(pane.Audio);
         }
 
         _loggerFactory.Dispose();
         _closed = true;
         Close();
+    }
+
+    /// <summary>Disposes one resource and logs a failure, so the next one is still disposed.</summary>
+    private async Task DisposeLoggedAsync(IAsyncDisposable resource)
+    {
+        try
+        {
+            await resource.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Disposing {Resource} failed", resource.GetType().Name);
+        }
     }
 
     /// <summary>One side of the window: its controls, its audio sink and, once built, its player.</summary>

@@ -68,21 +68,29 @@ public partial class MainWindow : Window
     protected override async void OnLoaded(RoutedEventArgs e)
     {
         base.OnLoaded(e);
-        if (StartupPath is not null)
+        if (StartupPath is null)
+            return;
+        if (File.Exists(StartupPath) || Directory.Exists(StartupPath))
             await OpenAsync(StartupPath);
+        else
+            StatusText.Text = $"Not a media file or folder: {StartupPath}";
     }
 
-    /// <summary>Opens a media file, or every media file in a folder. One open at a time.</summary>
+    /// <summary>Opens a media file, or every media file in a folder, after any open before it.</summary>
     private async Task OpenAsync(string path)
     {
-        if (_closing || !_opening.IsCompleted)
+        if (_closing)
             return;
-        _opening = OpenCoreAsync(path);
+        _opening = OpenCoreAsync(_opening, path);
         await _opening;
     }
 
-    private async Task OpenCoreAsync(string path)
+    private async Task OpenCoreAsync(Task previous, string path)
     {
+        await previous;
+        if (_closing)
+            return;
+
         var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(path));
         try
         {
@@ -186,20 +194,12 @@ public partial class MainWindow : Window
             return;
         _closing = true;
 
-        try
-        {
-            // Let an open in progress finish, so a player it is still building is disposed too.
-            await _opening;
-            await DisposePlayerAsync();
+        // Let the opens finish, so a player one is still building is disposed too.
+        await _opening;
+        await DisposePlayerAsync();
 
-            // The audio sink is ours, so it goes after the player. The view disposes its own sink.
-            await _audioSink.DisposeAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Teardown failed");
-        }
-
+        // The audio sink is ours, so it goes after the player. The view disposes its own sink.
+        await DisposeLoggedAsync(_audioSink);
         _loggerFactory.Dispose();
         _closed = true;
         Close();
@@ -213,7 +213,20 @@ public partial class MainWindow : Window
         _player = null;
         PlayerView.Transport = null;
         _queueSubscription?.Dispose();
-        await player.DisposeAsync();
+        await DisposeLoggedAsync(player);
+    }
+
+    /// <summary>Disposes one resource and logs a failure, so the next one is still disposed.</summary>
+    private async Task DisposeLoggedAsync(IAsyncDisposable resource)
+    {
+        try
+        {
+            await resource.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Disposing {Resource} failed", resource.GetType().Name);
+        }
     }
 
     private static readonly HashSet<string> MediaExtensions = new(StringComparer.OrdinalIgnoreCase)

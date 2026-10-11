@@ -111,8 +111,8 @@ public partial class MainWindow : Window
 {
     // The sink is the app's: it constructs it and disposes it after the player.
     private readonly OpenAlAudioSink _audio = new();
-    private Task<IMediaPlayer>? _building;
     private IMediaPlayer? _player;
+    private Task _opening = Task.CompletedTask;
     private DispatcherTimer? _diagnosticsTimer;
     private bool _showingPosition, _closing, _closed;
 
@@ -127,19 +127,35 @@ public partial class MainWindow : Window
         var path = await PickFileAsync();
         if (path is null || _closing) return;
 
-        // One player, built on the first open and kept. Each file opened
-        // replaces its queue; the sinks stay warm across all of them.
-        _player = await (_building ??= BuildPlayerAsync());
-        var replaced = await _player.ReplaceAsync([MediaSource.FromFile(path)]);
-        if (!replaced.IsSuccess)
-        {
-            StatusBadge.Text = replaced.Error.Message;
-            return;
-        }
+        // Opens run one after another, so closing can wait for the last.
+        _opening = OpenAsync(_opening, path);
+        await _opening;
+    }
 
-        // A playing player moves to the new file by itself, and refuses Play.
-        if (_player.State is not (PlaybackState.Playing or PlaybackState.Rebuffering))
-            Show(await _player.PlayAsync());
+    private async Task OpenAsync(Task previous, string path)
+    {
+        await previous;
+        if (_closing) return;
+        try
+        {
+            // One player, built on the first open and kept. Each file opened
+            // replaces its queue; the sinks stay warm across all of them.
+            _player ??= await BuildPlayerAsync();
+            var replaced = await _player.ReplaceAsync([MediaSource.FromFile(path)]);
+            if (!replaced.IsSuccess)
+            {
+                StatusBadge.Text = replaced.Error.Message;
+                return;
+            }
+
+            // A playing player moves to the new file by itself, and refuses Play.
+            if (_player.State is not (PlaybackState.Playing or PlaybackState.Rebuffering))
+                Show(await _player.PlayAsync());
+        }
+        catch (Exception ex)    // the build throws when FFmpeg or a sink cannot start
+        {
+            StatusBadge.Text = ex.Message;
+        }
     }
 
     private async Task<IMediaPlayer> BuildPlayerAsync()
@@ -205,18 +221,25 @@ public partial class MainWindow : Window
         if (_closing) return;
         _closing = true;
 
-        // A build still in flight finishes first, so its player is disposed too.
-        if (_building is not null)
-            await (await _building).DisposeAsync();
+        await _opening;                     // never throws: OpenAsync catches
         _diagnosticsTimer?.Stop();
-        await _audio.DisposeAsync();
+        if (_player is not null)
+            await DisposeQuietlyAsync(_player);
+        await DisposeQuietlyAsync(_audio);
         _closed = true;
         Close();
+    }
+
+    // One failed dispose must not keep the next from running.
+    private static async Task DisposeQuietlyAsync(IAsyncDisposable resource)
+    {
+        try { await resource.DisposeAsync(); }
+        catch (Exception ex) { Trace.TraceError(ex.ToString()); }
     }
 }
 ```
 
-That's it. About 110 lines.
+That's it. About 135 lines.
 
 **Things this example demonstrates the ideal API should make easy:**
 
