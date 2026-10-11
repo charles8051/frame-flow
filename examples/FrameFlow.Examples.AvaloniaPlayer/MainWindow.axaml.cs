@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private IDisposable? _queueSubscription;
     private Task _opening = Task.CompletedTask;
     private bool _closing;
+    private bool _closed;
 
     /// <summary>A media file or folder to open on startup.</summary>
     public string? StartupPath { get; init; }
@@ -113,8 +114,8 @@ public partial class MainWindow : Window
                 return;
             }
 
-            // A playing player moves to the new queue on its own.
-            if (_player.State != PlaybackState.Playing)
+            // A playing player moves to the new queue on its own, and refuses Play.
+            if (_player.State is not (PlaybackState.Playing or PlaybackState.Rebuffering))
             {
                 var played = await _player.PlayAsync();
                 if (!played.IsSuccess)
@@ -152,11 +153,18 @@ public partial class MainWindow : Window
 
     private async Task PickFolderAsync()
     {
-        var folders = await StorageProvider.OpenFolderPickerAsync(
-            new FolderPickerOpenOptions { Title = "Open a media folder" }
-        );
-        if (folders is [var folder] && folder.TryGetLocalPath() is { } path)
-            await OpenAsync(path);
+        try
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(
+                new FolderPickerOpenOptions { Title = "Open a media folder" }
+            );
+            if (folders is [var folder] && folder.TryGetLocalPath() is { } path)
+                await OpenAsync(path);
+        }
+        catch (Exception ex)
+        {
+            ShowError($"Could not pick a folder: {ex.Message}", ex);
+        }
     }
 
     private void ShowError(string name, PlaybackError error) =>
@@ -170,18 +178,30 @@ public partial class MainWindow : Window
 
     private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {
-        if (_closing)
+        // Hold every close until teardown has run; only the Close() at the end gets through.
+        if (_closed)
             return;
         e.Cancel = true;
+        if (_closing)
+            return;
         _closing = true;
 
-        // Let an open in progress finish, so a player it is still building is disposed too.
-        await _opening;
-        await DisposePlayerAsync();
+        try
+        {
+            // Let an open in progress finish, so a player it is still building is disposed too.
+            await _opening;
+            await DisposePlayerAsync();
 
-        // The audio sink is ours, so it goes after the player. The view disposes its own sink.
-        await _audioSink.DisposeAsync();
+            // The audio sink is ours, so it goes after the player. The view disposes its own sink.
+            await _audioSink.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Teardown failed");
+        }
+
         _loggerFactory.Dispose();
+        _closed = true;
         Close();
     }
 

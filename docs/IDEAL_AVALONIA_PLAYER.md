@@ -1,9 +1,9 @@
 # The Ideal AvaloniaPlayer — A Target to Shoot For
 
 **Date:** 2026-05-12
-**Status:** Design target. Not implemented; serves as the call-site
-shape we work back from when filling in the rest of the
-Crossbar-shaping roadmap.
+**Status:** Design target. Layer 2 (the player builder) has since
+shipped and the main example below is written against it; the shapes
+under *What about advanced needs?* are still targets.
 
 > **Update 2026-05-15 / 16 (Crossbar ADR-0010 / ADR-0012).** Code
 > samples below reference `IFrameSink<IVideoFrame>` /
@@ -75,9 +75,10 @@ The ideal player has three layers, each Crossbar-shaped:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-Layer 1 already exists (ADR-0036 / ADR-0037 / ADR-0038). Layer 2 is
-the new shape we're missing. Layer 3 is the example we want to
-write.
+Layer 1 already existed when this was written (ADR-0036 / ADR-0037 /
+ADR-0038). Layer 2 was the missing shape; it has since shipped as
+`FrameFlowPlayer.Create()` (see the 2026-10-11 update). Layer 3 is the
+example below.
 
 ## The ideal example
 
@@ -110,8 +111,10 @@ public partial class MainWindow : Window
 {
     // The sink is the app's: it constructs it and disposes it after the player.
     private readonly OpenAlAudioSink _audio = new();
+    private Task<IMediaPlayer>? _building;
     private IMediaPlayer? _player;
     private DispatcherTimer? _diagnosticsTimer;
+    private bool _showingPosition, _closing, _closed;
 
     public MainWindow()
     {
@@ -122,16 +125,21 @@ public partial class MainWindow : Window
     private async void OnOpenClick(object? sender, RoutedEventArgs e)
     {
         var path = await PickFileAsync();
-        if (path is null) return;
+        if (path is null || _closing) return;
 
         // One player, built on the first open and kept. Each file opened
         // replaces its queue; the sinks stay warm across all of them.
-        _player ??= await BuildPlayerAsync();
-        await _player.ReplaceAsync([MediaSource.FromFile(path)]);
+        _player = await (_building ??= BuildPlayerAsync());
+        var replaced = await _player.ReplaceAsync([MediaSource.FromFile(path)]);
+        if (!replaced.IsSuccess)
+        {
+            StatusBadge.Text = replaced.Error.Message;
+            return;
+        }
 
-        var played = await _player.PlayAsync();
-        if (!played.IsSuccess)
-            StatusBadge.Text = played.Error.Message;
+        // A playing player moves to the new file by itself, and refuses Play.
+        if (_player.State is not (PlaybackState.Playing or PlaybackState.Rebuffering))
+            Show(await _player.PlayAsync());
     }
 
     private async Task<IMediaPlayer> BuildPlayerAsync()
@@ -147,7 +155,7 @@ public partial class MainWindow : Window
 
         // ── Reactive UI bindings — one observable per concern. ────────
         player.StateChanged.ObserveOnUiThread().Subscribe(s => StatusBadge.Text = s.ToString());
-        player.PositionTick.ObserveOnUiThread().Subscribe(p => SeekBar.Value = p.TotalSeconds);
+        player.PositionTick.ObserveOnUiThread().Subscribe(ShowPosition);
         // Diagnostics are polled at the app's own rate (ADR-0034).
         _diagnosticsTimer = new DispatcherTimer(
             TimeSpan.FromMilliseconds(500),
@@ -161,30 +169,54 @@ public partial class MainWindow : Window
     private async void OnPlayPauseClick(object? sender, RoutedEventArgs e)
     {
         if (_player is null) return;
-        if (_player.State == PlaybackState.Playing)
-            await _player.PauseAsync();
-        else
-            await _player.PlayAsync();
+        Show(_player.State == PlaybackState.Playing
+            ? await _player.PauseAsync()
+            : await _player.PlayAsync());
     }
 
-    private async void OnSeek(object? sender, RangeBaseValueChangedEventArgs e) =>
-        await (_player?.SeekAsync(TimeSpan.FromSeconds(e.NewValue)) ?? Task.CompletedTask);
+    private void ShowPosition(TimeSpan position)
+    {
+        // Moving the slider raises ValueChanged; this keeps OnSeek from
+        // seeking to where the player already is.
+        _showingPosition = true;
+        SeekBar.Value = position.TotalSeconds;
+        _showingPosition = false;
+    }
+
+    private async void OnSeek(object? sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_player is null || _showingPosition) return;
+        Show(await _player.SeekAsync(TimeSpan.FromSeconds(e.NewValue)));
+    }
+
+    // Every transport command answers with a Result; a refusal is shown, not thrown.
+    private void Show(Result result)
+    {
+        if (!result.IsSuccess)
+            StatusBadge.Text = result.Error.Message;
+    }
 
     private async void OnClosing(object? sender, WindowClosingEventArgs e)
     {
+        // Hold every close until teardown has run; only the Close() at the
+        // end gets through.
+        if (_closed) return;
         e.Cancel = true;
-        Closing -= OnClosing;
+        if (_closing) return;
+        _closing = true;
 
+        // A build still in flight finishes first, so its player is disposed too.
+        if (_building is not null)
+            await (await _building).DisposeAsync();
         _diagnosticsTimer?.Stop();
-        if (_player is not null)
-            await _player.DisposeAsync();
         await _audio.DisposeAsync();
+        _closed = true;
         Close();
     }
 }
 ```
 
-That's it. About 80 lines.
+That's it. About 110 lines.
 
 **Things this example demonstrates the ideal API should make easy:**
 
@@ -279,9 +311,10 @@ ADR-0038:
 | `Observe`, `Transform`, `Enrich` | ✓ | Crossbar |
 | `Resample(rate, channels)` | ✓ | `FrameFlow.Audio` |
 
-The decode → operator → sink call sites work today — what's missing
-is the *fluent player layer* (Layer 2) that hides the
-`IPlaybackController` / DI ceremony.
+The decode → operator → sink call sites already worked when this was
+written. What was missing was the *fluent player layer* (Layer 2) that
+hides the `IPlaybackController` / DI ceremony; it has since shipped
+(see the 2026-10-11 update).
 
 ## Gap inventory
 
@@ -307,9 +340,8 @@ Internally `IMediaTransport` composes the existing
 `IPlaybackControllerFactory` / `IDecodedMediaStreamFactory`. The
 *shape* is new, but the implementation reuses the substrate.
 
-**Sizing.** ~400 lines for the builder + player; not on a tier
-explicitly — it's the surface-layer cleanup the tiers feed into. Call
-it ADR-0041 (future).
+It sat on no tier: it is the surface-layer cleanup the tiers feed
+into.
 
 ### Crossbar surface gaps
 
@@ -374,8 +406,9 @@ manual wiring:
 
 ## Comparison
 
-For reference, the **current AvaloniaPlayer's `MainWindow.axaml.cs`
-is 800+ lines** with significant ceremony around:
+For reference, when this was written (2026-05) **the AvaloniaPlayer's
+`MainWindow.axaml.cs` was 800+ lines**, with significant ceremony
+around:
 
 - DI registration with `services.AddFrameFlow().AddFrameFlowDecoding()
   .AddFrameFlowPlayback().AddFrameFlowAvalonia().AddFrameFlowOpenAlAudio()`.
@@ -388,7 +421,8 @@ is 800+ lines** with significant ceremony around:
 - Bespoke teardown handling.
 
 The ideal example shrinks each of those to a single line or hides it
-entirely.
+entirely. The AvaloniaPlayer example now does: it builds one player
+with `FrameFlowPlayer.Create()` and reuses it for every file it opens.
 
 The Layer 2 builder doesn't replace `IPlaybackController` — it sits
 *on top of* it, the same way ASP.NET Core's `WebApplication.Create`
@@ -408,15 +442,13 @@ complementary:
 | 3 | User-domain operators (Whisper, YOLO) | Layer 1 substrate |
 | 4 | Audio sink symmetry | Layer 1 substrate |
 | 5 | Capture / encode | Layer 1 substrate |
-| (new) | Fluent player builder | Layer 2 builder — ADR-0041 candidate |
+| (new) | Fluent player builder (✓ landed) | Layer 2 builder |
 
-Tiers 3, 4, 5 land next. The Layer 2 builder ADR is the natural
-follow-up once the operator vocabulary is complete enough to be
-worth wrapping.
+The Layer 2 builder has landed. Stages from the other tiers plug into
+it through `ConfigureVideo` / `ConfigureAudio`.
 
 ---
 
 *This document is the target. The tiers are the route. Treat the
-gaps as a backlog, not as criticism — Layer 1 is most of the way
-there, and Layer 2 becomes a clean weekend project once Tiers 3 and
-4 land.*
+gaps as a backlog, not as criticism. Layer 2 has landed; what is left
+is the advanced-needs shapes above.*

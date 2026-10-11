@@ -19,19 +19,37 @@ public partial class MainWindow : Window
     private readonly Pane _left;
     private readonly Pane _right;
     private Task _starting = Task.CompletedTask;
-
-    private sealed record Pane(
-        FrameFlowVideoView Video,
-        FrameFlowPlayerChrome Chrome,
-        TextBlock Title,
-        OpenAlAudioSink Audio
-    )
-    {
-        public IMediaPlayer? Player { get; set; }
-    }
+    private bool _closing;
+    private bool _closed;
 
     public string LeftPath { get; init; } = "";
     public string RightPath { get; init; } = "";
+
+    /// <summary>Builds one pane's player, binds its chrome and starts it looping.</summary>
+    private async Task StartAsync(Pane pane, string path)
+    {
+        pane.Title.Text = Path.GetFileName(path);
+        try
+        {
+            pane.Player = await FrameFlowPlayer
+                .Create()
+                .WithMedia(path)
+                .WithAvaloniaVideoView(pane.Video)
+                .WithAudioSink(pane.Audio)
+                .WithRepeatMode(RepeatMode.One)
+                .WithLogger(_loggerFactory)
+                .BuildPlayerAsync();
+            pane.Chrome.Transport = pane.Player;
+
+            var played = await pane.Player.PlayAsync();
+            if (!played.IsSuccess)
+                ShowError(pane, path, $"{played.Error.Category}: {played.Error.Message}", played.Error.Inner);
+        }
+        catch (Exception ex)
+        {
+            ShowError(pane, path, ex.Message, ex);
+        }
+    }
 
     public MainWindow()
     {
@@ -62,31 +80,6 @@ public partial class MainWindow : Window
         await _starting;
     }
 
-    private async Task StartAsync(Pane pane, string path)
-    {
-        pane.Title.Text = Path.GetFileName(path);
-        try
-        {
-            pane.Player = await FrameFlowPlayer
-                .Create()
-                .WithMedia(path)
-                .WithAvaloniaVideoView(pane.Video)
-                .WithAudioSink(pane.Audio)
-                .WithRepeatMode(RepeatMode.One)
-                .WithLogger(_loggerFactory)
-                .BuildPlayerAsync();
-            pane.Chrome.Transport = pane.Player;
-
-            var played = await pane.Player.PlayAsync();
-            if (!played.IsSuccess)
-                ShowError(pane, path, $"{played.Error.Category}: {played.Error.Message}", played.Error.Inner);
-        }
-        catch (Exception ex)
-        {
-            ShowError(pane, path, ex.Message, ex);
-        }
-    }
-
     private void ShowError(Pane pane, string path, string message, Exception? ex)
     {
         _logger.LogError(ex, "{Path}: {Message}", path, message);
@@ -95,22 +88,50 @@ public partial class MainWindow : Window
 
     private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {
+        // Hold every close until teardown has run; only the Close() at the end gets through.
+        if (_closed)
+            return;
         e.Cancel = true;
-        Closing -= OnWindowClosing;
+        if (_closing)
+            return;
+        _closing = true;
 
         // Let both builds finish, so a player still being built is disposed too.
         await _starting;
         foreach (var pane in new[] { _left, _right })
         {
-            pane.Chrome.Transport = null;
-            if (pane.Player is not null)
-                await pane.Player.DisposeAsync();
+            try
+            {
+                pane.Chrome.Transport = null;
+                if (pane.Player is not null)
+                    await pane.Player.DisposeAsync();
 
-            // The audio sink is ours, so it goes after its player. The view disposes its own sink.
-            await pane.Audio.DisposeAsync();
+                // The audio sink is ours, so it goes after its player. The view disposes its own sink.
+                await pane.Audio.DisposeAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Teardown failed");
+            }
         }
 
         _loggerFactory.Dispose();
+        _closed = true;
         Close();
+    }
+
+    /// <summary>One side of the window: its controls, its audio sink and, once built, its player.</summary>
+    private sealed class Pane(
+        FrameFlowVideoView video,
+        FrameFlowPlayerChrome chrome,
+        TextBlock title,
+        OpenAlAudioSink audio
+    )
+    {
+        public FrameFlowVideoView Video { get; } = video;
+        public FrameFlowPlayerChrome Chrome { get; } = chrome;
+        public TextBlock Title { get; } = title;
+        public OpenAlAudioSink Audio { get; } = audio;
+        public IMediaPlayer? Player { get; set; }
     }
 }

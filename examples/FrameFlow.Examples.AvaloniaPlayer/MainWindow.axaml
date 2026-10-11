@@ -24,11 +24,6 @@
     <Style Selector="Button:pointerover">
       <Setter Property="Background" Value="#3d3d3d"/>
     </Style>
-    <Style Selector="Button:disabled">
-      <Setter Property="Foreground" Value="#555"/>
-      <Setter Property="Background" Value="#222"/>
-      <Setter Property="BorderBrush" Value="#333"/>
-    </Style>
     <Style Selector="ListBoxItem">
       <Setter Property="Padding" Value="2,1"/>
       <Setter Property="Margin" Value="0"/>
