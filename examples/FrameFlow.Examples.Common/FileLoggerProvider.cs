@@ -4,9 +4,8 @@ namespace FrameFlow.Examples.Common;
 
 /// <summary>
 /// Minimal file-backed logging provider shared by the FrameFlow examples.
-/// Writes each log entry as a single line to the configured file, flushing
-/// after every write so the log survives a crash mid-run. Pair with
-/// <c>--log-file &lt;path&gt;</c>.
+/// Writes each log entry as a single line, with any exception in full beneath it,
+/// flushing after every write so the log survives a crash mid-run.
 /// </summary>
 /// <remarks>
 /// Debugging aid for the examples only — production hosts should use a proper
@@ -87,10 +86,10 @@ public sealed class FileLoggerProvider : ILoggerProvider
 
             _owner.Write($"[{timestamp}] {level} [{_category}] {formatter(state, exception)}");
 
+            // ToString, not Message: it carries the inner exceptions, which is where a
+            // GraphFaultException keeps the node's own fault.
             if (exception is not null)
-                _owner.Write(
-                    $"  {exception.GetType().FullName}: {exception.Message}\n{exception.StackTrace}"
-                );
+                _owner.Write($"  {exception}");
         }
 
         private static string GetShortCategory(string category)
