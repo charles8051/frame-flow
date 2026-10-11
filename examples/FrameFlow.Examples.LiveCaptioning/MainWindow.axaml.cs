@@ -27,7 +27,8 @@ public partial class MainWindow : Window
     private readonly CancellationTokenSource _windowCts = new();
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger _logger;
-    private readonly PresentedResults<IReadOnlyList<Detection>> _onScreen;
+    private readonly AvaloniaVideoSink _videoSink;
+    private PresentedResults<IReadOnlyList<Detection>>? _onScreen;
     private Yolov8Detector? _detector;
 
     // One player for the window: each file opened replaces its queue.
@@ -50,12 +51,8 @@ public partial class MainWindow : Window
         _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
         VideoView.LoggerFactory = _loggerFactory;
 
-        // Detections arrive before their frame is on screen; this hands each on when it is.
-        var videoSink = VideoView.EnsureSink();
-        _onScreen = new PresentedResults<IReadOnlyList<Detection>>(videoSink);
-        _onScreen.Presented += (_, result) => Dispatcher.UIThread.Post(() => DetectionOverlay.Show(result));
-        _onScreen.Cleared += (_, _) => Dispatcher.UIThread.Post(() => DetectionOverlay.Show(null));
-        videoSink.FramePresented += OnFramePresented;
+        _videoSink = VideoView.EnsureSink();
+        _videoSink.FramePresented += OnFramePresented;
 
         PlayerChrome.FileOpenRequested += async (_, e) => await OpenFileAsync(e.FilePath);
         Closing += OnWindowClosing;
@@ -87,7 +84,7 @@ public partial class MainWindow : Window
                         chain.Then(SendToWhisper(_captionAudio.Writer, Interlocked.Increment(ref _audioGraph)))
                     )
                     .ConfigureVideo(chain =>
-                        detector is null ? chain : chain.Infer("yolo", detector, _onScreen.Post)
+                        detector is null ? chain : chain.Infer("yolo", detector, ShowWhenPresented())
                     )
                     .BuildPlayerAsync(_windowCts.Token);
 
@@ -165,6 +162,21 @@ public partial class MainWindow : Window
             await OpenFileAsync(StartupFilePath);
         else
             SetStatus("Click Open, or pass a file on the command line.", Neutral);
+    }
+
+    /// <summary>
+    /// Detections arrive before their frame is on screen; this hands each to the overlay when it
+    /// is. Called for each graph the player builds, so each graph's results are matched only to
+    /// its own frames, never to those after a seek or in the next file.
+    /// </summary>
+    private Action<InferenceResult<IReadOnlyList<Detection>>> ShowWhenPresented()
+    {
+        var onScreen = new PresentedResults<IReadOnlyList<Detection>>(_videoSink);
+        onScreen.Presented += (_, result) => Dispatcher.UIThread.Post(() => DetectionOverlay.Show(result));
+        onScreen.Cleared += (_, _) => Dispatcher.UIThread.Post(() => DetectionOverlay.Show(null));
+        Interlocked.Exchange(ref _onScreen, onScreen)?.Dispose();
+        Dispatcher.UIThread.Post(() => DetectionOverlay.Show(null));
+        return onScreen.Post;
     }
 
     /// <summary>YOLOv8 on CUDA, or on the CPU where CUDA cannot open it; null if it cannot be loaded.</summary>
@@ -369,7 +381,7 @@ public partial class MainWindow : Window
             if (_player is not null)
                 await _player.DisposeAsync();
             await _audioSink.DisposeAsync(); // after the player that drives it
-            _onScreen.Dispose();
+            Interlocked.Exchange(ref _onScreen, null)?.Dispose();
             _captionAudio.Writer.TryComplete();
             await _captionGraph;
             while (_captionAudio.Reader.TryRead(out var unread))
