@@ -30,7 +30,8 @@
 //
 // Observed against FrameFlow 0.15.2-alpha.0.14 on Windows 11, RTX 3080 Ti.
 //
-// Exit codes: 0 every check passed, 1 a check failed, 2 could not run at all.
+// Exit codes: 0 every check passed, 1 a check failed, 2 could not run at all. Closing the window
+// stops the run early and fails it.
 
 using System.Diagnostics;
 using System.Globalization;
@@ -98,6 +99,11 @@ Console.WriteLine(
 
 var report = new Report();
 var exitCode = 0;
+// Closing the window mid-run cancels the run, waits for it to dispose the players, and fails it:
+// an aborted soak is not a pass.
+using var cancel = new CancellationTokenSource();
+var running = false;
+var finished = false;
 
 AppBuilder
     .Configure<SoakApp>()
@@ -122,6 +128,14 @@ AppBuilder
         };
         lifetime.MainWindow = host;
 
+        host.Closing += (_, e) =>
+        {
+            if (!running)
+                return;
+            e.Cancel = true;
+            cancel.Cancel();
+        };
+
         host.Opened += async (_, _) =>
         {
             // On the UI thread: AttachSink initialises the compositor surface, and doing it from
@@ -144,9 +158,18 @@ AppBuilder
                 return;
             }
 
+            running = true;
             try
             {
-                exitCode = await Task.Run(() => Soak.RunAsync(panes, backend, windows, sample, label, csv, report));
+                exitCode = await Task.Run(() =>
+                    Soak.RunAsync(panes, backend, windows, sample, label, csv, report, cancel.Token)
+                );
+                finished = true;
+            }
+            catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+            {
+                report.Fail("the run finished", "the window was closed first");
+                exitCode = 1;
             }
             catch (Exception ex)
             {
@@ -156,12 +179,18 @@ AppBuilder
             finally
             {
                 // After the players are disposed, so each view outlives the player feeding it.
+                running = false;
                 host.Close();
             }
         };
     })
     .StartWithClassicDesktopLifetime([]);
 
+if (exitCode != 2 && !finished && report.Failures == 0)
+{
+    report.Fail("the run finished", "the window closed before it did");
+    exitCode = 1;
+}
 if (exitCode != 2)
     report.Print("gpu-two-player-loop-soak");
 return exitCode;
@@ -175,7 +204,8 @@ internal static class Soak
         TimeSpan sample,
         string label,
         Csv? csv,
-        Report report
+        Report report,
+        CancellationToken cancellation
     )
     {
         var players = new List<IMediaPlayer>();
@@ -211,9 +241,9 @@ internal static class Soak
                         .WithHardwareFrames();
                     if (device is not null)
                         builder = builder.WithHardwareDevice(device);
-                    player = await builder.BuildPlayerAsync();
+                    player = await builder.BuildPlayerAsync(cancellation);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     Console.Error.WriteLine($"The {pane.Name} player could not be built: {ex.Message}");
                     return 2;
@@ -223,7 +253,8 @@ internal static class Soak
                 // Subscribed before play, so no restart or stall happens before anyone is listening.
                 pane.Watch(player);
 
-                var played = await player.PlayAsync();
+                var played = await player.PlayAsync(cancellation);
+                cancellation.ThrowIfCancellationRequested();
                 if (!played.IsSuccess)
                 {
                     Console.Error.WriteLine(
@@ -233,10 +264,13 @@ internal static class Soak
                 }
             }
 
+            // Each window counts from here, not from when its player started.
             var started = Stopwatch.GetTimestamp();
+            foreach (var pane in panes)
+                pane.Baseline();
             for (var window = 1; window <= windows; window++)
             {
-                await Task.Delay(sample);
+                await Task.Delay(sample, cancellation);
                 var elapsed = Stopwatch.GetElapsedTime(started);
 
                 foreach (var pane in panes)
@@ -437,6 +471,10 @@ internal sealed class Pane(string name, string clip, IVideoSink sink) : IDisposa
             player.ErrorOccurred.Subscribe(new ActionObserver<PlaybackError>(_ => Interlocked.Increment(ref _errors)))
         );
     }
+
+    /// <summary>Starts the first window at the frames presented so far.</summary>
+    public void Baseline() =>
+        _presentedAtLastSample = _player!.GetDiagnostics().Pipeline.VideoSink.FramesPresented;
 
     public Row Sample(TimeSpan elapsed)
     {

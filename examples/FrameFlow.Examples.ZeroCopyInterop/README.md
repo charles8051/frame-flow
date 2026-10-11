@@ -37,18 +37,18 @@ The project builds on Linux and macOS, but the view needs Direct3D to run.
 ## Run
 
 ```powershell
-dotnet run --project examples/FrameFlow.Examples.ZeroCopyInterop -- <video.mp4>
+dotnet run --project examples/FrameFlow.Examples.ZeroCopyInterop -- <video.mp4> [--hw-device d3d12va]
 ```
 
-| Option | Effect |
-|---|---|
-| `--hw-device d3d12va` | Decode on one D3D12VA device. The view converts each frame on that device and copies it across to the compositor's D3D11 side. |
-| `--hw-device d3d11va` | Decode on one D3D11VA device. |
-| `--super-resolution` | Start with the driver's video super resolution on. |
+`--hw-device d3d12va` decodes on one D3D12VA device that the player borrows
+(`WithHardwareDevice`). The view converts each frame on that device and copies it
+across to the compositor's D3D11 side.
 
-Press `S` to toggle super resolution; the corner shows its status. The driver
+Press `S` to toggle the driver's video super resolution; the corner shows its status,
+which names the first condition that keeps the view from asking for it. The driver
 upscales only 8-bit D3D11VA frames, on an NVIDIA RTX GPU, in a local session, with
 Super Resolution on in the NVIDIA App (System, Video, RTX Video Enhancements), and
-only while the video is smaller than the window.
+only while the video is smaller than the window. A failure during playback replaces
+the status line.
 
 The log is written to `logs/zero-copy-interop.log` at the repository root.

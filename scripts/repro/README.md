@@ -78,15 +78,16 @@ side of that trade.
 
 ## Fixtures
 
-All three need the generated corpus, which is gitignored. The two-player soak
-plays `test-1080p-h264-aac.mp4` unless `--clip` names another file:
+The fixtures come from the generated corpus, which is gitignored. The two-player
+soak needs it only for its default clip, `test-1080p-h264-aac.mp4`; `--clip` and
+`--second` can name any other file:
 
 ```bash
 dotnet run scripts/generate-test-corpus.cs
-dotnet run scripts/generate-test-corpus.cs -- --include-benchmarks   # for the soak
+dotnet run scripts/generate-test-corpus.cs -- --include-benchmarks   # for signage-gpu-noaudio-soak.cs
 ```
 
-The soak's fixture is `bench-1080p60-h264-aac.mp4`: 45s of noise at 15 Mbps,
+`signage-gpu-noaudio-soak.cs` plays `bench-1080p60-h264-aac.mp4`: 45s of noise at 15 Mbps,
 1080p60, 85 MB. It is behind a flag because of the size, and it is noise rather
 than `testsrc2` because `testsrc2` "encodes to almost nothing" and costs the
 decoder nothing to play.
