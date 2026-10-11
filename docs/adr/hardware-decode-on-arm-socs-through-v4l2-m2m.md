@@ -178,15 +178,28 @@ A wrapper that fails to open falls to the next candidate and then to software, a
 The first-packet fallback of ADR-0083 Decision 4 applies, and `Required` throws
 `HardwareDecodeUnavailableException` with the attempt list.
 
-A wrapper decodes asynchronously, so a refusal can surface at receive, or as a stall that returns no
+A wrapper decodes asynchronously, so a refusal can surface at receive, or as silence that returns no
 error at all. ADR-0083 left receive-side refusals open because the bundled hardware refused at send.
 For this backend they are expected, and the candidate is not offered under `Auto` until a policy
-covers them. The proposed policy is bounded and uses what the fallback already has. Until the first
-frame is received, the decoder keeps the packets it has sent, up to the wrapper's output buffer count
-(`-num_output_buffers`, default 16). A receive error before the first frame, or no frame after that
-many packets, reopens on the prepared software context and sends the kept packets again. After the
-first frame, a receive error is a fault, as for any other backend. The merge gate for slice 3 includes
-a stream the node refuses, which must fall back to software, and not only a clip that decodes.
+covers them. The policy has three parts, and a packet count is not one of them. A count cannot tell a
+stalled node from codec startup or frame reordering, so it is not used as a signal.
+
+1. **An error before the first frame.** The decoder keeps the packets it has sent until the first
+   frame is received. A receive error before then reopens on the prepared software context and sends
+   the kept packets again. The keep is bounded by the node's input queue (`-num_output_buffers`,
+   default 16), because a node cannot hold more than that unanswered. If a send blocks or fails at that
+   bound with no frame, that is a refusal too.
+2. **Silence before the first frame.** A shell-owned deadline, read from an injected `TimeProvider`
+   and counted from the first send, treats a node that has produced nothing as refusing, with the same
+   reopen. The core holds no clock: it receives "deadline passed" as an input, as the other cadence
+   decisions do. The value is not chosen here. It comes from measuring startup latency on a stateful
+   device, and the candidate stays out of `Auto` until it exists.
+3. **After the first frame.** A receive error is a fault, as for any other backend. A silent stall is
+   what any decoder's stall is: the player's existing stall handling sees that frames stopped, and
+   the decoder does not swap.
+
+The merge gate for slice 3 includes a stream the node refuses and a node that is made to go silent,
+each of which must fall back to software, and not only a clip that decodes.
 
 ### 7. Stateless decoders are not part of this decision
 
@@ -298,8 +311,8 @@ selection change.
 1. **What a stateful device returns.** The format of the wrapper's frames (NV12 or YUV420P), whether
    they alias capture buffers, and whether the copy in Decision 5 is needed. The Raspberry Pi 4 is the
    bench.
-2. **The receive-side policy in Decision 6.** Whether 16 kept packets is the right bound, and whether
-   a stall is observable without a clock in the core.
+2. **The receive-side policy in Decision 6.** The deadline for the first frame, and how a node is made
+   to go silent in a test.
 3. **Seek and loop.** Whether `avcodec_flush_buffers` on a wrapper restarts the node cleanly in
    FrameFlow's seek and loop paths.
 4. **The stateless hwaccel's config shape** in a patched build (Decision 7).
