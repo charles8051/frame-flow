@@ -1,26 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!--
-    Zero-copy GPU presenter spike (ADR-0016 amendment / ADR-0038 Phase B).
-    Decodes via D3D11VA, keeps the NV12 surface on the GPU, color-converts to
-    a shared keyed-mutex BGRA texture with ID3D11VideoProcessor, and imports it
-    straight into Avalonia's compositor via ICompositionGpuInterop — no CPU
-    round-trip. Windows-only (Vortice / D3D11).
-  -->
+  <!-- Builds everywhere; runs on Windows only, where CompositionInteropVideoView presents through Direct3D. -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <NoWarn>$(NoWarn);NU1903</NoWarn>
-    <!-- Windows-only GPU interop surface needs a supported-OS manifest. -->
-    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\FrameFlow.Media\FrameFlow.Media.csproj" />
-    <ProjectReference Include="..\..\src\FrameFlow.Native\FrameFlow.Native.csproj" />
-    <ProjectReference Include="..\..\src\FrameFlow.Playback\FrameFlow.Playback.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Player\FrameFlow.Player.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Avalonia.Windows\FrameFlow.Avalonia.Windows.csproj" />
   </ItemGroup>

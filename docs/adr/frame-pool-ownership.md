@@ -222,3 +222,9 @@ Before any of this is built:
 - The pure resolve carries a table test per branch, on the model of `ReadAheadCapacityTests`.
 - A new `ClockSelectBufferTests` covers depth as a parameterised dimension. The shipped default of
   3 appears in no test today.
+
+## Amendment, 2026-10-11: the soak moved
+
+`FrameFlow.Examples.ZeroCopyInterop` now plays one file, so it is no longer a several-players case
+in the open questions. Its `--soak` mode is now `scripts/repro/gpu-two-player-loop-soak.cs`, which
+is the instrument the validation section names.
