@@ -14,12 +14,15 @@ public enum ColorFilter
 public static class ColorFilters
 {
     /// <summary>
-    /// A new BGRA frame holding <paramref name="frame"/> with <paramref name="filter"/> applied, at
-    /// the same timestamp. The caller owns it.
+    /// <paramref name="frame"/> with <paramref name="filter"/> applied: a new BGRA frame at the same
+    /// timestamp, or, for <see cref="ColorFilter.None"/>, another reference to
+    /// <paramref name="frame"/>. The caller owns what it returns.
     /// </summary>
     /// <exception cref="NotSupportedException"><paramref name="frame"/> is not BGRA.</exception>
     public static IVideoFrame Apply(IVideoFrame frame, ColorFilter filter)
     {
+        if (filter == ColorFilter.None)
+            return frame.AddRef();
         if (frame.Format != PixelFormat.Bgra32)
             throw new NotSupportedException($"The filter reads Bgra32 frames, not {frame.Format}.");
 
@@ -43,12 +46,6 @@ public static class ColorFilters
         {
             var from = source.PlaneY.Span.Slice(y * source.StrideY, rowBytes);
             var to = target.Y.Slice(y * target.StrideY, rowBytes);
-            if (filter == ColorFilter.None)
-            {
-                from.CopyTo(to);
-                continue;
-            }
-
             for (int x = 0; x < rowBytes; x += 4)
             {
                 int b = from[x], g = from[x + 1], r = from[x + 2];

@@ -103,7 +103,18 @@ public partial class MainWindow : Window
 
         try
         {
-            _detector = await LoadDetectorAsync();
+            // YOLOv8 on CUDA, or on the CPU when CUDA cannot open the model.
+            var inference = InferenceSessionFactoryBuilder.Create(
+                ExecutionProvider.Cuda,
+                new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+                {
+                    [ExecutionProvider.Cuda] = path => new CudaInferenceSession(path),
+                    [ExecutionProvider.Cpu] = path => new CpuInferenceSession(path),
+                },
+                loggerFactory: _loggerFactory
+            );
+            _detector = await Panes.LoadDetectorAsync(inference, _loggerFactory, _closing.Token);
+
             var cameras = await CameraDevice.EnumerateAsync(_closing.Token);
             CameraPicker.ItemsSource = cameras;
             if (cameras.Count > 0)
@@ -118,37 +129,6 @@ public partial class MainWindow : Window
         {
             _logger.LogError(ex, "Camera enumeration failed.");
             StatusText.Text = $"Camera enumeration failed: {ex.Message}";
-        }
-    }
-
-    /// <summary>The detector, or null when it cannot load: the other panes run on without it.</summary>
-    private async Task<Yolov8Detector?> LoadDetectorAsync()
-    {
-        var inference = InferenceSessionFactoryBuilder.Create(
-            ExecutionProvider.Cuda,
-            new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
-            {
-                [ExecutionProvider.Cuda] = path => new CudaInferenceSession(path),
-                [ExecutionProvider.Cpu] = path => new CpuInferenceSession(path),
-            },
-            loggerFactory: _loggerFactory
-        );
-
-        Panes.SetDetectionStatus("loading YOLOv8");
-        try
-        {
-            // A cached model opens synchronously, so load it off the UI thread.
-            var detector = await Task.Run(() =>
-                Yolov8Detector.CreateAsync(inference, ct: _closing.Token, loggerFactory: _loggerFactory)
-            );
-            Panes.SetDetectionStatus("YOLOv8");
-            return detector;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "YOLOv8 did not load; the second pane shows the camera without boxes.");
-            Panes.SetDetectionStatus("YOLOv8 unavailable");
-            return null;
         }
     }
 
@@ -216,7 +196,8 @@ public partial class MainWindow : Window
             await _startup;
             await _switching;
             await CloseCameraAsync();
-            // The detector ran inside the graph, so it goes after it.
+            // The panes' sink is ours, and it and the detector ran inside the graph: both go after it.
+            await Panes.Sink.DisposeAsync();
             _detector?.Dispose();
         }
         catch (Exception ex)

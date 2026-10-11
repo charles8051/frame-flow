@@ -32,24 +32,6 @@ public partial class PlayerWindow : Window
         Chrome.FileOpenRequested += async (_, e) => await OpenAsync(e.FilePath);
     }
 
-    /// <summary>The GPU execution provider YOLOv8 tries before the CPU.</summary>
-    public required ExecutionProvider GpuProvider { get; init; }
-
-    /// <summary>Opens a model on <see cref="GpuProvider"/>.</summary>
-    public required Func<string, IInferenceSession> OpenOnGpu { get; init; }
-
-    /// <summary>The file to play on start, if any.</summary>
-    public string? StartupFile { get; init; }
-
-    /// <summary>The log's file name, under the repository's <c>logs/</c> directory.</summary>
-    public required string LogFileName { get; init; }
-
-    protected override void OnLoaded(RoutedEventArgs e)
-    {
-        base.OnLoaded(e);
-        _startup = StartAsync();
-    }
-
     private async Task StartAsync()
     {
         _loggerFactory = ExampleLogging.CreateFactory(LogFileName, onFailure: ex => Title += $"  [no log file: {ex.Message}]");
@@ -58,7 +40,17 @@ public partial class PlayerWindow : Window
 
         try
         {
-            var detector = await LoadDetectorAsync();
+            // YOLOv8 on the GPU, or on the CPU when the GPU provider cannot open the model.
+            var inference = InferenceSessionFactoryBuilder.Create(
+                GpuProvider,
+                new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+                {
+                    [GpuProvider] = OpenOnGpu,
+                    [ExecutionProvider.Cpu] = path => new CpuInferenceSession(path),
+                },
+                loggerFactory: _loggerFactory
+            );
+            var detector = await Panes.LoadDetectorAsync(inference, _loggerFactory, _closing.Token);
             _detector = detector;
             _audio = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
 
@@ -84,37 +76,6 @@ public partial class PlayerWindow : Window
         }
     }
 
-    /// <summary>The detector, or null when it cannot load: the other panes play on without it.</summary>
-    private async Task<Yolov8Detector?> LoadDetectorAsync()
-    {
-        var inference = InferenceSessionFactoryBuilder.Create(
-            GpuProvider,
-            new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
-            {
-                [GpuProvider] = OpenOnGpu,
-                [ExecutionProvider.Cpu] = path => new CpuInferenceSession(path),
-            },
-            loggerFactory: _loggerFactory
-        );
-
-        Panes.SetDetectionStatus("loading YOLOv8");
-        try
-        {
-            // A cached model opens synchronously, so load it off the UI thread.
-            var detector = await Task.Run(() =>
-                Yolov8Detector.CreateAsync(inference, ct: _closing.Token, loggerFactory: _loggerFactory)
-            );
-            Panes.SetDetectionStatus("YOLOv8");
-            return detector;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "YOLOv8 did not load; the second pane shows the video without boxes.");
-            Panes.SetDetectionStatus("YOLOv8 unavailable");
-            return null;
-        }
-    }
-
     private async Task OpenAsync(string path)
     {
         if (_player is not { } player)
@@ -124,6 +85,7 @@ public partial class PlayerWindow : Window
         if (!replaced.IsSuccess)
         {
             _logger.LogError("Could not open {File}: {Message}", path, replaced.Error.Message);
+            Title = $"FrameFlow multicast: could not open {Path.GetFileName(path)}";
             return;
         }
 
@@ -133,7 +95,28 @@ public partial class PlayerWindow : Window
 
         var played = await player.PlayAsync();
         if (!played.IsSuccess)
+        {
             _logger.LogError(played.Error.Inner, "Play refused: {Category}: {Message}", played.Error.Category, played.Error.Message);
+            Title = $"FrameFlow multicast: could not play {Path.GetFileName(path)}";
+        }
+    }
+
+    /// <summary>The GPU execution provider YOLOv8 tries before the CPU.</summary>
+    public required ExecutionProvider GpuProvider { get; init; }
+
+    /// <summary>Opens a model on <see cref="GpuProvider"/>.</summary>
+    public required Func<string, IInferenceSession> OpenOnGpu { get; init; }
+
+    /// <summary>The file to play on start, if any.</summary>
+    public string? StartupFile { get; init; }
+
+    /// <summary>The log's file name, under the repository's <c>logs/</c> directory.</summary>
+    public required string LogFileName { get; init; }
+
+    protected override void OnLoaded(RoutedEventArgs e)
+    {
+        base.OnLoaded(e);
+        _startup = StartAsync();
     }
 
     protected override async void OnClosing(WindowClosingEventArgs e)
@@ -154,7 +137,8 @@ public partial class PlayerWindow : Window
             Chrome.Transport = null;
             if (_player is not null)
                 await _player.DisposeAsync();
-            // The audio sink is ours, and the detector ran inside the player: both go after it.
+            // Both sinks are ours, and the detector ran inside the player: all three go after it.
+            await Panes.Sink.DisposeAsync();
             if (_audio is not null)
                 await _audio.DisposeAsync();
             _detector?.Dispose();

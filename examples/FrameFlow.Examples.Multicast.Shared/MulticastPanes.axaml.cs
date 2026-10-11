@@ -19,7 +19,8 @@ public partial class MulticastPanes : UserControl
     private readonly AvaloniaVideoSink _detection;
     private readonly AvaloniaVideoSink _filtered;
     private int _filter;
-    private int _shownCount = -1;
+    private int _loggedCount = -1;
+    private long _nextLogAt;
 
     public MulticastPanes()
     {
@@ -29,17 +30,19 @@ public partial class MulticastPanes : UserControl
         _detection = DetectionView.EnsureSink();
         _filtered = FilteredView.EnsureSink();
 
-        // The first two panes keep up to two of the frames they are given; the third keeps copies.
-        Sink = new DelegatingVideoSink(PresentAsync, maxHeldFrames: 4);
+        // Each pane keeps up to two of the frames it is given.
+        Sink = new DelegatingVideoSink(PresentAsync, maxHeldFrames: 6);
 
         Detections = new PresentedResults<IReadOnlyList<Detection>>(_detection);
         Detections.Presented += (_, shown) =>
         {
             Overlay.Show(shown);
-            if (shown.Result.Count != _shownCount)
+            long now = Environment.TickCount64;
+            if (shown.Result.Count != _loggedCount && now >= _nextLogAt)
             {
-                _shownCount = shown.Result.Count;
-                Logger.LogDebug("The second pane now shows {Count} object(s).", _shownCount);
+                _loggedCount = shown.Result.Count;
+                _nextLogAt = now + 1000;
+                Logger.LogDebug("The second pane shows {Count} object(s).", _loggedCount);
             }
         };
         Detections.Cleared += (_, _) => Overlay.Show(null);
@@ -54,8 +57,8 @@ public partial class MulticastPanes : UserControl
     }
 
     /// <summary>
-    /// Presents each frame it is given in all three panes. Give it to a player, or end a graph at it.
-    /// It takes BGRA frames in CPU memory.
+    /// Presents each frame it is given in all three panes. Give it to a player, or end a graph at it,
+    /// and dispose it after either has stopped. It takes BGRA frames in CPU memory.
     /// </summary>
     public IVideoSink Sink { get; }
 
@@ -65,11 +68,38 @@ public partial class MulticastPanes : UserControl
     /// </summary>
     public PresentedResults<IReadOnlyList<Detection>> Detections { get; }
 
-    /// <summary>Where the panes log what the second pane shows.</summary>
+    /// <summary>Where the panes log how many objects the second pane shows, at most once a second.</summary>
     public ILogger Logger { get; set; } = NullLogger.Instance;
 
-    /// <summary>Says in the second pane's title how the detector is doing.</summary>
-    public void SetDetectionStatus(string status) => DetectionTitle.Text = $"Object detection: {status}";
+    /// <summary>
+    /// Loads YOLOv8 through <paramref name="inference"/> and says in the second pane's title how it
+    /// went. Null when the model cannot load: the other panes run on without it. The caller owns
+    /// the detector.
+    /// </summary>
+    public async Task<Yolov8Detector?> LoadDetectorAsync(
+        IInferenceSessionFactory inference,
+        ILoggerFactory loggerFactory,
+        CancellationToken ct
+    )
+    {
+        SetDetectionStatus("loading YOLOv8");
+        try
+        {
+            // A cached model opens synchronously, so load it off the UI thread.
+            var detector = await Task.Run(() => Yolov8Detector.CreateAsync(inference, ct: ct, loggerFactory: loggerFactory));
+            SetDetectionStatus("YOLOv8");
+            return detector;
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            // A download that times out is a failure here too, not a cancellation.
+            Logger.LogWarning(ex, "YOLOv8 did not load; the second pane shows the picture without boxes.");
+            SetDetectionStatus("YOLOv8 unavailable");
+            return null;
+        }
+    }
+
+    private void SetDetectionStatus(string status) => DetectionTitle.Text = $"Object detection: {status}";
 
     /// <inheritdoc />
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)

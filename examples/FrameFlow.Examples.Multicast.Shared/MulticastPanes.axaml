@@ -25,7 +25,7 @@
     <Border Classes="pane" Grid.Column="0">
       <DockPanel>
         <DockPanel Classes="header" DockPanel.Dock="Top">
-          <TextBlock Text="As decoded"/>
+          <TextBlock Text="Original"/>
         </DockPanel>
         <Panel Background="Black">
           <ff:FrameFlowVideoView Name="DirectView"/>

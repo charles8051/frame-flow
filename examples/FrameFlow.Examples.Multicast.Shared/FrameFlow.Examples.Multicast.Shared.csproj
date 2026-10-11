@@ -9,7 +9,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!--
-      The color filter visits every pixel of every frame on the presenting thread. A Debug build's
+      A color filter visits every pixel of every frame on the presenting thread. A Debug build's
       unoptimized loop is slow enough there to make all three panes drop frames, so this project
       is optimized in every configuration.
     -->
