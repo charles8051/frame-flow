@@ -1,112 +1,54 @@
-# FrameFlow.Examples.ZeroCopyInterop (spike)
+# FrameFlow.Examples.ZeroCopyInterop
 
-A spike of the **true zero-copy GPU video path** on Windows: decode on the GPU
-(D3D11VA), keep the NV12 surface in VRAM, color-convert to BGRA with the
-fixed-function `ID3D11VideoProcessor`, and import the result **straight into
-Avalonia's compositor** via `ICompositionGpuInterop` — no GPU→CPU readback, no
-`WriteableBitmap`.
+Plays a video file on `CompositionInteropVideoView`, the Windows presenter in
+`FrameFlow.Avalonia.Windows`. Hardware-decoded frames go from the decoder to
+Avalonia's compositor without leaving the GPU: the view converts each frame to BGRA
+on the GPU and hands the texture to the compositor through `ICompositionGpuInterop`,
+with no readback and no `WriteableBitmap`.
 
-Branch: `spike/zero-copy-presenter`. Backs the 2026-06-04 amendments to
-[ADR-0016](../../docs/adr/ADR-0016-avalonia-presenter-frame-delivery-strategy.md)
-(compositor interop supersedes the deferred ANGLE/Skia path) and
-[ADR-0038](../../docs/adr/ADR-0038-memory-domain-pipeline-operators.md)
-(the Phase B `ID3D11VideoFrame` accessor + first GPU-aware sink).
+```csharp
+var player = await FrameFlowPlayer.Create()
+    .WithMedia(path)
+    .WithVideoSink(((IVideoSurface)VideoView).AttachSink(loggerFactory))
+    .WithRepeatMode(RepeatMode.One)
+    .BuildPlayerAsync();
 
-## Where the code lives
-
-The presenter has **graduated out of this example** into a reusable Windows library,
-[`src/FrameFlow.Avalonia.Windows`](../../src/FrameFlow.Avalonia.Windows/):
-
-- `CompositionInteropVideoSink : IVideoSink` — frame intake + latest-wins buffering.
-- `CompositionInteropVideoView : Control` — owns the compositor surface and the D3D11
-  present ring; pulls frames from the sink on a render tick. Get the sink to hand to the
-  player via `EnsureSink()`. (Mirrors `AvaloniaVideoSink` / `FrameFlowVideoView`.)
-- `D3D11Nv12SharedConverter` (internal) — the NV12→BGRA shared-texture ring.
-
-This project is now just the host that wires the library to `MediaPlayer` and drives it
-headlessly. It's Windows-only (Direct3D 11); the cross-platform analogue is a future
-`FrameFlow.Avalonia.Vulkan` presenter behind the same `IVideoSink` seam.
-
-## The path
-
-```
-H.264 → D3D11VA decode → NV12 texture (VRAM)          GpuVideoFrame (YieldHardwareFrames=true)
-      → GpuVideoFrame.TryGetD3D11Texture(tex, slice)  ADR-0038 Phase B accessor (core change)
-      → ID3D11VideoProcessor Blt → BGRA (VRAM)         one of a 3-buffer SharedKeyedMutex ring
-      → ICompositionGpuInterop.ImportImage(handle)     D3D11TextureGlobalSharedHandle
-      → CompositionDrawingSurface.UpdateWithKeyedMutexAsync(img, 1, 0)
-      → compositor composites the surface visual       no CPU crossing
+var played = await player.PlayAsync();
+if (!played.IsSuccess)
+    StatusText.Text = $"{played.Error.Category}: {played.Error.Message}";
 ```
 
-Keyed-mutex handshake: producer `AcquireSync(0)` → Blt → `ReleaseSync(1)`;
-compositor takes `acquire 1` / `release 0`. The shared **NT handle** lets the
-compositor open the texture on its own device, so we never touch Avalonia's
-render device — which is what removes ADR-0016's original objection.
+The view's sink takes D3D11 and D3D12 frames, so the player keeps hardware frames on
+the GPU without `WithHardwareFrames()`. When hardware decode does not bind, the view
+uploads the software-decoded frames instead. The log says which path is live:
+`ZERO-COPY PATH LIVE` or `CPU-UPLOAD FALLBACK LIVE`.
 
-## What this spike validated (run 2026-06-04, NVIDIA + Intel box)
+The code is in [MainWindow.axaml.cs](MainWindow.axaml.cs).
 
-Confirmed live, end to end, from the run log:
+## Requirements
 
-- `Hardware decode bound: codec 'h264' on D3D11Va` — the caps + `yieldHardwareFrames`
-  threading engages D3D11VA through the real `MediaPlayer` pipeline.
-- `Compositor GPU interop ready. D3D11 global-shared-handle import supported: True`.
-- `GpuVideoFrame.TryGetD3D11Texture` returns a valid `ID3D11Texture2D` + array slice.
-- `ID3D11VideoProcessor` NV12→BGRA Blt into a shared keyed-mutex texture succeeds.
-- **First frame imported + presented with no CPU round-trip.**
-- **Sustained continuous playback: 240 frames presented, 0 dropped, 0 errors**
-  across a loop boundary, then a clean graceful exit (`--exit-after`).
+- Windows 10 or 11.
+- A GPU with Direct3D 11 video decode for the file's codec, such as H.264 or HEVC.
+- For `--hw-device d3d12va`, a GPU and driver with D3D12 video decode.
+- The FFmpeg binaries: `dotnet run scripts/fetch-ffmpeg.cs` once per clone.
 
-## Continuous playback: 3-buffer shared-texture ring
+The project builds on Linux and macOS, but the view needs Direct3D to run.
 
-The first cut used a **single** shared texture ping-ponged on one keyed mutex,
-which stalled after the first frames (`DXGI_ERROR_INVALID_CALL` on `ReleaseSync`)
-whenever the compositor's consume cadence diverged from decode — the producer's
-next `AcquireSync(0)` blocked on a key the compositor hadn't released yet.
-
-Fixed with a **ring of `BufferCount` (=3) shared BGRA textures** (one
-`ID3D11VideoProcessor` + N output textures, each with its own keyed mutex and
-shared handle) plus per-buffer present-`Task` tracking: each frame the presenter
-targets a buffer whose previous `UpdateWithKeyedMutexAsync` has completed, so
-`AcquireSync(0)` never contends with an in-flight present. If all N are still in
-flight the frame is dropped (latest-wins). This is the shape of Avalonia's own
-`samples/GpuInterop` `SwapchainBase`. Validated at 240/0 above.
-
-**Remaining follow-ups (not blockers):** GPU-side BT.709 color-space config on the
-VideoProcessor (currently default conversion), aspect-ratio preservation
-(currently stretch-to-fill), running the Blt off the UI thread, and graduating
-the presenter out of the example into a `FrameFlow.Avalonia.Windows` library.
-
-## Run it
+## Run
 
 ```powershell
-dotnet run --project examples/FrameFlow.Examples.ZeroCopyInterop -- `
-  <path-to-h264-or-hevc>.mp4 --log-file zero-copy-interop.log --exit-after 10
+dotnet run --project examples/FrameFlow.Examples.ZeroCopyInterop -- <video.mp4>
 ```
 
-Requires a Windows box whose GPU supports D3D11VA decode of the file's codec and
-whose Avalonia backend advertises `D3D11TextureGlobalSharedHandle` (logged at
-startup). `--exit-after <s>` closes the window gracefully so the log flushes —
-use it for headless/autonomous runs. No file argument → the window explains what
-to pass. `--hw-device d3d12va` decodes on one D3D12VA device, which the presenter
-converts on and copies across to D3D11 (#429); `d3d11va` pins D3D11VA the same way.
+| Option | Effect |
+|---|---|
+| `--hw-device d3d12va` | Decode on one D3D12VA device. The view converts each frame on that device and copies it across to the compositor's D3D11 side. |
+| `--hw-device d3d11va` | Decode on one D3D11VA device. |
+| `--super-resolution` | Start with the driver's video super resolution on. |
 
-`--super-resolution` starts with `CompositionInteropVideoView.DriverSuperResolution` on (#560),
-and `S` toggles it while playing. The corner shows `DriverSuperResolutionStatus`. To see the
-driver's upscale, play a clip smaller than the window, on an NVIDIA RTX GPU, in a local session,
-with Super Resolution on in the NVIDIA App (System → Video → RTX Video Enhancements).
+Press `S` to toggle super resolution; the corner shows its status. The driver
+upscales only 8-bit D3D11VA frames, on an NVIDIA RTX GPU, in a local session, with
+Super Resolution on in the NVIDIA App (System, Video, RTX Video Enhancements), and
+only while the video is smaller than the window.
 
-Generate a quick test clip:
-
-```bash
-ffmpeg -f lavfi -i testsrc=size=1280x720:rate=30:duration=6 \
-  -c:v libx264 -profile:v high -pix_fmt yuv420p -movflags +faststart test.mp4
-```
-
-## Scope notes
-
-Windows / D3D11 only (Vortice). NVDEC/CUDA frames would use a different bridge
-(`cuGraphicsD3D11RegisterResource` → shared D3D texture, or a Vulkan-backend
-import); the `ICompositionGpuInterop` destination is the same. The presenter
-lives in the example for the spike; if it graduates it moves to a
-`FrameFlow.Avalonia.Windows` presenter (the `IVideoFramePresenter` slot ADR-0016
-reserves).
+The log is written to `logs/zero-copy-interop.log` at the repository root.

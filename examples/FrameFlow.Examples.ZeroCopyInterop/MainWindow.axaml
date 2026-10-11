@@ -2,14 +2,12 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ffw="clr-namespace:FrameFlow.Avalonia.Windows;assembly=FrameFlow.Avalonia.Windows"
         x:Class="FrameFlow.Examples.ZeroCopyInterop.MainWindow"
-        Width="1280" Height="720" Background="Black" Topmost="True"
-        Title="FrameFlow — Zero-Copy Composition Interop Spike">
+        Width="1280" Height="720" Background="Black"
+        Title="FrameFlow Zero-Copy Interop">
   <Panel>
-    <!-- The compositor-interop zero-copy video surface is added here in code. -->
-    <Panel x:Name="VideoHost" />
+    <ffw:CompositionInteropVideoView x:Name="VideoView" />
     <TextBlock x:Name="StatusText"
                Foreground="#A0FFFFFF" Margin="14"
-               VerticalAlignment="Top" HorizontalAlignment="Left"
-               Text="starting…" />
+               VerticalAlignment="Top" HorizontalAlignment="Left" />
   </Panel>
 </Window>

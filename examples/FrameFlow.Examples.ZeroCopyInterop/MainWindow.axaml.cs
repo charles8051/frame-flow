@@ -3,7 +3,6 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using FrameFlow.Avalonia;
-using FrameFlow.Avalonia.Windows;
 using FrameFlow.Decoding;
 using FrameFlow.Media;
 using FrameFlow.Player;
@@ -12,385 +11,120 @@ using Microsoft.Extensions.Logging;
 namespace FrameFlow.Examples.ZeroCopyInterop;
 
 /// <summary>
-/// Drives the zero-copy composition-interop spike: opens a file with
-/// <see cref="HardwareDecodeMode.Required"/> + <c>yieldHardwareFrames: true</c>
-/// so the decoder produces D3D11 <c>GpuVideoFrame</c>s, and hands them to the
-/// <see cref="CompositionInteropVideoView"/> sink which presents them with no
-/// CPU round-trip.
+/// Plays one file, looping, on a <see cref="FrameFlow.Avalonia.Windows.CompositionInteropVideoView"/>:
+/// hardware-decoded frames go from the decoder to Avalonia's compositor without leaving the GPU.
+/// <c>S</c> toggles the driver's video super resolution.
 /// </summary>
-/// <remarks>
-/// With <see cref="Soak"/> set it runs two such players side by side, each on its own presenter,
-/// and samples both into a CSV. Two presenters on one GPU is the condition ADR-0063's hang needed,
-/// and the samples are what a before/after comparison of a playback change reads.
-/// </remarks>
 public partial class MainWindow : Window
 {
     private readonly ILoggerFactory _loggerFactory;
-    private readonly ILogger<MainWindow> _logger;
-    private readonly List<IVideoSurface> _surfaces = [];
-    private readonly List<IMediaTransport> _players = [];
-    private HardwareDevice? _hardwareDevice;
-    private SoakSampler? _sampler;
-    private DispatcherTimer? _sampleTimer;
-    private DispatcherTimer? _exitTimer;
-    private bool _isClosing;
+    private readonly string? _path;
+    private readonly HardwareDecodeBackendKind? _backend;
+    private HardwareDevice? _device;
+    private IMediaPlayer? _player;
+    private Task _startup = Task.CompletedTask;
+    private bool _closing;
+    private bool _closed;
 
-    public string? StartupFilePath { get; set; }
-
-    /// <summary>Run full-screen (covers the output).</summary>
-    public bool StartupFullscreen { get; set; }
-
-    /// <summary>Hardware-decode policy: <c>auto</c> (default), <c>disabled</c>/<c>software</c>,
-    /// or <c>required</c>. <c>auto</c> uses the zero-copy GPU path when D3D11VA binds and the
-    /// CPU upload fallback otherwise.</summary>
-    public string? StartupHwMode { get; set; }
-
-    /// <summary>
-    /// <c>d3d12va</c> or <c>d3d11va</c>: decode on one device of that backend, shared by every
-    /// player, instead of letting each decoder pick. Unset, the builders pick D3D11VA on Windows.
-    /// </summary>
-    public string? StartupHwDevice { get; set; }
-
-    /// <summary>When &gt; 0, the window closes itself after this many seconds —
-    /// a graceful shutdown that flushes the log, for autonomous/headless runs.</summary>
-    public int ExitAfterSeconds { get; set; }
-
-    /// <summary>Set by <c>--soak</c>: two players, sampled into a CSV.</summary>
-    public SoakOptions? Soak { get; set; }
-
-    /// <summary>
-    /// Set by <c>--super-resolution</c>: start with the driver's video super resolution on (#560).
-    /// <c>S</c> toggles it while playing.
-    /// </summary>
-    public bool StartupSuperResolution { get; set; }
-
-    private DispatcherTimer? _statusTimer;
-    private string _presenting = "";
-
-    public MainWindow(ILoggerFactory loggerFactory)
-    {
-        _loggerFactory = loggerFactory;
-        _logger = loggerFactory.CreateLogger<MainWindow>();
-        InitializeComponent();
-        Closing += OnWindowClosing;
-        KeyDown += OnKeyDown;
-    }
-
-    protected override async void OnLoaded(RoutedEventArgs e)
-    {
-        base.OnLoaded(e);
-        _logger.LogInformation("Window loaded; bringing up GPU interop and playback.");
-
-        if (StartupFullscreen)
-            WindowState = WindowState.FullScreen;
-
-        if (ExitAfterSeconds > 0)
-        {
-            _exitTimer = new DispatcherTimer(
-                TimeSpan.FromSeconds(ExitAfterSeconds),
-                DispatcherPriority.Background,
-                (_, _) =>
-                {
-                    _logger.LogInformation("--exit-after {N}s elapsed; closing.", ExitAfterSeconds);
-                    Close();
-                }
-            );
-            _exitTimer.Start();
-        }
-
-        if (string.IsNullOrEmpty(StartupFilePath) || !File.Exists(StartupFilePath))
-        {
-            const string msg =
-                "No video file. Pass an H.264/HEVC .mp4 path as an argument "
-                + "(the box must support D3D11VA decode of that codec).";
-            StatusText.Text = msg;
-            _logger.LogWarning("{Message}", msg);
-            return;
-        }
-
-        // A soak measures the hardware path, so it requires hardware decode unless the caller
-        // named a mode. Auto would fall back to software and report a soak that proved nothing.
-        var hwMode = StartupHwMode?.Trim().ToLowerInvariant() switch
-        {
-            "disabled" or "software" => HardwareDecodeMode.Disabled,
-            "required" => HardwareDecodeMode.Required,
-            null or "" when Soak is not null => HardwareDecodeMode.Required,
-            _ => HardwareDecodeMode.Auto,
-        };
-        _logger.LogInformation(
-            "Hardware decode mode: {Mode} (from --hw-mode '{Raw}').", hwMode, StartupHwMode ?? "(unset)");
-
-        var backend = StartupHwDevice?.Trim().ToLowerInvariant() switch
-        {
-            "d3d12va" => HardwareDecodeBackendKind.D3D12Va,
-            "d3d11va" => HardwareDecodeBackendKind.D3D11Va,
-            _ => (HardwareDecodeBackendKind?)null,
-        };
-        if (backend is { } kind)
-        {
-            try
-            {
-                _hardwareDevice = HardwareDevice.Create(kind);
-                _logger.LogInformation("Decoding on one {Backend} device (from --hw-device).", kind);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Could not create a {Backend} device.", kind);
-                StatusText.Text = $"No {kind} device — see log.";
-                return;
-            }
-        }
-
-        if (Soak is { } soak)
-        {
-            await StartSoakAsync(soak, hwMode);
-            return;
-        }
-
-        _presenting = $"Presenting {Path.GetFileName(StartupFilePath)}";
-        StatusText.Text = _presenting + " …";
-        await StartPlayerAsync(StartupFilePath, hwMode, Host(VideoHost, column: null));
-
-        // The status changes as frames are presented and the window is resized, so it is polled.
-        _statusTimer = new DispatcherTimer(
-            TimeSpan.FromMilliseconds(500),
-            DispatcherPriority.Background,
-            (_, _) => ShowSuperResolutionStatus()
-        );
-        _statusTimer.Start();
-    }
-
-    /// <summary>S toggles the driver's video super resolution on every pane (#560).</summary>
-    private void OnKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.Key != Key.S)
-            return;
-
-        foreach (var view in _surfaces.OfType<CompositionInteropVideoView>())
-            view.DriverSuperResolution = !view.DriverSuperResolution;
-        _logger.LogInformation(
-            "Driver super resolution toggled {State}.",
-            _surfaces.OfType<CompositionInteropVideoView>().FirstOrDefault()?.DriverSuperResolution == true ? "on" : "off"
-        );
-        ShowSuperResolutionStatus();
-    }
-
-    private void ShowSuperResolutionStatus()
-    {
-        var view = _surfaces.OfType<CompositionInteropVideoView>().FirstOrDefault();
-        if (view is null)
-            return;
-        StatusText.Text = $"{_presenting} · super resolution: {view.DriverSuperResolutionStatus}";
-    }
-
-    /// <summary>Starts both players, then samples them on the interval the options set.</summary>
-    private async Task StartSoakAsync(SoakOptions soak, HardwareDecodeMode hwMode)
-    {
-        var left = StartupFilePath!;
-        var right = soak.SecondFilePath is { } second && File.Exists(second) ? second : left;
-
-        var grid = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("*,*"),
-        };
-        VideoHost.Children.Add(grid);
-
-        _sampler = SoakSampler.TryCreate(soak.CsvPath, soak.Label, _logger);
-        if (_sampler is null)
-        {
-            StatusText.Text = $"Soak aborted — cannot write {soak.CsvPath}.";
-            return;
-        }
-
-        StatusText.Text = $"Soak '{soak.Label}' → {soak.CsvPath}";
-        _logger.LogInformation(
-            "Soak '{Label}': left={Left}, right={Right}, every {N}s → {Csv}.",
-            soak.Label,
-            Path.GetFileName(left),
-            Path.GetFileName(right),
-            soak.SampleSeconds,
-            soak.CsvPath
-        );
-
-        var leftPlayer = await StartPlayerAsync(left, hwMode, Host(grid, column: 0));
-        var rightPlayer = leftPlayer is null
-            ? null
-            : await StartPlayerAsync(right, hwMode, Host(grid, column: 1));
-
-        // A soak is two panes or nothing: one pane measures a condition the soak is not about, and
-        // a player left running unsampled says nothing. Stop what started.
-        if (leftPlayer is null || rightPlayer is null || _isClosing)
-        {
-            _logger.LogWarning("Soak '{Label}' did not start both panes; stopping.", soak.Label);
-            StatusText.Text = "Soak aborted — a pane did not start. See the log.";
-            await StopPlaybackAsync();
-            return;
-        }
-
-        _sampler.Watch("left", Path.GetFileName(left), leftPlayer);
-        _sampler.Watch("right", Path.GetFileName(right), rightPlayer);
-
-        _sampleTimer = new DispatcherTimer(
-            TimeSpan.FromSeconds(soak.SampleSeconds),
-            DispatcherPriority.Background,
-            (_, _) =>
-            {
-                if (_sampler is null)
-                    return;
-                StatusText.Text = _sampler.Sample();
-                if (_sampler.Faulted)
-                    _sampleTimer?.Stop();
-            }
-        );
-        _sampleTimer.Start();
-    }
-
-    /// <summary>A panel inside <paramref name="parent"/>, in <paramref name="column"/> if it is a grid.</summary>
-    private static Panel Host(Panel parent, int? column)
-    {
-        if (column is null)
-            return parent;
-
-        var host = new Panel();
-        Grid.SetColumn(host, column.Value);
-        parent.Children.Add(host);
-        return host;
-    }
-
-    /// <summary>
-    /// Builds a zero-copy presenter inside <paramref name="host"/> and plays <paramref name="path"/>
-    /// through it, looping. Returns the player, or <see langword="null"/> when it could not start.
-    /// </summary>
-    private async Task<IMediaTransport?> StartPlayerAsync(
-        string path,
-        HardwareDecodeMode hwMode,
-        Panel host
+    public MainWindow(
+        ILoggerFactory loggerFactory,
+        string? path,
+        HardwareDecodeBackendKind? backend,
+        bool superResolution
     )
     {
-        // Present via the compositor-interop zero-copy view: the hardware-decoded frame stays on
-        // the GPU, is color-converted to BGRA, and is imported straight into Avalonia's
-        // compositor with no CPU round-trip.
-        //
-        // The surface joins the teardown list only once its player is built, so a teardown that
-        // runs while it is being built cannot dispose a surface that build is still using. Until
-        // then this method owns it.
-        IVideoSurface surface = new CompositionInteropVideoView { DriverSuperResolution = StartupSuperResolution };
-        host.Children.Add(surface.Control);
-        var videoSink = surface.AttachSink(_loggerFactory);
-        _logger.LogInformation("Presentation surface: compositor interop (zero-copy).");
+        _loggerFactory = loggerFactory;
+        _path = path;
+        _backend = backend;
+        InitializeComponent();
+        VideoView.DriverSuperResolution = superResolution;
+        Closing += OnClosing;
+    }
 
-        var handedOver = false;
+    private async Task StartAsync()
+    {
+        if (_path is null)
+        {
+            StatusText.Text = "Pass an H.264 or HEVC file to play.";
+            return;
+        }
+
         try
         {
+            // Optional: one device the decoder borrows instead of creating its own. A D3D12VA
+            // frame is converted on that device and copied across to the compositor's D3D11 side.
+            _device = _backend is { } backend ? HardwareDevice.Create(backend) : null;
+
+            // The view's sink takes D3D11 and D3D12 frames, so the player keeps hardware-decoded
+            // frames on the GPU without being asked. Software-decoded frames are uploaded instead.
             var builder = FrameFlowPlayer
                 .Create()
-                .WithMedia(path)
-                .WithVideoSink(videoSink)
-                .WithHardwareDecode(hwMode)
+                .WithMedia(_path)
+                .WithVideoSink(((IVideoSurface)VideoView).AttachSink(_loggerFactory))
                 .WithRepeatMode(RepeatMode.One)
                 .WithLogger(_loggerFactory);
-            if (_hardwareDevice is not null)
-                builder = builder.WithHardwareDevice(_hardwareDevice);
-            var player = await builder.BuildPlayerAsync();
+            if (_device is not null)
+                builder = builder.WithHardwareDevice(_device);
 
-            // The window can start closing while a player is being built. Its teardown has already
-            // run, so this player and its surface dispose themselves instead of joining the lists.
-            if (_isClosing)
-            {
-                await player.DisposeAsync();
-                await DisposeSurfaceAsync(surface);
-                return null;
-            }
-
-            // Both are handed to the teardown together, on the UI thread, with no await between
-            // the check above and here.
-            _players.Add(player);
-            _surfaces.Add(surface);
-            handedOver = true;
-
-            var played = await player.PlayAsync();
-            if (!played.IsSuccess)
-            {
-                _logger.LogError(
-                    played.Error.Inner,
-                    "Zero-copy playback refused: {Category}: {Message}",
-                    played.Error.Category,
-                    played.Error.Message
-                );
-                StatusText.Text = $"Refused — {played.Error.Message}";
-                // A player that refused to start still holds a session and a presenter. A soak
-                // that retries would stack them up, so this one goes now.
-                _players.Remove(player);
-                _surfaces.Remove(surface);
-                await player.DisposeAsync();
-                await DisposeSurfaceAsync(surface);
-                return null;
-            }
-
-            _logger.LogInformation("Playback started on the zero-copy composition-interop sink.");
-            return player;
+            _player = await builder.BuildPlayerAsync();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Zero-copy playback failed to start (hardware decode required).");
-            StatusText.Text = "Failed — see log. (Hardware decode required for this spike.)";
-            // A build that threw left the surface with this method, so it disposes it. One handed
-            // over is the teardown's, whether or not the list still holds it.
-            if (!handedOver)
-                await DisposeSurfaceAsync(surface);
-            return null;
+            _loggerFactory.CreateLogger<MainWindow>().LogError(ex, "Could not open {Path}.", _path);
+            StatusText.Text = $"Could not open {Path.GetFileName(_path)}: {ex.Message}";
+            return;
         }
-    }
 
-    private static async Task DisposeSurfaceAsync(IVideoSurface surface)
-    {
-        if (surface is IAsyncDisposable disposable)
-            await disposable.DisposeAsync();
-    }
-
-    /// <summary>Disposes the sampler, every player and every surface, in that order.</summary>
-    private async Task StopPlaybackAsync()
-    {
-        _sampleTimer?.Stop();
-        _statusTimer?.Stop();
-        _sampler?.Dispose();
-        _sampler = null;
-
-        foreach (var player in _players)
+        var played = await _player.PlayAsync();
+        if (!played.IsSuccess)
         {
-            try { await player.DisposeAsync(); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Player teardown threw"); }
+            StatusText.Text = $"{played.Error.Category}: {played.Error.Message}";
+            return;
         }
-        _players.Clear();
 
-        foreach (var surface in _surfaces)
-        {
-            await DisposeSurfaceAsync(surface);
-        }
-        _surfaces.Clear();
-
-        // Last: the players' decoders borrowed it.
-        _hardwareDevice?.Dispose();
-        _hardwareDevice = null;
+        // The status changes as frames are presented, so it is polled.
+        DispatcherTimer.Run(
+            () =>
+            {
+                StatusText.Text =
+                    $"{Path.GetFileName(_path)} · super resolution: {VideoView.DriverSuperResolutionStatus}";
+                return !_closing;
+            },
+            TimeSpan.FromMilliseconds(500)
+        );
     }
 
-    private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
+    protected override void OnLoaded(RoutedEventArgs e)
     {
-        if (_isClosing)
+        base.OnLoaded(e);
+        _startup = StartAsync();
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.Key == Key.S)
+            VideoView.DriverSuperResolution = !VideoView.DriverSuperResolution;
+    }
+
+    private async void OnClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (_closed)
             return;
         e.Cancel = true;
-        _isClosing = true;
-        Closing -= OnWindowClosing;
-        _exitTimer?.Stop();
-        _sampleTimer?.Stop();
-        _statusTimer?.Stop();
+        if (_closing)
+            return;
+        _closing = true;
 
-        // A last sample, so a run that ends mid-window still records what that window did.
-        _sampler?.Sample();
-        await StopPlaybackAsync();
+        // A player still being built finishes first, so it is disposed too. Then the view, which
+        // owns the sink, and last the device the decoder borrowed.
+        await _startup;
+        if (_player is not null)
+            await _player.DisposeAsync();
+        await VideoView.DisposeAsync();
+        _device?.Dispose();
 
-        _logger.LogInformation("Shutdown complete; flushing log.");
-        _loggerFactory.Dispose();
+        _closed = true;
         Close();
     }
 }
