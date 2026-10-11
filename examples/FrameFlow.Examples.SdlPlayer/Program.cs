@@ -1,479 +1,294 @@
 using System.Runtime.InteropServices;
+using System.Threading.Channels;
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Examples.SdlPlayer;
 using FrameFlow.Media;
-using FrameFlow.Native;
-using FrameFlow.Playback; // IPlaybackController — this example drives the state machine directly
+using FrameFlow.Playback;
+using FrameFlow.Player;
 using FrameFlow.Sdl;
 using FrameFlow.Sdl.Bootstrap;
 using Microsoft.Extensions.Logging;
 using Silk.NET.SDL;
+using PlayerCommand = System.Func<FrameFlow.Player.IMediaPlayer, System.Threading.Tasks.Task>;
 
-// ──────────────────────────────────────────────────────────────────────
-// FrameFlow SDL Player (substrate edition; Crossbar ADR-0014 Phase 3)
-//
-// A lightweight media player built on PlaybackController.Create + SDL2.
-//
-// Controls:
-//   [O]           Open file dialog
-//   [Q] / [Esc]   Quit
-//   [Space]       Pause / resume
-//   [S]           Stop
-//   [L]           Toggle loop
-//
-// Drag-and-drop a media file onto the window to play it.
-// Pass a file path on the command line to play it immediately.
-// Pass --loop to enable looping from the start.
-// ──────────────────────────────────────────────────────────────────────
+// FrameFlow SDL Player: plays media files in an SDL window, with OpenAL audio.
 
-// SDL requires that SDL_Init, CreateWindow, PollEvent, and RenderPresent all
-// happen on the same OS thread. On macOS/AppKit this must be the actual OS
-// main thread — System.Threading.Thread is NOT the OS main thread and causes
-// NSInternalInconsistencyException. Run SdlMain() directly here to preserve
-// the OS main thread identity.
-Environment.ExitCode = SdlMain(args);
+if (!TryReadArgs(args, out var startFile, out var repeat))
+    return 1;
 
-// ── Entry point (runs on the OS main thread) ─────────────────────────
+using var loggerFactory = LoggerFactory.Create(logging =>
+    logging.AddSimpleConsole(console => console.SingleLine = true).AddExampleFile("sdl-player.log")
+);
 
-static int SdlMain(string[] args)
+// The window posts commands here; RunPlayerAsync runs them against the player one at a time.
+var commands = Channel.CreateUnbounded<PlayerCommand>();
+if (startFile is not null)
+    commands.Writer.TryWrite(player => OpenAsync(player, startFile));
+
+// SDL wants its window and event loop on the OS main thread (on macOS, AppKit's), so this thread
+// runs SDL and never awaits. The player runs beside it on the thread pool.
+return RunWindow(commands, repeat, loggerFactory);
+
+// ── The player ───────────────────────────────────────────────────────
+
+static async Task RunPlayerAsync(
+    SdlVideoSink video,
+    ChannelReader<PlayerCommand> commands,
+    RepeatMode repeat,
+    ILoggerFactory loggerFactory
+)
 {
-    using var loggerFactory = CreateLoggerFactory();
+    await using var audio = new OpenAlAudioSink(loggerFactory.CreateLogger<OpenAlAudioSink>());
 
-    // ── Bootstrap native libraries ───────────────────────────────────
-    if (!TryBootstrapFfmpeg(loggerFactory, out var ffmpegMessage))
+    async Task<IMediaPlayer> BuildAsync()
     {
-        Console.Error.WriteLine($"FFmpeg bootstrap failed: {ffmpegMessage}");
+        var built = await FrameFlowPlayer
+            .Create()
+            .WithVideoSink(video)
+            .WithAudioSink(audio)
+            .WithRepeatMode(repeat)
+            .WithLogger(loggerFactory)
+            .BuildPlayerAsync();
+
+        built.StateChanged.Subscribe(state => Console.WriteLine(state));
+        built.ErrorOccurred.Subscribe(error =>
+            Console.Error.WriteLine($"Playback error: {error.Message}")
+        );
+        return built;
+    }
+
+    var player = await BuildAsync();
+    try
+    {
+        await foreach (var command in commands.ReadAllAsync())
+        {
+            // Error is final, and a file that fails to open while nothing plays leaves the player
+            // there, so the next command gets a fresh one.
+            if (player.State == PlaybackState.Error)
+            {
+                repeat = player.GetDiagnostics().RepeatMode;
+                await player.DisposeAsync();
+                player = await BuildAsync();
+            }
+
+            await command(player);
+        }
+    }
+    finally
+    {
+        await player.DisposeAsync();
+    }
+}
+
+static async Task OpenAsync(IMediaPlayer player, string path)
+{
+    Console.WriteLine($"Opening {Path.GetFileName(path)}");
+    var replaced = await player.ReplaceAsync([MediaSource.FromFile(path)]);
+    if (!replaced.IsSuccess)
+    {
+        Console.Error.WriteLine($"Open failed: {replaced.Error.Message}");
+        return;
+    }
+
+    // A playing player moves to the new file by itself; in any other state it waits for Play.
+    if (player.State != PlaybackState.Playing)
+        Check("Play", await player.PlayAsync());
+}
+
+static async Task TogglePauseAsync(IMediaPlayer player)
+{
+    if (player.State == PlaybackState.Playing)
+        Check("Pause", await player.PauseAsync());
+    else
+        Check("Play", await player.PlayAsync());
+}
+
+static async Task StopAsync(IMediaPlayer player)
+{
+    if (player.State == PlaybackState.Playing && !Check("Pause", await player.PauseAsync()))
+        return;
+    Check("Seek", await player.SeekAsync(TimeSpan.Zero));
+}
+
+static async Task ToggleLoopAsync(IMediaPlayer player)
+{
+    // IMediaTransport sets the repeat mode but does not report it; the diagnostics snapshot does.
+    var looping = player.GetDiagnostics().RepeatMode == RepeatMode.One;
+    var mode = looping ? RepeatMode.Off : RepeatMode.One;
+    if (Check("Loop", await player.SetRepeatModeAsync(mode)))
+        Console.WriteLine(mode == RepeatMode.One ? "Loop on" : "Loop off");
+}
+
+static bool Check(string command, Result result)
+{
+    if (!result.IsSuccess)
+        Console.Error.WriteLine($"{command} failed: {result.Error.Message}");
+    return result.IsSuccess;
+}
+
+// ── The window ───────────────────────────────────────────────────────
+
+static int RunWindow(
+    Channel<PlayerCommand> commands,
+    RepeatMode repeat,
+    ILoggerFactory loggerFactory
+)
+{
+    var bootstrapper = new SdlBootstrapper(new SdlNativeOptions(), loggerFactory);
+    var bootstrap = bootstrapper.Initialize();
+    if (!bootstrap.IsSuccess)
+    {
+        Console.Error.WriteLine($"SDL bootstrap failed: {bootstrap.Message}");
         return 1;
     }
 
-    if (!TryBootstrapSdl(loggerFactory, out var sdl))
-        return 1;
-
+    var sdl = bootstrapper.CreateSdlApi();
     if (sdl.Init(Sdl.InitVideo | Sdl.InitEvents) < 0)
     {
         Console.Error.WriteLine($"SDL_Init failed: {sdl.GetErrorS()}");
         return 1;
     }
 
-    // ── Construct sinks directly (no DI) ─────────────────────────────
-    // The substrate controller doesn't need a DI container: sinks
-    // construct directly and PlaybackController.Create takes them as
-    // parameters.
-#pragma warning disable CA2000 // videoSink lifetime owned by main + finally
-    var videoSink = new SdlVideoSink(
-        sdl,
-        WindowTitle.Default,
-        WindowTitle.InitialWidth,
-        WindowTitle.InitialHeight,
-        loggerFactory.CreateLogger<SdlVideoSink>()
-    );
-    var audioSink = new OpenAlAudioSink(loggerFactory.CreateLogger<OpenAlAudioSink>());
-#pragma warning restore CA2000 // audioSink lifetime owned by main + finally below
-
-    var transitionLogger = loggerFactory.CreateLogger("FrameFlow.Examples.SdlPlayer.Transitions");
-
-    // ── Run the event loop ───────────────────────────────────────────
     try
     {
-        // Canonical-surface note: this example deliberately drops below
-        // the FrameFlowPlayer builder to the raw
-        // PlaybackController.Create state machine. The interactive SDL
-        // shell IS a state-machine consumer — it subscribes to
-        // PlaybackStateChanged / SeekStateChanged / RepeatModeChanged /
-        // ErrorOccurred, drives Load/Play/Pause/Seek/SetRepeatMode by
-        // hand from key + drag-drop events, and inspects controller.State
-        // each tick to detect terminal states. IMediaTransport intentionally
-        // hides exactly those transitions, so app/host code should prefer
-        // FrameFlowPlayer.Create().WithMedia(...).BuildPlayerAsync(); reach for
-        // PlaybackController.Create only when the state machine itself is
-        // the thing you're building around, as here.
-        //
-        // Closure-style controller factory replaces the old
-        // IPlaybackControllerFactory. Each call returns a fresh
-        // PlaybackController bound to the long-lived sinks.
-        IPlaybackController Factory() =>
-            PlaybackController.Create(
-                videoSink: videoSink,
-                audioSink: audioSink,
-                hardwareDecodeMode: HardwareDecodeMode.Auto,
-                loggerFactory: loggerFactory
-            );
-
-        return RunEventLoop(sdl, videoSink, Factory, transitionLogger, args);
+#pragma warning disable CA2000 // released by DestroyResources below, which must run on this thread
+        var video = new SdlVideoSink(
+            sdl,
+            "FrameFlow SDL Player",
+            1280,
+            720,
+            loggerFactory.CreateLogger<SdlVideoSink>()
+        );
+#pragma warning restore CA2000
+        try
+        {
+            RunEventLoop(sdl, video, commands, repeat, loggerFactory);
+        }
+        finally
+        {
+            video.DestroyResources();
+        }
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"FrameFlow SDL Player failed: {ex}");
+        return 1;
     }
     finally
     {
-        // Best-effort cleanup of the audio sink (deactivated already
-        // by the last controller's dispose). DisposeAsync releases the
-        // OpenAL device handle.
-        try
-        {
-            audioSink.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        }
-        catch { /* swallow during shutdown */ }
-        videoSink.DestroyResources();
         sdl.Quit();
     }
 }
 
-// ── Logging ──────────────────────────────────────────────────────────
-
-static ILoggerFactory CreateLoggerFactory() =>
-    LoggerFactory.Create(builder =>
+static void RunEventLoop(
+    Sdl sdl,
+    SdlVideoSink video,
+    Channel<PlayerCommand> commands,
+    RepeatMode repeat,
+    ILoggerFactory loggerFactory
+)
+{
+    using var closeWindow = new CancellationTokenSource();
+    var playerLoop = Task.Run(async () =>
     {
-        builder
-            .SetMinimumLevel(LogLevel.Information)
-            .AddFilter("FrameFlow", LogLevel.Information)
-            .AddSimpleConsole(options =>
-            {
-                options.TimestampFormat = "HH:mm:ss.fff ";
-                options.SingleLine = true;
-                options.IncludeScopes = false;
-            });
-
-        // File sink, for reading after the window has gone. Additive: the
-        // console provider above is untouched. SetMinimumLevel filters before
-        // any provider sees a record, so both carry Information and up.
-        builder.AddExampleFile(
-            "sdl-player.log",
-            onFailure: ex => Console.Error.WriteLine($"File logging is off: {ex.Message}")
-        );
+        try
+        {
+            await RunPlayerAsync(video, commands.Reader, repeat, loggerFactory);
+        }
+        finally
+        {
+            closeWindow.Cancel(); // a player that fails closes the window
+        }
     });
 
-// ── Native bootstrap ─────────────────────────────────────────────────
-
-static bool TryBootstrapFfmpeg(ILoggerFactory loggerFactory, out string message)
-{
-    var bootstrapper = new FrameFlowBootstrapper(new FrameFlowNativeOptions(), loggerFactory);
-    var result = bootstrapper.Initialize();
-    message = result.Message ?? "Unknown error";
-    return result.IsSuccess;
+    Console.WriteLine(
+        "[O] open (or drop a file)  [Space] pause/resume  [S] stop  [L] loop  [Q]/[Esc] quit"
+    );
+    try
+    {
+        SdlEventLoop.Run(
+            sdl,
+            video,
+            onEvent: (ref Event e) => HandleEvent(sdl, ref e, commands.Writer),
+            ct: closeWindow.Token
+        );
+    }
+    finally
+    {
+        // The player is disposed before its window goes.
+        commands.Writer.Complete();
+        playerLoop.GetAwaiter().GetResult();
+    }
 }
 
-static bool TryBootstrapSdl(ILoggerFactory loggerFactory, out Sdl sdl)
+// Runs on the SDL thread: it never waits on the player, it posts a command and returns.
+// [O]'s dialog is modal, so the video stops repainting while it is open.
+static bool HandleEvent(Sdl sdl, ref Event e, ChannelWriter<PlayerCommand> commands)
 {
-    var bootstrapper = new SdlBootstrapper(new SdlNativeOptions(), loggerFactory);
-    var result = bootstrapper.Initialize();
-    if (!result.IsSuccess)
+    switch ((EventType)e.Type)
     {
-        Console.Error.WriteLine($"SDL bootstrap failed: {result.Message}");
-        sdl = null!;
-        return false;
+        case EventType.Dropfile:
+            PostOpen(commands, ReadDroppedFile(sdl, ref e));
+            break;
+
+        case EventType.Keydown when e.Key.Repeat == 0:
+            switch ((KeyCode)e.Key.Keysym.Sym)
+            {
+                case KeyCode.KQ or KeyCode.KEscape:
+                    return false;
+                case KeyCode.KO:
+                    PostOpen(commands, FileDialogHelper.ShowOpenFileDialog());
+                    break;
+                case KeyCode.KSpace:
+                    commands.TryWrite(TogglePauseAsync);
+                    break;
+                case KeyCode.KS:
+                    commands.TryWrite(StopAsync);
+                    break;
+                case KeyCode.KL:
+                    commands.TryWrite(ToggleLoopAsync);
+                    break;
+            }
+            break;
     }
-    sdl = bootstrapper.CreateSdlApi();
     return true;
 }
 
-// ── Event loop ───────────────────────────────────────────────────────
-
-static int RunEventLoop(
-    Sdl sdl,
-    SdlVideoSink videoSink,
-    Func<IPlaybackController> controllerFactory,
-    ILogger transitionLogger,
-    string[] args
-)
+static void PostOpen(ChannelWriter<PlayerCommand> commands, string? path)
 {
-    PrintBanner();
-
-    var cliLoop = args.Contains("--loop");
-    var pendingFile = args.FirstOrDefault(a =>
-        !a.StartsWith("--", StringComparison.Ordinal) && File.Exists(a)
-    );
-    IPlaybackController? controller = null;
-    IDisposable? controllerSubscriptions = null;
-
-    SdlEventLoop.Run(
-        sdl,
-        videoSink,
-        onTick: () =>
-        {
-            if (pendingFile is not null)
-            {
-                controller = ReplaceController(
-                    controllerFactory,
-                    controller,
-                    ref controllerSubscriptions,
-                    transitionLogger,
-                    pendingFile,
-                    cliLoop
-                );
-                pendingFile = null;
-            }
-
-            if (controller is not null && IsTerminalState(controller.State))
-            {
-                PrintPlaybackSummary(controller, videoSink);
-                DisposeController(controller, ref controllerSubscriptions);
-                controller = null;
-                videoSink.SetWindowTitle(WindowTitle.Idle);
-            }
-        },
-        onEvent: (ref Event evt) =>
-        {
-            switch ((EventType)evt.Type)
-            {
-                case EventType.Dropfile:
-                    pendingFile = ReadDroppedFilePath(sdl, ref evt);
-                    return true;
-                case EventType.Keydown:
-                    var action = HandleKeyDown(evt.Key.Keysym.Sym, controller);
-                    if (action.OpenFile is not null)
-                        pendingFile = action.OpenFile;
-                    return action.Continue;
-            }
-            return true;
-        }
-    );
-
-    if (controller is not null)
-        DisposeController(controller, ref controllerSubscriptions);
-
-    return 0;
-}
-
-// ── Controller lifecycle ─────────────────────────────────────────────
-
-static IPlaybackController? ReplaceController(
-    Func<IPlaybackController> factory,
-    IPlaybackController? previous,
-    ref IDisposable? previousSubscriptions,
-    ILogger transitionLogger,
-    string filePath,
-    bool loop
-)
-{
-    if (previous is not null)
-        DisposeController(previous, ref previousSubscriptions);
-
-    var controller = factory();
-    var subscriptions = SubscribeToStateMachineTransitions(controller, transitionLogger, filePath);
-
-    var loadResult = controller.LoadAsync(MediaSource.FromFile(filePath)).GetAwaiter().GetResult();
-    if (!loadResult.IsSuccess)
+    if (path is null)
+        return;
+    if (!File.Exists(path))
     {
-        Console.Error.WriteLine(
-            $"Load failed [{Path.GetFileName(filePath)}]: {loadResult.Error.Message}"
-        );
-        subscriptions.Dispose();
-        controller.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        previousSubscriptions = null;
-        return null;
+        Console.Error.WriteLine($"File not found: {path}");
+        return;
     }
-
-    var playResult = controller.PlayAsync().GetAwaiter().GetResult();
-    if (!playResult.IsSuccess)
-    {
-        Console.Error.WriteLine(
-            $"Play failed [{Path.GetFileName(filePath)}]: {playResult.Error.Message}"
-        );
-        subscriptions.Dispose();
-        controller.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        previousSubscriptions = null;
-        return null;
-    }
-
-    Console.WriteLine($"Playing: {Path.GetFileName(filePath)}");
-
-    if (loop)
-    {
-        controller.SetRepeatModeAsync(RepeatMode.One).GetAwaiter().GetResult();
-        Console.WriteLine("Loop: ON (via --loop)");
-    }
-
-    previousSubscriptions = subscriptions;
-    return controller;
+    commands.TryWrite(player => OpenAsync(player, path));
 }
 
-static void DisposeController(IPlaybackController controller, ref IDisposable? subscriptions)
+static unsafe string? ReadDroppedFile(Sdl sdl, ref Event e)
 {
-    subscriptions?.Dispose();
-    subscriptions = null;
-    UnloadIfActive(controller);
-    controller.DisposeAsync().AsTask().GetAwaiter().GetResult();
-}
-
-static IDisposable SubscribeToStateMachineTransitions(
-    IPlaybackController controller,
-    ILogger logger,
-    string filePath
-)
-{
-    var sourceName = Path.GetFileName(filePath);
-
-    var playbackSubscription = controller.PlaybackStateChanged.Subscribe(transition =>
-        logger.LogInformation(
-            "[{Source}] playback: {Previous} -> {Current}",
-            sourceName,
-            transition.Previous,
-            transition.Current
-        )
-    );
-
-    var seekSubscription = controller.SeekStateChanged.Subscribe(transition =>
-        logger.LogInformation(
-            "[{Source}] seek: {Previous} -> {Current}",
-            sourceName,
-            transition.Previous,
-            transition.Current
-        )
-    );
-
-    var repeatSubscription = controller.RepeatModeChanged.Subscribe(transition =>
-        logger.LogInformation(
-            "[{Source}] repeat: {Previous} -> {Current}",
-            sourceName,
-            transition.Previous,
-            transition.Current
-        )
-    );
-
-    var errorSubscription = controller.ErrorOccurred.Subscribe(error =>
-        logger.LogError(
-            error.Inner,
-            "[{Source}] playback error: {Category} - {Message}",
-            sourceName,
-            error.Category,
-            error.Message
-        )
-    );
-
-    return new CompositeSubscription(
-        playbackSubscription,
-        seekSubscription,
-        repeatSubscription,
-        errorSubscription
-    );
-}
-
-static void UnloadIfActive(IPlaybackController controller)
-{
-    if (controller.State is PlaybackState.Playing or PlaybackState.Paused)
-        controller.UnloadAsync().GetAwaiter().GetResult();
-}
-
-static bool IsTerminalState(PlaybackState state) =>
-    state is PlaybackState.Ended or PlaybackState.Error;
-
-// ── Key handling ─────────────────────────────────────────────────────
-
-static KeyAction HandleKeyDown(int key, IPlaybackController? controller)
-{
-    switch (key)
-    {
-        case (int)KeyCode.KQ or (int)KeyCode.KEscape:
-            return new KeyAction(Continue: false, OpenFile: null);
-
-        case (int)KeyCode.KO:
-            return new KeyAction(Continue: true, OpenFile: FileDialogHelper.ShowOpenFileDialog());
-
-        case (int)KeyCode.KSpace when controller is not null:
-            TogglePause(controller);
-            return new KeyAction(true, null);
-
-        case (int)KeyCode.KS when controller is not null:
-            if (controller.State is PlaybackState.Playing or PlaybackState.Paused)
-            {
-                controller.PauseAsync().GetAwaiter().GetResult();
-                controller.SeekAsync(TimeSpan.Zero).GetAwaiter().GetResult();
-                Console.WriteLine("Stopped (at beginning). Press [Space] to play.");
-            }
-            return new KeyAction(true, null);
-
-        case (int)KeyCode.KL when controller is not null:
-            ToggleLoop(controller);
-            return new KeyAction(true, null);
-    }
-    return new KeyAction(true, null);
-}
-
-static void TogglePause(IPlaybackController controller)
-{
-    if (controller.State == PlaybackState.Playing)
-    {
-        controller.PauseAsync().GetAwaiter().GetResult();
-        Console.WriteLine("Paused.");
-    }
-    else if (controller.State == PlaybackState.Paused)
-    {
-        controller.PlayAsync().GetAwaiter().GetResult();
-        Console.WriteLine("Resumed.");
-    }
-}
-
-static void ToggleLoop(IPlaybackController controller)
-{
-    var newMode = controller.RepeatMode == RepeatMode.Off ? RepeatMode.One : RepeatMode.Off;
-    controller.SetRepeatModeAsync(newMode).GetAwaiter().GetResult();
-    Console.WriteLine(newMode == RepeatMode.One ? "Loop: ON" : "Loop: OFF");
-}
-
-// ── Drag-and-drop ────────────────────────────────────────────────────
-
-static unsafe string? ReadDroppedFilePath(Sdl sdl, ref Event evt)
-{
-    var path = Marshal.PtrToStringUTF8((nint)evt.Drop.File);
-    sdl.Free(evt.Drop.File);
-
-    if (path is null || !File.Exists(path))
-    {
-        if (path is not null)
-            Console.Error.WriteLine($"Dropped file not found: {path}");
-        return null;
-    }
-
+    var path = Marshal.PtrToStringUTF8((nint)e.Drop.File);
+    sdl.Free(e.Drop.File);
     return path;
 }
 
-// ── Console output ───────────────────────────────────────────────────
-
-static void PrintBanner()
+static bool TryReadArgs(string[] args, out string? startFile, out RepeatMode repeat)
 {
-    Console.WriteLine("FrameFlow SDL Player ready.");
-    Console.WriteLine("Controls: [O] open  [Space] pause/resume  [S] stop  [L] loop  [Q/Esc] quit");
-    Console.WriteLine("          Drop a file onto the window to play it.");
-}
+    repeat = args.Contains("--loop") ? RepeatMode.One : RepeatMode.Off;
+    string[] files = [.. args.Where(a => a != "--loop")];
+    startFile = files.FirstOrDefault();
 
-static void PrintPlaybackSummary(IPlaybackController controller, SdlVideoSink videoSink)
-{
-    Console.WriteLine(
-        $"Playback {controller.State} — "
-            + $"{videoSink.RenderedFrameCount} rendered, "
-            + $"{videoSink.DroppedFrameCount} dropped"
-    );
-}
-
-// ── Type declarations (must follow all top-level statements) ────────
-
-/// <summary>
-/// Result of a key-down dispatch. <see cref="Continue"/> is false when the
-/// key requested quit (Q/Esc); <see cref="OpenFile"/> is non-null when the
-/// key triggered a file-picker dialog and the user chose a file.
-/// </summary>
-record struct KeyAction(bool Continue, string? OpenFile);
-
-// ── Window title constants ───────────────────────────────────────────
-
-static class WindowTitle
-{
-    public const string Default = "FrameFlow SDL Player";
-    public const string Idle = "FrameFlow SDL Player — press [O] to open a file";
-    public const int InitialWidth = 1280;
-    public const int InitialHeight = 720;
-}
-
-sealed class CompositeSubscription(params IDisposable[] subscriptions) : IDisposable
-{
-    private readonly IDisposable[] _subscriptions = subscriptions;
-    private bool _disposed;
-
-    public void Dispose()
+    if (files.Length > 1 || startFile?.StartsWith('-') == true)
     {
-        if (_disposed)
-            return;
-
-        _disposed = true;
-        foreach (var subscription in _subscriptions)
-            subscription.Dispose();
+        Console.Error.WriteLine("Usage: FrameFlow.Examples.SdlPlayer [--loop] [media-file]");
+        return false;
     }
+    if (startFile is not null && !File.Exists(startFile))
+    {
+        Console.Error.WriteLine($"File not found: {startFile}");
+        return false;
+    }
+    return true;
 }
