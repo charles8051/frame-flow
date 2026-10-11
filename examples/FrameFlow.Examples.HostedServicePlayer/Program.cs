@@ -42,8 +42,7 @@ internal sealed class PlaybackService(
     {
         try
         {
-            await using var pass = await FrameFlowPass
-                .Create(inputPath)
+            await using var pass = await FrameFlowPass.Create(inputPath)
                 .WithAudioSink(audio)
                 .WithLogger(loggerFactory)
                 .BuildAsync(stoppingToken);

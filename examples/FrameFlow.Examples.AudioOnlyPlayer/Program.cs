@@ -16,8 +16,7 @@ if (!ExampleArgs.TryReadInputPath(args, Usage, out var inputPath))
 using var loggerFactory = ExampleLogging.CreateFactory("audio-only-player.log");
 
 await using var audio = new OpenAlAudioSink(loggerFactory.CreateLogger<OpenAlAudioSink>());
-await using var pass = await FrameFlowPass
-    .Create(inputPath)
+await using var pass = await FrameFlowPass.Create(inputPath)
     .WithAudioSink(audio)
     .WithLogger(loggerFactory)
     .BuildAsync();
