@@ -69,8 +69,8 @@ static async Task RunPlayerAsync(
     {
         await foreach (var command in commands.ReadAllAsync())
         {
-            // Error is final. A file that fails to open while nothing plays ends there, so the
-            // next command gets a fresh player.
+            // Error is final, and a file that fails to open while nothing plays leaves the player
+            // there, so the next command gets a fresh one.
             if (player.State == PlaybackState.Error)
             {
                 repeat = player.GetDiagnostics().RepeatMode;
