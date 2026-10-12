@@ -104,6 +104,54 @@ public sealed class SdlEventLoopTests
     }
 
     [Fact]
+    public async Task A_command_a_handler_posts_runs_while_the_loop_keeps_rendering_and_polling()
+    {
+        // The handler posts a command on the first event. The command can finish only after the
+        // loop has rendered twice more, and Quit arrives only after the command has finished. So
+        // Run returns only if the command ran beside the loop: it neither stalled rendering and
+        // polling nor waited for the loop to exit.
+        var pump = new FakePump(EventType.Keydown);
+        var commands = new SdlCommandQueue(NullLogger.Instance);
+        var renderedTwiceMore = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var ran = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var quitSent = false;
+
+        pump.OnRender = count =>
+        {
+            if (count == 3)
+                renderedTwiceMore.TrySetResult();
+        };
+        pump.OnEmptyPoll = _ =>
+        {
+            if (!quitSent && ran.Task.IsCompleted)
+            {
+                quitSent = true;
+                pump.Enqueue(EventType.Quit);
+            }
+        };
+
+        var exit = await RunAsync(
+            pump,
+            commands,
+            onEvent: (ref Event _) =>
+            {
+                commands.Post(async _ =>
+                {
+                    await renderedTwiceMore.Task;
+                    ran.SetResult();
+                });
+                return true;
+            }
+        );
+
+        Assert.Equal(0, exit);
+        Assert.True(quitSent);
+        Assert.True(pump.Renders >= 3);
+    }
+
+    [Fact]
     public async Task A_command_a_handler_posts_runs_off_the_loop_thread_before_Run_returns()
     {
         var pump = new FakePump(EventType.Keydown, EventType.Quit);
@@ -211,13 +259,20 @@ public sealed class SdlEventLoopTests
         /// <summary>Called on the loop's thread with the count of empty polls so far.</summary>
         public Action<int>? OnEmptyPoll { get; set; }
 
+        /// <summary>Called on the loop's thread with the count of renders so far.</summary>
+        public Action<int>? OnRender { get; set; }
+
         public int Renders { get; private set; }
 
         public List<EventType> Discarded { get; } = [];
 
         public void Enqueue(EventType type) => _script.Enqueue(type);
 
-        public void RenderPendingFrame() => Renders++;
+        public void RenderPendingFrame()
+        {
+            Renders++;
+            OnRender?.Invoke(Renders);
+        }
 
         public bool PollEvent(ref Event sdlEvent)
         {

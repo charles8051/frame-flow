@@ -30,7 +30,9 @@ namespace FrameFlow.Sdl;
 /// <see cref="SdlVideoSink.RenderPendingFrame"/>, <see cref="SdlVideoSink.SetWindowTitle"/> and
 /// <see cref="SdlVideoSink.DestroyResources"/>. SDL's window and render calls belong to the thread
 /// that runs the loop, which on macOS must be the OS main thread. To show a command's result in
-/// the window, store it where the loop's <see cref="SdlEventLoop.TickHandler"/> reads it.
+/// the window, store it where the loop's <see cref="SdlEventLoop.TickHandler"/> reads it. A long
+/// command should observe its token: <c>Run</c> waits for it after the loop exits, and until it
+/// finishes the window drops every event, Quit included.
 /// </para>
 /// <para>
 /// <b>Failures.</b> A command that throws, or whose task faults, is logged as an error, and the
