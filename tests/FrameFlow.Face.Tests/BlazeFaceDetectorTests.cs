@@ -1,5 +1,6 @@
 using FrameFlow.Graph;
 using FrameFlow.Inference;
+using FrameFlow.Tests.Shared;
 using Xunit;
 
 namespace FrameFlow.Face.Tests;
@@ -58,6 +59,38 @@ public sealed class BlazeFaceDetectorTests
     }
 
     /// <summary>
+    /// <c>CreateAsync</c> opens the session and warms it up off the caller's thread (#626). The
+    /// open waits on a gate the test opens only after the call has returned and the open has
+    /// reached the gate, so the task is still running, with the open in progress, when the test
+    /// looks at it. The open and the warmup throw if they run on the caller, inside the call or
+    /// posted back to its synchronization context, where the gate could never open, so a
+    /// regression fails the test rather than hanging it.
+    /// </summary>
+    [Fact]
+    public async Task CreateAsync_ReturnsBeforeTheSessionOpens()
+    {
+        using var gate = new OpenGate();
+        var session = new NegativeScoreSession { BeforeRun = () => CallerContext.ThrowIfOnTheCaller("The warmup") };
+        var factory = InferenceSessionFactoryBuilder.Create(
+            ExecutionProvider.Cpu,
+            new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+            {
+                [ExecutionProvider.Cpu] = _ =>
+                {
+                    CallerContext.ThrowIfOnTheCaller("The factory's open");
+                    gate.Wait();
+                    return session;
+                },
+            });
+
+        var creating = CallerContext.Call(() => BlazeFaceDetector.CreateAsync(factory, "face.onnx"));
+
+        await gate.AssertRunningWhileTheOpenWaitsAsync(creating);
+        using var detector = await creating;
+        Assert.Equal(1, session.RunCount);
+    }
+
+    /// <summary>
     /// Two-output BlazeFace-shaped fake. Fills the score output with a
     /// large negative logit each Run so decode returns nothing, and counts
     /// runs so warmup + detect are observable.
@@ -76,6 +109,9 @@ public sealed class BlazeFaceDetectorTests
 
         public bool Disposed { get; private set; }
 
+        /// <summary>Runs at the start of every <c>Run</c>, when set.</summary>
+        public Action? BeforeRun { get; init; }
+
         public IReadOnlyList<string> InputNames { get; } = ["input"];
 
         public IReadOnlyList<string> OutputNames =>
@@ -90,6 +126,7 @@ public sealed class BlazeFaceDetectorTests
             IReadOnlyDictionary<string, ICpuTensor> inputs,
             IReadOnlyDictionary<string, ICpuTensor> outputs)
         {
+            BeforeRun?.Invoke();
             RunCount++;
             if (outputs.TryGetValue("scores", out var scores) && scores is CpuTensor<float> s)
                 s.Span.Fill(-100f);

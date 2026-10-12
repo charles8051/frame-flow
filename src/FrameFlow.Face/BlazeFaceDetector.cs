@@ -218,6 +218,11 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
     /// BlazeFace ships no runtime downloader (ADR-0051): the caller passes
     /// its bundled / pre-seeded model path.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="factory"/> opens the model, and the detector validates and warms it up, on a
+    /// thread-pool thread, so an awaiting UI thread is free while they run. <paramref name="progress"/>
+    /// is called there too; a <see cref="Progress{T}"/> created on the UI thread reports on it.
+    /// </remarks>
     public static async Task<BlazeFaceDetector> CreateAsync(
         FrameFlow.Inference.IInferenceSessionFactory factory,
         string modelPath,
@@ -231,26 +236,27 @@ public sealed partial class BlazeFaceDetector : IDisposable, IImageModel<IReadOn
         var loggers = loggerFactory ?? NullLoggerFactory.Instance;
         var log = loggers.CreateLogger<BlazeFaceDetector>();
 
-        var sw = Stopwatch.StartNew();
-        LogSessionConstructionStarted(log, modelPath);
-        FrameFlow.Inference.IInferenceSession session;
-        try
+        // Opening the session, compiling it for the provider and the warmup run block for as long
+        // as they take, so they run on the pool and the caller's thread is not held for them (#626).
+        return await Task.Run(() =>
         {
-            session = factory.Open(modelPath, progress);
-        }
-        catch (Exception ex)
-        {
-            LogSessionConstructionFailed(log, modelPath, ex);
-            throw;
-        }
-        sw.Stop();
-        LogSessionConstructed(log, sw.Elapsed.TotalMilliseconds);
+            var sw = Stopwatch.StartNew();
+            LogSessionConstructionStarted(log, modelPath);
+            FrameFlow.Inference.IInferenceSession session;
+            try
+            {
+                session = factory.Open(modelPath, progress);
+            }
+            catch (Exception ex)
+            {
+                LogSessionConstructionFailed(log, modelPath, ex);
+                throw;
+            }
+            sw.Stop();
+            LogSessionConstructed(log, sw.Elapsed.TotalMilliseconds);
 
-        // Create() is CPU/GPU work (validation + warmup); keep the async
-        // signature uniform with the YOLO detector without blocking a pool
-        // thread on it.
-        return await Task.FromResult(
-            Create(session, loggers, descriptor, postprocessor, progress)).ConfigureAwait(false);
+            return Create(session, loggers, descriptor, postprocessor, progress);
+        }).ConfigureAwait(false);
     }
 
     private static TensorShape InputTensorShape(BlazeFaceModelDescriptor shape)
