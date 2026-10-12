@@ -773,8 +773,11 @@ public sealed partial class OpenAlAudioSink
             QueueDepthHistogram.Record(queued);
 
             // Start playback after pre-buffering — the pure pre-buffer gate latches
-            // SourceStarted and tells us whether to actually call SourcePlay.
-            var start = _queue.ObserveQueueDepth(queued);
+            // SourceStarted and tells us whether to actually call SourcePlay. It stays shut
+            // while the sink is paused, so an upload that lands after a pause, from a buffer
+            // already in flight or from the drain's remainder, cannot start a source the pause
+            // found not yet started.
+            var start = _queue.ObserveQueueDepth(queued, paused: _pausedPosition is not null);
             _queue = start.Next;
             if (start.ShouldStartPlayback)
             {
@@ -855,7 +858,8 @@ public sealed partial class OpenAlAudioSink
             }
             else
             {
-                // Source drained (underrun) while we were paused — it is AL_STOPPED.
+                // Source drained (underrun) while we were paused — it is AL_STOPPED. Or the
+                // pause came before the pre-buffer gate opened, which leaves it AL_INITIAL.
                 // Rebase first, while the latch still says the source was playing: the
                 // rebase returns that drained queue to the pool, and the priming guard in
                 // RecycleProcessedBuffers would skip it if the latch were already clear.
@@ -996,14 +1000,18 @@ public sealed partial class OpenAlAudioSink
         _al.GetSourceProperty(_source, GetSourceInteger.BuffersQueued, out int queued);
         _al.GetSourceProperty(_source, GetSourceInteger.SampleOffset, out int sampleOffset);
 
-        var state = (SourceState)rawState switch
-        {
-            SourceState.Initial => DrainSourceState.Initial,
-            SourceState.Playing => DrainSourceState.Playing,
-            SourceState.Paused => DrainSourceState.Paused,
-            // Stopped, or a value no source state has: either way nothing more will play.
-            _ => DrainSourceState.Stopped,
-        };
+        // The sink's own pause latch first. A pause that lands before the source started leaves
+        // it in AL_INITIAL (OpenAL 1.1 §4.3.6), and read raw that would be a source to start.
+        var state = _pausedPosition is not null
+            ? DrainSourceState.Paused
+            : (SourceState)rawState switch
+            {
+                SourceState.Initial => DrainSourceState.Initial,
+                SourceState.Playing => DrainSourceState.Playing,
+                SourceState.Paused => DrainSourceState.Paused,
+                // Stopped, or a value no source state has: either way nothing more will play.
+                _ => DrainSourceState.Stopped,
+            };
 
         return new DrainObservation(
             Staged: _queue.StagingCount > 0,

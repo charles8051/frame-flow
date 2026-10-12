@@ -160,15 +160,17 @@ public sealed class OpenAlAudioSinkDrainTests
     /// sink waits as long as the pause lasts, and finishes once it resumes.
     /// </summary>
     /// <remarks>
-    /// The negative half needs a happens-before. Each step waits for the drain loop to read the
-    /// device again after the time advance, and a loop that had given up would not read it
-    /// again, so reaching the next read is the proof that the previous one decided to wait.
+    /// The negative half needs a happens-before. Each advance fires the wait the drain loop is
+    /// parked on, and the loop then reads the device and decides. Arming its next wait is the
+    /// proof that it decided to keep waiting, and a loop that had given up would arm nothing.
+    /// It is also what makes the next advance land: an advance made before the loop armed its
+    /// next wait would pass under a timer that did not exist yet.
     /// </remarks>
     [Fact]
     public async Task Drain_WaitsOutAPause_HoweverLongItLasts()
     {
         var device = new FakeOpenAlDevice();
-        var time = new FakeTimeProvider();
+        var time = new ArmSignallingTimeProvider();
         await using var sink = FakeOpenAlSink.Create(device, timeProvider: time);
         await sink.ActivateAsync(CancellationToken.None);
         await PushBlocksAsync(sink, blocks: 8, value: 100);
@@ -177,10 +179,16 @@ public sealed class OpenAlAudioSinkDrainTests
 
         var drain = sink.DrainAsync(CancellationToken.None).AsTask();
 
-        // Five stall limits of pause, then one more slice to see the last of them decided.
+        // Five stall limits of pause.
         for (int i = 0; i < 5; i++)
-            await AdvanceAndAwaitTheNextReadAsync(device, time, DrainStallLimit, drain);
-        await AdvanceAndAwaitTheNextReadAsync(device, time, DrainPollSlice, drain);
+        {
+            await AdvanceAndAwaitTheNextWaitAsync(
+                time,
+                DrainStallLimit,
+                drain,
+                "The drain ended while the sink was paused, instead of waiting for it to resume."
+            );
+        }
 
         await sink.ResumeAsync(CancellationToken.None);
         Play(device, time, 6 * BlockDuration);
@@ -188,6 +196,66 @@ public sealed class OpenAlAudioSinkDrainTests
 
         Assert.True(device.AllQueuedAudioPlayed);
         Assert.Equal(8 * ScalarsPerBlock, device.PlayedSamples.Count);
+    }
+
+    /// <summary>
+    /// A sink paused before its source started stays silent through the drain. Neither the
+    /// remainder the drain hands over nor the drain itself starts the source; the resume does.
+    /// </summary>
+    /// <remarks>
+    /// Pausing a source that has not started leaves it in <c>AL_INITIAL</c> (OpenAL 1.1 §4.3.6),
+    /// so the device alone cannot tell this sink from one whose stream ended too soon to start.
+    /// Three blocks sit below the pre-buffer depth, and the half block still in staging is the
+    /// upload that would carry the queue to it. Everything up to the drain's first wait is
+    /// synchronous against the fake, so the first assertion reads what that pass did.
+    /// </remarks>
+    [Fact]
+    public async Task Drain_KeepsASinkPausedBeforeItsSourceStarted_SilentUntilItResumes()
+    {
+        var device = new FakeOpenAlDevice();
+        var time = new ArmSignallingTimeProvider();
+        await using var sink = FakeOpenAlSink.Create(device, timeProvider: time);
+        await sink.ActivateAsync(CancellationToken.None);
+
+        await PushBlocksAsync(sink, blocks: 3, value: 300);
+        const short tail = 777;
+        await PresentAsync(sink, scalars: ScalarsPerBlock / 2, value: tail, pts: 3 * BlockDuration);
+        await sink.PauseAsync(CancellationToken.None);
+
+        var drain = sink.DrainAsync(CancellationToken.None).AsTask();
+        Assert.False(drain.IsCompleted, "The drain completed over a paused sink that had played nothing.");
+        Assert.True(
+            !device.CallNames.Contains("SourcePlay"),
+            "The drain started the source of a paused sink.\n" + device.DescribeCalls()
+        );
+
+        // A whole stall limit of pause: the drain neither starts the source nor gives up.
+        await AdvanceAndAwaitTheNextWaitAsync(
+            time,
+            DrainStallLimit,
+            drain,
+            "The drain gave up on a paused sink, instead of waiting for it to resume."
+        );
+        Assert.True(
+            !device.CallNames.Contains("SourcePlay"),
+            "The drain started the source of a paused sink.\n" + device.DescribeCalls()
+        );
+
+        await sink.ResumeAsync(CancellationToken.None);
+        await AdvanceAndAwaitTheNextWaitAsync(
+            time,
+            DrainPollSlice,
+            drain,
+            "The drain ended after the resume without playing the stream."
+        );
+        Assert.Contains("SourcePlay", device.CallNames);
+
+        Play(device, time, 3 * BlockDuration + BlockDuration / 2);
+        await AssertCompletesAsync(drain, "The resumed device played everything, but the drain did not end.");
+
+        Assert.True(device.AllQueuedAudioPlayed);
+        Assert.Equal(3 * ScalarsPerBlock + ScalarsPerBlock / 2, device.PlayedSamples.Count);
+        Assert.Equal(tail, device.PlayedSamples[^1]);
     }
 
     [Fact]
@@ -330,23 +398,22 @@ public sealed class OpenAlAudioSinkDrainTests
     }
 
     /// <summary>
-    /// Advances time and waits for the drain loop to read the device afterwards. A loop that
-    /// had decided to stop never reads it again, and the bounded wait fails the test.
+    /// Advances time, and waits for the drain loop to arm its next wait. The advance fires the
+    /// wait the loop is parked on; arming the next one proves the observation after the advance
+    /// decided to keep waiting. A loop that had decided to stop arms nothing, and the drain
+    /// completes instead, which fails the test with <paramref name="because"/>.
     /// </summary>
-    private static async Task AdvanceAndAwaitTheNextReadAsync(
-        FakeOpenAlDevice device,
-        FakeTimeProvider time,
+    private static async Task AdvanceAndAwaitTheNextWaitAsync(
+        ArmSignallingTimeProvider time,
         TimeSpan by,
-        Task drain
+        Task drain,
+        string because
     )
     {
-        var read = device.WhenCalledAsync("GetSourceProperty");
+        var armed = time.NextTimerCreated;
         time.Advance(by);
-        var first = await Task.WhenAny(read, drain).WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.True(
-            first == read,
-            "The drain ended while the sink was paused, instead of waiting for it to resume."
-        );
+        var first = await Task.WhenAny(armed, drain).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(first == armed, because);
     }
 
     // The timeout only bounds a failure: a working drain completes as soon as the device or
@@ -361,5 +428,38 @@ public sealed class OpenAlAudioSinkDrainTests
         {
             Assert.Fail(because);
         }
+    }
+
+    /// <summary>
+    /// A <see cref="FakeTimeProvider"/> that signals when it creates a timer, so a test can wait
+    /// for the drain loop to arm its next wait instead of guessing when it has.
+    /// </summary>
+    /// <remarks>
+    /// The signal fires after the base provider has registered the timer, so an advance made once
+    /// it completes is guaranteed to fire that timer. Nothing else creates timers on the provider
+    /// while a drain runs in these tests: no flush parks on its backpressure wait, because the
+    /// pool is never full, and nothing paces against the sink's clock.
+    /// </remarks>
+    private sealed class ArmSignallingTimeProvider : FakeTimeProvider
+    {
+        private TaskCompletionSource _next = NewSignal();
+
+        /// <summary>Completes when the first timer created after this was read is armed.</summary>
+        public Task NextTimerCreated => Volatile.Read(ref _next).Task;
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period
+        )
+        {
+            var timer = base.CreateTimer(callback, state, dueTime, period);
+            Interlocked.Exchange(ref _next, NewSignal()).TrySetResult();
+            return timer;
+        }
+
+        private static TaskCompletionSource NewSignal() =>
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }

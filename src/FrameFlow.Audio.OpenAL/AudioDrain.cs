@@ -4,19 +4,23 @@
 namespace FrameFlow.Audio.OpenAL;
 
 /// <summary>
-/// The execution state of an OpenAL source, all four of them. The drain needs the split
-/// <see cref="AlSourceState"/> folds away: a source that has never been started and one that is
-/// playing call for opposite actions at the end of a stream.
+/// The execution state of an OpenAL source, all four of them, as the sink sees it. The drain
+/// needs the split <see cref="AlSourceState"/> folds away: a source that has never been started
+/// and one that is playing call for opposite actions at the end of a stream.
 /// </summary>
 internal enum DrainSourceState
 {
-    /// <summary><c>AL_INITIAL</c>: buffers may be queued, nothing has played.</summary>
+    /// <summary><c>AL_INITIAL</c>, on a sink that is not paused: buffers may be queued, nothing has played.</summary>
     Initial,
 
     /// <summary><c>AL_PLAYING</c>.</summary>
     Playing,
 
-    /// <summary><c>AL_PAUSED</c>: nothing plays until something resumes it.</summary>
+    /// <summary>
+    /// The sink is paused: <c>AL_PAUSED</c>, or whatever state the pause found, since pausing a
+    /// source that has not started leaves it in <c>AL_INITIAL</c>. Nothing plays until something
+    /// resumes it.
+    /// </summary>
     Paused,
 
     /// <summary><c>AL_STOPPED</c>: it played its queue to the end, or was stopped.</summary>
