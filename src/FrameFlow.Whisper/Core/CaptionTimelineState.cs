@@ -23,8 +23,10 @@ internal readonly record struct TimedCaption(Caption Caption, TimeSpan ArrivedAt
 /// </para>
 /// <para>
 /// This agrees with <see cref="WhisperOperators.TranscribeWithWhisper"/>, which starts a new
-/// window when its audio jumps: every caption it emits after a jump is for audio after it, and
-/// arrives with a frame after it, on the new timeline.
+/// window when its audio jumps: every caption it emits once it has taken in audio from after a
+/// jump is for that audio, and arrives with a frame after the jump, on the new timeline. A
+/// caption for audio before the jump that is still being transcribed when the video jumps also
+/// arrives after it; nothing here tells the two apart, so the caller drops that one.
 /// </para>
 /// </remarks>
 internal sealed record CaptionTimelineState
@@ -43,8 +45,8 @@ internal sealed record CaptionTimelineState
     public TimeSpan DisplayDuration { get; }
 
     /// <summary>
-    /// The most captions shown at once. One or less shows the latest batch: every caption that
-    /// arrived with the same frame as the last.
+    /// Above one, the most captions shown at once. One or less shows the latest batch: every
+    /// caption that arrived with the same frame as the last.
     /// </summary>
     public int MaxStackedLines { get; }
 

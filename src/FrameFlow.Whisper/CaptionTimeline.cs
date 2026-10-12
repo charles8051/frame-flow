@@ -26,6 +26,17 @@ namespace FrameFlow.Whisper;
 /// needs <see cref="Reset"/>.
 /// </para>
 /// <para>
+/// <b>Which PTS.</b> Give both calls the PTS of the frame just presented. Not a caption's own
+/// <see cref="Caption.From"/>, which sits behind that frame, and not a position polled on a
+/// timer or read from an audio clock, which can step back slightly: any step back, however
+/// small, starts the timeline again.
+/// </para>
+/// <para>
+/// <b>Captions in flight at a jump.</b> A caption for audio from before a jump that arrives
+/// after it lands on the new timeline, since the timeline cannot tell it apart. A caller that
+/// can, by the graph or position its audio came from, drops it before <see cref="Add"/>.
+/// </para>
+/// <para>
 /// <b>Eviction.</b> A caption more than the display duration behind the clock is dropped as
 /// the clock advances, so the timeline holds only what can still be shown.
 /// </para>
@@ -36,8 +47,8 @@ namespace FrameFlow.Whisper;
 /// </remarks>
 /// <param name="displayDuration">How long a caption shows after the frame it arrived with.</param>
 /// <param name="maxStackedLines">
-/// The most captions shown at once. One or less shows the latest batch: every caption that
-/// arrived with the same frame as the last.
+/// Above one, the most captions shown at once. One or less shows the latest batch: every
+/// caption that arrived with the same frame as the last.
 /// </param>
 public sealed class CaptionTimeline(TimeSpan displayDuration, int maxStackedLines = 1)
 {
