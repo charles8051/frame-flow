@@ -75,6 +75,7 @@
     <Project Path="tests/FrameFlow.Playback.Tests/FrameFlow.Playback.Tests.csproj" />
     <Project Path="tests/FrameFlow.TestBench.Tests/FrameFlow.TestBench.Tests.csproj" />
     <Project Path="tests/FrameFlow.Player.Tests/FrameFlow.Player.Tests.csproj" />
+    <Project Path="tests/FrameFlow.Sdl.Tests/FrameFlow.Sdl.Tests.csproj" />
     <Project Path="tests/FrameFlow.Video.Tests/FrameFlow.Video.Tests.csproj" />
     <Project Path="tests/FrameFlow.Face.Tests/FrameFlow.Face.Tests.csproj" />
     <Project Path="tests/FrameFlow.Whisper.Tests/FrameFlow.Whisper.Tests.csproj" />
