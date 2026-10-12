@@ -190,9 +190,9 @@ internal static class OpenAlPlaybackHarness
                 timeout
             );
 
-            // Let the device finish the audio still queued at EOF. The pipeline
-            // reports Ended once the last buffer has been handed over, which is
-            // earlier than the moment the device has played it.
+            // Check the device has played out what it was given. The pipeline
+            // reports Ended once the sink has drained (#609), so this returns at
+            // once unless the drain gave up on a device that stopped playing.
             bool drained = await DrainAsync(device).ConfigureAwait(false);
 
             // Stop the pump before reading the device, so the snapshot is of a

@@ -1767,6 +1767,16 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                         await _videoPacer.WaitForDrainAsync(ct).ConfigureAwait(false);
                     }
 
+                    // Graph completion means the audio sink has been handed the last buffer, not
+                    // that it has been heard: an OpenAL sink still has up to a pool of buffers
+                    // queued and a partial block staged, and whoever acts on the end of stream
+                    // deactivates it (#609). With no video there is no pacer above to wait out,
+                    // so an audio-only item ended about a second early and lost that second.
+                    // Every item with audio waits, so ended means heard; with video the pacer has
+                    // already held this to the audio clock, and the wait is the audio's tail.
+                    if (!ct.IsCancellationRequested && _hasAudio)
+                        await _audioSink!.DrainAsync(ct).ConfigureAwait(false);
+
                     if (!ct.IsCancellationRequested && Interlocked.Exchange(ref _eofFired, 1) == 0)
                     {
                         _callbacks.OnEndOfStream();

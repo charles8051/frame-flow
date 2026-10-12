@@ -20,10 +20,15 @@ namespace FrameFlow.Audio.OpenAL;
 /// <para>
 /// Audio data arrives as interleaved S16 stereo at 48 kHz from the
 /// <c>AudioDecoder</c>. Small decoded blocks (~21ms each for AAC) are
-/// coalesced into larger staging buffers (~100ms) before being uploaded
+/// coalesced into staging buffers of at least 50 ms before being uploaded
 /// to OpenAL. This reduces buffer-transition overhead, which is the
 /// primary source of crackling on high-latency audio stacks (WSL2,
 /// PulseAudio).
+/// </para>
+/// <para>
+/// <see cref="DrainAsync"/> ends a stream: it uploads the partial block still in staging and
+/// waits for the device to play the queue out, so a caller that deactivates afterwards does not
+/// cut the end off (#609).
 /// </para>
 /// <para>
 /// <see cref="GetPlaybackTime"/> returns the cumulative playback position
@@ -72,9 +77,19 @@ public sealed partial class OpenAlAudioSink
     private const int BufferPoolSize = 16;
     private const int PreBufferCount = 4;
 
-    // Target size for coalesced buffers: ~100ms at 48kHz stereo S16.
-    // 48000 samples/sec × 2 channels × 2 bytes/sample × 0.1sec = 19200 bytes ≈ 4800 shorts.
+    // Upload threshold for the staging buffer, in interleaved samples (shorts), not frames:
+    // 4800 is 2400 stereo frames, which is 50 ms at 48 kHz (100 ms only for mono). An upload
+    // carries the whole fill, so a buffer is at least this long and up to one decoded block
+    // longer.
     private const int CoalesceTargetSamples = 4800;
+
+    // How often DrainAsync reads the device while it waits for the queue to play out.
+    private static readonly TimeSpan DrainPollSlice = TimeSpan.FromMilliseconds(10);
+
+    // How long the device may play nothing, while its source says it is playing, before
+    // DrainAsync stops waiting for it. Measured from the last progress, not from the start of the
+    // drain, and paused time does not count (AudioDrain).
+    private static readonly TimeSpan DrainStallLimit = TimeSpan.FromSeconds(2);
 
     private readonly ILogger<OpenAlAudioSink> _logger;
 
@@ -877,6 +892,144 @@ public sealed partial class OpenAlAudioSink
     }
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// <para>
+    /// Uploads the partial block the coalesce gate held back, starts a source the stream ended
+    /// too soon to start, then reads the device every <see cref="DrainPollSlice"/> until the
+    /// source has played its queue out. Each decision is <see cref="AudioDrain"/>'s; this method
+    /// only reads the device and acts on the answer.
+    /// </para>
+    /// <para>
+    /// On completion the played buffers are credited to the clock and the source is left empty
+    /// and rewound, so <see cref="GetPlaybackTime"/> reads the end of the stream and a further
+    /// <see cref="PresentAsync"/> primes a fresh queue rather than reading as an underrun.
+    /// </para>
+    /// <para>
+    /// It gives up, with a warning, once the source has reported itself playing for
+    /// <see cref="DrainStallLimit"/> with the device making no progress. A paused source does
+    /// not count towards that. Disposal ends it quietly; <paramref name="cancellationToken"/>
+    /// ends it with <see cref="OperationCanceledException"/>.
+    /// </para>
+    /// </remarks>
+    public async ValueTask DrainAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_disposed)
+            return;
+
+        CancellationToken shutdown;
+        try
+        {
+            shutdown = _clockShutdownCts.Token;
+        }
+        catch (ObjectDisposedException)
+        {
+            return; // disposed since the check above
+        }
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, shutdown);
+        var startedAt = _timeProvider.GetTimestamp();
+        var drain = AudioDrain.Begin(DrainStallLimit, TimeSpan.Zero);
+        var uploadLatency = Stopwatch.StartNew();
+        var firstPass = true;
+
+        while (true)
+        {
+            // Hand over whatever staging still holds. A no-op once it is empty; while the pool
+            // is full it waits for the next pass, as the source frees a buffer.
+            TryFlushStagingBufferOnce(firstPass, uploadLatency);
+            firstPass = false;
+
+            lock (_stateLock)
+            {
+                if (_al is null || _disposed)
+                    return;
+
+                var seen = ObserveDrainUnderLock(_timeProvider.GetElapsedTime(startedAt));
+                var outcome = drain.Observe(seen);
+                drain = outcome.Next;
+
+                switch (outcome.Step)
+                {
+                    case DrainStep.Complete:
+                        FinishDrainUnderLock();
+                        LogDrained(_logger, GetPlaybackTimeUnderLock().TotalSeconds, seen.Now.TotalSeconds);
+                        return;
+
+                    case DrainStep.StartSource:
+                        _queue = _queue.MarkSourceStarted();
+                        _al.SourcePlay(_source);
+                        break;
+
+                    case DrainStep.Stalled:
+                        LogDrainStalled(_logger, DrainStallLimit.TotalSeconds, seen.QueuedBuffers, seen.Staged);
+                        return;
+                }
+            }
+
+            try
+            {
+                await Task.Delay(DrainPollSlice, _timeProvider, linked.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return; // the sink was disposed; there is nothing left to wait for
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads what <see cref="AudioDrain"/> decides on. Must hold <see cref="_stateLock"/>, with
+    /// <see cref="_al"/> non-null.
+    /// </summary>
+    /// <remarks>
+    /// Recycles nothing. The played position is the clock's credited samples plus the live
+    /// offset, which moves only when the device plays whether or not another thread recycles in
+    /// between, so the drain needs no recycle of its own to see progress.
+    /// </remarks>
+    private DrainObservation ObserveDrainUnderLock(TimeSpan now)
+    {
+        _al!.GetSourceProperty(_source, GetSourceInteger.SourceState, out int rawState);
+        _al.GetSourceProperty(_source, GetSourceInteger.BuffersQueued, out int queued);
+        _al.GetSourceProperty(_source, GetSourceInteger.SampleOffset, out int sampleOffset);
+
+        var state = (SourceState)rawState switch
+        {
+            SourceState.Initial => DrainSourceState.Initial,
+            SourceState.Playing => DrainSourceState.Playing,
+            SourceState.Paused => DrainSourceState.Paused,
+            // Stopped, or a value no source state has: either way nothing more will play.
+            _ => DrainSourceState.Stopped,
+        };
+
+        return new DrainObservation(
+            Staged: _queue.StagingCount > 0,
+            QueuedBuffers: queued,
+            State: state,
+            PlayedSamples: _clock.ProcessedSamplesPerChannel + sampleOffset,
+            Now: now
+        );
+    }
+
+    /// <summary>
+    /// Leaves a drained source the way an activation would: queue empty, cursor rewound, latch
+    /// clear. Must hold <see cref="_stateLock"/>, with <see cref="_al"/> non-null.
+    /// </summary>
+    /// <remarks>
+    /// A started source that stopped played everything it was given (OpenAL 1.1 §4.3.5), so its
+    /// buffers are credited to the clock before they go back to the pool; that is what makes the
+    /// clock read the end of the stream. Without the reset, the next <see cref="PresentAsync"/>
+    /// would find a started source stopped and count an underrun that never happened.
+    /// </remarks>
+    private void FinishDrainUnderLock()
+    {
+        if (_queue.SourceStarted)
+            RecycleProcessedBuffers(force: true);
+        ResetSourceQueueUnderLock();
+        _queue = _queue.MarkSourceStopped();
+    }
+
+    /// <inheritdoc/>
     public unsafe ValueTask DeactivateAsync(CancellationToken cancellationToken = default)
     {
         lock (_stateLock)
@@ -1550,6 +1703,18 @@ public sealed partial class OpenAlAudioSink
         long backpressure,
         double durationSec
     );
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Audio drained: the device played to the end of the stream at {PositionSec:F2}s, {WaitSec:F2}s after the last buffer was handed over"
+    )]
+    private static partial void LogDrained(ILogger logger, double positionSec, double waitSec);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Audio drain gave up: the source reported itself playing but the device played nothing for {StallSec:F1}s. QueuedBuffers={QueuedBuffers}, staged={Staged}. What it still held is dropped at deactivation."
+    )]
+    private static partial void LogDrainStalled(ILogger logger, double stallSec, int queuedBuffers, bool staged);
 
     [LoggerMessage(
         Level = LogLevel.Debug,

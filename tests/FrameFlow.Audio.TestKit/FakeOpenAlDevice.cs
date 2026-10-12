@@ -65,6 +65,7 @@ public sealed class FakeOpenAlDevice : IOpenAlApi
     private bool _connected = true;
     private int _leasesOutstanding;
     private int _leasesDisposed;
+    private readonly List<(string Name, TaskCompletionSource Signal)> _callWaiters = new();
 
     /// <summary>The endpoint name this fake reports, as a driver would.</summary>
     public string DeviceName { get; init; } = "FakeOpenAL on Test Endpoint";
@@ -622,6 +623,22 @@ public sealed class FakeOpenAlDevice : IOpenAlApi
         }
     }
 
+    /// <summary>
+    /// Completes on the next call named <paramref name="name"/> this device receives.
+    /// </summary>
+    /// <remarks>
+    /// The signal a test waits on to know that a worker inside the sink has read the device
+    /// since some point, such as a time advance, without polling for it. Its continuations run
+    /// asynchronously, so none runs inside the device's lock.
+    /// </remarks>
+    public Task WhenCalledAsync(string name)
+    {
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+            _callWaiters.Add((name, signal));
+        return signal.Task;
+    }
+
     /// <summary>The names of the recorded calls, in order — the sequence a test asserts on.</summary>
     public IReadOnlyList<string> CallNames
     {
@@ -708,7 +725,8 @@ public sealed class FakeOpenAlDevice : IOpenAlApi
         return b;
     }
 
-    private void Record(string name, uint? source = null, uint? buffer = null, string? detail = null) =>
+    private void Record(string name, uint? source = null, uint? buffer = null, string? detail = null)
+    {
         _calls.Add(
             new AlCall(
                 _calls.Count,
@@ -719,6 +737,15 @@ public sealed class FakeOpenAlDevice : IOpenAlApi
                 Environment.CurrentManagedThreadId
             )
         );
+
+        for (int i = _callWaiters.Count - 1; i >= 0; i--)
+        {
+            if (_callWaiters[i].Name != name)
+                continue;
+            _callWaiters[i].Signal.TrySetResult();
+            _callWaiters.RemoveAt(i);
+        }
+    }
 
     private static SourceState ToSilkState(AlState state) =>
         state switch

@@ -296,6 +296,13 @@ internal readonly record struct BufferQueueState
     }
 
     /// <summary>
+    /// Latches <see cref="SourceStarted"/> for a source the shell started outside the pre-buffer
+    /// gate: at the end of the stream, when no further buffer will arrive to carry the queue to
+    /// the pre-buffer depth (<see cref="AudioDrain"/>, #609).
+    /// </summary>
+    public BufferQueueState MarkSourceStarted() => this with { SourceStarted = true };
+
+    /// <summary>
     /// Clears the source-started latch without touching the staging level — the sink's
     /// <c>_sourceStarted = false</c> on deactivate and in the resume-after-underrun path,
     /// where the source drained while paused and the pre-buffer gate must re-arm.

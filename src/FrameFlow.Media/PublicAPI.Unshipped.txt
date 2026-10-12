@@ -350,6 +350,7 @@ FrameFlow.Media.HighResolutionTimeProvider
 FrameFlow.Media.IAudioSink
 FrameFlow.Media.IAudioSink.ActivateAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.IAudioSink.DeactivateAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.IAudioSink.DrainAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.IAudioSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.AudioSinkDiagnosticsSnapshot!
 FrameFlow.Media.IAudioSink.PauseAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.IAudioSink.PresentAsync(FrameFlow.Graph.IAudioBuffer! buffer, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
