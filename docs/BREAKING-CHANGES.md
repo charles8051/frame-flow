@@ -188,7 +188,7 @@ surface and the GPU interop waited for `Initialize(ILoggerFactory)`, so
 window and logged nothing (#613). `EnsureSink` now runs `Initialize`, without a logger, when it
 has not run: once the view is attached, it sets up the compositor surface and starts the stall
 watchdog (entry 12). A later `Initialize` call moves the view's logging, and its own sink's, to the
-factory it is given. After `DisposeAsync` it starts neither.
+factory it is given. After `DisposeAsync` both throw `ObjectDisposedException` (entry 12).
 
 **Who hits this.** A caller that calls `EnsureSink` off the UI thread on a view already in the
 visual tree: it now touches the compositor and must run on the UI thread, as `Initialize` always
@@ -333,10 +333,14 @@ again and restarts the stall watchdog. Only `DisposeAsync` is final.
   whether or not the view was attached, so `PresenterStalled` could be raised for a view that was
   not on screen.
 - `DisposeAsync` after a detach releases a sink made since, without a second teardown.
+- After `DisposeAsync`, `EnsureSink`, `Initialize`, `IVideoSurface.AttachSink` and assigning a sink
+  through `Sink` throw `ObjectDisposedException` (#665). They used to make or bind a sink that the
+  view never presented and nothing disposed, along with the last frame it was given.
 
 **Who hits this.** Code that read `Sink` after a detach and took `null` to mean the view was done
-with a sink it had assigned, and code that counted on the stall watchdog before the view joined the
-tree. Code that worked around the bug by building a new view for each attach keeps working.
+with a sink it had assigned, code that counted on the stall watchdog before the view joined the
+tree, and code that wires a view it has already disposed. Code that worked around the bug by
+building a new view for each attach keeps working.
 
 **What to write instead.** Nothing, to reuse a view. The player keeps the sink it was built with,
 and the view's own sink is disposed on a detach. Where one player outlives the view's trips out of

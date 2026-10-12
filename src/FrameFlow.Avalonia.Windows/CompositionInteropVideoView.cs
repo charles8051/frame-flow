@@ -211,6 +211,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// presents its frames again when it rejoins. <see cref="DisposeAsync"/> clears it. The
     /// view-owned sink is disposed on either, and this then reads <see langword="null"/>.
     /// </remarks>
+    /// <exception cref="ObjectDisposedException">
+    /// A sink is assigned after <see cref="DisposeAsync"/>: nothing would present it or end its
+    /// binding.
+    /// </exception>
     public CompositionInteropVideoSink? Sink
     {
         get => _sink;
@@ -218,6 +222,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         {
             if (ReferenceEquals(_sink, value))
                 return;
+            ObjectDisposedException.ThrowIf(value is not null && IsDisposed, this);
 
             // End the outgoing sink's diagnostics attachment. It must not keep reading the
             // view's live counters, which go on moving for its replacement — a caller still
@@ -358,10 +363,13 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// again moves the view's logging, and its own sink's, to the new factory. A caller who
     /// assigns <see cref="Sink"/> instead of asking for one calls this itself. The surface and
     /// the watchdog run while the view is in the visual tree: a detach stops them and a reattach
-    /// starts them again. After <see cref="DisposeAsync"/> this starts neither.
+    /// starts them again.
     /// </remarks>
+    /// <exception cref="ObjectDisposedException"><see cref="DisposeAsync"/> has run.</exception>
     public void Initialize(ILoggerFactory loggerFactory)
     {
+        ObjectDisposedException.ThrowIf(IsDisposed, this);
+
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
         _logger.Use(_loggerFactory);
         _sinkLogger.Use(_loggerFactory);
@@ -394,8 +402,13 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// <see cref="Initialize"/> before or after this, or hand the view to a builder with
     /// <c>FrameFlowAvaloniaBuilderExtensions.WithVideoSurface</c>.
     /// </remarks>
+    /// <exception cref="ObjectDisposedException">
+    /// <see cref="DisposeAsync"/> has run: a sink made now would never be presented or disposed.
+    /// </exception>
     public CompositionInteropVideoSink EnsureSink()
     {
+        ObjectDisposedException.ThrowIf(IsDisposed, this);
+
         var sink = CreateOwnedSinkIfNone();
 
         // The compositor surface and the GPU interop wait for Initialize, and the presenter
@@ -407,6 +420,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
 
         return sink;
     }
+
+    // DisposeAsync is final: no event moves the view out of Disposed, so a sink made or bound
+    // afterwards would have nothing to release it (#650).
+    private bool IsDisposed => _lifecycle.Phase == InteropViewPhase.Disposed;
 
     private CompositionInteropVideoSink CreateOwnedSinkIfNone()
     {
@@ -1565,7 +1582,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// <summary>
     /// Tears the view down for good: the compositor side, if a detach has not already, and the
     /// view's own sink. The view presents nothing afterwards, and <see cref="Sink"/> reads
-    /// <see langword="null"/>. Call on the UI thread.
+    /// <see langword="null"/>. <see cref="EnsureSink"/>, <see cref="Initialize"/>,
+    /// <see cref="IVideoSurface.AttachSink"/> and assigning a sink then throw
+    /// <see cref="ObjectDisposedException"/>. Call on the UI thread.
     /// </summary>
     /// <returns>
     /// A task that completes once the producers are disposed, or handed to the background reaper

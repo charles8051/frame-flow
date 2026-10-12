@@ -78,6 +78,7 @@ public sealed class CompositionInteropVideoViewReattachTests
         Reattach(window, view);
         var second = view.EnsureSink();
         Assert.NotSame(first, second); // the first went with the detach, as on FrameFlowVideoView
+        Assert.NotNull(second.FrameArrived); // made after the reattach, and bound: the view presents it
         var held = new TrackedFrame();
         await second.PresentAsync(held, CancellationToken.None);
 
@@ -193,6 +194,28 @@ public sealed class CompositionInteropVideoViewReattachTests
         Assert.Equal(TrackedFrame.DisposeFault, fault.Message);
         Assert.Null(ElementComposition.GetElementChildVisual(view));
         Assert.False(view.IsWatchingForStalls);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task AfterDisposeAsync_TheViewRefusesASink_AndKeepsNone()
+    {
+        // DisposeAsync is final: no later detach or dispose would present a sink made or bound
+        // afterwards, or release it and the frame it holds.
+        var view = new CompositionInteropVideoView();
+        var window = Show(view);
+        ((IVideoSurface)view).AttachSink(new RecordingLoggerFactory());
+        await view.DisposeAsync();
+        await using var callers = new CompositionInteropVideoSink();
+
+        Assert.Throws<ObjectDisposedException>(() => view.EnsureSink());
+        Assert.Throws<ObjectDisposedException>(() => view.Initialize(new RecordingLoggerFactory()));
+        Assert.Throws<ObjectDisposedException>(() => ((IVideoSurface)view).AttachSink(new RecordingLoggerFactory()));
+        Assert.Throws<ObjectDisposedException>(() => view.Sink = callers);
+
+        Assert.Null(view.Sink);
+        Assert.Null(callers.FrameArrived);
+        view.Sink = null; // clearing it is still allowed, and does nothing
         window.Close();
     }
 
