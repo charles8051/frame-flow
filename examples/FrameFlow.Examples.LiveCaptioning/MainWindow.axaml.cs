@@ -223,7 +223,7 @@ public partial class MainWindow : Window
 
     // Counts the player's audio graphs: one per load, seek or file. Audio tapped from an older
     // graph never reaches Whisper, and captions still waiting are dropped once a newer graph's
-    // frame is on screen. Whisper's own window can still hold up to 2.5 s from before; it has no reset.
+    // frame is on screen. Whisper itself starts a new window when the audio's timestamps jump.
     private int _audioGraph;
     private int _presentedGraph;
 
