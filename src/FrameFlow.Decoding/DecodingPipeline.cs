@@ -146,10 +146,12 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
 
     /// <summary>
     /// The media time at which the pump stops feeding the decoders, or null to read to the end
-    /// of the source. A pass bounded to a range sets it before the pump runs (#483); what is
-    /// fed and when the pump stops is <see cref="ReadBound"/>'s.
+    /// of the source. A pass bounded to a range sets it before the pump runs (#483), and a player
+    /// item with an end sets it before each run; what is fed and when the pump stops is
+    /// <see cref="ReadBound"/>'s. The pump reads it when it starts, so it is set while no pump
+    /// runs.
     /// </summary>
-    internal TimeSpan? ReadUntil { get; init; }
+    internal TimeSpan? ReadUntil { get; set; }
 
     /// <summary>
     /// Read-only access to the underlying demux session, exposed so the

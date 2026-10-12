@@ -136,13 +136,15 @@ internal abstract record PlaylistSessionAction
 
     /// <summary>
     /// Create a runtime tagged with <paramref name="Generation"/>, and open the source positioned
-    /// at <paramref name="Start"/>, the item's start in the source's time.
+    /// at <paramref name="Start"/>, the item's start in the source's time, to stop at
+    /// <paramref name="End"/> when it has one.
     /// </summary>
     public sealed record OpenItem(
         int Generation,
         IMediaSource Source,
         int? Command,
-        TimeSpan Start = default
+        TimeSpan Start = default,
+        TimeSpan? End = null
     ) : PlaylistSessionAction;
 
     /// <summary>Warm the runtime up.</summary>
@@ -159,9 +161,9 @@ internal abstract record PlaylistSessionAction
 
     /// <summary>
     /// Rewind the runtime in place to <paramref name="Position"/>, the start of the item it now
-    /// plays.
+    /// plays, to stop at <paramref name="End"/>, that item's end, when it has one.
     /// </summary>
-    public sealed record RewindItem(int? Command, TimeSpan Position = default)
+    public sealed record RewindItem(int? Command, TimeSpan Position = default, TimeSpan? End = null)
         : PlaylistSessionAction;
 
     /// <summary>Dispose the runtime. It never fails: the shell logs a throw and carries on.</summary>

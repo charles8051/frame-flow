@@ -245,6 +245,150 @@ public sealed class MediaClipPlaybackTests : IClassFixture<FfmpegBootstrapFixtur
         AssertNothingBefore(second.Start, video.PresentedPts);
     }
 
+    [RequiresFfmpegAndCorpusFact]
+    public async Task AClipWithAnEnd_StopsThere_AndTheQueueEnds()
+    {
+        var clip = new MediaClip(Corpus(Fixture), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3));
+        var video = new PtsRecordingVideoSink();
+        var audio = new HarnessAudioSink();
+        var coordinator = PlaylistCoordinator.Of([clip], RepeatMode.Off);
+        await using var controller = CreatePlaylist(coordinator, video, audio: audio);
+        var ended = StateReached(controller, PlaybackState.Ended);
+
+        Assert.True((await controller.LoadAsync(clip.Source)).IsSuccess);
+        Assert.True((await controller.PlayAsync()).IsSuccess);
+        await ended.WaitAsync(Bound);
+
+        // The clip played up to its end and no further. The source runs to 10 s, so without the
+        // end the queue would have ended there, with frames past 3 s on the sink.
+        AssertWithin([(clip.Start, clip.End!.Value)], video.PresentedPts);
+        Assert.Contains(video.PresentedPts, pts => pts >= clip.End.Value - TimeSpan.FromMilliseconds(100));
+        Assert.True(audio.LastBlockPts < clip.End.Value, $"audio played to {audio.LastBlockPts}");
+
+        // The item stopped reading at its end rather than decoding the rest of the source and
+        // dropping it. The keyframe is at zero, so reaching 3 s decodes 180 frames, and the whole
+        // source is 600.
+        var decoded = controller.GetDiagnostics().Pipeline.Stream.VideoDecoder.FramesDecoded;
+        Assert.True(decoded < 240, $"{decoded} frames were decoded for a clip that ends 3 s in");
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task AClipThatEndsAmongReorderedFrames_PresentsNothingAtOrPastItsEnd()
+    {
+        // In this HEVC fixture a frame decodes up to 0.6 s before it presents, so the packets
+        // read before the end include frames that present after it. Only the end filter keeps
+        // them off the sink.
+        var clip = new MediaClip(
+            Corpus("test-video-h265-yuv420p.mp4"),
+            TimeSpan.FromSeconds(0.5),
+            TimeSpan.FromSeconds(2)
+        );
+        var video = new PtsRecordingVideoSink();
+        var coordinator = PlaylistCoordinator.Of([clip], RepeatMode.Off);
+        await using var controller = CreatePlaylist(coordinator, video);
+        var ended = StateReached(controller, PlaybackState.Ended);
+
+        Assert.True((await controller.LoadAsync(clip.Source)).IsSuccess);
+        Assert.True((await controller.PlayAsync()).IsSuccess);
+        await ended.WaitAsync(Bound);
+
+        AssertWithin([(clip.Start, clip.End!.Value)], video.PresentedPts);
+        Assert.Contains(video.PresentedPts, pts => pts >= clip.End.Value - TimeSpan.FromMilliseconds(100));
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task ALoopOfAClipWithAnEnd_StaysWithinIt()
+    {
+        var clip = new MediaClip(Corpus(Fixture), TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(4.5));
+        var video = new PtsRecordingVideoSink();
+        var coordinator = PlaylistCoordinator.Of([clip], RepeatMode.One);
+        await using var controller = CreatePlaylist(coordinator, video, RepeatMode.One);
+
+        var loops = 0;
+        var twice = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sub = controller.LoopRestarted.Subscribe(
+            new ActionObserver<LoopRestarted>(_ =>
+            {
+                if (Interlocked.Increment(ref loops) == 2)
+                    twice.TrySetResult();
+            })
+        );
+
+        Assert.True((await controller.LoadAsync(clip.Source)).IsSuccess);
+        Assert.True((await controller.PlayAsync()).IsSuccess);
+        await twice.Task.WaitAsync(Bound);
+
+        AssertWithin([(clip.Start, clip.End!.Value)], video.PresentedPts);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task ASeekPastAClipsEnd_PlaysOnToTheSourcesEnd()
+    {
+        var clip = new MediaClip(Corpus(Fixture), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3));
+        var video = new PtsRecordingVideoSink();
+        var coordinator = PlaylistCoordinator.Of([clip], RepeatMode.Off);
+        await using var controller = CreatePlaylist(coordinator, video);
+
+        Assert.True((await controller.LoadAsync(clip.Source)).IsSuccess);
+        Assert.True((await controller.PlayAsync()).IsSuccess);
+        await video.WhenPresented(pts => pts >= clip.Start + PastStart).WaitAsync(Bound);
+
+        Assert.True((await controller.SeekAsync(TimeSpan.FromSeconds(5))).IsSuccess);
+        await video.WhenPresented(pts => pts >= TimeSpan.FromSeconds(5.5)).WaitAsync(Bound);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task ClipsOfOneSourceWithEnds_PlayEachSpanInTurn()
+    {
+        // One source object, so the hand-off rewinds the open item, and has to give it the
+        // second clip's end as well as its start.
+        var source = Corpus(Fixture);
+        var first = new MediaClip(source, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2.5));
+        var second = new MediaClip(source, TimeSpan.FromSeconds(7), TimeSpan.FromSeconds(7.5));
+        var video = new PtsRecordingVideoSink();
+        var coordinator = PlaylistCoordinator.Of([first, second], RepeatMode.Off);
+        await using var controller = CreatePlaylist(coordinator, video);
+        var ended = StateReached(controller, PlaybackState.Ended);
+
+        Assert.True((await controller.LoadAsync(source)).IsSuccess);
+        Assert.True((await controller.PlayAsync()).IsSuccess);
+        await ended.WaitAsync(Bound);
+
+        AssertWithin(
+            [(first.Start, first.End!.Value), (second.Start, second.End!.Value)],
+            video.PresentedPts
+        );
+        Assert.Contains(video.PresentedPts, pts => pts >= first.End.Value - TimeSpan.FromMilliseconds(100) && pts < second.Start);
+        Assert.Contains(video.PresentedPts, pts => pts >= second.End.Value - TimeSpan.FromMilliseconds(100));
+    }
+
+    private static Task StateReached(IPlaybackController controller, PlaybackState state)
+    {
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sub = controller.PlaybackStateChanged.Subscribe(
+            new ActionObserver<StateTransition<PlaybackState>>(t =>
+            {
+                if (t.Current == state)
+                    signal.TrySetResult();
+            })
+        );
+        return signal.Task.ContinueWith(_ => sub.Dispose(), TaskScheduler.Default);
+    }
+
+    private static void AssertWithin(
+        IReadOnlyList<(TimeSpan Start, TimeSpan End)> spans,
+        IEnumerable<TimeSpan> presented
+    )
+    {
+        var outside = presented
+            .Where(pts => !spans.Any(s => pts >= s.Start - HalfFrame && pts < s.End))
+            .ToList();
+        Assert.True(
+            outside.Count == 0,
+            $"{outside.Count} frame(s) outside the clips reached the sink, the first at {outside.FirstOrDefault()}"
+        );
+    }
+
     private static long DemuxSeeks(IPlaybackController controller) =>
         controller.GetDiagnostics().Pipeline.Stream.Demux.SeeksPerformed;
 
@@ -268,12 +412,13 @@ public sealed class MediaClipPlaybackTests : IClassFixture<FfmpegBootstrapFixtur
     private static IPlaybackController CreatePlaylist(
         PlaylistCoordinator coordinator,
         IVideoSink video,
-        RepeatMode repeat = RepeatMode.Off
+        RepeatMode repeat = RepeatMode.Off,
+        HarnessAudioSink? audio = null
     ) =>
         PlaybackController.CreatePlaylist(
             coordinator,
             videoSink: video,
-            audioSink: new HarnessAudioSink(),
+            audioSink: audio ?? new HarnessAudioSink(),
             hardwareDecodeMode: HardwareDecodeMode.Disabled,
             initialRepeatMode: repeat
         );

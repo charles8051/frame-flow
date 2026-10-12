@@ -39,6 +39,7 @@ public sealed class PlaylistItem
             throw new ArgumentException("The clip has no source.", nameof(clip));
         Source = clip.Source;
         Start = clip.Start;
+        End = clip.End;
     }
 
     /// <summary>The source this item plays.</summary>
@@ -49,6 +50,12 @@ public sealed class PlaylistItem
     /// it returns here. Zero for an item created from a source alone.
     /// </summary>
     public TimeSpan Start { get; }
+
+    /// <summary>
+    /// Where the item stops, in the source's time, exclusive, or null to play to the end of the
+    /// source. See <see cref="MediaClip.End"/>.
+    /// </summary>
+    public TimeSpan? End { get; }
 
     /// <inheritdoc/>
     public override string ToString() =>

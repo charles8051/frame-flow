@@ -33,6 +33,29 @@ public sealed class MediaClipTests
     }
 
     [Fact]
+    public void AClip_CarriesItsEnd_AndHasNoneByDefault()
+    {
+        Assert.Null(new MediaClip(Source, TimeSpan.FromSeconds(2)).End);
+        Assert.Equal(
+            TimeSpan.FromSeconds(3),
+            new MediaClip(Source, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3)).End
+        );
+    }
+
+    [Fact]
+    public void AnEndThatIsNotAfterTheStart_IsRefused_WhicheverIsSetLast()
+    {
+        var two = TimeSpan.FromSeconds(2);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new MediaClip(Source, two, two));
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new MediaClip(Source, two) with { End = TimeSpan.FromSeconds(1) }
+        );
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new MediaClip(Source, TimeSpan.Zero, two) with { Start = two }
+        );
+    }
+
+    [Fact]
     public void ClipsOfOneSourceAndStart_AreEqual() =>
         Assert.Equal(
             new MediaClip(Source, TimeSpan.FromSeconds(2)),

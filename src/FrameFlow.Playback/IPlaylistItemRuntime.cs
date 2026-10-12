@@ -20,23 +20,29 @@ internal interface IPlaylistItemRuntime : IPlaybackSession
     /// <summary>
     /// Opens <paramref name="source"/> positioned at <paramref name="start"/>, in the source's
     /// time, so that the warm-up that follows decodes from there and nothing before it is
-    /// presented.
+    /// presented. When <paramref name="end"/> is given, a run that starts before it ends there.
     /// </summary>
     /// <remarks>
     /// Fails, as an open does, when the source cannot be positioned there: it reports a duration
     /// and <paramref name="start"/> is at or past it, or the demuxer cannot seek it.
     /// </remarks>
-    ValueTask InitializeAsync(IMediaSource source, TimeSpan start, CancellationToken cancellationToken);
+    ValueTask InitializeAsync(
+        IMediaSource source,
+        TimeSpan start,
+        TimeSpan? end,
+        CancellationToken cancellationToken
+    );
 
     /// <summary>
     /// Rewinds the runtime in place to <paramref name="position"/>, the start of the item it now
-    /// plays, as <see cref="IPlaybackSession.RewindToStartAsync"/> rewinds it to zero.
+    /// plays, as <see cref="IPlaybackSession.RewindToStartAsync"/> rewinds it to zero. The runs
+    /// that follow stop at <paramref name="end"/>, that item's end, when it is given.
     /// </summary>
     /// <remarks>
     /// Fails, as an open would, when the source reports a duration and
     /// <paramref name="position"/> is at or past it.
     /// </remarks>
-    ValueTask RewindToAsync(TimeSpan position, CancellationToken cancellationToken);
+    ValueTask RewindToAsync(TimeSpan position, TimeSpan? end, CancellationToken cancellationToken);
 }
 
 /// <summary>Creates the runtime for each item a <see cref="PlaylistSession"/> opens.</summary>

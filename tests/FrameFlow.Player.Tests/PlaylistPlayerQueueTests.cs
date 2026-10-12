@@ -88,6 +88,10 @@ public sealed class PlaylistPlayerQueueTests
         Assert.All([added, queued, next, replaced.Value[0]], item => Assert.Equal(at, item.Start));
         Assert.Equal(TimeSpan.Zero, replaced.Value[1].Start);
         Assert.Equal(TimeSpan.Zero, (await player.AddAsync(Source("z"))).Start);
+
+        var bounded = await player.EnqueueAsync(new MediaClip(Source("e"), at, at + TimeSpan.FromSeconds(3)));
+        Assert.Equal(at + TimeSpan.FromSeconds(3), bounded.End);
+        Assert.Null(added.End);
     }
 
     [Fact]

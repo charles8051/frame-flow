@@ -413,7 +413,9 @@ FrameFlow.Media.LoopStalled.Position.get -> System.TimeSpan
 FrameFlow.Media.LoopStalled.Position.init -> void
 FrameFlow.Media.MediaClip
 FrameFlow.Media.MediaClip.MediaClip() -> void
-FrameFlow.Media.MediaClip.MediaClip(FrameFlow.Media.IMediaSource! source, System.TimeSpan start = default(System.TimeSpan)) -> void
+FrameFlow.Media.MediaClip.End.get -> System.TimeSpan?
+FrameFlow.Media.MediaClip.End.init -> void
+FrameFlow.Media.MediaClip.MediaClip(FrameFlow.Media.IMediaSource! source, System.TimeSpan start = default(System.TimeSpan), System.TimeSpan? end = null) -> void
 FrameFlow.Media.MediaClip.Source.get -> FrameFlow.Media.IMediaSource!
 FrameFlow.Media.MediaClip.Start.get -> System.TimeSpan
 FrameFlow.Media.MediaClip.Start.init -> void

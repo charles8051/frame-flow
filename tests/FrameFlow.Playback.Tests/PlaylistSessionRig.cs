@@ -359,13 +359,14 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
         public ValueTask InitializeAsync(
             IMediaSource source,
             CancellationToken cancellationToken = default
-        ) => InitializeAsync(source, TimeSpan.Zero, cancellationToken);
+        ) => InitializeAsync(source, TimeSpan.Zero, end: null, cancellationToken);
 
-        // Logged as "Open" for an item that starts at zero, so the logs of every test written
-        // before clips read as they did.
+        // Logged as "Open" for an item that starts at zero and has no end, so the logs of every
+        // test written before clips read as they did.
         public async ValueTask InitializeAsync(
             IMediaSource source,
             TimeSpan start,
+            TimeSpan? end,
             CancellationToken cancellationToken
         )
         {
@@ -374,7 +375,7 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
             await rig.PerformAsync(
                 this,
                 ItemOp.Open,
-                start == TimeSpan.Zero ? "Open" : $"Open({start})",
+                Describe("Open", start, end),
                 cancellationToken
             );
             MediaInfo = new MediaInfo(Source, TimeSpan.FromSeconds(3), [], []);
@@ -404,17 +405,29 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
         }
 
         public ValueTask RewindToStartAsync(CancellationToken cancellationToken = default) =>
-            RewindToAsync(TimeSpan.Zero, cancellationToken);
+            RewindToAsync(TimeSpan.Zero, end: null, cancellationToken);
 
-        public async ValueTask RewindToAsync(TimeSpan position, CancellationToken cancellationToken)
+        public async ValueTask RewindToAsync(
+            TimeSpan position,
+            TimeSpan? end,
+            CancellationToken cancellationToken
+        )
         {
             await rig.RepositionAsync(
                 this,
                 ItemOp.Rewind,
-                position == TimeSpan.Zero ? "Rewind" : $"Rewind({position})",
+                Describe("Rewind", position, end),
                 cancellationToken
             );
         }
+
+        private static string Describe(string op, TimeSpan start, TimeSpan? end) =>
+            (start, end) switch
+            {
+                ({ Ticks: 0 }, null) => op,
+                (_, null) => $"{op}({start})",
+                _ => $"{op}({start}..{end})",
+            };
 
         public async ValueTask DisposeAsync()
         {

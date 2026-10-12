@@ -38,8 +38,9 @@ namespace FrameFlow.Player;
 /// until a skip or jump moves on. <see cref="GetPlaylist"/> returns a snapshot of all of it.
 /// </para>
 /// <para>
-/// <b>Clips.</b> The queue methods also take a <see cref="MediaClip"/>, a source and a start. The
-/// item opens at the clip's start, and a loop or replay of it returns there.
+/// <b>Clips.</b> The queue methods also take a <see cref="MediaClip"/>: a source, a start, and
+/// optionally an end. The item opens at the clip's start, ends at its end as it would at the end of
+/// the source, and a loop or replay of it returns to the start.
 /// <see cref="IMediaTransport.Position"/> and <see cref="IMediaTransport.Duration"/> stay in the
 /// source's time. Give clips of one file one source object: moving between them then repositions
 /// the open item instead of opening the file again.
