@@ -11,9 +11,9 @@ namespace FrameFlow.Player.Core;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>What it folds.</b> The state the transport was in once the wait had subscribed, each state
-/// it moves to, each error it raises with the state it was in at that moment, and the end of its
-/// streams. The shell reads the transport and feeds the readings in; everything it decides is
+/// <b>What it folds.</b> The state the transport was in once the wait had subscribed to its
+/// errors, and again once it had subscribed to its state changes too; each state it moves to;
+/// each error it raises, with the state it was in at that moment; and the end of its streams. The shell reads the transport and feeds the readings in; everything it decides is
 /// here, so the ordering cases are tested without a player, a thread or a clock.
 /// </para>
 /// <para>
@@ -22,6 +22,15 @@ namespace FrameFlow.Player.Core;
 /// subscribed between the two never sees the state change, only the error, and the state read
 /// alongside the error is what tells a fatal error from an item failure the player carries on
 /// from.
+/// </para>
+/// <para>
+/// <b>Why the state is read twice.</b> The wait subscribes to errors first and reads the state,
+/// then subscribes to state changes and reads it again. A transport in
+/// <see cref="PlaybackState.Error"/> at the first read may have raised its error before the wait
+/// was listening, so that is the one case decided without the error. At the second read it is
+/// not: the move came after the first read, so its error comes after the wait began listening for
+/// errors, and the wait holds out for it. A single read after both subscriptions cannot tell
+/// those apart, and would give up on an error that was still on its way.
 /// </para>
 /// <para>
 /// Decided once: the first outcome stands and every later input is ignored.
@@ -49,14 +58,15 @@ internal readonly record struct PlaybackEndWatch
         new(ErrorCategory.InvalidOperation, "The player was disposed before playback ended.");
 
     /// <summary>
-    /// The failure for a player already in <see cref="PlaybackState.Error"/> when the wait began.
-    /// Its error was raised on <c>ErrorOccurred</c> before then and is not replayed.
+    /// The failure for a player already in <see cref="PlaybackState.Error"/> when the wait began
+    /// listening for errors. Its error may already have been raised on <c>ErrorOccurred</c>, and
+    /// is not replayed.
     /// </summary>
     public static PlaybackError AlreadyFailed { get; } =
         new(
             ErrorCategory.InvalidOperation,
-            "The player was already in Error when the wait began. The error that put it there was "
-                + "raised on ErrorOccurred before the wait subscribed."
+            "The player was already in Error when the wait began. The error that put it there may "
+                + "have been raised on ErrorOccurred before the wait subscribed, and is not replayed."
         );
 
     /// <summary>The failure for a player disposed after it entered Error and before it said why.</summary>
@@ -66,7 +76,10 @@ internal readonly record struct PlaybackEndWatch
             "The player entered Error and was disposed before it raised the error."
         );
 
-    /// <summary>The state the transport was in once the wait had subscribed.</summary>
+    /// <summary>
+    /// The state the transport was in once the wait had subscribed to its errors, read before it
+    /// subscribes to state changes.
+    /// </summary>
     /// <remarks>
     /// A wait that already saw the move into <see cref="PlaybackState.Error"/> on the stream,
     /// before it read the state, keeps waiting: the error follows that move, so it will arrive.
@@ -78,6 +91,18 @@ internal readonly record struct PlaybackEndWatch
             PlaybackState.Error when !InError => Decide(Result.Fail(AlreadyFailed)),
             _ => this,
         };
+
+    /// <summary>
+    /// The state the transport was in once the wait had subscribed to its state changes as well,
+    /// read after <see cref="Started"/>. It catches a move made between the two subscriptions,
+    /// which the state stream did not report.
+    /// </summary>
+    /// <remarks>
+    /// A move into <see cref="PlaybackState.Error"/> seen here came after <see cref="Started"/>
+    /// read some other state, so after the wait was listening for errors: its error will arrive,
+    /// and is the one to report. It is folded as the move it is.
+    /// </remarks>
+    public PlaybackEndWatch Watching(PlaybackState current) => StateChanged(current);
 
     /// <summary>A state the transport moved to.</summary>
     public PlaybackEndWatch StateChanged(PlaybackState state) =>

@@ -50,10 +50,10 @@ public static class MediaTransportExtensions
     /// <para>
     /// <b>Called late.</b> It subscribes before it reads <see cref="IMediaTransport.State"/>, so a
     /// player that is already in <see cref="PlaybackState.Ended"/> completes it at once, and one
-    /// that ends while it is being set up is not missed. A player already in
-    /// <see cref="PlaybackState.Error"/> fails it at once, but with a generic error: the one that
-    /// put it there may already have been raised before the wait subscribed, and is not replayed.
-    /// A disposed player fails it.
+    /// that ends or fails while it is being set up is not missed. A player already in
+    /// <see cref="PlaybackState.Error"/> when the wait starts listening for errors fails it at
+    /// once, but with a generic error: the one that put it there may already have been raised,
+    /// and is not replayed. A disposed player fails it.
     /// </para>
     /// <para>
     /// <b>Repeat.</b> Under <see cref="RepeatMode.One"/> the current item loops, and under
@@ -110,6 +110,13 @@ public static class MediaTransportExtensions
                             fault => Apply(w => w.Faulted(fault))
                         )
                     );
+
+                    // Read between the two subscriptions. A player not in Error now raises any
+                    // fatal error from here on to this wait, which is what the fold needs to know
+                    // when the second read finds it in Error.
+                    var whenListening = transport.State;
+                    Apply(w => w.Started(whenListening));
+
                     states = transport.StateChanged.Subscribe(
                         new Observer<PlaybackState>(
                             state => Apply(w => w.StateChanged(state)),
@@ -123,9 +130,10 @@ public static class MediaTransportExtensions
                     return Result.Fail(PlaybackEndWatch.Disposed);
                 }
 
-                // After subscribing, so an end that lands in between is seen one way or the other.
-                var current = transport.State;
-                Apply(w => w.Started(current));
+                // And after both, so a move made between the subscriptions is seen one way or
+                // the other.
+                var whenWatching = transport.State;
+                Apply(w => w.Watching(whenWatching));
 
                 return await _done.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             }

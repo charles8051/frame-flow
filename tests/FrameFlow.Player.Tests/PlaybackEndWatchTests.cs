@@ -87,12 +87,40 @@ public sealed class PlaybackEndWatchTests
     [Fact]
     public void AMoveIntoErrorSeenBeforeTheStateWasRead_WaitsForTheError()
     {
-        // The flip landed between subscribing and reading State. The wait saw it on the stream,
-        // so the error that follows it will arrive too, and is the one to report.
+        // Whatever order the readings come in, a wait that saw the move into Error on the stream
+        // knows the error follows it, so it will arrive too, and is the one to report.
         var watch = PlaybackEndWatch.Waiting.StateChanged(PlaybackState.Error).Started(PlaybackState.Error);
         Assert.Null(watch.Outcome);
 
         Assert.Same(Fatal, watch.ErrorRaised(Fatal, PlaybackState.Error).Outcome!.Value.Error);
+    }
+
+    [Fact]
+    public void AMoveIntoErrorBetweenTheTwoSubscriptions_WaitsForTheError()
+    {
+        // The first read, with errors already watched, found the player playing. The move into
+        // Error came after it, so the error that follows the move comes to this wait.
+        var watch = PlaybackEndWatch.Waiting.Started(PlaybackState.Playing).Watching(PlaybackState.Error);
+        Assert.Null(watch.Outcome);
+
+        Assert.Same(Fatal, watch.ErrorRaised(Fatal, PlaybackState.Error).Outcome!.Value.Error);
+    }
+
+    [Fact]
+    public void AnEndBetweenTheTwoSubscriptions_IsSuccess()
+    {
+        var watch = PlaybackEndWatch.Waiting.Started(PlaybackState.Playing).Watching(PlaybackState.Ended);
+
+        Assert.Equal(Result.Ok(), watch.Outcome);
+    }
+
+    [Fact]
+    public void InErrorAtTheFirstRead_FailsAtOnce_WhateverTheSecondRead()
+    {
+        // The first read is the one that can say the error may already have gone by.
+        var watch = PlaybackEndWatch.Waiting.Started(PlaybackState.Error).Watching(PlaybackState.Error);
+
+        Assert.Same(PlaybackEndWatch.AlreadyFailed, watch.Outcome!.Value.Error);
     }
 
     [Fact]

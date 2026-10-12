@@ -96,6 +96,41 @@ public sealed class WaitForEndTests
         Assert.Same(PlaybackEndWatch.AlreadyFailed, result.Error);
     }
 
+    /// <summary>
+    /// A player that enters Error while the wait is subscribing, after it began listening for
+    /// errors and before it began listening for state changes, raises its error to the wait. The
+    /// wait reports that error, not the generic one for a player that was already in Error.
+    /// </summary>
+    [Fact]
+    public async Task FailsWithThePlayersError_WhenItEntersErrorWhileTheWaitSubscribes()
+    {
+        var (transport, script) = ScriptedTransport.Create(PlaybackState.Playing);
+        script.States.BeforeNextSubscribe = () => script.Move(PlaybackState.Error);
+
+        var wait = transport.WaitForEndAsync();
+        Assert.False(wait.IsCompleted, "The wait gave up before the player said why it failed.");
+        script.Raise(Fatal);
+
+        var result = await wait.WaitAsync(Bound);
+        Assert.Same(Fatal, result.Error);
+    }
+
+    /// <summary>
+    /// Playback that ends while the wait is subscribing, after it began listening for errors and
+    /// before it began listening for state changes, still ends the wait.
+    /// </summary>
+    [Fact]
+    public async Task CompletesWithSuccess_WhenPlaybackEndsWhileTheWaitSubscribes()
+    {
+        var (transport, script) = ScriptedTransport.Create(PlaybackState.Playing);
+        script.States.BeforeNextSubscribe = () => script.Move(PlaybackState.Ended);
+
+        var wait = transport.WaitForEndAsync();
+
+        Assert.True(wait.IsCompleted, "Playback ended while the wait subscribed, and the wait missed it.");
+        Assert.True((await wait.WaitAsync(Bound)).IsSuccess);
+    }
+
     [Fact]
     public async Task Fails_WhenThePlayerIsDisposedWhileWaiting()
     {
@@ -300,6 +335,12 @@ public sealed class WaitForEndTests
         private readonly List<IObserver<T>> _observers = new();
         private bool _completed;
 
+        /// <summary>
+        /// Runs once, at the start of the next <see cref="Subscribe"/>, before the observer is added:
+        /// what the transport does while a subscriber is still on its way.
+        /// </summary>
+        public Action? BeforeNextSubscribe;
+
         public int Count
         {
             get
@@ -311,6 +352,7 @@ public sealed class WaitForEndTests
 
         public IDisposable Subscribe(IObserver<T> observer)
         {
+            Interlocked.Exchange(ref BeforeNextSubscribe, null)?.Invoke();
             lock (_observers)
             {
                 ObjectDisposedException.ThrowIf(_completed, this);
