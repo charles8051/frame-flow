@@ -294,6 +294,42 @@ public sealed class ChromeReattachTests
         }
     }
 
+    // The bar subscribes to the repeat mode first, so a transport that refuses only its state
+    // leaves the bar holding a subscription unless the refused follow is let go of whole.
+
+    [AvaloniaFact]
+    public void TransportBar_ABindRefusedPartWay_LeavesNoSubscriptionBehind()
+    {
+        var transport = new FakeTransport();
+        transport.StateChangedSubject.Dispose();
+        var bar = new FrameFlowTransportBar();
+
+        Assert.Throws<ObjectDisposedException>(() => bar.Transport = transport);
+
+        Assert.Equal(0, transport.RepeatModeChangedSubject.Count);
+    }
+
+    [AvaloniaFact]
+    public void TransportBar_AReattachRefusedPartWay_LeavesNoSubscriptionBehind()
+    {
+        var transport = new FakeTransport();
+        var bar = new FrameFlowTransportBar { Transport = transport };
+        var window = Show(bar);
+        try
+        {
+            Detach(window, bar);
+            transport.StateChangedSubject.Dispose();
+
+            Attach(window, bar);
+
+            Assert.Equal(0, transport.RepeatModeChangedSubject.Count);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     // ── Player view ──────────────────────────────────────────────────────────
 
     [AvaloniaFact]

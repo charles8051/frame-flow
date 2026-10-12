@@ -319,9 +319,10 @@ after `DisposeAsync`, or catch `ObjectDisposedException` where a command can rac
   switching tabs or a host swapping a panel's `Content`, kept showing what it showed when it left.
   It now reads the transport's state, repeat mode and media when it comes back, and follows it from
   there. The transport bar does not ask for `LoopByDefault` again: that is a request made when
-  `Transport` is set. A state change posted to the UI thread before a control let go of a transport,
-  by leaving the tree or by a rebind, is dropped when it arrives after; the badge, the stream
-  summary and the bar's buttons used to show it. A transport disposed while its control was out of
+  `Transport` is set. A state or repeat-mode change posted to the UI thread before a control let go
+  of a transport, by leaving the tree or by a rebind, is dropped when it arrives after. The badge,
+  the stream summary and the bar used to show it, except a repeat-mode change from a transport the
+  bar had been rebound away from, which its Loop toggle already dropped. A transport disposed while its control was out of
   the tree is not followed when the control comes back, and the control keeps what it showed until
   the next transport is bound. #643.
 

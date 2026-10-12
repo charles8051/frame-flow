@@ -63,7 +63,7 @@ internal sealed class TransportFollower(Action<IMediaTransport, TransportFollowe
         }
         catch (ObjectDisposedException)
         {
-            Stop();
+            // Start has already let go of whatever it subscribed before the refusal.
         }
     }
 
@@ -75,11 +75,24 @@ internal sealed class TransportFollower(Action<IMediaTransport, TransportFollowe
         live?.Dispose();
     }
 
+    /// <summary>
+    /// Runs the control's delegate on a new <see cref="Follow"/>. If the delegate throws, the
+    /// follow is stopped, with whatever it had subscribed, so <c>_live</c> only ever holds one
+    /// that started.
+    /// </summary>
     private void Start(IMediaTransport transport)
     {
         var follow = new Follow();
         _live = follow;
-        start(transport, follow);
+        try
+        {
+            start(transport, follow);
+        }
+        catch
+        {
+            Stop();
+            throw;
+        }
     }
 
     /// <summary>One spell of following a transport: its subscriptions, and whether it has stopped.</summary>
