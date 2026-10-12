@@ -9,7 +9,8 @@ using Microsoft.Extensions.Time.Testing;
 namespace FrameFlow.Audio.Tests;
 
 /// <summary>
-/// <see cref="OpenAlAudioSink.DrainAsync"/> against <see cref="FakeOpenAlDevice"/> (#609).
+/// <see cref="OpenAlAudioSink.DrainAsync"/> against <see cref="FakeOpenAlDevice"/> (#609), and the
+/// sink giving its device back when the process exits (#633).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -234,6 +235,63 @@ public sealed class OpenAlAudioSinkDrainTests
         var drain = sink.DrainAsync(CancellationToken.None);
 
         Assert.True(drain.IsCompletedSuccessfully);
+    }
+
+    // ── #633: the device is given back at process exit ──────────────────────
+
+    /// <summary>
+    /// At exit the sink gives back everything it holds on the device: its source, every buffer
+    /// it generated, and its lease, so the device can be closed under it.
+    /// </summary>
+    [Fact]
+    public async Task ProcessExit_TheSinkGivesBackItsSourceBuffersAndLease()
+    {
+        var device = new FakeOpenAlDevice();
+        await using var sink = FakeOpenAlSink.Create(device, timeProvider: new FakeTimeProvider());
+        await sink.ActivateAsync(CancellationToken.None);
+        await PushBlocksAsync(sink, blocks: 6, value: 100);
+
+        device.ExitProcess();
+
+        Assert.Equal(0, device.LiveSources);
+        Assert.Equal(0, device.LiveBuffers);
+        Assert.Equal(0, device.LeasesOutstanding);
+    }
+
+    /// <summary>
+    /// After the exit took its device, the sink is inert, as it is when no device could be
+    /// opened: nothing it is asked to do reaches the device, and nothing throws.
+    /// </summary>
+    [Fact]
+    public async Task ProcessExit_LeavesTheSinkInert()
+    {
+        var device = new FakeOpenAlDevice();
+        var sink = FakeOpenAlSink.Create(device, timeProvider: new FakeTimeProvider());
+        await sink.ActivateAsync(CancellationToken.None);
+        await PushBlocksAsync(sink, blocks: 6, value: 100);
+
+        device.ExitProcess();
+        int callsAtExit = device.Calls.Count;
+
+        await PushBlocksAsync(sink, blocks: 6, value: 200, firstBlock: 6);
+        await AssertCompletesAsync(
+            sink.DrainAsync(CancellationToken.None).AsTask(),
+            "A sink with no device waited on a drain."
+        );
+        await sink.PauseAsync(CancellationToken.None);
+        await sink.ResumeAsync(CancellationToken.None);
+        sink.Volume = 0.5f;
+        _ = sink.GetPlaybackTime();
+        await sink.DeactivateAsync(CancellationToken.None);
+        await sink.ActivateAsync(CancellationToken.None); // the exiting device refuses the lease
+        await PushBlocksAsync(sink, blocks: 6, value: 300);
+        await sink.DisposeAsync();
+
+        Assert.True(
+            device.Calls.Count == callsAtExit,
+            "The sink kept calling a device the exit had taken:\n"
+                + string.Join(Environment.NewLine, device.Calls.Skip(callsAtExit))
+        );
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────

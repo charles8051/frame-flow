@@ -104,8 +104,10 @@ public sealed partial class OpenAlAudioSink
 
     // How this sink gets its device. Production passes SharedOpenAlContext.Acquire;
     // a test passes a fake so the sink's ordering against the device, and the PCM the
-    // device was actually handed, are both observable on a headless runner (#138).
-    private readonly Func<IOpenAlContextLease?> _leaseFactory;
+    // device was actually handed, are both observable on a headless runner (#138). The
+    // argument is what the device calls if it has to be given back early: at process exit
+    // (#633), with OnDeviceRevoked.
+    private readonly Func<Action, IOpenAlContextLease?> _leaseFactory;
     private uint _source;
     private readonly Queue<uint> _freeBuffers = new();
 
@@ -335,22 +337,23 @@ public sealed partial class OpenAlAudioSink
     /// <param name="logger">Optional logger.</param>
     /// <param name="timeProvider">Supplies the sink's elapsed time. See the public constructor.</param>
     /// <param name="leaseFactory">
-    /// Supplies the device lease at each activation. Null acquires the process-wide
-    /// shared OpenAL device (ADR-0058), which is what production does. A test passes a
-    /// fake device here so the sink's call ordering and the PCM the device was handed
-    /// are both assertable with no sound card (#138).
+    /// Supplies the device lease at each activation, given the callback that hands the
+    /// device back if the process exits first. Null acquires the process-wide shared
+    /// OpenAL device (ADR-0058), which is what production does. A test passes a fake
+    /// device here so the sink's call ordering and the PCM the device was handed are both
+    /// assertable with no sound card (#138).
     /// </param>
     internal OpenAlAudioSink(
         ILogger<OpenAlAudioSink>? logger,
         TimeProvider? timeProvider,
-        Func<IOpenAlContextLease?>? leaseFactory
+        Func<Action, IOpenAlContextLease?>? leaseFactory
     )
     {
         _logger = logger ?? NullLogger<OpenAlAudioSink>.Instance;
         _timeProvider = timeProvider ?? HighResolutionTimeProvider.Preferred;
         _sessionClock = new SessionClock(_timeProvider);
         _bufferReturned = new AsyncAutoResetEvent(_timeProvider);
-        _leaseFactory = leaseFactory ?? SharedOpenAlContext.Acquire;
+        _leaseFactory = leaseFactory ?? (static onRevoked => SharedOpenAlContext.Acquire(onRevoked));
     }
 
     /// <summary>
@@ -426,9 +429,9 @@ public sealed partial class OpenAlAudioSink
             // instead of opening our own. The context is made current exactly
             // once (on the first sink in the process) and never changed, so no
             // sink can clobber another's al* target (ADR-0058). A null lease
-            // means no audio device is available; stay inert, exactly as the
-            // prior per-sink OpenDevice-failure path did.
-            _contextLease = _leaseFactory();
+            // means no audio device is available, or that the process is exiting;
+            // stay inert, exactly as the prior per-sink OpenDevice-failure path did.
+            _contextLease = _leaseFactory(OnDeviceRevoked);
             if (_contextLease is null)
             {
                 LogDeviceOpenFailed(_logger);
@@ -1358,7 +1361,7 @@ public sealed partial class OpenAlAudioSink
         return ValueTask.CompletedTask;
     }
 
-    private unsafe void DisposeOpenAlResources()
+    private void DisposeOpenAlResources()
     {
         lock (_stateLock)
         {
@@ -1366,44 +1369,76 @@ public sealed partial class OpenAlAudioSink
                 return;
             _disposed = true;
 
-            if (_al is not null)
-            {
-                _al.SourceStop(_source);
-
-                // Delete the source before its buffers. Deleting a source releases
-                // whatever is still attached to it, and that is the only way to get
-                // the queue off a source that never started: alSourceStop on an
-                // AL_INITIAL source is a legal NOP, an AL_INITIAL source reports no
-                // buffers processed, and unqueueing from it therefore fails
-                // (OpenAL 1.1 §4.3.6, §4.3.2, §4.3.5). Draining first only works for
-                // a source that actually played, which is not a safe assumption at
-                // teardown — a sink disposed before it reached PreBufferCount has a
-                // queue it never started (#138).
-                _al.DeleteSource(_source);
-
-                // Delete every name generated, not just the free ones. A buffer the
-                // device still held was not in _freeBuffers, and the unqueued array
-                // the old teardown built was discarded without deleting or pooling
-                // it, so each in-flight buffer leaked a native name per disposal.
-                // Nothing in the sink's reporting showed it (#138).
-                foreach (var buffer in _allBuffers)
-                    _al.DeleteBuffer(buffer);
-
-                _allBuffers.Clear();
-                _freeBuffers.Clear();
-            }
-
-            // Release this sink's reference on the shared device/context. The
-            // last sink to release tears the device + context down (ADR-0058);
-            // this sink no longer owns the device, context, or AL API lifetime.
-            // Source + buffers were already deleted above while the context was
-            // still current and valid.
-            _contextLease?.Dispose();
-            _contextLease = null;
-            _al = null;
+            ReleaseDeviceUnderLock();
 
             LogDisposed(_logger, _blocksWritten, _underrunCount, _backpressureCount);
         }
+    }
+
+    /// <summary>
+    /// Gives the device back because the process is exiting (#633). Called by the shared
+    /// context's exit handler, on the exit thread, with no context lock held.
+    /// </summary>
+    /// <remarks>
+    /// Releases what disposal releases, under the same lock, and leaves the sink undisposed but
+    /// with no device: every member then behaves as it does when no device could be opened, and
+    /// a later activation finds the context refusing leases. Every <c>al*</c> call this sink
+    /// makes is under <see cref="_stateLock"/>, so once this returns none is in flight and the
+    /// context can close the device.
+    /// </remarks>
+    private void OnDeviceRevoked()
+    {
+        lock (_stateLock)
+        {
+            if (_disposed || _al is null)
+                return;
+
+            ReleaseDeviceUnderLock();
+            LogDeviceRevoked(_logger);
+        }
+    }
+
+    /// <summary>
+    /// Stops and deletes this sink's source and buffers and disposes its lease. Must hold
+    /// <see cref="_stateLock"/>.
+    /// </summary>
+    private void ReleaseDeviceUnderLock()
+    {
+        if (_al is not null)
+        {
+            _al.SourceStop(_source);
+
+            // Delete the source before its buffers. Deleting a source releases
+            // whatever is still attached to it, and that is the only way to get
+            // the queue off a source that never started: alSourceStop on an
+            // AL_INITIAL source is a legal NOP, an AL_INITIAL source reports no
+            // buffers processed, and unqueueing from it therefore fails
+            // (OpenAL 1.1 §4.3.6, §4.3.2, §4.3.5). Draining first only works for
+            // a source that actually played, which is not a safe assumption at
+            // teardown — a sink disposed before it reached PreBufferCount has a
+            // queue it never started (#138).
+            _al.DeleteSource(_source);
+
+            // Delete every name generated, not just the free ones. A buffer the
+            // device still held was not in _freeBuffers, and the unqueued array
+            // the old teardown built was discarded without deleting or pooling
+            // it, so each in-flight buffer leaked a native name per disposal.
+            // Nothing in the sink's reporting showed it (#138).
+            foreach (var buffer in _allBuffers)
+                _al.DeleteBuffer(buffer);
+
+            _allBuffers.Clear();
+            _freeBuffers.Clear();
+        }
+
+        // Release this sink's reference on the shared device/context. The
+        // last sink to release tears the device + context down (ADR-0058);
+        // this sink no longer owns the device, context, or AL API lifetime.
+        // Source + buffers were already deleted above while the context was
+        // still current and valid.
+        _contextLease?.Dispose();
+        _contextLease = null;
+        _al = null;
     }
 
     private void EnsureStagingCapacity(int required)
@@ -1631,6 +1666,12 @@ public sealed partial class OpenAlAudioSink
 
     [LoggerMessage(Level = LogLevel.Error, Message = "OpenAL: failed to open audio device")]
     private static partial void LogDeviceOpenFailed(ILogger logger);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "OpenAL audio sink gave its device back because the process is exiting; it plays nothing from here."
+    )]
+    private static partial void LogDeviceRevoked(ILogger logger);
 
     [LoggerMessage(
         Level = LogLevel.Warning,

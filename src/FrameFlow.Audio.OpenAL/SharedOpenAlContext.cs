@@ -41,13 +41,24 @@ namespace FrameFlow.Audio.OpenAL;
 /// rule is per-sink lock → <see cref="Gate"/> (the gate is always the leaf), so
 /// no sink lock is ever acquired while the gate is held.
 /// </para>
+/// <para>
+/// <b>Exit.</b> The first open registers a <see cref="AppDomain.ProcessExit"/> handler,
+/// <see cref="ReleaseForExit"/>, that closes the device whatever the lease count, so a process
+/// that ends with a sink undisposed exits cleanly (#633). The refcount decisions, exit
+/// included, are <see cref="OpenAlContextLifetime"/>'s.
+/// </para>
 /// </remarks>
 internal sealed class SharedOpenAlContext
 {
     private static readonly Lock Gate = new();
     private static SharedOpenAlContext? _live;
-    private static int _leaseCount;
+    private static OpenAlContextLifetime _lifetime = OpenAlContextLifetime.Initial;
     private static int _deviceOpensTotal;
+    private static bool _exitHookRegistered;
+
+    // Every lease handed out and not yet given back, so an exit can ask each holder to let go
+    // of the device under its own lock before the device is closed (#633).
+    private static readonly HashSet<SharedOpenAlContextLease> _leases = new();
 
     // ── Test-only structural diagnostics (InternalsVisibleTo) ──────────────
     // Device-independent, deterministic proof that N sinks share ONE
@@ -74,7 +85,7 @@ internal sealed class SharedOpenAlContext
         get
         {
             lock (Gate)
-                return _leaseCount;
+                return _lifetime.Leases;
         }
     }
 
@@ -168,24 +179,43 @@ internal sealed class SharedOpenAlContext
 
     /// <summary>
     /// Acquires a lease on the shared device/context, creating it on first use.
-    /// Returns <see langword="null"/> when no audio device can be opened — the
-    /// caller stays inert (mirrors the prior per-sink device-open-failure path).
+    /// Returns <see langword="null"/> when no audio device can be opened, or once the process
+    /// has begun to exit — the caller stays inert (mirrors the prior per-sink
+    /// device-open-failure path).
     /// </summary>
-    public static SharedOpenAlContextLease? Acquire()
+    /// <param name="onRevoked">
+    /// Called if the process exits while the lease is held: the holder releases its sources and
+    /// buffers and disposes the lease, under its own lock. Called at most once, on the exit
+    /// thread, with no context lock held.
+    /// </param>
+    public static SharedOpenAlContextLease? Acquire(Action? onRevoked = null)
     {
         lock (Gate)
         {
-            if (_live is null)
+            var (next, action) = _lifetime.Acquire();
+            switch (action)
             {
-                var created = TryCreate();
-                if (created is null)
+                case ContextAcquire.Refuse:
                     return null;
-                _live = created;
-                _deviceOpensTotal++;
+
+                case ContextAcquire.Open:
+                    var created = TryCreate();
+                    if (created is null)
+                        return null;
+                    _live = created;
+                    _deviceOpensTotal++;
+                    _lifetime = next.Opened();
+                    RegisterExitHookUnderGate();
+                    break;
+
+                default:
+                    _lifetime = next;
+                    break;
             }
 
-            _leaseCount++;
-            return new SharedOpenAlContextLease(_live);
+            var lease = new SharedOpenAlContextLease(_live!, onRevoked);
+            _leases.Add(lease);
+            return lease;
         }
     }
 
@@ -194,23 +224,85 @@ internal sealed class SharedOpenAlContext
     /// <see cref="SharedOpenAlContextLease.Dispose"/>; the last release tears
     /// down the device/context.
     /// </summary>
-    internal static void Release(SharedOpenAlContext context)
+    internal static void Release(SharedOpenAlContext context, SharedOpenAlContextLease lease)
     {
         lock (Gate)
         {
+            _leases.Remove(lease);
+
             // Defensive: the lease guarantees single-release, so a mismatch here
             // means the context was already torn down. No-op rather than throw.
             if (_live != context)
                 return;
 
-            _leaseCount--;
-            if (_leaseCount > 0)
+            var (next, close) = _lifetime.Release();
+            _lifetime = next;
+            if (!close)
                 return;
 
-            _leaseCount = 0;
             context.TearDown();
             _live = null;
         }
+    }
+
+    /// <summary>
+    /// Closes the shared device at process exit, whatever the lease count (#633).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A process that ended with a lease outstanding still had the device and context open when
+    /// the runtime shut down, and on Windows it failed fast with <c>0xC0000409</c> instead of
+    /// exiting with its own code. A sink is released only by its disposal, so any exit that
+    /// skipped one did this: an early return, an <see cref="Environment.Exit"/>, a window closed
+    /// during startup.
+    /// </para>
+    /// <para>
+    /// Three steps. Under <see cref="Gate"/>, refuse every later lease and take the outstanding
+    /// ones. Then, with the gate released, ask each holder to let go: a sink stops and deletes its
+    /// source and buffers and disposes its lease under its own lock, which is the lock order the
+    /// rest of the class keeps (sink, then gate), and which no sink thread can be inside an
+    /// <c>al*</c> call without. Last, under the gate again, close whatever is still open. A sink
+    /// used afterwards finds no device, as when none could be opened.
+    /// </para>
+    /// </remarks>
+    internal static void ReleaseForExit()
+    {
+        SharedOpenAlContextLease[] outstanding;
+        lock (Gate)
+        {
+            _lifetime = _lifetime.BeginExit();
+            outstanding = [.. _leases];
+        }
+
+        foreach (var lease in outstanding)
+        {
+            try
+            {
+                lease.Revoke();
+            }
+            catch
+            {
+                // On the way out, one holder failing must not keep the device open for the rest.
+            }
+        }
+
+        lock (Gate)
+        {
+            var (next, close) = _lifetime.Abandon();
+            _lifetime = next;
+            if (close)
+                _live?.TearDown();
+            _live = null;
+            _leases.Clear();
+        }
+    }
+
+    private static void RegisterExitHookUnderGate()
+    {
+        if (_exitHookRegistered)
+            return;
+        _exitHookRegistered = true;
+        AppDomain.CurrentDomain.ProcessExit += static (_, _) => ReleaseForExit();
     }
 
     private static unsafe SharedOpenAlContext? TryCreate()
@@ -282,8 +374,19 @@ internal sealed class SharedOpenAlContext
 internal sealed class SharedOpenAlContextLease : IOpenAlContextLease
 {
     private SharedOpenAlContext? _context;
+    private Action? _onRevoked;
 
-    internal SharedOpenAlContextLease(SharedOpenAlContext context) => _context = context;
+    internal SharedOpenAlContextLease(SharedOpenAlContext context, Action? onRevoked)
+    {
+        _context = context;
+        _onRevoked = onRevoked;
+    }
+
+    /// <summary>
+    /// Asks the holder to give the device back because the process is exiting. Runs the
+    /// holder's callback at most once; a lease taken with none is left to the forced close.
+    /// </summary>
+    internal void Revoke() => Interlocked.Exchange(ref _onRevoked, null)?.Invoke();
 
     /// <summary>The shared AL API. Throws if the lease has already been disposed.</summary>
     public IOpenAlApi Al =>
@@ -304,6 +407,6 @@ internal sealed class SharedOpenAlContextLease : IOpenAlContextLease
         // swaps the field to null calls Release.
         var context = Interlocked.Exchange(ref _context, null);
         if (context is not null)
-            SharedOpenAlContext.Release(context);
+            SharedOpenAlContext.Release(context, this);
     }
 }
