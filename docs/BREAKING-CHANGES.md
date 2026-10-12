@@ -21,15 +21,17 @@ errors, which announce themselves. A few are not, and those are called out.
 forward from there, whatever the later buffers said (#620). A node fed across a seek, a loop or
 the next item joined up to one window of earlier audio to the new audio, and stamped every later
 caption on the old clock. It now compares each buffer's `PresentationTime` with where the held
-audio ends. Off by more than 200 ms, the partial window is dropped and a new one starts at that
-buffer's time.
+audio ends. Off by more than 50 ms either way, the partial window is dropped and a new one starts
+at that buffer's time.
 
-A window now holds `WindowSize` of audio whatever `InputChannels` is. With two channels it used
-to hold half that, stamped as if it were whole.
+Multi-channel input is now mixed to mono before Whisper reads it. With two channels the operator
+used to hand Whisper the interleaved samples as if they were one channel, half a window of audio
+stamped as a whole one.
 
 **Who hits this.** A source whose buffers do not carry the time they play at: constant or
 restarting timestamps over audio meant to run on, such as clips concatenated with each starting
-at zero. Every jump now drops the partial window.
+at zero. Every jump now drops the partial window. So does a gap of more than 50 ms in a source
+that drops buffers when its consumer falls behind.
 
 **What to write instead.** Stamp each buffer with its position on one running timeline. The
 decoder and the resampler already do.

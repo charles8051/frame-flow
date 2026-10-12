@@ -8,20 +8,19 @@ namespace FrameFlow.Whisper.Tests;
 /// </summary>
 public sealed class WindowTimelineTests
 {
-    private const int Mono16k = 16_000;
-    private const int FiveSecondsMono = 5 * Mono16k;
+    private const int Rate = 16_000;
+    private const int FiveSeconds = 5 * Rate;
 
     private static TimeSpan Seconds(double s) => TimeSpan.FromSeconds(s);
 
-    private static int SamplesFor(double seconds, int samplesPerSecond = Mono16k) =>
-        (int)(seconds * samplesPerSecond);
+    private static int SamplesFor(double seconds) => (int)(seconds * Rate);
 
     // ─── Admit ───────────────────────────────────────────────────────
 
     [Fact]
     public void FirstBuffer_AnchorsTheWindowAtItsOwnTime()
     {
-        var admission = WindowTimeline.Admit(null, Seconds(42), SamplesFor(0.1), Mono16k);
+        var admission = WindowTimeline.Admit(null, Seconds(42), SamplesFor(0.1), Rate);
 
         Assert.False(admission.Discard);
         Assert.Equal(Seconds(42), admission.Clock.Start);
@@ -35,7 +34,7 @@ public sealed class WindowTimelineTests
         WindowClock? clock = null;
         for (int i = 0; i < 30; i++)
         {
-            var admission = WindowTimeline.Admit(clock, Seconds(10 + i * 0.1), SamplesFor(0.1), Mono16k);
+            var admission = WindowTimeline.Admit(clock, Seconds(10 + i * 0.1), SamplesFor(0.1), Rate);
             Assert.False(admission.Discard);
             clock = admission.Clock;
         }
@@ -45,15 +44,15 @@ public sealed class WindowTimelineTests
     }
 
     [Theory]
-    [InlineData(-0.150)]
-    [InlineData(-0.005)]
-    [InlineData(0.005)]
-    [InlineData(0.150)]
-    public void Jitter_WithinTolerance_IsTheNextAudio(double offsetSeconds)
+    [InlineData(-0.040)]
+    [InlineData(-0.002)]
+    [InlineData(0.002)]
+    [InlineData(0.040)]
+    public void TimestampRounding_IsTheNextAudio(double offsetSeconds)
     {
-        var held = new WindowClock(Seconds(10), SamplesFor(2), Mono16k);
+        var held = new WindowClock(Seconds(10), SamplesFor(2), Rate);
 
-        var admission = WindowTimeline.Admit(held, held.End + Seconds(offsetSeconds), SamplesFor(0.1), Mono16k);
+        var admission = WindowTimeline.Admit(held, held.End + Seconds(offsetSeconds), SamplesFor(0.1), Rate);
 
         Assert.False(admission.Discard);
         Assert.Equal(Seconds(10), admission.Clock.Start);
@@ -61,79 +60,71 @@ public sealed class WindowTimelineTests
     }
 
     [Theory]
-    [InlineData(0.0)]   // seek back to the start, or a loop
-    [InlineData(5.0)]   // seek back
-    [InlineData(60.0)]  // seek forward
-    public void Jump_DropsTheHeldAudio_AndStartsAtTheJumpTime(double jumpToSeconds)
+    [InlineData(-0.1)]  // a small step back
+    [InlineData(0.1)]   // a small step forward
+    [InlineData(-10)]   // seek back to the start, or a loop
+    [InlineData(-5)]    // seek back
+    [InlineData(47)]    // seek forward
+    public void Jump_DropsTheHeldAudio_AndStartsAtTheJumpTime(double jumpBySeconds)
     {
-        var held = new WindowClock(Seconds(10), SamplesFor(3), Mono16k);
+        var held = new WindowClock(Seconds(10), SamplesFor(3), Rate);
+        var jumpTo = held.End + Seconds(jumpBySeconds);
 
-        var admission = WindowTimeline.Admit(held, Seconds(jumpToSeconds), SamplesFor(0.1), Mono16k);
+        var admission = WindowTimeline.Admit(held, jumpTo, SamplesFor(0.1), Rate);
 
         Assert.True(admission.Discard);
-        Assert.Equal(Seconds(jumpToSeconds), admission.Clock.Start);
+        Assert.Equal(jumpTo, admission.Clock.Start);
         Assert.Equal(SamplesFor(0.1), admission.Clock.Samples);
     }
 
     [Fact]
     public void Jump_JustPastTolerance_DropsTheHeldAudio()
     {
-        var held = new WindowClock(Seconds(10), SamplesFor(1), Mono16k);
-        var past = held.End + WindowTimeline.DiscontinuityTolerance + TimeSpan.FromTicks(1);
+        var held = new WindowClock(Seconds(10), SamplesFor(1), Rate);
+        var tolerance = WindowTimeline.DiscontinuityTolerance;
+        var tick = TimeSpan.FromTicks(1);
 
-        Assert.True(WindowTimeline.Admit(held, past, SamplesFor(0.1), Mono16k).Discard);
+        Assert.False(WindowTimeline.Admit(held, held.End + tolerance, SamplesFor(0.1), Rate).Discard);
+        Assert.True(WindowTimeline.Admit(held, held.End + tolerance + tick, SamplesFor(0.1), Rate).Discard);
+        Assert.True(WindowTimeline.Admit(held, held.End - tolerance - tick, SamplesFor(0.1), Rate).Discard);
     }
 
     [Fact]
     public void EmptyWindow_TakesTheBufferTime_WithoutDiscarding()
     {
-        var empty = new WindowClock(Seconds(15), 0, Mono16k);
+        var empty = new WindowClock(Seconds(15), 0, Rate);
 
-        var admission = WindowTimeline.Admit(empty, Seconds(90), SamplesFor(0.1), Mono16k);
+        var admission = WindowTimeline.Admit(empty, Seconds(90), SamplesFor(0.1), Rate);
 
         Assert.False(admission.Discard);
         Assert.Equal(Seconds(90), admission.Clock.Start);
     }
 
-    [Fact]
-    public void Stereo_TimesSamplesAcrossBothChannels()
-    {
-        const int stereo16k = 2 * Mono16k;
-        var held = new WindowClock(Seconds(0), SamplesFor(1, stereo16k), stereo16k);
-
-        Assert.Equal(Seconds(1), held.End);
-        Assert.False(WindowTimeline.Admit(held, Seconds(1), SamplesFor(0.1, stereo16k), stereo16k).Discard);
-    }
-
-    // ─── Close ───────────────────────────────────────────────────────
+    // ─── CloseOne ────────────────────────────────────────────────────
 
     [Fact]
-    public void Close_BelowAWindow_ClosesNothing()
-    {
-        var clock = new WindowClock(Seconds(10), FiveSecondsMono - 1, Mono16k);
-
-        var (starts, remainder) = WindowTimeline.Close(clock, FiveSecondsMono);
-
-        Assert.Empty(starts);
-        Assert.Equal(clock, remainder);
-    }
+    public void CloseOne_BelowAWindow_ClosesNothing() =>
+        Assert.Null(WindowTimeline.CloseOne(new WindowClock(Seconds(10), FiveSeconds - 1, Rate), FiveSeconds));
 
     [Fact]
-    public void Close_EachWindowStartsWhereThePreviousEnded_AndTheRemainderFollows()
+    public void CloseOne_TakesOneWindow_AndTheRemainderStartsWhereItEnds()
     {
-        var clock = new WindowClock(Seconds(10), 2 * FiveSecondsMono + SamplesFor(0.5), Mono16k);
+        var clock = new WindowClock(Seconds(10), 2 * FiveSeconds + SamplesFor(0.5), Rate);
 
-        var (starts, remainder) = WindowTimeline.Close(clock, FiveSecondsMono);
+        var first = WindowTimeline.CloseOne(clock, FiveSeconds)!.Value;
+        var second = WindowTimeline.CloseOne(first.Remainder, FiveSeconds)!.Value;
 
-        Assert.Equal(new[] { Seconds(10), Seconds(15) }, starts);
-        Assert.Equal(Seconds(20), remainder.Start);
-        Assert.Equal(SamplesFor(0.5), remainder.Samples);
+        Assert.Equal(Seconds(10), first.Start);
+        Assert.Equal(Seconds(15), second.Start);
+        Assert.Equal(Seconds(20), second.Remainder.Start);
+        Assert.Equal(SamplesFor(0.5), second.Remainder.Samples);
+        Assert.Null(WindowTimeline.CloseOne(second.Remainder, FiveSeconds));
     }
 
     [Fact]
-    public void Close_ZeroWindow_Throws() =>
+    public void CloseOne_ZeroWindow_Throws() =>
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => WindowTimeline.Close(new WindowClock(Seconds(0), 10, Mono16k), 0)
+            () => WindowTimeline.CloseOne(new WindowClock(Seconds(0), 10, Rate), 0)
         );
 
     // ─── A seek, end to end ──────────────────────────────────────────
@@ -150,13 +141,17 @@ public sealed class WindowTimelineTests
 
         void Feed(double pts)
         {
-            var admission = WindowTimeline.Admit(clock, Seconds(pts), SamplesFor(0.1), Mono16k);
+            var admission = WindowTimeline.Admit(clock, Seconds(pts), SamplesFor(0.1), Rate);
             held = admission.Discard ? SamplesFor(0.1) : held + SamplesFor(0.1);
-            var (starts, remainder) = WindowTimeline.Close(admission.Clock, FiveSecondsMono);
-            closed.AddRange(starts);
-            held -= starts.Count * (long)FiveSecondsMono;
-            clock = remainder;
-            Assert.Equal(held, clock.Value.Samples);
+            var current = admission.Clock;
+            while (WindowTimeline.CloseOne(current, FiveSeconds) is { } window)
+            {
+                closed.Add(window.Start);
+                held -= FiveSeconds;
+                current = window.Remainder;
+            }
+            clock = current;
+            Assert.Equal(held, current.Samples);
         }
 
         for (int i = 0; i < 30; i++)
@@ -166,5 +161,31 @@ public sealed class WindowTimelineTests
 
         Assert.Equal(new[] { Seconds(60) }, closed);
         Assert.Equal(Seconds(65), clock!.Value.Start);
+    }
+
+    // ─── Mono ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void AppendMono_Mono_Scales()
+    {
+        var target = new List<float>();
+
+        WhisperSamples.AppendMono(target, [16384, -32768, 0], channels: 1);
+
+        Assert.Equal(new[] { 0.5f, -1f, 0f }, target);
+    }
+
+    [Fact]
+    public void AppendMono_Stereo_AveragesEachFrame()
+    {
+        var target = new List<float> { 0.25f };
+
+        WhisperSamples.AppendMono(target, [16384, 0, -32768, -32768, 32767, -32768], channels: 2);
+
+        Assert.Equal(4, target.Count);
+        Assert.Equal(0.25f, target[0]);
+        Assert.Equal(0.25f, target[1]);
+        Assert.Equal(-1f, target[2]);
+        Assert.Equal(-1f / 65536f, target[3], 1e-7f);
     }
 }

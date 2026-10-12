@@ -84,7 +84,8 @@ public static class WhisperOperators
     /// that does not continue the held audio (a seek, a loop, the next item) drops the partial
     /// window and starts a new one at its own time, so captions are never built from audio of two
     /// places and their times match the media position. A node kept across seeks, so the model
-    /// loads once, therefore needs no reset.
+    /// loads once, therefore needs no reset. Multi-channel input is mixed to mono, which is what
+    /// Whisper reads.
     /// </remarks>
     public static MultiOperatorNode<PcmAudioBuffer, CaptionRef> TranscribeWithWhisper(
         string id,
@@ -104,9 +105,7 @@ public static class WhisperOperators
         // graph construction) doesn't touch the model file.
         WhisperFactory? factory = null;
         WhisperProcessor? processor = null;
-        var samplesPerSecond = opts.InputSampleRate * opts.InputChannels;
-        var windowSamples =
-            (int)(opts.InputSampleRate * opts.EffectiveWindowSize.TotalSeconds) * opts.InputChannels;
+        var windowSamples = (int)(opts.InputSampleRate * opts.EffectiveWindowSize.TotalSeconds);
         var windowBuffer = new List<float>(windowSamples + 4096);
         WindowClock? clock = null;
 
@@ -147,30 +146,28 @@ public static class WhisperOperators
             var admission = WindowTimeline.Admit(
                 clock,
                 buffer.PresentationTime,
-                buffer.SampleCount,
-                samplesPerSecond
+                buffer.FrameCount,
+                opts.InputSampleRate
             );
             if (admission.Discard)
                 windowBuffer.Clear();
 
-            AppendSamplesAsFloat(windowBuffer, buffer);
+            WhisperSamples.AppendMono(windowBuffer, buffer.Samples.Span, buffer.Channels);
+            var current = admission.Clock;
+            clock = current;
 
-            // Take the closed windows out and record the clock before inference runs, so a run
-            // cancelled between windows leaves the held samples and the clock in agreement.
-            var (starts, remainder) = WindowTimeline.Close(admission.Clock, windowSamples);
-            var slices = new float[starts.Count][];
-            for (int i = 0; i < slices.Length; i++)
+            while (WindowTimeline.CloseOne(current, windowSamples) is { } closed)
             {
-                slices[i] = new float[windowSamples];
-                windowBuffer.CopyTo(i * windowSamples, slices[i], 0, windowSamples);
-            }
-            windowBuffer.RemoveRange(0, slices.Length * windowSamples);
-            clock = remainder;
+                // Take the window out and advance the clock before inference runs, so a run
+                // cancelled during it leaves the held samples and the clock in agreement.
+                var slice = new float[windowSamples];
+                windowBuffer.CopyTo(0, slice, 0, windowSamples);
+                windowBuffer.RemoveRange(0, windowSamples);
+                current = closed.Remainder;
+                clock = current;
 
-            for (int i = 0; i < slices.Length; i++)
-            {
                 await foreach (
-                    var caption in InferCaptionsAsync(processor!, slices[i], starts[i], ct)
+                    var caption in InferCaptionsAsync(processor!, slice, closed.Start, ct)
                         .ConfigureAwait(false)
                 )
                 {
@@ -205,20 +202,6 @@ public static class WhisperOperators
                     Text: text
                 )
             );
-        }
-    }
-
-    /// <summary>
-    /// Converts S16 PCM samples to float32 in <c>[-1, 1]</c> and appends
-    /// to <paramref name="target"/>. Same conversion as the old version.
-    /// </summary>
-    private static void AppendSamplesAsFloat(List<float> target, PcmAudioBuffer buffer)
-    {
-        const float int16Normalize = 1f / 32768f;
-        var span = buffer.Samples.Span[..buffer.SampleCount];
-        for (int i = 0; i < span.Length; i++)
-        {
-            target.Add(span[i] * int16Normalize);
         }
     }
 }
