@@ -84,7 +84,10 @@ public partial class MainWindow : Window
                         chain.Then(SendToWhisper(_captionAudio.Writer, Interlocked.Increment(ref _audioGraph)))
                     )
                     .ConfigureVideo(chain =>
-                        detector is null ? chain : chain.Infer("yolo", detector, ShowWhenPresented())
+                        // A frame the model fails on loses its boxes; the picture and captions go on.
+                        detector is null
+                            ? chain
+                            : chain.Infer("yolo", detector, ShowWhenPresented(), onError: FailureResponse.Discard)
                     )
                     .BuildPlayerAsync(_windowCts.Token);
 
@@ -194,10 +197,7 @@ public partial class MainWindow : Window
 
         try
         {
-            // Off the UI thread: once the model is downloaded, the session opens synchronously.
-            return await Task.Run(() =>
-                Yolov8Detector.CreateAsync(sessions, ct: _windowCts.Token, loggerFactory: _loggerFactory)
-            );
+            return await Yolov8Detector.CreateAsync(sessions, ct: _windowCts.Token, loggerFactory: _loggerFactory);
         }
         catch (OperationCanceledException) when (_windowCts.IsCancellationRequested)
         {

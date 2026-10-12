@@ -143,18 +143,15 @@ public partial class MainWindow : Window
             },
             loggerFactory: _loggerFactory);
 
-        // CreateAsync opens the session, and compiles the model for the GPU, on the calling
-        // thread, so it runs on the pool.
         if (FaceModelPath is null)
         {
-            var yolo = await Task.Run(() => Yolov8Detector.CreateAsync(
-                factory, ModelPath, _closingCts.Token, _loggerFactory));
+            var yolo = await Yolov8Detector.CreateAsync(factory, ModelPath, _closingCts.Token, _loggerFactory);
             _model = yolo;
             Use(yolo, "yolo", $"YOLOv8 on {factory.ActiveProvider}", Overlay.Show);
         }
         else
         {
-            var faces = await Task.Run(() => BlazeFaceDetector.CreateAsync(factory, FaceModelPath, _loggerFactory));
+            var faces = await BlazeFaceDetector.CreateAsync(factory, FaceModelPath, _loggerFactory);
             _model = faces;
             Use(faces, "blazeface", $"BlazeFace on {factory.ActiveProvider}", Overlay.Show);
         }
