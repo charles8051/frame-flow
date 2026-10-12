@@ -40,25 +40,26 @@ At process exit the shared OpenAL device is now closed whatever its lease count 
 when no device could be opened.
 
 **Who hits this.**
--  Code that deactivates the sink after `RunToCompletionAsync`. The pass already has, so the call is
+- Code that deactivates the sink after `RunToCompletionAsync`. The pass already has, so the call is
   redundant and harmless.
--  Code that reads the sink's clock or state after a pass, expecting it still active. It reads a
+- Code that reads the sink's clock or state after a pass, expecting it still active. It reads a
   deactivated sink.
--  A host that times something from `RunToCompletionAsync` returning, or from `Ended`,
+- A host that times something from `RunToCompletionAsync` returning, or from `Ended`,
   `LoopRestarted` or `SourceTransitioned`. Each now arrives after the item's audio has been heard.
--  A custom `IAudioSink` that queues audio ahead of a device. It keeps losing the end of every
-  stream until it overrides `DrainAsync`.
--  A sink that wraps another. The default `DrainAsync` completes at once without asking the inner
+- A custom `IAudioSink` that queues audio ahead of a device. It keeps losing the end of every
+  stream that ends naturally until it overrides `DrainAsync`. A pass that is cancelled or faults
+  deactivates the sink without draining it, so audio still queued then is dropped either way.
+- A sink that wraps another. The default `DrainAsync` completes at once without asking the inner
   sink, so the wrapper must forward it.
 
 **What to write instead.**
--  Drop the `DeactivateAsync` after `RunToCompletionAsync`. A sink used by the next pass is
+- Drop the `DeactivateAsync` after `RunToCompletionAsync`. A sink used by the next pass is
   activated again by that pass.
--  In a sink that buffers ahead of its device, implement `DrainAsync`. It should hand the device
+- In a sink that buffers ahead of its device, implement `DrainAsync`. It should hand the device
   whatever is held back, and complete once the device has played what it was given. It should give
   up if the device stops making progress, and observe the token.
 - In a wrapping sink, forward `DrainAsync` to the inner sink.
--  To wait for a player to finish, write `await player.WaitForEndAsync(ct)` instead of bridging
+- To wait for a player to finish, write `await player.WaitForEndAsync(ct)` instead of bridging
   `StateChanged` and `ErrorOccurred` yourself. Subscribe to `ErrorOccurred` or `ItemFailed` too if a
   failed item must count as a failure, because a last item that faults mid-play still ends the queue
   in `Ended`.
@@ -118,9 +119,9 @@ the model and run the warmup on the caller's thread whenever nothing before them
 with a cached model or an override path, and for BlazeFace always (#626). They now run that work in
 `Task.Run` and return to an awaiting caller at once. The session factory
 (`Func<string, IInferenceSession>`, or `IInferenceSessionFactory.Open`) and the `progress` reporter
-are called on a thread-pool thread. `Yolov8Detector.CreateAsync` also checks its token before the open: a token
-cancelled after the model is on disk now throws `OperationCanceledException` and opens nothing,
-where it used to build the detector.
+are called on a thread-pool thread. `Yolov8Detector.CreateAsync` also checks its token before the
+open: a token cancelled after the model is on disk now throws `OperationCanceledException` and
+opens nothing, where it used to build the detector.
 
 **Who hits this.** A session factory or progress reporter that must run on the thread that called
 `CreateAsync`, such as one that touches a UI control directly rather than through `Progress<T>`. A
@@ -311,42 +312,6 @@ after `DisposeAsync`, or catch `ObjectDisposedException` where a command can rac
   sink's `AvaloniaVideoSink created.` line still goes to the factory held when the sink was built.
   A sink you assigned through `Sink` keeps the logger you gave it. You no longer need to assign
   `LoggerFactory` in the window constructor to get ahead of the attach. #630.
-
--  **`ErrorOccurred` documents that a command's failure into `Error` is raised there too.** **Not a
-  change in behaviour.** The documentation now says what the player has always done.
-
-  The summary of `IMediaTransport.ErrorOccurred`, and entry 2 of the `v0.9.0-alpha.1` group below,
-  said a command's own failure comes back on its `Result` and is not repeated on `ErrorOccurred`
-  (#606). That was never true of a failure that puts the player into `Error`. A `PlayAsync` whose
-  item cannot be loaded, from `Idle` or `Ended`, returns a failed `Result` and raises
-  `ErrorOccurred` before it completes, with the same `PlaybackError` instance as `Result.Error`. The
-  behaviour stays: the `Result` reaches only whoever called, and `ErrorOccurred` is how everyone
-  else hears the player broke, including an app whose Play button belongs to a chrome control. A
-  command refused with the state unchanged, such as a play with nothing to play or a seek with
-  nothing loaded, still reports on its `Result` only.
-
-  The same remarks gave "a play on a disposed player" and "a seek on a non-seekable source" as
-  refusals that come back on the `Result`. Neither is: a transport command issued once the player's
-  disposal has begun throws `ObjectDisposedException`, as it always has, and the controller has no
-  seekability check. The docs now say so; #644 asks whether a disposed player should refuse instead.
-
-  **Who hits this.** A consumer that took the old summary at its word and handles both channels
-  reports a failed load twice. One that treated `ErrorOccurred` as "playback broke while nobody was
-  asking" reacts to a failure its own command already reported. One that relied on a `Result` from a
-  transport command racing a disposal gets an exception, as it already did.
-
-  **What to write instead.** Let `ErrorOccurred` report whatever put the player into `Error`, and
-  the `Result` report the refusals:
-
-  ```csharp
-player.ErrorOccurred.ObserveOnUiThread().Subscribe(Show);
-
-  var played = await player.PlayAsync();
-if (!played.IsSuccess && player.State != PlaybackState.Error)
-    Show(played.Error); // a refusal; a failure into Error arrives on ErrorOccurred
-```
-
-  A consumer that sees both copies can also tell them apart by reference: `ErrorOccurred` carries the instance the `Result` does, and fires before the command completes. Do not issue transport commands after `DisposeAsync`, or catch `ObjectDisposedException` where a command can race it.
 
 ## `v0.15.0` — since `v0.14.0`
 
