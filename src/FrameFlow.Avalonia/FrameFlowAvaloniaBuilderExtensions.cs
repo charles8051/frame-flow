@@ -20,6 +20,11 @@ public static class FrameFlowAvaloniaBuilderExtensions
     /// <see cref="IPlayerBuilder.BuildPlayerAsync"/> resolves — even if the view
     /// has not yet attached to the visual tree.
     /// </summary>
+    /// <remarks>
+    /// The sink logs through the view's <see cref="FrameFlowVideoView.LoggerFactory"/>, which can
+    /// be assigned before or after this call; the builder's <c>WithLogger</c> does not reach it.
+    /// <c>WithVideoSurface(view, loggerFactory)</c> wires the factory in the same call.
+    /// </remarks>
     /// <param name="builder">The player builder being configured.</param>
     /// <param name="view">The Avalonia control that will render frames.</param>
     /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
