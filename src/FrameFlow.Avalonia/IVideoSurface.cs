@@ -27,5 +27,10 @@ public interface IVideoSurface
     /// Wires the logger factory and returns the <see cref="IVideoSink"/> to hand to the
     /// player's <c>FrameFlowPlayer.Create()</c>. Idempotent: repeated calls return the same sink.
     /// </summary>
+    /// <remarks>
+    /// The factory reaches the surface's own sink whenever this is called, before or after the
+    /// surface joins the visual tree; a later call with another factory moves the logging to it.
+    /// A sink the caller assigned to the surface keeps the logger its owner gave it.
+    /// </remarks>
     IVideoSink AttachSink(ILoggerFactory loggerFactory);
 }
