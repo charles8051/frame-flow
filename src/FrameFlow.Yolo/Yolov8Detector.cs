@@ -276,9 +276,14 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
     /// first <c>Open()</c> call drives EP selection; observable via
     /// <see cref="FrameFlow.Inference.IInferenceSessionFactory.ActiveProvider"/>).
     /// </summary>
+    /// <remarks>
+    /// <paramref name="factory"/> opens the model, and the detector validates and warms it up, on a
+    /// thread-pool thread, so an awaiting UI thread is free while they run. <paramref name="progress"/>
+    /// is called there too; a <see cref="Progress{T}"/> created on the UI thread reports on it.
+    /// </remarks>
     /// <param name="factory">EP-resolving session factory.</param>
     /// <param name="overrideModelPath">Optional path override; if null, downloads.</param>
-    /// <param name="ct">Cancellation token for the model download.</param>
+    /// <param name="ct">Cancels the model download, and the session open if it has not started.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <param name="descriptor">Optional explicit model shape; auto-inferred from the session when null.</param>
     /// <param name="classFilter">Optional set of class ids to keep; null keeps all.</param>
@@ -316,6 +321,12 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
     /// Builds a detector from a model path and a session factory.
     /// Downloads the YOLOv8 model if not cached locally and overridden.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="sessionFactory"/> opens the model, and the detector validates and warms it
+    /// up, on a thread-pool thread, so an awaiting UI thread is free while they run.
+    /// <paramref name="progress"/> is called there too; a <see cref="Progress{T}"/> created on the
+    /// UI thread reports on it.
+    /// </remarks>
     /// <param name="sessionFactory">
     /// Function that constructs the EP-specific inference session given
     /// a model path. Typical: <c>path => new CudaInferenceSession(path)</c>
@@ -325,7 +336,7 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
     /// overload, which centralises EP selection and fallback.
     /// </param>
     /// <param name="overrideModelPath">Optional path override; if null, downloads.</param>
-    /// <param name="ct">Cancellation token for the model download.</param>
+    /// <param name="ct">Cancels the model download, and the session open if it has not started.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <param name="descriptor">Optional explicit model shape; auto-inferred from the session when null.</param>
     /// <param name="classFilter">Optional set of class ids to keep; null keeps all.</param>
@@ -366,22 +377,32 @@ public sealed partial class Yolov8Detector : IDisposable, IImageModel<IReadOnlyL
                 .ConfigureAwait(false);
         }
 
-        var sessionWatch = Stopwatch.StartNew();
-        LogSessionConstructionStarted(log, modelPath);
-        FrameFlow.Inference.IInferenceSession session;
-        try
-        {
-            session = sessionFactory(modelPath);
-        }
-        catch (Exception ex)
-        {
-            LogSessionConstructionFailed(log, modelPath, ex);
-            throw;
-        }
-        sessionWatch.Stop();
-        LogSessionConstructed(log, sessionWatch.Elapsed.TotalMilliseconds);
+        // Opening the session, compiling it for the provider and the warmup run block for as long
+        // as they take, and a cached or overridden model reaches them without having yielded. They
+        // run on the pool so that the caller's thread is not held for them (#626).
+        return await Task.Run(
+                () =>
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var sessionWatch = Stopwatch.StartNew();
+                    LogSessionConstructionStarted(log, modelPath);
+                    FrameFlow.Inference.IInferenceSession session;
+                    try
+                    {
+                        session = sessionFactory(modelPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        LogSessionConstructionFailed(log, modelPath, ex);
+                        throw;
+                    }
+                    sessionWatch.Stop();
+                    LogSessionConstructed(log, sessionWatch.Elapsed.TotalMilliseconds);
 
-        return Create(session, factory, descriptor, classFilter, progress, thresholds);
+                    return Create(session, factory, descriptor, classFilter, progress, thresholds);
+                },
+                ct)
+            .ConfigureAwait(false);
     }
 
     /// <summary>

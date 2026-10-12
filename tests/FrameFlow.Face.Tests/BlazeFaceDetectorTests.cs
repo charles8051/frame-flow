@@ -58,6 +58,66 @@ public sealed class BlazeFaceDetectorTests
     }
 
     /// <summary>
+    /// <c>CreateAsync</c> opens the session and warms it up off the caller's thread (#626). The
+    /// open waits on a gate the test opens only after the call has returned, so the task is still
+    /// running when the test looks at it. The open and the warmup throw if they run inside the
+    /// call, on the caller's thread, where the gate could never open, so a regression fails the
+    /// test rather than hanging it.
+    /// </summary>
+    [Fact]
+    public async Task CreateAsync_ReturnsBeforeTheSessionOpens()
+    {
+        using var gate = new SemaphoreSlim(0);
+        var session = new NegativeScoreSession { BeforeRun = () => ThrowIfInsideTheCall("The warmup") };
+        var factory = InferenceSessionFactoryBuilder.Create(
+            ExecutionProvider.Cpu,
+            new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+            {
+                [ExecutionProvider.Cpu] = _ =>
+                {
+                    ThrowIfInsideTheCall("The factory's open");
+                    gate.Wait();
+                    return session;
+                },
+            });
+
+        Task<BlazeFaceDetector> creating;
+        t_insideTheCall = true;
+        try
+        {
+            creating = BlazeFaceDetector.CreateAsync(factory, "face.onnx");
+        }
+        finally
+        {
+            t_insideTheCall = false;
+        }
+
+        try
+        {
+            Assert.False(
+                creating.IsCompleted,
+                $"CreateAsync returned a {creating.Status} task before the session was let open: "
+                    + creating.Exception?.InnerException?.Message);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var detector = await creating;
+        Assert.Equal(1, session.RunCount);
+    }
+
+    [ThreadStatic]
+    private static bool t_insideTheCall;
+
+    private static void ThrowIfInsideTheCall(string what)
+    {
+        if (t_insideTheCall)
+            throw new InvalidOperationException($"{what} ran inside the CreateAsync call, on the caller's thread.");
+    }
+
+    /// <summary>
     /// Two-output BlazeFace-shaped fake. Fills the score output with a
     /// large negative logit each Run so decode returns nothing, and counts
     /// runs so warmup + detect are observable.
@@ -76,6 +136,9 @@ public sealed class BlazeFaceDetectorTests
 
         public bool Disposed { get; private set; }
 
+        /// <summary>Runs at the start of every <c>Run</c>, when set.</summary>
+        public Action? BeforeRun { get; init; }
+
         public IReadOnlyList<string> InputNames { get; } = ["input"];
 
         public IReadOnlyList<string> OutputNames =>
@@ -90,6 +153,7 @@ public sealed class BlazeFaceDetectorTests
             IReadOnlyDictionary<string, ICpuTensor> inputs,
             IReadOnlyDictionary<string, ICpuTensor> outputs)
         {
+            BeforeRun?.Invoke();
             RunCount++;
             if (outputs.TryGetValue("scores", out var scores) && scores is CpuTensor<float> s)
                 s.Span.Fill(-100f);
