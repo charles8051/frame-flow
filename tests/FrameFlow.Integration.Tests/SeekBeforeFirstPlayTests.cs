@@ -157,13 +157,18 @@ public sealed class SeekBeforeFirstPlayTests : IClassFixture<FfmpegBootstrapFixt
         await settled.Task.WaitAsync(Bound);
     }
 
+    /// <summary>
+    /// Plays, and returns once a frame past the target has been presented since the play.
+    /// Frames from before it, including an earlier playlist item's, are not considered.
+    /// </summary>
     private static async Task PlayPastTargetAsync(
         IPlaybackController controller,
         PtsRecordingVideoSink video
     )
     {
+        var before = video.Count;
         Assert.True((await controller.PlayAsync()).IsSuccess);
-        await video.WhenPresented(pts => pts >= PastTarget).WaitAsync(Bound);
+        await video.WhenPresented(pts => pts >= PastTarget, skip: before).WaitAsync(Bound);
     }
 
     private static string CapMessage(PaceCapLog log) =>

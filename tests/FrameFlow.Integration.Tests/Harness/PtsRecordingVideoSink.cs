@@ -29,18 +29,26 @@ internal sealed class PtsRecordingVideoSink : IVideoSink
     /// <summary>Every frame's PTS, in delivery order.</summary>
     public IReadOnlyList<TimeSpan> PresentedPts => _presented.ToArray();
 
+    /// <summary>How many frames have been delivered.</summary>
+    public int Count => _presented.Count;
+
     /// <summary>
     /// Completes with the PTS of the first frame <paramref name="match"/> accepts, whether it
-    /// was delivered before this call or arrives after it.
+    /// was delivered before this call or arrives after it, ignoring the first
+    /// <paramref name="skip"/> frames delivered.
     /// </summary>
-    public Task<TimeSpan> WhenPresented(Func<TimeSpan, bool> match)
+    /// <remarks>
+    /// Pass a <see cref="Count"/> read earlier as <paramref name="skip"/> to consider only the
+    /// frames delivered since, for instance those of a later playlist item.
+    /// </remarks>
+    public Task<TimeSpan> WhenPresented(Func<TimeSpan, bool> match, int skip = 0)
     {
         var signal = new TaskCompletionSource<TimeSpan>(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
         lock (_gate)
         {
-            foreach (var pts in _presented)
+            foreach (var pts in _presented.Skip(skip))
             {
                 if (match(pts))
                 {
