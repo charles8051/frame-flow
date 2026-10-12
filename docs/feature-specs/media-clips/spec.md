@@ -1,7 +1,7 @@
 # Media clips: playlist items that start at a position
 
-**Status:** Phase 1 (start positions) built. Phases 2 to 4 open. Living document, rewritten as
-the feature changes.
+**Status:** Phases 1 (start positions) and 2 (reuse across clips of one file) built. Phases 3
+and 4 open. Living document, rewritten as the feature changes.
 
 **Date:** 2026-10-12.
 
@@ -56,6 +56,16 @@ With phase 1, on the same files and setup, with a lent device, to a random targe
 Opening at the start saves the warm-up at zero and the second graph build, and no frame from the
 file's start is shown. The decode walk to the target is unchanged, and it is now most of the cost.
 
+With phase 2, a hop to another clip of the open file while paused repositions the open item. Medians
+of ten hops between random clips of one file, from `JumpToAsync` (phase 1 reopened the file):
+
+| | Phase 1 | Phase 2 |
+|---|---|---|
+| Jump to transition, a decode device per item | 212 ms | 1 ms |
+| Jump to transition, a lent device | 25 ms | 2 ms |
+| Jump and Play to the target frame, a device per item, keyframe every 2 s | 263 ms | 63 ms |
+| Jump and Play to the target frame, a device per item, keyframe every 10 s | 388 ms | 127 ms |
+
 ## Requirements
 
 1. **An item opens at its start.** The first frame presented is the first at or after the clip's
@@ -66,10 +76,9 @@ file's start is shown. The decode walk to the target is unchanged, and it is now
 3. **A replay returns to the start.** A loop under `RepeatMode.One`, a wrap to the only item under
    `RepeatMode.All`, and a replay from `Ended` all play from the clip's start. *Phase 1.*
 4. **Clips that share a source reuse the open file.** Moving from one clip to another of the same
-   source object repositions the open item instead of reopening the file. Today this happens only
-   while playing, after the current item has played, and always to zero. *Phase 1 sets the
-   target to the next clip's start. Phase 2 extends the reuse to a paused player and to an item
-   that has not played.*
+   source object repositions the open item instead of reopening the file, in any state: playing,
+   paused, or before the current item has played. *Phase 1 set the target to the next clip's
+   start. Phase 2 extended the reuse from a playing, played item to every state (decision 5).*
 5. **Failure accounting measures from the start.** `PlaylistFailureGuard` counts progress from
    the clip's start and sizes the progress it needs from what remains after the start, so a clip
    late in a file that faults at once is not counted as having played. *Phase 1.*

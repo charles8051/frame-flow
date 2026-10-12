@@ -1411,8 +1411,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         {
             // Re-init audio in paused state so it's ready for the next resume but produces no
             // audible output now. Don't restart the graph or open gates — the next user
-            // PlayAsync does that. The clock stays seeked + paused. (Reachable only via the
-            // user-seek path; a loop rewind is fired from Playing with the clock running.)
+            // PlayAsync does that. The clock stays seeked + paused. A user seek reaches here,
+            // and so does a playlist's in-place rewind of a paused item or of one that has not
+            // played (media-clips decision 5).
             // Before the first play the sink has not been activated, and the first-play
             // branch of PlayAsync activates it, so it is left alone here.
             if (_hasAudio && _renderersActivated)

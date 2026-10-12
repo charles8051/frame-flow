@@ -27,12 +27,12 @@ namespace FrameFlow.Playback;
 /// ended, advances are dropped.
 /// </para>
 /// <para>
-/// <b>Same-source replay.</b> When the decision is <see cref="PlaylistQueue.NextKind.Replay"/>, the
-/// controller is playing and the item has played and not failed, the runtime is rewound in place
-/// rather than rebuilt, so the loop seam costs about one frame. It is rewound to the start of the
-/// item taken, which for a clip is partway into the source. If the rewind fails, the item is
-/// rebuilt. An item that has not played is always rebuilt: the in-place rewind is built for a loop
-/// reached while playing.
+/// <b>Same-source replay.</b> When the decision is <see cref="PlaylistQueue.NextKind.Replay"/> and
+/// the item has not failed, the runtime is rewound in place rather than rebuilt, so the loop seam
+/// costs about one frame and a hand-off between clips of one file does not open it again. It is
+/// rewound to the start of the item taken, which for a clip is partway into the source. While
+/// paused the rewound item waits for Play. An item that has not played is held by its rewind, so
+/// while playing it is then played. If the rewind fails, the item is rebuilt.
 /// </para>
 /// <para>
 /// <b>The end of the queue.</b> An item that ends the queue without failing is kept, so at Ended it
@@ -809,8 +809,7 @@ internal static class PlaylistSessionProtocol
             );
 
             if (
-                advance.Playing
-                && State.Item is { Played: true }
+                State.Item is not null
                 && !failed
                 && decision.Kind == PlaylistQueue.NextKind.Replay
             )
@@ -867,9 +866,22 @@ internal static class PlaylistSessionProtocol
             }
 
             // The item may be a different item of the same source, such as a back-to-back
-            // duplicate. An in-place replay keeps the runtime, so the controller hears nothing.
+            // duplicate or another clip of the file. An in-place replay keeps the runtime, so the
+            // controller hears nothing.
             var slot = State.Item!;
             State = State with { Item = slot with { Item = work.Decision.Item! } };
+
+            // A rewind holds an item that has not played, as a seek before the first play does, so
+            // a playing advance plays it. Its start is handled as a rebuilt item's is.
+            if (work.Advance.Playing && !slot.Played)
+            {
+                Await(
+                    new PlaylistSessionAction.PlayItem(Command: null),
+                    new PlaylistSessionWork.Starting(work.Advance, work.Decision)
+                );
+                return;
+            }
+
             RaiseStart(work.Advance, work.Decision.Item!, slot.Info, work.Decision.Wrapped);
         }
 

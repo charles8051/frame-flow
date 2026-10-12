@@ -132,10 +132,11 @@ public sealed class PlaylistSessionProtocolTests
             // An item that reached its end has stopped: the queue ends with no pause.
             { Run.Playing, Slot.Played, Next.Nothing, Decision.End },
             { Run.Paused, Slot.Played, Next.Nothing, Decision.End },
-            // Only a playing item that has played is rewound in place.
+            // A same-source replay rewinds in place in every state. An item that has not played is
+            // held by the rewind and then played; a paused one waits for Play.
             { Run.Playing, Slot.Played, Next.Replay, Decision.Rewind },
-            { Run.Playing, Slot.Unplayed, Next.Replay, Decision.Rebuild },
-            { Run.Paused, Slot.Played, Next.Replay, Decision.Rebuild },
+            { Run.Playing, Slot.Unplayed, Next.Replay, Decision.Rewind },
+            { Run.Paused, Slot.Played, Next.Replay, Decision.Rewind },
         };
 
     [Theory]
@@ -1030,18 +1031,22 @@ public sealed class PlaylistSessionProtocolTests
             fellBack.Awaited.Select(a => a.GetType())
         );
         AssertLoopRestarted(Assert.Single(fellBack.Actions.OfType<PlaylistSessionAction.ReportLoopRestarted>()), 1);
+    }
 
-        // A loop that ends while paused is rebuilt, and reported when the new item's warm-up succeeds.
-        // The Play that follows reports nothing more.
+    [Fact]
+    public void ALoopThatEndsWhilePaused_IsRewoundInPlace_AndReportedOnce()
+    {
+        // The rewind holds the paused item, and the loop is reported when it succeeds. The Play that
+        // follows resumes the item and reports nothing more.
         var (paused, pausedQueue) = Setup(PlaylistRunState.Paused, Slot.Played, Next.Replay);
-        var rebuilt = RunToIdle(paused, pausedQueue, new PlaylistSessionInput.EndOfStream(CurrentGeneration, CurrentRun));
+        var rewound = RunToIdle(paused, pausedQueue, new PlaylistSessionInput.EndOfStream(CurrentGeneration, CurrentRun));
         Assert.Equal(
-            new[] { typeof(PlaylistSessionAction.DisposeItem), typeof(PlaylistSessionAction.OpenItem), typeof(PlaylistSessionAction.WarmUpItem) },
-            rebuilt.Awaited.Select(a => a.GetType())
+            new[] { typeof(PlaylistSessionAction.RewindItem) },
+            rewound.Awaited.Select(a => a.GetType())
         );
-        AssertLoopRestarted(Assert.Single(rebuilt.Actions.OfType<PlaylistSessionAction.ReportLoopRestarted>()), 1);
+        AssertLoopRestarted(Assert.Single(rewound.Actions.OfType<PlaylistSessionAction.ReportLoopRestarted>()), 1);
 
-        var played = RunToIdle(rebuilt.State, rebuilt.Queue, new PlaylistSessionInput.Play(Command));
+        var played = RunToIdle(rewound.State, rewound.Queue, new PlaylistSessionInput.Play(Command));
         Assert.Contains(played.Awaited, a => a is PlaylistSessionAction.PlayItem);
         Assert.DoesNotContain(played.Actions, a => a is PlaylistSessionAction.ReportLoopRestarted);
         Assert.Equal(1, played.State.LoopCount);
@@ -1069,11 +1074,12 @@ public sealed class PlaylistSessionProtocolTests
             return Result(RunToIdle(state with { LoopCount = 2 }, queue, new PlaylistSessionInput.Fault(CurrentGeneration, new InvalidOperationException(), TimeSpan.FromSeconds(10))));
         },
         // The repeat's open fails, so the item opened after it is a failed start's successor.
+        // The in-place rewind fails, so the item is rebuilt, and the rebuild's open fails too.
         ["a repeat that fails to start"] = () =>
         {
             var (state, queue) = Setup(PlaylistRunState.Paused, Slot.Played, Next.Replay);
             var opens = 0;
-            return Result(RunToIdle(state with { LoopCount = 2 }, queue, new PlaylistSessionInput.EndOfStream(CurrentGeneration, CurrentRun), fail: a => a is PlaylistSessionAction.OpenItem && opens++ == 0));
+            return Result(RunToIdle(state with { LoopCount = 2 }, queue, new PlaylistSessionInput.EndOfStream(CurrentGeneration, CurrentRun), fail: a => a is PlaylistSessionAction.RewindItem || (a is PlaylistSessionAction.OpenItem && opens++ == 0)));
         },
         ["an end-of-stream latched before the first Play"] = () =>
         {

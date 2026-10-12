@@ -110,6 +110,9 @@ internal static class ExplorerInvariants
     public const string PlaysWhileNotPlaying =
         "Presenting: a play while not playing";
 
+    public const string LaunchesWhileNotPlaying =
+        "Presenting: a run launches while not playing";
+
     public const string PlaysOrSeeksAfterTheEnd =
         "The end: a play or seek after the end of the queue was reported, before a warm-up out of Ended";
 
@@ -216,13 +219,6 @@ internal sealed record ExplorerResult(int States, IReadOnlyList<ExplorerViolatio
 /// </remarks>
 internal sealed class PlaylistSessionExplorer
 {
-    /// <summary>
-    /// The invariant decision 7 names as an expected failure: the end-of-queue record leaves open a
-    /// seek or rewind before an item's first play, which starts it while the controller is not playing.
-    /// </summary>
-    public const string ExpectedFailure =
-        "Presenting: a seek or rewind of an item that has not played, while not playing";
-
     private const int StateBound = 400_000;
 
     private static readonly MediaInfo Info = new("model", TimeSpan.FromSeconds(3), [], []);
@@ -505,6 +501,12 @@ internal sealed class PlaylistSessionExplorer
         };
         var repositions = action is PlaylistSessionAction.SeekItem or PlaylistSessionAction.RewindItem;
 
+        // Only a play, or a seek or rewind of an item that is playing, starts a run that presents.
+        // A seek or rewind before an item's first play once launched one while the controller
+        // said it was not playing (#639).
+        if (succeeded.Launched && !model.Launched && world.State.Run != PlaylistRunState.Playing)
+            Violate(ExplorerInvariants.LaunchesWhileNotPlaying, $"{Describe(action)} at {world.State.Run}");
+
         yield return ($"{name} succeeds", With(world, runtime, succeeded), Ok(succeeded.Run));
         if (_scenario.Failures.HasFlag(flag))
             yield return ($"{name} fails", world, Failed(model.Run));
@@ -628,14 +630,6 @@ internal sealed class PlaylistSessionExplorer
             Violate(ExplorerInvariants.RewindsAFaultedItem, Describe(handling));
         if (awaited is PlaylistSessionAction.PlayItem && after.Run != PlaylistRunState.Playing)
             Violate(ExplorerInvariants.PlaysWhileNotPlaying, $"run {after.Run}");
-        if (
-            awaited is PlaylistSessionAction.SeekItem or PlaylistSessionAction.RewindItem
-            && after.Item is { Played: false }
-            && after.Run != PlaylistRunState.Playing
-        )
-        {
-            Violate(ExpectedFailure, $"{Describe(awaited)} at {after.Run}");
-        }
 
         // The end.
         var endReported =

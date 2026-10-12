@@ -8,8 +8,7 @@ namespace FrameFlow.Playback.Tests;
 /// <list type="bullet">
 ///   <item><description>
 ///   A run launches at the first play, and at a seek or rewind that is not paused. Before its first
-///   play a runtime reads as not paused, so a seek then launches a run: the gap the end-of-queue record
-///   leaves open.
+///   play a runtime is held as a paused one is, so a seek or rewind then does not launch a run (#639).
 ///   </description></item>
 ///   <item><description>A paused seek or rewind advances the run without launching.</description></item>
 ///   <item><description>
@@ -23,7 +22,7 @@ namespace FrameFlow.Playback.Tests;
 /// </remarks>
 /// <param name="Run">The run number, as <c>RunNumber</c> reports it.</param>
 /// <param name="Launched">Whether the current run is running.</param>
-/// <param name="Paused">Whether the runtime is paused.</param>
+/// <param name="Paused">Whether the runtime is paused, or has not played yet.</param>
 /// <param name="EndRaised">Whether the current run has raised its end-of-stream.</param>
 /// <param name="Disposed">Whether the runtime has been disposed.</param>
 internal sealed record PlaylistItemModel(
@@ -34,8 +33,8 @@ internal sealed record PlaylistItemModel(
     bool Disposed
 )
 {
-    /// <summary>A runtime that has opened and not played.</summary>
-    public static PlaylistItemModel Opened { get; } = new(0, false, false, false, false);
+    /// <summary>A runtime that has opened and not played. It is held until its first play.</summary>
+    public static PlaylistItemModel Opened { get; } = new(0, false, true, false, false);
 
     /// <summary>Whether the runtime can raise an end-of-stream now.</summary>
     public bool CanRaiseEndOfStream => Launched && !EndRaised && !Disposed;
