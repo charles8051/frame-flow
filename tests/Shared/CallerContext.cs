@@ -48,22 +48,6 @@ internal static class CallerContext
             throw new InvalidOperationException($"{what} ran on the caller's thread or its synchronization context.");
     }
 
-    /// <summary>Asserts that <paramref name="task"/> is still running, then opens the gate.</summary>
-    public static void AssertRunningUntilTheGateOpens(Task task, SemaphoreSlim gate)
-    {
-        try
-        {
-            Assert.False(
-                task.IsCompleted,
-                $"The call returned a {task.Status} task before the gate opened: "
-                    + task.Exception?.InnerException?.Message);
-        }
-        finally
-        {
-            gate.Release();
-        }
-    }
-
     private sealed class CallersContext : SynchronizationContext
     {
         public override void Post(SendOrPostCallback d, object? state) =>
@@ -90,4 +74,44 @@ internal static class CallerContext
             }
         }
     }
+}
+
+/// <summary>
+/// A gate that a session open waits on, and the signal that the open has reached it. The test
+/// opens the gate only after it has seen the task still running while the open waits, so the
+/// open is in progress, and cannot finish, when the test looks.
+/// </summary>
+internal sealed class OpenGate : IDisposable
+{
+    private readonly SemaphoreSlim _gate = new(0);
+    private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Called by the open: signals that it has reached the gate, then waits for it to open.</summary>
+    public void Wait()
+    {
+        _reached.TrySetResult();
+        _gate.Wait();
+    }
+
+    /// <summary>
+    /// Waits until the open has reached the gate, or <paramref name="task"/> has finished without
+    /// it, asserts that <paramref name="task"/> is still running, then opens the gate.
+    /// </summary>
+    public async Task AssertRunningWhileTheOpenWaitsAsync(Task task)
+    {
+        try
+        {
+            await Task.WhenAny(_reached.Task, task);
+            Assert.False(
+                task.IsCompleted,
+                $"The call's task was {task.Status} before the gate opened: "
+                    + task.Exception?.InnerException?.Message);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public void Dispose() => _gate.Dispose();
 }

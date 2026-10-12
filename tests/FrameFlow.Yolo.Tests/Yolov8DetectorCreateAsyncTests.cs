@@ -10,19 +10,19 @@ namespace FrameFlow.Yolo.Tests;
 /// open opens nothing (#626).
 /// </summary>
 /// <remarks>
-/// The session factory waits on a gate the test opens only after <c>CreateAsync</c> has returned,
-/// so the task it returns is still running when the test looks at it. The factory and the warmup
-/// run also refuse to run on the caller, which <see cref="CallerContext"/> marks: inside the call,
-/// on the caller's thread, or posted back to its synchronization context. Work done there throws
-/// instead of waiting on a gate that would never open, so a regression fails the test rather than
-/// hanging it.
+/// The session factory waits on a gate the test opens only after <c>CreateAsync</c> has returned
+/// and the open has reached the gate, so the task it returns is still running, with the open in
+/// progress, when the test looks at it. The factory and the warmup run also refuse to run on the
+/// caller, which <see cref="CallerContext"/> marks: inside the call, on the caller's thread, or
+/// posted back to its synchronization context. Work done there throws instead of waiting on a gate
+/// that would never open, so a regression fails the test rather than hanging it.
 /// </remarks>
 public sealed class Yolov8DetectorCreateAsyncTests
 {
     [Fact]
     public async Task CreateAsync_FromSessionFactory_ReturnsBeforeTheSessionOpens()
     {
-        using var gate = new SemaphoreSlim(0);
+        using var gate = new OpenGate();
         var session = new CallerCheckingSession();
 
         var creating = CallerContext.Call(() => Yolov8Detector.CreateAsync(
@@ -34,7 +34,7 @@ public sealed class Yolov8DetectorCreateAsyncTests
             },
             overrideModelPath: "model.onnx"));
 
-        CallerContext.AssertRunningUntilTheGateOpens(creating, gate);
+        await gate.AssertRunningWhileTheOpenWaitsAsync(creating);
         using var detector = await creating;
         Assert.Equal(1, session.RunCount);
     }
@@ -42,7 +42,7 @@ public sealed class Yolov8DetectorCreateAsyncTests
     [Fact]
     public async Task CreateAsync_FromFactory_ReturnsBeforeTheSessionOpens()
     {
-        using var gate = new SemaphoreSlim(0);
+        using var gate = new OpenGate();
         var session = new CallerCheckingSession();
         var factory = InferenceSessionFactoryBuilder.Create(
             ExecutionProvider.Cpu,
@@ -58,7 +58,7 @@ public sealed class Yolov8DetectorCreateAsyncTests
 
         var creating = CallerContext.Call(() => Yolov8Detector.CreateAsync(factory, overrideModelPath: "model.onnx"));
 
-        CallerContext.AssertRunningUntilTheGateOpens(creating, gate);
+        await gate.AssertRunningWhileTheOpenWaitsAsync(creating);
         using var detector = await creating;
         Assert.Equal(1, session.RunCount);
     }
