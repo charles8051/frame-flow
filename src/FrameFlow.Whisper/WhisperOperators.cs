@@ -4,6 +4,7 @@
 using System.Runtime.CompilerServices;
 using FrameFlow.Graph;
 using FrameFlow.Media;
+using FrameFlow.Whisper.Core;
 using Whisper.net;
 
 namespace FrameFlow.Whisper;
@@ -78,6 +79,14 @@ public static class WhisperOperators
     /// <exception cref="ArgumentNullException">Required arg is null.</exception>
     /// <exception cref="ArgumentException">Model path is empty or whitespace.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Sample rate / channel count is non-positive.</exception>
+    /// <remarks>
+    /// The window follows the stream's <see cref="PcmAudioBuffer.PresentationTime"/>. A buffer
+    /// that does not continue the held audio (a seek, a loop, the next item) drops the partial
+    /// window and starts a new one at its own time, so captions are never built from audio of two
+    /// places and their times match the media position. A node kept across seeks, so the model
+    /// loads once, therefore needs no reset. Multi-channel input is mixed to mono, which is what
+    /// Whisper reads.
+    /// </remarks>
     public static MultiOperatorNode<PcmAudioBuffer, CaptionRef> TranscribeWithWhisper(
         string id,
         string modelPath,
@@ -98,7 +107,7 @@ public static class WhisperOperators
         WhisperProcessor? processor = null;
         var windowSamples = (int)(opts.InputSampleRate * opts.EffectiveWindowSize.TotalSeconds);
         var windowBuffer = new List<float>(windowSamples + 4096);
-        TimeSpan? windowStartPts = null;
+        WindowClock? clock = null;
 
         return new MultiOperatorNode<PcmAudioBuffer, CaptionRef>(id, TranscribeImpl);
 
@@ -134,33 +143,37 @@ public static class WhisperOperators
                 );
             }
 
-            windowStartPts ??= buffer.PresentationTime;
+            var admission = WindowTimeline.Admit(
+                clock,
+                buffer.PresentationTime,
+                buffer.FrameCount,
+                opts.InputSampleRate
+            );
+            if (admission.Discard)
+                windowBuffer.Clear();
 
-            AppendSamplesAsFloat(windowBuffer, buffer);
+            WhisperSamples.AppendMono(windowBuffer, buffer.Samples.Span, buffer.Channels);
+            var current = admission.Clock;
+            clock = current;
 
-            var localStart = windowStartPts.Value;
-            var windowSize = opts.EffectiveWindowSize;
-
-            while (windowBuffer.Count >= windowSamples)
+            while (WindowTimeline.CloseOne(current, windowSamples) is { } closed)
             {
+                // Take the window out and advance the clock before inference runs, so a run
+                // cancelled during it leaves the held samples and the clock in agreement.
                 var slice = new float[windowSamples];
                 windowBuffer.CopyTo(0, slice, 0, windowSamples);
                 windowBuffer.RemoveRange(0, windowSamples);
+                current = closed.Remainder;
+                clock = current;
 
                 await foreach (
-                    var caption in InferCaptionsAsync(processor!, slice, localStart, ct)
+                    var caption in InferCaptionsAsync(processor!, slice, closed.Start, ct)
                         .ConfigureAwait(false)
                 )
                 {
                     yield return caption;
                 }
-
-                localStart += windowSize;
             }
-
-            // Thread the advanced start PTS back into the closure for
-            // the next call's windowing math.
-            windowStartPts = localStart;
         }
     }
 
@@ -189,20 +202,6 @@ public static class WhisperOperators
                     Text: text
                 )
             );
-        }
-    }
-
-    /// <summary>
-    /// Converts S16 PCM samples to float32 in <c>[-1, 1]</c> and appends
-    /// to <paramref name="target"/>. Same conversion as the old version.
-    /// </summary>
-    private static void AppendSamplesAsFloat(List<float> target, PcmAudioBuffer buffer)
-    {
-        const float int16Normalize = 1f / 32768f;
-        var span = buffer.Samples.Span[..buffer.SampleCount];
-        for (int i = 0; i < span.Length; i++)
-        {
-            target.Add(span[i] * int16Normalize);
         }
     }
 }
