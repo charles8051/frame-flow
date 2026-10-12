@@ -134,9 +134,16 @@ internal abstract record PlaylistSessionAction
 
     // ── Awaited: the shell feeds back an Outcome ────────────────────────────
 
-    /// <summary>Create a runtime tagged with <paramref name="Generation"/>, and open the source.</summary>
-    public sealed record OpenItem(int Generation, IMediaSource Source, int? Command)
-        : PlaylistSessionAction;
+    /// <summary>
+    /// Create a runtime tagged with <paramref name="Generation"/>, and open the source positioned
+    /// at <paramref name="Start"/>, the item's start in the source's time.
+    /// </summary>
+    public sealed record OpenItem(
+        int Generation,
+        IMediaSource Source,
+        int? Command,
+        TimeSpan Start = default
+    ) : PlaylistSessionAction;
 
     /// <summary>Warm the runtime up.</summary>
     public sealed record WarmUpItem(int? Command) : PlaylistSessionAction;
@@ -150,8 +157,12 @@ internal abstract record PlaylistSessionAction
     /// <summary>Seek the runtime.</summary>
     public sealed record SeekItem(TimeSpan Position, int? Command) : PlaylistSessionAction;
 
-    /// <summary>Rewind the runtime in place.</summary>
-    public sealed record RewindItem(int? Command) : PlaylistSessionAction;
+    /// <summary>
+    /// Rewind the runtime in place to <paramref name="Position"/>, the start of the item it now
+    /// plays.
+    /// </summary>
+    public sealed record RewindItem(int? Command, TimeSpan Position = default)
+        : PlaylistSessionAction;
 
     /// <summary>Dispose the runtime. It never fails: the shell logs a throw and carries on.</summary>
     public sealed record DisposeItem : PlaylistSessionAction;

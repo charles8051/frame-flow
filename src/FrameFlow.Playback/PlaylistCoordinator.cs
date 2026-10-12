@@ -53,16 +53,20 @@ internal sealed class PlaylistCoordinator
     /// by then.
     /// </summary>
     public PlaylistCoordinator(IEnumerable<IMediaSource> initial, RepeatMode repeat)
-    {
-        ArgumentNullException.ThrowIfNull(initial);
-        var items = new List<PlaylistItem>();
-        foreach (var s in initial)
-        {
-            ArgumentNullException.ThrowIfNull(s);
-            items.Add(new PlaylistItem(s));
-        }
+        : this(ItemsOf(initial), repeat) { }
+
+    private PlaylistCoordinator(PlaylistItem[] items, RepeatMode repeat) =>
         _queue = PlaylistQueue.Create(items, repeat);
-    }
+
+    /// <summary>
+    /// Seeds the coordinator with a playlist of clips, each item opening at its clip's start.
+    /// </summary>
+    /// <remarks>
+    /// A factory rather than a constructor overload, so that an empty collection expression still
+    /// names one constructor.
+    /// </remarks>
+    internal static PlaylistCoordinator Of(IEnumerable<MediaClip> initial, RepeatMode repeat) =>
+        new(ItemsOf(initial), repeat);
 
     /// <summary>
     /// An empty coordinator for a controller that plays one source at a time. Each load makes the
@@ -118,9 +122,12 @@ internal sealed class PlaylistCoordinator
     public IObservable<PlaylistSnapshot> PlaylistChanged => _changed;
 
     /// <summary>Appends a source to the playlist, where it stays after it plays.</summary>
-    public PlaylistItem Add(IMediaSource source)
+    public PlaylistItem Add(IMediaSource source) => Add(new MediaClip(source));
+
+    /// <summary>Appends a clip to the playlist, where it stays after it plays.</summary>
+    public PlaylistItem Add(MediaClip clip)
     {
-        var item = new PlaylistItem(source);
+        var item = ItemOf(clip);
         Apply(q => q.Add(item));
         return item;
     }
@@ -128,9 +135,14 @@ internal sealed class PlaylistCoordinator
     /// <summary>
     /// Adds a one-shot item that plays after the playlist items left in the current pass.
     /// </summary>
-    public PlaylistItem Enqueue(IMediaSource source)
+    public PlaylistItem Enqueue(IMediaSource source) => Enqueue(new MediaClip(source));
+
+    /// <summary>
+    /// Adds a one-shot clip that plays after the playlist items left in the current pass.
+    /// </summary>
+    public PlaylistItem Enqueue(MediaClip clip)
     {
-        var item = new PlaylistItem(source);
+        var item = ItemOf(clip);
         Apply(q => q.Enqueue(item));
         return item;
     }
@@ -139,11 +151,15 @@ internal sealed class PlaylistCoordinator
     /// Adds a one-shot item that plays next, ahead of the next items already there.
     /// A <see langword="null"/> source adds nothing and returns <see langword="null"/>.
     /// </summary>
-    public PlaylistItem? SetNext(IMediaSource? source)
+    public PlaylistItem? SetNext(IMediaSource? source) =>
+        source is null ? null : SetNext(new MediaClip(source));
+
+    /// <summary>
+    /// Adds a one-shot clip that plays next, ahead of the next items already there.
+    /// </summary>
+    public PlaylistItem SetNext(MediaClip clip)
     {
-        if (source is null)
-            return null;
-        var item = new PlaylistItem(source);
+        var item = ItemOf(clip);
         Apply(q => q.SetNext(item));
         return item;
     }
@@ -207,20 +223,22 @@ internal sealed class PlaylistCoordinator
     /// Clears the player, adds <paramref name="sources"/> as the playlist and makes the first
     /// new item the pending jump, in one edit. Pokes the attached session.
     /// </summary>
-    public IReadOnlyList<PlaylistItem> Replace(IEnumerable<IMediaSource> sources)
+    public IReadOnlyList<PlaylistItem> Replace(IEnumerable<IMediaSource> sources) =>
+        Replace(ItemsOf(sources), nameof(sources));
+
+    /// <summary>
+    /// Clears the player, adds <paramref name="clips"/> as the playlist and makes the first new
+    /// item the pending jump, in one edit. Pokes the attached session.
+    /// </summary>
+    public IReadOnlyList<PlaylistItem> Replace(IEnumerable<MediaClip> clips) =>
+        Replace(ItemsOf(clips), nameof(clips));
+
+    private PlaylistItem[] Replace(PlaylistItem[] items, string paramName)
     {
-        ArgumentNullException.ThrowIfNull(sources);
-        var items = sources
-            .Select(s =>
-            {
-                ArgumentNullException.ThrowIfNull(s);
-                return new PlaylistItem(s);
-            })
-            .ToArray();
         if (items.Length == 0)
             throw new ArgumentException(
                 "A replacement playlist requires at least one source.",
-                nameof(sources)
+                paramName
             );
 
         Action? handler;
@@ -462,6 +480,24 @@ internal sealed class PlaylistCoordinator
 
     // ── Private ─────────────────────────────────────────────────────────────
 
+    // A default MediaClip has no source, and is refused as a null source is.
+    private static PlaylistItem ItemOf(MediaClip clip) =>
+        clip.Source is null
+            ? throw new ArgumentException("The clip has no source.", nameof(clip))
+            : new PlaylistItem(clip);
+
+    private static PlaylistItem[] ItemsOf(IEnumerable<IMediaSource> sources)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+        return [.. sources.Select(s => new PlaylistItem(s))];
+    }
+
+    private static PlaylistItem[] ItemsOf(IEnumerable<MediaClip> clips)
+    {
+        ArgumentNullException.ThrowIfNull(clips);
+        return [.. clips.Select(ItemOf)];
+    }
+
     private void Apply(Func<PlaylistQueue, PlaylistQueue> operation)
     {
         lock (_gate)
@@ -491,7 +527,7 @@ internal sealed class PlaylistCoordinator
     /// </summary>
     /// <remarks>
     /// Every assignment to <c>_queue</c> outside the constructors goes through here. <c>Apply</c>
-    /// is not the only writer: <see cref="Replace"/> and <see cref="LoadSource"/> take the lock
+    /// is not the only writer: <see cref="Replace(PlaylistItem[], string)"/> and <see cref="LoadSource"/> take the lock
     /// themselves because they need more than the queue under it, and a first draft that raised
     /// from <c>Apply</c> alone silently dropped both. The snapshot is taken here, from the queue
     /// being committed, rather than read back from <c>_queue</c> afterwards: a second edit landing

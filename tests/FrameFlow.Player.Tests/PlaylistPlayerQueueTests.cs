@@ -73,10 +73,46 @@ public sealed class PlaylistPlayerQueueTests
     }
 
     [Fact]
+    public async Task ClipItems_CarryTheirStart()
+    {
+        await using var player = NewPlayer(PlaybackState.Paused, out _);
+        var at = TimeSpan.FromSeconds(12);
+
+        var added = await player.AddAsync(new MediaClip(Source("b"), at));
+        var queued = await player.EnqueueAsync(new MediaClip(Source("x"), at));
+        var next = await player.SetNextAsync(new MediaClip(Source("y"), at));
+        var replaced = await player.ReplaceAsync(
+            [new MediaClip(Source("r"), at), new MediaClip(Source("s"))]
+        );
+
+        Assert.All([added, queued, next, replaced.Value[0]], item => Assert.Equal(at, item.Start));
+        Assert.Equal(TimeSpan.Zero, replaced.Value[1].Start);
+        Assert.Equal(TimeSpan.Zero, (await player.AddAsync(Source("z"))).Start);
+    }
+
+    [Fact]
+    public async Task AClipWithNoSource_IsRefused()
+    {
+        await using var player = NewPlayer(PlaybackState.Paused, out _);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => player.AddAsync(default(MediaClip)));
+        await Assert.ThrowsAsync<ArgumentException>(() => player.EnqueueAsync(default(MediaClip)));
+        await Assert.ThrowsAsync<ArgumentException>(() => player.SetNextAsync(default(MediaClip)));
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => player.ReplaceAsync([new MediaClip(Source("r")), default])
+        );
+    }
+
+    [Fact]
     public async Task Replace_WithNoSources_Throws()
     {
         await using var player = NewPlayer(PlaybackState.Paused, out _);
-        await Assert.ThrowsAsync<ArgumentException>(() => player.ReplaceAsync([]));
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => player.ReplaceAsync(Array.Empty<IMediaSource>())
+        );
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => player.ReplaceAsync(Array.Empty<MediaClip>())
+        );
     }
 
     [Fact]
