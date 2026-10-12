@@ -125,6 +125,37 @@ public interface IAudioSink : IAsyncDisposable
     ValueTask DeactivateAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Ends the stream for this activation: hands the device whatever the sink still holds, and
+    /// completes once the device has played the last sample it was given.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why it exists.</b> <see cref="PresentAsync"/> returns once the sink has taken a buffer,
+    /// not once it has been heard. A sink in front of a device keeps a queue ahead of the play
+    /// cursor and may hold a partial block back to coalesce it, so stopping the sink straight
+    /// after the last <see cref="PresentAsync"/> drops the end of the stream (#609).
+    /// <c>MediaPass</c> awaits this before <c>RunToCompletionAsync</c> returns, and the player
+    /// awaits it before it reports that an item ended.
+    /// </para>
+    /// <para>
+    /// <b>Contract.</b> Called after the last <see cref="PresentAsync"/> of an activation and
+    /// before <see cref="DeactivateAsync"/>; it does not deactivate. A paused sink stays paused
+    /// and the drain waits for it to resume. The wait is bounded: a device that stops playing
+    /// must not hold it forever, so an implementation gives up once the device has made no
+    /// progress for a while, and the audio it still held is dropped by the deactivation that
+    /// follows. It observes <paramref name="cancellationToken"/>.
+    /// </para>
+    /// <para>
+    /// <b>Default.</b> Completes at once. That is right for a sink that has delivered everything
+    /// by the time <see cref="PresentAsync"/> returns, such as a capture sink or a test double. A
+    /// sink that queues ahead of a device overrides it, and a sink that wraps another forwards it
+    /// to the inner one, which the default does not do.
+    /// </para>
+    /// </remarks>
+    /// <param name="cancellationToken">Cancels the wait. The audio still queued is left where it is.</param>
+    ValueTask DrainAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+    /// <summary>
     /// Returns a coherent snapshot of the sink's observable state (ADR-0034).
     /// This is the sanctioned cross-thread read path — implementations
     /// internally acquire whatever synchronization is needed so callers can

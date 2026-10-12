@@ -51,6 +51,7 @@
     <Project Path="tools/FrameFlow.TestBench/FrameFlow.TestBench.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/FrameFlow.Audio.ExitProbe/FrameFlow.Audio.ExitProbe.csproj" />
     <Project Path="tests/FrameFlow.Audio.TestKit/FrameFlow.Audio.TestKit.csproj" />
     <Project Path="tests/FrameFlow.Audio.Tests/FrameFlow.Audio.Tests.csproj" />
     <Project Path="tests/FrameFlow.Avalonia.Tests/FrameFlow.Avalonia.Tests.csproj" />

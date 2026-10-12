@@ -36,7 +36,8 @@ namespace FrameFlow.Player;
 /// This matches the convention of <see cref="IPassBuilder.WithVideoSink"/> and ADR-0044: a sink is
 /// owned by whoever constructed it, and the player layer is a user rather than an owner. A sink
 /// that is expensive to build, such as one holding a loaded inference model, is therefore built
-/// once and handed to any number of passes.
+/// once and handed to any number of passes. As a user, the pass activates the audio sink for its
+/// run and deactivates it when the run ends, however it ends.
 /// </para>
 /// </remarks>
 public sealed class MediaPass : IAsyncDisposable
@@ -133,6 +134,12 @@ public sealed class MediaPass : IAsyncDisposable
     /// fault arrives as a <see cref="GraphFaultException"/> naming the
     /// node, with what it threw as the inner exception.
     /// </para>
+    /// <para>
+    /// <b>The audio sink.</b> The pass activates it before the run and deactivates it before this
+    /// returns or throws, so a caller has no lifecycle call of its own to make. On a natural end it
+    /// first awaits <see cref="IAudioSink.DrainAsync"/>, so the run returns once the device has
+    /// played the last sample rather than once the last buffer was handed over (#609).
+    /// </para>
     /// </remarks>
     public async Task RunToCompletionAsync(CancellationToken ct = default)
     {
@@ -196,6 +203,46 @@ public sealed class MediaPass : IAsyncDisposable
         if (hasAudio)
             await _audioSink!.ActivateAsync(ct).ConfigureAwait(false);
 
+        // What the pass activated it deactivates, on every way out (#609). The sink may be the
+        // container's singleton and outlive the pass, so leaving it active hands the next user a
+        // device still running.
+        try
+        {
+            await RunGraphAsync(graph, ct).ConfigureAwait(false);
+
+            // The graph completes once the last buffer has been handed to the sink, which is not
+            // when it has been heard: a sink in front of a device still has a queue to play out.
+            // Only a natural end drains. A cancelled or faulted run stops where it is.
+            if (hasAudio)
+                await _audioSink!.DrainAsync(ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (hasAudio)
+            {
+                try
+                {
+                    await _audioSink!.DeactivateAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    // The run's own failure is the one to report.
+                    _logger.LogWarning(ex, "Deactivating the audio sink after a failed pass threw.");
+                }
+            }
+            throw;
+        }
+
+        if (hasAudio)
+            await _audioSink!.DeactivateAsync(CancellationToken.None).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Runs the demux pump and <paramref name="graph"/> together until both finish, cancelling
+    /// the other side when one faults.
+    /// </summary>
+    private async Task RunGraphAsync(Graph.Graph graph, CancellationToken ct)
+    {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         // Pump task: read packets → decoder queues. Finalize decoders

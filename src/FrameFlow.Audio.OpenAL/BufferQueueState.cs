@@ -287,13 +287,26 @@ internal readonly record struct BufferQueueState
     /// <c>SourcePlay</c>.
     /// </summary>
     /// <param name="queuedDepth">The live <c>AL_BUFFERS_QUEUED</c> count after the upload.</param>
-    public StartOutcome ObserveQueueDepth(int queuedDepth)
+    /// <param name="paused">
+    /// Whether the sink is paused. A paused sink starts nothing, whoever uploads: a pause that
+    /// lands before the source started leaves it in <c>AL_INITIAL</c>, and starting it then would
+    /// play audio the caller has paused. The gate stays shut, so the first upload after the resume
+    /// opens it, or the drain does at the end of the stream.
+    /// </param>
+    public StartOutcome ObserveQueueDepth(int queuedDepth, bool paused = false)
     {
-        if (!SourceStarted && queuedDepth >= _preBufferCount)
+        if (!SourceStarted && !paused && queuedDepth >= _preBufferCount)
             return new StartOutcome(this with { SourceStarted = true }, ShouldStartPlayback: true);
 
         return new StartOutcome(this, ShouldStartPlayback: false);
     }
+
+    /// <summary>
+    /// Latches <see cref="SourceStarted"/> for a source the shell started outside the pre-buffer
+    /// gate: at the end of the stream, when no further buffer will arrive to carry the queue to
+    /// the pre-buffer depth (<see cref="AudioDrain"/>, #609).
+    /// </summary>
+    public BufferQueueState MarkSourceStarted() => this with { SourceStarted = true };
 
     /// <summary>
     /// Clears the source-started latch without touching the staging level — the sink's

@@ -46,7 +46,8 @@ public interface IPassBuilder
 
     /// <summary>
     /// Attaches an <see cref="IAudioSink"/> the pass will drive. Replaces any previously-attached
-    /// audio sink. The pass activates it before the run.
+    /// audio sink. The pass activates it before the run and deactivates it when the run ends,
+    /// however it ends, draining it first on a natural end.
     /// </summary>
     /// <remarks>
     /// <b>Ownership (ADR-0044).</b> Whoever constructed the sink owns it; the pass never disposes

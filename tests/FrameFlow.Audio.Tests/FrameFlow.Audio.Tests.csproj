@@ -26,5 +26,7 @@
     <ProjectReference Include="..\..\src\FrameFlow.Audio.OpenAL\FrameFlow.Audio.OpenAL.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Audio\FrameFlow.Audio.csproj" />
     <ProjectReference Include="..\FrameFlow.Audio.TestKit\FrameFlow.Audio.TestKit.csproj" />
+    <!-- The child process ProcessExitTests starts (#633); built and copied next to the tests. -->
+    <ProjectReference Include="..\FrameFlow.Audio.ExitProbe\FrameFlow.Audio.ExitProbe.csproj" />
   </ItemGroup>
 </Project>
