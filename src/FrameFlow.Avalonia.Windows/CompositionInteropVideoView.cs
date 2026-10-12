@@ -56,7 +56,13 @@ namespace FrameFlow.Avalonia.Windows;
 public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsyncDisposable
 {
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
-    private ILogger _logger = NullLogger.Instance;
+
+    // Handed out rather than replaced, so Initialize can move the logging after the stall
+    // watchdog, the converters and the owned sink were built with it. EnsureSink readies the
+    // view without a logger when Initialize has not run (#613), and a factory that comes later
+    // still reaches all of them.
+    private readonly SwitchableLogger<CompositionInteropVideoView> _logger = new();
+    private readonly SwitchableLogger<CompositionInteropVideoSink> _sinkLogger = new();
 
     private CompositionInteropVideoSink? _sink;
     private bool _sinkOwned;
@@ -317,13 +323,20 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
 
     /// <summary>
     /// Wires the logger, materializes the owned sink, brings up the compositor surface +
-    /// GPU interop, and starts the render tick. Call once the control is attached to the
-    /// visual tree (e.g. from the window's <c>OnLoaded</c>) and before playback starts.
+    /// GPU interop once the control is attached, and starts the stall watchdog. Call on the
+    /// UI thread, before playback starts.
     /// </summary>
+    /// <remarks>
+    /// <see cref="EnsureSink"/> runs this without a logger when it has not run yet, and
+    /// <see cref="IVideoSurface.AttachSink"/> runs it with the factory it is given. Calling it
+    /// again moves the view's logging, and its own sink's, to the new factory. A caller who
+    /// assigns <see cref="Sink"/> instead of asking for one calls this itself.
+    /// </remarks>
     public void Initialize(ILoggerFactory loggerFactory)
     {
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
-        _logger = _loggerFactory.CreateLogger<CompositionInteropVideoView>();
+        _logger.Use(_loggerFactory);
+        _sinkLogger.Use(_loggerFactory);
         _initialized = true;
 
         EnsureSink();
@@ -355,17 +368,29 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// returns it as the <see cref="IVideoSink"/> to hand to the player. The view disposes
     /// the owned sink on detach / <see cref="DisposeAsync"/>.
     /// </summary>
+    /// <remarks>
+    /// Readies the view to present that sink's frames: if <see cref="Initialize"/> has not run,
+    /// this runs it, without a logger, so call it on the UI thread. To log, pass a factory to
+    /// <see cref="Initialize"/> before or after this, or hand the view to a builder with
+    /// <c>FrameFlowAvaloniaBuilderExtensions.WithVideoSurface</c>.
+    /// </remarks>
     public CompositionInteropVideoSink EnsureSink()
     {
-        if (_sink is not null)
-            return _sink;
+        if (_sink is null)
+        {
+            _sink = new CompositionInteropVideoSink(_sinkLogger);
+            WireDiagnostics(_sink);
+            BindSink(_sink);
+            _sinkOwned = true;
+        }
 
-        _sink = new CompositionInteropVideoSink(
-            _loggerFactory.CreateLogger<CompositionInteropVideoSink>()
-        );
-        WireDiagnostics(_sink);
-        BindSink(_sink);
-        _sinkOwned = true;
+        // The compositor surface and the GPU interop wait for Initialize, and the presenter
+        // holds every frame until they exist. A caller copying the FrameFlowVideoView pattern,
+        // EnsureSink straight into WithVideoSink, never called it and got a black window with
+        // nothing in the log (#613). Initialize calls back in here; it has set the flag by then.
+        if (!_initialized)
+            Initialize(_loggerFactory);
+
         return _sink;
     }
 

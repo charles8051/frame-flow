@@ -31,6 +31,8 @@ public interface IVideoSurface
     /// The factory reaches the surface's own sink whenever this is called, before or after the
     /// surface joins the visual tree; a later call with another factory moves the logging to it.
     /// A sink the caller assigned to the surface keeps the logger its owner gave it.
+    /// <c>FrameFlowAvaloniaBuilderExtensions.WithVideoSurface</c> makes this call inside a
+    /// builder chain.
     /// </remarks>
     IVideoSink AttachSink(ILoggerFactory loggerFactory);
 }

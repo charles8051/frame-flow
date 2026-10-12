@@ -155,6 +155,7 @@ await pass.RunToCompletionAsync();
 `CompositionInteropVideoView` shows D3D12VA frames: it converts them on the decoder's D3D12 device
 and copies the result across to the D3D11 texture Avalonia's compositor imports (#429). Its sink takes
 GPU frames, so a player given a D3D12VA `HardwareDevice` presents through it without being asked.
+`WithVideoSurface(view, loggerFactory)` hands it, or any other `IVideoSurface`, to a player builder.
 
 ### Generic Host and DI
 

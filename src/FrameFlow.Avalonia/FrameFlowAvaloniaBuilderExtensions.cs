@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using FrameFlow.Player;
+using Microsoft.Extensions.Logging;
 
 namespace FrameFlow.Avalonia;
 
 /// <summary>
-/// Provides <see cref="IPlayerBuilder"/> extension methods for wiring an
-/// Avalonia <see cref="FrameFlowVideoView"/> into the fluent FrameFlow player.
+/// Provides <see cref="IPlayerBuilder"/> and <see cref="IPassBuilder"/> extension methods for
+/// wiring an Avalonia video surface into the fluent FrameFlow player.
 /// </summary>
 public static class FrameFlowAvaloniaBuilderExtensions
 {
@@ -58,5 +59,63 @@ public static class FrameFlowAvaloniaBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(view);
         return builder.WithVideoSink(view.EnsureSink());
+    }
+
+    /// <summary>
+    /// Wires any <see cref="IVideoSurface"/> to the fluent <see cref="IPlayerBuilder"/>: the
+    /// surface gets <paramref name="loggerFactory"/> and hands back its sink, through
+    /// <see cref="IVideoSurface.AttachSink"/>, whether or not it has joined the visual tree yet.
+    /// </summary>
+    /// <remarks>
+    /// This is the one call that readies the Windows zero-copy presenter
+    /// (<c>FrameFlow.Avalonia.Windows.CompositionInteropVideoView</c>) and the CPU
+    /// <see cref="FrameFlowVideoView"/> alike. The builder's own <c>WithLogger</c> does not reach
+    /// the surface, so pass the same factory here; pass <c>NullLoggerFactory.Instance</c> for none.
+    /// </remarks>
+    /// <param name="builder">The player builder being configured.</param>
+    /// <param name="surface">The control that will render frames.</param>
+    /// <param name="loggerFactory">The logger factory the surface and its sink log through.</param>
+    /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
+    /// <example>
+    /// <code>
+    /// _player = await FrameFlowPlayer.Create()
+    ///     .WithMedia(path)
+    ///     .WithVideoSurface(VideoView, loggerFactory)
+    ///     .WithLogger(loggerFactory)
+    ///     .BuildPlayerAsync();
+    /// </code>
+    /// </example>
+    public static IPlayerBuilder WithVideoSurface(
+        this IPlayerBuilder builder,
+        IVideoSurface surface,
+        ILoggerFactory loggerFactory
+    )
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(surface);
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        return builder.WithVideoSink(surface.AttachSink(loggerFactory));
+    }
+
+    /// <summary>
+    /// Wires any <see cref="IVideoSurface"/> to a narrowed <see cref="IPassBuilder"/> chain, the
+    /// overload for chains headed for <see cref="IPassBuilder.BuildAsync"/>. The surface gets
+    /// <paramref name="loggerFactory"/> and hands back its sink, through
+    /// <see cref="IVideoSurface.AttachSink"/>.
+    /// </summary>
+    /// <param name="builder">The pass builder being configured.</param>
+    /// <param name="surface">The control that will render frames.</param>
+    /// <param name="loggerFactory">The logger factory the surface and its sink log through.</param>
+    /// <returns>The <paramref name="builder"/> instance for continued chaining.</returns>
+    public static IPassBuilder WithVideoSurface(
+        this IPassBuilder builder,
+        IVideoSurface surface,
+        ILoggerFactory loggerFactory
+    )
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(surface);
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        return builder.WithVideoSink(surface.AttachSink(loggerFactory));
     }
 }

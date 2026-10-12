@@ -9,7 +9,7 @@ with no readback and no `WriteableBitmap`.
 ```csharp
 var player = await FrameFlowPlayer.Create()
     .WithMedia(path)
-    .WithVideoSink(((IVideoSurface)VideoView).AttachSink(loggerFactory))
+    .WithVideoSurface(VideoView, loggerFactory)
     .WithRepeatMode(RepeatMode.One)
     .BuildPlayerAsync();
 
