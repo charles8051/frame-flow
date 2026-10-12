@@ -71,9 +71,9 @@ public sealed class CompositionInteropVideoViewSetupTests
     [AvaloniaFact]
     public async Task InitializeAfterEnsureSink_MovesTheViewsAndTheSinksLoggingToTheNewFactory()
     {
-        // EnsureSink now readies the view without a logger, so the sink and the stall watchdog
-        // exist before the factory arrives. The factory still has to reach them and the view
-        // itself, as on the CPU view (#630).
+        // EnsureSink now readies the view without a logger, so the sink exists before the factory
+        // arrives, and so would the stall watchdog once the view is attached. The factory still
+        // has to reach the sink and the view itself, as on the CPU view (#630).
         var view = new CompositionInteropVideoView();
         var sink = view.EnsureSink();
         var log = new RecordingLoggerFactory();

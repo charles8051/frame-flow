@@ -155,6 +155,47 @@ public sealed class CompositionInteropVideoViewReattachTests
         window.Close();
     }
 
+    [AvaloniaFact]
+    public async Task ADetach_WhoseSinkThrowsOnDispose_StillTakesTheAttachmentDown()
+    {
+        // The lifecycle has moved to Detached before the sink is released, and it does not ask for
+        // the stop again. A throw from the sink's dispose must not leave the surface and the
+        // watchdog up with nothing left to take them down.
+        var view = new CompositionInteropVideoView();
+        var log = new RecordingLoggerFactory();
+        var window = Show(view);
+        var sink = ((IVideoSurface)view).AttachSink(log);
+        await sink.PresentAsync(new TrackedFrame(throwOnDispose: true), CancellationToken.None);
+
+        Detach(window);
+
+        Assert.Null(ElementComposition.GetElementChildVisual(view));
+        Assert.False(view.IsWatchingForStalls);
+        var messages = log.MessagesFrom<CompositionInteropVideoView>();
+        Assert.Contains(messages, m => m.Contains(TeardownCompleted, StringComparison.Ordinal));
+        Assert.Contains(messages, m => m.Contains("teardown faulted", StringComparison.Ordinal)); // not swallowed
+
+        Reattach(window, view);
+        Assert.NotNull(ElementComposition.GetElementChildVisual(view));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task DisposeAsync_WhoseSinkThrows_StillTearsDown_AndReturnsTheFault()
+    {
+        var view = new CompositionInteropVideoView();
+        var window = Show(view);
+        var sink = ((IVideoSurface)view).AttachSink(new RecordingLoggerFactory());
+        await sink.PresentAsync(new TrackedFrame(throwOnDispose: true), CancellationToken.None);
+
+        var fault = await Assert.ThrowsAsync<InvalidOperationException>(() => view.DisposeAsync().AsTask());
+
+        Assert.Equal(TrackedFrame.DisposeFault, fault.Message);
+        Assert.Null(ElementComposition.GetElementChildVisual(view));
+        Assert.False(view.IsWatchingForStalls);
+        window.Close();
+    }
+
     private static Window Show(Control view)
     {
         var window = new Window { Width = 200, Height = 100, Content = view };
@@ -175,9 +216,13 @@ public sealed class CompositionInteropVideoViewReattachTests
         Dispatcher.UIThread.RunJobs();
     }
 
-    /// <summary>A frame that records its disposal. Nothing here reads its pixels.</summary>
-    private sealed class TrackedFrame : IVideoFrame
+    /// <summary>
+    /// A frame that records its disposal, and can throw from it. Nothing here reads its pixels.
+    /// </summary>
+    private sealed class TrackedFrame(bool throwOnDispose = false) : IVideoFrame
     {
+        public const string DisposeFault = "The frame failed to release.";
+
         public bool Disposed { get; private set; }
         public int Width => 16;
         public int Height => 16;
@@ -189,7 +234,12 @@ public sealed class CompositionInteropVideoViewReattachTests
         public IVideoFrame AddRef() =>
             throw new NotSupportedException("One-shot frame: ref counting is not supported.");
 
-        public void Dispose() => Disposed = true;
+        public void Dispose()
+        {
+            Disposed = true;
+            if (throwOnDispose)
+                throw new InvalidOperationException(DisposeFault);
+        }
 
         public CpuFrameData? AsCpu() => null;
 

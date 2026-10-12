@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Platform;
@@ -424,7 +425,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// Moves the view to the state the lifecycle core chose and does the work it named, in the
     /// core's order (#650). UI thread. Returns the teardown's remaining work, which completes
     /// once this attachment's producers are disposed or handed to the reaper; a teardown that
-    /// fails comes back as a faulted task rather than a throw.
+    /// fails, or a sink whose dispose throws, comes back as a faulted task rather than a throw.
     /// </summary>
     private Task Apply(InteropViewTransition transition)
     {
@@ -432,23 +433,46 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         _tornDown = transition.Next.HoldsFrames; // step 1 of a teardown: post nothing further.
 
         var work = transition.Work;
-        var teardown = Task.CompletedTask;
-        try
+
+        // The lifecycle has already moved on and will not ask for this stop again, so a sink whose
+        // dispose throws (it disposes the frame it holds) must not skip it: that would leave the
+        // surface, the stall watchdog and the producers up with nothing left to take them down.
+        Exception? sinkFault = null;
+        if (work.HasFlag(InteropViewWork.ReleaseSink))
         {
-            if (work.HasFlag(InteropViewWork.ReleaseSink))
-                ReleaseSink(forgetCallerSink: work.HasFlag(InteropViewWork.ForgetCallerSink));
-            if (work.HasFlag(InteropViewWork.StopPresenting))
-                teardown = StopPresenting();
+            try { ReleaseSink(forgetCallerSink: work.HasFlag(InteropViewWork.ForgetCallerSink)); }
+            catch (Exception ex) { sinkFault = ex; }
         }
-        catch (Exception ex)
+
+        var teardown = Task.CompletedTask;
+        if (work.HasFlag(InteropViewWork.StopPresenting))
         {
-            teardown = Task.FromException(ex);
+            try { teardown = StopPresenting(); }
+            catch (Exception ex) { teardown = Task.FromException(ex); }
         }
 
         if (work.HasFlag(InteropViewWork.StartPresenting))
             StartPresenting();
 
-        return teardown;
+        return sinkFault is null ? teardown : FaultAfterAsync(teardown, sinkFault);
+    }
+
+    /// <summary>
+    /// Completes once <paramref name="teardown"/> does, then faults with the sink's
+    /// <paramref name="sinkFault"/>, or with both faults when the teardown failed as well.
+    /// </summary>
+    private static async Task FaultAfterAsync(Task teardown, Exception sinkFault)
+    {
+        try
+        {
+            await teardown.ConfigureAwait(false);
+        }
+        catch (Exception teardownFault)
+        {
+            throw new AggregateException(sinkFault, teardownFault);
+        }
+
+        ExceptionDispatchInfo.Throw(sinkFault);
     }
 
     /// <summary>
