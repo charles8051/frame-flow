@@ -29,15 +29,16 @@ namespace FrameFlow.Player;
 /// <b>Error model (ADR-0069).</b> Transport commands return
 /// <see cref="Result"/> rather than throwing, matching
 /// <see cref="IPlaybackController"/>. A command that the state machine
-/// refuses — a seek on a non-seekable source, a play on a disposed player —
+/// refuses — a play with nothing to play, a seek with nothing loaded —
 /// is an expected outcome, and <see cref="Result.Error"/> carries the
 /// <see cref="ErrorCategory"/> the controller produced.
 /// </para>
 /// <para>
 /// Exceptions are still thrown, for the cases that are not expected
 /// outcomes: <see cref="ArgumentException"/> and friends for a caller that
-/// passed something invalid, and whatever escapes a sink or the decode
-/// stack. Failures that arise during playback surface on
+/// passed something invalid, <see cref="ObjectDisposedException"/> for a
+/// command issued once the player's disposal has begun, and whatever escapes
+/// a sink or the decode stack. Failures that arise during playback surface on
 /// <see cref="ErrorOccurred"/>. So does a command's failure that puts the
 /// player into <see cref="PlaybackState.Error"/>, which the command's
 /// <see cref="Result"/> also returns.
@@ -62,8 +63,8 @@ public interface IMediaTransport : IAsyncDisposable
     /// <summary>Seek to the given position in media time.</summary>
     /// <returns>
     /// A successful <see cref="Result"/>, or one whose
-    /// <see cref="Result.Error"/> says why the command was refused —
-    /// seeking a non-seekable source is the common case.
+    /// <see cref="Result.Error"/> says why the command was refused, such as
+    /// a seek with nothing loaded.
     /// </returns>
     Task<Result> SeekAsync(TimeSpan position, CancellationToken cancellationToken = default);
 
@@ -197,7 +198,8 @@ public interface IMediaTransport : IAsyncDisposable
     /// </para>
     /// <para>
     /// A command refused with the state unchanged raises nothing here: a play with nothing to
-    /// play, a seek with nothing loaded, any command on a disposed player.
+    /// play, or a seek with nothing loaded. Neither does a command issued once the player's
+    /// disposal has begun, which throws <see cref="ObjectDisposedException"/>.
     /// </para>
     /// <para>
     /// An error does not always stop playback. A single-source player raises it

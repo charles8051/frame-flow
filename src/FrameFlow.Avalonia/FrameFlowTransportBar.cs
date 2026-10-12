@@ -228,6 +228,8 @@ public sealed class FrameFlowTransportBar : StackPanel
         // The click has already flipped the toggle. Put it back to the mode the transport
         // reports: the toggle moves when RepeatModeChanged says the mode moved, so a refused
         // command leaves it on the mode still in force, and there is nothing to roll back.
+        // A second click that lands before the first request is applied reads the same mode and
+        // asks for the same next one, so it is absorbed rather than stepping twice.
         var current = p.RepeatMode;
         ShowRepeatMode(current);
         var next = LoopToggle.Next(current);
