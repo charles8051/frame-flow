@@ -67,11 +67,15 @@ internal readonly record struct PlaybackEndWatch
         );
 
     /// <summary>The state the transport was in once the wait had subscribed.</summary>
+    /// <remarks>
+    /// A wait that already saw the move into <see cref="PlaybackState.Error"/> on the stream,
+    /// before it read the state, keeps waiting: the error follows that move, so it will arrive.
+    /// </remarks>
     public PlaybackEndWatch Started(PlaybackState current) =>
         current switch
         {
             PlaybackState.Ended => Decide(Result.Ok()),
-            PlaybackState.Error => Decide(Result.Fail(AlreadyFailed)),
+            PlaybackState.Error when !InError => Decide(Result.Fail(AlreadyFailed)),
             _ => this,
         };
 

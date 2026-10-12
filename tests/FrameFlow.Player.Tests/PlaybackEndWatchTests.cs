@@ -85,6 +85,17 @@ public sealed class PlaybackEndWatchTests
     }
 
     [Fact]
+    public void AMoveIntoErrorSeenBeforeTheStateWasRead_WaitsForTheError()
+    {
+        // The flip landed between subscribing and reading State. The wait saw it on the stream,
+        // so the error that follows it will arrive too, and is the one to report.
+        var watch = PlaybackEndWatch.Waiting.StateChanged(PlaybackState.Error).Started(PlaybackState.Error);
+        Assert.Null(watch.Outcome);
+
+        Assert.Same(Fatal, watch.ErrorRaised(Fatal, PlaybackState.Error).Outcome!.Value.Error);
+    }
+
+    [Fact]
     public void Disposal_Fails()
     {
         var watch = PlaybackEndWatch.Waiting.Started(PlaybackState.Playing).Completed();
