@@ -430,10 +430,56 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
     // ── IPlaybackSession lifecycle ──────────────────────────────────
 
-    public async ValueTask InitializeAsync(
+    public ValueTask InitializeAsync(
         IMediaSource source,
         CancellationToken cancellationToken = default
+    ) => InitializeAsync(source, TimeSpan.Zero, cancellationToken);
+
+    /// <inheritdoc/>
+    public async ValueTask InitializeAsync(
+        IMediaSource source,
+        TimeSpan start,
+        CancellationToken cancellationToken
     )
+    {
+        await OpenAsync(source, cancellationToken).ConfigureAwait(false);
+        if (start > TimeSpan.Zero)
+            await PositionAtStartAsync(start, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Positions a session that has opened but not yet warmed up at <paramref name="start"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the seek recipe, not a copy of it (ADR-0056). Before the first play a reposition
+    /// holds the session: it moves the demuxer, resets the decoders, seats both clocks on the
+    /// start and records the pacer's floor, and starts nothing (#639). The warm-up that follows
+    /// decodes from the keyframe at or before the start, and the floor keeps every frame before
+    /// the start off the sink.
+    /// </para>
+    /// <para>
+    /// A start at or past a known end is refused. The item would open with nothing in it and end
+    /// at once, and under <c>RepeatMode.One</c> it would then loop with no content. Refused here,
+    /// it fails to start, and the playlist's failure guard counts it.
+    /// </para>
+    /// </remarks>
+    private ValueTask PositionAtStartAsync(TimeSpan start, CancellationToken cancellationToken)
+    {
+        var duration = Duration;
+        if (duration > TimeSpan.Zero && start >= duration)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(start),
+                start,
+                $"'{_source?.DisplayName}' cannot start at {start}: it is {duration} long."
+            );
+        }
+
+        return RepositionAsync(start, GraphPolicy.Rebuild, TaskPolicy.Cancel, cancellationToken);
+    }
+
+    private async ValueTask OpenAsync(IMediaSource source, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(source);
         cancellationToken.ThrowIfCancellationRequested();
@@ -1095,7 +1141,16 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// no-cancel route in that case.
     /// </para>
     /// </remarks>
-    public ValueTask RewindToStartAsync(CancellationToken cancellationToken = default)
+    public ValueTask RewindToStartAsync(CancellationToken cancellationToken = default) =>
+        RewindToAsync(TimeSpan.Zero, cancellationToken);
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The rewind <see cref="RewindToStartAsync"/> describes, to <paramref name="position"/>
+    /// rather than to zero: the start of the item this runtime now plays, which for a clip is
+    /// partway into the source.
+    /// </remarks>
+    public ValueTask RewindToAsync(TimeSpan position, CancellationToken cancellationToken)
     {
         if (_pipeline is null || _demux is null)
             return ValueTask.CompletedTask;
@@ -1105,7 +1160,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // (Rebuild + Cancel), which builds/initialises whatever is missing.
         if (_graph is null)
             return RepositionAsync(
-                TimeSpan.Zero,
+                position,
                 GraphPolicy.Rebuild,
                 TaskPolicy.Cancel,
                 cancellationToken
@@ -1116,7 +1171,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // (TaskPolicy.AwaitClean) and re-run the retained graph (GraphPolicy.Reuse),
         // skipping the per-loop CTS-cancel and topology rebuild.
         return RepositionAsync(
-            TimeSpan.Zero,
+            position,
             GraphPolicy.Reuse,
             TaskPolicy.AwaitClean,
             cancellationToken

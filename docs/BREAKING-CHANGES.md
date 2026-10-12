@@ -36,6 +36,17 @@ that drops buffers when its consumer falls behind.
 **What to write instead.** Stamp each buffer with its position on one running timeline. The
 decoder and the resampler already do.
 
+### 2. `ReplaceAsync([])` no longer compiles
+
+**A compile error, on a call that always threw.**
+
+`IMediaPlayer.ReplaceAsync` gained an overload that takes media clips (#656). An empty collection
+expression converts to both overloads, so `player.ReplaceAsync([])` is now ambiguous. The call
+threw `ArgumentException` before, because a replacement needs at least one item, and it still does.
+
+**What to write instead.** Name the element type, `player.ReplaceAsync(Array.Empty<IMediaSource>())`,
+if a test exercises the refusal. Nothing else needs to change.
+
 ## `v0.15.0` — since `v0.14.0`
 
 ### 1. `FrameMemoryDomains` names each GPU API, and `Gpu` is their union

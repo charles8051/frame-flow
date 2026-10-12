@@ -141,7 +141,9 @@ FrameFlow.Playback.PlaybackController
 FrameFlow.Playback.PlaybackObservableExtensions
 FrameFlow.Playback.PlaylistItem
 FrameFlow.Playback.PlaylistItem.PlaylistItem(FrameFlow.Media.IMediaSource! source) -> void
+FrameFlow.Playback.PlaylistItem.PlaylistItem(FrameFlow.Media.MediaClip clip) -> void
 FrameFlow.Playback.PlaylistItem.Source.get -> FrameFlow.Media.IMediaSource!
+FrameFlow.Playback.PlaylistItem.Start.get -> System.TimeSpan
 FrameFlow.Playback.PlaylistItemFailed
 FrameFlow.Playback.PlaylistItemFailed.Error.get -> FrameFlow.Media.PlaybackError!
 FrameFlow.Playback.PlaylistItemFailed.Error.init -> void

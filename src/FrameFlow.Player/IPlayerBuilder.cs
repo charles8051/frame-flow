@@ -51,6 +51,13 @@ public interface IPlayerBuilder
     IPlayerBuilder WithMedia(IMediaSource source);
 
     /// <summary>
+    /// Names the media the built player starts with, as a clip that opens at its start. Replaces
+    /// anything a previous <c>WithMedia</c> named.
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="clip"/> has no source.</exception>
+    IPlayerBuilder WithMedia(MediaClip clip);
+
+    /// <summary>
     /// Names an ordered queue the built player starts with, replacing anything a previous
     /// <c>WithMedia</c> named. The queue may be empty, and the player is then built with nothing
     /// loaded.

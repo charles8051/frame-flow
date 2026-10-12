@@ -22,9 +22,11 @@ FrameFlow.Player.IMediaTransport.SupportsVolumeControl.get -> bool
 FrameFlow.Player.IMediaTransport.Volume.get -> float
 FrameFlow.Player.IMediaTransport.Volume.set -> void
 FrameFlow.Player.IMediaPlayer
+FrameFlow.Player.IMediaPlayer.AddAsync(FrameFlow.Media.MediaClip clip, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Playback.PlaylistItem!>!
 FrameFlow.Player.IMediaPlayer.AddAsync(FrameFlow.Media.IMediaSource! source, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Playback.PlaylistItem!>!
 FrameFlow.Player.IMediaPlayer.ClearAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
 FrameFlow.Player.IMediaPlayer.CurrentSource.get -> FrameFlow.Media.IMediaSource?
+FrameFlow.Player.IMediaPlayer.EnqueueAsync(FrameFlow.Media.MediaClip clip, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Playback.PlaylistItem!>!
 FrameFlow.Player.IMediaPlayer.EnqueueAsync(FrameFlow.Media.IMediaSource! source, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Playback.PlaylistItem!>!
 FrameFlow.Player.IMediaPlayer.GetPlaylist() -> FrameFlow.Playback.PlaylistSnapshot!
 FrameFlow.Player.IMediaPlayer.ItemFailed.get -> System.IObservable<FrameFlow.Playback.PlaylistItemFailed!>!
@@ -33,7 +35,9 @@ FrameFlow.Player.IMediaPlayer.ItemStalled.get -> System.IObservable<FrameFlow.Pl
 FrameFlow.Player.IMediaPlayer.JumpToAsync(FrameFlow.Playback.PlaylistItem! item, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
 FrameFlow.Player.IMediaPlayer.PlaylistChanged.get -> System.IObservable<FrameFlow.Playback.PlaylistSnapshot!>!
 FrameFlow.Player.IMediaPlayer.RemoveAsync(FrameFlow.Playback.PlaylistItem! item, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
+FrameFlow.Player.IMediaPlayer.ReplaceAsync(System.Collections.Generic.IEnumerable<FrameFlow.Media.MediaClip>! clips, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result<System.Collections.Generic.IReadOnlyList<FrameFlow.Playback.PlaylistItem!>!>>!
 FrameFlow.Player.IMediaPlayer.ReplaceAsync(System.Collections.Generic.IEnumerable<FrameFlow.Media.IMediaSource!>! sources, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result<System.Collections.Generic.IReadOnlyList<FrameFlow.Playback.PlaylistItem!>!>>!
+FrameFlow.Player.IMediaPlayer.SetNextAsync(FrameFlow.Media.MediaClip clip, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Playback.PlaylistItem!>!
 FrameFlow.Player.IMediaPlayer.SetNextAsync(FrameFlow.Media.IMediaSource? source, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Playback.PlaylistItem?>!
 FrameFlow.Player.IMediaPlayer.SkipToNextAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
 FrameFlow.Player.IMediaPlayer.SourceTransitioned.get -> System.IObservable<FrameFlow.Playback.PlaylistTransition!>!
@@ -64,6 +68,7 @@ FrameFlow.Player.IPlayerBuilder.WithExcludedCodecs(params string![]! codecs) -> 
 FrameFlow.Player.IPlayerBuilder.WithHardwareFrames(bool yieldHardwareFrames = true) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithLatenessRecovery(FrameFlow.Playback.LatenessRecoveryOptions! options) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithLogger(Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory) -> FrameFlow.Player.IPlayerBuilder!
+FrameFlow.Player.IPlayerBuilder.WithMedia(FrameFlow.Media.MediaClip clip) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithMedia(FrameFlow.Media.IMediaSource! source) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithMedia(System.Collections.Generic.IEnumerable<FrameFlow.Media.IMediaSource!>! sources) -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPlayerBuilder.WithMedia(string! path) -> FrameFlow.Player.IPlayerBuilder!

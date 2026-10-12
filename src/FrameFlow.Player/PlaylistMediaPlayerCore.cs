@@ -179,10 +179,20 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
         return Task.FromResult(_coordinator.Enqueue(source));
     }
 
+    public Task<PlaylistItem> EnqueueAsync(
+        MediaClip clip,
+        CancellationToken cancellationToken = default
+    ) => Task.FromResult(_coordinator.Enqueue(clip));
+
     public Task<PlaylistItem?> SetNextAsync(
         IMediaSource? source,
         CancellationToken cancellationToken = default
     ) => Task.FromResult(_coordinator.SetNext(source));
+
+    public Task<PlaylistItem> SetNextAsync(
+        MediaClip clip,
+        CancellationToken cancellationToken = default
+    ) => Task.FromResult(_coordinator.SetNext(clip));
 
     public Task<PlaylistItem> AddAsync(
         IMediaSource source,
@@ -192,6 +202,11 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
         ArgumentNullException.ThrowIfNull(source);
         return Task.FromResult(_coordinator.Add(source));
     }
+
+    public Task<PlaylistItem> AddAsync(
+        MediaClip clip,
+        CancellationToken cancellationToken = default
+    ) => Task.FromResult(_coordinator.Add(clip));
 
     public PlaylistSnapshot GetPlaylist() => _coordinator.Snapshot();
 
@@ -244,11 +259,28 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
     )
     {
         ArgumentNullException.ThrowIfNull(sources);
-        var list = sources.ToList();
+        return ReplaceAsync(sources.Select(s => new MediaClip(s)), nameof(sources));
+    }
+
+    public Task<Result<IReadOnlyList<PlaylistItem>>> ReplaceAsync(
+        IEnumerable<MediaClip> clips,
+        CancellationToken cancellationToken = default
+    )
+    {
+        ArgumentNullException.ThrowIfNull(clips);
+        return ReplaceAsync(clips, nameof(clips));
+    }
+
+    private Task<Result<IReadOnlyList<PlaylistItem>>> ReplaceAsync(
+        IEnumerable<MediaClip> clips,
+        string paramName
+    )
+    {
+        var list = clips.ToList();
         if (list.Count == 0)
             throw new ArgumentException(
                 "A replacement playlist requires at least one source.",
-                nameof(sources)
+                paramName
             );
 
         if (RefusalWhileUnusable("replace the playlist") is { } refused)

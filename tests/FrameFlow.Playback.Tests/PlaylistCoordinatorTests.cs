@@ -33,10 +33,24 @@ public sealed class PlaylistCoordinatorTests
     }
 
     [Fact]
+    public void ASeededPlaylistOfClips_StartsEachItemAtItsClip()
+    {
+        var at = TimeSpan.FromSeconds(12);
+        var coord = PlaylistCoordinator.Of(
+            [new MediaClip(S("a"), at), new MediaClip(S("b"))],
+            RepeatMode.Off
+        );
+
+        Assert.Equal([at, TimeSpan.Zero], coord.Queue.Playlist.Select(i => i.Start));
+        Assert.Throws<ArgumentException>(() => PlaylistCoordinator.Of([default], RepeatMode.Off));
+    }
+
+    [Fact]
     public void Replace_WithNoSources_Throws()
     {
         var coord = new PlaylistCoordinator([S("a")], RepeatMode.Off);
-        Assert.Throws<ArgumentException>(() => coord.Replace([]));
+        Assert.Throws<ArgumentException>(() => coord.Replace(Array.Empty<IMediaSource>()));
+        Assert.Throws<ArgumentException>(() => coord.Replace(Array.Empty<MediaClip>()));
     }
 
     [Fact]

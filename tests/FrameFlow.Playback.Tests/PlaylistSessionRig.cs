@@ -356,14 +356,27 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
         /// <summary>Raises ready, as the item's pacer does when frames flow again.</summary>
         public void RaiseBufferReady() => callbacks.OnBufferReady();
 
-        public async ValueTask InitializeAsync(
+        public ValueTask InitializeAsync(
             IMediaSource source,
             CancellationToken cancellationToken = default
+        ) => InitializeAsync(source, TimeSpan.Zero, cancellationToken);
+
+        // Logged as "Open" for an item that starts at zero, so the logs of every test written
+        // before clips read as they did.
+        public async ValueTask InitializeAsync(
+            IMediaSource source,
+            TimeSpan start,
+            CancellationToken cancellationToken
         )
         {
             Source = source.DisplayName;
             Name = rig.Opened(this, Source);
-            await rig.PerformAsync(this, ItemOp.Open, "Open", cancellationToken);
+            await rig.PerformAsync(
+                this,
+                ItemOp.Open,
+                start == TimeSpan.Zero ? "Open" : $"Open({start})",
+                cancellationToken
+            );
             MediaInfo = new MediaInfo(Source, TimeSpan.FromSeconds(3), [], []);
         }
 
@@ -390,9 +403,17 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
             await rig.RepositionAsync(this, ItemOp.Seek, $"Seek({position})", cancellationToken);
         }
 
-        public async ValueTask RewindToStartAsync(CancellationToken cancellationToken = default)
+        public ValueTask RewindToStartAsync(CancellationToken cancellationToken = default) =>
+            RewindToAsync(TimeSpan.Zero, cancellationToken);
+
+        public async ValueTask RewindToAsync(TimeSpan position, CancellationToken cancellationToken)
         {
-            await rig.RepositionAsync(this, ItemOp.Rewind, "Rewind", cancellationToken);
+            await rig.RepositionAsync(
+                this,
+                ItemOp.Rewind,
+                position == TimeSpan.Zero ? "Rewind" : $"Rewind({position})",
+                cancellationToken
+            );
         }
 
         public async ValueTask DisposeAsync()
