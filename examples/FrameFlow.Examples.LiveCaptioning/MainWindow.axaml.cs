@@ -251,8 +251,10 @@ public partial class MainWindow : Window
             "whisper-tap",
             (buffer, _) =>
             {
-                // The player's runs never overlap, and each counts its jump before it starts, so
-                // the jump now is the one this buffer's run started with.
+                // This tap and the picture's chain are in one graph, which runs its BeforeEachRun
+                // actions before any of its nodes, and the player's runs never overlap. So the
+                // jump now is the one this buffer's run counted. (A file with no picture counts
+                // none, and shows no captions.)
                 var tapped = new AfterJump<PcmAudioBuffer>(Volatile.Read(ref _jump), buffer);
                 buffer.AddRef();
                 if (!_captionAudio.Writer.TryWrite(tapped))
