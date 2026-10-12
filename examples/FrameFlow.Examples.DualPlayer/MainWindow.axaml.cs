@@ -34,7 +34,7 @@ public partial class MainWindow : Window
             pane.Player = await FrameFlowPlayer
                 .Create()
                 .WithMedia(path)
-                .WithAvaloniaVideoView(pane.Video)
+                .WithVideoSurface(pane.Video, _loggerFactory)
                 .WithAudioSink(pane.Audio)
                 .WithRepeatMode(RepeatMode.One)
                 .WithLogger(_loggerFactory)
@@ -60,10 +60,6 @@ public partial class MainWindow : Window
             onFailure: ex => Title += $"  [no log file: {ex.Message}]"
         );
         _logger = _loggerFactory.CreateLogger<MainWindow>();
-
-        // Before the views join the visual tree, which is where each creates its sink.
-        LeftVideo.LoggerFactory = _loggerFactory;
-        RightVideo.LoggerFactory = _loggerFactory;
 
         _left = new Pane(LeftVideo, LeftChrome, LeftTitle, NewAudioSink());
         _right = new Pane(RightVideo, RightChrome, RightTitle, NewAudioSink());

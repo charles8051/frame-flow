@@ -354,6 +354,44 @@ public class InferenceSessionFactoryBuilderTests
         Assert.Equal(ExecutionProvider.Cuda, factory.ActiveProvider);
     }
 
+    /// <summary>
+    /// ONNX Runtime's CUDA provider on a machine without the CUDA runtime libraries fails to load
+    /// them for the life of the process, so the CPU that opens after it is cached and the next
+    /// model does not try CUDA again (#635).
+    /// </summary>
+    [Fact]
+    public void ACudaProviderThatCannotLoadItsLibraries_IsRuledOut_AndTheCpuIsCached()
+    {
+        var attempts = new List<ExecutionProvider>();
+        var factory = InferenceSessionFactoryBuilder.Create(
+            preferred: ExecutionProvider.Cuda,
+            providers: new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+            {
+                [ExecutionProvider.Cuda] = _ =>
+                {
+                    attempts.Add(ExecutionProvider.Cuda);
+                    throw new InvalidOperationException(
+                        "[ErrorCode:Fail] OrtSessionOptionsAppendExecutionProvider_Cuda: Failed to load shared library");
+                },
+                [ExecutionProvider.Cpu] = path =>
+                {
+                    attempts.Add(ExecutionProvider.Cpu);
+                    return new FakeInferenceSession(path);
+                },
+            });
+
+        using (factory.Open("a.onnx"))
+        {
+        }
+
+        Assert.Equal(ExecutionProvider.Cpu, factory.ActiveProvider);
+
+        using var b = factory.Open("b.onnx");
+
+        Assert.Equal(new[] { ExecutionProvider.Cuda, ExecutionProvider.Cpu, ExecutionProvider.Cpu }, attempts);
+        Assert.Equal(ExecutionProvider.Cpu, factory.ActiveProvider);
+    }
+
     [Fact]
     public void AWalkPastOneLastingAndOneUnrecognisedFailure_CachesNothing()
     {

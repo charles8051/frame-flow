@@ -84,7 +84,11 @@ public partial class MainWindow : Window
                         chain.Then(SendToWhisper(_captionAudio.Writer, Interlocked.Increment(ref _audioGraph)))
                     )
                     .ConfigureVideo(chain =>
-                        detector is null ? chain : chain.Infer("yolo", detector, ShowWhenPresented())
+                        // A frame the model fails on loses its boxes, counted on the
+                        // frameflow.graph.discards metric; the picture and captions go on.
+                        detector is null
+                            ? chain
+                            : chain.Infer("yolo", detector, ShowWhenPresented(), onError: FailureResponse.Discard)
                     )
                     .BuildPlayerAsync(_windowCts.Token);
 
@@ -194,10 +198,7 @@ public partial class MainWindow : Window
 
         try
         {
-            // Off the UI thread: once the model is downloaded, the session opens synchronously.
-            return await Task.Run(() =>
-                Yolov8Detector.CreateAsync(sessions, ct: _windowCts.Token, loggerFactory: _loggerFactory)
-            );
+            return await Yolov8Detector.CreateAsync(sessions, ct: _windowCts.Token, loggerFactory: _loggerFactory);
         }
         catch (OperationCanceledException) when (_windowCts.IsCancellationRequested)
         {
@@ -231,11 +232,9 @@ public partial class MainWindow : Window
 
     private readonly ConcurrentQueue<Caption> _newCaptions = new();
     private Task _captionGraph = Task.CompletedTask;
-    private CaptionTimeline _captions = NewCaptionTimeline();
+    private readonly CaptionTimeline _captions = new(displayDuration: TimeSpan.FromSeconds(6));
     private TimeSpan _lastPresented;
     private string _shownCaption = "";
-
-    private static CaptionTimeline NewCaptionTimeline() => new(displayDuration: TimeSpan.FromSeconds(6));
 
     /// <summary>Passes each audio buffer on to the speakers and sends a reference to it to Whisper.</summary>
     private static OperatorNode<PcmAudioBuffer, PcmAudioBuffer> SendToWhisper(
@@ -319,9 +318,10 @@ public partial class MainWindow : Window
         var graph = Volatile.Read(ref _audioGraph);
         if (pts < _lastPresented || graph != _presentedGraph)
         {
-            // A seek, a loop or the next file: a timeline only runs forward.
-            _captions = NewCaptionTimeline();
+            // A seek, a loop or the next file: the captions queued and on screen are for the
+            // audio before it. The timeline would see a jump back for itself, not one forward.
             _newCaptions.Clear();
+            _captions.Reset();
             _presentedGraph = graph;
         }
         _lastPresented = pts;

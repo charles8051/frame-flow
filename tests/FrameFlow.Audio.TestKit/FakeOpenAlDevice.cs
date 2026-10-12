@@ -65,6 +65,9 @@ public sealed class FakeOpenAlDevice : IOpenAlApi
     private bool _connected = true;
     private int _leasesOutstanding;
     private int _leasesDisposed;
+    private bool _exited;
+    private readonly List<FakeLease> _leases = new();
+    private readonly List<(string Name, TaskCompletionSource Signal)> _callWaiters = new();
 
     /// <summary>The endpoint name this fake reports, as a driver would.</summary>
     public string DeviceName { get; init; } = "FakeOpenAL on Test Endpoint";
@@ -216,13 +219,40 @@ public sealed class FakeOpenAlDevice : IOpenAlApi
     /// <c>FrameFlow.Audio.OpenAL</c>; a public member cannot name it. Callers
     /// outside this assembly build a sink through <see cref="FakeOpenAlSink"/>.
     /// </remarks>
-    internal IOpenAlContextLease? Lease()
+    /// <param name="onRevoked">
+    /// What <see cref="ExitProcess"/> calls to ask the holder to give the device back, as the
+    /// shared context's exit handler does (#633). Null for a lease no sink holds.
+    /// </param>
+    internal IOpenAlContextLease? Lease(Action? onRevoked = null)
     {
         lock (_gate)
         {
+            // An exiting process refuses every lease, as SharedOpenAlContext does.
+            if (_exited)
+                return null;
             _leasesOutstanding++;
-            return new FakeLease(this);
+            var lease = new FakeLease(this, onRevoked);
+            _leases.Add(lease);
+            return lease;
         }
+    }
+
+    /// <summary>
+    /// Does to this device what the shared context does at process exit (#633): refuses every
+    /// lease from here on, then asks each holder to give the device back, with no device lock
+    /// held, so a sink's release can call into the device.
+    /// </summary>
+    public void ExitProcess()
+    {
+        FakeLease[] outstanding;
+        lock (_gate)
+        {
+            _exited = true;
+            outstanding = [.. _leases];
+        }
+
+        foreach (var lease in outstanding)
+            lease.Revoke();
     }
 
     // ── Virtual time ────────────────────────────────────────────────────────
@@ -622,6 +652,22 @@ public sealed class FakeOpenAlDevice : IOpenAlApi
         }
     }
 
+    /// <summary>
+    /// Completes on the next call named <paramref name="name"/> this device receives.
+    /// </summary>
+    /// <remarks>
+    /// The signal a test waits on to know that a worker inside the sink has read the device
+    /// since some point, such as a time advance, without polling for it. Its continuations run
+    /// asynchronously, so none runs inside the device's lock.
+    /// </remarks>
+    public Task WhenCalledAsync(string name)
+    {
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+            _callWaiters.Add((name, signal));
+        return signal.Task;
+    }
+
     /// <summary>The names of the recorded calls, in order — the sequence a test asserts on.</summary>
     public IReadOnlyList<string> CallNames
     {
@@ -708,7 +754,8 @@ public sealed class FakeOpenAlDevice : IOpenAlApi
         return b;
     }
 
-    private void Record(string name, uint? source = null, uint? buffer = null, string? detail = null) =>
+    private void Record(string name, uint? source = null, uint? buffer = null, string? detail = null)
+    {
         _calls.Add(
             new AlCall(
                 _calls.Count,
@@ -719,6 +766,15 @@ public sealed class FakeOpenAlDevice : IOpenAlApi
                 Environment.CurrentManagedThreadId
             )
         );
+
+        for (int i = _callWaiters.Count - 1; i >= 0; i--)
+        {
+            if (_callWaiters[i].Name != name)
+                continue;
+            _callWaiters[i].Signal.TrySetResult();
+            _callWaiters.RemoveAt(i);
+        }
+    }
 
     private static SourceState ToSilkState(AlState state) =>
         state switch
@@ -732,8 +788,15 @@ public sealed class FakeOpenAlDevice : IOpenAlApi
     private sealed class FakeLease : IOpenAlContextLease
     {
         private FakeOpenAlDevice? _device;
+        private Action? _onRevoked;
 
-        internal FakeLease(FakeOpenAlDevice device) => _device = device;
+        internal FakeLease(FakeOpenAlDevice device, Action? onRevoked)
+        {
+            _device = device;
+            _onRevoked = onRevoked;
+        }
+
+        internal void Revoke() => Interlocked.Exchange(ref _onRevoked, null)?.Invoke();
 
         public IOpenAlApi Al =>
             _device ?? throw new ObjectDisposedException(nameof(FakeLease));
@@ -750,7 +813,10 @@ public sealed class FakeOpenAlDevice : IOpenAlApi
             if (device is null)
                 return;
             lock (device._gate)
+            {
                 device._leasesDisposed++;
+                device._leases.Remove(this);
+            }
         }
     }
 

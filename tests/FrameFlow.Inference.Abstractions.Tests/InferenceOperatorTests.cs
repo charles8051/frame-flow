@@ -242,6 +242,69 @@ public sealed class InferenceOperatorTests
     }
 
     /// <summary>
+    /// A branch told to discard loses the result of a run that throws and goes on, so the trunk
+    /// carries every frame and the run completes; the graph counts the discards under the node's
+    /// id (#618).
+    /// </summary>
+    [Fact]
+    public async Task AModelThatThrows_OnABranchThatDiscards_LosesItsResults_WhileTheTrunkCarriesEveryFrame()
+    {
+        var graph = new GraphRunner();
+        var results = new List<InferenceResult<float[]>>();
+        var trunk = new List<TimeSpan>();
+        var failure = new InvalidOperationException("The model rejected the frame.");
+        var model = new ChannelMeanModel(new ChannelMeanSession { Failure = failure });
+
+        graph.Pipeline(Frames(3))
+            .Infer(
+                "infer",
+                model,
+                result =>
+                {
+                    lock (results)
+                        results.Add(result);
+                },
+                onError: FailureResponse.Discard)
+            .To(new SinkNode<IVideoFrame>("trunk", (frame, _) =>
+            {
+                trunk.Add(frame.Timestamp);
+                return ValueTask.CompletedTask;
+            }, holding: FrameHolding.InFlight));
+
+        await graph.RunAsync(CancellationToken.None);
+
+        Assert.Equal([TimeSpan.Zero, TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(80)], trunk);
+        Assert.Empty(results);
+        // A latest-wins branch may drop a frame before the node sees it, so at least one run threw.
+        var discards = Assert.Single(graph.Discards);
+        Assert.Equal("infer", discards.NodeId);
+        Assert.InRange(discards.Count, 1, 3);
+        Assert.Same(failure, discards.LastException);
+    }
+
+    /// <summary>
+    /// Without <c>onError</c> a run that throws faults the graph, naming the inference node, as it
+    /// did before the parameter existed (#618).
+    /// </summary>
+    [Fact]
+    public async Task AModelThatThrows_ByDefault_FaultsTheGraph_NamingTheNode()
+    {
+        var graph = new GraphRunner();
+        var failure = new InvalidOperationException("The model rejected the frame.");
+        var model = new ChannelMeanModel(new ChannelMeanSession { Failure = failure });
+
+        graph.Pipeline(Frames(3))
+            .Infer("infer", model, _ => { })
+            .To(Discarding("trunk"));
+
+        var fault = await Assert.ThrowsAsync<GraphFaultException>(() => graph.RunAsync(CancellationToken.None));
+
+        Assert.Equal("infer", fault.NodeId);
+        Assert.Same(failure, fault.InnerException);
+        Assert.Empty(graph.Discards);
+    }
+
+    /// <summary>
     /// The result sink's id is derived from the caller's, so two branches given one id collide on
     /// both of their nodes, and the graph names both ids (#500).
     /// </summary>
@@ -340,6 +403,9 @@ public sealed class InferenceOperatorTests
 
         public DeviceTensor? LastDeviceInput { get; private set; }
 
+        /// <summary>What every host run throws, when set.</summary>
+        public Exception? Failure { get; init; }
+
         public IReadOnlyList<string> InputNames => ["x"];
 
         public IReadOnlyList<string> OutputNames => ["y"];
@@ -352,6 +418,9 @@ public sealed class InferenceOperatorTests
 
         public void Run(IReadOnlyDictionary<string, ICpuTensor> inputs, IReadOnlyDictionary<string, ICpuTensor> outputs)
         {
+            if (Failure is not null)
+                throw Failure;
+
             var input = MemoryMarshal.Cast<byte, float>(inputs["x"].Bytes.Span);
             var output = Writable(outputs["y"]);
             for (int c = 0; c < 3; c++)

@@ -51,17 +51,27 @@ public static class InferenceOperators
     /// Prepares the input on the GPU for the frames it can read. Frames it cannot read take the CPU
     /// path when they are in CPU memory. Not disposed by the graph.
     /// </param>
+    /// <param name="onError">
+    /// What a run that throws does. <see cref="FailureResponse.Propagate"/>, the default, faults the
+    /// graph, and a player fails the item it is playing. <see cref="FailureResponse.Discard"/> loses
+    /// that frame's result and the branch goes on to the next frame: the choice for a branch the
+    /// picture can do without, such as an overlay. A discard is not logged. It is counted in
+    /// <see cref="FrameFlow.Graph.Graph.Discards"/> under <paramref name="id"/>, and on the
+    /// <c>frameflow.graph.discards</c> metric tagged <c>node</c> with <paramref name="id"/>, which
+    /// is where a player's discards show.
+    /// </param>
     public static GraphChain<IVideoFrame> Infer<TResult>(
         this GraphChain<IVideoFrame> chain,
         string id,
         IImageModel<TResult> model,
         Action<InferenceResult<TResult>> onResult,
-        IDeviceImageToTensor? deviceStage = null)
+        IDeviceImageToTensor? deviceStage = null,
+        FailureResponse onError = FailureResponse.Propagate)
     {
         ArgumentNullException.ThrowIfNull(onResult);
 
         chain.Branch(EdgeOptions.LatestWins(1))
-            .Then(Infer(id, model, deviceStage))
+            .Then(Infer(id, model, deviceStage, onError))
             .To(new SinkNode<InferenceResult<TResult>>(
                 $"{id}-results",
                 (result, _) =>
@@ -75,7 +85,7 @@ public static class InferenceOperators
 
     /// <summary>
     /// A node that runs <paramref name="model"/> on each frame it receives and emits the result.
-    /// For wiring by hand; <see cref="Infer{TResult}(GraphChain{IVideoFrame}, string, IImageModel{TResult}, Action{InferenceResult{TResult}}, IDeviceImageToTensor?)"/>
+    /// For wiring by hand; <see cref="Infer{TResult}(GraphChain{IVideoFrame}, string, IImageModel{TResult}, Action{InferenceResult{TResult}}, IDeviceImageToTensor?, FailureResponse)"/>
     /// wires it on a branch.
     /// </summary>
     /// <remarks>

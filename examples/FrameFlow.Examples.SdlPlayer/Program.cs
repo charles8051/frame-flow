@@ -1,15 +1,11 @@
 using System.Runtime.InteropServices;
-using System.Threading.Channels;
-using FrameFlow.Audio.OpenAL;
 using FrameFlow.Examples.SdlPlayer;
 using FrameFlow.Media;
-using FrameFlow.Playback;
 using FrameFlow.Player;
 using FrameFlow.Sdl;
 using FrameFlow.Sdl.Bootstrap;
 using Microsoft.Extensions.Logging;
 using Silk.NET.SDL;
-using PlayerCommand = System.Func<FrameFlow.Player.IMediaPlayer, System.Threading.Tasks.Task>;
 
 // FrameFlow SDL Player: plays media files in an SDL window, with OpenAL audio.
 
@@ -20,70 +16,17 @@ using var loggerFactory = LoggerFactory.Create(logging =>
     logging.AddSimpleConsole(console => console.SingleLine = true).AddExampleFile("sdl-player.log")
 );
 
-// The window posts commands here; RunPlayerAsync runs them against the player one at a time.
-var commands = Channel.CreateUnbounded<PlayerCommand>();
-if (startFile is not null)
-    commands.Writer.TryWrite(player => OpenAsync(player, startFile));
-
 // SDL wants its window and event loop on the OS main thread (on macOS, AppKit's), so this thread
-// runs SDL and never awaits. The player runs beside it on the thread pool.
-return RunWindow(commands, repeat, loggerFactory);
+// runs SDL and never awaits. The player runs beside it on the thread pool, driven by the commands
+// the window posts.
+return RunWindow(startFile, repeat, loggerFactory);
 
 // ── The player ───────────────────────────────────────────────────────
 
-static async Task RunPlayerAsync(
-    SdlVideoSink video,
-    ChannelReader<PlayerCommand> commands,
-    RepeatMode repeat,
-    ILoggerFactory loggerFactory
-)
-{
-    await using var audio = new OpenAlAudioSink(loggerFactory.CreateLogger<OpenAlAudioSink>());
-
-    async Task<IMediaPlayer> BuildAsync()
-    {
-        var built = await FrameFlowPlayer
-            .Create()
-            .WithVideoSink(video)
-            .WithAudioSink(audio)
-            .WithRepeatMode(repeat)
-            .WithLogger(loggerFactory)
-            .BuildPlayerAsync();
-
-        built.StateChanged.Subscribe(state => Console.WriteLine(state));
-        built.ErrorOccurred.Subscribe(error =>
-            Console.Error.WriteLine($"Playback error: {error.Message}")
-        );
-        return built;
-    }
-
-    var player = await BuildAsync();
-    try
-    {
-        await foreach (var command in commands.ReadAllAsync())
-        {
-            // Error is final, and a file that fails to open while nothing plays leaves the player
-            // there, so the next command gets a fresh one.
-            if (player.State == PlaybackState.Error)
-            {
-                repeat = player.GetDiagnostics().RepeatMode;
-                await player.DisposeAsync();
-                player = await BuildAsync();
-            }
-
-            await command(player);
-        }
-    }
-    finally
-    {
-        await player.DisposeAsync();
-    }
-}
-
-static async Task OpenAsync(IMediaPlayer player, string path)
+static async Task OpenAsync(IMediaPlayer player, string path, CancellationToken ct)
 {
     Console.WriteLine($"Opening {Path.GetFileName(path)}");
-    var replaced = await player.ReplaceAsync([MediaSource.FromFile(path)]);
+    var replaced = await player.ReplaceAsync([MediaSource.FromFile(path)], ct);
     if (!replaced.IsSuccess)
     {
         Console.Error.WriteLine($"Open failed: {replaced.Error.Message}");
@@ -92,30 +35,29 @@ static async Task OpenAsync(IMediaPlayer player, string path)
 
     // A playing player moves to the new file by itself; in any other state it waits for Play.
     if (player.State != PlaybackState.Playing)
-        Check("Play", await player.PlayAsync());
+        Check("Play", await player.PlayAsync(ct));
 }
 
-static async Task TogglePauseAsync(IMediaPlayer player)
+static async Task TogglePauseAsync(IMediaPlayer player, CancellationToken ct)
 {
     if (player.State == PlaybackState.Playing)
-        Check("Pause", await player.PauseAsync());
+        Check("Pause", await player.PauseAsync(ct));
     else
-        Check("Play", await player.PlayAsync());
+        Check("Play", await player.PlayAsync(ct));
 }
 
-static async Task StopAsync(IMediaPlayer player)
+static async Task StopAsync(IMediaPlayer player, CancellationToken ct)
 {
-    if (player.State == PlaybackState.Playing && !Check("Pause", await player.PauseAsync()))
+    if (player.State == PlaybackState.Playing && !Check("Pause", await player.PauseAsync(ct)))
         return;
-    Check("Seek", await player.SeekAsync(TimeSpan.Zero));
+    Check("Seek", await player.SeekAsync(TimeSpan.Zero, ct));
 }
 
-static async Task ToggleLoopAsync(IMediaPlayer player)
+static async Task ToggleLoopAsync(IMediaPlayer player, CancellationToken ct)
 {
-    // IMediaTransport sets the repeat mode but does not report it; the diagnostics snapshot does.
-    var looping = player.GetDiagnostics().RepeatMode == RepeatMode.One;
+    var looping = player.RepeatMode == RepeatMode.One;
     var mode = looping ? RepeatMode.Off : RepeatMode.One;
-    if (Check("Loop", await player.SetRepeatModeAsync(mode)))
+    if (Check("Loop", await player.SetRepeatModeAsync(mode, ct)))
         Console.WriteLine(mode == RepeatMode.One ? "Loop on" : "Loop off");
 }
 
@@ -128,11 +70,7 @@ static bool Check(string command, Result result)
 
 // ── The window ───────────────────────────────────────────────────────
 
-static int RunWindow(
-    Channel<PlayerCommand> commands,
-    RepeatMode repeat,
-    ILoggerFactory loggerFactory
-)
+static int RunWindow(string? startFile, RepeatMode repeat, ILoggerFactory loggerFactory)
 {
     var bootstrapper = new SdlBootstrapper(new SdlNativeOptions(), loggerFactory);
     var bootstrap = bootstrapper.Initialize();
@@ -162,7 +100,7 @@ static int RunWindow(
 #pragma warning restore CA2000
         try
         {
-            RunEventLoop(sdl, video, commands, repeat, loggerFactory);
+            RunEventLoop(sdl, video, startFile, repeat, loggerFactory);
         }
         finally
         {
@@ -184,52 +122,45 @@ static int RunWindow(
 static void RunEventLoop(
     Sdl sdl,
     SdlVideoSink video,
-    Channel<PlayerCommand> commands,
+    string? startFile,
     RepeatMode repeat,
     ILoggerFactory loggerFactory
 )
 {
-    using var closeWindow = new CancellationTokenSource();
-    var playerLoop = Task.Run(async () =>
-    {
-        try
-        {
-            await RunPlayerAsync(video, commands.Reader, repeat, loggerFactory);
-        }
-        finally
-        {
-            closeWindow.Cancel(); // a player that fails closes the window
-        }
-    });
+    // The queue runs the window's commands against the player one at a time, off this thread.
+    var player = new PlayerSlot(video, repeat, loggerFactory);
+    var commands = new SdlCommandQueue(loggerFactory.CreateLogger<SdlCommandQueue>());
+    if (startFile is not null)
+        commands.Post(player.Run((p, ct) => OpenAsync(p, startFile, ct)));
 
     Console.WriteLine(
         "[O] open (or drop a file)  [Space] pause/resume  [S] stop  [L] loop  [Q]/[Esc] quit"
     );
     try
     {
+        // Returns once the last command has finished.
         SdlEventLoop.Run(
             sdl,
             video,
-            onEvent: (ref Event e) => HandleEvent(sdl, ref e, commands.Writer),
-            ct: closeWindow.Token
+            commands,
+            onEvent: (ref Event e) => HandleEvent(sdl, ref e, commands, player)
         );
     }
     finally
     {
         // The player is disposed before its window goes.
-        commands.Writer.Complete();
-        playerLoop.GetAwaiter().GetResult();
+        player.DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 }
 
 // Runs on the SDL thread: it never waits on the player, it posts a command and returns.
 // [O]'s dialog is modal, so the video stops repainting while it is open.
-static bool HandleEvent(Sdl sdl, ref Event e, ChannelWriter<PlayerCommand> commands)
+static bool HandleEvent(Sdl sdl, ref Event e, SdlCommandQueue commands, PlayerSlot player)
 {
     switch ((EventType)e.Type)
     {
         case EventType.Dropfile:
-            PostOpen(commands, ReadDroppedFile(sdl, ref e));
+            PostOpen(commands, player, ReadDroppedFile(sdl, ref e));
             break;
 
         case EventType.Keydown when e.Key.Repeat == 0:
@@ -238,16 +169,16 @@ static bool HandleEvent(Sdl sdl, ref Event e, ChannelWriter<PlayerCommand> comma
                 case KeyCode.KQ or KeyCode.KEscape:
                     return false;
                 case KeyCode.KO:
-                    PostOpen(commands, FileDialogHelper.ShowOpenFileDialog());
+                    PostOpen(commands, player, FileDialogHelper.ShowOpenFileDialog());
                     break;
                 case KeyCode.KSpace:
-                    commands.TryWrite(TogglePauseAsync);
+                    commands.Post(player.Run(TogglePauseAsync));
                     break;
                 case KeyCode.KS:
-                    commands.TryWrite(StopAsync);
+                    commands.Post(player.Run(StopAsync));
                     break;
                 case KeyCode.KL:
-                    commands.TryWrite(ToggleLoopAsync);
+                    commands.Post(player.Run(ToggleLoopAsync));
                     break;
             }
             break;
@@ -255,7 +186,7 @@ static bool HandleEvent(Sdl sdl, ref Event e, ChannelWriter<PlayerCommand> comma
     return true;
 }
 
-static void PostOpen(ChannelWriter<PlayerCommand> commands, string? path)
+static void PostOpen(SdlCommandQueue commands, PlayerSlot player, string? path)
 {
     if (path is null)
         return;
@@ -264,7 +195,7 @@ static void PostOpen(ChannelWriter<PlayerCommand> commands, string? path)
         Console.Error.WriteLine($"File not found: {path}");
         return;
     }
-    commands.TryWrite(player => OpenAsync(player, path));
+    commands.Post(player.Run((p, ct) => OpenAsync(p, path, ct)));
 }
 
 static unsafe string? ReadDroppedFile(Sdl sdl, ref Event e)

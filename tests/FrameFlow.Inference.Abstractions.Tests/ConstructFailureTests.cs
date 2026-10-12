@@ -101,6 +101,12 @@ public sealed class ConstructFailureTests
             nameof(ConstructFailureKind.ProviderUnavailable)
         },
         {
+            "the CUDA provider without the CUDA runtime libraries it depends on (#635)",
+            new Exception(
+                "[ErrorCode:Fail] OrtSessionOptionsAppendExecutionProvider_Cuda: Failed to load shared library"),
+            nameof(ConstructFailureKind.ProviderUnavailable)
+        },
+        {
             "a missing native library, inside a type initializer",
             new TypeInitializationException(
                 "Microsoft.ML.OnnxRuntime.NativeMethods",

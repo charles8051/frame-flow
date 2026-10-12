@@ -39,4 +39,8 @@
   <ItemGroup>
     <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="FrameFlow.Sdl.Tests" />
+  </ItemGroup>
 </Project>

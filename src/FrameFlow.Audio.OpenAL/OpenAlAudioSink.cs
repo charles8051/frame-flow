@@ -20,10 +20,15 @@ namespace FrameFlow.Audio.OpenAL;
 /// <para>
 /// Audio data arrives as interleaved S16 stereo at 48 kHz from the
 /// <c>AudioDecoder</c>. Small decoded blocks (~21ms each for AAC) are
-/// coalesced into larger staging buffers (~100ms) before being uploaded
+/// coalesced into staging buffers of at least 50 ms before being uploaded
 /// to OpenAL. This reduces buffer-transition overhead, which is the
 /// primary source of crackling on high-latency audio stacks (WSL2,
 /// PulseAudio).
+/// </para>
+/// <para>
+/// <see cref="DrainAsync"/> ends a stream: it uploads the partial block still in staging and
+/// waits for the device to play the queue out, so a caller that deactivates afterwards does not
+/// cut the end off (#609).
 /// </para>
 /// <para>
 /// <see cref="GetPlaybackTime"/> returns the cumulative playback position
@@ -72,9 +77,19 @@ public sealed partial class OpenAlAudioSink
     private const int BufferPoolSize = 16;
     private const int PreBufferCount = 4;
 
-    // Target size for coalesced buffers: ~100ms at 48kHz stereo S16.
-    // 48000 samples/sec × 2 channels × 2 bytes/sample × 0.1sec = 19200 bytes ≈ 4800 shorts.
+    // Upload threshold for the staging buffer, in interleaved samples (shorts), not frames:
+    // 4800 is 2400 stereo frames, which is 50 ms at 48 kHz (100 ms only for mono). An upload
+    // carries the whole fill, so a buffer is at least this long and up to one decoded block
+    // longer.
     private const int CoalesceTargetSamples = 4800;
+
+    // How often DrainAsync reads the device while it waits for the queue to play out.
+    private static readonly TimeSpan DrainPollSlice = TimeSpan.FromMilliseconds(10);
+
+    // How long the device may play nothing, while its source says it is playing, before
+    // DrainAsync stops waiting for it. Measured from the last progress, not from the start of the
+    // drain, and paused time does not count (AudioDrain).
+    private static readonly TimeSpan DrainStallLimit = TimeSpan.FromSeconds(2);
 
     private readonly ILogger<OpenAlAudioSink> _logger;
 
@@ -89,8 +104,10 @@ public sealed partial class OpenAlAudioSink
 
     // How this sink gets its device. Production passes SharedOpenAlContext.Acquire;
     // a test passes a fake so the sink's ordering against the device, and the PCM the
-    // device was actually handed, are both observable on a headless runner (#138).
-    private readonly Func<IOpenAlContextLease?> _leaseFactory;
+    // device was actually handed, are both observable on a headless runner (#138). The
+    // argument is what the device calls if it has to be given back early: at process exit
+    // (#633), with OnDeviceRevoked.
+    private readonly Func<Action, IOpenAlContextLease?> _leaseFactory;
     private uint _source;
     private readonly Queue<uint> _freeBuffers = new();
 
@@ -320,22 +337,23 @@ public sealed partial class OpenAlAudioSink
     /// <param name="logger">Optional logger.</param>
     /// <param name="timeProvider">Supplies the sink's elapsed time. See the public constructor.</param>
     /// <param name="leaseFactory">
-    /// Supplies the device lease at each activation. Null acquires the process-wide
-    /// shared OpenAL device (ADR-0058), which is what production does. A test passes a
-    /// fake device here so the sink's call ordering and the PCM the device was handed
-    /// are both assertable with no sound card (#138).
+    /// Supplies the device lease at each activation, given the callback that hands the
+    /// device back if the process exits first. Null acquires the process-wide shared
+    /// OpenAL device (ADR-0058), which is what production does. A test passes a fake
+    /// device here so the sink's call ordering and the PCM the device was handed are both
+    /// assertable with no sound card (#138).
     /// </param>
     internal OpenAlAudioSink(
         ILogger<OpenAlAudioSink>? logger,
         TimeProvider? timeProvider,
-        Func<IOpenAlContextLease?>? leaseFactory
+        Func<Action, IOpenAlContextLease?>? leaseFactory
     )
     {
         _logger = logger ?? NullLogger<OpenAlAudioSink>.Instance;
         _timeProvider = timeProvider ?? HighResolutionTimeProvider.Preferred;
         _sessionClock = new SessionClock(_timeProvider);
         _bufferReturned = new AsyncAutoResetEvent(_timeProvider);
-        _leaseFactory = leaseFactory ?? SharedOpenAlContext.Acquire;
+        _leaseFactory = leaseFactory ?? (static onRevoked => SharedOpenAlContext.Acquire(onRevoked));
     }
 
     /// <summary>
@@ -411,9 +429,9 @@ public sealed partial class OpenAlAudioSink
             // instead of opening our own. The context is made current exactly
             // once (on the first sink in the process) and never changed, so no
             // sink can clobber another's al* target (ADR-0058). A null lease
-            // means no audio device is available; stay inert, exactly as the
-            // prior per-sink OpenDevice-failure path did.
-            _contextLease = _leaseFactory();
+            // means no audio device is available, or that the process is exiting;
+            // stay inert, exactly as the prior per-sink OpenDevice-failure path did.
+            _contextLease = _leaseFactory(OnDeviceRevoked);
             if (_contextLease is null)
             {
                 LogDeviceOpenFailed(_logger);
@@ -755,8 +773,11 @@ public sealed partial class OpenAlAudioSink
             QueueDepthHistogram.Record(queued);
 
             // Start playback after pre-buffering — the pure pre-buffer gate latches
-            // SourceStarted and tells us whether to actually call SourcePlay.
-            var start = _queue.ObserveQueueDepth(queued);
+            // SourceStarted and tells us whether to actually call SourcePlay. It stays shut
+            // while the sink is paused, so an upload that lands after a pause, from a buffer
+            // already in flight or from the drain's remainder, cannot start a source the pause
+            // found not yet started.
+            var start = _queue.ObserveQueueDepth(queued, paused: _pausedPosition is not null);
             _queue = start.Next;
             if (start.ShouldStartPlayback)
             {
@@ -837,7 +858,8 @@ public sealed partial class OpenAlAudioSink
             }
             else
             {
-                // Source drained (underrun) while we were paused — it is AL_STOPPED.
+                // Source drained (underrun) while we were paused — it is AL_STOPPED. Or the
+                // pause came before the pre-buffer gate opened, which leaves it AL_INITIAL.
                 // Rebase first, while the latch still says the source was playing: the
                 // rebase returns that drained queue to the pool, and the priming guard in
                 // RecycleProcessedBuffers would skip it if the latch were already clear.
@@ -874,6 +896,148 @@ public sealed partial class OpenAlAudioSink
         _pausedPosition = null;
         InvalidateClockAnchorsUnderLock();
         return resumeAt;
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// <para>
+    /// Uploads the partial block the coalesce gate held back, starts a source the stream ended
+    /// too soon to start, then reads the device every <see cref="DrainPollSlice"/> until the
+    /// source has played its queue out. Each decision is <see cref="AudioDrain"/>'s; this method
+    /// only reads the device and acts on the answer.
+    /// </para>
+    /// <para>
+    /// On completion the played buffers are credited to the clock and the source is left empty
+    /// and rewound, so <see cref="GetPlaybackTime"/> reads the end of the stream and a further
+    /// <see cref="PresentAsync"/> primes a fresh queue rather than reading as an underrun.
+    /// </para>
+    /// <para>
+    /// It gives up, with a warning, once the source has reported itself playing for
+    /// <see cref="DrainStallLimit"/> with the device making no progress. A paused source does
+    /// not count towards that. Disposal ends it quietly; <paramref name="cancellationToken"/>
+    /// ends it with <see cref="OperationCanceledException"/>.
+    /// </para>
+    /// </remarks>
+    public async ValueTask DrainAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_disposed)
+            return;
+
+        CancellationToken shutdown;
+        try
+        {
+            shutdown = _clockShutdownCts.Token;
+        }
+        catch (ObjectDisposedException)
+        {
+            return; // disposed since the check above
+        }
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, shutdown);
+        var startedAt = _timeProvider.GetTimestamp();
+        var drain = AudioDrain.Begin(DrainStallLimit, TimeSpan.Zero);
+        var uploadLatency = Stopwatch.StartNew();
+        var firstPass = true;
+
+        while (true)
+        {
+            // Hand over whatever staging still holds. A no-op once it is empty; while the pool
+            // is full it waits for the next pass, as the source frees a buffer.
+            TryFlushStagingBufferOnce(firstPass, uploadLatency);
+            firstPass = false;
+
+            lock (_stateLock)
+            {
+                if (_al is null || _disposed)
+                    return;
+
+                var seen = ObserveDrainUnderLock(_timeProvider.GetElapsedTime(startedAt));
+                var outcome = drain.Observe(seen);
+                drain = outcome.Next;
+
+                switch (outcome.Step)
+                {
+                    case DrainStep.Complete:
+                        FinishDrainUnderLock();
+                        LogDrained(_logger, GetPlaybackTimeUnderLock().TotalSeconds, seen.Now.TotalSeconds);
+                        return;
+
+                    case DrainStep.StartSource:
+                        _queue = _queue.MarkSourceStarted();
+                        _al.SourcePlay(_source);
+                        break;
+
+                    case DrainStep.Stalled:
+                        LogDrainStalled(_logger, DrainStallLimit.TotalSeconds, seen.QueuedBuffers, seen.Staged);
+                        return;
+                }
+            }
+
+            try
+            {
+                await Task.Delay(DrainPollSlice, _timeProvider, linked.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return; // the sink was disposed; there is nothing left to wait for
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads what <see cref="AudioDrain"/> decides on. Must hold <see cref="_stateLock"/>, with
+    /// <see cref="_al"/> non-null.
+    /// </summary>
+    /// <remarks>
+    /// Recycles nothing. The played position is the clock's credited samples plus the live
+    /// offset, which moves only when the device plays whether or not another thread recycles in
+    /// between, so the drain needs no recycle of its own to see progress.
+    /// </remarks>
+    private DrainObservation ObserveDrainUnderLock(TimeSpan now)
+    {
+        _al!.GetSourceProperty(_source, GetSourceInteger.SourceState, out int rawState);
+        _al.GetSourceProperty(_source, GetSourceInteger.BuffersQueued, out int queued);
+        _al.GetSourceProperty(_source, GetSourceInteger.SampleOffset, out int sampleOffset);
+
+        // The sink's own pause latch first. A pause that lands before the source started leaves
+        // it in AL_INITIAL (OpenAL 1.1 §4.3.6), and read raw that would be a source to start.
+        var state = _pausedPosition is not null
+            ? DrainSourceState.Paused
+            : (SourceState)rawState switch
+            {
+                SourceState.Initial => DrainSourceState.Initial,
+                SourceState.Playing => DrainSourceState.Playing,
+                SourceState.Paused => DrainSourceState.Paused,
+                // Stopped, or a value no source state has: either way nothing more will play.
+                _ => DrainSourceState.Stopped,
+            };
+
+        return new DrainObservation(
+            Staged: _queue.StagingCount > 0,
+            QueuedBuffers: queued,
+            State: state,
+            PlayedSamples: _clock.ProcessedSamplesPerChannel + sampleOffset,
+            Now: now
+        );
+    }
+
+    /// <summary>
+    /// Leaves a drained source the way an activation would: queue empty, cursor rewound, latch
+    /// clear. Must hold <see cref="_stateLock"/>, with <see cref="_al"/> non-null.
+    /// </summary>
+    /// <remarks>
+    /// A started source that stopped played everything it was given (OpenAL 1.1 §4.3.5), so its
+    /// buffers are credited to the clock before they go back to the pool; that is what makes the
+    /// clock read the end of the stream. Without the reset, the next <see cref="PresentAsync"/>
+    /// would find a started source stopped and count an underrun that never happened.
+    /// </remarks>
+    private void FinishDrainUnderLock()
+    {
+        if (_queue.SourceStarted)
+            RecycleProcessedBuffers(force: true);
+        ResetSourceQueueUnderLock();
+        _queue = _queue.MarkSourceStopped();
     }
 
     /// <inheritdoc/>
@@ -1205,7 +1369,7 @@ public sealed partial class OpenAlAudioSink
         return ValueTask.CompletedTask;
     }
 
-    private unsafe void DisposeOpenAlResources()
+    private void DisposeOpenAlResources()
     {
         lock (_stateLock)
         {
@@ -1213,44 +1377,76 @@ public sealed partial class OpenAlAudioSink
                 return;
             _disposed = true;
 
-            if (_al is not null)
-            {
-                _al.SourceStop(_source);
-
-                // Delete the source before its buffers. Deleting a source releases
-                // whatever is still attached to it, and that is the only way to get
-                // the queue off a source that never started: alSourceStop on an
-                // AL_INITIAL source is a legal NOP, an AL_INITIAL source reports no
-                // buffers processed, and unqueueing from it therefore fails
-                // (OpenAL 1.1 §4.3.6, §4.3.2, §4.3.5). Draining first only works for
-                // a source that actually played, which is not a safe assumption at
-                // teardown — a sink disposed before it reached PreBufferCount has a
-                // queue it never started (#138).
-                _al.DeleteSource(_source);
-
-                // Delete every name generated, not just the free ones. A buffer the
-                // device still held was not in _freeBuffers, and the unqueued array
-                // the old teardown built was discarded without deleting or pooling
-                // it, so each in-flight buffer leaked a native name per disposal.
-                // Nothing in the sink's reporting showed it (#138).
-                foreach (var buffer in _allBuffers)
-                    _al.DeleteBuffer(buffer);
-
-                _allBuffers.Clear();
-                _freeBuffers.Clear();
-            }
-
-            // Release this sink's reference on the shared device/context. The
-            // last sink to release tears the device + context down (ADR-0058);
-            // this sink no longer owns the device, context, or AL API lifetime.
-            // Source + buffers were already deleted above while the context was
-            // still current and valid.
-            _contextLease?.Dispose();
-            _contextLease = null;
-            _al = null;
+            ReleaseDeviceUnderLock();
 
             LogDisposed(_logger, _blocksWritten, _underrunCount, _backpressureCount);
         }
+    }
+
+    /// <summary>
+    /// Gives the device back because the process is exiting (#633). Called by the shared
+    /// context's exit handler, on the exit thread, with no context lock held.
+    /// </summary>
+    /// <remarks>
+    /// Releases what disposal releases, under the same lock, and leaves the sink undisposed but
+    /// with no device: every member then behaves as it does when no device could be opened, and
+    /// a later activation finds the context refusing leases. Every <c>al*</c> call this sink
+    /// makes is under <see cref="_stateLock"/>, so once this returns none is in flight and the
+    /// context can close the device.
+    /// </remarks>
+    private void OnDeviceRevoked()
+    {
+        lock (_stateLock)
+        {
+            if (_disposed || _al is null)
+                return;
+
+            ReleaseDeviceUnderLock();
+            LogDeviceRevoked(_logger);
+        }
+    }
+
+    /// <summary>
+    /// Stops and deletes this sink's source and buffers and disposes its lease. Must hold
+    /// <see cref="_stateLock"/>.
+    /// </summary>
+    private void ReleaseDeviceUnderLock()
+    {
+        if (_al is not null)
+        {
+            _al.SourceStop(_source);
+
+            // Delete the source before its buffers. Deleting a source releases
+            // whatever is still attached to it, and that is the only way to get
+            // the queue off a source that never started: alSourceStop on an
+            // AL_INITIAL source is a legal NOP, an AL_INITIAL source reports no
+            // buffers processed, and unqueueing from it therefore fails
+            // (OpenAL 1.1 §4.3.6, §4.3.2, §4.3.5). Draining first only works for
+            // a source that actually played, which is not a safe assumption at
+            // teardown — a sink disposed before it reached PreBufferCount has a
+            // queue it never started (#138).
+            _al.DeleteSource(_source);
+
+            // Delete every name generated, not just the free ones. A buffer the
+            // device still held was not in _freeBuffers, and the unqueued array
+            // the old teardown built was discarded without deleting or pooling
+            // it, so each in-flight buffer leaked a native name per disposal.
+            // Nothing in the sink's reporting showed it (#138).
+            foreach (var buffer in _allBuffers)
+                _al.DeleteBuffer(buffer);
+
+            _allBuffers.Clear();
+            _freeBuffers.Clear();
+        }
+
+        // Release this sink's reference on the shared device/context. The
+        // last sink to release tears the device + context down (ADR-0058);
+        // this sink no longer owns the device, context, or AL API lifetime.
+        // Source + buffers were already deleted above while the context was
+        // still current and valid.
+        _contextLease?.Dispose();
+        _contextLease = null;
+        _al = null;
     }
 
     private void EnsureStagingCapacity(int required)
@@ -1480,6 +1676,12 @@ public sealed partial class OpenAlAudioSink
     private static partial void LogDeviceOpenFailed(ILogger logger);
 
     [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "OpenAL audio sink gave its device back because the process is exiting; it plays nothing from here."
+    )]
+    private static partial void LogDeviceRevoked(ILogger logger);
+
+    [LoggerMessage(
         Level = LogLevel.Warning,
         Message = "Audio buffer UNDERRUN #{UnderrunCount}: source starved. FreeBuffers={FreeBuffers}, QueuedBuffers={QueuedBuffers}"
     )]
@@ -1550,6 +1752,18 @@ public sealed partial class OpenAlAudioSink
         long backpressure,
         double durationSec
     );
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Audio drained: the device played to the end of the stream at {PositionSec:F2}s, {WaitSec:F2}s after the last buffer was handed over"
+    )]
+    private static partial void LogDrained(ILogger logger, double positionSec, double waitSec);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Audio drain gave up: the source reported itself playing but the device played nothing for {StallSec:F1}s. QueuedBuffers={QueuedBuffers}, staged={Staged}. What it still held is dropped at deactivation."
+    )]
+    private static partial void LogDrainStalled(ILogger logger, double stallSec, int queuedBuffers, bool staged);
 
     [LoggerMessage(
         Level = LogLevel.Debug,

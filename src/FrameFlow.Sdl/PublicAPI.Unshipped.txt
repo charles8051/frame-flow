@@ -57,3 +57,7 @@ static FrameFlow.Sdl.SdlEventLoop.Run(Silk.NET.SDL.Sdl! sdl, FrameFlow.Sdl.SdlVi
 static FrameFlow.Sdl.SdlVideoSink.CreateHeadless(Microsoft.Extensions.Logging.ILogger<FrameFlow.Sdl.SdlVideoSink!>? logger = null) -> FrameFlow.Sdl.SdlVideoSink!
 static readonly FrameFlow.Sdl.SdlEventLoop.DefaultPollInterval -> System.TimeSpan
 FrameFlow.Sdl.SdlVideoSink.AcceptedDomains.get -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Sdl.SdlCommandQueue
+FrameFlow.Sdl.SdlCommandQueue.Post(System.Func<System.Threading.CancellationToken, System.Threading.Tasks.Task!>! command) -> bool
+FrameFlow.Sdl.SdlCommandQueue.SdlCommandQueue(Microsoft.Extensions.Logging.ILogger! logger) -> void
+static FrameFlow.Sdl.SdlEventLoop.Run(Silk.NET.SDL.Sdl! sdl, FrameFlow.Sdl.SdlVideoSink! videoSink, FrameFlow.Sdl.SdlCommandQueue! commands, FrameFlow.Sdl.SdlEventLoop.EventHandler? onEvent = null, FrameFlow.Sdl.SdlEventLoop.TickHandler? onTick = null, System.TimeSpan? pollInterval = null, System.Threading.CancellationToken ct = default(System.Threading.CancellationToken)) -> int

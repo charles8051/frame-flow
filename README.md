@@ -109,6 +109,10 @@ await using var player = await FrameFlowPlayer.Create()
 so a slow model drops frames instead of delaying the picture. `Yolov8Detector` and
 `BlazeFaceDetector` are `IImageModel`s; another model implements the same interface. A model
 that returns an image, such as an upscaler, can build its result frame with `TensorToImage.ToFrame`.
+A run that throws fails the item the player is playing. For a branch the picture can do without,
+such as an overlay, pass `onError: FailureResponse.Discard`: that frame's result is lost, and the
+branch goes on to the next frame. Discards are not logged; the `frameflow.graph.discards` metric
+counts them, tagged `node` with the branch's id.
 
 DirectML runs a model with dynamic input dimensions much slower than the same model with its shape
 fixed. `new DmlInferenceSession(path, new DmlInferenceSessionOptions { FreeDimensions = ... })` fixes
@@ -155,6 +159,7 @@ await pass.RunToCompletionAsync();
 `CompositionInteropVideoView` shows D3D12VA frames: it converts them on the decoder's D3D12 device
 and copies the result across to the D3D11 texture Avalonia's compositor imports (#429). Its sink takes
 GPU frames, so a player given a D3D12VA `HardwareDevice` presents through it without being asked.
+`WithVideoSurface(view, loggerFactory)` hands it, or any other `IVideoSurface`, to a player builder.
 
 ### Generic Host and DI
 
@@ -179,7 +184,7 @@ await using var pass = await FrameFlowPass.Create(path)
 ### Errors
 
 Transport commands return `Result` rather than throwing. A command the state
-machine refuses — a seek on a non-seekable source, a play on a disposed player —
+machine refuses — a play with nothing to play, a seek with nothing loaded —
 is an expected outcome, and `Result.Error` carries an `ErrorCategory`:
 
 ```csharp
@@ -189,8 +194,11 @@ if (!seeked.IsSuccess && seeked.Error.Category == ErrorCategory.InvalidOperation
 ```
 
 Construction is the exception to that: a null sink, a bad argument or a source
-that cannot be opened or decoded throws. A failure that arises mid-playback rather than in
-answer to a command surfaces on `IMediaTransport.ErrorOccurred`.
+that cannot be opened or decoded throws. A command issued once the player's disposal has begun
+throws too, with `ObjectDisposedException`. A failure that arises mid-playback surfaces on
+`IMediaTransport.ErrorOccurred`, and so does any failure that puts the player into `Error`. A
+`PlayAsync` whose item cannot be loaded reports on both: its `Result` and `ErrorOccurred` carry
+the same `PlaybackError` instance.
 
 See [ADR-0069](docs/adr/ADR-0069-one-error-model-across-the-playback-stack.md).
 

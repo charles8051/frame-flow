@@ -85,9 +85,8 @@ public partial class MulticastPanes : UserControl
         SetDetectionStatus("loading YOLOv8");
         try
         {
-            // A cached model opens synchronously, so load it off the UI thread.
-            var detector = await Task.Run(() => Yolov8Detector.CreateAsync(inference, ct: ct, loggerFactory: loggerFactory));
-            SetDetectionStatus("YOLOv8");
+            var detector = await Yolov8Detector.CreateAsync(inference, ct: ct, loggerFactory: loggerFactory);
+            SetDetectionStatus(inference.ActiveProvider is { } provider ? $"YOLOv8 on {provider}" : "YOLOv8");
             return detector;
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)

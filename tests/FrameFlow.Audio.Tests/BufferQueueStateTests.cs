@@ -259,6 +259,20 @@ public sealed class BufferQueueStateTests
     }
 
     [Fact]
+    public void ObserveQueueDepth_StartsNothingWhilePaused_AndOpensAtTheFirstDepthAfterTheResume()
+    {
+        // A pause before the source started leaves it AL_INITIAL; the gate holds it there,
+        // and stays armed rather than latching, so the resume's first upload opens it.
+        var paused = New().AppendStaging(CoalesceTarget).ObserveQueueDepth(PreBuffer + 1, paused: true);
+        Assert.False(paused.ShouldStartPlayback);
+        Assert.False(paused.Next.SourceStarted);
+
+        var resumed = paused.Next.ObserveQueueDepth(PreBuffer + 2);
+        Assert.True(resumed.ShouldStartPlayback);
+        Assert.True(resumed.Next.SourceStarted);
+    }
+
+    [Fact]
     public void ObserveQueueDepth_ReArmsAfterUnderrunStop()
     {
         // After an underrun clears the latch, the gate must re-arm and fire again once

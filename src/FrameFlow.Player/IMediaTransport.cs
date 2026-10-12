@@ -29,16 +29,19 @@ namespace FrameFlow.Player;
 /// <b>Error model (ADR-0069).</b> Transport commands return
 /// <see cref="Result"/> rather than throwing, matching
 /// <see cref="IPlaybackController"/>. A command that the state machine
-/// refuses — a seek on a non-seekable source, a play on a disposed player —
+/// refuses — a play with nothing to play, a seek with nothing loaded —
 /// is an expected outcome, and <see cref="Result.Error"/> carries the
 /// <see cref="ErrorCategory"/> the controller produced.
 /// </para>
 /// <para>
 /// Exceptions are still thrown, for the cases that are not expected
 /// outcomes: <see cref="ArgumentException"/> and friends for a caller that
-/// passed something invalid, and whatever escapes a sink or the decode
-/// stack. Failures that arise mid-playback rather than in answer to a
-/// command surface on <see cref="ErrorOccurred"/>.
+/// passed something invalid, <see cref="ObjectDisposedException"/> for a
+/// command issued once the player's disposal has begun, and whatever escapes
+/// a sink or the decode stack. Failures that arise during playback surface on
+/// <see cref="ErrorOccurred"/>. So does a command's failure that puts the
+/// player into <see cref="PlaybackState.Error"/>, which the command's
+/// <see cref="Result"/> also returns.
 /// </para>
 /// </remarks>
 public interface IMediaTransport : IAsyncDisposable
@@ -60,8 +63,8 @@ public interface IMediaTransport : IAsyncDisposable
     /// <summary>Seek to the given position in media time.</summary>
     /// <returns>
     /// A successful <see cref="Result"/>, or one whose
-    /// <see cref="Result.Error"/> says why the command was refused —
-    /// seeking a non-seekable source is the common case.
+    /// <see cref="Result.Error"/> says why the command was refused, such as
+    /// a seek with nothing loaded.
     /// </returns>
     Task<Result> SeekAsync(TimeSpan position, CancellationToken cancellationToken = default);
 
@@ -71,6 +74,30 @@ public interface IMediaTransport : IAsyncDisposable
     /// <see cref="Result.Error"/> says why the command was refused.
     /// </returns>
     Task<Result> SetRepeatModeAsync(RepeatMode mode, CancellationToken cancellationToken = default);
+
+    /// <summary>The repeat mode in force.</summary>
+    /// <remarks>
+    /// Set at build by the builder's <c>WithRepeatMode</c>, and after that by
+    /// <see cref="SetRepeatModeAsync"/>; a refused command leaves it unchanged. This is
+    /// <see cref="IPlaybackController.RepeatMode"/>.
+    /// </remarks>
+    RepeatMode RepeatMode { get; }
+
+    /// <summary>Stream of repeat mode changes, carrying the mode moved from and the mode moved to.</summary>
+    /// <remarks>
+    /// <para>
+    /// Fires once per change, before the <see cref="SetRepeatModeAsync"/> that made it completes.
+    /// A command that asks for the mode already in force, or that is refused, changes nothing and
+    /// raises nothing. Like <see cref="StateChanged"/> it carries changes only, so read
+    /// <see cref="RepeatMode"/> when you subscribe.
+    /// </para>
+    /// <para>
+    /// This is <see cref="IPlaybackController.RepeatModeChanged"/> unprojected, and keeps its name
+    /// because it keeps its payload. <see cref="StateChanged"/> is named apart from the
+    /// controller's stream because it drops the previous state.
+    /// </para>
+    /// </remarks>
+    IObservable<StateTransition<RepeatMode>> RepeatModeChanged { get; }
 
     /// <summary>Current primary playback state.</summary>
     PlaybackState State { get; }
@@ -149,15 +176,30 @@ public interface IMediaTransport : IAsyncDisposable
     IObservable<LoopStalled> LoopStalled { get; }
 
     /// <summary>
-    /// Fires when a failure arises during playback rather than in answer to a
-    /// command. A command's own failure comes back on its <see cref="Result"/>
-    /// and is not repeated here.
+    /// Fires when a failure arises during playback, and whenever a failure puts the player into
+    /// <see cref="PlaybackState.Error"/>, a command's failure included. A command refused with
+    /// the state unchanged reports on its <see cref="Result"/> only.
     /// </summary>
     /// <remarks>
     /// <para>
     /// Forwarded from <see cref="IPlaybackController.ErrorOccurred"/>. Without
     /// it a consumer holding only the player surface has no structured error
     /// channel for anything the decode stack reports mid-stream.
+    /// </para>
+    /// <para>
+    /// <b>A command that fails into Error reports twice.</b> A <see cref="PlayAsync"/> whose item
+    /// cannot be loaded, from <see cref="PlaybackState.Idle"/> or <see cref="PlaybackState.Ended"/>,
+    /// moves the player to <see cref="PlaybackState.Error"/>. It returns a failed
+    /// <see cref="Result"/>, and before it completes this fires with the same
+    /// <see cref="PlaybackError"/> instance as <see cref="Result.Error"/>. The
+    /// <see cref="Result"/> answers whoever called; this tells everyone else, such as an app
+    /// watching a player whose Play button belongs to a chrome control. A consumer that handles
+    /// both discards the second sighting by reference equality.
+    /// </para>
+    /// <para>
+    /// A command refused with the state unchanged raises nothing here: a play with nothing to
+    /// play, or a seek with nothing loaded. Neither does a command issued once the player's
+    /// disposal has begun, which throws <see cref="ObjectDisposedException"/>.
     /// </para>
     /// <para>
     /// An error does not always stop playback. A single-source player raises it

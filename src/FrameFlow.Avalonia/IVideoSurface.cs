@@ -27,5 +27,14 @@ public interface IVideoSurface
     /// Wires the logger factory and returns the <see cref="IVideoSink"/> to hand to the
     /// player's <c>FrameFlowPlayer.Create()</c>. Idempotent: repeated calls return the same sink.
     /// </summary>
+    /// <remarks>
+    /// On the in-box surfaces, <see cref="FrameFlowVideoView"/> and
+    /// <c>CompositionInteropVideoView</c>, the factory reaches the surface's own sink whenever
+    /// this is called, before or after the surface joins the visual tree, and a later call with
+    /// another factory moves the logging to it. A sink the caller assigned to one of them keeps
+    /// the logger its owner gave it.
+    /// <c>FrameFlowAvaloniaBuilderExtensions.WithVideoSurface</c> makes this call inside a
+    /// builder chain.
+    /// </remarks>
     IVideoSink AttachSink(ILoggerFactory loggerFactory);
 }

@@ -426,6 +426,46 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
         Assert.Equal(atPause + TimeSpan.FromMilliseconds(250), sink.GetPlaybackTime());
     }
 
+    // ── Pause, headless ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A pause that lands before the source started holds it. A buffer presented after the pause
+    /// carries the queue to the pre-buffer depth and starts nothing; the first upload after the
+    /// resume starts it.
+    /// </summary>
+    /// <remarks>
+    /// The session pauses the sink before it closes its gates, so a buffer already past the gate
+    /// reaches a paused sink. Pausing a source that has not started leaves it in
+    /// <c>AL_INITIAL</c> (OpenAL 1.1 §4.3.6), so nothing on the device stops the pre-buffer gate
+    /// from starting it, and the paused sink would play.
+    /// </remarks>
+    [Fact]
+    public async Task Pause_BeforeTheSourceStarted_HoldsItUntilTheResume()
+    {
+        var device = new FakeOpenAlDevice();
+        await using var sink = NewSink(device);
+        await sink.ActivateAsync(CancellationToken.None);
+
+        await PushBlocksAsync(sink, blocks: PreBufferCount - 1, amplitude: 500);
+        await sink.PauseAsync(CancellationToken.None);
+        await PresentBlockAsync(sink, amplitude: 501, blockIndex: PreBufferCount - 1);
+
+        Assert.True(
+            !device.CallNames.Contains("SourcePlay"),
+            "A paused sink started its source.\n" + device.DescribeCalls()
+        );
+        device.AdvancePlayback(BlockDuration);
+        Assert.Empty(device.PlayedSamples);
+
+        await sink.ResumeAsync(CancellationToken.None);
+        await PresentBlockAsync(sink, amplitude: 502, blockIndex: PreBufferCount);
+        Assert.Contains("SourcePlay", device.CallNames);
+
+        DrainFully(device);
+        Assert.Equal((PreBufferCount + 1) * ScalarsPerBlock, device.PlayedSamples.Count);
+        Assert.Equal(502, device.PlayedSamples[^1]);
+    }
+
     // ── Backpressure, headless ──────────────────────────────────────────────
 
     /// <summary>

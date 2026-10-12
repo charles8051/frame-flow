@@ -60,6 +60,15 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     );
 
     private readonly ILogger<FrameFlowVideoView> _logger;
+
+    // The view's own logger when the constructor was given none, so it follows LoggerFactory.
+    private readonly SwitchableLogger<FrameFlowVideoView>? _ownLogger;
+
+    // What the sink this view owns logs through. The sink is built with this handle rather than
+    // with a logger made from the factory at that moment, so a factory assigned after the sink
+    // exists still reaches it (#630). The view makes its sink when it joins the visual tree, and a
+    // caller usually wires the logger later, from OnLoaded or a click handler.
+    private readonly SwitchableLogger<AvaloniaVideoSink> _sinkLogger = new();
     private readonly object _lock = new();
 
     // Double-buffer: render pass writes to _back then swaps to _front for drawing.
@@ -179,15 +188,23 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     }
 
     /// <summary>
-    /// Gets or sets the logger factory used by the view and any sink it
-    /// owns. Defaults to <see cref="NullLoggerFactory"/>. Assign before the
-    /// view attaches (or before calling <see cref="EnsureSink"/>) for the
-    /// factory to apply to the owned sink.
+    /// Gets or sets the logger factory used by the sink the view owns, and by the view itself
+    /// when it was constructed without a logger. Defaults to <see cref="NullLoggerFactory"/>.
     /// </summary>
+    /// <remarks>
+    /// Takes effect whenever it is assigned, before or after the view joins the visual tree and
+    /// before or after <see cref="EnsureSink"/>: the owned sink logs through the newest factory
+    /// from then on. A sink assigned through <see cref="Sink"/> keeps the logger its owner gave it.
+    /// </remarks>
     public ILoggerFactory LoggerFactory
     {
         get => _loggerFactory;
-        set => _loggerFactory = value ?? NullLoggerFactory.Instance;
+        set
+        {
+            _loggerFactory = value ?? NullLoggerFactory.Instance;
+            _sinkLogger.Use(_loggerFactory);
+            _ownLogger?.Use(_loggerFactory);
+        }
     }
 
     /// <summary>
@@ -197,19 +214,29 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
         : this(null) { }
 
     /// <summary>
-    /// Initializes a new <see cref="FrameFlowVideoView"/> with an optional logger.
+    /// Initializes a new <see cref="FrameFlowVideoView"/> with an optional logger. Without one,
+    /// the view logs through <see cref="LoggerFactory"/>.
     /// </summary>
     public FrameFlowVideoView(ILogger<FrameFlowVideoView>? logger)
     {
-        _logger = logger ?? NullLogger<FrameFlowVideoView>.Instance;
+        if (logger is null)
+        {
+            _ownLogger = new SwitchableLogger<FrameFlowVideoView>();
+            _logger = _ownLogger;
+        }
+        else
+        {
+            _logger = logger;
+        }
+
         ClipToBounds = true;
     }
 
     /// <summary>
     /// Ensures the view has a video sink ready to receive frames. If <see cref="Sink"/>
     /// is already set, this is a no-op. Otherwise, an <see cref="AvaloniaVideoSink"/> is
-    /// constructed using <see cref="LoggerFactory"/>; it is owned by the view and disposed
-    /// when it detaches from the visual tree.
+    /// constructed that logs through <see cref="LoggerFactory"/>, including a factory assigned
+    /// after this call; it is owned by the view and disposed when it detaches from the visual tree.
     /// </summary>
     /// <returns>The view's current <see cref="AvaloniaVideoSink"/> instance.</returns>
     /// <remarks>
@@ -221,7 +248,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
         if (_sink is not null)
             return _sink;
 
-        var sink = new AvaloniaVideoSink(_loggerFactory.CreateLogger<AvaloniaVideoSink>());
+        var sink = new AvaloniaVideoSink(_sinkLogger);
         _sink = sink;
         _sinkIsOwned = true;
         BeginBinding(sink);

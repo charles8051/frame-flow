@@ -53,9 +53,11 @@ internal static partial class ConstructFailure
 
     // ONNX Runtime failing to load a provider's library, and Windows ML naming a provider it does
     // not have. ONNX Runtime also reports "Failed to load provider" when a provider library refuses
-    // its options, which is how OpenVINO's refuses a device it does not have.
+    // its options, which is how OpenVINO's refuses a device it does not have, and "Failed to load
+    // shared library" when a provider's library or one it depends on, such as cuBLAS for CUDA's,
+    // cannot be loaded (#635).
     private static readonly string[] UnavailableTexts =
-        ["LoadLibrary failed", "No registered provider", "Failed to load provider"];
+        ["LoadLibrary failed", "No registered provider", "Failed to load provider", "Failed to load shared library"];
 
     /// <summary>
     /// The kind of <paramref name="exception"/>. When it and the exceptions it wraps say different
