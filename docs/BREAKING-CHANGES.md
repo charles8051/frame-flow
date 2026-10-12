@@ -13,7 +13,125 @@ errors, which announce themselves. A few are not, and those are called out.
 
 ## Unreleased — since `v0.15.1`
 
-### 1. A Whisper node starts a new window when its audio jumps
+### 1. A pass deactivates its audio sink, and the end of playback waits for the audio to play out
+
+**A change in behaviour, not a compile error.**
+
+`FrameFlowPass.RunToCompletionAsync` used to return as soon as the last buffer had been handed to
+the audio sink, and it left the sink active (#609). Now, on a natural end, it awaits the sink's new
+`IAudioSink.DrainAsync` and then deactivates the sink. It deactivates on every way out: success,
+cancellation and fault.
+
+The player waits for the same drain before it reports the end of any item with audio. That moves
+`Ended`, and also `LoopRestarted` under `RepeatMode.One` and `SourceTransitioned` between playlist
+items. With `OpenAlAudioSink`, an audio-only item ends up to about a second later than before. Each
+loop of it now plays the whole clip, so the loop period grows by the same amount. For an item with
+video, the wait is the audio's tail, normally tens of milliseconds.
+
+The device now plays out the buffers it had queued and the partial block it held back, which used to
+be dropped. A stream shorter than the sink's pre-buffer depth used to be accepted and never started;
+it now plays.
+
+`IAudioSink` gains `DrainAsync`, with a default implementation that completes at once, so an
+existing implementation compiles and behaves as before.
+
+At process exit the shared OpenAL device is now closed whatever its lease count (#633). An
+`OpenAlAudioSink` still undisposed at that point gives up its device and is inert afterwards, as
+when no device could be opened.
+
+**Who hits this.**
+-  Code that deactivates the sink after `RunToCompletionAsync`. The pass already has, so the call is
+  redundant and harmless.
+-  Code that reads the sink's clock or state after a pass, expecting it still active. It reads a
+  deactivated sink.
+-  A host that times something from `RunToCompletionAsync` returning, or from `Ended`,
+  `LoopRestarted` or `SourceTransitioned`. Each now arrives after the item's audio has been heard.
+-  A custom `IAudioSink` that queues audio ahead of a device. It keeps losing the end of every
+  stream until it overrides `DrainAsync`.
+-  A sink that wraps another. The default `DrainAsync` completes at once without asking the inner
+  sink, so the wrapper must forward it.
+
+**What to write instead.**
+-  Drop the `DeactivateAsync` after `RunToCompletionAsync`. A sink used by the next pass is
+  activated again by that pass.
+-  In a sink that buffers ahead of its device, implement `DrainAsync`. It should hand the device
+  whatever is held back, and complete once the device has played what it was given. It should give
+  up if the device stops making progress, and observe the token.
+- In a wrapping sink, forward `DrainAsync` to the inner sink.
+-  To wait for a player to finish, write `await player.WaitForEndAsync(ct)` instead of bridging
+  `StateChanged` and `ErrorOccurred` yourself. Subscribe to `ErrorOccurred` or `ItemFailed` too if a
+  failed item must count as a failure, because a last item that faults mid-play still ends the queue
+  in `Ended`.
+
+### 2. `IMediaTransport` gained `RepeatMode` and `RepeatModeChanged`, and the Loop toggle shows the mode in force
+
+**A compile error for an implementer of `IMediaTransport` or `IMediaPlayer`, and a change in
+behaviour for the transport bar's Loop toggle and `LoopByDefault`.**
+
+```csharp
+RepeatMode RepeatMode { get; }
+IObservable<StateTransition<RepeatMode>> RepeatModeChanged { get; }
+```
+
+`IMediaTransport` could set the repeat mode but not read it (#631), so the transport bar's Loop
+toggle showed `LoopByDefault` and the last click rather than the mode in force. A player looping a
+folder under `RepeatMode.All` showed Loop unchecked, a click on it set `One`, and `All` could not be
+chosen from the chrome at all. The two members are the controller's `RepeatMode` and
+`RepeatModeChanged`, passed through. The stream keeps the controller's name because it keeps the
+controller's `StateTransition<RepeatMode>` payload; `StateChanged` has a name of its own because it
+drops the previous state.
+
+The Loop toggle now shows the bound transport's mode and follows `RepeatModeChanged`. A click steps
+Off, One, All and back to Off. One and All both show checked, labelled "Loop one" and "Loop all".
+`LoopByDefault` sets `One` only on a transport that is not repeating; it used to set `One` on every
+bind, whatever the mode. A refused click leaves the toggle on the mode still in force, so the toggle
+no longer rolls itself back.
+
+**Who hits this.** A type that implements `IMediaTransport` or `IMediaPlayer` itself, such as a test
+fake, an adapter or a decorator, fails with CS0535 until it adds both members, and one compiled
+against `v0.15.1` and not rebuilt fails to load with `TypeLoadException` when the application uses
+the type. Neither member is a default interface member: the getter could default to
+`GetDiagnostics().RepeatMode`, but no default can supply the change stream, and one that never fires
+would leave a bound Loop toggle silently stale, which is the defect this fixes. An app that set
+`LoopByDefault` and also built or set its player in `All` used to get `One` from the bind; it now
+keeps `All`. An app or UI test that clicked the toggle twice to get from Off back to Off now lands
+on All, and needs a third click.
+
+**What to write instead.** Forward the members from whatever you wrap:
+
+```csharp
+public RepeatMode RepeatMode => _inner.RepeatMode;
+public IObservable<StateTransition<RepeatMode>> RepeatModeChanged => _inner.RepeatModeChanged;
+```
+
+A fake whose mode never changes returns the mode it holds and an observable that never fires. To
+loop one item whatever mode the player was built with, call `SetRepeatModeAsync(RepeatMode.One)`
+after binding instead of setting `LoopByDefault`. Code that read the mode from
+`GetDiagnostics().RepeatMode` can read `RepeatMode` instead.
+
+### 3. `CreateAsync` opens and warms the model on the thread pool
+
+**A change in behaviour, not a compile error.**
+
+`Yolov8Detector.CreateAsync` and `BlazeFaceDetector.CreateAsync` used to open the session, validate
+the model and run the warmup on the caller's thread whenever nothing before them yielded: for YOLO
+with a cached model or an override path, and for BlazeFace always (#626). They now run that work in
+`Task.Run` and return to an awaiting caller at once. The session factory
+(`Func<string, IInferenceSession>`, or `IInferenceSessionFactory.Open`) and the `progress` reporter
+are called on a thread-pool thread. `Yolov8Detector.CreateAsync` also checks its token before the open: a token
+cancelled after the model is on disk now throws `OperationCanceledException` and opens nothing,
+where it used to build the detector.
+
+**Who hits this.** A session factory or progress reporter that must run on the thread that called
+`CreateAsync`, such as one that touches a UI control directly rather than through `Progress<T>`. A
+caller that passes a token it may already have cancelled and expected a detector anyway.
+
+**What to write instead.** Report through a `Progress<T>` created on the UI thread, which posts back
+to it, or marshal in the reporter. To open a session on a thread of your choosing, open it there and
+pass it to `Create`, which still runs on the calling thread. A `Task.Run` around `CreateAsync` is no
+longer needed.
+
+### 4. A Whisper node starts a new window when its audio jumps
 
 **A change in results, not a compile error.**
 
@@ -35,6 +153,200 @@ that drops buffers when its consumer falls behind.
 
 **What to write instead.** Stamp each buffer with its position on one running timeline. The
 decoder and the resampler already do.
+
+### 5. `CaptionTimeline` starts again when the time goes back
+
+**A change in results, not a compile error.**
+
+`CaptionTimeline` kept the largest PTS `GetActive` had been given, evicted against it, and never
+lowered it (#619). After a seek back, a loop or the next item, a caption added at the new position
+was evicted as soon as it sat more than `displayDuration` behind the old position, and captions
+stamped near the old position showed again when playback reached their stamps. `Add` and `GetActive`
+now share one clock: the latest PTS either has been given. A PTS below it starts a new timeline with
+nothing on it. The new `Reset()` does the same for a jump the PTS cannot show, such as a short seek
+forward.
+
+**Who hits this.** A caller that gives the timeline a PTS below one it gave before, without meaning
+a jump. Each such call now empties the timeline. A caller that stamps `Add` with the caption's own
+`Caption.From`, which sits behind the presented frame, empties it on every `Add`, so stack mode
+never stacks. A caller that drives `GetActive` from a position polled on a timer or read from an
+audio clock empties it whenever that position steps back slightly. So does one timeline queried by
+two views at different positions, or captions added with a stamp ahead of the frame being presented.
+
+**What to write instead.** Use one timeline per presented stream, and give both `Add` and
+`GetActive` the PTS of the frame just presented. Code that built a new timeline at a seek or the
+next item can call `Reset()` instead, or rely on the new rule for a jump back.
+
+### 6. `CompositionInteropVideoView.EnsureSink` readies the view to present
+
+**A change in behaviour, not a compile error.**
+
+`EnsureSink` on the zero-copy view used to create its sink and nothing else. The compositor
+surface and the GPU interop waited for `Initialize(ILoggerFactory)`, so
+`WithVideoSink(view.EnsureSink())`, the `FrameFlowVideoView` pattern, built and played a black
+window and logged nothing (#613). `EnsureSink` now runs `Initialize`, without a logger, when it
+has not run: it starts the stall watchdog and, once the view is attached, sets up the compositor
+surface. A later `Initialize` call moves the view's logging, and its own sink's, to the factory it
+is given. On a view that has been torn down it starts neither.
+
+**Who hits this.** A caller that calls `EnsureSink` off the UI thread on a view already in the
+visual tree: it now touches the compositor and must run on the UI thread, as `Initialize` always
+had to. Also a caller that took a sink from `EnsureSink` and relied on the view not presenting it,
+or not raising `PresenterStalled`, until it called `Initialize`.
+
+**What to write instead.** Wire the view in one call, on the UI thread:
+
+```csharp
+// Before
+.WithVideoSink(((IVideoSurface)view).AttachSink(loggerFactory))
+
+// After
+.WithVideoSurface(view, loggerFactory)
+```
+
+`WithVideoSurface(IVideoSurface, ILoggerFactory)` is new on `IPlayerBuilder` and `IPassBuilder`
+and takes a `FrameFlowVideoView` too. Code that calls `Initialize` and then `EnsureSink` works
+unchanged.
+
+### 7. `Infer`'s chain form takes `onError`
+
+**A binary break, not a compile error.** Source that calls it compiles unchanged.
+
+`InferenceOperators.Infer(chain, id, model, onResult, deviceStage)` takes
+`FailureResponse onError = FailureResponse.Propagate` last (#618) and passes it to its node. The
+default keeps what the chain form did: a model that throws faults the graph, and a player fails the
+item it is playing. `FailureResponse.Discard` loses that frame's result instead, and
+`Graph.Discards` counts it under the node's id, as does the `frameflow.graph.discards` metric. A
+parameter with a default still changes the method's signature. An assembly compiled against
+`v0.15.1` that calls the chain form throws `MissingMethodException` against this release until it is
+rebuilt.
+
+**Who hits this.** A library built against `v0.15.1` that calls `chain.Infer(...)` and is loaded
+with this release without being rebuilt. An application that builds from source does not.
+
+**What to write instead.** Rebuild. A branch the picture can do without, such as an overlay, can
+pass `onError: FailureResponse.Discard`.
+
+### 8. A CUDA provider that cannot load its libraries is ruled out
+
+**A change in behaviour, not a compile error.**
+
+ONNX Runtime's "Failed to load shared library", which the CUDA provider raises when a library it
+depends on, such as cuBLAS, is missing, now counts as an unavailable provider (#635). The factory
+caches the provider that opens after it, so `ActiveProvider` names that provider where it was
+`null`, and later models open there without trying CUDA again. This is what the factory already did
+for a missing DLL (`v0.13.0`, entry 14).
+
+**Who hits this.** Code that read a `null` `ActiveProvider` after a CUDA fallback as "fell back",
+and a process that expects a later model to try CUDA again once the libraries are on the path.
+
+**What to write instead.** Read `ActiveProvider` for the provider that is running. To probe CUDA
+again, build a new factory.
+
+### 9. A bare `null` third argument to `SdlEventLoop.Run` is ambiguous
+
+**A compile error (CS0121).**
+
+`SdlEventLoop.Run` has an overload that takes an `SdlCommandQueue` in the position `onEvent` has
+(#605). A call that passes a bare `null` or `default` there, with nothing after it but more `null`s
+or named arguments, such as `SdlEventLoop.Run(sdl, sink, null)` or
+`SdlEventLoop.Run(sdl, sink, default, ct: token)`, now matches both. A call that passes a handler,
+or names the argument, is unaffected, and so is the original overload's behaviour.
+
+**Who hits this.** Code that spells out "no event handler" positionally instead of leaving the
+argument out.
+
+**What to write instead.** Drop the argument, or name it:
+`SdlEventLoop.Run(sdl, sink, onEvent: null)`.
+
+### 10. `ErrorOccurred` documents that a command's failure into `Error` is raised there too
+
+**Not a change in behaviour.** The documentation now says what the player has always done.
+
+The summary of `IMediaTransport.ErrorOccurred`, and entry 2 of the `v0.9.0-alpha.1` group below,
+said a command's own failure comes back on its `Result` and is not repeated on `ErrorOccurred`
+(#606). That was never true of a failure that puts the player into `Error`. A `PlayAsync` whose item
+cannot be loaded, from `Idle` or `Ended`, returns a failed `Result` and raises `ErrorOccurred`
+before it completes, with the same `PlaybackError` instance as `Result.Error`. The behaviour stays:
+the `Result` reaches only whoever called, and `ErrorOccurred` is how everyone else hears the player
+broke, including an app whose Play button belongs to a chrome control. A command refused with the
+state unchanged, such as a play with nothing to play or a seek with nothing loaded, still reports on
+its `Result` only.
+
+The same remarks gave "a play on a disposed player" and "a seek on a non-seekable source" as
+refusals that come back on the `Result`. Neither is: a transport command issued once the player's
+disposal has begun throws `ObjectDisposedException`, as it always has, and the controller has no
+seekability check. The docs now say so; #644 asks whether a disposed player should refuse instead.
+
+**Who hits this.** A consumer that took the old summary at its word and handles both channels
+reports a failed load twice. One that treated `ErrorOccurred` as "playback broke while nobody was
+asking" reacts to a failure its own command already reported. One that relied on a `Result` from a
+transport command racing a disposal gets an exception, as it already did.
+
+**What to write instead.** Let `ErrorOccurred` report whatever put the player into `Error`, and the
+`Result` report the refusals:
+
+```csharp
+player.ErrorOccurred.ObserveOnUiThread().Subscribe(Show);
+
+var played = await player.PlayAsync();
+if (!played.IsSuccess && player.State != PlaybackState.Error)
+    Show(played.Error); // a refusal; a failure into Error arrives on ErrorOccurred
+```
+
+A consumer that sees both copies can also tell them apart by reference: `ErrorOccurred` carries the
+instance the `Result` does, and fires before the command completes. Do not issue transport commands
+after `DisposeAsync`, or catch `ObjectDisposedException` where a command can race it.
+
+### Not breaking, but worth knowing
+
+- **A video view's logger factory applies whenever it is given.** `FrameFlowVideoView` builds its
+  sink when it joins the visual tree, and gave the sink the factory it held at that moment: the
+  null one, unless `LoggerFactory` had been assigned first. `IVideoSurface.AttachSink`,
+  `FrameFlowPlayerView.AttachSink` and the `LoggerFactory` setter, used after that, stored the
+  factory and did nothing with it. They now reach the sink at any time, and a later factory takes
+  over from an earlier one; `CompositionInteropVideoView.Initialize` does the same for that view
+  and its sink. A view constructed without a logger also logs its own copy failures through the
+  same factory. The difference you can see is log lines that were missing before, except one: the
+  sink's `AvaloniaVideoSink created.` line still goes to the factory held when the sink was built.
+  A sink you assigned through `Sink` keeps the logger you gave it. You no longer need to assign
+  `LoggerFactory` in the window constructor to get ahead of the attach. #630.
+
+-  **`ErrorOccurred` documents that a command's failure into `Error` is raised there too.** **Not a
+  change in behaviour.** The documentation now says what the player has always done.
+
+  The summary of `IMediaTransport.ErrorOccurred`, and entry 2 of the `v0.9.0-alpha.1` group below,
+  said a command's own failure comes back on its `Result` and is not repeated on `ErrorOccurred`
+  (#606). That was never true of a failure that puts the player into `Error`. A `PlayAsync` whose
+  item cannot be loaded, from `Idle` or `Ended`, returns a failed `Result` and raises
+  `ErrorOccurred` before it completes, with the same `PlaybackError` instance as `Result.Error`. The
+  behaviour stays: the `Result` reaches only whoever called, and `ErrorOccurred` is how everyone
+  else hears the player broke, including an app whose Play button belongs to a chrome control. A
+  command refused with the state unchanged, such as a play with nothing to play or a seek with
+  nothing loaded, still reports on its `Result` only.
+
+  The same remarks gave "a play on a disposed player" and "a seek on a non-seekable source" as
+  refusals that come back on the `Result`. Neither is: a transport command issued once the player's
+  disposal has begun throws `ObjectDisposedException`, as it always has, and the controller has no
+  seekability check. The docs now say so; #644 asks whether a disposed player should refuse instead.
+
+  **Who hits this.** A consumer that took the old summary at its word and handles both channels
+  reports a failed load twice. One that treated `ErrorOccurred` as "playback broke while nobody was
+  asking" reacts to a failure its own command already reported. One that relied on a `Result` from a
+  transport command racing a disposal gets an exception, as it already did.
+
+  **What to write instead.** Let `ErrorOccurred` report whatever put the player into `Error`, and
+  the `Result` report the refusals:
+
+  ```csharp
+player.ErrorOccurred.ObserveOnUiThread().Subscribe(Show);
+
+  var played = await player.PlayAsync();
+if (!played.IsSuccess && player.State != PlaybackState.Error)
+    Show(played.Error); // a refusal; a failure into Error arrives on ErrorOccurred
+```
+
+  A consumer that sees both copies can also tell them apart by reference: `ErrorOccurred` carries the instance the `Result` does, and fires before the command completes. Do not issue transport commands after `DisposeAsync`, or catch `ObjectDisposedException` where a command can race it.
 
 ## `v0.15.0` — since `v0.14.0`
 
