@@ -1,0 +1,15 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ff="clr-namespace:FrameFlow.Avalonia;assembly=FrameFlow.Avalonia"
+        xmlns:local="clr-namespace:FrameFlow.Examples.Multicast.Shared"
+        x:Class="FrameFlow.Examples.Multicast.Shared.PlayerWindow"
+        Width="1500" Height="700"
+        Background="#1a1a1a"
+        Title="FrameFlow multicast">
+  <DockPanel Margin="8">
+    <Border DockPanel.Dock="Bottom" Background="#202020" CornerRadius="4" Margin="4">
+      <ff:FrameFlowPlayerChrome Name="Chrome" LoopByDefault="True"/>
+    </Border>
+    <local:MulticastPanes Name="Panes"/>
+  </DockPanel>
+</Window>

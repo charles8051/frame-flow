@@ -12,26 +12,17 @@ public class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var args = desktop.Args ?? Array.Empty<string>();
-
+            var args = desktop.Args ?? [];
             desktop.MainWindow = new MainWindow
             {
-                // --model <path.onnx>: run this model instead of downloading
-                // the stock yolov8n. The detector auto-infers input size /
-                // class count (ADR-0050), so any minted variant works.
+                // --model <path.onnx>: a YOLOv8 export to run instead of the downloaded yolov8n.
+                // The detector reads the input size and class count from the model.
                 ModelPath = ValueAfter(args, "--model"),
-                // --face <path.onnx>: run BlazeFace face detection (box + 6
-                // keypoints) instead of YOLO. Takes precedence over --model.
-                // The module ships no weights (ADR-0051), so this must point
-                // at a BlazeFace ONNX you supply.
+                // --face <path.onnx>: a BlazeFace model to run instead of YOLO. FrameFlow does
+                // not download one.
                 FaceModelPath = ValueAfter(args, "--face"),
-                // --camera <index>: which enumerated camera to auto-select
-                // (default 0). The first camera connects automatically on
-                // startup regardless — no UI click needed.
-                CameraIndex = IntAfter(args, "--camera", 0),
-                // --exit-after <seconds>: self-close after N seconds so the
-                // file logger flushes for non-interactive diagnostic runs.
-                ExitAfterSeconds = DoubleAfter(args, "--exit-after", 0),
+                // --camera <index>: the camera to open first.
+                CameraIndex = int.TryParse(ValueAfter(args, "--camera"), out var camera) ? camera : 0,
             };
         }
 
@@ -40,28 +31,7 @@ public class App : Application
 
     private static string? ValueAfter(string[] args, string flag)
     {
-        for (var i = 0; i < args.Length - 1; i++)
-            if (args[i] == flag)
-                return args[i + 1];
-        return null;
-    }
-
-    private static int IntAfter(string[] args, string flag, int fallback)
-    {
-        var v = ValueAfter(args, flag);
-        return v is not null && int.TryParse(v, out var n) ? n : fallback;
-    }
-
-    private static double DoubleAfter(string[] args, string flag, double fallback)
-    {
-        var v = ValueAfter(args, flag);
-        return v is not null
-            && double.TryParse(
-                v,
-                System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture,
-                out var n)
-            ? n
-            : fallback;
+        var i = Array.IndexOf(args, flag);
+        return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
     }
 }

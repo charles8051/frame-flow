@@ -2,13 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="FrameFlow.Examples.AvaloniaPlayer.App"
              RequestedThemeVariant="Dark">
-  <!--
-    Force Dark variant so Fluent renders transport buttons with dark
-    backgrounds and light text (matching the dark video player chrome).
-    Without this the variant follows the OS — on Windows Light mode the
-    buttons render light-gray with black text, jarring against the dark
-    overlay scrim.
-  -->
+  <!-- Dark, so the chrome's Fluent buttons match the dark overlay in any OS theme. -->
   <Application.Styles>
     <FluentTheme />
   </Application.Styles>

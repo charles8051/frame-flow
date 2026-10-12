@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    What the three multicast examples share: the three panes one frame is shown in, the file
+    player window, and the Avalonia app. It references no ONNX Runtime native package; each
+    example brings its own, because two in one process conflict.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!--
+      A color filter visits every pixel of every frame on the presenting thread. A Debug build's
+      unoptimized loop is slow enough there to make all three panes drop frames, so this project
+      is optimized in every configuration.
+    -->
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Audio.OpenAL\FrameFlow.Audio.OpenAL.csproj" />
+    <ProjectReference Include="..\..\src\FrameFlow.Yolo\FrameFlow.Yolo.csproj" />
+    <!-- CpuInferenceSession, which every ONNX Runtime package can run. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Inference.Ort\FrameFlow.Inference.Ort.csproj" />
+    <ProjectReference Include="..\FrameFlow.Examples.Common\FrameFlow.Examples.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="$(FrameFlowAvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Desktop" Version="$(FrameFlowAvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="$(FrameFlowAvaloniaVersion)" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.*" />
+  </ItemGroup>
+</Project>

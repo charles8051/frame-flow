@@ -11,8 +11,9 @@ dotnet run scripts/repro/signage-gpu-noaudio.cs
 |---|---|---|
 | `signage-gpu-noaudio.cs` | GPU zero-copy presenter, no audio sink, one 3s clip | seconds |
 | `signage-gpu-noaudio-soak.cs` | the same, looping a 45s clip, measured in two windows | ~6 minutes |
+| `gpu-two-player-loop-soak.cs` | two players looping side by side, each on its own GPU presenter, sampled into an optional CSV | `--duration`, 10 minutes by default |
 
-Both are **Windows only**. They pin the zero-copy compositor presenter, which is
+All three are **Windows only**. They pin the zero-copy compositor presenter, which is
 `FrameFlow.Avalonia.Windows`, and exit 2 elsewhere rather than quietly measuring
 the software path.
 
@@ -77,14 +78,16 @@ side of that trade.
 
 ## Fixtures
 
-Both need the generated corpus, which is gitignored:
+The fixtures come from the generated corpus, which is gitignored. The two-player
+soak needs it only for its default clip, `test-1080p-h264-aac.mp4`; `--clip` and
+`--second` can name any other file:
 
 ```bash
 dotnet run scripts/generate-test-corpus.cs
-dotnet run scripts/generate-test-corpus.cs -- --include-benchmarks   # for the soak
+dotnet run scripts/generate-test-corpus.cs -- --include-benchmarks   # for signage-gpu-noaudio-soak.cs
 ```
 
-The soak's fixture is `bench-1080p60-h264-aac.mp4`: 45s of noise at 15 Mbps,
+`signage-gpu-noaudio-soak.cs` plays `bench-1080p60-h264-aac.mp4`: 45s of noise at 15 Mbps,
 1080p60, 85 MB. It is behind a flag because of the size, and it is noise rather
 than `testsrc2` because `testsrc2` "encodes to almost nothing" and costs the
 decoder nothing to play.

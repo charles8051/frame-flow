@@ -4,22 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <NoWarn>$(NoWarn);NU1903</NoWarn>
   </PropertyGroup>
 
-  <!--
-    Dead-simple single-pane camera inference demo: live camera to BGRA32
-    convert to a YOLOv8 detection overlay (one ObjectDetectionPreview
-    pane). DirectML EP (FrameFlow.Inference.Dml) so it runs on a low-power
-    Intel iGPU. The detector is model-shape-aware (ADR-0050), so the model
-    is selectable via a model-path argument at any input size / class
-    count; pair with scripts/mint_yolo.py output to A/B models on hardware.
-
-    Pass a face-model argument instead to run FrameFlow.Face (BlazeFace
-    box + 6 keypoints) rather than YOLO. BlazeFace ships no weights
-    (ADR-0051), so it must point at a supplied ONNX.
-  -->
+  <!-- A live camera with YOLOv8, or BlazeFace, running on DirectML and drawn over the picture. -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\FrameFlow.Media\FrameFlow.Media.csproj" />
     <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
@@ -39,13 +27,7 @@
     <PackageReference Include="Avalonia.Themes.Fluent" Version="$(FrameFlowAvaloniaVersion)" />
     <PackageReference Include="Periphery" Version="4.1.0-alpha.*" />
     <PackageReference Include="Periphery.Camera" Version="4.1.0-alpha.*" />
-    <!--
-      FFmpeg natives for the BGRA32 ConvertPixelFormat (libswscale) stage.
-      Shipped as a NuGet runtime asset so a self-contained kiosk publish
-      carries them (ADR-0051) instead of relying on the dev-time
-      Directory.Build.targets copy. DirectML.dll comes bundled via
-      FrameFlow.Inference.Dml.
-    -->
+    <!-- The FFmpeg libraries the BGRA convert runs on. DirectML.dll comes with FrameFlow.Inference.Dml. -->
     <PackageReference Include="FrameFlow.Native.Runtime" Version="$(FrameFlowNativeRuntimeVersion)" />
   </ItemGroup>
 
@@ -54,8 +36,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Shared examples support (FileLoggerProvider), consolidated from the
-         former per-example copies into FrameFlow.Examples.Common. -->
     <ProjectReference Include="..\FrameFlow.Examples.Common\FrameFlow.Examples.Common.csproj" />
     <Using Include="FrameFlow.Examples.Common" />
   </ItemGroup>

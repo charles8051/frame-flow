@@ -1,6 +1,5 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using Avalonia.Threading;
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Avalonia;
 using FrameFlow.Media;
@@ -10,301 +9,135 @@ using Microsoft.Extensions.Logging;
 namespace FrameFlow.Examples.DualPlayer;
 
 /// <summary>
-/// Hosts two fully independent players side by side in one process.
+/// Two independent players side by side in one process. Each pane has its own video view,
+/// OpenAL sink, player and chrome, and the two share nothing.
 /// </summary>
-/// <remarks>
-/// <para>
-/// Each pane owns a private decode → present chain: its own
-/// <see cref="AvaloniaVideoSink"/> (+ frame pool, supplied by the
-/// <see cref="FrameFlowVideoView"/>), optionally its own
-/// <see cref="OpenAlAudioSink"/>, and its own <see cref="IMediaTransport"/>
-/// backed by a separate playback controller. Nothing is shared between the
-/// two except process-global state (the FFmpeg bootstrap, the OpenAL device
-/// layer, the metrics meters) — which is precisely the surface that
-/// multi-player-per-process bugs live on, so running two at once is the point
-/// of the example, not an accident of it.
-/// </para>
-/// <para>
-/// Clock-source selection follows the digital-signage pattern: the clock is
-/// chosen by <i>whether an audio sink is attached</i>,
-/// not by an explicit clock knob.
-/// </para>
-/// <list type="bullet">
-///   <item><b>Wall clock</b> (<see cref="ClockSourceKind.Wall"/>): attach no
-///         audio sink. Video paces off the <c>WallClockSource</c> fallback
-///         (ADR-0003); the clip's audio stream is discarded at the demuxer
-///         (ADR-0059) so the pump never backpressures.</item>
-///   <item><b>Audio master clock</b> (<see cref="ClockSourceKind.Audio"/>):
-///         attach an audible <see cref="OpenAlAudioSink"/>, which masters the
-///         clock off its sample counter.</item>
-/// </list>
-/// <para>
-/// Two concurrent OpenAL sinks would be safe here (ADR-0058, shared device +
-/// context), but in the canonical profile only the audio-master pane has one —
-/// the wall-clock pane is silent by construction, so the two never compete for
-/// the speakers.
-/// </para>
-/// </remarks>
 public partial class MainWindow : Window
 {
-    private readonly DualPlayerOptions _options;
-    private ILoggerFactory? _loggerFactory;
-    private ILogger<MainWindow>? _logger;
-    private readonly List<Pane> _panes = [];
-    private DispatcherTimer? _statusTimer;
-    private bool _isClosing;
+    private readonly ILoggerFactory _loggerFactory;
+    private readonly ILogger _logger;
+    private readonly Pane _left;
+    private readonly Pane _right;
+    private Task _starting = Task.CompletedTask;
+    private bool _closing;
+    private bool _closed;
 
-    /// <summary>Per-pane runtime state.</summary>
-    private sealed class Pane
+    public string LeftPath { get; init; } = "";
+    public string RightPath { get; init; } = "";
+
+    /// <summary>Builds one pane's player, binds its chrome and starts it looping.</summary>
+    private async Task StartAsync(Pane pane, string path)
     {
-        public required PlayerConfig Config { get; init; }
-        public required FrameFlowVideoView Video { get; init; }
-        public required AvaloniaVideoSink VideoSink { get; init; }
-        public required TextBlock Status { get; init; }
+        pane.Title.Text = Path.GetFileName(path);
+        try
+        {
+            pane.Player = await FrameFlowPlayer
+                .Create()
+                .WithMedia(path)
+                .WithAvaloniaVideoView(pane.Video)
+                .WithAudioSink(pane.Audio)
+                .WithRepeatMode(RepeatMode.One)
+                .WithLogger(_loggerFactory)
+                .BuildPlayerAsync();
+            pane.Chrome.Transport = pane.Player;
 
-        /// <summary>The OpenAL sink — present only for an audio-master pane;
-        /// <see langword="null"/> for a wall-clock pane (no sink attached).
-        /// Kept for disposal.</summary>
-        public OpenAlAudioSink? AudioSink { get; set; }
-
-        public IMediaTransport? Player { get; set; }
+            var played = await pane.Player.PlayAsync();
+            if (!played.IsSuccess)
+                ShowError(pane, path, $"{played.Error.Category}: {played.Error.Message}", played.Error.Inner);
+        }
+        catch (Exception ex)
+        {
+            ShowError(pane, path, ex.Message, ex);
+        }
     }
 
-    /// <summary>Parameterless ctor for the Avalonia XAML previewer.</summary>
     public MainWindow()
-        : this(DualPlayerOptions.Parse([])) { }
-
-    public MainWindow(DualPlayerOptions options)
     {
-        _options = options;
         InitializeComponent();
 
-        // Build the logger factory in the ctor (before the window attaches to
-        // the visual tree) so the FrameFlowVideoView's attach-time EnsureSink()
-        // picks up our factory rather than the silent NullLoggerFactory.
         _loggerFactory = ExampleLogging.CreateFactory(
             "dual-player.log",
             onFailure: ex => Title += $"  [no log file: {ex.Message}]"
         );
         _logger = _loggerFactory.CreateLogger<MainWindow>();
 
+        // Before the views join the visual tree, which is where each creates its sink.
         LeftVideo.LoggerFactory = _loggerFactory;
         RightVideo.LoggerFactory = _loggerFactory;
 
-        ApplyConfigLabels();
+        _left = new Pane(LeftVideo, LeftChrome, LeftTitle, NewAudioSink());
+        _right = new Pane(RightVideo, RightChrome, RightTitle, NewAudioSink());
         Closing += OnWindowClosing;
     }
 
-    private void ApplyConfigLabels()
-    {
-        LeftTitle.Text = $"LEFT  —  {DescribeClock(_options.Left.ClockSource)}";
-        RightTitle.Text = $"RIGHT  —  {DescribeClock(_options.Right.ClockSource)}";
-        LeftConfig.Text = DescribeConfig(_options.Left);
-        RightConfig.Text = DescribeConfig(_options.Right);
-    }
-
-    private static string DescribeClock(ClockSourceKind clock) =>
-        clock == ClockSourceKind.Wall ? "wall clock (no audio sink)" : "audio master clock";
-
-    private static string DescribeConfig(PlayerConfig c) =>
-        $"corpus={Path.GetFileName(c.CorpusPath)} · hw={c.HardwareDecodeMode} · "
-        + $"clock={(c.ClockSource == ClockSourceKind.Wall ? "WALL" : "AUDIO")} · "
-        + $"loop={(c.Loop ? "on" : "off")}";
+    private OpenAlAudioSink NewAudioSink() =>
+        new(_loggerFactory.CreateLogger<OpenAlAudioSink>());
 
     protected override async void OnLoaded(RoutedEventArgs e)
     {
         base.OnLoaded(e);
-        if (_loggerFactory is null || _logger is null)
-            return;
-
-        _logger.LogInformation(
-            "Dual-player example ready. Launching two independent players in one process."
-        );
-
-        // Schedule an unattended clean shutdown so an agent can launch, let the
-        // failing path surface, and read the flushed log (--exit-after N).
-        if (_options.ExitAfterSeconds > 0)
-        {
-            _logger.LogInformation(
-                "Auto-exit scheduled in {Seconds}s (--exit-after).",
-                _options.ExitAfterSeconds
-            );
-            _ = Task.Delay(TimeSpan.FromSeconds(_options.ExitAfterSeconds))
-                .ContinueWith(
-                    _ => Dispatcher.UIThread.Post(Close),
-                    TaskScheduler.Default
-                );
-        }
-
-        _panes.Add(
-            new Pane
-            {
-                Config = _options.Left,
-                Video = LeftVideo,
-                VideoSink = LeftVideo.EnsureSink(),
-                Status = LeftStatus,
-            }
-        );
-        _panes.Add(
-            new Pane
-            {
-                Config = _options.Right,
-                Video = RightVideo,
-                VideoSink = RightVideo.EnsureSink(),
-                Status = RightStatus,
-            }
-        );
-
-        StartStatusTimer();
-
-        // Build + start BOTH players concurrently — the genuine "side by side"
-        // path. Running CreateAsync for both at once is what stresses the
-        // shared process-global state (FFmpeg bootstrap, OpenAL device init).
-        await Task.WhenAll(_panes.Select(BuildPaneAsync));
+        _starting = Task.WhenAll(StartAsync(_left, LeftPath), StartAsync(_right, RightPath));
+        await _starting;
     }
 
-    private async Task BuildPaneAsync(Pane pane)
+    private void ShowError(Pane pane, string path, string message, Exception? ex)
     {
-        if (_loggerFactory is null || _logger is null)
-            return;
-
-        var cfg = pane.Config;
-        if (!File.Exists(cfg.CorpusPath))
-        {
-            _logger.LogError("[{Label}] corpus file not found: {Path}", cfg.Label, cfg.CorpusPath);
-            Dispatcher.UIThread.Post(() => pane.Status.Text = $"missing file: {cfg.CorpusPath}");
-            return;
-        }
-
-        try
-        {
-            var builder = FrameFlowPlayer
-                .Create()
-                .WithMedia(cfg.CorpusPath)
-                .WithVideoSink(pane.VideoSink)
-                .WithHardwareDecode(cfg.HardwareDecodeMode)
-                .WithRepeatMode(cfg.Loop ? RepeatMode.One : RepeatMode.Off)
-                .WithLogger(_loggerFactory);
-
-            // Clock-source selection by sink presence (signage parity):
-            //   Wall  -> no audio sink. Video paces off WallClockSource
-            //            (ADR-0003); the audio stream is discarded at the
-            //            demuxer (ADR-0059), so the pump can't backpressure.
-            //   Audio -> an audible OpenAlAudioSink masters the clock off its
-            //            sample counter.
-            if (cfg.ClockSource == ClockSourceKind.Audio)
-            {
-                var openAl = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
-                pane.AudioSink = openAl;
-                builder = builder.WithAudioSink(openAl);
-            }
-
-            _logger.LogInformation(
-                "[{Label}] building player: {Config}",
-                cfg.Label,
-                DescribeConfig(cfg)
-            );
-
-            var player = await builder.BuildPlayerAsync();
-            pane.Player = player;
-
-            var played = await player.PlayAsync();
-            if (!played.IsSuccess)
-            {
-                _logger.LogError(
-                    played.Error.Inner,
-                    "[{Label}] playback refused: {Category}: {Message}",
-                    cfg.Label,
-                    played.Error.Category,
-                    played.Error.Message
-                );
-                var reason = played.Error.Message;
-                Dispatcher.UIThread.Post(() => pane.Status.Text = $"error: {reason}");
-                return;
-            }
-
-            _logger.LogInformation("[{Label}] playing.", cfg.Label);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "[{Label}] failed to start player.", cfg.Label);
-            Dispatcher.UIThread.Post(() => pane.Status.Text = $"error: {ex.Message}");
-        }
+        _logger.LogError(ex, "{Path}: {Message}", path, message);
+        pane.Title.Text = $"{Path.GetFileName(path)}: {message}";
     }
-
-    private void StartStatusTimer()
-    {
-        _statusTimer = new DispatcherTimer(
-            TimeSpan.FromMilliseconds(500),
-            DispatcherPriority.Background,
-            (_, _) => UpdateStatus()
-        );
-        _statusTimer.Start();
-    }
-
-    private void UpdateStatus()
-    {
-        foreach (var pane in _panes)
-        {
-            var player = pane.Player;
-            if (player is null)
-                continue;
-
-            var audio = pane.AudioSink is null ? "no audio" : "audio";
-            pane.Status.Text =
-                $"{player.State} · {Fmt(player.Position)}/{Fmt(player.Duration)} · "
-                + $"rendered {pane.Video.RenderedFrameCount} dropped {pane.VideoSink.DroppedFrameCount} · "
-                + audio;
-        }
-    }
-
-    private static string Fmt(TimeSpan t) =>
-        $"{(int)t.TotalMinutes:00}:{t.Seconds:00}.{t.Milliseconds / 100}";
 
     private async void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {
-        if (_isClosing)
+        // Hold every close until teardown has run; only the Close() at the end gets through.
+        if (_closed)
             return;
         e.Cancel = true;
-        _isClosing = true;
-        Closing -= OnWindowClosing;
+        if (_closing)
+            return;
+        _closing = true;
 
-        _statusTimer?.Stop();
-        _statusTimer = null;
-
-        foreach (var pane in _panes)
+        // Let both builds finish, so a player still being built is disposed too.
+        await _starting;
+        foreach (var pane in new[] { _left, _right })
         {
+            pane.Chrome.Transport = null;
             if (pane.Player is not null)
-            {
-                try
-                {
-                    await pane.Player.DisposeAsync();
-                }
-                catch (Exception ex)
-                {
-                    _logger?.LogWarning(ex, "[{Label}] player teardown threw", pane.Config.Label);
-                }
-                pane.Player = null;
-            }
+                await DisposeLoggedAsync(pane.Player);
 
-            // The controller deactivated the sink during its dispose; here we
-            // release the native OpenAL device handle (only the audio-master
-            // pane has a sink to release).
-            if (pane.AudioSink is not null)
-            {
-                try
-                {
-                    await pane.AudioSink.DisposeAsync();
-                }
-                catch (Exception ex)
-                {
-                    _logger?.LogWarning(ex, "[{Label}] audio sink teardown threw", pane.Config.Label);
-                }
-                pane.AudioSink = null;
-            }
+            // The audio sink is ours, so it goes after its player. The view disposes its own sink.
+            await DisposeLoggedAsync(pane.Audio);
         }
 
-        _loggerFactory?.Dispose();
+        _loggerFactory.Dispose();
+        _closed = true;
         Close();
+    }
+
+    /// <summary>Disposes one resource and logs a failure, so the next one is still disposed.</summary>
+    private async Task DisposeLoggedAsync(IAsyncDisposable resource)
+    {
+        try
+        {
+            await resource.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Disposing {Resource} failed", resource.GetType().Name);
+        }
+    }
+
+    /// <summary>One side of the window: its controls, its audio sink and, once built, its player.</summary>
+    private sealed class Pane(
+        FrameFlowVideoView video,
+        FrameFlowPlayerChrome chrome,
+        TextBlock title,
+        OpenAlAudioSink audio
+    )
+    {
+        public FrameFlowVideoView Video { get; } = video;
+        public FrameFlowPlayerChrome Chrome { get; } = chrome;
+        public TextBlock Title { get; } = title;
+        public OpenAlAudioSink Audio { get; } = audio;
+        public IMediaPlayer? Player { get; set; }
     }
 }

@@ -1,373 +1,276 @@
-using System.Collections.ObjectModel;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using FrameFlow.Avalonia;
 using FrameFlow.Camera;
 using FrameFlow.Face;
-using FrameFlow.Graph;
+using FrameFlow.Inference;
 using FrameFlow.Inference.Dml;
 using FrameFlow.Media;
-using FrameFlow.Native;
 using FrameFlow.Video;
 using FrameFlow.Yolo;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Periphery;
 using Periphery.Camera;
 
 namespace FrameFlow.Examples.Camera.Inference.Dml;
 
 /// <summary>
-/// Dead-simple single-pane camera inference demo. One live
-/// <see cref="CameraSession"/> frame flows through a BGRA32 convert into a
-/// single <see cref="ObjectDetectionPreview"/> pane that runs YOLOv8 on the
-/// DirectML EP and overlays detection boxes — the post-inference image
-/// output. The model is selectable with <c>--model &lt;path.onnx&gt;</c>;
-/// the detector is shape-aware (ADR-0050) so any minted variant (640/416/320,
-/// FP16, person-only) loads without code changes. Built to A/B models on a
-/// low-power Intel iGPU.
+/// A live camera on a <c>FrameFlowVideoView</c>, with YOLOv8 running on DirectML beside the
+/// picture and its detections drawn over it. <c>--face</c> runs a BlazeFace model instead.
 /// </summary>
 public partial class MainWindow : Window
 {
-    private readonly CancellationTokenSource _windowCts = new();
-    private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
-    private ILogger<MainWindow> _logger = NullLogger<MainWindow>.Instance;
-    private DeviceSessionHost<CameraSession>? _host;
-    private DeviceInfo? _selectedDevice;
-    private Yolov8Detector? _yoloDetector;
-    private BlazeFaceDetector? _faceDetector;
-    // The pane the camera graph + stats drive. YOLO object pane by default;
-    // the BlazeFace pane when --face is passed.
-    private IInferencePreview? _activePane;
+    private readonly ILoggerFactory _loggerFactory;
+    private readonly ILogger _logger;
+    private readonly AvaloniaVideoSink _videoSink;
+    private readonly CancellationTokenSource _closingCts = new();
+    private IDisposable? _model;
+    private IDisposable? _onScreen;
+    private Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? _runModel;
+    private string _modelLabel = "";
+    private Task _starting = Task.CompletedTask;
+    private CancellationTokenSource? _captureCts;
+    private Task _capture = Task.CompletedTask;
+    private bool _closing;
+    private bool _closed;
 
-    private DispatcherTimer? _statsTimer;
-    private long _lastRendered;
-    private long _frameCount;
-    private long _lastFrameCount;
-    private DateTime _lastStatsAt;
-    private string _modelLabel = "(none)";
-    private string _cameraLabel = "(none)";
-
-    public ObservableCollection<DeviceInfo> Cameras { get; } = new();
-
-    /// <summary>Optional ONNX model path (<c>--model</c>); null downloads stock yolov8n.</summary>
-    public string? ModelPath { get; set; }
-
-    /// <summary>
-    /// Optional BlazeFace ONNX path (<c>--face</c>). When set, the example
-    /// runs face detection (box + 6 keypoints) instead of YOLO; takes
-    /// precedence over <see cref="ModelPath"/>.
-    /// </summary>
-    public string? FaceModelPath { get; set; }
-
-
-    /// <summary>
-    /// Which enumerated camera to auto-select (<c>--camera &lt;idx&gt;</c>,
-    /// default 0). The first camera is connected automatically on startup;
-    /// the picker still lets you switch.
-    /// </summary>
-    public int CameraIndex { get; set; }
-
-    public double ExitAfterSeconds { get; set; }
+    public string? ModelPath { get; init; }
+    public string? FaceModelPath { get; init; }
+    public int CameraIndex { get; init; }
 
     public MainWindow()
     {
         InitializeComponent();
-        DevicePicker.ItemsSource = Cameras;
-        DevicePicker.SelectionChanged += OnDeviceSelected;
-        Closing += OnClosing;
+        _loggerFactory = ExampleLogging.CreateFactory(
+            "camera-inference-dml.log", onFailure: ex => Title += $"  [no log file: {ex.Message}]");
+        _logger = _loggerFactory.CreateLogger<MainWindow>();
+        VideoView.LoggerFactory = _loggerFactory;
+        _videoSink = VideoView.EnsureSink();
     }
 
-    protected override async void OnLoaded(RoutedEventArgs e)
+    private async Task CaptureAsync(DeviceInfo camera, CancellationToken ct)
     {
-        base.OnLoaded(e);
-
-        _loggerFactory = ExampleLogging.CreateFactory(
-            "camera-inference-dml.log",
-            onFailure: ex => Title += $"  [no log file: {ex.Message}]"
-        );
-        _logger = _loggerFactory.CreateLogger<MainWindow>();
-        var faceMode = !string.IsNullOrEmpty(FaceModelPath);
-        _modelLabel = faceMode
-            ? $"blazeface ({Path.GetFileName(FaceModelPath)})"
-            : ModelPath is null ? "yolov8n (auto-download)" : Path.GetFileName(ModelPath);
-        _logger.LogInformation(
-            "Camera inference ready. mode={Mode} model={Model}",
-            faceMode ? "face" : "object",
-            (faceMode ? FaceModelPath : ModelPath) ?? "(stock yolov8n)");
-
-        // FFmpeg bootstrap for the BGRA32 ConvertPixelFormat (libswscale)
-        // stage. The resolver would install itself on the first native call
-        // (ADR-0070); bootstrapping here chooses the binaries up front and
-        // skips the HW-decode probe — cameras don't decode.
-        var ffmpeg = new FrameFlowBootstrapper(
-            new FrameFlowNativeOptions { SkipHardwareProbe = true },
-            _loggerFactory).Initialize();
-        if (!ffmpeg.IsSuccess)
+        CameraSession? session = null;
+        try
         {
-            _logger.LogError("FFmpeg bootstrap failed: {Message}", ffmpeg.Message);
-            StatusText.Text = $"FFmpeg bootstrap failed: {ffmpeg.Message}";
-            return;
+            session = await CameraSession.For(camera)
+                .PreferPixelFormat(CameraPixelFormat.Bgra32)
+                // The formats FrameFlow.Camera turns into frames.
+                .AllowOnlyPixelFormats(
+                    CameraPixelFormat.Bgra32, CameraPixelFormat.Rgba32, CameraPixelFormat.Nv12,
+                    CameraPixelFormat.Yuy2, CameraPixelFormat.Uyvy)
+                .MaxResolution(1280, 720)
+                .WithSessionOptions(o => o with { BufferCount = CameraBufferCount() ?? o.BufferCount })
+                .WithLogger(_loggerFactory.CreateLogger<CameraSession>())
+                .OpenAsync(ct);
+
+            // Cancelled when the graph ends, so the camera's pump stops even if the graph failed.
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            await using var source = session.AsPushVideoFrameSource(stop.Token, _loggerFactory);
+            Dispatcher.UIThread.Post(() => StatusText.Text = $"{camera.Name}: {_modelLabel}");
+            try
+            {
+                await BuildGraph(source.Source).RunAsync(stop.Token);
+            }
+            finally
+            {
+                stop.Cancel();
+            }
         }
-
-        _statsTimer = new DispatcherTimer(
-            TimeSpan.FromSeconds(1), DispatcherPriority.Background, OnStatsTick);
-        _statsTimer.Start();
-        _lastStatsAt = DateTime.UtcNow;
-
-        if (faceMode)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            DetectionPane.IsVisible = false;
-            FacePane.IsVisible = true;
-            _activePane = FacePane;
-            await BootstrapFaceAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Capture from {Camera} failed.", camera.Name);
+            Overlay.Clear();
+            Dispatcher.UIThread.Post(() => StatusText.Text = $"Capture from {camera.Name} failed: {ex.Message}");
+        }
+        finally
+        {
+            if (session is not null)
+                await CloseCameraAsync(session);
+        }
+    }
+
+    // Camera, converted to BGRA, to the view. _runModel is chain.Infer(id, model, onScreen.Post),
+    // which runs the model on a branch that takes the newest frame.
+    private FrameFlow.Graph.Graph BuildGraph(SourceNode<IVideoFrame> camera)
+    {
+        var graph = new FrameFlow.Graph.Graph();
+        var bgra = graph.Pipeline(camera).Then(VideoOperators.ConvertPixelFormat("to-bgra", PixelFormat.Bgra32));
+        _runModel!(bgra).To(_videoSink.AsSinkNode());
+        return graph;
+    }
+
+    // As many buffers as the graph holds of the camera's frames, and one for the frame the push
+    // source keeps ahead of it, lets the session hand every frame over without a copy.
+    private int? CameraBufferCount()
+    {
+        var standIn = new SourceNode<IVideoFrame>("camera-source", static _ => default);
+        return BuildGraph(standIn).FrameBudgetFor(standIn.Output).Frames + 1;
+    }
+
+    // Closing a camera can hang after an unclean unplug, so give up after two seconds rather
+    // than hold up the next capture or the window closing. Opening that camera again can then
+    // fail until the OS lets go of it, and Refresh tries again.
+    private async Task CloseCameraAsync(CameraSession session)
+    {
+        try
+        {
+            await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (TimeoutException)
+        {
+            _logger.LogWarning("The camera did not close within two seconds; abandoning it.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Closing the camera failed.");
+        }
+    }
+
+    private async Task LoadModelAsync()
+    {
+        // DirectML, and the CPU when DirectML cannot open the model.
+        var factory = InferenceSessionFactoryBuilder.Create(
+            ExecutionProvider.DirectML,
+            new Dictionary<ExecutionProvider, Func<string, IInferenceSession>>
+            {
+                [ExecutionProvider.DirectML] = path => new DmlInferenceSession(path),
+                [ExecutionProvider.Cpu] = path => new CpuInferenceSession(path),
+            },
+            loggerFactory: _loggerFactory);
+
+        // CreateAsync opens the session, and compiles the model for the GPU, on the calling
+        // thread, so it runs on the pool.
+        if (FaceModelPath is null)
+        {
+            var yolo = await Task.Run(() => Yolov8Detector.CreateAsync(
+                factory, ModelPath, _closingCts.Token, _loggerFactory));
+            _model = yolo;
+            Use(yolo, "yolo", $"YOLOv8 on {factory.ActiveProvider}", Overlay.Show);
         }
         else
         {
-            _activePane = DetectionPane;
-            await BootstrapYoloAsync().ConfigureAwait(true);
+            var faces = await Task.Run(() => BlazeFaceDetector.CreateAsync(factory, FaceModelPath, _loggerFactory));
+            _model = faces;
+            Use(faces, "blazeface", $"BlazeFace on {factory.ActiveProvider}", Overlay.Show);
         }
 
-        // RefreshDevicesAsync auto-selects the first camera (CameraIndex)
-        // when nothing is connected yet — no UI click needed.
-        await RefreshDevicesAsync().ConfigureAwait(true);
-
-        if (ExitAfterSeconds > 0)
-        {
-            var exitTimer = new DispatcherTimer(
-                TimeSpan.FromSeconds(ExitAfterSeconds), DispatcherPriority.Background,
-                (_, _) => { _logger.LogInformation("--exit-after: closing."); Close(); });
-            exitTimer.Start();
-        }
+        _logger.LogInformation("{Model} ready.", _modelLabel);
     }
 
-    private async Task BootstrapYoloAsync()
+    // PresentedResults hands each result on when the view presents a frame at or after the one it
+    // came from, and the boxes stay until the next, so on a moving object they trail by about one
+    // inference.
+    private void Use<T>(IImageModel<T> model, string id, string label, Action<InferenceResult<T>> show)
+    {
+        var onScreen = new PresentedResults<T>(_videoSink);
+        onScreen.Presented += (_, result) => show(result);
+        onScreen.Cleared += (_, _) => Overlay.Clear();
+        _onScreen = onScreen;
+        _runModel = chain => chain.Infer(id, model, onScreen.Post);
+        _modelLabel = label;
+    }
+
+    protected override void OnLoaded(RoutedEventArgs e)
+    {
+        base.OnLoaded(e);
+        _starting = StartAsync();
+    }
+
+    private async Task StartAsync()
     {
         try
         {
-            _yoloDetector = await Yolov8Detector.CreateAsync(
-                sessionFactory: path => new DmlInferenceSession(path),
-                overrideModelPath: ModelPath,
-                ct: _windowCts.Token,
-                loggerFactory: _loggerFactory).ConfigureAwait(true);
-            DetectionPane.SetDetector(_yoloDetector);
-            _logger.LogInformation("YOLOv8 detector ready (model={Model}).", _modelLabel);
+            await LoadModelAsync();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "YOLOv8 bootstrap failed for model {Model}.", _modelLabel);
-            DetectionPane.SetUnavailable($"{ex.GetType().Name}");
-            StatusText.Text = $"Model load failed ({_modelLabel}): {ex.Message}";
-        }
-    }
-
-    private async Task BootstrapFaceAsync()
-    {
-        try
-        {
-            // BlazeFace ships no downloader (ADR-0051) — FaceModelPath must
-            // point at a supplied ONNX. Session construction + warmup run off
-            // the UI thread (DML PSO compile is ~100-300 ms).
-            _faceDetector = await Task.Run(
-                () => BlazeFaceDetector.Create(
-                    new DmlInferenceSession(FaceModelPath!),
-                    _loggerFactory)).ConfigureAwait(true);
-            FacePane.SetDetector(_faceDetector);
-            _logger.LogInformation("BlazeFace detector ready (model={Model}).", _modelLabel);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "BlazeFace bootstrap failed for model {Model}.", _modelLabel);
-            FacePane.SetUnavailable($"{ex.GetType().Name}");
-            StatusText.Text = $"Face model load failed ({_modelLabel}): {ex.Message}";
-        }
-    }
-
-    // ── Device discovery + connect ────────────────────────────────────
-
-    private async Task RefreshDevicesAsync()
-    {
-        try
-        {
-            var devices = await CameraDevice.EnumerateAsync(_windowCts.Token).ConfigureAwait(true);
-            Cameras.Clear();
-            foreach (var d in devices) Cameras.Add(d);
-            _logger.LogInformation("Enumerated {Count} camera(s).", devices.Count);
-            if (devices.Count == 0)
-            {
-                StatusText.Text = "No cameras detected. Plug one in and click Refresh.";
+            if (_closing)
                 return;
-            }
+            _logger.LogError(ex, "The model failed to load.");
+            StatusText.Text = $"The model failed to load: {ex.Message}";
+            return;
+        }
 
-            // Auto-select the first camera (or CameraIndex) when nothing is
-            // connected yet — the dead-simple default. Setting SelectedIndex
-            // fires OnDeviceSelected, which connects. Re-selecting in the
-            // picker switches cameras manually.
-            if (DevicePicker.SelectedItem is null)
-            {
-                var idx = Math.Clamp(CameraIndex, 0, Cameras.Count - 1);
-                _logger.LogInformation(
-                    "Auto-selecting camera [{Idx}] {Name}.", idx, Cameras[idx].Name ?? "(unnamed)");
-                DevicePicker.SelectedIndex = idx;
-            }
+        await RefreshCamerasAsync();
+    }
+
+    // Nothing starts once the window is closing: it would outlive the model and the log.
+    private async Task RefreshCamerasAsync()
+    {
+        if (_closing)
+            return;
+        try
+        {
+            var cameras = await CameraDevice.EnumerateAsync(_closingCts.Token);
+            if (_closing)
+                return;
+            DevicePicker.ItemsSource = cameras;
+            if (cameras.Count == 0)
+                StatusText.Text = "No cameras found.";
+            else
+                DevicePicker.SelectedIndex = Math.Clamp(CameraIndex, 0, cameras.Count - 1);
         }
         catch (Exception ex)
         {
+            if (_closing)
+                return;
             _logger.LogError(ex, "Camera enumeration failed.");
-            StatusText.Text = $"Enumeration failed: {ex.Message}";
+            StatusText.Text = $"Camera enumeration failed: {ex.Message}";
         }
     }
 
-    private async void OnRefreshClick(object? sender, RoutedEventArgs e) =>
-        await RefreshDevicesAsync().ConfigureAwait(true);
+    private async void OnRefreshClick(object? sender, RoutedEventArgs e) => await RefreshCamerasAsync();
 
-    private async void OnDeviceSelected(object? sender, SelectionChangedEventArgs e)
+    private void OnCameraSelected(object? sender, SelectionChangedEventArgs e)
     {
-        if (DevicePicker.SelectedItem is not DeviceInfo device) return;
-        if (ReferenceEquals(device, _selectedDevice)) return;
-        _selectedDevice = device;
-        await ConnectAsync(device).ConfigureAwait(true);
-    }
-
-    private async Task ConnectAsync(DeviceInfo device)
-    {
-        await DisconnectAsync().ConfigureAwait(true);
-        _cameraLabel = device.Name ?? "(unnamed)";
-        StatusText.Text = $"Connecting to {_cameraLabel}…";
-        try
-        {
-            _host = await DeviceSessionHost<CameraSession>.ForDeviceAsync(
-                device,
-                createSession: CreateSessionAsync,
-                onSessionEnded: _ => Task.CompletedTask,
-                whileSessionActive: RunGraphAsync,
-                ct: _windowCts.Token).ConfigureAwait(true);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Camera host failed to start.");
-            StatusText.Text = $"Failed to start: {ex.Message}";
-        }
-    }
-
-    private async Task DisconnectAsync()
-    {
-        if (_host is null) return;
-        var host = _host;
-        _host = null;
-        try { await host.DisposeAsync().ConfigureAwait(true); }
-        catch (Exception ex) { _logger.LogWarning(ex, "Host teardown threw."); }
-    }
-
-    private Task<CameraSession> CreateSessionAsync(DeviceInfo device, CancellationToken ct) =>
-        CameraSession.For(device)
-            .PreferPixelFormat(CameraPixelFormat.Bgra32)
-            .AllowOnlyPixelFormats(
-                CameraPixelFormat.Bgra32,
-                CameraPixelFormat.Rgba32,
-                CameraPixelFormat.Nv12,
-                CameraPixelFormat.Yuy2,
-                CameraPixelFormat.Uyvy)
-            .MaxResolution(1280, 720)
-            // The graph holds three camera frames (the source's, the edge's and the
-            // converter's) and the push source's bridge one more, so the session needs four to
-            // hand them over without copying (ADR-0081).
-            .WithSessionOptions(o => o with { BufferCount = 4 })
-            .WithLogger(_loggerFactory.CreateLogger<CameraSession>())
-            .OpenAsync(ct);
-
-    private async Task RunGraphAsync(CameraSession session, CancellationToken ct)
-    {
-        Interlocked.Exchange(ref _frameCount, 0);
-
-        // Push-style source (library): a background pump drains
-        // session.CaptureAsync into a capacity-1 DropOldest bridge (LatestOnly —
-        // a slow inference never sees stale frames), exposed as a graph source.
-        await using var camSource = session.AsPushVideoFrameSource(ct, _loggerFactory);
-
-        // source → convert(BGRA32) → single detection-overlay sink.
-        var graph = new FrameFlow.Graph.Graph();
-        graph
-            .Pipeline(camSource.Source)
-            .Then(VideoOperators.ConvertPixelFormat("camera-convert", PixelFormat.Bgra32))
-            .To(new SinkNode<IVideoFrame>(
-                "detect-sink",
-                async (item, frameCt) =>
-                {
-                    Interlocked.Increment(ref _frameCount);
-
-                    // The pane takes its own reference to the converted frame
-                    // (ADR-0080); the converter has already released the camera
-                    // lease. PresentAsync returns immediately (queue-of-one), so
-                    // this sink never blocks on inference — slow models drop
-                    // frames, they don't stall.
-                    if (_activePane is not { } pane)
-                        return;
-                    await pane.PresentAsync(item.AddRef(), frameCt).ConfigureAwait(false);
-                }));
-
-        Dispatcher.UIThread.Post(() => StatusText.Text = $"Capturing from {_cameraLabel}.");
-
-        try
-        {
-            await graph.RunAsync(ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) { /* shutdown */ }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Capture graph faulted.");
-            Dispatcher.UIThread.Post(() => StatusText.Text = $"Capture error: {ex.Message}");
-        }
-
-        // `await using camSource` (above) awaits the pump's teardown here.
-    }
-
-    // ── Stats ─────────────────────────────────────────────────────────
-
-    private void OnStatsTick(object? sender, EventArgs e)
-    {
-        var now = DateTime.UtcNow;
-        var dt = (now - _lastStatsAt).TotalSeconds;
-        if (dt < 0.5) return;
-        _lastStatsAt = now;
-
-        var pane = _activePane;
-        if (pane is null)
+        if (_closing || DevicePicker.SelectedItem is not DeviceInfo camera || _runModel is null)
             return;
 
-        var rendered = pane.RenderedFrameCount;
-        var renderFps = (rendered - _lastRendered) / dt;
-        _lastRendered = rendered;
-
-        var frames = Interlocked.Read(ref _frameCount);
-        var sourceFps = (frames - _lastFrameCount) / dt;
-        _lastFrameCount = frames;
-
-        StatusText.Text =
-            $"model={_modelLabel}   cam={_cameraLabel}   "
-            + $"source={sourceFps,5:F1} fps   detect={renderFps,5:F1} fps   "
-            + $"dropped={pane.DroppedWhileBusyCount}   {pane.StatusText}\n"
-            + $"[ms] {pane.TimingBreakdown}";
-
-        if (_logger.IsEnabled(LogLevel.Debug) && sourceFps > 0)
+        // Each capture starts once the one before it has stopped, so two never run at once.
+        Overlay.Clear();
+        _captureCts?.Cancel();
+        _captureCts = new CancellationTokenSource();
+        var ct = _captureCts.Token;
+        var previous = _capture;
+        _capture = Task.Run(async () =>
         {
-            _logger.LogDebug(
-                "Stats: model={Model} source={SourceFps:F1}fps detect={DetectFps:F1}fps "
-                + "dropped={Dropped} {Timing}",
-                _modelLabel, sourceFps, renderFps, pane.DroppedWhileBusyCount,
-                pane.TimingBreakdown);
-        }
+            await previous;
+            await CaptureAsync(camera, ct);
+        });
     }
 
-    private async void OnClosing(object? sender, WindowClosingEventArgs e)
+    protected override async void OnClosing(WindowClosingEventArgs e)
     {
-        _statsTimer?.Stop();
-        try { _windowCts.Cancel(); } catch { /* idempotent */ }
-        await DisconnectAsync().ConfigureAwait(true);
-        _yoloDetector?.Dispose();
-        _yoloDetector = null;
-        _faceDetector?.Dispose();
-        _faceDetector = null;
+        base.OnClosing(e);
+        if (_closed)
+            return;
+
+        // The graph uses the model and the view's sink, so it stops before they go.
+        e.Cancel = true;
+        if (_closing)
+            return;
+        _closing = true;
+
+        _closingCts.Cancel();
+        _captureCts?.Cancel();
+        await _starting;
+        await _capture;
+        _onScreen?.Dispose();
+        _model?.Dispose();
+
+        _closed = true;
+        Dispatcher.UIThread.Post(Close);
+    }
+
+    // After the view has released its sink, which logs as it goes.
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
         _loggerFactory.Dispose();
     }
 }

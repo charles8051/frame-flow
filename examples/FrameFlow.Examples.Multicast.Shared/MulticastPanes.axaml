@@ -1,0 +1,60 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ff="clr-namespace:FrameFlow.Avalonia;assembly=FrameFlow.Avalonia"
+             xmlns:local="clr-namespace:FrameFlow.Examples.Multicast.Shared"
+             x:Class="FrameFlow.Examples.Multicast.Shared.MulticastPanes">
+  <UserControl.Styles>
+    <Style Selector="Border.pane">
+      <Setter Property="Background" Value="#252525"/>
+      <Setter Property="CornerRadius" Value="4"/>
+      <Setter Property="Padding" Value="6"/>
+      <Setter Property="Margin" Value="4"/>
+    </Style>
+    <Style Selector="DockPanel.header">
+      <Setter Property="Height" Value="32"/>
+      <Setter Property="Margin" Value="0,0,0,6"/>
+    </Style>
+    <Style Selector="DockPanel.header > TextBlock">
+      <Setter Property="Foreground" Value="#dddddd"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+  </UserControl.Styles>
+
+  <Grid ColumnDefinitions="*,*,*">
+    <Border Classes="pane" Grid.Column="0">
+      <DockPanel>
+        <DockPanel Classes="header" DockPanel.Dock="Top">
+          <TextBlock Text="Original"/>
+        </DockPanel>
+        <Panel Background="Black">
+          <ff:FrameFlowVideoView Name="DirectView"/>
+        </Panel>
+      </DockPanel>
+    </Border>
+
+    <Border Classes="pane" Grid.Column="1">
+      <DockPanel>
+        <DockPanel Classes="header" DockPanel.Dock="Top">
+          <TextBlock Name="DetectionTitle" Text="Object detection"/>
+        </DockPanel>
+        <Panel Background="Black">
+          <ff:FrameFlowVideoView Name="DetectionView"/>
+          <local:DetectionOverlay Name="Overlay"/>
+        </Panel>
+      </DockPanel>
+    </Border>
+
+    <Border Classes="pane" Grid.Column="2">
+      <DockPanel>
+        <DockPanel Classes="header" DockPanel.Dock="Top">
+          <ComboBox Name="FilterPicker" DockPanel.Dock="Right" MinWidth="120" VerticalAlignment="Center"/>
+          <TextBlock Text="Color filter"/>
+        </DockPanel>
+        <Panel Background="Black">
+          <ff:FrameFlowVideoView Name="FilteredView"/>
+        </Panel>
+      </DockPanel>
+    </Border>
+  </Grid>
+</UserControl>

@@ -3,30 +3,20 @@ using Microsoft.Extensions.Logging;
 namespace FrameFlow.Examples.Common;
 
 /// <summary>
-/// The examples' log sink: a file under <c>&lt;repo&gt;/logs/</c>, with no flag.
+/// The examples' log: a file under <c>&lt;repo&gt;/logs/</c>, named by the example.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Every example used to hand-roll a <c>--log-file</c> parser — eleven copies of
-/// the same loop, and on a <c>WinExe</c> the only way to see anything at all.
-/// Driving and watching a run is what <c>tools/FrameFlow.TestBench</c> is for
-/// (ADR-0068), so the flag is gone and the path is fixed. An example logs to a
-/// predictable place or it does not log.
-/// </para>
-/// <para>
 /// <see cref="FileLoggerProvider"/> opens its file in the constructor with
 /// <see cref="FileShare.Read"/>, so a second instance of an example cannot have
-/// the canonical name. It takes <c>&lt;name&gt;.1.log</c> instead, and so on: an
-/// example started twice keeps its diagnostics rather than losing them to the
-/// first instance's handle. The canonical name always belongs to whichever
-/// instance opened it, and every file's first line carries the time it was
-/// opened, so the runs can be told apart.
+/// the canonical name. It takes <c>&lt;name&gt;.1.log</c> instead, and so on, and
+/// every file's first line carries the time it was opened, so the runs can be told
+/// apart.
 /// </para>
 /// <para>
 /// When no candidate can be opened at all — a read-only install, no writable
-/// repository root — setup does not throw. An example must still start:
-/// diagnostics being unavailable is not a reason to fail to run. The reason
-/// goes to <c>onFailure</c>, and to stderr when the caller passes none.
+/// repository root — setup does not throw, and the example runs without a file log.
+/// The reason goes to <c>onFailure</c>, and to stderr when the caller passes none.
 /// </para>
 /// </remarks>
 public static class ExampleLogging
@@ -38,7 +28,7 @@ public static class ExampleLogging
     /// Adds a file provider writing to
     /// <c>&lt;repo&gt;/logs/&lt;<paramref name="logFileName"/>&gt;</c>, or the first free
     /// numbered alternative. For examples that own an <see cref="ILoggingBuilder"/>
-    /// already, such as the Generic Host's <c>ConfigureLogging</c>. Never throws.
+    /// already, such as a Generic Host's <c>builder.Logging</c>. Never throws.
     /// </summary>
     /// <param name="builder">The builder to add the provider to.</param>
     /// <param name="logFileName">A bare filename, e.g. <c>sdl-player.log</c>.</param>

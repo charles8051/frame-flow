@@ -1,33 +1,27 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
-using FrameFlow.Native;
 
 namespace FrameFlow.Examples.DualPlayer;
 
 public class App : Application
 {
-    public override void Initialize()
-    {
-        AvaloniaXamlLoader.Load(this);
-
-        // Bootstrap FFmpeg once for the whole process before either player
-        // starts. The bootstrapper caches its result, so each player's
-        // BuildPlayerAsync re-invocation is cheap — but doing it here
-        // surfaces a native-load failure before any window appears.
-        var bootstrapper = new FrameFlowBootstrapper(new FrameFlowNativeOptions());
-        var result = bootstrapper.Initialize();
-        if (!result.IsSuccess)
-            System.Console.Error.WriteLine($"FFmpeg bootstrap failed: {result.Message}");
-    }
+    public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
     public override void OnFrameworkInitializationCompleted()
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var args = desktop.Args ?? System.Array.Empty<string>();
-            var options = DualPlayerOptions.Parse(args);
-            desktop.MainWindow = new MainWindow(options);
+            // [left] [right]: one path plays in both panes, none plays the test corpus clip.
+            var corpus = Path.Combine(
+                RepoRoot.Find(), "tests", "corpus", "files", "test-1080p-h264-aac.mp4");
+            var (left, right) = desktop.Args switch
+            {
+                [var l, var r] => (l, r),
+                [var both] => (both, both),
+                _ => (corpus, corpus),
+            };
+            desktop.MainWindow = new MainWindow { LeftPath = left, RightPath = right };
         }
 
         base.OnFrameworkInitializationCompleted();
