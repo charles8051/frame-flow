@@ -31,7 +31,8 @@ namespace FrameFlow.Avalonia;
 /// </para>
 /// <para>
 /// The bar stops following its transport when it leaves the visual tree. When it comes back, it
-/// shows what the transport reports then and follows it again.
+/// shows what the transport reports then and follows it again. A transport set while the bar is
+/// out is followed from its return.
 /// </para>
 /// <para>
 /// A refused <c>PlayAsync</c> / <c>PauseAsync</c> / <c>SeekAsync</c> /
@@ -137,7 +138,7 @@ public sealed class FrameFlowTransportBar : StackPanel
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        _follower.Stop();
+        _follower.Suspend();
         base.OnDetachedFromVisualTree(e);
     }
 

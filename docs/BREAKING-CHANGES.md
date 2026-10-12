@@ -333,9 +333,11 @@ if a test exercises the refusal. Nothing else needs to change.
   `Transport` is set. A state or repeat-mode change posted to the UI thread before a control let go
   of a transport, by leaving the tree or by a rebind, is dropped when it arrives after. The badge,
   the stream summary and the bar used to show it, except a repeat-mode change from a transport the
-  bar had been rebound away from, which its Loop toggle already dropped. A transport disposed while its control was out of
-  the tree is not followed when the control comes back, and the control keeps what it showed until
-  the next transport is bound. #643.
+  bar had been rebound away from, which its Loop toggle already dropped. A transport set on a
+  control while it is out of the tree is followed from when the control comes back, not at once;
+  a control bound before it first joins the tree still follows from the bind. A transport disposed
+  while its control was out of the tree is not followed when the control comes back, and the
+  control keeps what it showed until the next transport is bound. #643.
 
 ## `v0.15.0` — since `v0.14.0`
 

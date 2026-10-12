@@ -305,7 +305,7 @@ public sealed class FrameFlowPlayerView : UserControl
         _pointerHostTopLevel = null;
         _chromeHideTimer?.Stop();
         _chromeHideTimer = null;
-        _chromeFollower.Stop();
+        _chromeFollower.Suspend();
         base.OnDetachedFromVisualTree(e);
     }
 

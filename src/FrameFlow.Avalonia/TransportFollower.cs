@@ -9,7 +9,8 @@ namespace FrameFlow.Avalonia;
 /// <summary>
 /// Keeps a chrome control following its bound <see cref="IMediaTransport"/>: the subscriptions
 /// that track the transport start when it is bound, stop when the control leaves the visual tree,
-/// and start again when the control comes back (#643).
+/// and start again when the control comes back (#643). A transport bound while the control is out
+/// of the tree is followed from its return.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,7 +22,10 @@ namespace FrameFlow.Avalonia;
 /// such as the transport bar's <c>LoopByDefault</c>, stays with the bind.
 /// </para>
 /// <para>
-/// Notifications are posted to the UI thread, so one raised before <see cref="Stop"/> can be
+/// A control bound before it first joins the tree follows from the bind, as it always has.
+/// </para>
+/// <para>
+/// Notifications are posted to the UI thread, so one raised before a follow stops can be
 /// delivered after it, from a transport the control has let go of or over values read on the
 /// control's return. A <see cref="Follow"/> drops whatever it delivers once it has stopped. UI
 /// thread only: the stop and the delivery both run there, which is what makes that check sound.
@@ -33,14 +37,19 @@ internal sealed class TransportFollower(Action<IMediaTransport, TransportFollowe
 {
     private Follow? _live;
 
+    // Between Suspend and Resume: the control is out of the visual tree.
+    private bool _suspended;
+
     /// <summary>
     /// Follows <paramref name="transport"/> in place of whatever was followed, or nothing when it
-    /// is <see langword="null"/>. Call when the control's transport changes.
+    /// is <see langword="null"/>. Call when the control's transport changes. While the control is
+    /// out of the tree this only lets go of the old transport; <see cref="Resume"/> takes up the
+    /// new one.
     /// </summary>
     public void Rebind(IMediaTransport? transport)
     {
-        Stop();
-        if (transport is not null)
+        End();
+        if (transport is not null && !_suspended)
             Start(transport);
     }
 
@@ -55,6 +64,7 @@ internal sealed class TransportFollower(Action<IMediaTransport, TransportFollowe
     /// </remarks>
     public void Resume(IMediaTransport? transport)
     {
+        _suspended = false;
         if (_live is not null || transport is null)
             return;
         try
@@ -67,8 +77,16 @@ internal sealed class TransportFollower(Action<IMediaTransport, TransportFollowe
         }
     }
 
-    /// <summary>Stops following. Call when the control leaves the visual tree.</summary>
-    public void Stop()
+    /// <summary>
+    /// Stops following until <see cref="Resume"/>. Call when the control leaves the visual tree.
+    /// </summary>
+    public void Suspend()
+    {
+        _suspended = true;
+        End();
+    }
+
+    private void End()
     {
         var live = _live;
         _live = null;
@@ -90,7 +108,7 @@ internal sealed class TransportFollower(Action<IMediaTransport, TransportFollowe
         }
         catch
         {
-            Stop();
+            End();
             throw;
         }
     }

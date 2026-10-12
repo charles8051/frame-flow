@@ -59,7 +59,7 @@ public sealed class FrameFlowStreamSummary : TextBlock
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        _follower.Stop();
+        _follower.Suspend();
         base.OnDetachedFromVisualTree(e);
     }
 

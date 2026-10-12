@@ -24,7 +24,8 @@ namespace FrameFlow.Avalonia;
 /// (or set to <see langword="null"/>) at any time — the badge disposes
 /// the prior subscription and re-binds. The badge lets go of the
 /// subscription when it leaves the visual tree, and seeds and subscribes
-/// again when it comes back.
+/// again when it comes back. A transport assigned while it is out is
+/// seeded and followed from its return.
 /// </para>
 /// <para>
 /// This is intentionally a leaf control: text + color, nothing else.
@@ -78,7 +79,7 @@ public sealed class FrameFlowStateBadge : TextBlock
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        _follower.Stop();
+        _follower.Suspend();
         base.OnDetachedFromVisualTree(e);
     }
 

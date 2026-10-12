@@ -92,6 +92,35 @@ public sealed class ChromeReattachTests
     }
 
     [AvaloniaFact]
+    public void StateBadge_ATransportBoundWhileOut_IsFollowedFromTheReturn()
+    {
+        var first = new FakeTransport { State = PlaybackState.Paused };
+        var badge = new FrameFlowStateBadge { Transport = first };
+        var window = Show(badge);
+        try
+        {
+            Detach(window, badge);
+            var second = new FakeTransport { State = PlaybackState.Playing };
+            badge.Transport = second;
+
+            Assert.Equal(0, first.StateChangedSubject.Count);
+            Assert.Equal(0, second.StateChangedSubject.Count);
+
+            Attach(window, badge);
+            Assert.Equal(1, second.StateChangedSubject.Count);
+            Assert.Equal("Playing", badge.Text);
+
+            second.Push(PlaybackState.Ended);
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal("Ended", badge.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void StateBadge_AChangePostedBeforeTheDetach_DoesNotOverwriteWhatTheReattachRead()
     {
         var transport = new FakeTransport { State = PlaybackState.Paused };
@@ -287,6 +316,32 @@ public sealed class ChromeReattachTests
             Attach(window, bar);
             Assert.Equal(1, transport.StateChangedSubject.Count);
             Assert.Equal(1, transport.RepeatModeChangedSubject.Count);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void TransportBar_ATransportBoundWhileOut_IsFollowedFromTheReturn()
+    {
+        var bar = new FrameFlowTransportBar { Transport = new FakeTransport() };
+        var window = Show(bar);
+        try
+        {
+            Detach(window, bar);
+            var next = new FakeTransport { State = PlaybackState.Playing, RepeatMode = RepeatMode.All };
+            bar.Transport = next;
+
+            Assert.Equal(0, next.StateChangedSubject.Count);
+            Assert.Equal(0, next.RepeatModeChangedSubject.Count);
+
+            Attach(window, bar);
+            Assert.Equal(1, next.StateChangedSubject.Count);
+            Assert.Equal(1, next.RepeatModeChangedSubject.Count);
+            Assert.True(ButtonNamed(bar, "Pause").IsEnabled);
+            Assert.Equal("Loop all", LoopButton(bar).Content);
         }
         finally
         {
