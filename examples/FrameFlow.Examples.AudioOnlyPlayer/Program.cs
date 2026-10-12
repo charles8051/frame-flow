@@ -1,11 +1,12 @@
 // Plays the audio of a media file through OpenAL, with no video, and exits at the end.
 //
-// FrameFlowPass runs a file through once. It holds no clock, but an audio device takes samples
-// only as fast as it plays them, so a pass into an audio sink plays in real time. For pause,
-// seek, a queue or video, use FrameFlowPlayer.
+// FrameFlowPlayer paces playback and runs the audio sink for it. WaitForEndAsync completes once
+// the device has played the last sample, so the process exits after the end is heard.
 
 using System.Runtime.InteropServices;
 using FrameFlow.Audio.OpenAL;
+using FrameFlow.Media;
+using FrameFlow.Playback;
 using FrameFlow.Player;
 using Microsoft.Extensions.Logging;
 
@@ -16,21 +17,22 @@ if (!ExampleArgs.TryReadInputPath(args, Usage, out var inputPath))
 using var loggerFactory = ExampleLogging.CreateFactory("audio-only-player.log");
 
 await using var audio = new OpenAlAudioSink(loggerFactory.CreateLogger<OpenAlAudioSink>());
-await using var pass = await FrameFlowPass.Create(inputPath)
+await using var player = await FrameFlowPlayer.Create()
+    .WithMedia(inputPath)
     .WithAudioSink(audio)
     .WithLogger(loggerFactory)
-    .BuildAsync();
+    .BuildPlayerAsync();
 
-if (pass.Info.AudioStreams.Count == 0)
+if (player.MediaInfo is not { AudioStreams.Count: > 0 } info)
 {
     Console.Error.WriteLine($"No audio stream in {inputPath}.");
     return 1;
 }
 
-var stream = pass.Info.AudioStreams[0];
+var stream = info.AudioStreams[0];
 Console.WriteLine(
     $"{inputPath}: {stream.CodecName}, {stream.SampleRate} Hz, {stream.Channels} ch, "
-        + $"{pass.Info.Duration:hh\\:mm\\:ss\\.fff}"
+        + $"{info.Duration:hh\\:mm\\:ss\\.fff}"
 );
 Console.WriteLine("Playing. Press Ctrl+C to stop.");
 
@@ -44,18 +46,30 @@ using var ctrlC = PosixSignalRegistration.Create(
     }
 );
 
+// A file that fails part-way through is an item failure: the player reports it here and then
+// ends, so WaitForEndAsync alone would report success.
+PlaybackError? failure = null;
+using var errors = player.ErrorOccurred.Subscribe(error => failure ??= error);
+
+var play = await player.PlayAsync();
+if (!play.IsSuccess)
+{
+    Console.Error.WriteLine($"Could not play {inputPath}: {play.Error.Message}");
+    return 1;
+}
+
 try
 {
-    await pass.RunToCompletionAsync(stop.Token);
+    var ended = await player.WaitForEndAsync(stop.Token);
+    if ((ended.Error ?? failure) is { } error)
+    {
+        Console.Error.WriteLine($"Playback failed: {error.Message}");
+        return 1;
+    }
 }
 catch (OperationCanceledException) when (stop.IsCancellationRequested)
 {
     Console.WriteLine("Stopped.");
-}
-finally
-{
-    // A pass starts the audio sink and leaves it running.
-    await audio.DeactivateAsync();
 }
 
 return 0;

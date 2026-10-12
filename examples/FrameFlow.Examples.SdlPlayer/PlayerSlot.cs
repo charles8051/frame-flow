@@ -49,7 +49,7 @@ internal sealed class PlayerSlot(
         // there, so the next command gets a fresh one.
         if (_player?.State == PlaybackState.Error)
         {
-            _repeat = _player.GetDiagnostics().RepeatMode;
+            _repeat = _player.RepeatMode;
             await _player.DisposeAsync();
             _player = null;
         }

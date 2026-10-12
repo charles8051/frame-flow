@@ -55,8 +55,7 @@ static async Task StopAsync(IMediaPlayer player, CancellationToken ct)
 
 static async Task ToggleLoopAsync(IMediaPlayer player, CancellationToken ct)
 {
-    // IMediaTransport sets the repeat mode but does not report it; the diagnostics snapshot does.
-    var looping = player.GetDiagnostics().RepeatMode == RepeatMode.One;
+    var looping = player.RepeatMode == RepeatMode.One;
     var mode = looping ? RepeatMode.Off : RepeatMode.One;
     if (Check("Loop", await player.SetRepeatModeAsync(mode, ct)))
         Console.WriteLine(mode == RepeatMode.One ? "Loop on" : "Loop off");

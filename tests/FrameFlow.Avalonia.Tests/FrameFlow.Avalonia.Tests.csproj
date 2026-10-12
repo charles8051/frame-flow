@@ -34,5 +34,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FrameFlow.Avalonia\FrameFlow.Avalonia.csproj" />
+    <!-- The zero-copy view's setup is tested here, in this project's headless Avalonia app. It
+         builds on every platform; only presenting a frame needs Direct3D. -->
+    <ProjectReference Include="..\..\src\FrameFlow.Avalonia.Windows\FrameFlow.Avalonia.Windows.csproj" />
   </ItemGroup>
 </Project>

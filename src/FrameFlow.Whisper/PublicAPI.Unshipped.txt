@@ -21,6 +21,7 @@ FrameFlow.Whisper.CaptionTimeline
 FrameFlow.Whisper.CaptionTimeline.Add(FrameFlow.Whisper.Caption! caption, System.TimeSpan enqueuedAtPts) -> void
 FrameFlow.Whisper.CaptionTimeline.CaptionTimeline(System.TimeSpan displayDuration, int maxStackedLines = 1) -> void
 FrameFlow.Whisper.CaptionTimeline.GetActive(System.TimeSpan framePts) -> System.Collections.Generic.IReadOnlyList<FrameFlow.Whisper.Caption!>!
+FrameFlow.Whisper.CaptionTimeline.Reset() -> void
 FrameFlow.Whisper.WhisperOperators
 FrameFlow.Whisper.WhisperOptions
 FrameFlow.Whisper.WhisperOptions.EffectiveWindowSize.get -> System.TimeSpan

@@ -192,6 +192,10 @@ public sealed class FrameFlowPlayerView : UserControl
     /// <c>FrameFlowPlayer.Create()</c>. The sink says which memory domains it takes, and the
     /// player keeps hardware frames on the GPU for one that takes them (#294).
     /// </summary>
+    /// <remarks>
+    /// Can be called before or after this control joins the visual tree; either way the logger
+    /// reaches the sink (see <see cref="IVideoSurface.AttachSink"/>).
+    /// </remarks>
     public IVideoSink AttachSink(ILoggerFactory loggerFactory) => _surface.AttachSink(loggerFactory);
 
     /// <summary>

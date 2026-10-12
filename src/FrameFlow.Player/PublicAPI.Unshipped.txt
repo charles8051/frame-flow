@@ -14,6 +14,8 @@ FrameFlow.Player.IMediaTransport.PauseAsync(System.Threading.CancellationToken c
 FrameFlow.Player.IMediaTransport.PlayAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
 FrameFlow.Player.IMediaTransport.Position.get -> System.TimeSpan
 FrameFlow.Player.IMediaTransport.PositionTick.get -> System.IObservable<System.TimeSpan>!
+FrameFlow.Player.IMediaTransport.RepeatMode.get -> FrameFlow.Media.RepeatMode
+FrameFlow.Player.IMediaTransport.RepeatModeChanged.get -> System.IObservable<FrameFlow.Media.StateTransition<FrameFlow.Media.RepeatMode>>!
 FrameFlow.Player.IMediaTransport.SeekAsync(System.TimeSpan position, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
 FrameFlow.Player.IMediaTransport.SetRepeatModeAsync(FrameFlow.Media.RepeatMode mode, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
 FrameFlow.Player.IMediaTransport.State.get -> FrameFlow.Media.PlaybackState
@@ -78,3 +80,5 @@ static FrameFlow.Player.FrameFlowPass.Create(FrameFlow.Media.IMediaSource! sourc
 static FrameFlow.Player.FrameFlowPass.Create(string! path) -> FrameFlow.Player.IPassBuilder!
 static FrameFlow.Player.FrameFlowPlayer.Create() -> FrameFlow.Player.IPlayerBuilder!
 FrameFlow.Player.IPassBuilder.WithHardwareFrames(bool yieldHardwareFrames = true) -> FrameFlow.Player.IPassBuilder!
+FrameFlow.Player.MediaTransportExtensions
+static FrameFlow.Player.MediaTransportExtensions.WaitForEndAsync(this FrameFlow.Player.IMediaTransport! transport, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<FrameFlow.Media.Result>!
