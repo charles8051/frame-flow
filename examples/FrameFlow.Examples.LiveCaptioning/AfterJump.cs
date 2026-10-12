@@ -3,9 +3,10 @@ using FrameFlow.Graph;
 namespace FrameFlow.Examples.LiveCaptioning;
 
 /// <summary>
-/// An item of the caption graph with the jump its audio was tapped after: the run of the
-/// player's graph that played it. The player runs its graph once for each load, seek, loop and
-/// file, so a caption whose jump is not the one on screen is for audio from before a jump.
+/// An item of the caption graph with the jump its audio was played after. The window counts a
+/// jump as each run of the player's graph with a picture starts, which is once for each load,
+/// seek, loop and file, so a caption whose jump is not the one on screen is for audio from
+/// before a jump.
 /// </summary>
 /// <remarks>
 /// It counts no references of its own: adding or releasing one adds or releases one on
@@ -31,6 +32,10 @@ internal sealed class AfterJump<T>(int jump, T item) : IRefCounted
 /// Runs the library's nodes on <see cref="AfterJump{T}"/> items, so each caption keeps the jump
 /// of the audio it was transcribed from.
 /// </summary>
+/// <remarks>
+/// A node's memory-domain rule is not carried over, which suits the caption graph: its nodes
+/// declare none.
+/// </remarks>
 internal static class AfterJump
 {
     /// <summary>Runs <paramref name="node"/> on each item; its output keeps the item's jump.</summary>

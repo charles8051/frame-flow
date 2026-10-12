@@ -81,14 +81,19 @@ public partial class MainWindow : Window
                     .WithAudioSink(_audioSink)
                     .WithAvaloniaVideoView(VideoView)
                     .WithLogger(_loggerFactory)
-                    .ConfigureAudio(chain => chain.Then(SendToWhisper(chain.Graph)))
+                    .ConfigureAudio(chain => chain.Then(SendToWhisper()))
                     .ConfigureVideo(chain =>
+                    {
+                        // Captions are shown with the picture, so a jump is a run of its graph:
+                        // a loop runs the same graph again, and a file may have no audio.
+                        chain.Graph.BeforeEachRun(() => Interlocked.Increment(ref _jump));
+
                         // A frame the model fails on loses its boxes, counted on the
                         // frameflow.graph.discards metric; the picture and captions go on.
-                        detector is null
+                        return detector is null
                             ? chain
-                            : chain.Infer("yolo", detector, ShowWhenPresented(), onError: FailureResponse.Discard)
-                    )
+                            : chain.Infer("yolo", detector, ShowWhenPresented(), onError: FailureResponse.Discard);
+                    })
                     .BuildPlayerAsync(_windowCts.Token);
 
                 PlayerChrome.Transport = _player;
@@ -222,12 +227,13 @@ public partial class MainWindow : Window
             static dropped => dropped.Dispose()
         );
 
-    // Counts the runs of the player's graph: one per load, seek, loop or file, each after a jump
-    // in the audio. Each tapped buffer carries its run through the caption graph to its captions.
-    // Audio from an earlier run never reaches Whisper, and a caption from one, still in the
-    // caption graph when the jump came, is dropped as it arrives. Whisper itself starts a new
-    // window when the audio's timestamps jump.
-    private int _audioJump;
+    // Counts the jumps: each run of the player's graph with a picture, so one per load, seek,
+    // loop or file. Each tapped buffer carries the jump it was played after through the caption
+    // graph to its captions. Audio from before a jump that is still waiting in the channel is
+    // dropped before Whisper; what was already past the source is transcribed, and its captions
+    // are dropped as they arrive. Whisper itself starts a new window when the audio's timestamps
+    // jump.
+    private int _jump;
     private int _presentedJump;
 
     private readonly ConcurrentQueue<(int Jump, Caption Caption)> _newCaptions = new();
@@ -238,25 +244,22 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Passes each audio buffer on to the speakers and sends a reference to it to Whisper, with
-    /// the run of <paramref name="graph"/> that tapped it.
+    /// the jump it was played after.
     /// </summary>
-    private OperatorNode<PcmAudioBuffer, PcmAudioBuffer> SendToWhisper(Graph.Graph graph)
-    {
-        // Counted as each run starts, not as the graph is built: a loop runs the same graph again.
-        var jump = 0;
-        graph.BeforeEachRun(() => jump = Interlocked.Increment(ref _audioJump));
-
-        return new(
+    private OperatorNode<PcmAudioBuffer, PcmAudioBuffer> SendToWhisper() =>
+        new(
             "whisper-tap",
             (buffer, _) =>
             {
+                // The player's runs never overlap, and each counts its jump before it starts, so
+                // the jump now is the one this buffer's run started with.
+                var tapped = new AfterJump<PcmAudioBuffer>(Volatile.Read(ref _jump), buffer);
                 buffer.AddRef();
-                if (!_captionAudio.Writer.TryWrite(new AfterJump<PcmAudioBuffer>(jump, buffer)))
+                if (!_captionAudio.Writer.TryWrite(tapped))
                     buffer.Dispose(); // the window is closing
                 return ValueTask.FromResult<PcmAudioBuffer?>(buffer);
             }
         );
-    }
 
     private async Task RunCaptionGraphAsync(string whisperModel, CancellationToken ct)
     {
@@ -272,7 +275,7 @@ public partial class MainWindow : Window
                         {
                             while (audio.TryRead(out var tapped))
                             {
-                                if (tapped.Jump == Volatile.Read(ref _audioJump))
+                                if (tapped.Jump == Volatile.Read(ref _jump))
                                     return tapped;
                                 tapped.Dispose();
                             }
@@ -323,7 +326,7 @@ public partial class MainWindow : Window
     private void OnFramePresented(object? sender, FramePresentedInfo frame)
     {
         var pts = frame.PresentationTime;
-        var jump = Volatile.Read(ref _audioJump);
+        var jump = Volatile.Read(ref _jump);
         if (pts < _lastPresented || jump != _presentedJump)
         {
             // A seek, a loop or the next file: the captions on screen are for the audio before
