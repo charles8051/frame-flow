@@ -1,158 +1,102 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Whisper.Core;
+
 namespace FrameFlow.Whisper;
 
 /// <summary>
-/// Thread-safe timeline that holds <see cref="Caption"/> entries
-/// stamped with the video PTS at which they were enqueued (i.e. the
-/// moment they became visible to the renderer). Used internally by
-/// <c>CaptionOverlayPipelineExtensions.OverlayOnto</c> to answer
-/// per-frame queries of "which captions should be shown at PTS
-/// <c>t</c>?" — see the implementation file for why arrival-stamped
-/// display is the right model for live captioning instead of
-/// <c>Caption.[From, To]</c> matching.
+/// Holds captions stamped with the presentation time of the frame on screen when each arrived,
+/// and answers which to show at a frame. Call <see cref="Add"/> for each caption that has
+/// arrived and then <see cref="GetActive"/>, both with the PTS of the frame just presented.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Concurrency.</b> A single video-side pump calls both
-/// <see cref="Add"/> (draining the caption queue when a new frame
-/// arrives) and <see cref="GetActive"/> (querying the timeline for
-/// that frame). The lock is there as defence in depth; current callers
-/// don't actually race. Both operations are O(n) over the entries
-/// currently retained, which is bounded by
-/// <see cref="_displayDuration"/> via the eviction in
-/// <see cref="GetActive"/>.
+/// <b>Why arrival, not <see cref="Caption.From"/>.</b> Whisper emits a caption only once it has
+/// transcribed a whole window, by which time much of the caption's <c>[From, To]</c> has
+/// usually played. Shown from the frame it arrived with for the display duration, it stays up
+/// long enough to read.
 /// </para>
 /// <para>
-/// <b>Eviction.</b> Entries whose <see cref="TimelineEntry.EnqueuedAtPts"/>
-/// is more than <see cref="_displayDuration"/> behind the most-recent
-/// queried PTS are dropped on the next <see cref="GetActive"/> call.
-/// Keeps the backing list O(captions-per-display-window) — typically
-/// 1–2 — without a separate sweep task.
+/// <b>One clock.</b> <see cref="Add"/> and <see cref="GetActive"/> share a clock: the latest PTS
+/// either has been given. Within a run of playback it only rises. A PTS below it is a seek
+/// back, a loop or the next item, and starts a new timeline with nothing on it: no caption from
+/// before the jump shows again, and the time before it no longer evicts the captions after it.
+/// A jump the PTS does not show, such as a seek forward by less than the display duration,
+/// needs <see cref="Reset"/>.
+/// </para>
+/// <para>
+/// <b>Which PTS.</b> Give both calls the PTS of the frame just presented. Not a caption's own
+/// <see cref="Caption.From"/>, which sits behind that frame, and not a position polled on a
+/// timer or read from an audio clock, which can step back slightly: any step back, however
+/// small, starts the timeline again.
+/// </para>
+/// <para>
+/// <b>Captions in flight at a jump.</b> A caption for audio from before a jump that arrives
+/// after it lands on the new timeline, since the timeline cannot tell it apart. A caller that
+/// can, by the graph or position its audio came from, drops it before <see cref="Add"/>.
+/// </para>
+/// <para>
+/// <b>Eviction.</b> A caption more than the display duration behind the clock is dropped as
+/// the clock advances, so the timeline holds only what can still be shown.
+/// </para>
+/// <para>
+/// <b>Concurrency.</b> Each call is atomic. The calls still need one caller's PTS order: two
+/// callers at different positions would each start the timeline again.
 /// </para>
 /// </remarks>
+/// <param name="displayDuration">How long a caption shows after the frame it arrived with.</param>
+/// <param name="maxStackedLines">
+/// Above one, the most captions shown at once. One or less shows the latest batch: every
+/// caption that arrived with the same frame as the last.
+/// </param>
 public sealed class CaptionTimeline(TimeSpan displayDuration, int maxStackedLines = 1)
 {
     private readonly object _gate = new();
-    private readonly List<TimelineEntry> _entries = [];
-    private readonly TimeSpan _displayDuration = displayDuration;
-    private readonly int _maxStackedLines = maxStackedLines;
-    private TimeSpan _highWaterMark = TimeSpan.MinValue;
+    private CaptionTimelineState _state = CaptionTimelineState.Empty(displayDuration, maxStackedLines);
 
     /// <summary>
-    /// Adds <paramref name="caption"/> to the timeline stamped with
-    /// <paramref name="enqueuedAtPts"/> — typically the video PTS of
-    /// the frame currently being processed when the caption was
-    /// pulled off the pump's queue. Entries are appended; the
-    /// timeline relies on monotonically-increasing PTS (which is
-    /// guaranteed because video frames flow in PTS order and the
-    /// drain happens per-frame).
+    /// Adds <paramref name="caption"/> as arriving with the frame at
+    /// <paramref name="enqueuedAtPts"/>, the frame just presented. A PTS below the clock starts a
+    /// new timeline first.
     /// </summary>
     public void Add(Caption caption, TimeSpan enqueuedAtPts)
     {
         ArgumentNullException.ThrowIfNull(caption);
         lock (_gate)
         {
-            _entries.Add(new TimelineEntry(caption, enqueuedAtPts));
+            _state = _state.Add(caption, enqueuedAtPts);
         }
     }
 
     /// <summary>
-    /// Returns the captions to display at <paramref name="framePts"/>.
-    /// The returned set is the most-recent batch — captions sharing
-    /// the highest <see cref="TimelineEntry.EnqueuedAtPts"/> that is
-    /// still within the display window. Older entries are evicted as
-    /// a side effect. Returns an empty list when no caption has
-    /// arrived yet, or the most recent one has aged out.
+    /// Returns the captions to show at <paramref name="framePts"/>, oldest first: the latest
+    /// batch, or with <c>maxStackedLines</c> above one, up to that many of the latest captions.
+    /// Empty when none has arrived within the display duration. A PTS below the clock starts a
+    /// new timeline first.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// <b>Most-recent-batch semantics.</b> Whisper emits 1..N segments
-    /// per inference window; they all arrive in the pump's burst, get
-    /// stamped with the same frame PTS, and end up adjacent in
-    /// <see cref="_entries"/>. Returning the latest batch keeps a
-    /// multi-segment chunk visible together (each segment on its own
-    /// caption line) instead of showing only the last one.
-    /// </para>
+    /// Whisper emits the segments of one window in one burst, so they arrive with the same frame
+    /// and show together, each on its own line.
     /// </remarks>
     public IReadOnlyList<Caption> GetActive(TimeSpan framePts)
     {
         lock (_gate)
         {
-            if (framePts > _highWaterMark)
-                _highWaterMark = framePts;
-
-            // Evict entries older than the display window. Cheap because
-            // entries are append-only in PTS order.
-            var cutoff = _highWaterMark - _displayDuration;
-            if (cutoff > TimeSpan.Zero)
-            {
-                int drop = 0;
-                while (drop < _entries.Count && _entries[drop].EnqueuedAtPts < cutoff)
-                    drop++;
-                if (drop > 0)
-                    _entries.RemoveRange(0, drop);
-            }
-
-            if (_entries.Count == 0)
-                return Array.Empty<Caption>();
-
-            // Find the latest qualifying entry (EnqueuedAtPts <=
-            // framePts and within the display window).
-            int latest = -1;
-            for (int i = _entries.Count - 1; i >= 0; i--)
-            {
-                var e = _entries[i];
-                if (e.EnqueuedAtPts > framePts)
-                    continue;
-                if (framePts - e.EnqueuedAtPts > _displayDuration)
-                    break;
-                latest = i;
-                break;
-            }
-            if (latest < 0)
-                return Array.Empty<Caption>();
-
-            var latestBatchPts = _entries[latest].EnqueuedAtPts;
-
-            if (_maxStackedLines <= 1)
-            {
-                // Single-line mode: return the latest *batch* (every
-                // entry sharing latestBatchPts — the burst from one
-                // Whisper inference call shown together on the same
-                // visual line).
-                int batchStart = latest;
-                while (batchStart > 0 && _entries[batchStart - 1].EnqueuedAtPts == latestBatchPts)
-                    batchStart--;
-
-                int count = latest - batchStart + 1;
-                if (count == 1)
-                    return new[] { _entries[latest].Caption };
-
-                var hits = new Caption[count];
-                for (int i = 0; i < count; i++)
-                    hits[i] = _entries[batchStart + i].Caption;
-                return hits;
-            }
-
-            // Multi-line stack mode: walk backwards from latest,
-            // collecting up to _maxStackedLines DISTINCT entries that
-            // are still within the display window. Order oldest →
-            // newest so callers can render top-to-bottom in
-            // chronological reading order.
-            var stack = new List<Caption>(_maxStackedLines);
-            for (int i = latest; i >= 0 && stack.Count < _maxStackedLines; i--)
-            {
-                var e = _entries[i];
-                if (framePts - e.EnqueuedAtPts > _displayDuration)
-                    break;
-                stack.Add(e.Caption);
-            }
-            stack.Reverse();
-            return stack;
+            _state = _state.MoveTo(framePts);
+            return _state.OnScreen();
         }
     }
 
-    private readonly record struct TimelineEntry(Caption Caption, TimeSpan EnqueuedAtPts);
+    /// <summary>
+    /// Drops every caption and the clock, as if the timeline were new. For a jump the PTS does
+    /// not show; a PTS below the clock starts a new timeline without it.
+    /// </summary>
+    public void Reset()
+    {
+        lock (_gate)
+        {
+            _state = _state.Reset();
+        }
+    }
 }
