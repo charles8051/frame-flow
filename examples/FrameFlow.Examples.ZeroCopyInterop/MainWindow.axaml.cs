@@ -61,7 +61,7 @@ public partial class MainWindow : Window
             var builder = FrameFlowPlayer
                 .Create()
                 .WithMedia(_path)
-                .WithVideoSink(((IVideoSurface)VideoView).AttachSink(_loggerFactory))
+                .WithVideoSurface(VideoView, _loggerFactory)
                 .WithRepeatMode(RepeatMode.One)
                 .WithLogger(_loggerFactory);
             if (_device is not null)

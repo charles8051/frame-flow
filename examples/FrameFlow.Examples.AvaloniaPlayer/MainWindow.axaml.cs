@@ -18,7 +18,6 @@ public partial class MainWindow : Window
 {
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger _logger;
-    private readonly IVideoSink _videoSink;
     private readonly OpenAlAudioSink _audioSink;
 
     private IMediaPlayer? _player;
@@ -39,9 +38,6 @@ public partial class MainWindow : Window
             onFailure: ex => StatusText.Text = $"Logging to file is off ({ex.Message})."
         );
         _logger = _loggerFactory.CreateLogger<MainWindow>();
-
-        // Before the view joins the visual tree, so the sink it creates logs here as well.
-        _videoSink = PlayerView.AttachSink(_loggerFactory);
         _audioSink = new OpenAlAudioSink(_loggerFactory.CreateLogger<OpenAlAudioSink>());
 
         PlayerView.FileOpenRequested += async (_, e) => await OpenAsync(e.FilePath);
@@ -55,7 +51,7 @@ public partial class MainWindow : Window
     {
         var player = await FrameFlowPlayer
             .Create()
-            .WithVideoSink(_videoSink)
+            .WithVideoSink(PlayerView.AttachSink(_loggerFactory))
             .WithAudioSink(_audioSink)
             .WithLogger(_loggerFactory)
             .BuildPlayerAsync();
