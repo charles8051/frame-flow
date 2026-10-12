@@ -66,8 +66,6 @@ internal sealed class PlaybackService(
         }
         finally
         {
-            // A pass starts the audio sink and leaves it running, and this sink outlives the pass.
-            await audio.DeactivateAsync(CancellationToken.None);
             lifetime.StopApplication();
         }
     }
