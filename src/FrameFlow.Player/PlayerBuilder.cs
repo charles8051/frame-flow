@@ -22,7 +22,7 @@ namespace FrameFlow.Player;
 /// </remarks>
 internal sealed class PlayerBuilder : IPlayerBuilder
 {
-    private IReadOnlyList<IMediaSource> _sources = [];
+    private IReadOnlyList<MediaClip> _clips = [];
     private IVideoSink? _videoSink;
     private IAudioSink? _audioSink;
     private Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? _videoConfigurator;
@@ -44,21 +44,29 @@ internal sealed class PlayerBuilder : IPlayerBuilder
     public IPlayerBuilder WithMedia(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        _sources = [MediaSource.FromFile(path)];
+        _clips = [new MediaClip(MediaSource.FromFile(path))];
         return this;
     }
 
     public IPlayerBuilder WithMedia(IMediaSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        _sources = [source];
+        _clips = [new MediaClip(source)];
+        return this;
+    }
+
+    public IPlayerBuilder WithMedia(MediaClip clip)
+    {
+        if (clip.Source is null)
+            throw new ArgumentException("The clip has no source.", nameof(clip));
+        _clips = [clip];
         return this;
     }
 
     public IPlayerBuilder WithMedia(IEnumerable<IMediaSource> sources)
     {
         ArgumentNullException.ThrowIfNull(sources);
-        _sources = [.. sources];
+        _clips = [.. sources.Select(s => new MediaClip(s))];
         return this;
     }
 
@@ -211,7 +219,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
     {
         RequireSinkForEachConfigurator();
         return await PlayerFactory.CreateAsync(
-            initial: _sources,
+            initial: _clips,
             videoSink: _videoSink,
             audioSink: _audioSink,
             hardwareDecodeMode: _hwMode,

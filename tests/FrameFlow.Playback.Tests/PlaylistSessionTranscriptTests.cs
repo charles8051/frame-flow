@@ -287,11 +287,13 @@ public sealed class PlaylistSessionTranscriptTests
     }
 
     /// <summary>
-    /// #194 (#182): a skip latched before the first play under <see cref="RepeatMode.One"/> rewound
-    /// an item that had never played, which left its clocks stopped. The first play rebuilds it.
+    /// A skip latched before the first play under <see cref="RepeatMode.One"/> takes the same item
+    /// again. #194 (#182) rebuilt it, because rewinding an item that had never played left its clocks
+    /// stopped. Since #639 that rewind holds the item as a seek before the first play does, so the
+    /// first play rewinds it in place and then plays it.
     /// </summary>
     [Fact]
-    public async Task LatchedSkipUnderOne_RebuildsTheUnplayedItem()
+    public async Task LatchedSkipUnderOne_RewindsTheUnplayedItemInPlace_ThenPlaysIt()
     {
         await using var rig = await PlaylistSessionRig.LoadedAsync(RepeatMode.One, "a");
 
@@ -304,11 +306,8 @@ public sealed class PlaylistSessionTranscriptTests
 
         Assert.Equal(
             [
-                "a#1.Dispose",
-                "clock.Stop",
-                "a#2.Open",
-                "a#2.WarmUp",
-                "a#2.Play",
+                "a#1.Rewind",
+                "a#1.Play",
                 "ctl.ItemChanged(a)",
                 "transition(a, wrapped)",
             ],

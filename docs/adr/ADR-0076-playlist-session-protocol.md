@@ -841,3 +841,9 @@ handlers.
     are now no-ops once it has.
   - **What changed from decision 7.** It added three invariants, restated two in checkable form, and
     left the ninth-failure count to the queue's tests. *As implemented: step 4* lists each.
+- **Amendment (2026-10-12), the replay rule and the expected failure.** Decision 5 of the media-clips
+  record (`docs/feature-specs/media-clips/adr.md`) rewinds a same-source replay in place in every state,
+  not only for an item that has played while playing (#194). #639 made a rewind hold an item that has
+  not played, which is what the rule guarded against. The explorer's expected failure, a seek or
+  rewind of an unplayed item while not playing, described that gap. It is retired: `PlaylistItemModel`
+  now holds an unplayed runtime, and a new invariant says a run launches only while playing.

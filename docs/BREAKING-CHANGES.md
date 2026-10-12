@@ -187,7 +187,7 @@ surface and the GPU interop waited for `Initialize(ILoggerFactory)`, so
 `WithVideoSink(view.EnsureSink())`, the `FrameFlowVideoView` pattern, built and played a black
 window and logged nothing (#613). `EnsureSink` now runs `Initialize`, without a logger, when it
 has not run: once the view is attached, it sets up the compositor surface and starts the stall
-watchdog (entry 11). A later `Initialize` call moves the view's logging, and its own sink's, to the
+watchdog (entry 12). A later `Initialize` call moves the view's logging, and its own sink's, to the
 factory it is given. After `DisposeAsync` it starts neither.
 
 **Who hits this.** A caller that calls `EnsureSink` off the UI thread on a view already in the
@@ -299,7 +299,18 @@ A consumer that sees both copies can also tell them apart by reference: `ErrorOc
 instance the `Result` does, and fires before the command completes. Do not issue transport commands
 after `DisposeAsync`, or catch `ObjectDisposedException` where a command can race it.
 
-### 11. `CompositionInteropVideoView` presents again after it rejoins the visual tree
+### 11. `ReplaceAsync([])` no longer compiles
+
+**A compile error, on a call that always threw.**
+
+`IMediaPlayer.ReplaceAsync` gained an overload that takes media clips (#656). An empty collection
+expression converts to both overloads, so `player.ReplaceAsync([])` is now ambiguous. The call
+threw `ArgumentException` before, because a replacement needs at least one item, and it still does.
+
+**What to write instead.** Name the element type, `player.ReplaceAsync(Array.Empty<IMediaSource>())`,
+if a test exercises the refusal. Nothing else needs to change.
+
+### 12. `CompositionInteropVideoView` presents again after it rejoins the visual tree
 
 **A change in behaviour, not a compile error.**
 
