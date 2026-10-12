@@ -466,6 +466,17 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// </remarks>
     private ValueTask PositionAtStartAsync(TimeSpan start, CancellationToken cancellationToken)
     {
+        ThrowIfPastTheEnd(start);
+        return RepositionAsync(start, GraphPolicy.Rebuild, TaskPolicy.Cancel, cancellationToken);
+    }
+
+    /// <summary>
+    /// Refuses an item start at or past the source's known duration, wherever the item is
+    /// positioned: at open, and in a rewind that hands the open runtime to another clip of the
+    /// same source.
+    /// </summary>
+    private void ThrowIfPastTheEnd(TimeSpan start)
+    {
         var duration = Duration;
         if (duration > TimeSpan.Zero && start >= duration)
         {
@@ -475,8 +486,6 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 $"'{_source?.DisplayName}' cannot start at {start}: it is {duration} long."
             );
         }
-
-        return RepositionAsync(start, GraphPolicy.Rebuild, TaskPolicy.Cancel, cancellationToken);
     }
 
     private async ValueTask OpenAsync(IMediaSource source, CancellationToken cancellationToken)
@@ -1154,6 +1163,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     {
         if (_pipeline is null || _demux is null)
             return ValueTask.CompletedTask;
+
+        // A hand-off to another clip of this source positions it here rather than at open, so
+        // the open's check applies here too. The rewind then fails, the playlist rebuilds the
+        // item, and the rebuilt item fails to start.
+        if (position > TimeSpan.Zero)
+            ThrowIfPastTheEnd(position);
 
         // If the graph was never built (e.g. a session that never reached
         // StartSessionTasks), there is nothing to reuse — fall back to the full seek

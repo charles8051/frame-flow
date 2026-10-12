@@ -32,6 +32,10 @@ internal interface IPlaylistItemRuntime : IPlaybackSession
     /// Rewinds the runtime in place to <paramref name="position"/>, the start of the item it now
     /// plays, as <see cref="IPlaybackSession.RewindToStartAsync"/> rewinds it to zero.
     /// </summary>
+    /// <remarks>
+    /// Fails, as an open would, when the source reports a duration and
+    /// <paramref name="position"/> is at or past it.
+    /// </remarks>
     ValueTask RewindToAsync(TimeSpan position, CancellationToken cancellationToken);
 }
 

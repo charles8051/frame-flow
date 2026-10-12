@@ -159,6 +159,36 @@ public sealed class MediaClipPlaybackTests : IClassFixture<FfmpegBootstrapFixtur
         Assert.Contains("cannot start at", load.Error!.Message + load.Error.Inner?.Message, StringComparison.Ordinal);
     }
 
+    [RequiresFfmpegAndCorpusFact]
+    public async Task AClipOfTheOpenSourceThatStartsAtTheEnd_FailsToStart()
+    {
+        // The hand-off rewinds the open item in place, which bypasses the open. The start is the
+        // file's 10 s duration, so the item has nothing in it and must fail rather than end.
+        var source = Corpus(Fixture);
+        var first = new MediaClip(source, TimeSpan.FromSeconds(2));
+        var atTheEnd = new MediaClip(source, TimeSpan.FromSeconds(10));
+        var video = new PtsRecordingVideoSink();
+        var coordinator = PlaylistCoordinator.Of([first, atTheEnd], RepeatMode.Off);
+        await using var controller = CreatePlaylist(coordinator, video);
+
+        var failed = new TaskCompletionSource<PlaylistItemFailed>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        using var sub = controller.ItemFailed.Subscribe(
+            new ActionObserver<PlaylistItemFailed>(f => failed.TrySetResult(f))
+        );
+
+        Assert.True((await controller.LoadAsync(source)).IsSuccess);
+        Assert.True((await controller.PlayAsync()).IsSuccess);
+        await video.WhenPresented(pts => pts >= first.Start + PastStart).WaitAsync(Bound);
+
+        coordinator.RequestSkip();
+        var failure = await failed.Task.WaitAsync(Bound);
+
+        Assert.Equal(atTheEnd.Start, failure.Item.Start);
+        Assert.Equal(PlaylistItemFailure.CouldNotStart, failure.Failure);
+    }
+
     private static MediaSource Corpus(string name) =>
         MediaSource.FromFile(IntegrationTestEnvironment.GetCorpusFile(name)!);
 
