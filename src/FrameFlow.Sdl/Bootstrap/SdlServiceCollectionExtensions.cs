@@ -117,7 +117,7 @@ public static class SdlServiceCollectionExtensions
     /// <summary>
     /// Convenience overload that constructs an <see cref="SdlVideoSink"/>
     /// and registers it with the service collection. Outputs the sink so the caller
-    /// can pass it to <see cref="SdlEventLoop.Run"/> (or invoke
+    /// can pass it to <see cref="SdlEventLoop"/>.<c>Run</c> (or invoke
     /// <see cref="SdlVideoSink.RenderPendingFrame"/> directly).
     /// </summary>
     /// <param name="builder">
