@@ -16,6 +16,7 @@ using FrameFlow.Player;
 using FrameFlow.Whisper;
 using FrameFlow.Yolo;
 using Microsoft.Extensions.Logging;
+using static FrameFlow.Examples.LiveCaptioning.AfterJump;
 
 namespace FrameFlow.Examples.LiveCaptioning;
 
@@ -80,9 +81,7 @@ public partial class MainWindow : Window
                     .WithAudioSink(_audioSink)
                     .WithAvaloniaVideoView(VideoView)
                     .WithLogger(_loggerFactory)
-                    .ConfigureAudio(chain =>
-                        chain.Then(SendToWhisper(_captionAudio.Writer, Interlocked.Increment(ref _audioGraph)))
-                    )
+                    .ConfigureAudio(chain => chain.Then(SendToWhisper(chain.Graph)))
                     .ConfigureVideo(chain =>
                         // A frame the model fails on loses its boxes, counted on the
                         // frameflow.graph.discards metric; the picture and captions go on.
@@ -217,40 +216,47 @@ public partial class MainWindow : Window
     // rebuilds its graph after every seek, and Whisper on an audio branch would restart with it.
 
     // When Whisper falls behind, the oldest buffer is dropped rather than holding up playback.
-    private readonly Channel<TappedAudio> _captionAudio = Channel.CreateBounded<TappedAudio>(
-        new BoundedChannelOptions(32) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true },
-        static dropped => dropped.Buffer.Dispose()
-    );
+    private readonly Channel<AfterJump<PcmAudioBuffer>> _captionAudio =
+        Channel.CreateBounded<AfterJump<PcmAudioBuffer>>(
+            new BoundedChannelOptions(32) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true },
+            static dropped => dropped.Dispose()
+        );
 
-    // Counts the player's audio graphs: one per load, seek or file. Audio tapped from an older
-    // graph never reaches Whisper, and captions still waiting are dropped once a newer graph's
-    // frame is on screen. Whisper itself starts a new window when the audio's timestamps jump.
-    private int _audioGraph;
-    private int _presentedGraph;
+    // Counts the runs of the player's graph: one per load, seek, loop or file, each after a jump
+    // in the audio. Each tapped buffer carries its run through the caption graph to its captions.
+    // Audio from an earlier run never reaches Whisper, and a caption from one, still in the
+    // caption graph when the jump came, is dropped as it arrives. Whisper itself starts a new
+    // window when the audio's timestamps jump.
+    private int _audioJump;
+    private int _presentedJump;
 
-    private readonly record struct TappedAudio(int Graph, PcmAudioBuffer Buffer);
-
-    private readonly ConcurrentQueue<Caption> _newCaptions = new();
+    private readonly ConcurrentQueue<(int Jump, Caption Caption)> _newCaptions = new();
     private Task _captionGraph = Task.CompletedTask;
     private readonly CaptionTimeline _captions = new(displayDuration: TimeSpan.FromSeconds(6));
     private TimeSpan _lastPresented;
     private string _shownCaption = "";
 
-    /// <summary>Passes each audio buffer on to the speakers and sends a reference to it to Whisper.</summary>
-    private static OperatorNode<PcmAudioBuffer, PcmAudioBuffer> SendToWhisper(
-        ChannelWriter<TappedAudio> whisper,
-        int graph
-    ) =>
-        new(
+    /// <summary>
+    /// Passes each audio buffer on to the speakers and sends a reference to it to Whisper, with
+    /// the run of <paramref name="graph"/> that tapped it.
+    /// </summary>
+    private OperatorNode<PcmAudioBuffer, PcmAudioBuffer> SendToWhisper(Graph.Graph graph)
+    {
+        // Counted as each run starts, not as the graph is built: a loop runs the same graph again.
+        var jump = 0;
+        graph.BeforeEachRun(() => jump = Interlocked.Increment(ref _audioJump));
+
+        return new(
             "whisper-tap",
             (buffer, _) =>
             {
                 buffer.AddRef();
-                if (!whisper.TryWrite(new TappedAudio(graph, buffer)))
+                if (!_captionAudio.Writer.TryWrite(new AfterJump<PcmAudioBuffer>(jump, buffer)))
                     buffer.Dispose(); // the window is closing
                 return ValueTask.FromResult<PcmAudioBuffer?>(buffer);
             }
         );
+    }
 
     private async Task RunCaptionGraphAsync(string whisperModel, CancellationToken ct)
     {
@@ -258,7 +264,7 @@ public partial class MainWindow : Window
         var graph = new Graph.Graph();
         graph
             .Pipeline(
-                new SourceNode<PcmAudioBuffer>(
+                new SourceNode<AfterJump<PcmAudioBuffer>>(
                     "whisper-audio",
                     async token =>
                     {
@@ -266,31 +272,33 @@ public partial class MainWindow : Window
                         {
                             while (audio.TryRead(out var tapped))
                             {
-                                if (tapped.Graph == Volatile.Read(ref _audioGraph))
-                                    return tapped.Buffer;
-                                tapped.Buffer.Dispose();
+                                if (tapped.Jump == Volatile.Read(ref _audioJump))
+                                    return tapped;
+                                tapped.Dispose();
                             }
                         }
                         return null;
                     }
                 )
             )
-            .Then(AudioOperators.Resample("whisper-resample", targetSampleRate: 16_000, targetChannels: 1))
+            .Then(KeepJump(AudioOperators.Resample("whisper-resample", targetSampleRate: 16_000, targetChannels: 1)))
             .Then(
-                WhisperOperators.TranscribeWithWhisper(
-                    "whisper",
-                    whisperModel,
-                    new WhisperOptions(Language: "en", WindowSize: TimeSpan.FromSeconds(2.5))
+                KeepJump(
+                    WhisperOperators.TranscribeWithWhisper(
+                        "whisper",
+                        whisperModel,
+                        new WhisperOptions(Language: "en", WindowSize: TimeSpan.FromSeconds(2.5))
+                    )
                 )
             )
-            .Then(CaptionOperators.SplitOnPunctuation("split-on-punctuation"))
-            .Then(CaptionOperators.AnimatedReveal("animated-reveal", wordsPerSecond: 5))
+            .Then(KeepJump(CaptionOperators.SplitOnPunctuation("split-on-punctuation")))
+            .Then(KeepJump(CaptionOperators.AnimatedReveal("animated-reveal", wordsPerSecond: 5)))
             .To(
-                new SinkNode<CaptionRef>(
+                new SinkNode<AfterJump<CaptionRef>>(
                     "captions",
                     (caption, _) =>
                     {
-                        _newCaptions.Enqueue(caption.Value);
+                        _newCaptions.Enqueue((caption.Jump, caption.Item.Value));
                         return ValueTask.CompletedTask;
                     }
                 )
@@ -315,19 +323,23 @@ public partial class MainWindow : Window
     private void OnFramePresented(object? sender, FramePresentedInfo frame)
     {
         var pts = frame.PresentationTime;
-        var graph = Volatile.Read(ref _audioGraph);
-        if (pts < _lastPresented || graph != _presentedGraph)
+        var jump = Volatile.Read(ref _audioJump);
+        if (pts < _lastPresented || jump != _presentedJump)
         {
-            // A seek, a loop or the next file: the captions queued and on screen are for the
-            // audio before it. The timeline would see a jump back for itself, not one forward.
-            _newCaptions.Clear();
+            // A seek, a loop or the next file: the captions on screen are for the audio before
+            // it. The timeline would see a jump back for itself, not one forward.
             _captions.Reset();
-            _presentedGraph = graph;
+            _presentedJump = jump;
         }
         _lastPresented = pts;
 
+        // A caption from an earlier run is for audio from before the jump, which was still in the
+        // caption graph when the jump came.
         while (_newCaptions.TryDequeue(out var caption))
-            _captions.Add(caption, pts);
+        {
+            if (caption.Jump == _presentedJump)
+                _captions.Add(caption.Caption, pts);
+        }
 
         var text = string.Join('\n', _captions.GetActive(pts).Select(c => c.Text));
         if (text == _shownCaption)
@@ -385,7 +397,7 @@ public partial class MainWindow : Window
             _captionAudio.Writer.TryComplete();
             await _captionGraph;
             while (_captionAudio.Reader.TryRead(out var unread))
-                unread.Buffer.Dispose();
+                unread.Dispose();
             _detector?.Dispose();
         }
         catch (Exception ex)
