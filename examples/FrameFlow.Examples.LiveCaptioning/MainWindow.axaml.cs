@@ -84,7 +84,8 @@ public partial class MainWindow : Window
                         chain.Then(SendToWhisper(_captionAudio.Writer, Interlocked.Increment(ref _audioGraph)))
                     )
                     .ConfigureVideo(chain =>
-                        // A frame the model fails on loses its boxes; the picture and captions go on.
+                        // A frame the model fails on loses its boxes, counted on the
+                        // frameflow.graph.discards metric; the picture and captions go on.
                         detector is null
                             ? chain
                             : chain.Infer("yolo", detector, ShowWhenPresented(), onError: FailureResponse.Discard)

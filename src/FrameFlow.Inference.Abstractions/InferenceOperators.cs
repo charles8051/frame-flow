@@ -54,9 +54,11 @@ public static class InferenceOperators
     /// <param name="onError">
     /// What a run that throws does. <see cref="FailureResponse.Propagate"/>, the default, faults the
     /// graph, and a player fails the item it is playing. <see cref="FailureResponse.Discard"/> loses
-    /// that frame's result and the branch goes on to the next frame, counted in
-    /// <see cref="FrameFlow.Graph.Graph.Discards"/> under <paramref name="id"/>: the choice for a branch the
-    /// picture can do without, such as an overlay.
+    /// that frame's result and the branch goes on to the next frame: the choice for a branch the
+    /// picture can do without, such as an overlay. A discard is not logged. It is counted in
+    /// <see cref="FrameFlow.Graph.Graph.Discards"/> under <paramref name="id"/>, and on the
+    /// <c>frameflow.graph.discards</c> metric tagged <c>node</c> with <paramref name="id"/>, which
+    /// is where a player's discards show.
     /// </param>
     public static GraphChain<IVideoFrame> Infer<TResult>(
         this GraphChain<IVideoFrame> chain,

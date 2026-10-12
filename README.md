@@ -111,7 +111,8 @@ so a slow model drops frames instead of delaying the picture. `Yolov8Detector` a
 that returns an image, such as an upscaler, can build its result frame with `TensorToImage.ToFrame`.
 A run that throws fails the item the player is playing. For a branch the picture can do without,
 such as an overlay, pass `onError: FailureResponse.Discard`: that frame's result is lost, and the
-branch goes on to the next frame.
+branch goes on to the next frame. Discards are not logged; the `frameflow.graph.discards` metric
+counts them, tagged `node` with the branch's id.
 
 DirectML runs a model with dynamic input dimensions much slower than the same model with its shape
 fixed. `new DmlInferenceSession(path, new DmlInferenceSessionOptions { FreeDimensions = ... })` fixes
