@@ -25,13 +25,22 @@ internal sealed class PlayerSlot(
     public Func<CancellationToken, Task> Run(Func<IMediaPlayer, CancellationToken, Task> command) =>
         async ct => await command(await GetAsync(ct), ct);
 
-    /// <summary>Disposes the player, then its audio sink. Call once no command is running.</summary>
+    /// <summary>
+    /// Disposes the player, then its audio sink, even if the player's disposal fails. Call once no
+    /// command is running.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
-        if (_player is not null)
-            await _player.DisposeAsync();
-        if (_audio is not null)
-            await _audio.DisposeAsync();
+        try
+        {
+            if (_player is not null)
+                await _player.DisposeAsync();
+        }
+        finally
+        {
+            if (_audio is not null)
+                await _audio.DisposeAsync();
+        }
     }
 
     private async Task<IMediaPlayer> GetAsync(CancellationToken ct)
