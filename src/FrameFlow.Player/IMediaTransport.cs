@@ -37,8 +37,10 @@ namespace FrameFlow.Player;
 /// Exceptions are still thrown, for the cases that are not expected
 /// outcomes: <see cref="ArgumentException"/> and friends for a caller that
 /// passed something invalid, and whatever escapes a sink or the decode
-/// stack. Failures that arise mid-playback rather than in answer to a
-/// command surface on <see cref="ErrorOccurred"/>.
+/// stack. Failures that arise during playback surface on
+/// <see cref="ErrorOccurred"/>. So does a command's failure that puts the
+/// player into <see cref="PlaybackState.Error"/>, which the command's
+/// <see cref="Result"/> also returns.
 /// </para>
 /// </remarks>
 public interface IMediaTransport : IAsyncDisposable
@@ -173,15 +175,29 @@ public interface IMediaTransport : IAsyncDisposable
     IObservable<LoopStalled> LoopStalled { get; }
 
     /// <summary>
-    /// Fires when a failure arises during playback rather than in answer to a
-    /// command. A command's own failure comes back on its <see cref="Result"/>
-    /// and is not repeated here.
+    /// Fires when a failure arises during playback, and whenever a failure puts the player into
+    /// <see cref="PlaybackState.Error"/>, a command's failure included. A command refused with
+    /// the state unchanged reports on its <see cref="Result"/> only.
     /// </summary>
     /// <remarks>
     /// <para>
     /// Forwarded from <see cref="IPlaybackController.ErrorOccurred"/>. Without
     /// it a consumer holding only the player surface has no structured error
     /// channel for anything the decode stack reports mid-stream.
+    /// </para>
+    /// <para>
+    /// <b>A command that fails into Error reports twice.</b> A <see cref="PlayAsync"/> whose item
+    /// cannot be loaded, from <see cref="PlaybackState.Idle"/> or <see cref="PlaybackState.Ended"/>,
+    /// moves the player to <see cref="PlaybackState.Error"/>. It returns a failed
+    /// <see cref="Result"/>, and before it completes this fires with the same
+    /// <see cref="PlaybackError"/> instance as <see cref="Result.Error"/>. The
+    /// <see cref="Result"/> answers whoever called; this tells everyone else, such as an app
+    /// watching a player whose Play button belongs to a chrome control. A consumer that handles
+    /// both discards the second sighting by reference equality.
+    /// </para>
+    /// <para>
+    /// A command refused with the state unchanged raises nothing here: a play with nothing to
+    /// play, a seek with nothing loaded, any command on a disposed player.
     /// </para>
     /// <para>
     /// An error does not always stop playback. A single-source player raises it
