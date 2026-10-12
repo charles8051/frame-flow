@@ -67,6 +67,12 @@ public sealed class WaitForEndTests
         Assert.Same(Fatal, result.Error);
     }
 
+    /// <summary>
+    /// An item failure raised while playing does not end the wait. It is also the sequence a last
+    /// item that faults mid-play produces under <see cref="RepeatMode.Off"/>: the error while
+    /// <see cref="PlaybackState.Playing"/>, then <see cref="PlaybackState.Ended"/>. The wait
+    /// reports success for it, as its remarks say.
+    /// </summary>
     [Fact]
     public async Task KeepsWaiting_ThroughAnItemFailureThePlayerCarriesOnFrom()
     {

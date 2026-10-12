@@ -32,17 +32,28 @@ public static class MediaTransportExtensions
     /// </returns>
     /// <remarks>
     /// <para>
-    /// <b>Ended means heard.</b> The player raises <see cref="PlaybackState.Ended"/> once the
-    /// audio sink has played the last sample out, not once it has been handed the last buffer
-    /// (<see cref="IAudioSink.DrainAsync"/>), so a caller that tears down here cuts nothing off.
+    /// <b>Ended means heard, for an item that plays to its end.</b> The player raises
+    /// <see cref="PlaybackState.Ended"/> once the audio sink has played the last sample out, not
+    /// once it has been handed the last buffer (<see cref="IAudioSink.DrainAsync"/>), so a caller
+    /// that tears down here cuts nothing off.
+    /// </para>
+    /// <para>
+    /// <b>Success does not mean every item played.</b> An item failure that the player carries on
+    /// from is raised on <see cref="IMediaTransport.ErrorOccurred"/> while the state stays
+    /// <see cref="PlaybackState.Playing"/>, and does not end the wait. That includes the last
+    /// item: under <see cref="RepeatMode.Off"/>, a last item that faults while it plays ends the
+    /// queue in <see cref="PlaybackState.Ended"/>, which follows the fault rather than a drain,
+    /// and the wait reports success. A caller that needs to know whether anything failed
+    /// subscribes to <see cref="IMediaTransport.ErrorOccurred"/>, or to
+    /// <see cref="IMediaPlayer.ItemFailed"/>, before it plays.
     /// </para>
     /// <para>
     /// <b>Called late.</b> It subscribes before it reads <see cref="IMediaTransport.State"/>, so a
     /// player that is already in <see cref="PlaybackState.Ended"/> completes it at once, and one
     /// that ends while it is being set up is not missed. A player already in
     /// <see cref="PlaybackState.Error"/> fails it at once, but with a generic error: the one that
-    /// put it there was raised before the wait subscribed and is not replayed. A disposed player
-    /// fails it.
+    /// put it there may already have been raised before the wait subscribed, and is not replayed.
+    /// A disposed player fails it.
     /// </para>
     /// <para>
     /// <b>Repeat.</b> Under <see cref="RepeatMode.One"/> the current item loops, and under
@@ -52,10 +63,6 @@ public static class MediaTransportExtensions
     /// cancellation. Under <see cref="RepeatMode.Off"/> a queue ends after its last item. There
     /// is no per-item wait: <see cref="IMediaPlayer.SourceTransitioned"/> and
     /// <see cref="IMediaTransport.LoopRestarted"/> report the end of each item.
-    /// </para>
-    /// <para>
-    /// An item failure that the player carries on from, raised on
-    /// <see cref="IMediaTransport.ErrorOccurred"/> while it keeps playing, does not end the wait.
     /// </para>
     /// </remarks>
     public static Task<Result> WaitForEndAsync(

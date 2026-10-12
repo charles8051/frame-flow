@@ -5,6 +5,8 @@
 
 using System.Runtime.InteropServices;
 using FrameFlow.Audio.OpenAL;
+using FrameFlow.Media;
+using FrameFlow.Playback;
 using FrameFlow.Player;
 using Microsoft.Extensions.Logging;
 
@@ -44,6 +46,11 @@ using var ctrlC = PosixSignalRegistration.Create(
     }
 );
 
+// A file that fails part-way through is an item failure: the player reports it here and then
+// ends, so WaitForEndAsync alone would report success.
+PlaybackError? failure = null;
+using var errors = player.ErrorOccurred.Subscribe(error => failure ??= error);
+
 var play = await player.PlayAsync();
 if (!play.IsSuccess)
 {
@@ -54,9 +61,9 @@ if (!play.IsSuccess)
 try
 {
     var ended = await player.WaitForEndAsync(stop.Token);
-    if (!ended.IsSuccess)
+    if ((ended.Error ?? failure) is { } error)
     {
-        Console.Error.WriteLine($"Playback failed: {ended.Error.Message}");
+        Console.Error.WriteLine($"Playback failed: {error.Message}");
         return 1;
     }
 }

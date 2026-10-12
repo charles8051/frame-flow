@@ -148,7 +148,8 @@ public interface IAudioSink : IAsyncDisposable
     /// <para>
     /// <b>Default.</b> Completes at once. That is right for a sink that has delivered everything
     /// by the time <see cref="PresentAsync"/> returns, such as a capture sink or a test double. A
-    /// sink that queues ahead of a device overrides it.
+    /// sink that queues ahead of a device overrides it, and a sink that wraps another forwards it
+    /// to the inner one, which the default does not do.
     /// </para>
     /// </remarks>
     /// <param name="cancellationToken">Cancels the wait. The audio still queued is left where it is.</param>
