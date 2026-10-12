@@ -90,8 +90,9 @@ public sealed class CompositionInteropVideoViewSetupTests
     [AvaloniaFact]
     public void AttachSinkAfterTheViewWasTornDown_StartsNoStallWatchdog()
     {
-        // Teardown runs once. A watchdog started after it has nothing left to stop it, so its
-        // timer samples the closed view, and keeps it alive, for good.
+        // The watchdog runs while the view is in the visual tree, and a detach stops it (#650). One
+        // started on a view out of the tree would have nothing to stop it, so its timer would
+        // sample the closed view, and keep it alive, for good.
         var view = new CompositionInteropVideoView();
         var log = new RecordingLoggerFactory();
         var window = Show(view);
