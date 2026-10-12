@@ -20,9 +20,10 @@ namespace FrameFlow.Whisper;
 /// <para>
 /// <b>One clock.</b> <see cref="Add"/> and <see cref="GetActive"/> share a clock: the latest PTS
 /// either has been given. Within a run of playback it only rises. A PTS below it is a seek
-/// back, a loop or the next item, and starts a new timeline with nothing on it, so no caption
-/// from before the jump shows again or evicts the captions after it. A jump the PTS does not
-/// show, such as a seek forward by less than the display duration, needs <see cref="Reset"/>.
+/// back, a loop or the next item, and starts a new timeline with nothing on it: no caption from
+/// before the jump shows again, and the time before it no longer evicts the captions after it.
+/// A jump the PTS does not show, such as a seek forward by less than the display duration,
+/// needs <see cref="Reset"/>.
 /// </para>
 /// <para>
 /// <b>Eviction.</b> A caption more than the display duration behind the clock is dropped as
