@@ -836,9 +836,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             // climb, PaceUntil waits, and on a weak box hits the 5 s wait-cap
             // (cosmetic micro-hitch). Seating the origin here makes the audio clock
             // and the per-item frame PTS agree from the first frame at every loop
-            // boundary. The seek path is unaffected: it seeds its own baseline
-            // before this branch runs (and reactivates outside PlayAsync's
-            // first-play branch entirely), so this never overrides a seek target.
+            // boundary. This never overrides a seek target. A seek after the first
+            // play reactivates outside this branch entirely, and a seek before it
+            // leaves the position clock on the target, which is what itemOrigin reads.
             var itemOrigin = _clock.Position;
             (_clockSource as ISeekableClock)?.SeekBaseline(itemOrigin);
 
@@ -856,7 +856,16 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 await _audioSink!.ActivateAsync(cancellationToken).ConfigureAwait(false);
 
             _clock.Start(itemOrigin);
-            _ownedClockSource?.Start();
+
+            // Start runs the wallclock from zero and discards the baseline seated above,
+            // because the owned wallclock is the same object as _clockSource. It is seated
+            // again once running. Otherwise a seek before the first play paced the target's
+            // frames against a clock at zero, and each one waited out PaceWaitCap (#639).
+            if (_ownedClockSource is { } wallclock)
+            {
+                wallclock.Start();
+                wallclock.Seek(itemOrigin);
+            }
 
             if (_pumpTask is null || _graphTask is null)
             {
@@ -1195,7 +1204,10 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         if (_pipeline is null || _demux is null)
             return;
 
-        var wasPaused = _clock.IsPaused;
+        // A session that has not played yet holds still as a paused one does. Its clock is
+        // stopped rather than paused, so IsPaused alone reads false, and resuming would open
+        // the gates before the first PlayAsync (#639). That PlayAsync launches the graph.
+        var wasPaused = _clock.IsPaused || !_renderersActivated;
 
         // Supersede any floor a previous discontinuity recorded but never launched: this
         // reposition is now the one that decides where playback resumes.
@@ -1331,7 +1343,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             // audible output now. Don't restart the graph or open gates — the next user
             // PlayAsync does that. The clock stays seeked + paused. (Reachable only via the
             // user-seek path; a loop rewind is fired from Playing with the clock running.)
-            if (_hasAudio)
+            // Before the first play the sink has not been activated, and the first-play
+            // branch of PlayAsync activates it, so it is left alone here.
+            if (_hasAudio && _renderersActivated)
             {
                 await _audioSink!.ActivateAsync(cancellationToken).ConfigureAwait(false);
                 await _audioSink!.PauseAsync(cancellationToken).ConfigureAwait(false);

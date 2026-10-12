@@ -23,14 +23,55 @@ namespace FrameFlow.Integration.Tests.Harness;
 internal sealed class PtsRecordingVideoSink : IVideoSink
 {
     private readonly ConcurrentQueue<TimeSpan> _presented = new();
+    private readonly Lock _gate = new();
+    private readonly List<(Func<TimeSpan, bool> Match, TaskCompletionSource<TimeSpan> Signal)> _waiters = [];
 
     /// <summary>Every frame's PTS, in delivery order.</summary>
     public IReadOnlyList<TimeSpan> PresentedPts => _presented.ToArray();
 
+    /// <summary>
+    /// Completes with the PTS of the first frame <paramref name="match"/> accepts, whether it
+    /// was delivered before this call or arrives after it.
+    /// </summary>
+    public Task<TimeSpan> WhenPresented(Func<TimeSpan, bool> match)
+    {
+        var signal = new TaskCompletionSource<TimeSpan>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        lock (_gate)
+        {
+            foreach (var pts in _presented)
+            {
+                if (match(pts))
+                {
+                    signal.TrySetResult(pts);
+                    return signal.Task;
+                }
+            }
+            _waiters.Add((match, signal));
+        }
+        return signal.Task;
+    }
+
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
     {
-        _presented.Enqueue(frame.Pts);
+        var pts = frame.Pts;
+        _presented.Enqueue(pts);
         frame.Dispose();
+
+        // Enqueued first, so a waiter registered after this point finds the frame in the queue
+        // and one registered before it is found here.
+        lock (_gate)
+        {
+            for (var i = _waiters.Count - 1; i >= 0; i--)
+            {
+                if (_waiters[i].Match(pts))
+                {
+                    _waiters[i].Signal.TrySetResult(pts);
+                    _waiters.RemoveAt(i);
+                }
+            }
+        }
         return ValueTask.CompletedTask;
     }
 
