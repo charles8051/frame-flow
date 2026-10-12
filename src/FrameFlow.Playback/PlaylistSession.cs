@@ -356,7 +356,8 @@ internal sealed class PlaylistSession : IPlaybackSession
             OnEndOfStream: () =>
                 Deliver(new PlaylistSessionInput.EndOfStream(generation, runNumber())),
             // How far a faulted item played is read when it faulted. The position clock starts from
-            // zero for each item and each in-place rewind, and stops while paused.
+            // the item's start for each item and each in-place rewind, and stops while paused. The
+            // protocol subtracts the start.
             OnWorkerFaulted: ex =>
                 Deliver(new PlaylistSessionInput.Fault(generation, ex, _clock.Position)),
             OnBufferReady: () => Deliver(new PlaylistSessionInput.BufferReady(generation)),
@@ -614,7 +615,10 @@ internal sealed class PlaylistSession : IPlaybackSession
                     CreateItemCallbacks(open.Generation, () => runtime!.RunNumber)
                 );
                 _runtime = runtime;
-                return await RunItemAsync(open.Command, t => runtime.InitializeAsync(open.Source, t))
+                return await RunItemAsync(
+                        open.Command,
+                        t => runtime.InitializeAsync(open.Source, open.Start, t)
+                    )
                     .ConfigureAwait(false);
             }
 
@@ -635,7 +639,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                     .ConfigureAwait(false);
 
             case PlaylistSessionAction.RewindItem rewind:
-                return await RunItemAsync(rewind.Command, t => _runtime!.RewindToStartAsync(t))
+                return await RunItemAsync(rewind.Command, t => _runtime!.RewindToAsync(rewind.Position, t))
                     .ConfigureAwait(false);
 
             case PlaylistSessionAction.DisposeItem:

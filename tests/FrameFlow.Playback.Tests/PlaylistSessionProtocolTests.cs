@@ -1144,6 +1144,148 @@ public sealed class PlaylistSessionProtocolTests
         Assert.False(skipping.LoopUnderWay);
     }
 
+    // ── Clips ───────────────────────────────────────────────────────────────
+
+    private static readonly TimeSpan ClipStart = TimeSpan.FromSeconds(20);
+
+    [Fact]
+    public void Initialize_OpensTheFirstItemAtItsStart()
+    {
+        var clip = new PlaylistItem(new MediaClip(new FakeSource("a"), ClipStart));
+        var queue = PlaylistQueue.Create([clip], RepeatMode.Off);
+
+        var (_, _, step) = Step(PlaylistSessionState.Initial, queue, new PlaylistSessionInput.Initialize(Command));
+
+        var open = Assert.IsType<PlaylistSessionAction.OpenItem>(step.Awaited);
+        Assert.Same(clip.Source, open.Source);
+        Assert.Equal(ClipStart, open.Start);
+    }
+
+    [Fact]
+    public void AnAdvance_OpensTheNextItemAtItsStart()
+    {
+        var a = new PlaylistItem(new FakeSource("a"));
+        var b = new PlaylistItem(new MediaClip(new FakeSource("b"), ClipStart));
+        var queue = PlaylistQueue.Create([a, b], RepeatMode.Off);
+        (queue, _) = queue.TakeStart();
+        (queue, _) = queue.ReportCurrent(a, Info);
+        var state = PlayingWith(a);
+
+        var drive = RunToIdle(state, queue, new PlaylistSessionInput.EndOfStream(CurrentGeneration, CurrentRun));
+
+        var open = Assert.Single(drive.Awaited.OfType<PlaylistSessionAction.OpenItem>());
+        Assert.Same(b.Source, open.Source);
+        Assert.Equal(ClipStart, open.Start);
+    }
+
+    [Fact]
+    public void AFailedFirstOpen_OpensTheItemAfterItAtItsStart()
+    {
+        // Once an item has started, a new session's first item that cannot be opened is passed
+        // over, and the next one opens in its place.
+        var a = new PlaylistItem(new FakeSource("a"));
+        var b = new PlaylistItem(new MediaClip(new FakeSource("b"), ClipStart));
+        var queue = PlaylistQueue.Create([a, b], RepeatMode.Off);
+        (queue, _) = queue.ReportCurrent(a, Info);
+        var opens = 0;
+
+        var drive = RunToIdle(
+            PlaylistSessionState.Initial,
+            queue,
+            new PlaylistSessionInput.Initialize(Command),
+            fail: call => call is PlaylistSessionAction.OpenItem && opens++ == 0
+        );
+
+        var reopened = drive.Awaited.OfType<PlaylistSessionAction.OpenItem>().ElementAt(1);
+        Assert.Same(b.Source, reopened.Source);
+        Assert.Equal(ClipStart, reopened.Start);
+    }
+
+    [Fact]
+    public void ALoopOfAClip_RewindsToItsStart()
+    {
+        var clip = new PlaylistItem(new MediaClip(new FakeSource("a"), ClipStart));
+        var queue = PlaylistQueue.Create([clip], RepeatMode.One);
+        (queue, _) = queue.TakeStart();
+        (queue, _) = queue.ReportCurrent(clip, Info);
+
+        var (_, _, step) = Step(PlayingWith(clip), queue, new PlaylistSessionInput.EndOfStream(CurrentGeneration, CurrentRun));
+
+        var rewind = Assert.IsType<PlaylistSessionAction.RewindItem>(step.Awaited);
+        Assert.Equal(ClipStart, rewind.Position);
+    }
+
+    [Fact]
+    public void AHandOffToAnotherClipOfTheSameSource_RewindsToThatClipsStart()
+    {
+        var source = new FakeSource("a");
+        var first = new PlaylistItem(new MediaClip(source, TimeSpan.FromSeconds(2)));
+        var second = new PlaylistItem(new MediaClip(source, ClipStart));
+        var queue = PlaylistQueue.Create([first, second], RepeatMode.Off);
+        (queue, _) = queue.TakeStart();
+        (queue, _) = queue.ReportCurrent(first, Info);
+
+        var (_, _, step) = Step(
+            PlayingWith(first),
+            queue,
+            new PlaylistSessionInput.SkipRequested(CurrentGeneration, PlaylistRunState.Playing)
+        );
+
+        var rewind = Assert.IsType<PlaylistSessionAction.RewindItem>(step.Awaited);
+        Assert.Equal(ClipStart, rewind.Position);
+    }
+
+    [Fact]
+    public void ARewindCommand_RewindsTheCurrentItemToItsStart()
+    {
+        var clip = new PlaylistItem(new MediaClip(new FakeSource("a"), ClipStart));
+        var queue = PlaylistQueue.Create([clip], RepeatMode.Off);
+        (queue, _) = queue.TakeStart();
+        (queue, _) = queue.ReportCurrent(clip, Info);
+
+        var (_, _, step) = Step(PlayingWith(clip), queue, new PlaylistSessionInput.Rewind(Command));
+
+        var rewind = Assert.IsType<PlaylistSessionAction.RewindItem>(step.Awaited);
+        Assert.Equal(ClipStart, rewind.Position);
+    }
+
+    [Theory]
+    // One failure already counted. Played one second past its start, out of the forty that
+    // follow it: short of the five seconds of progress that clear the count, so it counts.
+    [InlineData(21, 2)]
+    // Played six seconds past its start: progress, so the count clears.
+    [InlineData(26, 0)]
+    public void AFaultedClip_CountsProgressFromItsStart(int positionSeconds, int expectedFailures)
+    {
+        var clip = new PlaylistItem(new MediaClip(new FakeSource("a"), ClipStart));
+        var b = new PlaylistItem(new FakeSource("b"));
+        var queue = PlaylistQueue.Create([clip, b], RepeatMode.Off);
+        (queue, _) = queue.TakeStart();
+        (queue, _) = queue.ReportCurrent(clip, Info);
+        (queue, _) = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
+        var sixtySeconds = new MediaInfo("a", TimeSpan.FromSeconds(60), [], []);
+        var state = PlayingWith(clip) with
+        {
+            Item = new PlaylistItemSlot(CurrentGeneration, clip, Played: true, AwaitsPlay: false, CurrentRun, sixtySeconds),
+        };
+
+        var (_, after, _) = Step(
+            state,
+            queue,
+            new PlaylistSessionInput.Fault(CurrentGeneration, new InvalidOperationException(), TimeSpan.FromSeconds(positionSeconds))
+        );
+
+        Assert.Equal(expectedFailures, after.ConsecutiveFailures);
+    }
+
+    private static PlaylistSessionState PlayingWith(PlaylistItem item) =>
+        PlaylistSessionState.Initial with
+        {
+            Run = PlaylistRunState.Playing,
+            Generation = CurrentGeneration,
+            Item = new PlaylistItemSlot(CurrentGeneration, item, Played: true, AwaitsPlay: false, CurrentRun, Info),
+        };
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private sealed record Drive(

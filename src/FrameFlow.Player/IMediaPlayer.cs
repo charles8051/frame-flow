@@ -38,6 +38,13 @@ namespace FrameFlow.Player;
 /// until a skip or jump moves on. <see cref="GetPlaylist"/> returns a snapshot of all of it.
 /// </para>
 /// <para>
+/// <b>Clips.</b> The queue methods also take a <see cref="MediaClip"/>, a source and a start. The
+/// item opens at the clip's start, and a loop or replay of it returns there.
+/// <see cref="IMediaTransport.Position"/> and <see cref="IMediaTransport.Duration"/> stay in the
+/// source's time. Give clips of one file one source object: moving between them then repositions
+/// the open item instead of opening the file again.
+/// </para>
+/// <para>
 /// For continuous rotation under <see cref="RepeatMode.Off"/>, enqueue the next item from a
 /// <see cref="SourceTransitioned"/> handler with <see cref="EnqueueAsync"/>. Its items leave
 /// once they have played, so the player holds nothing after each one. Items added with
@@ -83,15 +90,39 @@ public interface IMediaPlayer : IMediaTransport
     Task<PlaylistItem> EnqueueAsync(IMediaSource source, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Adds a clip that plays once, from its start, after the playlist items left in the current
+    /// pass.
+    /// </summary>
+    /// <returns>The item added, for <see cref="JumpToAsync"/> or <see cref="RemoveAsync"/>.</returns>
+    /// <exception cref="ArgumentException"><paramref name="clip"/> has no source.</exception>
+    Task<PlaylistItem> EnqueueAsync(MediaClip clip, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Makes <paramref name="source"/> the very next item to play, ahead of anything already
     /// set next or queued. It plays once. A <see langword="null"/> value adds nothing.
     /// </summary>
     /// <returns>The item added, or <see langword="null"/> when <paramref name="source"/> is null.</returns>
     Task<PlaylistItem?> SetNextAsync(IMediaSource? source, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Makes <paramref name="clip"/> the very next item to play, from its start, ahead of anything
+    /// already set next or queued. It plays once.
+    /// </summary>
+    /// <returns>The item added.</returns>
+    /// <exception cref="ArgumentException"><paramref name="clip"/> has no source.</exception>
+    Task<PlaylistItem> SetNextAsync(MediaClip clip, CancellationToken cancellationToken = default);
+
     /// <summary>Appends a source to the playlist, where it stays after it plays.</summary>
     /// <returns>The item added.</returns>
     Task<PlaylistItem> AddAsync(IMediaSource source, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Appends a clip to the playlist, where it stays after it plays. It plays from its start
+    /// each time.
+    /// </summary>
+    /// <returns>The item added.</returns>
+    /// <exception cref="ArgumentException"><paramref name="clip"/> has no source.</exception>
+    Task<PlaylistItem> AddAsync(MediaClip clip, CancellationToken cancellationToken = default);
 
     /// <summary>Returns a snapshot of the queue.</summary>
     PlaylistSnapshot GetPlaylist();
@@ -107,7 +138,8 @@ public interface IMediaPlayer : IMediaTransport
     /// from there. A later jump replaces one not yet taken.
     /// </para>
     /// <para>
-    /// A jump to the current item does nothing and succeeds; seek to zero to restart it. A jump
+    /// A jump to the current item does nothing and succeeds; seek to its
+    /// <see cref="PlaylistItem.Start"/> to restart it. A jump
     /// to an item that is not in the player, including a current item that has been removed, or
     /// while the player is in
     /// <see cref="PlaybackState.Error"/> or disposed, returns a failed <see cref="Result"/> with
@@ -146,6 +178,24 @@ public interface IMediaPlayer : IMediaTransport
     /// <exception cref="ArgumentException"><paramref name="sources"/> is empty.</exception>
     Task<Result<IReadOnlyList<PlaylistItem>>> ReplaceAsync(
         IEnumerable<IMediaSource> sources,
+        CancellationToken cancellationToken = default
+    );
+
+    /// <summary>
+    /// Replaces the queue with <paramref name="clips"/> in one edit and jumps to the first of
+    /// them, so a playing player moves to the new playlist at once. Each item plays from its
+    /// clip's start.
+    /// </summary>
+    /// <returns>
+    /// The new playlist items, or a failed <see cref="Result{T}"/> with
+    /// <see cref="ErrorCategory.InvalidOperation"/> while the player is in
+    /// <see cref="PlaybackState.Error"/> or disposed.
+    /// </returns>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="clips"/> is empty, or a clip has no source.
+    /// </exception>
+    Task<Result<IReadOnlyList<PlaylistItem>>> ReplaceAsync(
+        IEnumerable<MediaClip> clips,
         CancellationToken cancellationToken = default
     );
 
