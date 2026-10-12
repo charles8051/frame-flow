@@ -21,7 +21,7 @@ public static class FrameFlowAvaloniaBuilderExtensions
     /// has not yet attached to the visual tree.
     /// </summary>
     /// <remarks>
-    /// The sink logs through the view's <see cref="FrameFlowVideoView.LoggerFactory"/>, which can
+    /// The view's own sink logs through its <see cref="FrameFlowVideoView.LoggerFactory"/>, which can
     /// be assigned before or after this call; the builder's <c>WithLogger</c> does not reach it.
     /// <c>WithVideoSurface(view, loggerFactory)</c> wires the factory in the same call.
     /// </remarks>
@@ -76,6 +76,8 @@ public static class FrameFlowAvaloniaBuilderExtensions
     /// (<c>FrameFlow.Avalonia.Windows.CompositionInteropVideoView</c>) and the CPU
     /// <see cref="FrameFlowVideoView"/> alike. The builder's own <c>WithLogger</c> does not reach
     /// the surface, so pass the same factory here; pass <c>NullLoggerFactory.Instance</c> for none.
+    /// Call on the UI thread: the zero-copy view, once on screen, sets up its compositor surface
+    /// in this call.
     /// </remarks>
     /// <param name="builder">The player builder being configured.</param>
     /// <param name="surface">The control that will render frames.</param>
@@ -108,6 +110,7 @@ public static class FrameFlowAvaloniaBuilderExtensions
     /// <paramref name="loggerFactory"/> and hands back its sink, through
     /// <see cref="IVideoSurface.AttachSink"/>.
     /// </summary>
+    /// <remarks>Call on the UI thread, as for the <see cref="IPlayerBuilder"/> overload.</remarks>
     /// <param name="builder">The pass builder being configured.</param>
     /// <param name="surface">The control that will render frames.</param>
     /// <param name="loggerFactory">The logger factory the surface and its sink log through.</param>

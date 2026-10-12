@@ -69,10 +69,11 @@ public sealed class CompositionInteropVideoViewSetupTests
     }
 
     [AvaloniaFact]
-    public async Task InitializeAfterEnsureSink_MovesTheSinksLoggingToTheNewFactory()
+    public async Task InitializeAfterEnsureSink_MovesTheViewsAndTheSinksLoggingToTheNewFactory()
     {
-        // EnsureSink now readies the view without a logger, so the sink exists before the
-        // factory arrives. The factory still has to reach it, as on the CPU view (#630).
+        // EnsureSink now readies the view without a logger, so the sink and the stall watchdog
+        // exist before the factory arrives. The factory still has to reach them and the view
+        // itself, as on the CPU view (#630).
         var view = new CompositionInteropVideoView();
         var sink = view.EnsureSink();
         var log = new RecordingLoggerFactory();
@@ -80,9 +81,30 @@ public sealed class CompositionInteropVideoViewSetupTests
         view.Initialize(log);
         sink.FramePresented += (_, _) => throw new InvalidOperationException("overlay failed");
         sink.RaiseFramePresented(TimeSpan.FromMilliseconds(16));
+        await view.DisposeAsync(); // the view logs how its teardown went before this completes
 
         Assert.Contains(log.MessagesFrom<CompositionInteropVideoSink>(), m => m.Contains("FramePresented handler threw", StringComparison.Ordinal));
-        await view.DisposeAsync();
+        Assert.Contains(log.MessagesFrom<CompositionInteropVideoView>(), m => m.Contains("Presenter teardown completed cleanly", StringComparison.Ordinal));
+    }
+
+    [AvaloniaFact]
+    public void AttachSinkAfterTheViewWasTornDown_StartsNoStallWatchdog()
+    {
+        // Teardown runs once. A watchdog started after it has nothing left to stop it, so its
+        // timer samples the closed view, and keeps it alive, for good.
+        var view = new CompositionInteropVideoView();
+        var log = new RecordingLoggerFactory();
+        var window = Show(view);
+        ((IVideoSurface)view).AttachSink(log);
+        Assert.True(view.IsWatchingForStalls);
+
+        window.Close();
+        Assert.Contains(log.MessagesFrom<CompositionInteropVideoView>(), m => m.Contains("Presenter teardown completed cleanly", StringComparison.Ordinal));
+        Assert.False(view.IsWatchingForStalls);
+
+        ((IVideoSurface)view).AttachSink(log);
+
+        Assert.False(view.IsWatchingForStalls);
     }
 
     private static Window Show(Control view)

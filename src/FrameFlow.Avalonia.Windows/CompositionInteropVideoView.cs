@@ -29,8 +29,8 @@ namespace FrameFlow.Avalonia.Windows;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Pairs with <see cref="CompositionInteropVideoSink"/>: the sink buffers incoming
-/// frames; this control pulls the latest on a render tick and presents it. Use
+/// Pairs with <see cref="CompositionInteropVideoSink"/>: the sink holds the latest incoming
+/// frame and signals its arrival; this control then presents it on the UI thread. Use
 /// <see cref="EnsureSink"/> to get the <see cref="IVideoSink"/> to hand to the player.
 /// </para>
 /// <para>
@@ -167,6 +167,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     private long _lastBltStartedTicks;
     private PresenterStallWatchdog? _stallWatchdog;
 
+    /// <summary>Whether the stall watchdog is running. For tests.</summary>
+    internal bool IsWatchingForStalls => _stallWatchdog is not null;
+
 
     // Bounded wait for in-flight presents to drain at teardown. On the happy path the
     // compositor finishes each UpdateWithKeyedMutexAsync in well under a frame, so this is
@@ -258,7 +261,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// <remarks>
     /// This is only the presenter's share of the loss, counted for the view's whole lifetime.
     /// Frames superseded at the sink's latest-wins intake — the newest frame replacing one
-    /// this render tick never took — are counted by
+    /// the view never presented — are counted by
     /// <see cref="CompositionInteropVideoSink.FramesSuperseded"/>. The diagnostics snapshot
     /// reports the sum of the two, rebased onto the attached sink's window; see
     /// <c>BuildSinkDiagnostics</c>.
@@ -330,7 +333,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// <see cref="EnsureSink"/> runs this without a logger when it has not run yet, and
     /// <see cref="IVideoSurface.AttachSink"/> runs it with the factory it is given. Calling it
     /// again moves the view's logging, and its own sink's, to the new factory. A caller who
-    /// assigns <see cref="Sink"/> instead of asking for one calls this itself.
+    /// assigns <see cref="Sink"/> instead of asking for one calls this itself. A view that has
+    /// been torn down presents nothing more, so on one this starts neither the stall watchdog
+    /// nor the compositor surface.
     /// </remarks>
     public void Initialize(ILoggerFactory loggerFactory)
     {
@@ -341,6 +346,13 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
 
         EnsureSink();
         _tickMeter.Reset();
+
+        // Teardown runs once, so a view torn down does not present again. A watchdog started
+        // now would have nothing left to stop it: its timer would sample the view, and keep it
+        // alive, for good. EnsureSink reaches here on its own when Initialize has not run, so a
+        // late EnsureSink on a closed view must not start one either.
+        if (_disposed)
+            return;
 
         if (_stallWatchdog is null)
         {
