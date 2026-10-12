@@ -58,7 +58,8 @@ public sealed class FrameFlowPlayerChrome : UserControl
         set => SetValue(TransportProperty, value);
     }
 
-    /// <summary>Initial state of the Loop toggle. See
+    /// <summary>Whether binding a transport that is not repeating sets it to
+    /// <see cref="RepeatMode.One"/>. See
     /// <see cref="FrameFlowTransportBar.LoopByDefault"/>.</summary>
     public static readonly StyledProperty<bool> LoopByDefaultProperty =
         AvaloniaProperty.Register<FrameFlowPlayerChrome, bool>(nameof(LoopByDefault));

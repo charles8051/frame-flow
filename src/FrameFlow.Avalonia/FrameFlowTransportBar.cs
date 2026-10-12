@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
+using FrameFlow.Avalonia.Core;
 using FrameFlow.Media;
 using FrameFlow.Playback;
 using FrameFlow.Player;
@@ -25,14 +26,21 @@ namespace FrameFlow.Avalonia;
 /// Open button + drag-drop alongside this transport bar.
 /// </para>
 /// <para>
+/// The Loop toggle shows the transport's <see cref="IMediaTransport.RepeatMode"/> and follows
+/// <see cref="IMediaTransport.RepeatModeChanged"/>. A click steps the mode from Off to One to All
+/// and back to Off. One and All both show checked, labelled "Loop one" and "Loop all".
+/// </para>
+/// <para>
 /// A refused <c>PlayAsync</c> / <c>PauseAsync</c> / <c>SeekAsync</c> /
 /// <c>SetRepeatModeAsync</c> comes back as a <see cref="Result"/> and is
 /// logged through Avalonia's logger by <c>TransportCommand</c> (ADR-0069).
 /// The bar has no error affordance of its own: the buttons follow
-/// <see cref="IMediaTransport.StateChanged"/>, so a refusal leaves them
-/// where the state says they belong. A consumer wanting failures that
-/// arise mid-playback rather than in answer to a command should observe
-/// <see cref="IMediaTransport.ErrorOccurred"/>.
+/// <see cref="IMediaTransport.StateChanged"/> and the Loop toggle follows
+/// <see cref="IMediaTransport.RepeatModeChanged"/>, so a refusal leaves them
+/// where the transport says they belong. A consumer that wants to hear about
+/// failures observes <see cref="IMediaTransport.ErrorOccurred"/>, which carries
+/// failures during playback and any failure that puts the player into
+/// <see cref="PlaybackState.Error"/>, a Play clicked here included.
 /// </para>
 /// </remarks>
 public sealed class FrameFlowTransportBar : StackPanel
@@ -49,10 +57,15 @@ public sealed class FrameFlowTransportBar : StackPanel
     }
 
     /// <summary>
-    /// Initial state of the Loop toggle. Consumers who want loop-by-default
+    /// Whether binding a transport that is not repeating sets it to
+    /// <see cref="RepeatMode.One"/>. Consumers who want loop-by-default
     /// (e.g. demo apps with short clips) set this to <see langword="true"/>.
-    /// The transport bar reflects subsequent user clicks regardless.
     /// </summary>
+    /// <remarks>
+    /// Read when <see cref="Transport"/> is set. A transport already in
+    /// <see cref="RepeatMode.One"/> or <see cref="RepeatMode.All"/> keeps its
+    /// mode. The Loop toggle shows the transport's mode either way.
+    /// </remarks>
     public static readonly StyledProperty<bool> LoopByDefaultProperty =
         AvaloniaProperty.Register<FrameFlowTransportBar, bool>(nameof(LoopByDefault));
 
@@ -69,6 +82,7 @@ public sealed class FrameFlowTransportBar : StackPanel
     private readonly ToggleButton _loopButton;
 
     private IDisposable? _stateSubscription;
+    private IDisposable? _repeatSubscription;
 
     public FrameFlowTransportBar()
     {
@@ -79,13 +93,9 @@ public sealed class FrameFlowTransportBar : StackPanel
         _pauseButton = NewButton("Pause", OnPauseClick);
         _stopButton = NewButton("Stop", OnStopClick);
 
-        _loopButton = new ToggleButton
-        {
-            Content = "Loop",
-            Margin = new Thickness(4),
-            IsEnabled = false,
-        };
+        _loopButton = new ToggleButton { Margin = new Thickness(4), IsEnabled = false };
         _loopButton.Click += OnLoopClick;
+        ShowRepeatMode(RepeatMode.Off);
 
         Children.Add(_playButton);
         Children.Add(_pauseButton);
@@ -116,6 +126,8 @@ public sealed class FrameFlowTransportBar : StackPanel
     {
         _stateSubscription?.Dispose();
         _stateSubscription = null;
+        _repeatSubscription?.Dispose();
+        _repeatSubscription = null;
         base.OnDetachedFromVisualTree(e);
     }
 
@@ -123,35 +135,35 @@ public sealed class FrameFlowTransportBar : StackPanel
     {
         _stateSubscription?.Dispose();
         _stateSubscription = null;
+        _repeatSubscription?.Dispose();
+        _repeatSubscription = null;
 
         if (transport is null)
         {
             UpdateButtonsForState(null);
+            ShowRepeatMode(RepeatMode.Off);
             _loopButton.IsEnabled = false;
             return;
         }
 
         _loopButton.IsEnabled = true;
-        _loopButton.IsChecked = LoopByDefault;
-        // Apply the initial loop preference to the freshly-bound transport.
-        if (LoopByDefault)
+        // Subscribe before reading, so a change that lands between the two still arrives, after
+        // the read. ObserveOnUiThread posts, so a change from a transport this bar has since let
+        // go of can arrive after the rebind; the guard drops it.
+        _repeatSubscription = transport
+            .RepeatModeChanged.ObserveOnUiThread()
+            .Subscribe(t =>
+            {
+                if (ReferenceEquals(Transport, transport))
+                    ShowRepeatMode(t.Current);
+            });
+        var mode = transport.RepeatMode;
+        ShowRepeatMode(mode);
+        if (LoopToggle.OnBind(mode, LoopByDefault) is { } requested)
             TransportCommand.FireAndForget(
                 this,
                 nameof(IMediaTransport.SetRepeatModeAsync),
-                () => transport.SetRepeatModeAsync(RepeatMode.One),
-                // Repeat mode has no observable to resynchronise from, so a
-                // refused command would otherwise leave the toggle showing a
-                // mode the transport never adopted.
-                //
-                // Only while this transport is still the bound one. A rebind
-                // during the command leaves this callback holding a transport the
-                // control no longer shows, and unchecking then would overwrite
-                // the new binding's LoopByDefault.
-                _ =>
-                {
-                    if (ReferenceEquals(Transport, transport))
-                        _loopButton.IsChecked = false;
-                }
+                () => transport.SetRepeatModeAsync(requested)
             );
 
         UpdateButtonsForState(transport.State);
@@ -165,6 +177,13 @@ public sealed class FrameFlowTransportBar : StackPanel
         _playButton.IsEnabled = state is PlaybackState.Paused or PlaybackState.Ended;
         _pauseButton.IsEnabled = state is PlaybackState.Playing;
         _stopButton.IsEnabled = state is PlaybackState.Playing or PlaybackState.Paused;
+    }
+
+    private void ShowRepeatMode(RepeatMode mode)
+    {
+        var face = LoopToggle.Face(mode);
+        _loopButton.IsChecked = face.IsChecked;
+        _loopButton.Content = face.Label;
     }
 
     private void OnPlayClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
@@ -205,30 +224,17 @@ public sealed class FrameFlowTransportBar : StackPanel
     {
         if (Transport is not { } p)
             return;
-        var requested = _loopButton.IsChecked == true;
-        var mode = requested ? RepeatMode.One : RepeatMode.Off;
+
+        // The click has already flipped the toggle. Put it back to the mode the transport
+        // reports: the toggle moves when RepeatModeChanged says the mode moved, so a refused
+        // command leaves it on the mode still in force, and there is nothing to roll back.
+        var current = p.RepeatMode;
+        ShowRepeatMode(current);
+        var next = LoopToggle.Next(current);
         TransportCommand.FireAndForget(
             this,
             nameof(IMediaTransport.SetRepeatModeAsync),
-            () => p.SetRepeatModeAsync(mode),
-            // Click already flipped the toggle. Unlike play/pause/stop, whose
-            // buttons follow StateChanged, repeat mode has no observable on
-            // this surface — so nothing would correct the glyph and it would
-            // keep advertising a mode the transport refused until the next click.
-            // Setting IsChecked here does not re-raise Click.
-            //
-            // Guarded, because the button stays live while the command runs.
-            // Two quick clicks put two of these in flight, and an older one
-            // completing last would roll back a state the newer click already
-            // replaced. If the toggle no longer reads what this call asked
-            // for, a later click owns it.
-            // The transport check is the rebind case, the IsChecked check the
-            // newer-click one.
-            _ =>
-            {
-                if (ReferenceEquals(Transport, p) && _loopButton.IsChecked == requested)
-                    _loopButton.IsChecked = !requested;
-            }
+            () => p.SetRepeatModeAsync(next)
         );
     }
 }

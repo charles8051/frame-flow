@@ -72,6 +72,30 @@ public interface IMediaTransport : IAsyncDisposable
     /// </returns>
     Task<Result> SetRepeatModeAsync(RepeatMode mode, CancellationToken cancellationToken = default);
 
+    /// <summary>The repeat mode in force.</summary>
+    /// <remarks>
+    /// Set at build by the builder's <c>WithRepeatMode</c>, and after that by
+    /// <see cref="SetRepeatModeAsync"/>; a refused command leaves it unchanged. This is
+    /// <see cref="IPlaybackController.RepeatMode"/>.
+    /// </remarks>
+    RepeatMode RepeatMode { get; }
+
+    /// <summary>Stream of repeat mode changes, carrying the mode moved from and the mode moved to.</summary>
+    /// <remarks>
+    /// <para>
+    /// Fires once per change, before the <see cref="SetRepeatModeAsync"/> that made it completes.
+    /// A command that asks for the mode already in force, or that is refused, changes nothing and
+    /// raises nothing. Like <see cref="StateChanged"/> it carries changes only, so read
+    /// <see cref="RepeatMode"/> when you subscribe.
+    /// </para>
+    /// <para>
+    /// This is <see cref="IPlaybackController.RepeatModeChanged"/> unprojected, and keeps its name
+    /// because it keeps its payload. <see cref="StateChanged"/> is named apart from the
+    /// controller's stream because it drops the previous state.
+    /// </para>
+    /// </remarks>
+    IObservable<StateTransition<RepeatMode>> RepeatModeChanged { get; }
+
     /// <summary>Current primary playback state.</summary>
     PlaybackState State { get; }
 

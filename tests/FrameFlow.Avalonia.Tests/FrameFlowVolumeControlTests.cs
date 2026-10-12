@@ -156,6 +156,9 @@ public sealed class FrameFlowVolumeControlTests
         public IObservable<LoopRestarted> LoopRestarted { get; } = new Never<LoopRestarted>();
         public IObservable<LoopStalled> LoopStalled { get; } = new Never<LoopStalled>();
         public IObservable<PlaybackError> ErrorOccurred { get; } = new Never<PlaybackError>();
+        public RepeatMode RepeatMode => RepeatMode.Off;
+        public IObservable<StateTransition<RepeatMode>> RepeatModeChanged { get; } =
+            new Never<StateTransition<RepeatMode>>();
 
         public PlaybackDiagnosticsSnapshot GetDiagnostics() => PlaybackDiagnosticsSnapshot.Empty;
 

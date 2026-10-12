@@ -1,0 +1,121 @@
+using FrameFlow.Playback;
+using Microsoft.Extensions.Logging.Abstractions;
+
+namespace FrameFlow.Player.Tests;
+
+/// <summary>
+/// A player over the real <see cref="PlaybackControllerCore"/> dispatch loop, with an in-memory
+/// session in place of FFmpeg and a clock that never moves. For tests that pin what
+/// <see cref="IMediaTransport"/> reports when the controller underneath does its real work.
+/// </summary>
+/// <remarks>
+/// Every command completes on the controller's dispatch loop after the observables it raises
+/// have been called, so awaiting a command is the barrier: whatever it raised has been seen.
+/// </remarks>
+internal sealed class ControllerRig : IAsyncDisposable
+{
+    public ControllerRig(RepeatMode initialRepeatMode = RepeatMode.Off)
+    {
+        Factory = new SessionFactory(Session);
+        Controller = new PlaybackControllerCore(
+            NullLogger<PlaybackControllerCore>.Instance,
+            Factory,
+            new PlaybackClock(new FrozenTime()),
+            Microsoft.Extensions.Options.Options.Create(
+                new FrameFlowPlaybackOptions { InitialRepeatMode = initialRepeatMode }
+            ),
+            new FrozenTime()
+        );
+        Player = new PlaylistMediaPlayerCore(
+            Controller,
+            new PlaylistCoordinator([], initialRepeatMode),
+            audioSink: null,
+            NullLogger.Instance
+        );
+    }
+
+    public FakeSession Session { get; } = new();
+
+    public SessionFactory Factory { get; }
+
+    public PlaybackControllerCore Controller { get; }
+
+    public IMediaPlayer Player { get; }
+
+    public ValueTask DisposeAsync() => Player.DisposeAsync();
+
+    /// <summary>
+    /// Hands out <see cref="Session"/>, and answers <c>Play</c> at <c>Idle</c> with
+    /// <see cref="Reservable"/> the way a player built with an empty queue answers with the item
+    /// added to it since.
+    /// </summary>
+    internal sealed class SessionFactory(FakeSession session) : IPlaybackSessionFactory
+    {
+        public IMediaSource? Reservable { get; set; }
+
+        public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks) =>
+            session;
+
+        public IMediaSource? ReserveStart() => Reservable;
+    }
+
+    /// <summary>A session that opens whatever it is given, unless told to fail.</summary>
+    internal sealed class FakeSession : IPlaybackSession
+    {
+        public Exception? InitializeThrows { get; set; }
+
+        public MediaInfo? MediaInfo { get; } =
+            new(ContainerName: "fake", Duration: TimeSpan.FromSeconds(10), VideoStreams: [], AudioStreams: []);
+
+        public TimeSpan Duration => TimeSpan.FromSeconds(10);
+
+        public ValueTask InitializeAsync(IMediaSource source, CancellationToken cancellationToken = default) =>
+            InitializeThrows is { } ex ? ValueTask.FromException(ex) : ValueTask.CompletedTask;
+
+        public ValueTask WarmUpAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+        public ValueTask PlayAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+        public ValueTask PauseAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+        public ValueTask SeekAsync(TimeSpan position, CancellationToken cancellationToken = default) =>
+            ValueTask.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    internal sealed class FakeSource : IMediaSource
+    {
+        public string DisplayName => "fake";
+        public Uri? Uri => null;
+        public string? FilePath => null;
+        public bool IsSeekable => true;
+    }
+
+    /// <summary>
+    /// A clock that reads the same instant forever and whose timers never fire. Nothing here plays,
+    /// so nothing reads the time; this keeps the machine's clock out of the room regardless.
+    /// </summary>
+    private sealed class FrozenTime : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch;
+
+        public override long GetTimestamp() => 0;
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period
+        ) => new InertTimer();
+
+        private sealed class InertTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose() { }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+}
