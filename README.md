@@ -180,7 +180,7 @@ await using var pass = await FrameFlowPass.Create(path)
 ### Errors
 
 Transport commands return `Result` rather than throwing. A command the state
-machine refuses — a seek on a non-seekable source, a play on a disposed player —
+machine refuses — a play with nothing to play, a seek with nothing loaded —
 is an expected outcome, and `Result.Error` carries an `ErrorCategory`:
 
 ```csharp
@@ -190,8 +190,11 @@ if (!seeked.IsSuccess && seeked.Error.Category == ErrorCategory.InvalidOperation
 ```
 
 Construction is the exception to that: a null sink, a bad argument or a source
-that cannot be opened or decoded throws. A failure that arises mid-playback rather than in
-answer to a command surfaces on `IMediaTransport.ErrorOccurred`.
+that cannot be opened or decoded throws. A command issued once the player's disposal has begun
+throws too, with `ObjectDisposedException`. A failure that arises mid-playback surfaces on
+`IMediaTransport.ErrorOccurred`, and so does any failure that puts the player into `Error`. A
+`PlayAsync` whose item cannot be loaded reports on both: its `Result` and `ErrorOccurred` carry
+the same `PlaybackError` instance.
 
 See [ADR-0069](docs/adr/ADR-0069-one-error-model-across-the-playback-stack.md).
 

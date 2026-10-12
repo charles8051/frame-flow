@@ -71,6 +71,12 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
     public IObservable<LoopStalled> LoopStalled => _controller.LoopStalled;
     public IObservable<PlaybackError> ErrorOccurred => _controller.ErrorOccurred;
 
+    // From the controller, as the stream is: the getter and the stream report one mode. The
+    // coordinator follows the controller rather than leading it (SetRepeatModeAsync below).
+    public RepeatMode RepeatMode => _controller.RepeatMode;
+    public IObservable<StateTransition<RepeatMode>> RepeatModeChanged =>
+        _controller.RepeatModeChanged;
+
     public PlaybackDiagnosticsSnapshot GetDiagnostics() => _controller.GetDiagnostics();
 
     // Same shape as MediaPlayerCore: forward to the sink when it implements
