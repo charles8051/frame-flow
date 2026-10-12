@@ -11,6 +11,29 @@ where it is not obvious — why the change was worth making.
 **Read the first entry of any group carefully.** Most breaks here are compile
 errors, which announce themselves. A few are not, and those are called out.
 
+## Unreleased — since `v0.15.1`
+
+### 1. A Whisper node starts a new window when its audio jumps
+
+**A change in results, not a compile error.**
+
+`TranscribeWithWhisper` used to take its window's start time from the first buffer and count
+forward from there, whatever the later buffers said (#620). A node fed across a seek, a loop or
+the next item joined up to one window of earlier audio to the new audio, and stamped every later
+caption on the old clock. It now compares each buffer's `PresentationTime` with where the held
+audio ends. Off by more than 200 ms, the partial window is dropped and a new one starts at that
+buffer's time.
+
+A window now holds `WindowSize` of audio whatever `InputChannels` is. With two channels it used
+to hold half that, stamped as if it were whole.
+
+**Who hits this.** A source whose buffers do not carry the time they play at: constant or
+restarting timestamps over audio meant to run on, such as clips concatenated with each starting
+at zero. Every jump now drops the partial window.
+
+**What to write instead.** Stamp each buffer with its position on one running timeline. The
+decoder and the resampler already do.
+
 ## `v0.15.0` — since `v0.14.0`
 
 ### 1. `FrameMemoryDomains` names each GPU API, and `Gpu` is their union

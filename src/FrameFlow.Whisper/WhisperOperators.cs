@@ -4,6 +4,7 @@
 using System.Runtime.CompilerServices;
 using FrameFlow.Graph;
 using FrameFlow.Media;
+using FrameFlow.Whisper.Core;
 using Whisper.net;
 
 namespace FrameFlow.Whisper;
@@ -78,6 +79,13 @@ public static class WhisperOperators
     /// <exception cref="ArgumentNullException">Required arg is null.</exception>
     /// <exception cref="ArgumentException">Model path is empty or whitespace.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Sample rate / channel count is non-positive.</exception>
+    /// <remarks>
+    /// The window follows the stream's <see cref="PcmAudioBuffer.PresentationTime"/>. A buffer
+    /// that does not continue the held audio (a seek, a loop, the next item) drops the partial
+    /// window and starts a new one at its own time, so captions are never built from audio of two
+    /// places and their times match the media position. A node kept across seeks, so the model
+    /// loads once, therefore needs no reset.
+    /// </remarks>
     public static MultiOperatorNode<PcmAudioBuffer, CaptionRef> TranscribeWithWhisper(
         string id,
         string modelPath,
@@ -96,9 +104,11 @@ public static class WhisperOperators
         // graph construction) doesn't touch the model file.
         WhisperFactory? factory = null;
         WhisperProcessor? processor = null;
-        var windowSamples = (int)(opts.InputSampleRate * opts.EffectiveWindowSize.TotalSeconds);
+        var samplesPerSecond = opts.InputSampleRate * opts.InputChannels;
+        var windowSamples =
+            (int)(opts.InputSampleRate * opts.EffectiveWindowSize.TotalSeconds) * opts.InputChannels;
         var windowBuffer = new List<float>(windowSamples + 4096);
-        TimeSpan? windowStartPts = null;
+        WindowClock? clock = null;
 
         return new MultiOperatorNode<PcmAudioBuffer, CaptionRef>(id, TranscribeImpl);
 
@@ -134,33 +144,39 @@ public static class WhisperOperators
                 );
             }
 
-            windowStartPts ??= buffer.PresentationTime;
+            var admission = WindowTimeline.Admit(
+                clock,
+                buffer.PresentationTime,
+                buffer.SampleCount,
+                samplesPerSecond
+            );
+            if (admission.Discard)
+                windowBuffer.Clear();
 
             AppendSamplesAsFloat(windowBuffer, buffer);
 
-            var localStart = windowStartPts.Value;
-            var windowSize = opts.EffectiveWindowSize;
-
-            while (windowBuffer.Count >= windowSamples)
+            // Take the closed windows out and record the clock before inference runs, so a run
+            // cancelled between windows leaves the held samples and the clock in agreement.
+            var (starts, remainder) = WindowTimeline.Close(admission.Clock, windowSamples);
+            var slices = new float[starts.Count][];
+            for (int i = 0; i < slices.Length; i++)
             {
-                var slice = new float[windowSamples];
-                windowBuffer.CopyTo(0, slice, 0, windowSamples);
-                windowBuffer.RemoveRange(0, windowSamples);
+                slices[i] = new float[windowSamples];
+                windowBuffer.CopyTo(i * windowSamples, slices[i], 0, windowSamples);
+            }
+            windowBuffer.RemoveRange(0, slices.Length * windowSamples);
+            clock = remainder;
 
+            for (int i = 0; i < slices.Length; i++)
+            {
                 await foreach (
-                    var caption in InferCaptionsAsync(processor!, slice, localStart, ct)
+                    var caption in InferCaptionsAsync(processor!, slices[i], starts[i], ct)
                         .ConfigureAwait(false)
                 )
                 {
                     yield return caption;
                 }
-
-                localStart += windowSize;
             }
-
-            // Thread the advanced start PTS back into the closure for
-            // the next call's windowing math.
-            windowStartPts = localStart;
         }
     }
 

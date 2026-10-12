@@ -35,6 +35,9 @@
     <Using Include="FrameFlow.Graph" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="FrameFlow.Whisper.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../FrameFlow.Graph/FrameFlow.Graph.csproj" />
   </ItemGroup>
 </Project>
