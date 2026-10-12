@@ -43,9 +43,9 @@ namespace FrameFlow.Audio.OpenAL;
 /// </para>
 /// <para>
 /// <b>Exit.</b> The first open registers a <see cref="AppDomain.ProcessExit"/> handler,
-/// <see cref="ReleaseForExit"/>, that closes the device whatever the lease count, so a process
-/// that ends with a sink undisposed exits cleanly (#633). The refcount decisions, exit
-/// included, are <see cref="OpenAlContextLifetime"/>'s.
+/// <see cref="ReleaseForExit"/>, before it opens the device. The handler closes the device
+/// whatever the lease count, so a process that ends with a sink undisposed exits cleanly (#633).
+/// The refcount decisions, exit included, are <see cref="OpenAlContextLifetime"/>'s.
 /// </para>
 /// </remarks>
 internal sealed class SharedOpenAlContext
@@ -199,13 +199,16 @@ internal sealed class SharedOpenAlContext
                     return null;
 
                 case ContextAcquire.Open:
+                    // Before the open, not after it: an exit that begins while the device is
+                    // opening raises ProcessExit once, to the handlers it finds then. Registered
+                    // first, the handler waits on the gate for this open and then closes it.
+                    RegisterExitHookUnderGate();
                     var created = TryCreate();
                     if (created is null)
                         return null;
                     _live = created;
                     _deviceOpensTotal++;
                     _lifetime = next.Opened();
-                    RegisterExitHookUnderGate();
                     break;
 
                 default:
