@@ -23,7 +23,7 @@ namespace FrameFlow.Player;
 internal static class PlayerFactory
 {
     internal static async Task<PlaylistMediaPlayerCore> CreateAsync(
-        IReadOnlyList<IMediaSource> initial,
+        IReadOnlyList<MediaClip> initial,
         IVideoSink? videoSink,
         IAudioSink? audioSink,
         HardwareDecodeMode hardwareDecodeMode,
@@ -54,7 +54,7 @@ internal static class PlayerFactory
         if (!bootstrap.IsSuccess)
             throw new InvalidOperationException($"FFmpeg bootstrap failed: {bootstrap.Message}");
 
-        var coordinator = new PlaylistCoordinator(initial, initialRepeatMode);
+        var coordinator = PlaylistCoordinator.Of(initial, initialRepeatMode);
 
 #pragma warning disable CA2000 // controller ownership transfers to the player returned below; disposed via Dispose
         var controller = PlaybackController.CreatePlaylist(
@@ -89,7 +89,7 @@ internal static class PlayerFactory
             if (initial.Count > 0)
             {
                 var load = await controller
-                    .LoadAsync(initial[0], cancellationToken)
+                    .LoadAsync(initial[0].Source, cancellationToken)
                     .ConfigureAwait(false);
                 if (!load.IsSuccess)
                     throw new InvalidOperationException(

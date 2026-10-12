@@ -29,9 +29,28 @@ public sealed class PlaylistItem
         Source = source;
     }
 
+    /// <summary>
+    /// Creates an item that plays <paramref name="clip"/> from its start, belonging to no player.
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="clip"/> has no source.</exception>
+    public PlaylistItem(MediaClip clip)
+    {
+        if (clip.Source is null)
+            throw new ArgumentException("The clip has no source.", nameof(clip));
+        Source = clip.Source;
+        Start = clip.Start;
+    }
+
     /// <summary>The source this item plays.</summary>
     public IMediaSource Source { get; }
 
+    /// <summary>
+    /// Where the item starts, in the source's time. The item opens here, and a loop or a replay of
+    /// it returns here. Zero for an item created from a source alone.
+    /// </summary>
+    public TimeSpan Start { get; }
+
     /// <inheritdoc/>
-    public override string ToString() => Source.DisplayName;
+    public override string ToString() =>
+        Start == TimeSpan.Zero ? Source.DisplayName : $"{Source.DisplayName} @ {Start}";
 }

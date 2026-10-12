@@ -299,6 +299,17 @@ A consumer that sees both copies can also tell them apart by reference: `ErrorOc
 instance the `Result` does, and fires before the command completes. Do not issue transport commands
 after `DisposeAsync`, or catch `ObjectDisposedException` where a command can race it.
 
+### 11. `ReplaceAsync([])` no longer compiles
+
+**A compile error, on a call that always threw.**
+
+`IMediaPlayer.ReplaceAsync` gained an overload that takes media clips (#656). An empty collection
+expression converts to both overloads, so `player.ReplaceAsync([])` is now ambiguous. The call
+threw `ArgumentException` before, because a replacement needs at least one item, and it still does.
+
+**What to write instead.** Name the element type, `player.ReplaceAsync(Array.Empty<IMediaSource>())`,
+if a test exercises the refusal. Nothing else needs to change.
+
 ### Not breaking, but worth knowing
 
 - **A video view's logger factory applies whenever it is given.** `FrameFlowVideoView` builds its

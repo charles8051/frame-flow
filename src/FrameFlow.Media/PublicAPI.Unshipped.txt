@@ -411,6 +411,12 @@ FrameFlow.Media.LoopStalled.Overrun.get -> System.TimeSpan
 FrameFlow.Media.LoopStalled.Overrun.init -> void
 FrameFlow.Media.LoopStalled.Position.get -> System.TimeSpan
 FrameFlow.Media.LoopStalled.Position.init -> void
+FrameFlow.Media.MediaClip
+FrameFlow.Media.MediaClip.MediaClip() -> void
+FrameFlow.Media.MediaClip.MediaClip(FrameFlow.Media.IMediaSource! source, System.TimeSpan start = default(System.TimeSpan)) -> void
+FrameFlow.Media.MediaClip.Source.get -> FrameFlow.Media.IMediaSource!
+FrameFlow.Media.MediaClip.Start.get -> System.TimeSpan
+FrameFlow.Media.MediaClip.Start.init -> void
 FrameFlow.Media.MediaInfo
 FrameFlow.Media.MediaInfo.AudioStreams.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Media.AudioStreamInfo!>!
 FrameFlow.Media.MediaInfo.AudioStreams.init -> void
