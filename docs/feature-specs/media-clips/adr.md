@@ -133,3 +133,47 @@ replay play from the clip's start. A seek is not bounded by the clip.
 - **Clip-relative time**, with `Position` zero at the clip's start and `Duration` the clip's
   length. It reads well for a clip with an end, but every consumer that seeks or labels by file
   timestamp would have to convert, and the sink would see PTS that disagree with `Position`.
+
+## Decision 5: a same-source hand-off repositions the open item in every state
+
+**Date:** 2026-10-12
+**Status:** Accepted
+**Supersedes:** the rule in decision 8 of the end-of-queue record
+(`docs/adr/playlist-end-of-queue-replay-and-faults.md`) that only an item that has played is rewound
+in place, and only while playing (#194).
+
+### Context
+
+When the next item has the same source object as the current one, the protocol could rewind the
+open runtime instead of rebuilding it, but only while playing and only for an item that had played.
+Otherwise it disposed the runtime and opened the file again. For clips of one file, that is every
+paused hop, and every hop before the first play.
+
+The rule was made because rewinding an item that had never played left its clocks stopped (#194). A
+rewind took the resume branch of `RepositionAsync` for a session whose clock had never started, and
+nothing then started it. #639 made a reposition hold a session that has not played, as a paused
+seek does.
+
+### Decision
+
+A same-source replay rewinds the open item in place whenever the item has not failed, in every run
+state.
+
+- While paused, the rewound item waits for Play, as a paused seek does.
+- An item that has not played is held by the rewind. While playing, the advance then plays it,
+  through the same start path a rebuilt item takes. A failed start is reported and skipped as a
+  rebuilt item's is.
+- A rewind that fails still falls back to rebuilding the item.
+
+### Consequences
+
+- A jump, skip or end-of-stream to another clip of the current source costs a seek, in any state,
+  not an open.
+- The ordering explorer's expected failure, a seek or rewind of an unplayed item while not playing,
+  is retired. `PlaylistItemModel` models an unplayed runtime as held, and a new invariant says a run
+  launches only while playing.
+
+### Alternatives considered
+
+- **Keep rebuilding outside the playing, played case.** It is correct, and costs an open per hop,
+  which for clips of one file is most hops in a paused or not-yet-started player.

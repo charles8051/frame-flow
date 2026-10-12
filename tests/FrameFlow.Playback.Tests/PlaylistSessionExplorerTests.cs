@@ -130,24 +130,13 @@ public sealed class PlaylistSessionExplorerTests(ITestOutputHelper output)
 
     [Theory]
     [MemberData(nameof(ScenarioNames))]
-    public void TheCore_BreaksNoInvariant_OtherThanTheExpectedFailure(string name)
+    public void TheCore_BreaksNoInvariant(string name)
     {
         var result = PlaylistSessionExplorer.Explore(Scenario(name));
         output.WriteLine($"{name}: {result.States} states");
 
-        var unexpected = result
-            .Violations.Where(v => v.Invariant != PlaylistSessionExplorer.ExpectedFailure)
-            .ToList();
-        Assert.True(unexpected.Count == 0, string.Join(Environment.NewLine + Environment.NewLine, unexpected));
-    }
-
-    [Fact]
-    public void TheExpectedFailure_IsFound()
-    {
-        var result = PlaylistSessionExplorer.Explore(Scenario("A seek before the first play"));
-
-        var found = Assert.Single(result.Violations, v => v.Invariant == PlaylistSessionExplorer.ExpectedFailure);
-        output.WriteLine(found.ToString());
+        var violations = result.Violations.ToList();
+        Assert.True(violations.Count == 0, string.Join(Environment.NewLine + Environment.NewLine, violations));
     }
 
     private sealed record SeededDefect(string Scenario, string Invariant, StepFunction Step);

@@ -941,3 +941,9 @@ the advance, or the tooling #143 asks for. A timing-based test would not show th
   review of #197 then found that a repeat-mode change racing the end of the queue let the
   controller loop a playlist that had ended. The draft had recorded that as an open question; the
   controller now never loops a session that runs its own repeat mode.
+
+- **Amendment (2026-10-12).** The rule that a same-source replay rewinds in place only while playing,
+  and only an item that has played, is superseded by decision 5 of the media-clips record
+  (`docs/feature-specs/media-clips/adr.md`). Its reason, that rewinding an unstarted item left its
+  clocks stopped, no longer holds since #639: the rewind holds the item, and a playing advance then
+  plays it. Test 18 above passes under the new rule.

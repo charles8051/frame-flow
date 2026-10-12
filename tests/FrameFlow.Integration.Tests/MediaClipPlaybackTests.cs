@@ -189,6 +189,79 @@ public sealed class MediaClipPlaybackTests : IClassFixture<FfmpegBootstrapFixtur
         Assert.Equal(PlaylistItemFailure.CouldNotStart, failure.Failure);
     }
 
+    [RequiresFfmpegAndCorpusFact]
+    public async Task APausedHandOffToAClipOfTheOpenSource_RepositionsTheOpenFile_AndWaitsForPlay()
+    {
+        var source = Corpus(Fixture);
+        var first = new MediaClip(source, TimeSpan.FromSeconds(2));
+        var second = new MediaClip(source, TimeSpan.FromSeconds(7));
+        var video = new PtsRecordingVideoSink();
+        var coordinator = PlaylistCoordinator.Of([first, second], RepeatMode.Off);
+        await using var controller = CreatePlaylist(coordinator, video);
+        var onSecond = NthTransition(coordinator, 2);
+
+        Assert.True((await controller.LoadAsync(source)).IsSuccess);
+        Assert.True((await controller.PlayAsync()).IsSuccess);
+        await video.WhenPresented(pts => pts >= first.Start + PastStart).WaitAsync(Bound);
+        Assert.True((await controller.PauseAsync()).IsSuccess);
+        var seeksBefore = DemuxSeeks(controller);
+
+        coordinator.RequestSkip();
+        await onSecond.WaitAsync(Bound);
+
+        // A rebuilt item has a new demuxer, which has sought once, to its start. The open one has
+        // sought once more than before.
+        Assert.Equal(seeksBefore + 1, DemuxSeeks(controller));
+        Assert.Equal(PlaybackState.Paused, controller.State);
+        Assert.Equal(second.Start, controller.Position);
+
+        var before = video.Count;
+        Assert.True((await controller.PlayAsync()).IsSuccess);
+        await video.WhenPresented(pts => pts >= second.Start + PastStart, skip: before).WaitAsync(Bound);
+        AssertNothingBefore(second.Start, video.PresentedPts.Skip(before));
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task AJumpBeforeTheFirstPlayToAClipOfTheOpenSource_RepositionsTheOpenFile_AndPlaysIt()
+    {
+        var source = Corpus(Fixture);
+        var first = new MediaClip(source, TimeSpan.FromSeconds(2));
+        var second = new MediaClip(source, TimeSpan.FromSeconds(7));
+        var video = new PtsRecordingVideoSink();
+        var coordinator = PlaylistCoordinator.Of([first, second], RepeatMode.Off);
+        await using var controller = CreatePlaylist(coordinator, video);
+        var onSecond = NthTransition(coordinator, 2);
+
+        Assert.True((await controller.LoadAsync(source)).IsSuccess);
+        var seeksBefore = DemuxSeeks(controller);
+        Assert.Equal(JumpRequest.Pending, coordinator.RequestJump(coordinator.Queue.Playlist[1]));
+
+        Assert.True((await controller.PlayAsync()).IsSuccess);
+        await onSecond.WaitAsync(Bound);
+        await video.WhenPresented(pts => pts >= second.Start + PastStart).WaitAsync(Bound);
+
+        Assert.Equal(seeksBefore + 1, DemuxSeeks(controller));
+        // Nothing of the first clip played: the jump was taken by the first play.
+        AssertNothingBefore(second.Start, video.PresentedPts);
+    }
+
+    private static long DemuxSeeks(IPlaybackController controller) =>
+        controller.GetDiagnostics().Pipeline.Stream.Demux.SeeksPerformed;
+
+    private static Task NthTransition(PlaylistCoordinator coordinator, int n)
+    {
+        var count = 0;
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sub = coordinator.SourceTransitioned.Subscribe(
+            new ActionObserver<PlaylistTransition>(_ =>
+            {
+                if (Interlocked.Increment(ref count) == n)
+                    signal.TrySetResult();
+            })
+        );
+        return signal.Task.ContinueWith(_ => sub.Dispose(), TaskScheduler.Default);
+    }
+
     private static MediaSource Corpus(string name) =>
         MediaSource.FromFile(IntegrationTestEnvironment.GetCorpusFile(name)!);
 
