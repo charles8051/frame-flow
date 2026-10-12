@@ -60,8 +60,8 @@ public sealed partial class SdlCommandQueue
 
     /// <summary>
     /// Queues <paramref name="command"/> to run after the commands posted before it. It never
-    /// blocks and never runs the command on the calling thread, so an SDL event handler can call
-    /// it. A command may post another.
+    /// waits for a command and never runs one on the calling thread, so an SDL event handler can
+    /// call it. A command may post another.
     /// </summary>
     /// <param name="command">
     /// The work. Its token is cancelled when the loop exits, so a long command can stop early.
