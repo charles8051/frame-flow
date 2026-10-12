@@ -8,19 +8,11 @@
         Background="#1a1a1a">
   <Grid RowDefinitions="*,Auto">
 
-    <!-- Video surface + detection boxes + caption overlay all share the
-         same Grid cell. Z-order is XAML document order: video at the
-         bottom, detections on top of video, captions on top of all,
-         app-status pill on top of everything (it carries model-load
-         and captioning-only warnings the player chrome can't surface). -->
-    <Grid Grid.Row="0" Name="VideoLayer">
-      <ff:FrameFlowVideoView Name="VideoView"
-                             HorizontalAlignment="Stretch"
-                             VerticalAlignment="Stretch" />
+    <!-- Video, boxes, captions and status share one cell, drawn in document order. -->
+    <Grid Grid.Row="0">
+      <ff:FrameFlowVideoView Name="VideoView" />
 
-      <local:DetectionOverlay Name="DetectionOverlay"
-                              HorizontalAlignment="Stretch"
-                              VerticalAlignment="Stretch" />
+      <local:DetectionOverlay Name="DetectionOverlay" />
 
       <Border Name="CaptionBackdrop"
               HorizontalAlignment="Center"
@@ -39,11 +31,6 @@
                    TextWrapping="Wrap" />
       </Border>
 
-      <!-- App-level status pill (model loading, captioning-only mode,
-           etc.). Separate from FrameFlowStateBadge inside chrome which
-           tracks player state (Idle/Playing/Paused/Ended/Error). This
-           pill stays visible so cold-start messages and YOLO-fallback
-           warnings remain on screen during playback. -->
       <Border Name="AppStatusPill"
               HorizontalAlignment="Left"
               VerticalAlignment="Top"
@@ -52,28 +39,16 @@
               CornerRadius="4"
               Background="#A0000000">
         <TextBlock Name="AppStatusText"
-                   Text="Idle"
                    Foreground="#888"
                    FontFamily="Consolas,Menlo,monospace"
                    FontSize="12" />
       </Border>
     </Grid>
 
-    <!-- Replaces the bespoke status badge + stream summary row. Chrome
-         contributes those (FrameFlowStateBadge + FrameFlowStreamSummary)
-         plus a seek bar, transport buttons, volume control, and an Open
-         button — capabilities the prior bespoke row didn't offer. Bound
-         to _player in code-behind after each PlayFileAsync build.
-
-         HasOpenButton="True": this example previously had no in-window
-         file picker (CLI args only, despite the misleading "Drop a media
-         file" status text). The chrome's Open button fixes that.
-
-         EnableKeyboardShortcuts="True" (default): Space pauses/resumes,
-         M mutes, ←/→ seek ±5 s, working window-wide. -->
+    <!-- The Open button appears once the models have loaded. -->
     <Border Grid.Row="1" Background="#1a1a1d" Padding="4">
       <ff:FrameFlowPlayerChrome Name="PlayerChrome"
-                                HasOpenButton="True" />
+                                HasOpenButton="False" />
     </Border>
 
   </Grid>
