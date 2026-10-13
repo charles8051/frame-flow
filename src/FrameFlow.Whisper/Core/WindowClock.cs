@@ -2,27 +2,34 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using FrameFlow.Graph;
+using FrameFlow.Graph.Core;
 
 namespace FrameFlow.Whisper.Core;
 
 /// <summary>
-/// Where the samples a transcription window holds sit on the media timeline: the presentation
-/// time of the first, and how many follow it. Pure.
+/// Where the samples a transcription window holds sit on the media timeline, and which timeline
+/// its input stream is on. Pure.
 /// </summary>
 /// <param name="Start">Presentation time of the first held sample.</param>
 /// <param name="Samples">Held mono samples.</param>
 /// <param name="SampleRate">Samples per second.</param>
-/// <param name="Timeline">
-/// The timeline of the buffer that started the window (ADR-0084), which the captions transcribed
-/// from it carry.
+/// <param name="Follower">
+/// Follows the timeline of the window's input stream (ADR-0084). The held samples belong to the
+/// timeline it follows, and so do the captions transcribed from them.
 /// </param>
 internal readonly record struct WindowClock(
     TimeSpan Start,
     long Samples,
     int SampleRate,
-    TimelineId Timeline = default
+    TimelineFollower Follower = default
 )
 {
+    /// <summary>
+    /// The timeline the held samples belong to, which the captions transcribed from them carry, or
+    /// <see cref="TimelineId.None"/> while the stream has named none.
+    /// </summary>
+    public TimelineId Timeline => Follower.Current;
+
     /// <summary>The presentation time the next contiguous sample would carry.</summary>
     public TimeSpan End => Start + DurationOf(Samples, SampleRate);
 
@@ -51,17 +58,28 @@ internal readonly record struct ClosedWindow(TimeSpan Start, WindowClock Remaind
 /// presentation time rather than being joined to audio from somewhere else. Pure.
 /// </summary>
 /// <remarks>
-/// A window takes the timeline of the buffer that starts it, and keeps it while later buffers
-/// continue the held audio. Until the window follows its input's timeline (ADR-0084, staging
-/// slice 2), a buffer on another timeline whose time continues the held audio joins the window,
-/// and its captions keep the timeline the window started on.
+/// <para>
+/// <b>A stream that names its timeline (ADR-0084).</b> The window's input keeps the player's
+/// order, so it follows it with a <see cref="TimelineFollower"/>. A buffer of a timeline other than
+/// the one followed starts a new window, however close its time is to where the held audio ends. A
+/// buffer of the timeline followed continues the window wherever its time sits, because within one
+/// timeline presentation times are continuous.
+/// </para>
+/// <para>
+/// <b>A stream that names none.</b> A buffer on <see cref="TimelineId.None"/>, or any buffer while
+/// the follower has seen no timeline, is judged by its time, as before timelines: more than
+/// <see cref="DiscontinuityTolerance"/> from where the held audio ends starts a new window. The
+/// first timeline the stream names is judged the same way, and adopting it does not by itself
+/// start one.
+/// </para>
 /// </remarks>
 internal static class WindowTimeline
 {
     /// <summary>
     /// How far a buffer's presentation time may sit from where the held samples end and still
-    /// count as the next audio. Container rounding and resampling move it by a millisecond or two;
-    /// a seek moves it by more than this, which is shorter than a syllable.
+    /// count as the next audio, on a stream that names no timeline. Container rounding and
+    /// resampling move it by a millisecond or two; a seek moves it by more than this, which is
+    /// shorter than a syllable.
     /// </summary>
     public static readonly TimeSpan DiscontinuityTolerance = TimeSpan.FromMilliseconds(50);
 
@@ -78,17 +96,30 @@ internal static class WindowTimeline
         TimelineId timeline = default
     )
     {
-        var anchored = new WindowClock(presentationTime, samples, sampleRate, timeline);
+        var follower = clock?.Follower ?? default;
+        var next = follower.Follow(timeline);
+        var anchored = new WindowClock(presentationTime, samples, sampleRate, next);
 
         // An empty window has nothing to keep in step, so it takes the buffer's own time.
         if (clock is not { Samples: > 0 } held)
             return new WindowAdmission(anchored, Discard: false);
 
+        var appended = held with { Samples = held.Samples + samples, Follower = next };
+
+        // A seek, a loop or the next item: the held audio is from another timeline.
+        if (follower.StartsNewTimeline(timeline))
+            return new WindowAdmission(anchored, Discard: true);
+
+        // The timeline followed: its times are continuous, so the time says nothing more.
+        if (timeline != TimelineId.None && timeline == follower.Current)
+            return new WindowAdmission(appended, Discard: false);
+
+        // No timeline on one side: the time decides.
         var offset = (presentationTime - held.End).Duration();
         if (offset > DiscontinuityTolerance)
             return new WindowAdmission(anchored, Discard: true);
 
-        return new WindowAdmission(held with { Samples = held.Samples + samples }, Discard: false);
+        return new WindowAdmission(appended, Discard: false);
     }
 
     /// <summary>

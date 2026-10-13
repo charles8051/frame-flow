@@ -49,13 +49,15 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     private readonly long _createdTimestamp;
     private volatile bool _disposed;
 
-    // Stall-detection state: when the most recent PresentAsync frame arrived and how long it is
-    // meant to show. Used to flag a frame arriving > 500 ms after the previous one finished showing
-    // as a Warning, so post-mortem log inspection can see when the sink stopped receiving frames.
-    // Only PresentAsync touches it, and its calls do not overlap: a graph's sink pump awaits each
-    // one before taking the next frame, a player's pacers present through one VideoFormatAnnouncer
-    // whose semaphore serializes them even while two items overlap at a queue boundary, and
-    // IVideoSink leaves two players driving one sink at once undefined.
+    // Stall-detection state: when the most recent PresentAsync frame arrived, how long it is meant
+    // to show, and the timeline it belongs to. Used to flag a frame arriving > 500 ms after the
+    // previous one finished showing as a Warning, so post-mortem log inspection can see when the
+    // sink stopped receiving frames. A frame of a new timeline starts it over (ADR-0084, #624).
+    // Only PresentAsync touches it, and its calls do not overlap and arrive in the player's order:
+    // a graph's sink pump awaits each one before taking the next frame, a player's pacers present
+    // through one VideoFormatAnnouncer whose semaphore serializes them, an item prepared ahead keeps
+    // its gates shut until the item before it has been disposed (ADR-0084), and IVideoSink leaves
+    // two players driving one sink at once undefined.
     private PresentGapTracker _gapTracker;
 
     /// <summary>Gets the total number of frames that reached the screen via this sink.</summary>
@@ -206,9 +208,15 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
         // that pins where a video freeze actually lives. The previous frame's
         // own duration is not part of the gap: a still is one frame held for
         // its whole dwell, and the next item's frame follows it by design (#576).
+        // The wait before the first frame of a new timeline is not judged: it
+        // is the player moving on, such as a new item after Ended (#624). It
+        // is still logged at Debug, so a slow seek, loop or open stays visible.
+        // Both name the timeline the tracker judged the frame on, which for a
+        // frame that names none is the one it was following.
         (_gapTracker, var gap) = _gapTracker.Observe(
             _timeProvider.GetElapsedTime(_createdTimestamp),
-            frame.Duration
+            frame.Duration,
+            frame.Timeline
         );
         if (gap is { } g)
         {
@@ -218,6 +226,16 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
                     _logger,
                     g.Interval.TotalMilliseconds,
                     g.Held.TotalMilliseconds,
+                    frame.Pts.TotalSeconds,
+                    _gapTracker.Timeline
+                );
+            }
+            else if (g.NewTimeline)
+            {
+                LogPresentNewTimeline(
+                    _logger,
+                    g.Interval.TotalMilliseconds,
+                    _gapTracker.Timeline,
                     frame.Pts.TotalSeconds
                 );
             }
@@ -359,13 +377,14 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
 
     [LoggerMessage(
         Level = LogLevel.Warning,
-        Message = "AvaloniaVideoSink PRESENT GAP {GapMs:F0}ms after a frame meant to show for {HeldMs:F0}ms (this frame pts={PtsSec:F3}s) — upstream stopped delivering frames"
+        Message = "AvaloniaVideoSink PRESENT GAP {GapMs:F0}ms after a frame meant to show for {HeldMs:F0}ms (this frame pts={PtsSec:F3}s on {Timeline}) — upstream stopped delivering frames"
     )]
     private static partial void LogPresentGap(
         ILogger logger,
         double gapMs,
         double heldMs,
-        double ptsSec
+        double ptsSec,
+        TimelineId timeline
     );
 
     [LoggerMessage(
@@ -373,4 +392,15 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
         Message = "AvaloniaVideoSink present gap={GapMs:F1}ms pts={PtsSec:F3}s"
     )]
     private static partial void LogPresentArrived(ILogger logger, double gapMs, double ptsSec);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "AvaloniaVideoSink present gap={GapMs:F1}ms starts {Timeline} pts={PtsSec:F3}s, not judged as a stall"
+    )]
+    private static partial void LogPresentNewTimeline(
+        ILogger logger,
+        double gapMs,
+        TimelineId timeline,
+        double ptsSec
+    );
 }
