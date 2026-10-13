@@ -594,8 +594,10 @@ public sealed class CaptionTimelineStateTests
     [Fact]
     public void TheFirstTimelinePresented_IsTakenUp_WithoutEmptying()
     {
+        // A caption on None shows at once, so it is on screen before the first tracked frame.
         var playing = TimelineId.Next();
-        var state = Empty().Add(Said("a"), Seconds(10), playing);
+        var state = Empty().Add(Said("a"), Seconds(10));
+        Assert.Equal(["a"], state.Entries.Select(e => e.Caption.Text));
 
         var moved = state.MoveTo(Seconds(10.1), playing);
 

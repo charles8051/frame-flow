@@ -405,8 +405,8 @@ input's. Frames from a camera, and from a synthetic source, are on `None` for no
   unchanged.
 - `FrameFlow.Graph` gained `TimelineId`, and `FrameFlow.Graph.Core` gained `TimelineFollower`,
   `PresentedTimeline` and `TimelineRelation`, the two pure followers a stateful consumer uses to
-  tell a new timeline from the current one. Entries 15 and 16 list the consumers in the library
-  that now follow them.
+  tell a new timeline from the current one. Entries 15 and 16, and the PRESENT GAP note under
+  "Not breaking", list the consumers in the library that now follow them.
 
 **Who hits this.**
 - A doc comment that names `CpuVideoFrame.Create{TState}`, `PcmAudioBuffer.Create{TState}` or
