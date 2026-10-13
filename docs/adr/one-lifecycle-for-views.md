@@ -182,14 +182,21 @@ serve several players in sequence, as ADR-0044 and ADR-0062 require: each releas
 is disposed. A sink without the interface keeps the documented rule. This closes #286 for the
 in-box sinks.
 
-### 7. A surface whose sink is claimed cannot be swapped out
+### 7. A surface is swapped out only when it is provably idle
 
-`FrameFlowPlayerView.VideoSurface` refuses to swap out a surface whose sink a player or pass has
-claimed, with `InvalidOperationException` telling the app to dispose the player first or to build it
-against the new surface. An unclaimed outgoing surface that the player view constructed itself (the
-default surface) is disposed on the swap. One the caller supplied stays the caller's, detached and
-holding no frames. The player view never moves a player from one sink to another: a player's sink
-is fixed when it is built.
+`FrameFlowPlayerView.VideoSurface` swaps out a surface only when no player can be feeding it: the
+surface has no sink, or its sink implements the claim interface (decision 6) and holds no claim.
+Otherwise the swap throws `InvalidOperationException`:
+
+- for a claimed sink, telling the app to dispose the player first or to build it against the new
+  surface;
+- for a sink without the claim interface, which can only be a caller's own sink, telling the app
+  to clear the outgoing surface's `Sink` first. Clearing it is the app saying no player still feeds
+  that surface, which the player view cannot establish itself.
+
+An idle outgoing surface that the player view constructed itself (the default surface) is disposed
+on the swap. One the caller supplied stays the caller's, detached and holding no frames. The player
+view never moves a player from one sink to another: a player's sink is fixed when it is built.
 
 ### Staging
 
@@ -205,7 +212,8 @@ is fixed when it is built.
    presented). Closes #663.
 4. **The chrome and the player view.** The chrome controls and `TransportFollower` onto the core,
    with no behaviour change intended. Decision 7 on `FrameFlowPlayerView.VideoSurface`, with tests
-   for a claimed surface (refused), an unclaimed default surface (disposed) and a caller's surface
+   for a claimed sink (refused), a sink without the claim interface (refused until the outgoing
+   surface's `Sink` is cleared), an idle default surface (disposed) and an idle caller's surface
    (left to the caller).
 5. **Docs.** `IVideoSurface`'s remarks, the BREAKING-CHANGES entry, and the examples that construct
    their own sink only to survive a detach.
@@ -229,8 +237,10 @@ is fixed when it is built.
 - Behaviour changes an app can see: the owned sink is no longer disposed on detach, `Sink` no longer
   reads null after one, `EnsureSink` returns the same sink after a reattach, the CPU view no longer
   presents before its first attach, a disposed CPU view throws from `EnsureSink`, a second player
-  built against a claimed in-box sink fails, and a swap of a claimed surface throws. Each needs a
-  BREAKING-CHANGES entry.
+  built against a claimed in-box sink fails, and a swap of a surface that is not provably idle
+  throws. Each needs a BREAKING-CHANGES entry.
+- An app that hands a view its own sink, of a type without the claim interface, must clear the
+  outgoing surface's `Sink` before swapping it out, even when it knows no player is running.
 - An app that relied on detach to release the owned sink now has to dispose the view. A view that
   is never disposed keeps its sink object.
 - The interop view's lifecycle moves out of `FrameFlow.Avalonia.Windows`, which replaces the core
@@ -276,8 +286,8 @@ record removes. A borrowed target with no dispose is a case the one machine alre
 
 The player view could move the player onto the new surface's sink. A player's sink is fixed when it
 is built, and no transport member replaces it. Adding one for this caller would put sink
-replacement, with its ordering and draining questions, on every player. Refusing the swap of a
-claimed surface keeps the rule that a player's sink does not change.
+replacement, with its ordering and draining questions, on every player. Refusing to swap out a
+surface a player may still feed keeps the rule that a player's sink does not change.
 
 ### Enforce one producer inside the sink
 
@@ -299,3 +309,7 @@ tell from fast seeks. A claim taken at build fails before anything is decoded an
   details: a swap strands the player on the old sink, and two players built against one view feed
   it for as long as both live. Decisions 6 (one player per sink, by a claim) and 7 (no swap of a
   claimed surface) settle them, with Context sections and staging to match.
+- **2026-10-13, review turn 2.** The claim interface is optional, so decision 7 could not see a
+  player feeding a sink without it. Decision 7 now swaps out a surface only when it is provably
+  idle (no sink, or a claimable sink with no claim) and otherwise refuses; for a sink without the
+  interface the app clears the outgoing surface's `Sink` to say no player feeds it.

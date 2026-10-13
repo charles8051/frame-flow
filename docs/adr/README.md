@@ -307,7 +307,7 @@ land.
   follows the attachment; no frames held before the first attach or while detached; disposed sinks
   that dispose what they are given (#664); one attachment number published to other threads; a
   claim the player and pass builders take on an in-box sink, so two players cannot feed one (#286);
-  and no swap of a surface whose sink a player has claimed.
+  and a surface swapped out only when no player can still be feeding it.
 
 ## Recently numbered
 
