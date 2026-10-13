@@ -182,6 +182,15 @@ public delegate ValueTask<TOut?> SyncJoinOperator<in TPrimary, in TSecondary, TO
 /// backward-step rule under <see cref="Window"/>. <see cref="SyncJoinKeys{TPrimary, TSecondary}"/>
 /// says where the join reads each item's timeline.
 /// </para>
+/// <para>
+/// Because the two breaks are not paired, a join prefers an unmatched primary to one matched with
+/// a secondary from another timeline. When the secondary leads, as <see cref="SyncMatch.Within"/>
+/// expects, its break arrives first: the primary's last items on the old timeline can then match
+/// nothing, and its first items on the new one match nothing until a secondary arrives after the
+/// primary's break. This only concerns a graph that outlives a break, such as one fed through a
+/// channel. A join inside a player's own graph sees none, since every break starts a new run, and
+/// each run starts with an empty window.
+/// </para>
 /// </remarks>
 public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     : IPumpableNode,
@@ -209,8 +218,9 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     /// For a primary on <see cref="TimelineId.None"/>, one more than this behind the highest time
     /// seen is a discontinuity, such as a timestamp wrap or a restarted source. The window
     /// releases every secondary still live on the old timeline and continues from the new
-    /// primary's time. A primary that names its timeline breaks only when that timeline changes,
-    /// whatever its time does, and the window does the same then.
+    /// primary's time. Once a primary has named a timeline, a later primary that names one breaks
+    /// only when the timeline changes, whatever its time does, and the window does the same then.
+    /// The first primary to name a timeline is still judged by its time.
     /// </para>
     /// <para>
     /// After a break that goes back past where the old timeline's window began, and until the
@@ -432,10 +442,11 @@ internal sealed class SecondaryWindow<T>
     // _highWater, whose TimeSpan.MinValue floor is also a legal primary time.
     private bool _primarySeen;
 
-    // Where each timeline left behind by a backward step in primary time had its window begin,
-    // nearest on top. Until the primary climbs back to the top one, a secondary ahead of the
-    // primary that ends at or past it belongs to a timeline from before a step. A later step
-    // pushes a lower boundary, so the stack ascends from the top.
+    // Where each timeline the primary left by going back in time had its window begin, nearest on
+    // top: a backward step of a primary that names no timeline, or a break to a new named timeline
+    // that lands behind where the old window began (ADR-0084). Until the primary climbs back to the
+    // top one, a secondary ahead of the primary that ends at or past it belongs to a timeline from
+    // before the break. A later break pushes a lower boundary, so the stack ascends from the top.
     private readonly Stack<TimeSpan> _staleFrom = new();
 
     // Set while the secondary reader is parked on the lead bound or the count limit. Completed
@@ -470,7 +481,8 @@ internal sealed class SecondaryWindow<T>
     /// usually arrive in order, so the insertion point is found by scanning back
     /// from the end. An item that ends more than <paramref name="window"/> behind
     /// the primary, which the next primary would evict, is released at once, and
-    /// so is an item from a timeline before a backward step in primary time.
+    /// so is an item from a timeline before a break that took the primary back
+    /// (<see cref="SyncJoinNode{TPrimary, TSecondary, TOut}.Window"/>).
     /// </summary>
     /// <returns>
     /// <see langword="null"/> when the item was admitted. Otherwise the item is
@@ -491,7 +503,7 @@ internal sealed class SecondaryWindow<T>
         lock (_gate)
         {
             // Released rather than filed, a late item cannot outlive the timeline it arrived on
-            // and survive a backward step as if it were on the new one.
+            // and survive a break that went back as if it were on the new timeline.
             if (
                 (TryGetCutoff(window, out var cutoff) && to < cutoff)
                 || (_staleFrom.TryPeek(out var staleFrom) && to >= staleFrom && from > _highWater)
@@ -751,9 +763,11 @@ internal sealed class SecondaryWindow<T>
 }
 
 /// <summary>
-/// Which retained secondaries can still match (ADR-0081, decision 1). Between window resets and
-/// backward steps the primary's time does not go backwards, so an entry that cannot match the
-/// primary now never will.
+/// Which retained secondaries can still match (ADR-0081, decision 1). Between window resets, the
+/// backward steps of a primary that names no timeline, and the breaks of one that does, the
+/// primary's time does not go backwards, so an entry that cannot match the primary now never will.
+/// For a named timeline that rests on ADR-0084's promise that presentation times within one
+/// timeline are continuous: the window does not judge such a primary by its time.
 /// </summary>
 internal static class SecondaryCandidates
 {

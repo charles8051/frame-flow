@@ -252,8 +252,7 @@ public sealed class SyncJoinTimelineTests
     /// <see cref="SyncJoinTests"/> uses to order the secondaries before the primaries.
     /// </summary>
     /// <remarks>
-    /// A condition wait on state the join exposes, yielding between checks, with no duration
-    /// involved (ADR-0072).
+    /// A condition wait on state the join exposes, through <see cref="SyncJoinTests.SpinUntil"/>.
     /// </remarks>
     private static SourceNode<RefBox<Tick>> EmitAfterRetained(
         SyncJoinNode<RefBox<Tick>, RefBox<Span>, RefBox<string>> join,
@@ -267,13 +266,8 @@ public sealed class SyncJoinTimelineTests
             async ct =>
             {
                 if (i == 0)
-                {
-                    while (join.RetainedCount < awaitRetained)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        await Task.Yield();
-                    }
-                }
+                    await SyncJoinTests.SpinUntil(() => join.RetainedCount >= awaitRetained, ct)
+                        .ConfigureAwait(false);
                 return i < items.Length ? items[i++] : null;
             }
         );

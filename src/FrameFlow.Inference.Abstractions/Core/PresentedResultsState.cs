@@ -237,17 +237,22 @@ internal sealed record PresentedResultsState<TResult>
         return found;
     }
 
-    // `pending` without the results before `match` that are on the timeline on screen.
+    // `pending` without the other results on the timeline on screen at or before `match`'s time.
+    // Judged by time, not by posting order: on a screen that follows timelines, a result on None
+    // and one on the timeline on screen are both current but posted in no common order, so one
+    // posted earlier can be for a later frame. Where every current result is in one group, which
+    // the time rules keep in time order, the two are the same.
     private static ImmutableArray<PendingResult<TResult>> WithoutEarlier(
         ImmutableArray<PendingResult<TResult>> pending,
         PresentedTimeline screen,
         int match
     )
     {
+        var at = pending[match].Result.Timestamp;
         int earlier = 0;
-        for (int i = 0; i < match; i++)
+        for (int i = 0; i < pending.Length; i++)
         {
-            if (screen.Classify(pending[i].Result.Timeline) == TimelineRelation.Current)
+            if (IsEarlier(pending, screen, match, at, i))
                 earlier++;
         }
 
@@ -257,11 +262,23 @@ internal sealed record PresentedResultsState<TResult>
         var kept = ImmutableArray.CreateBuilder<PendingResult<TResult>>(pending.Length - earlier);
         for (int i = 0; i < pending.Length; i++)
         {
-            if (i < match && screen.Classify(pending[i].Result.Timeline) == TimelineRelation.Current)
-                continue;
-            kept.Add(pending[i]);
+            if (!IsEarlier(pending, screen, match, at, i))
+                kept.Add(pending[i]);
         }
 
         return kept.MoveToImmutable();
     }
+
+    // Whether the result at `i` has been shown or passed over once the result at `match`, at
+    // `at`, is on screen.
+    private static bool IsEarlier(
+        ImmutableArray<PendingResult<TResult>> pending,
+        PresentedTimeline screen,
+        int match,
+        TimeSpan at,
+        int i
+    ) =>
+        i != match
+        && pending[i].Result.Timestamp <= at
+        && screen.Classify(pending[i].Result.Timeline) == TimelineRelation.Current;
 }

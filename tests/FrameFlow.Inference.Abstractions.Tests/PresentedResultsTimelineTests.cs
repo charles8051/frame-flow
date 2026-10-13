@@ -168,6 +168,39 @@ public sealed class PresentedResultsTimelineTests
     }
 
     [Fact]
+    public void OnATimelineTheScreenFollows_AResultOnNonePostedEarlier_StillShowsAtItsOwnTime()
+    {
+        // A result on None and one on the timeline on screen are both current, but the time rules
+        // keep them apart, so they are posted in no common order. The later one in time, posted
+        // first, has not been passed over when the earlier one shows.
+        var a = TimelineId.Next();
+        var (state, _) = Empty().Present(Ms(0), a);
+        state = state.Post(Result("untracked, later", 200, TimelineId.None)).Post(Result("tracked", 100, a));
+
+        (state, _) = state.Present(Ms(150), a);
+        Assert.Equal("tracked", state.Current?.Result);
+
+        (state, var change) = state.Present(Ms(210), a);
+        Assert.Equal(PresentedChange.Presented, change);
+        Assert.Equal("untracked, later", state.Current?.Result);
+    }
+
+    [Fact]
+    public void OnATimelineTheScreenFollows_AResultOnNonePostedLater_ButEarlierInTime_IsPassedOver()
+    {
+        // The other order: once a frame shows the result at 100 ms, one for 50 ms cannot show
+        // again, and is not left to wait until the capacity evicts it.
+        var a = TimelineId.Next();
+        var (state, _) = Empty().Present(Ms(0), a);
+        state = state.Post(Result("tracked", 100, a)).Post(Result("untracked, earlier", 50, TimelineId.None));
+
+        (state, _) = state.Present(Ms(120), a);
+
+        Assert.Equal("tracked", state.Current?.Result);
+        Assert.DoesNotContain(state.Pending, p => p.Result.Result == "untracked, earlier");
+    }
+
+    [Fact]
     public void AFrameThatChangesNothing_LeavesItsStateAlone()
     {
         // The present path runs for every frame; most change nothing, and allocate nothing.
