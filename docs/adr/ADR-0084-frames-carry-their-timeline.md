@@ -65,9 +65,13 @@ start and warms up without touching the shared sinks or clock (`SubstrateSession
 
 Those items wait behind its closed gates. Every graph is wired source, gate, configurator, sink
 (`SubstrateSession.cs:1735-1760`, `:1899-1911`), so no configured operator, tap or sink sees them
-until the runtime is promoted and its gates open. Downstream of the gates, one player's items
-therefore arrive in presentation order, whichever runtime made them. The order in which runs
-start does not match: a prepared run starts before the playing item's later loops and seeks.
+until the runtime is promoted and its gates open. The outgoing item is disposed, and its graph
+stopped, before the next item is promoted or opened (`PlaylistSessionProtocol.cs:927-948`). So
+inside the player's graphs and at its sinks, items arrive in presentation order, whichever runtime
+made them. A consumer the player feeds through a path of its own, such as a channel read by another
+task or a second graph, has no such guarantee: an item delayed on that path can arrive after the
+next timeline's first item. And the order in which runs start does not match presentation order
+at all: a prepared run starts before the playing item's later loops and seeks.
 
 ### Nothing downstream is told
 
@@ -186,18 +190,22 @@ order with the frames, without listening to transport events.
 
 ### 5. Stateful consumers take order from presentation
 
-Two pure cores in `FrameFlow.Graph.Core` answer the question for the two kinds of consumer:
+Two pure cores in `FrameFlow.Graph.Core` answer the question for the two kinds of consumer. Both
+keep the current id and the few ids they left most recently, so an item that arrives late from a
+timeline already left is recognised as **past** and dropped, whatever path delayed it. They differ
+only in what an id they have not seen means:
 
-- **`TimelineFollower`, for one stream in order.** A consumer downstream of the gates sees one
-  player's items in presentation order. An item whose id differs from the stream's current id
-  starts a new timeline: the consumer resets, then takes it. No item of an earlier timeline can
-  follow it in the same stream.
+- **`TimelineFollower`, for a stream.** An unseen id starts a **new** timeline: the consumer
+  resets, then takes the item, and the id it was on becomes past. A consumer inside the player's
+  graphs, or at its sinks, sees items in presentation order (see Context), so a new id there is the
+  next timeline. A consumer behind a path of its own relies on the past rule for items that path
+  delays.
 - **`PresentedTimeline`, for derived items matched against what is shown.** It is fed the
-  presented frame's id (decision 4), and keeps the current id and the few ids it left most
-  recently. A derived item, such as an inference result or a caption, is **current** when its id is
-  on screen, **past** when its id has been left (drop it), and **upcoming** otherwise (hold it,
-  within the consumer's existing bounds, until its id is presented). A derived item can arrive
-  before its frame presents, which is why upcoming is not the same as past.
+  presented frame's id (decision 4). A derived item, such as an inference result or a caption, is
+  **current** when its id is on screen and **past** when its id has been left. An unseen id is
+  **upcoming**: the consumer holds the item, within its existing bounds, until its id is presented.
+  A derived item can arrive before its frame presents, which is why an unseen id is not a new
+  timeline here.
 
 A follower tracks one lineage (decision 1). A consumer with two independent inputs keeps one
 follower per input. An item or a follower on `None` is treated as current, so a consumer fed by
@@ -207,9 +215,9 @@ The consumers in the table above adopt them:
 
 | Consumer | Follows | On a new timeline | On a past item |
 | -------- | ------- | ----------------- | -------------- |
-| Whisper window | its input stream | drops the partial window | does not arise |
-| `SyncJoinNode` | each input's stream, separately | on the primary, clears the secondary window | does not arise |
-| PRESENT GAP tracker | the presented frames | starts over (#624) | does not arise |
+| Whisper window | its input stream | drops the partial window | drops the buffer |
+| `SyncJoinNode` | each input's stream, separately | on the primary, clears the secondary window | drops the item on that input |
+| PRESENT GAP tracker | the presented frames | starts over (#624) | does not arise (frames present in order) |
 | `PresentedResults` | the presented timeline | clears results of the timeline it left (#621) | drops the result |
 | `CaptionTimeline` | the presented timeline | starts empty | drops the caption (#641) |
 
@@ -237,6 +245,8 @@ it cannot tell an item already in flight from one produced after it. An id on th
      new id has a presentation time from the old position.
    - An item prepared ahead (#674) and promoted after the playing item has looped: its items start
      a new timeline for every follower, although its id was minted first.
+   - Pure tests for both followers, including an item of a left timeline that arrives after the
+     next timeline's first item, through a delayed path.
    - A conformance test over every in-repo producer of `IVideoFrame` and `IAudioBuffer`: a derived
      item has its input's id. Sample aspect ratio and rotation should be added to the same test.
 2. **Follow it.** The two followers and the adopters in decision 5. Closes #621 and #624; moves
@@ -268,9 +278,10 @@ it cannot tell an item already in flight from one produced after it. An id on th
 - External `IVideoFrame` and `IAudioBuffer` implementations report `None` until they store an id,
   and their consumers keep today's behaviour.
 - Each frame and buffer carries eight more bytes.
-- A consumer of derived items keeps a short history of the timelines it has left. A late item from
-  a timeline older than that history is held as upcoming until the consumer's bounds evict it. It
-  never shows, because its timeline is never presented again.
+- A follower keeps a short history of the timelines it has left. A late item from a timeline older
+  than that history is unseen: a stream follower would reset to it, and a presented-timeline
+  follower would hold it until the consumer's bounds evict it. The history has to be longer than
+  the number of timelines a delayed path can fall behind by, which a few entries cover.
 - Two mechanisms remain, `ISeekResettable` for the session's components and the id for everything
   else. Decision 6 says which is which.
 
@@ -362,4 +373,6 @@ are decoded, and stamped, before promotion, and a frame is immutable once publis
   only. Decision 5 takes order from presentation, with a follower for in-order streams and one for
   derived items matched against what is shown. Context and decision 2 say why a prepared item's
   items still reach consumers in presentation order. Staging gains the test, and Alternatives the
-  minted-order design.
+  minted-order design. Review then found that order holds only inside the player's graphs and at
+  its sinks, not on a consumer's own delayed path, so both followers remember the timelines they
+  left and drop late items from them.
