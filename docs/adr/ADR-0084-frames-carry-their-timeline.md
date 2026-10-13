@@ -2,9 +2,12 @@
 
 ## Status
 
-**Accepted (2026-10-13).** Staging slice 1 is implemented (#678); slices 2 to 4 are not yet.
-Proposed on 2026-10-12, and revised on acceptance for items prepared ahead (#674): ids identify a
-timeline but carry no order, and order comes from presentation.
+**Accepted (2026-10-13) and implemented (2026-10-13)** under #677: staging slice 1 in #678, slice
+2 in #683, #686 and #681, and slice 3 in the change that closes #641. Slice 4 is optional and not
+done. [Implementation](#implementation) lists what shipped, what differs from the decisions, and
+what is left. Proposed on 2026-10-12, and revised on acceptance for items prepared ahead (#674):
+ids identify a timeline but carry no order, and order comes from presentation. Amended on
+implementation: decision 5's table names the join's action on a secondary's new timeline.
 [Revision history](#revision-history) lists what changed.
 
 Motivating issues: #621 (`PresentedResults` has no item boundary), #641 (LiveCaptioning shows
@@ -220,7 +223,7 @@ The consumers in the table above adopt them:
 | Consumer | Follows | On a new timeline | On a past item |
 | -------- | ------- | ----------------- | -------------- |
 | Whisper window | its input stream, in order | drops the partial window | does not arise |
-| `SyncJoinNode` | each input's stream, in order and separately | on the primary, clears the secondary window | does not arise |
+| `SyncJoinNode` | each input's stream, in order and separately | on the primary, clears the secondary window; on the secondary, releases what the window kept from its previous timeline | does not arise |
 | PRESENT GAP tracker | the presented frames, in order | starts over (#624) | does not arise |
 | `PresentedResults` | the presented timeline | clears results of the timeline it left (#621) | drops the result |
 | `CaptionTimeline` | the presented timeline | starts empty | drops the caption (#641) |
@@ -259,6 +262,99 @@ it cannot tell an item already in flight from one produced after it. An id on th
 3. **Use it in the example.** LiveCaptioning drops its graph counter and its presentation-time
    checks, and keys captions on the presented timeline. Closes #641; #670 is closed as superseded.
 4. **Optional.** Derive the session's run number and the pacer's run id from the timeline id.
+
+## Implementation
+
+| Slice | Change | Shipped in |
+| ----- | ------ | ---------- |
+| 1 | `TimelineId`; `IFrame.Timeline` and `IAudioBuffer.Timeline`; storage and `Create` overloads; minting per run; decoder stamping; copying in every derived-item producer; `InferenceResult<T>.Timeline`, `CaptionRef.Timeline` and `FramePresentedInfo.Timeline`; `TimelineFollower` and `PresentedTimeline` | #678 |
+| 2 | The Whisper window follows its input; `CaptionTimeline` follows the presented timeline | #683 |
+| 2 | `PresentedResults` follows the presented timeline (#621); `SyncJoinNode` follows each input | #686 |
+| 2 | The PRESENT GAP tracker starts over on a new timeline (#624) | #681 |
+| 3 | LiveCaptioning drops its graph counter and presented-time checks (#641); `CaptionTimeline` judges a caption that names a timeline at the first frame (#687) | the change that closes #641 |
+| 4 | Not done; optional | |
+
+What differs from the decisions, slice by slice. None reverses one; the last item under results
+and join amends decision 5's table.
+
+**Slice 1.**
+
+- `FramePresentedInfo.Timeline` is an init-only property, not a third positional member.
+  Construction and deconstruction stay source and binary compatible, and equality now includes the
+  timeline.
+- `TimelineFollower`, `PresentedTimeline` and `TimelineRelation` are public in
+  `FrameFlow.Graph.Core`, because the adopters live in other assemblies. Every other `*.Core` type
+  in the repository is internal. `PresentedTimeline` remembers 16 left timelines by default.
+- The id is minted and installed at every run launch (`SubstrateSession.LaunchSessionTasks`), not
+  at a step inside `RepositionAsync`. Every launch follows the previous run's stop and the
+  `ResetForSeek` pass, which is the order decision 2 requires. After a seek while paused, the Play
+  that launches the next run installs the id.
+- No pure core holds the mint rule. It has no inputs, since every launch mints, so it is one shell
+  method with one call site, pinned by the integration tests.
+- Copying reaches past the producers decision 3 lists: `PcmAudioTrim.Cut`, `DetectedVideoFrameRef`,
+  `DetectedFaceFrameRef` and the Multicast example's color filter. `FfmpegAudioResampler.Flush`
+  stamps the timeline of the last input that gave samples.
+- `GpuVideoFrame`'s factories are internal, so they gained a trailing optional timeline parameter
+  instead of overloads. The decoders' `Timeline` is internal.
+- A caption carries the timeline of the buffer that started its Whisper window. The `Caption`
+  record is unchanged, so open question 2 stays open.
+
+**Slice 2, captions.**
+
+- Held captions are bounded by count, not age, because times on two timelines cannot be compared.
+  Each timeline keeps what could show once it presents: its latest batch, or its latest
+  `maxStackedLines`. The captions of at most `PresentedTimeline.DefaultHistory` timelines wait at
+  once, and the one heard from least recently goes first.
+- Once a tracked timeline is on screen, `Add` holds every caption, and the next `GetActive` judges
+  it against that frame's timeline. A held caption shows from the first presented frame of its
+  timeline, stamped with that frame's PTS. Only `GetActive` changes the presented timeline.
+- Captions on screen expire one by one on their own stamps, since one tracked timeline can step
+  back.
+- `Reset()` drops shown and held captions and the clock, and keeps the presented history.
+- The Whisper window judges a buffer that names the first id after audio on `None` by the 50 ms
+  rule, and then adopts the id. Within one tracked timeline it ignores time, so a gap is joined
+  (#682).
+
+**Slice 2, results and join.**
+
+- `PresentedResults`: until a presented frame names a timeline, every result counts as one
+  timeline for the timestamp rules, whatever id it carries, so a presenter that does not fill
+  `FramePresentedInfo.Timeline` keeps today's behaviour.
+- `PresentedResults`' decision logic moved into a pure core, `PresentedResultsState`, which absorbed
+  the internal `PresentedMatch`. The public surface is unchanged.
+- `SyncJoinKeys` gained optional `PrimaryTimeline` and `SecondaryTimeline` selectors, delegates as in
+  ADR-0073. By default the join reads `IFrame.Timeline` or `IAudioBuffer.Timeline`. `CaptionRef`,
+  the usual `Within` secondary, is not a frame, so it names its timeline through a selector.
+- When a tracked primary starts a new timeline behind where the old window began, the window keeps
+  ADR-0073's stale-from boundary.
+- A secondary on a new timeline releases what the window kept from its previous timeline. The table
+  in decision 5 named an action only for the primary; this applies the follower rule to the
+  secondary's own follower, and the table now names it. The join does not pair the two inputs'
+  breaks, so between them it matches by time. A secondary that leads its primary costs the old
+  timeline's last primaries their matches. For one that lags, the old timeline's late secondaries
+  stop matching the new timeline's primaries once its own break arrives. Selectors that return
+  `TimelineId.None` restore the old rules.
+
+**Slice 2, presenters.** None.
+
+**Slice 3.**
+
+- The fix for #687 ships with the example. The example's graph counter had hidden it: with the
+  counter gone, an audio-only file opened first and a file with a picture opened after it showed
+  the first file's captions on the second's first frame. A caption that names a timeline now waits
+  for the first frame to judge it, as it does once a timeline is on screen.
+
+What is left:
+
+- Slice 4, deriving the session's run number and the pacer's run id from the id, is optional and
+  not done.
+- The open questions below are all still open. #684, a camera switch that shows the old camera's
+  result, waits on question 1.
+- #679: a resampler held across a timeline change, such as the one in LiveCaptioning's caption
+  graph, puts its filter tail from before the break under the new id.
+- #682 and #685 ask whether the time should still place samples, or start a new timeline in the
+  join, within one tracked timeline. Either answer that keeps a time rule amends decision 5.
+- #669 and #671, for the reasons [What it does not fix](#what-it-does-not-fix) gives.
 
 ## Consequences
 
@@ -383,3 +479,9 @@ are decoded, and stamped, before promotion, and a frame is immutable once publis
   `TimelineFollower` is limited to in-order streams and keeps no history, and a consumer on any
   other path uses `PresentedTimeline`, whose bounded history can only make a forgotten past item
   wait unseen, never show.
+- **2026-10-13, on implementation.** Status names the pull requests, and
+  [Implementation](#implementation) lists what shipped, what differs and what is left. Decision 5's
+  table gains the join's action on a secondary's new timeline: it releases what the window kept
+  from the secondary's previous timeline. The table had named an action only for the primary,
+  although each input has its own follower. Slice 2 implemented the secondary's action (#686), and
+  #677 asked for the table to say so.

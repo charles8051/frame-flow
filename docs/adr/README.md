@@ -477,7 +477,7 @@ ADR-0082 was numbered and accepted on 2026-10-02, and implemented under #561.
   upscales one stream at a time and that concurrent blits did not hang, so the drain that held
   blits back after a hand-off is gone and the lease stands for the driver's limit.
 
-ADR-0084 was numbered and accepted on 2026-10-13. Its staging slice 1 is implemented (#678).
+ADR-0084 was numbered and accepted on 2026-10-13, and implemented under #677.
 
 - [Frames carry the timeline they belong to](ADR-0084-frames-carry-their-timeline.md) — the
   session knows when the timeline breaks (a load, a seek, a loop, the next item) and nothing
