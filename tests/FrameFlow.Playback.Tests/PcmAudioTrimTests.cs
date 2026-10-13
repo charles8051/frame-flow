@@ -28,6 +28,15 @@ public sealed class PcmAudioTrimTests
     }
 
     [Fact]
+    public void FramesBefore_CountsFarApartWithoutOverflowing()
+    {
+        // 300 days at 48 kHz: the tick difference times the rate exceeds a long.
+        var frames = PcmAudioTrim.FramesBefore(TimeSpan.Zero, 48_000, TimeSpan.FromDays(300) + TimeSpan.FromTicks(1));
+
+        Assert.Equal(300L * 86_400 * 48_000 + 1, frames);
+    }
+
+    [Fact]
     public void FramesBefore_IsZeroWithoutASampleRate() =>
         Assert.Equal(0, PcmAudioTrim.FramesBefore(TimeSpan.Zero, 0, TimeSpan.FromSeconds(1)));
 

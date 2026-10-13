@@ -18,8 +18,10 @@ internal static class PcmAudioTrim
     {
         if (floor <= start || sampleRate <= 0)
             return 0;
-        var ticks = (floor - start).Ticks;
-        return (ticks * sampleRate + TimeSpan.TicksPerSecond - 1) / TimeSpan.TicksPerSecond;
+        // Whole seconds and the rest apart, so the product cannot overflow however far apart they
+        // are.
+        var seconds = Math.DivRem((floor - start).Ticks, TimeSpan.TicksPerSecond, out var rest);
+        return seconds * sampleRate + (rest * sampleRate + TimeSpan.TicksPerSecond - 1) / TimeSpan.TicksPerSecond;
     }
 
     /// <summary>
