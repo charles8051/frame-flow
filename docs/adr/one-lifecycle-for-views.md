@@ -5,10 +5,10 @@
 Draft, pending number assignment at merge. **Proposed** (2026-10-13). Not implemented.
 
 Motivating issues: #663 (`FrameFlowVideoView` never binds a caller's sink again after a detach and
-reattach) and #664 (`CompositionInteropVideoSink` keeps a frame presented after its disposal). It
-would also replace the separate mechanisms that #630, #643, #650 and #665 added, each fixing one
-control. Not covered: #286 (two players driving one sink) and the `VideoSurface` swap on
-`FrameFlowPlayerView`; see [Open questions](#open-questions).
+reattach), #664 (`CompositionInteropVideoSink` keeps a frame presented after its disposal) and #286
+(nothing stops two players driving one sink). It would also replace the separate mechanisms that
+#630, #643, #650 and #665 added, each fixing one control, and it settles what swapping
+`FrameFlowPlayerView.VideoSurface` does to a player built against the old surface.
 
 Line numbers are on `main` at c4cb0b5.
 
@@ -83,6 +83,23 @@ A sink bound before the first attach is copied and counted as presented on the C
 `FramePresented` for a view that is not on screen (`FrameFlowVideoView.cs:654-685` never checks
 attachment). The interop view holds frames until it presents. Neither is documented as the rule.
 
+### Nothing enforces one player per sink
+
+ADR-0044 says one sink serves one player at a time, and nothing enforces it (#286,
+`IVideoSink.cs:69-71`). `AvaloniaVideoSink`'s gap tracker assumes its calls never overlap
+(`AvaloniaVideoSink.cs:56-60`), and `IVideoSurface.AttachSink` is documented as idempotent, which
+makes it easy to give one view's sink to two builders. Today a detach bounds the damage, because it
+disposes the sink. Once the sink lives as long as the view (decision 2), two players built against
+one view can feed it for as long as both live, interleaving two sources on one picture.
+
+### A surface swap strands the player
+
+`FrameFlowPlayerView.VideoSurface` swaps the hosted control and nothing else
+(`FrameFlowPlayerView.cs:176-188`): it does not move the sink, does not tell the player, and does
+not dispose the old surface. A player built against the old surface goes on feeding it while the
+new surface shows nothing. The property is documented as meant for use before the first playback
+(`:172-174`), and nothing holds to that.
+
 ### Threads
 
 The lifetime events run on the UI thread. Frame arrival runs on the presenter thread, presents and
@@ -155,17 +172,41 @@ table; the interop view's surface identity check stays only if it guards somethi
 not. Work that finishes off the UI thread keeps snapshotting what it owns at the transition that
 started it, as `StopPresenting` does today, so the keyed-mutex order of ADR-0064 does not change.
 
+### 6. One player per sink, by a claim the builder takes
+
+The in-box sinks implement an optional side interface (ADR-0066), for example `IClaimableVideoSink`,
+whose `Claim()` returns a lease. `FrameFlowPlayer` and `FrameFlowPass` take the claim when they are
+built and release it when the player or pass is disposed. A second claim while one is held fails the
+build with `InvalidOperationException` naming the sink, before anything is decoded. A sink can still
+serve several players in sequence, as ADR-0044 and ADR-0062 require: each releases its claim when it
+is disposed. A sink without the interface keeps the documented rule. This closes #286 for the
+in-box sinks.
+
+### 7. A surface whose sink is claimed cannot be swapped out
+
+`FrameFlowPlayerView.VideoSurface` refuses to swap out a surface whose sink a player or pass has
+claimed, with `InvalidOperationException` telling the app to dispose the player first or to build it
+against the new surface. An unclaimed outgoing surface that the player view constructed itself (the
+default surface) is disposed on the swap. One the caller supplied stays the caller's, detached and
+holding no frames. The player view never moves a player from one sink to another: a player's sink
+is fixed when it is built.
+
 ### Staging
 
 1. **Sinks.** Decision 4 on both in-box sinks, with tests that a frame given after dispose is
-   disposed and that a second dispose does nothing. Closes #664. It needs nothing else first.
+   disposed and that a second dispose does nothing. Closes #664. Then decision 6: the claim
+   interface on both sinks, taken and released by the player and pass builders, with a test that a
+   second build against a claimed sink fails and a build after the first player's disposal succeeds.
+   Closes #286. It needs nothing else first.
 2. **The core.** `SurfaceLifecycle` in `FrameFlow.Avalonia.Core` with the exhaustive test, and the
    interop view moved onto it with today's behaviour, except that an owned sink survives a detach.
 3. **The CPU view.** `FrameFlowVideoView` onto the core: decisions 2, 3 and 5, `IAsyncDisposable`,
    and headless reattach tests for an owned and a borrowed sink (a frame given after reattach is
    presented). Closes #663.
-4. **The chrome.** The chrome controls and `TransportFollower` onto the core. No behaviour change is
-   intended; the gain is one model.
+4. **The chrome and the player view.** The chrome controls and `TransportFollower` onto the core,
+   with no behaviour change intended. Decision 7 on `FrameFlowPlayerView.VideoSurface`, with tests
+   for a claimed surface (refused), an unclaimed default surface (disposed) and a caller's surface
+   (left to the caller).
 5. **Docs.** `IVideoSurface`'s remarks, the BREAKING-CHANGES entry, and the examples that construct
    their own sink only to survive a detach.
 
@@ -180,12 +221,15 @@ started it, as `StopPresenting` does today, so the keyed-mutex order of ADR-0064
 - `IVideoSurface.AttachSink` becomes as idempotent as it says.
 - The two views agree before attach, after detach and after dispose.
 - No frame is pinned by a view that is not on screen.
+- Two players can no longer feed one in-box sink at once, and a surface swap can no longer strand a
+  player: both fail at the call that would cause them, with a message saying what to do.
 
 ### Negative
 
 - Behaviour changes an app can see: the owned sink is no longer disposed on detach, `Sink` no longer
   reads null after one, `EnsureSink` returns the same sink after a reattach, the CPU view no longer
-  presents before its first attach, and a disposed CPU view throws from `EnsureSink`. Each needs a
+  presents before its first attach, a disposed CPU view throws from `EnsureSink`, a second player
+  built against a claimed in-box sink fails, and a swap of a claimed surface throws. Each needs a
   BREAKING-CHANGES entry.
 - An app that relied on detach to release the owned sink now has to dispose the view. A view that
   is never disposed keeps its sink object.
@@ -228,15 +272,30 @@ The chrome has no ownership and no dispose, so it would use part of the machine.
 own helper keeps two models of "in the tree" and "late notification", which is the duplication this
 record removes. A borrowed target with no dispose is a case the one machine already has.
 
+### Rebind the player on a swap
+
+The player view could move the player onto the new surface's sink. A player's sink is fixed when it
+is built, and no transport member replaces it. Adding one for this caller would put sink
+replacement, with its ordering and draining questions, on every player. Refusing the swap of a
+claimed surface keeps the rule that a player's sink does not change.
+
+### Enforce one producer inside the sink
+
+A sink could detect two producers from the frames it receives, for example by their timelines
+(ADR-0084). Frames from two players interleave as alternating new timelines, which a sink cannot
+tell from fast seeks. A claim taken at build fails before anything is decoded and names the cause.
+
 ## Open questions
 
-1. **The surface swap.** `FrameFlowPlayerView.VideoSurface` is meant to be swapped before the first
-   playback. With decision 2 the old surface keeps its sink, detached, and a player still feeds it.
-   Should the player view dispose the surface it swaps out, or refuse a swap while a sink is bound?
-2. **One player per sink (#286).** The lifecycle makes a view's sink last longer, so two builders
-   given the same view are more likely to share it. Is a lease (a side interface, per ADR-0066) part
-   of this work or its own record?
-3. **Garbage collection.** Should an undisposed view's owned sink be released by a finaliser, or is
+1. **Garbage collection.** Should an undisposed view's owned sink be released by a finaliser, or is
    holding no frames while detached enough?
-4. **Counters.** The views' frame counters only ever go up today. With the sink kept, should drops
+2. **Counters.** The views' frame counters only ever go up today. With the sink kept, should drops
    while detached count toward them, or toward a separate detached-drop count?
+
+## Revision history
+
+- **2026-10-13, review turn 1.** The surface swap and #286 were open questions. Review pointed out
+  that a sink kept for the view's life makes both user-visible failures rather than cleanup
+  details: a swap strands the player on the old sink, and two players built against one view feed
+  it for as long as both live. Decisions 6 (one player per sink, by a claim) and 7 (no swap of a
+  claimed surface) settle them, with Context sections and staging to match.

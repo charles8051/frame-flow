@@ -305,7 +305,9 @@ land.
   Proposes one pure `SurfaceLifecycle` for every surface and chrome control, generalised from
   #662's `InteropViewLifecycle`; an owned sink that lives as long as the view, while presenting
   follows the attachment; no frames held before the first attach or while detached; disposed sinks
-  that dispose what they are given (#664); and one attachment number published to other threads.
+  that dispose what they are given (#664); one attachment number published to other threads; a
+  claim the player and pass builders take on an in-box sink, so two players cannot feed one (#286);
+  and no swap of a surface whose sink a player has claimed.
 
 ## Recently numbered
 
