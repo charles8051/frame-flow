@@ -297,6 +297,14 @@ land.
   into an `InFlight` sink that hands encoded frames to the application's own worker for a live
   source. The abandonable node it named is not pursued. The record and
   [the GenAI exploration](../explorations/generative-inference.md) are kept as the evidence.
+- [Frames carry the timeline they belong to](frames-carry-their-timeline.md): the session knows
+  when the timeline breaks (a load, a seek, a loop, the next item) and nothing downstream is told,
+  so five stateful consumers each infer it from presentation times and each misses cases another
+  catches. Proposes a process-wide, ordered `TimelineId` that the session mints per run, the
+  decoders stamp on every frame and buffer, derived items copy, and `FramePresentedInfo` reports,
+  with one pure rule (current, newer, older) for consumers. Keeps `ISeekResettable` for the
+  session's own components and declines extending it to operators. Addresses #621, #624 and #641,
+  and replaces the rules #619 and #620 added; not #669 or #671.
 
 ## Recently numbered
 
