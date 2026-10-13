@@ -88,6 +88,21 @@ public sealed class PresentedResultsTimelineTests
     }
 
     [Fact]
+    public void AResultPostedBeforeTheFirstFrame_IsJudgedOnThatFramesTimeline()
+    {
+        // Nothing has been presented, so nothing says which timeline a result is for. The first
+        // frame does: a result of another timeline waits rather than showing on it.
+        var (first, other) = (TimelineId.Next(), TimelineId.Next());
+        var state = Empty().Post(Result("first timeline", 0, first)).Post(Result("other timeline", 5, other));
+
+        (state, var change) = state.Present(Ms(10), first);
+
+        Assert.Equal(PresentedChange.Presented, change);
+        Assert.Equal("first timeline", state.Current?.Result);
+        Assert.Contains(state.Pending, p => p.Result.Result == "other timeline");
+    }
+
+    [Fact]
     public void AShortSeekForwardsFirstResult_DoesNotShowOnTheFramesStillPresentingBeforeIt()
     {
         // By time, the new position's result at 150 ms is the latest at or before the old
