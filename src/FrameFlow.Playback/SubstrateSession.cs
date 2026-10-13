@@ -2131,8 +2131,15 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             video.Timeline = timeline;
         if (_audioDecoder is { } audio)
             audio.Timeline = timeline;
-        _logger.LogDebug("Run {RunNumber} launches on {Timeline}.", RunNumber, timeline);
+        _logger.LogDebug(RunLaunchedMessage, RunNumber, timeline);
     }
+
+    /// <summary>
+    /// The Debug line <see cref="InstallNewTimeline"/> writes for each launch, with the run number
+    /// and the timeline it launches on as its two arguments. The integration tests read launches
+    /// from it.
+    /// </summary>
+    internal const string RunLaunchedMessage = "Run {RunNumber} launches on {Timeline}.";
 
     /// <summary>
     /// Reports a fault in the pump or the graph. The shared hardware device this item decoded on

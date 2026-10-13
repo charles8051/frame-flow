@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using FrameFlow.Graph;
 using FrameFlow.Media;
+using FrameFlow.Playback;
 using Microsoft.Extensions.Logging;
 
 namespace FrameFlow.Integration.Tests.Harness;
@@ -86,14 +87,35 @@ internal sealed class TimelineRecordingVideoSink : IVideoSink
 /// </summary>
 internal sealed class TimelineRecordingAudioSink : IAudioSink
 {
+    // Ticks of the position the sink stops taking audio at, or -1 for none.
+    private long _holdFrom = -1;
+
     public StampRecorder Recorder { get; } = new();
 
-    public ValueTask PresentAsync(IAudioBuffer buffer, CancellationToken ct)
+    /// <summary>
+    /// Takes no buffer after the first at or past <paramref name="position"/> until the run that
+    /// delivered it stops, as a device whose buffer is full at that position would. The audio
+    /// decoder's packet queue then holds the packets read after it. One run only: the next run's
+    /// buffers are taken as usual.
+    /// </summary>
+    public void HoldFrom(TimeSpan position) => Interlocked.Exchange(ref _holdFrom, position.Ticks);
+
+    public async ValueTask PresentAsync(IAudioBuffer buffer, CancellationToken ct)
     {
         var stamped = new Stamped(buffer.Timestamp, buffer.Timeline);
         buffer.Dispose();
         Recorder.Record(stamped);
-        return ValueTask.CompletedTask;
+
+        var holdFrom = Interlocked.Read(ref _holdFrom);
+        if (holdFrom < 0 || stamped.Pts.Ticks < holdFrom)
+            return;
+
+        // Completes only when the run is cancelled, which is how a seek or a dispose stops it.
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using (ct.Register(() => stopped.TrySetResult()))
+            await stopped.Task.ConfigureAwait(false);
+        Interlocked.Exchange(ref _holdFrom, -1);
+        ct.ThrowIfCancellationRequested();
     }
 
     public ValueTask ActivateAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
@@ -109,7 +131,8 @@ internal sealed class TimelineRecordingAudioSink : IAudioSink
 
 /// <summary>
 /// The runs a player's sessions launched, in order, read from the session's log line for each
-/// launch: the session's run number and the timeline it minted.
+/// launch (<see cref="SubstrateSession.RunLaunchedMessage"/>): the session's run number and the
+/// timeline it minted.
 /// </summary>
 internal sealed class LaunchLog : ILoggerFactory, ILogger
 {
@@ -137,20 +160,17 @@ internal sealed class LaunchLog : ILoggerFactory, ILogger
         if (state is not IReadOnlyList<KeyValuePair<string, object?>> values)
             return;
 
-        int? run = null;
-        TimelineId? timeline = null;
-        foreach (var (key, value) in values)
+        // The message's arguments come first, in order, and its template last.
+        if (
+            values.Count == 3
+            && values[2].Value is string format
+            && format == SubstrateSession.RunLaunchedMessage
+            && values[0].Value is int run
+            && values[1].Value is TimelineId timeline
+        )
         {
-            if (key == "{OriginalFormat}" && value is string format && !format.Contains("launches on", StringComparison.Ordinal))
-                return;
-            if (key == "RunNumber" && value is int number)
-                run = number;
-            if (key == "Timeline" && value is TimelineId id)
-                timeline = id;
+            _launches.Enqueue((run, timeline));
         }
-
-        if (run is { } r && timeline is { } t)
-            _launches.Enqueue((r, t));
     }
 
     public void Dispose() { }

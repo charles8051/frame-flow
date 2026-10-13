@@ -18,7 +18,9 @@ namespace FrameFlow.Integration.Tests;
 /// The witness is what the sinks are handed: each item's presentation time and timeline, in
 /// order. The record is split into stretches on one timeline, and each test checks that the
 /// stretches fall where its breaks put them: what came before a break is from the old position,
-/// what came after is from the new one.
+/// what came after is from the new one. A stretch is checked by what it must not contain, not by
+/// how far playback is hoped to have got: it runs forward without a jump, so an item from the other
+/// side of a break shows as one.
 /// </para>
 /// <para>
 /// Video is paced, so its stretches are checked against where playback had reached. The audio
@@ -57,11 +59,14 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
     /// <summary>Where the item has reached before a break is taken.</summary>
     private static readonly TimeSpan Played = TimeSpan.FromMilliseconds(400);
 
-    /// <summary>Before this, a frame is from where the item was playing before the break.</summary>
-    private static readonly TimeSpan OldPosition = TimeSpan.FromSeconds(1.5);
-
-    /// <summary>A break's destination, well past <see cref="OldPosition"/>.</summary>
+    /// <summary>A break's destination, well past <see cref="Played"/>.</summary>
     private static readonly TimeSpan Target = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// The most one stretch may skip between two consecutive items: a few frames the pacer dropped.
+    /// Every break here jumps by more, so an item from the other side of one shows as a jump.
+    /// </summary>
+    private static readonly TimeSpan MaxGap = TimeSpan.FromMilliseconds(500);
 
     private static readonly TimeSpan PastTarget = Target + TimeSpan.FromMilliseconds(200);
 
@@ -83,8 +88,8 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
         Assert.Single(video);
         Assert.Single(audio);
         AssertSameTimelines(video, audio);
-        AssertRunsForward(video[0], "video");
-        AssertRunsForward(audio[0], "audio");
+        AssertContinues(video[0], "video");
+        AssertContinues(audio[0], "audio");
         Assert.Single(rig.Log.Launches);
     }
 
@@ -102,7 +107,7 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
             await rig.WhenBothReach(PastTarget, skip: mark);
         }
 
-        AssertOneBreak(rig, before: OldPosition, after: Target);
+        AssertOneBreak(rig, after: Target);
     }
 
     [RequiresFfmpegAndCorpusFact]
@@ -121,7 +126,7 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
             await rig.WhenBothReach(PastTarget, skip: mark);
         }
 
-        AssertOneBreak(rig, before: OldPosition, after: Target);
+        AssertOneBreak(rig, after: Target);
     }
 
     [RequiresFfmpegAndCorpusFact]
@@ -174,7 +179,7 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
             await rig.WhenBothReach(PastTarget, skip: mark);
         }
 
-        AssertOneBreak(rig, before: OldPosition, after: Target);
+        AssertOneBreak(rig, after: Target);
         var launches = rig.Log.Launches;
         Assert.Equal(2, launches.Count);
         Assert.True(launches[1].RunNumber > launches[0].RunNumber, "the hand-off opened a new session");
@@ -311,7 +316,9 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
     }
 
     [RequiresFfmpegAndCorpusTheory]
-    // The demuxer reads seconds ahead into both decoders' packet queues.
+    // The audio sink stops taking audio at the old position, as a device with a full buffer does,
+    // so the audio decoder holds the packets read past it. AAC packets decode on their own, so one
+    // left in the queue would come out under the new id.
     [InlineData(OneKeyframe, true)]
     // Video alone, so the pump is paced by the video decoder and has not reached the end, and with
     // B-frames, so the codec holds decoded frames back to put them in presentation order.
@@ -330,6 +337,7 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
         var rig = await Rig.BuildAsync(new MediaClip(Corpus(fixture)), withAudio: withAudio);
         await using (rig)
         {
+            rig.AudioSink.HoldFrom(from);
             await rig.PlayAsync();
             await rig.WhenBothReach(from, skip: (0, 0));
             var mark = rig.Mark();
@@ -338,37 +346,37 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
             await rig.WhenBothReach(to + TimeSpan.FromMilliseconds(300), skip: mark, newTimeline: true);
         }
 
-        // The new timeline starts at the target and runs forward from it, and its video stays short
-        // of where the old position had reached.
+        // The new timeline starts at the target and runs on from it without a jump, so nothing from
+        // the old position is on it, first or later.
         var (video, audio) = rig.Segments();
         Assert.Equal(2, video.Count);
-        AssertRunsForwardFrom(video[1], to, HalfFrame, "video");
-        Assert.All(video[1].Pts, pts => Assert.True(pts < from, $"video at {pts} on the new timeline is from the old position"));
+        AssertContinuesFrom(video[1], to, HalfFrame, "video");
         if (withAudio)
         {
             Assert.Equal(2, audio.Count);
             AssertSameTimelines(video, audio);
-            AssertRunsForwardFrom(audio[1], to, AudioTolerance, "audio");
+            AssertContinuesFrom(audio[1], to, AudioTolerance, "audio");
         }
     }
 
     // ── Assertions ────────────────────────────────────────────────────
 
     /// <summary>
-    /// Exactly one break, on both streams: video from before <paramref name="before"/> until it,
-    /// and both streams starting at <paramref name="after"/> after it and running forward.
+    /// Exactly one break, on both streams: before it, a stretch that runs on without a jump, so
+    /// nothing from <paramref name="after"/> is on the old timeline; after it, both streams starting
+    /// at <paramref name="after"/> and running on.
     /// </summary>
-    private static void AssertOneBreak(Rig rig, TimeSpan before, TimeSpan after)
+    private static void AssertOneBreak(Rig rig, TimeSpan after)
     {
         var (video, audio) = rig.Segments();
         Assert.Equal(2, video.Count);
         Assert.Equal(2, audio.Count);
         AssertSameTimelines(video, audio);
 
-        Assert.All(video[0].Pts, pts => Assert.True(pts < before, $"video before the break at {pts}"));
-        AssertRunsForwardFrom(video[1], after, HalfFrame, "video");
-        AssertRunsForward(audio[0], "audio");
-        AssertRunsForwardFrom(audio[1], after, AudioTolerance, "audio");
+        AssertContinues(video[0], "video");
+        AssertContinuesFrom(video[1], after, HalfFrame, "video");
+        AssertContinues(audio[0], "audio");
+        AssertContinuesFrom(audio[1], after, AudioTolerance, "audio");
     }
 
     /// <summary>
@@ -384,11 +392,10 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
 
         AssertRunsForwardFrom(video[0], from, HalfFrame, "video");
         AssertRunsForwardFrom(audio[0], from, AudioTolerance, "audio");
-        AssertRunsForward(video[1], "video");
-        AssertRunsForward(audio[1], "audio");
+        AssertContinues(video[1], "video");
+        AssertContinues(audio[1], "audio");
         Assert.True(video[1].Pts[0] < from - HalfFrame, $"video after the break starts at {video[1].Pts[0]}");
         Assert.True(audio[1].Pts[0] < from - AudioTolerance, $"audio after the break starts at {audio[1].Pts[0]}");
-        Assert.All(video[1].Pts, pts => Assert.True(pts < from, $"video at {pts} after the break"));
     }
 
     /// <summary>A stretch that starts at <paramref name="start"/> and runs forward from it.</summary>
@@ -399,6 +406,32 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
             $"{stream}: a timeline starts at {segment.Pts[0]}, not {start}: {Describe(segment)}"
         );
         AssertRunsForward(segment, stream);
+    }
+
+    /// <summary>
+    /// A stretch that starts at <paramref name="start"/> and runs on from it without a jump wider
+    /// than <see cref="MaxGap"/>.
+    /// </summary>
+    private static void AssertContinuesFrom(Segment segment, TimeSpan start, TimeSpan tolerance, string stream)
+    {
+        AssertRunsForwardFrom(segment, start, tolerance, stream);
+        AssertContinues(segment, stream);
+    }
+
+    /// <summary>
+    /// A stretch that runs forward without a jump wider than <see cref="MaxGap"/>: an item from the
+    /// other side of a break would be one.
+    /// </summary>
+    private static void AssertContinues(Segment segment, string stream)
+    {
+        AssertRunsForward(segment, stream);
+        for (var i = 1; i < segment.Pts.Count; i++)
+        {
+            Assert.True(
+                segment.Pts[i] - segment.Pts[i - 1] <= MaxGap,
+                $"{stream}: {segment.Timeline} jumps from {segment.Pts[i - 1]} to {segment.Pts[i]}"
+            );
+        }
     }
 
     /// <summary>A stretch whose presentation times never go back: one continuous timeline.</summary>
@@ -496,13 +529,40 @@ public sealed class TimelineBreakTests : IClassFixture<FfmpegBootstrapFixture>
         {
             var seenVideo = newTimeline ? Video.Items.Take(skip.Video).Select(i => i.Timeline).ToHashSet() : [];
             var seenAudio = newTimeline ? Audio.Items.Take(skip.Audio).Select(i => i.Timeline).ToHashSet() : [];
-            await Task.WhenAll(
-                    Video.WhenDelivered(i => i.Pts >= pts && !seenVideo.Contains(i.Timeline), skip.Video),
-                    WithAudio
-                        ? Audio.WhenDelivered(i => i.Pts >= pts && !seenAudio.Contains(i.Timeline), skip.Audio)
-                        : Task.CompletedTask
-                )
-                .WaitAsync(Bound);
+            try
+            {
+                await Task.WhenAll(
+                        Video.WhenDelivered(i => i.Pts >= pts && !seenVideo.Contains(i.Timeline), skip.Video),
+                        WithAudio
+                            ? Audio.WhenDelivered(i => i.Pts >= pts && !seenAudio.Contains(i.Timeline), skip.Audio)
+                            : Task.CompletedTask
+                    )
+                    .WaitAsync(Bound);
+            }
+            catch (TimeoutException)
+            {
+                // Say what did arrive, so a run that stalled reads differently from one that leaked.
+                Assert.Fail(
+                    $"the sinks did not reach {pts} within {Bound}. Since the mark, video: {Since(Video, skip.Video)}; "
+                        + $"audio: {(WithAudio ? Since(Audio, skip.Audio) : "none")}"
+                );
+            }
+        }
+
+        private static string Since(StampRecorder recorder, int skip)
+        {
+            var items = recorder.Items.Skip(skip).ToList();
+            if (items.Count == 0)
+                return "nothing";
+            var segments = new List<Segment>();
+            foreach (var item in items)
+            {
+                if (segments.Count > 0 && segments[^1].Timeline == item.Timeline)
+                    ((List<TimeSpan>)segments[^1].Pts).Add(item.Pts);
+                else
+                    segments.Add(new Segment(item.Timeline, new List<TimeSpan> { item.Pts }));
+            }
+            return string.Join(", ", segments.Select(Describe));
         }
 
         public (IReadOnlyList<Segment> Video, IReadOnlyList<Segment> Audio) Segments() =>
