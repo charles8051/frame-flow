@@ -297,14 +297,6 @@ land.
   into an `InFlight` sink that hands encoded frames to the application's own worker for a live
   source. The abandonable node it named is not pursued. The record and
   [the GenAI exploration](../explorations/generative-inference.md) are kept as the evidence.
-- [Frames carry the timeline they belong to](frames-carry-their-timeline.md): the session knows
-  when the timeline breaks (a load, a seek, a loop, the next item) and nothing downstream is told,
-  so five stateful consumers each infer it from presentation times and each misses cases another
-  catches. Proposes a process-wide, ordered `TimelineId` that the session mints per run, the
-  decoders stamp on every frame and buffer, derived items copy, and `FramePresentedInfo` reports,
-  with one pure rule (current, newer, older) for consumers. Keeps `ISeekResettable` for the
-  session's own components and declines extending it to operators. Addresses #621, #624 and #641,
-  and replaces the rules #619 and #620 added; not #669 or #671.
 
 ## Recently numbered
 
@@ -484,3 +476,15 @@ ADR-0082 was numbered and accepted on 2026-10-02, and implemented under #561.
   the size has held for 200 ms. Amended 2026-10-03: a soak of two converters found that the driver
   upscales one stream at a time and that concurrent blits did not hang, so the drain that held
   blits back after a hand-off is gone and the lease stands for the driver's limit.
+
+ADR-0084 was numbered and accepted on 2026-10-13. It is not yet implemented.
+
+- [Frames carry the timeline they belong to](ADR-0084-frames-carry-their-timeline.md) — the
+  session knows when the timeline breaks (a load, a seek, a loop, the next item) and nothing
+  downstream is told, so five stateful consumers each infer it from presentation times and each
+  misses cases another catches. A `TimelineId` that the session mints per run, the decoders stamp
+  on every frame and buffer, derived items copy, and `FramePresentedInfo` reports. Ids are identity
+  only: an item prepared ahead (#674) mints its id before the playing item's later loops, so order
+  comes from presentation, through one follower for in-order streams and one for derived items
+  matched against what is shown. Keeps `ISeekResettable` for the session's own components.
+  Addresses #621, #624 and #641, and replaces the rules #619 and #620 added; not #669 or #671.
