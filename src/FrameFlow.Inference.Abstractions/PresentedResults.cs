@@ -18,29 +18,31 @@ namespace FrameFlow.Inference;
 /// branch drops frames while a run is in progress, so most frames show the result before theirs.
 /// </para>
 /// <para>
-/// A result earlier than the one before it means the timeline went back, by a seek or a loop, and
-/// the results still waiting are dropped. A presented frame earlier than the result showing, with
-/// no result of its own, means the same on the presenting side: the result is cleared and
-/// <see cref="Cleared"/> is raised until one arrives for the new position.
+/// <b>Timelines.</b> A result carries its frame's timeline (<see cref="InferenceResult{TResult}.Timeline"/>)
+/// and a presented frame names the timeline on screen (<see cref="FramePresentedInfo.Timeline"/>),
+/// so a load, a seek, a loop or the next item is known exactly (ADR-0084). A frame shows only a
+/// result of its own timeline. When a new timeline reaches the screen, the results of the one it
+/// left are dropped, the one showing included, and a result of a timeline already left is dropped
+/// when it is posted. A result of a timeline not yet shown waits until it is.
 /// </para>
 /// <para>
-/// <see cref="Presented"/> is raised on whichever thread presented the frame, inside the present
-/// path. Keep its handlers to handing the result on.
+/// <b>Without timelines.</b> A result on <see cref="Graph.TimelineId.None"/>, or a presenter that
+/// names none, keeps the rules that use timestamps alone. A result earlier than the one before it
+/// means the timeline went back, by a seek or a loop, and the results still waiting are dropped. A
+/// presented frame earlier than the result showing, with no result of its own, means the same on the
+/// presenting side: the result is cleared until one arrives for the new position. These rules miss
+/// a new item whose timestamps do not go back.
+/// </para>
+/// <para>
+/// <see cref="Presented"/> and <see cref="Cleared"/> are raised on whichever thread presented the
+/// frame, inside the present path. Keep their handlers to handing the result on.
 /// </para>
 /// </remarks>
 public sealed class PresentedResults<TResult> : IDisposable
 {
     private readonly IFramePresentedSource _source;
-    private readonly int _capacity;
     private readonly object _gate = new();
-    private readonly List<InferenceResult<TResult>> _pending = [];
-    private readonly List<TimeSpan> _timestamps = [];
-    private InferenceResult<TResult>? _current;
-
-    // Which timeline the waiting results and the current one came from. A result earlier than the
-    // last starts a new one; the waiting results are always from the newest.
-    private int _timeline;
-    private int _currentTimeline;
+    private PresentedResultsState<TResult> _state;
     private bool _disposed;
 
     /// <summary>Follows the frames <paramref name="source"/> presents.</summary>
@@ -51,7 +53,7 @@ public sealed class PresentedResults<TResult> : IDisposable
         ArgumentNullException.ThrowIfNull(source);
         ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
         _source = source;
-        _capacity = capacity;
+        _state = PresentedResultsState<TResult>.Empty(capacity);
         _source.FramePresented += OnFramePresented;
     }
 
@@ -59,8 +61,9 @@ public sealed class PresentedResults<TResult> : IDisposable
     public event EventHandler<InferenceResult<TResult>>? Presented;
 
     /// <summary>
-    /// Raised when the frame on screen went back before the result showing and has none of its
-    /// own, so nothing should be shown until the next <see cref="Presented"/>.
+    /// Raised when the result showing no longer applies and the frame on screen has none of its
+    /// own: the frame is on a new timeline, or went back before the result. Nothing should be shown
+    /// until the next <see cref="Presented"/>.
     /// </summary>
     public event EventHandler? Cleared;
 
@@ -70,31 +73,19 @@ public sealed class PresentedResults<TResult> : IDisposable
         get
         {
             lock (_gate)
-                return _current;
+                return _state.Current;
         }
     }
 
-    /// <summary>Holds <paramref name="result"/> until its frame is presented.</summary>
+    /// <summary>
+    /// Holds <paramref name="result"/> until its frame is presented, or drops it when its timeline
+    /// has already left the screen.
+    /// </summary>
     public void Post(InferenceResult<TResult> result)
     {
         ArgumentNullException.ThrowIfNull(result);
         lock (_gate)
-        {
-            if (_timestamps.Count > 0 && result.Timestamp < _timestamps[^1])
-            {
-                _pending.Clear();
-                _timestamps.Clear();
-                _timeline++;
-            }
-
-            _pending.Add(result);
-            _timestamps.Add(result.Timestamp);
-            if (_pending.Count > _capacity)
-            {
-                _pending.RemoveAt(0);
-                _timestamps.RemoveAt(0);
-            }
-        }
+            _state = _state.Post(result);
     }
 
     /// <summary>Stops following the source.</summary>
@@ -112,52 +103,17 @@ public sealed class PresentedResults<TResult> : IDisposable
 
     private void OnFramePresented(object? sender, FramePresentedInfo presented)
     {
-        InferenceResult<TResult>? changed = null;
-        bool cleared = false;
+        PresentedChange change;
+        InferenceResult<TResult>? current;
         lock (_gate)
         {
-            int index = PresentedMatch.LatestAtOrBefore(_timestamps, presented.PresentationTime);
-            if (index < 0)
-            {
-                // Nothing at or before this frame. If what is showing is from later in the
-                // stream, the picture went back past it.
-                if (_current is not null && presented.PresentationTime < _current.Timestamp)
-                {
-                    // What waits from the cleared result's timeline would show it again when the
-                    // picture gets back there; what the branch has posted since is for the new one.
-                    if (_currentTimeline == _timeline)
-                    {
-                        _pending.Clear();
-                        _timestamps.Clear();
-                    }
-
-                    _current = null;
-                    cleared = true;
-                }
-            }
-            else
-            {
-                changed = Match(index);
-            }
+            (_state, change) = _state.Present(presented.PresentationTime, presented.Timeline);
+            current = _state.Current;
         }
 
-        if (cleared)
+        if (change == PresentedChange.Cleared)
             Cleared?.Invoke(this, EventArgs.Empty);
-        else if (changed is not null)
-            Presented?.Invoke(this, changed);
-    }
-
-    /// <summary>Makes the result at <paramref name="index"/> current; returns it when it changed.</summary>
-    private InferenceResult<TResult>? Match(int index)
-    {
-        var result = _pending[index];
-        // Keep the matched result; everything before it has been shown or passed over.
-        _pending.RemoveRange(0, index);
-        _timestamps.RemoveRange(0, index);
-        if (ReferenceEquals(result, _current))
-            return null;
-        _current = result;
-        _currentTimeline = _timeline;
-        return result;
+        else if (change == PresentedChange.Presented && current is not null)
+            Presented?.Invoke(this, current);
     }
 }

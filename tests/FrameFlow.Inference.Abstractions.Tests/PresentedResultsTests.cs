@@ -17,10 +17,17 @@ public sealed class PresentedResultsTests
     [InlineData(39, 0)]
     [InlineData(40, 1)]
     [InlineData(1000, 2)]
-    public void TheMatch_IsTheLatestAtOrBeforeThePresentedFrame(int presentedMs, int expected) =>
+    public void TheMatch_IsTheLatestAtOrBeforeThePresentedFrame(int presentedMs, int expected)
+    {
+        var state = PresentedResultsState<string>.Empty(8)
+            .Post(Result("a", 0))
+            .Post(Result("b", 40))
+            .Post(Result("c", 80));
+
         Assert.Equal(
             expected,
-            PresentedMatch.LatestAtOrBefore([Ms(0), Ms(40), Ms(80)], Ms(presentedMs)));
+            PresentedResultsState<string>.LatestAtOrBefore(state.Pending, state.Screen, Ms(presentedMs)));
+    }
 
     [Fact]
     public void AFrameWithoutAResultOfItsOwn_ShowsTheOneBefore()
