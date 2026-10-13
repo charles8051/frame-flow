@@ -130,6 +130,20 @@ public sealed class AvaloniaVideoSinkPresentGapTests
         Assert.Contains($"on {given})", gap);
     }
 
+    [Fact]
+    public async Task ALateFrameThatNamesNoTimeline_IsReportedOnTheTimelineItWasJudgedOn()
+    {
+        await using var sink = new AvaloniaVideoSink(_log, _time);
+        var playing = TimelineId.Next();
+
+        await PresentAsync(sink, FrameInterval, playing);
+        _time.Advance(FrameInterval + TimeSpan.FromMilliseconds(600));
+        await PresentAsync(sink, FrameInterval, TimelineId.None);
+
+        var gap = Assert.Single(_log.Gaps);
+        Assert.Contains($"on {playing})", gap);
+    }
+
     private static async Task PresentAsync(
         AvaloniaVideoSink sink,
         TimeSpan duration,

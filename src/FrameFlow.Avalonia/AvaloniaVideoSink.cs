@@ -211,6 +211,8 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
         // The wait before the first frame of a new timeline is not judged: it
         // is the player moving on, such as a new item after Ended (#624). It
         // is still logged at Debug, so a slow seek, loop or open stays visible.
+        // Both name the timeline the tracker judged the frame on, which for a
+        // frame that names none is the one it was following.
         (_gapTracker, var gap) = _gapTracker.Observe(
             _timeProvider.GetElapsedTime(_createdTimestamp),
             frame.Duration,
@@ -225,7 +227,7 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
                     g.Interval.TotalMilliseconds,
                     g.Held.TotalMilliseconds,
                     frame.Pts.TotalSeconds,
-                    frame.Timeline
+                    _gapTracker.Timeline
                 );
             }
             else if (g.NewTimeline)
@@ -233,7 +235,7 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
                 LogPresentNewTimeline(
                     _logger,
                     g.Interval.TotalMilliseconds,
-                    frame.Timeline,
+                    _gapTracker.Timeline,
                     frame.Pts.TotalSeconds
                 );
             }

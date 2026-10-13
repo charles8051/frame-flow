@@ -100,6 +100,13 @@ internal readonly struct PresentGapTracker
     }
 
     /// <summary>
+    /// The timeline the last frame was judged on: the last id a frame named, which a frame on
+    /// <see cref="TimelineId.None"/> belongs to as well, or <see cref="TimelineId.None"/> before any
+    /// frame named one.
+    /// </summary>
+    public TimelineId Timeline => _timeline.Current;
+
+    /// <summary>
     /// Folds in a frame that arrived at <paramref name="arrival"/>, is meant to show for
     /// <paramref name="duration"/> and belongs to <paramref name="timeline"/>.
     /// </summary>

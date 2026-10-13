@@ -220,6 +220,20 @@ public sealed class PresentGapTests
     }
 
     [Fact]
+    public void TheTimelineAnUntrackedFrameIsJudgedOn_IsTheOneBeingFollowed()
+    {
+        var tracker = default(PresentGapTracker);
+
+        Assert.Equal(TimelineId.None, tracker.Timeline);
+        (tracker, _) = tracker.Observe(At(0), FrameInterval, Ended);
+        Assert.Equal(Ended, tracker.Timeline);
+        (tracker, _) = tracker.Observe(At(1), FrameInterval, Untracked);
+        Assert.Equal(Ended, tracker.Timeline);
+        (tracker, _) = tracker.Observe(At(2), FrameInterval, Given);
+        Assert.Equal(Given, tracker.Timeline);
+    }
+
+    [Fact]
     public void TheFirstTimelineNamed_IsAdoptedWithoutStartingOver()
     {
         // Frames that carried no timeline, then one that does: the tracker had nothing to leave.
