@@ -3,9 +3,9 @@
 ## Status
 
 **Accepted (2026-10-13) and implemented (2026-10-13)** under #677: staging slice 1 in #678, slice
-2 in #683, #686 and #681, and slice 3 in the change that closes #641. Slice 4 is optional and not
-done. [Implementation](#implementation) lists what shipped, what differs from the decisions, and
-what is left. Proposed on 2026-10-12, and revised on acceptance for items prepared ahead (#674):
+2 in #683, #686 and #681, and slice 3 in #688. Slice 4 is optional and not done.
+[Implementation](#implementation) lists what shipped, what differs from the decisions, and what is
+left. Proposed on 2026-10-12, and revised on acceptance for items prepared ahead (#674):
 ids identify a timeline but carry no order, and order comes from presentation. Amended on
 implementation: decision 5's table names the join's action on a secondary's new timeline.
 [Revision history](#revision-history) lists what changed.
@@ -271,7 +271,7 @@ it cannot tell an item already in flight from one produced after it. An id on th
 | 2 | The Whisper window follows its input; `CaptionTimeline` follows the presented timeline | #683 |
 | 2 | `PresentedResults` follows the presented timeline (#621); `SyncJoinNode` follows each input | #686 |
 | 2 | The PRESENT GAP tracker starts over on a new timeline (#624) | #681 |
-| 3 | LiveCaptioning drops its graph counter and presented-time checks (#641); `CaptionTimeline` judges a caption that names a timeline at the first frame (#687) | the change that closes #641 |
+| 3 | LiveCaptioning drops its graph counter and presented-time checks (#641); `CaptionTimeline` judges a caption that names a timeline at the first frame (#687) | #688 |
 | 4 | Not done; optional | |
 
 What differs from the decisions, slice by slice. None reverses one; the last item under results
