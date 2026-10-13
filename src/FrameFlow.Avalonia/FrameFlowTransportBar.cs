@@ -7,7 +7,6 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using FrameFlow.Avalonia.Core;
 using FrameFlow.Media;
-using FrameFlow.Playback;
 using FrameFlow.Player;
 
 namespace FrameFlow.Avalonia;
@@ -29,6 +28,11 @@ namespace FrameFlow.Avalonia;
 /// The Loop toggle shows the transport's <see cref="IMediaTransport.RepeatMode"/> and follows
 /// <see cref="IMediaTransport.RepeatModeChanged"/>. A click steps the mode from Off to One to All
 /// and back to Off. One and All both show checked, labelled "Loop one" and "Loop all".
+/// </para>
+/// <para>
+/// The bar stops following its transport when it leaves the visual tree. When it comes back, it
+/// shows what the transport reports then and follows it again. A transport set while the bar is
+/// out is followed from its return.
 /// </para>
 /// <para>
 /// A refused <c>PlayAsync</c> / <c>PauseAsync</c> / <c>SeekAsync</c> /
@@ -62,7 +66,8 @@ public sealed class FrameFlowTransportBar : StackPanel
     /// (e.g. demo apps with short clips) set this to <see langword="true"/>.
     /// </summary>
     /// <remarks>
-    /// Read when <see cref="Transport"/> is set. A transport already in
+    /// Read when <see cref="Transport"/> is set, and not again when the bar leaves
+    /// the visual tree and comes back. A transport already in
     /// <see cref="RepeatMode.One"/> or <see cref="RepeatMode.All"/> keeps its
     /// mode. The Loop toggle shows the transport's mode either way.
     /// </remarks>
@@ -81,11 +86,12 @@ public sealed class FrameFlowTransportBar : StackPanel
     private readonly Button _stopButton;
     private readonly ToggleButton _loopButton;
 
-    private IDisposable? _stateSubscription;
-    private IDisposable? _repeatSubscription;
+    private readonly TransportFollower _follower;
 
     public FrameFlowTransportBar()
     {
+        _follower = new TransportFollower(FollowTransport);
+
         Orientation = Orientation.Horizontal;
         HorizontalAlignment = HorizontalAlignment.Center;
 
@@ -122,21 +128,23 @@ public sealed class FrameFlowTransportBar : StackPanel
             OnTransportChanged(change.GetNewValue<IMediaTransport?>());
     }
 
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        // Back in the tree with the transport it left with: follow it again from what it reports
+        // now. LoopByDefault is not asked for again, because it is a request made on bind.
+        _follower.Resume(Transport);
+    }
+
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        _stateSubscription?.Dispose();
-        _stateSubscription = null;
-        _repeatSubscription?.Dispose();
-        _repeatSubscription = null;
+        _follower.Suspend();
         base.OnDetachedFromVisualTree(e);
     }
 
     private void OnTransportChanged(IMediaTransport? transport)
     {
-        _stateSubscription?.Dispose();
-        _stateSubscription = null;
-        _repeatSubscription?.Dispose();
-        _repeatSubscription = null;
+        _follower.Rebind(transport);
 
         if (transport is null)
         {
@@ -147,29 +155,22 @@ public sealed class FrameFlowTransportBar : StackPanel
         }
 
         _loopButton.IsEnabled = true;
-        // Subscribe before reading, so a change that lands between the two still arrives, after
-        // the read. ObserveOnUiThread posts, so a change from a transport this bar has since let
-        // go of can arrive after the rebind; the guard drops it.
-        _repeatSubscription = transport
-            .RepeatModeChanged.ObserveOnUiThread()
-            .Subscribe(t =>
-            {
-                if (ReferenceEquals(Transport, transport))
-                    ShowRepeatMode(t.Current);
-            });
-        var mode = transport.RepeatMode;
-        ShowRepeatMode(mode);
-        if (LoopToggle.OnBind(mode, LoopByDefault) is { } requested)
+        if (LoopToggle.OnBind(transport.RepeatMode, LoopByDefault) is { } requested)
             TransportCommand.FireAndForget(
                 this,
                 nameof(IMediaTransport.SetRepeatModeAsync),
                 () => transport.SetRepeatModeAsync(requested)
             );
+    }
 
+    // Following the transport, on bind and on every return to the tree. The follow drops a change
+    // posted before it stopped, so one from a transport this bar has since let go of does not show.
+    private void FollowTransport(IMediaTransport transport, TransportFollower.Follow follow)
+    {
+        follow.On(transport.RepeatModeChanged, t => ShowRepeatMode(t.Current));
+        follow.On(transport.StateChanged, s => UpdateButtonsForState(s));
+        ShowRepeatMode(transport.RepeatMode);
         UpdateButtonsForState(transport.State);
-        _stateSubscription = transport
-            .StateChanged.ObserveOnUiThread()
-            .Subscribe(s => UpdateButtonsForState(s));
     }
 
     private void UpdateButtonsForState(PlaybackState? state)

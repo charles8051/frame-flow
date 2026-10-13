@@ -12,7 +12,6 @@ using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using FrameFlow.Media;
-using FrameFlow.Playback;
 using FrameFlow.Player;
 using Microsoft.Extensions.Logging;
 
@@ -91,6 +90,7 @@ public sealed class FrameFlowPlayerView : UserControl
 
     public FrameFlowPlayerView()
     {
+        _chromeFollower = new TransportFollower(FollowTransport);
         Focusable = true;
 
         _surface = new FrameFlowVideoView();
@@ -217,16 +217,8 @@ public sealed class FrameFlowPlayerView : UserControl
             // Wire the hover-to-reveal state subscription so the
             // chrome pins visible on Paused/Idle/Error and fades on
             // Playing-with-idle-pointer.
-            _chromeStateSubscription?.Dispose();
-            _chromeStateSubscription = null;
-            if (p is not null)
-            {
-                OnTrackedStateChanged(p.State);
-                _chromeStateSubscription = p
-                    .StateChanged.ObserveOnUiThread()
-                    .Subscribe(OnTrackedStateChanged);
-            }
-            else
+            _chromeFollower.Rebind(p);
+            if (p is null)
             {
                 _chromeHideTimer?.Stop();
                 ShowChrome();
@@ -279,13 +271,17 @@ public sealed class FrameFlowPlayerView : UserControl
     // you're reaching for the seek thumb or a transport button.
     private static readonly TimeSpan ChromeHideAfter = TimeSpan.FromSeconds(2);
     private DispatcherTimer? _chromeHideTimer;
-    private IDisposable? _chromeStateSubscription;
+    private readonly TransportFollower _chromeFollower;
     private bool _pointerOverChrome;
     private TopLevel? _pointerHostTopLevel;
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
+        // Back in the tree with the transport it left with: follow its state again. Before the
+        // timer exists, so the read starts no hide, as on the first attach.
+        _chromeFollower.Resume(Transport);
+
         _pointerHostTopLevel = TopLevel.GetTopLevel(this);
         _pointerHostTopLevel?.AddHandler(
             PointerMovedEvent,
@@ -309,9 +305,15 @@ public sealed class FrameFlowPlayerView : UserControl
         _pointerHostTopLevel = null;
         _chromeHideTimer?.Stop();
         _chromeHideTimer = null;
-        _chromeStateSubscription?.Dispose();
-        _chromeStateSubscription = null;
+        _chromeFollower.Suspend();
         base.OnDetachedFromVisualTree(e);
+    }
+
+    // On bind and on every return to the tree.
+    private void FollowTransport(IMediaTransport transport, TransportFollower.Follow follow)
+    {
+        follow.On(transport.StateChanged, OnTrackedStateChanged);
+        OnTrackedStateChanged(transport.State);
     }
 
     private void OnTopLevelPointerMoved(object? sender, PointerEventArgs e)

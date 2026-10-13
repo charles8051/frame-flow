@@ -5,7 +5,6 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using FrameFlow.Media;
-using FrameFlow.Playback;
 using FrameFlow.Player;
 
 namespace FrameFlow.Avalonia;
@@ -15,8 +14,9 @@ namespace FrameFlow.Avalonia;
 /// <see cref="IMediaTransport"/>'s loaded media —
 /// codec, resolution, frame rate, audio sample rate / channels, and
 /// container. Refreshes whenever the transport's state changes (which
-/// covers the Initializing → Paused / Playing transition where
-/// <see cref="IMediaTransport.MediaInfo"/> first becomes available).
+/// covers the Loading → Paused / Playing transition where
+/// <see cref="IMediaTransport.MediaInfo"/> first becomes available), and
+/// when it comes back to the visual tree after leaving it.
 /// </summary>
 public sealed class FrameFlowStreamSummary : TextBlock
 {
@@ -31,10 +31,12 @@ public sealed class FrameFlowStreamSummary : TextBlock
         set => SetValue(TransportProperty, value);
     }
 
-    private IDisposable? _stateSubscription;
+    private readonly TransportFollower _follower;
 
     public FrameFlowStreamSummary()
     {
+        _follower = new TransportFollower(FollowTransport);
+
         FontFamily = new FontFamily("Cascadia Mono,Consolas,Menlo,monospace");
         FontSize = 11;
         VerticalAlignment = global::Avalonia.Layout.VerticalAlignment.Center;
@@ -49,26 +51,30 @@ public sealed class FrameFlowStreamSummary : TextBlock
             OnTransportChanged(change.GetNewValue<IMediaTransport?>());
     }
 
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _follower.Resume(Transport);
+    }
+
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        _stateSubscription?.Dispose();
-        _stateSubscription = null;
+        _follower.Suspend();
         base.OnDetachedFromVisualTree(e);
     }
 
     private void OnTransportChanged(IMediaTransport? transport)
     {
-        _stateSubscription?.Dispose();
-        _stateSubscription = null;
-
+        _follower.Rebind(transport);
         if (transport is null)
-        {
             Text = string.Empty;
-            return;
-        }
+    }
 
+    // On bind and on every return to the tree, which is when the media may have changed unseen.
+    private void FollowTransport(IMediaTransport transport, TransportFollower.Follow follow)
+    {
+        follow.On(transport.StateChanged, _ => Refresh(transport));
         Refresh(transport);
-        _stateSubscription = transport.StateChanged.ObserveOnUiThread().Subscribe(_ => Refresh(transport));
     }
 
     private void Refresh(IMediaTransport transport)

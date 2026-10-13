@@ -5,7 +5,6 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using FrameFlow.Media;
-using FrameFlow.Playback;
 using FrameFlow.Player;
 
 namespace FrameFlow.Avalonia;
@@ -23,7 +22,10 @@ namespace FrameFlow.Avalonia;
 /// onto the UI thread via <see cref="AvaloniaObservableExtensions.ObserveOnUiThread"/>,
 /// and seeds itself from the current state on assignment. Swap transports
 /// (or set to <see langword="null"/>) at any time — the badge disposes
-/// the prior subscription and re-binds.
+/// the prior subscription and re-binds. The badge lets go of the
+/// subscription when it leaves the visual tree, and seeds and subscribes
+/// again when it comes back. A transport assigned while it is out is
+/// seeded and followed from its return.
 /// </para>
 /// <para>
 /// This is intentionally a leaf control: text + color, nothing else.
@@ -47,10 +49,12 @@ public sealed class FrameFlowStateBadge : TextBlock
         set => SetValue(TransportProperty, value);
     }
 
-    private IDisposable? _stateSubscription;
+    private readonly TransportFollower _follower;
 
     public FrameFlowStateBadge()
     {
+        _follower = new TransportFollower(FollowTransport);
+
         // Sensible defaults that match the AvaloniaPlayer example's
         // status strip — consumers can override via XAML.
         FontFamily = new FontFamily("Cascadia Mono,Consolas,Menlo,monospace");
@@ -67,29 +71,31 @@ public sealed class FrameFlowStateBadge : TextBlock
             OnTransportChanged(change.GetNewValue<IMediaTransport?>());
     }
 
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _follower.Resume(Transport);
+    }
+
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        _stateSubscription?.Dispose();
-        _stateSubscription = null;
+        _follower.Suspend();
         base.OnDetachedFromVisualTree(e);
     }
 
     private void OnTransportChanged(IMediaTransport? transport)
     {
-        _stateSubscription?.Dispose();
-        _stateSubscription = null;
-
+        _follower.Rebind(transport);
         if (transport is null)
-        {
             ApplyState(PlaybackState.Idle);
-            return;
-        }
+    }
 
-        // Seed from current state — the observable only fires on
-        // *changes*, so without this the badge would lag until the
-        // first transition after binding.
+    // On bind and on every return to the tree. The read seeds the badge: the observable only fires
+    // on changes, so without it the badge would lag until the first transition.
+    private void FollowTransport(IMediaTransport transport, TransportFollower.Follow follow)
+    {
+        follow.On(transport.StateChanged, ApplyState);
         ApplyState(transport.State);
-        _stateSubscription = transport.StateChanged.ObserveOnUiThread().Subscribe(ApplyState);
     }
 
     private void ApplyState(PlaybackState state)
