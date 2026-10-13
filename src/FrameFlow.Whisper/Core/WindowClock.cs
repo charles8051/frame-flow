@@ -69,7 +69,8 @@ internal readonly record struct ClosedWindow(TimeSpan Start, WindowClock Remaind
 /// <b>A stream that names none.</b> A buffer on <see cref="TimelineId.None"/>, or any buffer while
 /// the follower has seen no timeline, is judged by its time, as before timelines: more than
 /// <see cref="DiscontinuityTolerance"/> from where the held audio ends starts a new window. The
-/// first timeline the stream names is adopted without starting one.
+/// first timeline the stream names is judged the same way, and adopting it does not by itself
+/// start one.
 /// </para>
 /// </remarks>
 internal static class WindowTimeline

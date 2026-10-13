@@ -30,12 +30,13 @@ internal readonly record struct HeldCaption(Caption Caption, TimelineId Timeline
 /// <para>
 /// <b>Tracked timelines (ADR-0084).</b> Captions are derived items matched against what is shown,
 /// so the order comes from presentation, through a <see cref="PresentedTimeline"/>. A frame on a
-/// timeline other than the one on screen starts a new, empty timeline, whichever way its time
-/// moved. A caption of a timeline the screen has left is dropped. A caption of a timeline not yet
-/// presented is held, and joins the screen with the first frame of its timeline, as if it arrived
-/// with that frame. While it waits only what could show then is kept: the latest batch, or with
-/// <see cref="MaxStackedLines"/> above one, that many of the latest captions. On one tracked
-/// timeline the time is continuous, so a time below <see cref="Now"/> is not a jump.
+/// timeline other than the one on screen starts a new timeline with nothing from the one it left,
+/// whichever way its time moved. A caption of a timeline the screen has left is dropped. A caption
+/// of a timeline not yet presented is held, and joins the screen with the first frame of its
+/// timeline, as if it arrived with that frame. Held captions are bounded by count, not by age:
+/// only what could show then is kept, the latest batch, or with <see cref="MaxStackedLines"/>
+/// above one, that many of the latest captions. On one tracked timeline the time is continuous,
+/// so a time below <see cref="Now"/> is not a jump.
 /// </para>
 /// <para>
 /// <b>Untracked.</b> Where the frame or the screen names no timeline, frames present in rising
@@ -178,6 +179,8 @@ internal sealed record CaptionTimelineState
         {
             if (waiting.Timeline == screen.Current)
                 entries.Add(new TimedCaption(waiting.Caption, pts));
+            // Defensive: no held caption is of a timeline left, since presenting a timeline
+            // takes every caption held for it and Add never holds a past one.
             else if (screen.Classify(waiting.Timeline) == TimelineRelation.Upcoming)
                 held.Add(waiting);
         }
@@ -193,7 +196,9 @@ internal sealed record CaptionTimelineState
 
     // Held captions are kept only while they could still show once their timeline presents, as
     // if they all arrived with its first frame: with stacking, the latest MaxStackedLines; without
-    // it, the latest batch, the ones that arrived together, on one timeline, as the newest.
+    // it, the latest batch, every caption that arrived with the same frame as the newest, as
+    // OnScreen groups them. A batch can hold captions of two timelines, and each shows when its
+    // own timeline presents.
     private ImmutableArray<HeldCaption> Hold(HeldCaption caption)
     {
         var held = Held.Add(caption);
@@ -205,11 +210,7 @@ internal sealed record CaptionTimelineState
         else
         {
             first = held.Length - 1;
-            while (
-                first > 0
-                && held[first - 1].ArrivedAt == caption.ArrivedAt
-                && held[first - 1].Timeline == caption.Timeline
-            )
+            while (first > 0 && held[first - 1].ArrivedAt == caption.ArrivedAt)
                 first--;
         }
 

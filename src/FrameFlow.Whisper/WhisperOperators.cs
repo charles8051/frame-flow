@@ -84,10 +84,13 @@ public static class WhisperOperators
     /// The window follows its input stream's timeline (ADR-0084). A buffer of another timeline
     /// than the held audio's (a seek, a loop, the next item) drops the partial window and starts a
     /// new one at its own time, so captions are never built from audio of two places and their
-    /// times match the media position. A buffer on <see cref="TimelineId.None"/> is judged by its
-    /// <see cref="PcmAudioBuffer.PresentationTime"/> instead: more than 50 ms from where the held
-    /// audio ends, it starts a new window. A node kept across seeks, so the model loads once,
-    /// therefore needs no reset. Each caption carries the timeline of the audio its window holds.
+    /// times match the media position. Within one timeline the window does not look at the time,
+    /// so a gap where buffers were dropped joins the audio on both sides. A buffer on
+    /// <see cref="TimelineId.None"/>, or any buffer before the stream has named a timeline, is
+    /// judged by its <see cref="PcmAudioBuffer.PresentationTime"/> instead: more than 50 ms from
+    /// where the held audio ends, it starts a new window. A node kept across seeks, so the model
+    /// loads once, therefore needs no reset. Each caption carries the timeline of the audio its
+    /// window holds.
     /// </para>
     /// <para>
     /// The stream must keep the player's order: the player's own audio chain, or one first-in,

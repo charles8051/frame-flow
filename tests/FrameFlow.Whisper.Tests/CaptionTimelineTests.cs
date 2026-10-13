@@ -291,6 +291,23 @@ public sealed class CaptionTimelineTests
     }
 
     [Fact]
+    public void HeldCaptionsOfTwoTimelines_ArrivingTogether_EachShowWithTheirOwn()
+    {
+        // Captions of two timelines not presented yet arrive with one frame: one batch, and each
+        // caption shows when its own timeline presents.
+        var timeline = new CaptionTimeline(Display);
+        var playing = TimelineId.Next();
+        var next = TimelineId.Next();
+        var after = TimelineId.Next();
+        Present(timeline, Seconds(39), playing);
+
+        Assert.Empty(Present(timeline, Seconds(40), playing, ("next", next), ("after", after)));
+
+        Assert.Equal(["next"], Present(timeline, Seconds(0), next));
+        Assert.Equal(["after"], Present(timeline, Seconds(0), after));
+    }
+
+    [Fact]
     public void ATimelineMadeFirst_StillFollowsTheOneOnScreen()
     {
         // An item prepared ahead takes its timeline before the playing item loops. Presentation,
@@ -346,6 +363,19 @@ public sealed class CaptionTimelineTests
         Assert.Equal(["before"], Present(timeline, Seconds(13), TimelineId.None));
         Assert.Empty(Present(timeline, Seconds(2), TimelineId.None));
         Assert.Equal(["after"], Present(timeline, Seconds(3), TimelineId.None, ("after", TimelineId.Next())));
+    }
+
+    [Fact]
+    public void AFrameWithoutATimeline_OnATrackedScreen_KeepsTheTimeRule()
+    {
+        var timeline = new CaptionTimeline(Display);
+        var playing = TimelineId.Next();
+        Assert.Equal(["a"], Present(timeline, Seconds(10), playing, ("a", playing)));
+
+        // Forward: nothing tells, so the caption stays. Back: a jump.
+        Assert.Equal(["a"], Present(timeline, Seconds(11), TimelineId.None));
+        Assert.Empty(Present(timeline, Seconds(5), TimelineId.None));
+        Assert.Equal(["b"], Present(timeline, Seconds(5.5), playing, ("b", playing)));
     }
 
     [Fact]

@@ -23,12 +23,12 @@ namespace FrameFlow.Whisper;
 /// frame's timeline, <c>FramePresentedInfo.Timeline</c>, and
 /// <see cref="Add(Caption, TimeSpan, TimelineId)"/> each caption's, <see cref="CaptionRef.Timeline"/>.
 /// The order comes from what is presented. A frame on a timeline other than the one on screen (a
-/// seek, a loop, the next item) starts a new timeline with nothing on it, whichever way its time
-/// moved. A caption of a timeline the screen has left, still in flight when it was left, is
-/// dropped. A caption of a timeline not presented yet is held, and shows from the first frame of
-/// its timeline. While it waits, only what could show then is kept: the latest batch, or with
-/// <c>maxStackedLines</c> above one, that many of the latest captions. A caption of a timeline that
-/// is never presented never shows.
+/// seek, a loop, the next item) starts a new timeline with nothing from the one it left, whichever
+/// way its time moved. A caption of a timeline the screen has left, still in flight when it was
+/// left, is dropped. A caption of a timeline not presented yet is held, and shows from the first
+/// frame of its timeline. While it waits, only what could show then is kept: the latest batch, or
+/// with <c>maxStackedLines</c> above one, that many of the latest captions. A caption of a
+/// timeline that is never presented never shows.
 /// </para>
 /// <para>
 /// <b>Without timelines.</b> Where the frame or the screen names none (<see cref="TimelineId.None"/>,
@@ -47,12 +47,15 @@ namespace FrameFlow.Whisper;
 /// timeline again.
 /// </para>
 /// <para>
-/// <b>Eviction.</b> A caption more than the display duration behind the clock is dropped as
-/// the clock advances, so the timeline holds only what can still be shown.
+/// <b>Eviction.</b> A caption on screen more than the display duration behind the clock is dropped
+/// as the clock advances. A held caption is bounded by count instead, since its timeline has no
+/// clock yet: one held for a timeline that is never presented stays until newer held captions or
+/// <see cref="Reset"/> replace it.
 /// </para>
 /// <para>
-/// <b>Concurrency.</b> Each call is atomic. The calls still need one caller's frame order: two
-/// callers at different positions would each start the timeline again.
+/// <b>Concurrency.</b> Each call is atomic. The calls still need one caller's frame order. Without
+/// timelines, two callers at different positions would each start the timeline again; with them,
+/// two callers on different timelines would.
 /// </para>
 /// </remarks>
 /// <param name="displayDuration">How long a caption shows after the frame it arrived with.</param>
