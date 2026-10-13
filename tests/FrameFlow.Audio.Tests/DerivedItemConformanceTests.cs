@@ -57,6 +57,23 @@ public sealed class DerivedItemConformanceTests : IClassFixture<FfmpegBootstrapF
     }
 
     [RequiresFfmpegFact]
+    public void AFlush_AfterAnEmptyInput_IsOnTheTimelineOfTheSamplesItDrains()
+    {
+        // An empty buffer adds no samples, so it does not change whose samples are held.
+        using var resampler = AudioResampler.Create(44_100, 2);
+        using var last = DerivedItemConformance.AudioInput(48_000, 2);
+        using var empty = DerivedItemConformance.AudioInput(48_000, 2, frames: 0);
+        using var a = resampler.Process(last);
+        using var b = resampler.Process(empty);
+
+        using var tail = resampler.Flush(last.PresentationTime + last.Duration);
+
+        Assert.NotNull(tail);
+        Assert.NotEqual(last.Timeline, empty.Timeline);
+        DerivedItemConformance.AssertCarriesTimeline(last, tail);
+    }
+
+    [RequiresFfmpegFact]
     public async Task TheResampleNode_IsOnItsInputsTimeline()
     {
         var node = AudioOperators.Resample("resample", 16_000, 1);

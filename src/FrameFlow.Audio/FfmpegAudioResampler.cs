@@ -26,8 +26,8 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
     private int _sourceSampleRate;
     private int _sourceChannels;
 
-    // The timeline of the last buffer processed, for the samples a flush drains: they came from
-    // it and the buffers before it (ADR-0084).
+    // The timeline of the last buffer that gave samples, for the samples a flush drains: they came
+    // from it and the buffers before it (ADR-0084). An empty buffer gives none, so it leaves this.
     private TimelineId _lastTimeline;
 
     public int TargetSampleRate { get; }
@@ -44,7 +44,6 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
         ArgumentNullException.ThrowIfNull(input);
         ObjectDisposedException.ThrowIf(_disposed, this);
         EnsureInitialized(input);
-        _lastTimeline = input.Timeline;
 
         if (input.SampleCount == 0 || input.Channels == 0)
         {
@@ -53,6 +52,8 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
             // before disposing aren't surprised.
             return CreateEmpty(input.PresentationTime, input.Timeline);
         }
+
+        _lastTimeline = input.Timeline;
 
         var swrPtr = _swr!.DangerousGetHandle();
 
