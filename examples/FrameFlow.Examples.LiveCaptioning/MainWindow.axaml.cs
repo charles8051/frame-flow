@@ -28,7 +28,7 @@ public partial class MainWindow : Window
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger _logger;
     private readonly AvaloniaVideoSink _videoSink;
-    private PresentedResults<IReadOnlyList<Detection>>? _onScreen;
+    private readonly PresentedResults<IReadOnlyList<Detection>> _detections;
     private Yolov8Detector? _detector;
 
     // One player for the window: each file opened replaces its queue.
@@ -53,6 +53,13 @@ public partial class MainWindow : Window
 
         _videoSink = VideoView.EnsureSink();
         _videoSink.FramePresented += OnFramePresented;
+
+        // Detections arrive before their frame is on screen; this hands each to the overlay when
+        // it is. It follows the timeline on screen, so nothing from before a seek, a loop or the
+        // next file shows after it.
+        _detections = new PresentedResults<IReadOnlyList<Detection>>(_videoSink);
+        _detections.Presented += (_, result) => Dispatcher.UIThread.Post(() => DetectionOverlay.Show(result));
+        _detections.Cleared += (_, _) => Dispatcher.UIThread.Post(() => DetectionOverlay.Show(null));
 
         PlayerChrome.FileOpenRequested += async (_, e) => await OpenFileAsync(e.FilePath);
         Closing += OnWindowClosing;
@@ -80,15 +87,13 @@ public partial class MainWindow : Window
                     .WithAudioSink(_audioSink)
                     .WithAvaloniaVideoView(VideoView)
                     .WithLogger(_loggerFactory)
-                    .ConfigureAudio(chain =>
-                        chain.Then(SendToWhisper(_captionAudio.Writer, Interlocked.Increment(ref _audioGraph)))
-                    )
+                    .ConfigureAudio(chain => chain.Then(SendToWhisper(_captionAudio.Writer)))
                     .ConfigureVideo(chain =>
                         // A frame the model fails on loses its boxes, counted on the
                         // frameflow.graph.discards metric; the picture and captions go on.
                         detector is null
                             ? chain
-                            : chain.Infer("yolo", detector, ShowWhenPresented(), onError: FailureResponse.Discard)
+                            : chain.Infer("yolo", detector, _detections.Post, onError: FailureResponse.Discard)
                     )
                     .BuildPlayerAsync(_windowCts.Token);
 
@@ -168,21 +173,6 @@ public partial class MainWindow : Window
             SetStatus("Click Open, or pass a file on the command line.", Neutral);
     }
 
-    /// <summary>
-    /// Detections arrive before their frame is on screen; this hands each to the overlay when it
-    /// is. Called for each graph the player builds, so each graph's results are matched only to
-    /// its own frames, never to those after a seek or in the next file.
-    /// </summary>
-    private Action<InferenceResult<IReadOnlyList<Detection>>> ShowWhenPresented()
-    {
-        var onScreen = new PresentedResults<IReadOnlyList<Detection>>(_videoSink);
-        onScreen.Presented += (_, result) => Dispatcher.UIThread.Post(() => DetectionOverlay.Show(result));
-        onScreen.Cleared += (_, _) => Dispatcher.UIThread.Post(() => DetectionOverlay.Show(null));
-        Interlocked.Exchange(ref _onScreen, onScreen)?.Dispose();
-        Dispatcher.UIThread.Post(() => DetectionOverlay.Show(null));
-        return onScreen.Post;
-    }
-
     /// <summary>YOLOv8 on CUDA, or on the CPU where CUDA cannot open it; null if it cannot be loaded.</summary>
     private async Task<Yolov8Detector?> LoadDetectorAsync()
     {
@@ -215,38 +205,31 @@ public partial class MainWindow : Window
     //
     // Whisper runs in a graph of its own, fed from a tap on the player's audio chain. The player
     // rebuilds its graph after every seek, and Whisper on an audio branch would restart with it.
+    // This graph runs on across seeks, loops and files: each buffer names the timeline it belongs
+    // to, and each caption the timeline of its audio, so Whisper starts a new window on a new
+    // timeline and a caption shows only on its own timeline's frames.
 
     // When Whisper falls behind, the oldest buffer is dropped rather than holding up playback.
-    private readonly Channel<TappedAudio> _captionAudio = Channel.CreateBounded<TappedAudio>(
+    private readonly Channel<PcmAudioBuffer> _captionAudio = Channel.CreateBounded<PcmAudioBuffer>(
         new BoundedChannelOptions(32) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true },
-        static dropped => dropped.Buffer.Dispose()
+        static dropped => dropped.Dispose()
     );
 
-    // Counts the player's audio graphs: one per load, seek or file. Audio tapped from an older
-    // graph never reaches Whisper, and captions still waiting are dropped once a newer graph's
-    // frame is on screen. Whisper itself starts a new window when the audio's timestamps jump.
-    private int _audioGraph;
-    private int _presentedGraph;
-
-    private readonly record struct TappedAudio(int Graph, PcmAudioBuffer Buffer);
-
-    private readonly ConcurrentQueue<Caption> _newCaptions = new();
+    private readonly ConcurrentQueue<(Caption Caption, TimelineId Timeline)> _newCaptions = new();
     private Task _captionGraph = Task.CompletedTask;
     private readonly CaptionTimeline _captions = new(displayDuration: TimeSpan.FromSeconds(6));
-    private TimeSpan _lastPresented;
     private string _shownCaption = "";
 
     /// <summary>Passes each audio buffer on to the speakers and sends a reference to it to Whisper.</summary>
     private static OperatorNode<PcmAudioBuffer, PcmAudioBuffer> SendToWhisper(
-        ChannelWriter<TappedAudio> whisper,
-        int graph
+        ChannelWriter<PcmAudioBuffer> whisper
     ) =>
         new(
             "whisper-tap",
             (buffer, _) =>
             {
                 buffer.AddRef();
-                if (!whisper.TryWrite(new TappedAudio(graph, buffer)))
+                if (!whisper.TryWrite(buffer))
                     buffer.Dispose(); // the window is closing
                 return ValueTask.FromResult<PcmAudioBuffer?>(buffer);
             }
@@ -264,12 +247,8 @@ public partial class MainWindow : Window
                     {
                         while (await audio.WaitToReadAsync(token))
                         {
-                            while (audio.TryRead(out var tapped))
-                            {
-                                if (tapped.Graph == Volatile.Read(ref _audioGraph))
-                                    return tapped.Buffer;
-                                tapped.Buffer.Dispose();
-                            }
+                            if (audio.TryRead(out var buffer))
+                                return buffer;
                         }
                         return null;
                     }
@@ -290,7 +269,7 @@ public partial class MainWindow : Window
                     "captions",
                     (caption, _) =>
                     {
-                        _newCaptions.Enqueue(caption.Value);
+                        _newCaptions.Enqueue((caption.Value, caption.Timeline));
                         return ValueTask.CompletedTask;
                     }
                 )
@@ -310,26 +289,16 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Stamps new captions with the frame that has just reached the screen and shows the ones
-    /// active at it. Raised on whichever thread presented the frame.
+    /// active at it. A caption of a timeline the screen has left, such as one still being
+    /// transcribed at a seek or a loop, is dropped. Raised on whichever thread presented the frame.
     /// </summary>
     private void OnFramePresented(object? sender, FramePresentedInfo frame)
     {
-        var pts = frame.PresentationTime;
-        var graph = Volatile.Read(ref _audioGraph);
-        if (pts < _lastPresented || graph != _presentedGraph)
-        {
-            // A seek, a loop or the next file: the captions queued and on screen are for the
-            // audio before it. The timeline would see a jump back for itself, not one forward.
-            _newCaptions.Clear();
-            _captions.Reset();
-            _presentedGraph = graph;
-        }
-        _lastPresented = pts;
+        while (_newCaptions.TryDequeue(out var arrived))
+            _captions.Add(arrived.Caption, frame.PresentationTime, arrived.Timeline);
 
-        while (_newCaptions.TryDequeue(out var caption))
-            _captions.Add(caption, pts);
-
-        var text = string.Join('\n', _captions.GetActive(pts).Select(c => c.Text));
+        var active = _captions.GetActive(frame.PresentationTime, frame.Timeline);
+        var text = string.Join('\n', active.Select(c => c.Text));
         if (text == _shownCaption)
             return;
         _shownCaption = text;
@@ -381,11 +350,11 @@ public partial class MainWindow : Window
             if (_player is not null)
                 await _player.DisposeAsync();
             await _audioSink.DisposeAsync(); // after the player that drives it
-            Interlocked.Exchange(ref _onScreen, null)?.Dispose();
+            _detections.Dispose();
             _captionAudio.Writer.TryComplete();
             await _captionGraph;
             while (_captionAudio.Reader.TryRead(out var unread))
-                unread.Buffer.Dispose();
+                unread.Dispose();
             _detector?.Dispose();
         }
         catch (Exception ex)

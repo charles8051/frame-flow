@@ -9,6 +9,8 @@ implementation landed. Implemented, with one of its two migrations shipped and m
 > **Amended 2026-09-28.** A backward step in primary time larger than `Window` starts a new timeline in the window (#92). See the amendment at the foot of this record.
 >
 > **Amended 2026-09-28 (2).** `ResetWindow()` is removed. See the last amendment at the foot of this record.
+>
+> **Amended 2026-10-13.** [ADR-0084](ADR-0084-frames-carry-their-timeline.md): each input follows its own timeline id, and the backward-step rule applies only to an input on `TimelineId.None`. *Not settled here*'s first item is declined. See the last amendment at the foot of this record.
 
 ### What exists
 
@@ -460,3 +462,25 @@ carries the entry.
 
 The window still clears itself: the pump calls it at the start of every run and at teardown, and a
 clear still releases a secondary held on the lead or the count.
+
+## Amendment, 2026-10-13: the join follows each input's timeline (ADR-0084)
+
+[ADR-0084](ADR-0084-frames-carry-their-timeline.md) puts a `TimelineId` on every frame and buffer
+the player decodes. The join keeps one follower per input and never compares one input's id with
+the other's (#686):
+
+- A primary on a new timeline releases every secondary the window holds, whichever way its time
+  moved. On one timeline a step back is no longer a break: the 2026-09-28 rule applies only to a
+  primary on `None`.
+- A secondary on a new timeline releases what the window kept from its previous timeline.
+- `SyncJoinKeys` gained optional `PrimaryTimeline` and `SecondaryTimeline` selectors. Without them
+  the join reads `IFrame.Timeline` or `IAudioBuffer.Timeline`, and any other item is on `None`.
+- When a tracked primary starts a new timeline behind where the old window began, the window keeps
+  the 2026-09-28 boundary for the secondaries still on the edge.
+
+A join inside a player's own graph is unchanged: each run still starts with an empty window (§6).
+The change reaches a join that outlives a break, such as one fed from the player through a tap.
+
+*Not settled here*'s first item is declined. `ISeekResettable` stays in the playback layer for the
+components the session constructs, and the timeline id serves everything else (ADR-0084,
+decision 6).

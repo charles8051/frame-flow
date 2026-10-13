@@ -405,7 +405,8 @@ input's. Frames from a camera, and from a synthetic source, are on `None` for no
   unchanged.
 - `FrameFlow.Graph` gained `TimelineId`, and `FrameFlow.Graph.Core` gained `TimelineFollower`,
   `PresentedTimeline` and `TimelineRelation`, the two pure followers a stateful consumer uses to
-  tell a new timeline from the current one. Nothing in the library follows them yet.
+  tell a new timeline from the current one. Entries 15 and 16, and the PRESENT GAP note under
+  "Not breaking", list the consumers in the library that now follow them.
 
 **Who hits this.**
 - A doc comment that names `CpuVideoFrame.Create{TState}`, `PcmAudioBuffer.Create{TState}` or
@@ -437,7 +438,147 @@ return CpuVideoFrame.Create(
 
 - In a frame or buffer type of your own, store the id it was made on and return it from `Timeline`.
 
+### 15. Captions follow the timeline they belong to
+
+**A change in results for a Whisper node fed audio that names its timeline, and a doc-reference
+break for `CaptionTimeline`. Code whose frames and audio name no timeline behaves as before.**
+
+`TranscribeWithWhisper` now follows its input's timeline (ADR-0084, #677). A buffer of a timeline
+other than the held audio's drops the partial window and starts a new one at its own time, however
+close that time is to where the held audio ends, so a seek of a few milliseconds no longer joins
+audio of two places. A buffer of the same timeline continues the window wherever its time sits.
+The 50 ms rule of entry 4 now applies only to buffers on `TimelineId.None`. Audio the player
+decodes names its timeline, and the in-repo resampler keeps it, so this is the path a node fed
+from a player takes.
+
+`CaptionTimeline` gained `GetActive(TimeSpan, TimelineId)`, given the presented frame's timeline
+(`FramePresentedInfo.Timeline`), and `Add(Caption, TimeSpan, TimelineId)`, given the caption's own
+(`CaptionRef.Timeline`). With them:
+
+- A frame on a timeline other than the one on screen starts a new one with nothing from the one it
+  left, whichever way its time moved.
+- A caption of a timeline the screen has left is dropped, which fixes captions in flight at a seek
+  or a loop (#641).
+- A caption of a timeline not yet presented is held, even one added before the first frame, and
+  shows from that timeline's first frame (#687).
+- On one timeline, a time below the clock no longer empties it.
+
+The existing overloads are the same calls on `None` and keep entry 5's behaviour. `Reset()` now
+also drops held captions, and it keeps which timelines have been presented.
+
+**Who hits this.**
+- A Whisper node on player audio behind a queue that drops buffers, such as a bounded channel that
+  drops the oldest when transcription falls behind. A gap on one timeline no longer starts a new
+  window: the audio on both sides of it is joined, and the times of the captions after it run
+  early by the length of the gap (#682). On `None`, a gap still starts a new window.
+- A doc comment that names `CaptionTimeline.Add` or `CaptionTimeline.GetActive` without
+  parameters. The reference is now ambiguous (CS0419), which is an error where warnings are.
+- A frame or buffer type of your own that keeps one timeline id across a jump in its times. Within
+  one id the window no longer looks at the time.
+
+**What to write instead.**
+- In the frame-presented handler, pass both timelines:
+  `captions.Add(caption, frame.PresentationTime, captionTimeline)` for each caption that has
+  arrived, where `captionTimeline` is the `CaptionRef.Timeline` it came with, then
+  `captions.GetActive(frame.PresentationTime, frame.Timeline)`. A run counter, a check that the
+  time went back, or a `Reset()` at a seek that only told stale captions from current ones can go.
+  `FrameFlow.Examples.LiveCaptioning` shows the handler.
+- Name an overload in the cref, or write the name as `<c>` text.
+- Size a dropping queue in front of the node so that transcription keeps up, or accept that a gap
+  joins.
+- Give a new id at every jump in a source's own frames or buffers.
+
+### 16. `PresentedResults` and `SyncJoinNode` follow the timeline
+
+**A change in behaviour, not a compile error.**
+
+`PresentedResults<T>` showed, for each presented frame, the latest result at or before its
+timestamp, and knew of a seek or a loop only from a timestamp that went back. A new item whose
+timestamps did not go back showed the old item's result on its first frames (#621). It now follows
+the timeline on screen, through `FramePresentedInfo.Timeline` and `InferenceResult<T>.Timeline`
+(ADR-0084):
+
+- A frame shows only a result of its own timeline, or one on `None`.
+- When a new timeline reaches the screen, the results of the one it left are dropped, the one
+  showing included. `Cleared` is raised unless the new frame has a result of its own.
+- A result of a timeline the screen has left is dropped when it is posted.
+- A result of a timeline not yet on screen waits for that timeline's first frame. It no longer
+  shows on the frames still presenting from the timeline before, and posting it no longer drops the
+  results that timeline is still showing.
+
+`SyncJoinNode` follows the timeline of each of its inputs, and never compares one input's timeline
+with the other's:
+
+- A primary on a new timeline releases every secondary the window holds, whether its time went
+  forward or back.
+- A primary that stays on one timeline is no longer judged by its time: a step back of more than
+  `Window` does not start a new timeline in the window.
+- A secondary on a new timeline releases what the window kept from the one before.
+- `SyncJoinKeys` gained `PrimaryTimeline` and `SecondaryTimeline`, optional selectors. Without them
+  the join reads `IFrame.Timeline` or `IAudioBuffer.Timeline`, and any other item is on `None`.
+
+An item on `TimelineId.None` keeps the old rules, and each side of a join is judged on its own.
+That covers results built without a timeline, a presenter that does not fill
+`FramePresentedInfo.Timeline` (every result then keeps the timestamp rules, whatever it carries),
+and a join input that is neither a frame nor a buffer and has no selector.
+
+A join inside a player's own graph sees no change at a seek, a loop or the next item. Each of those
+starts a new run of the graph, and the join starts every run with an empty window. The join changes
+reach a graph that outlives a break, such as one fed from the player through a tap or a channel.
+
+**Who hits this.**
+- A `Cleared` handler that took it to mean the picture went back. It is now also raised when a new
+  item, a seek forward or a loop reaches the screen while the old item's result is showing.
+- A join whose secondary leads its primary, as `SyncMatch.Within` expects, in a graph that outlives
+  a break. The primary's break releases the new timeline's secondaries that arrived before it, so
+  the new timeline's first primaries match nothing until the next secondary arrives. When the
+  secondary's break arrives first, it releases what the old timeline's last primaries would have
+  matched. Before, a break forward kept both.
+- A join whose primary is a frame or a buffer and whose secondary is not, such as a `CaptionRef` or
+  a `RefBox<T>`. Its primary side changes at once: a new timeline releases the window, and a step
+  back on one timeline is no longer a break. Only the release on the secondary's own break waits
+  for a `SecondaryTimeline` selector.
+- A join whose primary steps back in time within one timeline, which a player's frames do not do.
+  The window no longer starts again for it.
+- Code that compares two `SyncJoinKeys` values. As a record, two keys are now equal only when their
+  timeline selectors are too.
+
+**What to write instead.**
+- To clear an overlay at a break, handle `Cleared`. There is no need to watch transport events for
+  it, or to make a new `PresentedResults<T>` for each graph the player builds.
+- For a caption secondary, name the caption's timeline:
+
+```csharp
+var keys = new SyncJoinKeys<IVideoFrame, CaptionRef>(
+    f => f.Timestamp,
+    c => (c.Value.From, c.Value.To))
+{
+    SecondaryTimeline = c => c.Timeline,
+};
+```
+
+- To keep a join on the old rules, for example one whose secondary leads across breaks, name no
+  timeline on either side:
+
+```csharp
+var keys = new SyncJoinKeys<IVideoFrame, CaptionRef>(
+    f => f.Timestamp,
+    c => (c.Value.From, c.Value.To))
+{
+    PrimaryTimeline = _ => TimelineId.None,
+    SecondaryTimeline = _ => TimelineId.None,
+};
+```
+
+- In a presenter of your own, set the presented frame's timeline on what it raises:
+  `new FramePresentedInfo(pts, presentedAt) { Timeline = frame.Timeline }`.
+
 ### Not breaking, but worth knowing
+
+- **A new timeline is not a stall to the PRESENT GAP check.** `AvaloniaVideoSink` warned PRESENT
+  GAP when the first frame of a new item came long after the last frame of the one before, such as
+  a new item played after `Ended`. The wait before the first frame of a new timeline is now logged
+  at Debug, and the Warning names the timeline it judged the frame on. #624.
 
 - **Nothing from before a seek's target reaches a configurator or the audio sink.** A seek lands on
   the keyframe before its target, and the decoder walks from there. The frames before the target
