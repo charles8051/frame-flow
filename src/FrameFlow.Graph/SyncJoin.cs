@@ -1,6 +1,8 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Graph.Core;
+
 namespace FrameFlow.Graph;
 
 /// <summary>
@@ -48,6 +50,13 @@ public enum SyncMatch
 /// <para>
 /// A point-valued secondary supplies <c>(t, t)</c>.
 /// </para>
+/// <para>
+/// <b>Timelines.</b> The join follows the timeline of each input (ADR-0084). By default it reads
+/// <see cref="IFrame.Timeline"/> or <see cref="IAudioBuffer.Timeline"/>, and an item that is
+/// neither is on <see cref="TimelineId.None"/>. An item that carries its timeline some other way,
+/// such as <c>FrameFlow.Whisper.CaptionRef</c>, names it through <see cref="PrimaryTimeline"/> or
+/// <see cref="SecondaryTimeline"/>.
+/// </para>
 /// </remarks>
 /// <param name="PrimaryTime">Media time of a primary item.</param>
 /// <param name="SecondaryInterval">Media-time span a secondary item covers.</param>
@@ -56,7 +65,34 @@ public sealed record SyncJoinKeys<TPrimary, TSecondary>(
     Func<TSecondary, (TimeSpan From, TimeSpan To)> SecondaryInterval
 )
     where TPrimary : class, IRefCounted
-    where TSecondary : class, IRefCounted;
+    where TSecondary : class, IRefCounted
+{
+    /// <summary>
+    /// The timeline a primary item belongs to, or <see langword="null"/> to read it from
+    /// <see cref="IFrame"/> or <see cref="IAudioBuffer"/>.
+    /// </summary>
+    public Func<TPrimary, TimelineId>? PrimaryTimeline { get; init; }
+
+    /// <summary>
+    /// The timeline a secondary item belongs to, or <see langword="null"/> to read it from
+    /// <see cref="IFrame"/> or <see cref="IAudioBuffer"/>.
+    /// </summary>
+    public Func<TSecondary, TimelineId>? SecondaryTimeline { get; init; }
+
+    internal TimelineId TimelineOfPrimary(TPrimary item) =>
+        PrimaryTimeline is { } timeline ? timeline(item) : TimelineOf(item);
+
+    internal TimelineId TimelineOfSecondary(TSecondary item) =>
+        SecondaryTimeline is { } timeline ? timeline(item) : TimelineOf(item);
+
+    private static TimelineId TimelineOf(IRefCounted item) =>
+        item switch
+        {
+            IFrame frame => frame.Timeline,
+            IAudioBuffer buffer => buffer.Timeline,
+            _ => TimelineId.None,
+        };
+}
 
 /// <summary>
 /// Join operator contract: a primary item plus the secondary that corresponds
@@ -135,6 +171,17 @@ public delegate ValueTask<TOut?> SyncJoinOperator<in TPrimary, in TSecondary, TO
 /// Secondary EOS does not end the join. Retained entries stay matchable until
 /// they age out of the window.
 /// </para>
+/// <para>
+/// <b>Timelines.</b> The join follows the timeline of each input separately (ADR-0084,
+/// decision 5), and never compares one input's timeline with the other's, because the two need
+/// not come from the same player. A primary on a new timeline releases every secondary the window
+/// holds, since each was retained to match the timeline the primary left; on a timeline it
+/// continues, a step back in its time is not a break. A secondary on a new timeline releases the
+/// secondaries retained from the one before. An item on <see cref="TimelineId.None"/> belongs to
+/// the timeline being followed, and a primary on <see cref="TimelineId.None"/> keeps the
+/// backward-step rule under <see cref="Window"/>. <see cref="SyncJoinKeys{TPrimary, TSecondary}"/>
+/// says where the join reads each item's timeline.
+/// </para>
 /// </remarks>
 public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     : IPumpableNode,
@@ -158,13 +205,20 @@ public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
     /// its <c>To</c> falls more than this behind the highest primary time seen.
     /// </summary>
     /// <remarks>
-    /// A primary more than this behind the highest time seen is a discontinuity, such as a
-    /// timestamp wrap or a restarted source. The window releases every secondary still live on
-    /// the old timeline and continues from the new primary's time. Until the primary climbs back
-    /// to where the old timeline's window began, a secondary that arrives ahead of the primary
-    /// and ends in that range is taken to be from the old timeline and released: it is still on
-    /// the edge from before the step, and holding it on <see cref="MaxLead"/> would stop the
-    /// reader until the primary reached it.
+    /// <para>
+    /// For a primary on <see cref="TimelineId.None"/>, one more than this behind the highest time
+    /// seen is a discontinuity, such as a timestamp wrap or a restarted source. The window
+    /// releases every secondary still live on the old timeline and continues from the new
+    /// primary's time. A primary that names its timeline breaks only when that timeline changes,
+    /// whatever its time does, and the window does the same then.
+    /// </para>
+    /// <para>
+    /// After a break that goes back past where the old timeline's window began, and until the
+    /// primary climbs back there, a secondary that arrives ahead of the primary and ends in that
+    /// range is taken to be from the old timeline and released: it is still on the edge from
+    /// before the break, and holding it on <see cref="MaxLead"/> would stop the reader until the
+    /// primary reached it.
+    /// </para>
     /// </remarks>
     public TimeSpan Window { get; }
 
@@ -470,29 +524,41 @@ internal sealed class SecondaryWindow<T>
     /// Advances the high-water mark to <paramref name="t"/>, evicts entries
     /// that have aged out of <paramref name="window"/>, and returns an AddRef'd
     /// match for <paramref name="t"/> under <paramref name="policy"/>, or
-    /// <see langword="null"/>. A <paramref name="t"/> more than
-    /// <paramref name="window"/> behind the high-water mark starts a new timeline
-    /// instead (<see cref="SyncJoinNode{TPrimary, TSecondary, TOut}.Window"/>).
+    /// <see langword="null"/>. A primary on a new timeline
+    /// (<paramref name="step"/>) starts a new timeline in the window first, and
+    /// so does an untracked one more than <paramref name="window"/> behind the
+    /// high-water mark (<see cref="SyncJoinNode{TPrimary, TSecondary, TOut}.Window"/>).
     /// </summary>
     public T? AdvanceAndMatch(
         TimeSpan t,
         SyncMatch policy,
         TimeSpan window,
-        TimeSpan maxStaleness
+        TimeSpan maxStaleness,
+        TimelineStep step = TimelineStep.Untracked
     )
     {
         lock (_gate)
         {
-            if (!_primarySeen || t > _highWater)
+            if (step == TimelineStep.NewTimeline)
+            {
+                StartTimeline(t, window);
+            }
+            else if (!_primarySeen || t > _highWater)
             {
                 _primarySeen = true;
                 if (t > _highWater)
                     _highWater = t;
                 ReleaseRoomWaiter();
             }
-            else if (TryGetCutoff(window, out var oldCutoff) && t < oldCutoff)
+            else if (
+                step == TimelineStep.Untracked
+                && TryGetCutoff(window, out var oldCutoff)
+                && t < oldCutoff
+            )
             {
-                StepBack(t, oldCutoff);
+                // Only a primary that names no timeline is judged by its time (ADR-0084). On a
+                // timeline it continues, its time does not go back across a break.
+                StartTimeline(t, window);
             }
 
             while (_staleFrom.TryPeek(out var staleFrom) && _highWater >= staleFrom)
@@ -549,19 +615,37 @@ internal sealed class SecondaryWindow<T>
         }
     }
 
-    // Caller holds _gate. The primary stepped back to t from a timeline whose window began at
-    // oldCutoff. Every retained entry ends at or past oldCutoff, since TryAdmit and Evict release
-    // the rest, so every one is from that timeline and is released. A reader held on the lead or
-    // the count is released to try again, and TryAdmit releases its item if it is from a timeline
-    // before the step.
-    private void StepBack(TimeSpan t, TimeSpan oldCutoff)
+    /// <summary>
+    /// Disposes and drops every retained entry, and keeps the primary's place. For a secondary
+    /// on a new timeline: what the window holds is from the secondary's timeline before it.
+    /// </summary>
+    public void ReleaseEntries()
+    {
+        lock (_gate)
+        {
+            foreach (var e in _entries)
+                e.Item.Dispose();
+            _entries.Clear();
+        }
+    }
+
+    // Caller holds _gate. The primary is on a new timeline at t: it named a new one, or it named
+    // none and stepped back past the window. Every retained entry was kept to match the timeline
+    // it left, so every one is released, and the high-water mark moves to t. If t is behind where
+    // the old timeline's window began, that point is kept until the primary climbs back to it, so
+    // TryAdmit releases a secondary from before the break still on the edge rather than holding
+    // it on the lead. A reader held on the lead or the count is released to try again.
+    private void StartTimeline(TimeSpan t, TimeSpan window)
     {
         foreach (var e in _entries)
             e.Item.Dispose();
         _entries.Clear();
 
+        if (_primarySeen && TryGetCutoff(window, out var oldCutoff) && t < oldCutoff)
+            _staleFrom.Push(oldCutoff);
+
         _highWater = t;
-        _staleFrom.Push(oldCutoff);
+        _primarySeen = true;
         ReleaseRoomWaiter();
     }
 

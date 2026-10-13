@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Threading.Channels;
+using FrameFlow.Graph.Core;
 
 namespace FrameFlow.Graph;
 
@@ -315,6 +316,9 @@ internal static class NodePumps
         var secondaryLoop = Task.Run(
             async () =>
             {
+                // The secondary's own timeline, followed on its own: the two inputs need not come
+                // from one player, so neither is compared with the other (ADR-0084).
+                var secondaryTimeline = default(TimelineFollower);
                 try
                 {
                     await foreach (
@@ -334,6 +338,13 @@ internal static class NodePumps
                             node.ThrowIfFrameWithoutLead(item);
 
                             var (from, to) = node.Keys.SecondaryInterval(item);
+
+                            // A new timeline on the secondary: what the window holds is from the
+                            // one it left.
+                            var timeline = node.Keys.TimelineOfSecondary(item);
+                            if (secondaryTimeline.Step(timeline) == TimelineStep.NewTimeline)
+                                retained.ReleaseEntries();
+                            secondaryTimeline = secondaryTimeline.Follow(timeline);
 
                             // Past MaxLead, or at MaxRetained with every entry still a
                             // candidate, stop reading the edge until the primary catches
@@ -400,6 +411,9 @@ internal static class NodePumps
             CancellationToken.None
         );
 
+        // The primary's timeline. A new one releases the secondary window; one it continues is not
+        // judged by its time (ADR-0084, decision 5).
+        var primaryTimeline = default(TimelineFollower);
         try
         {
             await foreach (var item in primary.ReadAllAsync(ct).ConfigureAwait(false))
@@ -408,11 +422,15 @@ internal static class NodePumps
                 try
                 {
                     var t = node.Keys.PrimaryTime(item);
+                    var timeline = node.Keys.TimelineOfPrimary(item);
+                    var step = primaryTimeline.Step(timeline);
+                    primaryTimeline = primaryTimeline.Follow(timeline);
                     match = retained.AdvanceAndMatch(
                         t,
                         node.MatchPolicy,
                         node.Window,
-                        node.MaxStaleness
+                        node.MaxStaleness,
+                        step
                     );
                 }
                 catch (Exception ex) when (FaultRules.IsCancellation(ex, ct.IsCancellationRequested))
