@@ -297,6 +297,15 @@ land.
   into an `InFlight` sink that hands encoded frames to the application's own worker for a live
   source. The abandonable node it named is not pursued. The record and
   [the GenAI exploration](../explorations/generative-inference.md) are kept as the evidence.
+- [One lifecycle for views: the sink follows the view, presenting follows the attachment](one-lifecycle-for-views.md):
+  three mechanisms, each added by one fix, answer what attach, detach, reattach and dispose do to a
+  view's sink or a chrome control's transport, and six separate checks drop callbacks from an
+  attachment that has ended. #663 is #650's defect in the neighbouring view. Both views also dispose
+  their own sink on every detach while a player still feeds it, so a tab switch freezes the picture.
+  Proposes one pure `SurfaceLifecycle` for every surface and chrome control, generalised from
+  #662's `InteropViewLifecycle`; an owned sink that lives as long as the view, while presenting
+  follows the attachment; no frames held before the first attach or while detached; disposed sinks
+  that dispose what they are given (#664); and one attachment number published to other threads.
 
 ## Recently numbered
 
