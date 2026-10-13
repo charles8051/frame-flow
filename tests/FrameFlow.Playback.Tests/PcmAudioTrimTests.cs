@@ -92,6 +92,18 @@ public sealed class PcmAudioTrimTests
         Assert.True(cut.PresentationTime.TotalSeconds >= 1.0 / 44_100, $"{cut.PresentationTime.Ticks} ticks");
     }
 
+    [Fact]
+    public void Cut_IsOnItsBuffersTimeline()
+    {
+        // The cut is the same audio from a later frame, so it stays on the run it came from
+        // (ADR-0084, decision 3).
+        using var buffer = FrameFlow.Tests.Shared.DerivedItemConformance.AudioInput(Rate, channels: 2, frames: 100);
+
+        using var cut = PcmAudioTrim.Cut(buffer, 10);
+
+        FrameFlow.Tests.Shared.DerivedItemConformance.AssertCarriesTimeline(buffer, cut);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(100)]

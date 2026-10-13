@@ -11,6 +11,7 @@ using Avalonia.Threading;
 using FrameFlow.Avalonia.Windows.Core;
 using FrameFlow.Avalonia.Windows.Diagnostics;
 using FrameFlow.Decoding;
+using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Media.Core;
 using FrameFlow.Media.Diagnostics;
@@ -1145,7 +1146,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                     _gpuConverter.Output.Height,
                     _gpuConverter.GetSharedHandle,
                     i => _gpuConverter.ConvertInto(i, texture, slice),
-                    frame.Pts
+                    frame.Pts,
+                    frame.Timeline
                 );
             }
             else if (frame is GpuVideoFrame d3d12 && d3d12.TryGetD3D12Texture(out var d3d12Texture, out _, out _, out _))
@@ -1168,7 +1170,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                     frame.Height,
                     _cpuUploader.GetSharedHandle,
                     i => _cpuUploader.UploadInto(i, cpu),
-                    frame.Pts
+                    frame.Pts,
+                    frame.Timeline
                 );
             }
             else if (!_warnedUnpresentable)
@@ -1342,7 +1345,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                     Interlocked.Increment(ref _framesDropped);
                 return converted;
             },
-            frame.Pts
+            frame.Pts,
+            frame.Timeline
         );
     }
 
@@ -1404,7 +1408,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         int ringHeight,
         Func<int, nint> getSharedHandle,
         Func<int, bool> fill,
-        TimeSpan pts
+        TimeSpan pts,
+        TimelineId timeline
     )
     {
         if (_tornDown)
@@ -1498,8 +1503,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         presentTask.ContinueWith(
             static (_, state) =>
             {
-                var (self, sink, framePts) =
-                    ((CompositionInteropVideoView, CompositionInteropVideoSink?, TimeSpan))state!;
+                var (self, sink, framePts, frameTimeline) =
+                    ((CompositionInteropVideoView, CompositionInteropVideoSink?, TimeSpan, TimelineId))state!;
                 Interlocked.Increment(ref self._framesCommitted);
                 Volatile.Write(ref self._lastCommittedAtUtcTicks, DateTime.UtcNow.Ticks);
 
@@ -1507,9 +1512,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                 // thing the committed counter does: this frame reached the screen. A
                 // faulted or cancelled hand-off never runs this continuation, so a consumer
                 // is never told about a frame that device loss ate.
-                sink?.RaiseFramePresented(framePts);
+                sink?.RaiseFramePresented(framePts, frameTimeline);
             },
-            (this, presentingSink, pts),
+            (this, presentingSink, pts, timeline),
             CancellationToken.None,
             TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default

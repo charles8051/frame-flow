@@ -99,6 +99,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     private int _stagedWidth;
     private int _stagedHeight;
     private TimeSpan _stagedPts;
+    private TimelineId _stagedTimeline;
     private SinkBinding? _stagedBinding;
 
     // How each buffer's frame is meant to be shown (#542). They travel with the pixels: staged,
@@ -138,9 +139,10 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     private bool _backPending;
 
 
-    // PTS of the frame sitting in _back, carried to the swap so the sink can stamp it when
-    // the frame actually becomes the front buffer. Guarded by _lock.
+    // PTS and timeline of the frame sitting in _back, carried to the swap so the sink can stamp
+    // and report them when the frame actually becomes the front buffer. Guarded by _lock.
     private TimeSpan _backPts;
+    private TimelineId _backTimeline;
 
     // The binding that produced the frame sitting in _back, so the swap credits the sink that
     // actually made it. Guarded by _lock, and only meaningful while _backPending.
@@ -450,7 +452,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                         _stagedBinding?.Sink.RecordPreSwapDrop();
                     }
 
-                    StagePixelsLocked(data, frame.Pts, (frame.SampleAspectRatio, frame.Rotation), binding);
+                    StagePixelsLocked(data, frame.Pts, frame.Timeline, (frame.SampleAspectRatio, frame.Rotation), binding);
                     RequestBuffersForStagedFrame();
                     return;
                 }
@@ -467,6 +469,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
                 FrameCopyMetrics.Record(FrameCopySite.PresenterUpload);
 
                 _backPts = frame.Pts;
+                _backTimeline = frame.Timeline;
                 _backGeometry = (frame.SampleAspectRatio, frame.Rotation);
                 _backBinding = binding;
                 _backPending = true;
@@ -560,6 +563,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     private void StagePixelsLocked(
         CpuFrameData data,
         TimeSpan pts,
+        TimelineId timeline,
         (SampleAspectRatio Shape, VideoRotation Rotation) geometry,
         SinkBinding binding)
     {
@@ -574,6 +578,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
         _stagedWidth = data.Width;
         _stagedHeight = data.Height;
         _stagedPts = pts;
+        _stagedTimeline = timeline;
         _stagedGeometry = geometry;
         _stagedBinding = binding;
     }
@@ -620,6 +625,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             FrameCopyMetrics.Record(FrameCopySite.PresenterUpload);
 
             _backPts = pts;
+            _backTimeline = _stagedTimeline;
             _backGeometry = _stagedGeometry;
             _backBinding = binding;
             _backPending = true;
@@ -648,6 +654,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
     private void SwapAndInvalidate()
     {
         TimeSpan pts;
+        TimelineId timeline;
         SinkBinding? producer;
 
         lock (_lock)
@@ -662,6 +669,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
             (_frontGeometry, _backGeometry) = (_backGeometry, _frontGeometry);
             _backPending = false;
             pts = _backPts;
+            timeline = _backTimeline;
             producer = _backBinding;
         }
 
@@ -669,7 +677,7 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface
         // frame overwritten in the back buffer before this ran never drew and is counted a
         // drop instead, so no frame lands in both counters and FramesPresented means what it
         // says.
-        producer?.Sink.RecordPresented(pts);
+        producer?.Sink.RecordPresented(pts, timeline);
         Interlocked.Increment(ref _renderedFrameCount);
         FramesRenderedCounter.Add(1);
 

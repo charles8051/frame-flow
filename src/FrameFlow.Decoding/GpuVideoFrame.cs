@@ -107,6 +107,9 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// <inheritdoc />
     public VideoRotation Rotation { get; }
 
+    /// <inheritdoc />
+    public TimelineId Timeline { get; }
+
     /// <summary>
     /// The FFmpeg device context the frame's pool was made on: a borrowed
     /// <see cref="HardwareDevice"/>'s own, or the one its decoder created. Zero once disposed.
@@ -147,11 +150,13 @@ public sealed class GpuVideoFrame : IVideoFrame
         TimeSpan duration,
         HardwareDecodeBackendKind backend,
         SampleAspectRatio sampleAspectRatio,
-        VideoRotation rotation
+        VideoRotation rotation,
+        TimelineId timeline
     )
     {
         SampleAspectRatio = sampleAspectRatio.IsKnown ? sampleAspectRatio : SampleAspectRatio.Square;
         Rotation = rotation;
+        Timeline = timeline;
         _handle = handle;
         Width = width;
         Height = height;
@@ -188,6 +193,7 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// </param>
     /// <param name="sampleAspectRatio">The pixel shape to carry (#542). Unknown, the default, is square.</param>
     /// <param name="rotation">The turn to display the frame upright (#542).</param>
+    /// <param name="timeline">The timeline the frame belongs to (ADR-0084).</param>
     /// <returns>
     /// A new <see cref="GpuVideoFrame"/> that owns the cloned
     /// reference, or <see langword="null"/> if <c>av_frame_clone</c>
@@ -203,7 +209,8 @@ public sealed class GpuVideoFrame : IVideoFrame
         HardwareDecodeBackendKind backend,
         DecodePoolGeneration? pool = null,
         SampleAspectRatio sampleAspectRatio = default,
-        VideoRotation rotation = VideoRotation.None
+        VideoRotation rotation = VideoRotation.None,
+        TimelineId timeline = default
     )
     {
         nint cloned = FFAvUtil.av_frame_clone(sourceAvFrame);
@@ -211,7 +218,7 @@ public sealed class GpuVideoFrame : IVideoFrame
             return null;
 
         var frame = FromOwnedAvFrame(
-            cloned, width, height, softwareFormat, pts, duration, backend, sampleAspectRatio, rotation);
+            cloned, width, height, softwareFormat, pts, duration, backend, sampleAspectRatio, rotation, timeline);
         pool?.AttachFrame();
         frame._pool = pool;
         return frame;
@@ -234,6 +241,7 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// <param name="backend">The hardware backend that produced the frame.</param>
     /// <param name="sampleAspectRatio">The pixel shape to carry (#542). Unknown, the default, is square.</param>
     /// <param name="rotation">The turn to display the frame upright (#542).</param>
+    /// <param name="timeline">The timeline the frame belongs to (ADR-0084).</param>
     internal static GpuVideoFrame FromOwnedAvFrame(
         nint ownedAvFrame,
         int width,
@@ -243,7 +251,8 @@ public sealed class GpuVideoFrame : IVideoFrame
         TimeSpan duration,
         HardwareDecodeBackendKind backend,
         SampleAspectRatio sampleAspectRatio = default,
-        VideoRotation rotation = VideoRotation.None
+        VideoRotation rotation = VideoRotation.None,
+        TimelineId timeline = default
     )
     {
         var handle = new FrameHandle(ownedAvFrame);
@@ -251,7 +260,7 @@ public sealed class GpuVideoFrame : IVideoFrame
         // pool-occupancy telemetry). Released at the final ref-drop in Dispose.
         DecodePoolMetrics.OnLeaseAcquired();
         return new GpuVideoFrame(
-            handle, width, height, softwareFormat, pts, duration, backend, sampleAspectRatio, rotation);
+            handle, width, height, softwareFormat, pts, duration, backend, sampleAspectRatio, rotation, timeline);
     }
 
     /// <inheritdoc/>
@@ -304,8 +313,8 @@ public sealed class GpuVideoFrame : IVideoFrame
     /// pixel data via <c>av_hwframe_transfer_data</c>, then
     /// <c>sws_scale</c>s the result to a tightly-packed
     /// <see cref="PixelFormat.Bgra32"/> <see cref="CpuVideoFrame"/>.
-    /// The output's <c>PresentationTime</c> and <c>Duration</c>
-    /// match this frame's. Caller owns the returned frame and must
+    /// The output's <c>PresentationTime</c>, <c>Duration</c>, pixel shape, rotation and
+    /// <see cref="Timeline"/> match this frame's. Caller owns the returned frame and must
     /// dispose it.
     /// </summary>
     /// <remarks>
@@ -337,7 +346,8 @@ public sealed class GpuVideoFrame : IVideoFrame
             Pts,
             Duration,
             SampleAspectRatio,
-            Rotation
+            Rotation,
+            Timeline
         );
     }
 

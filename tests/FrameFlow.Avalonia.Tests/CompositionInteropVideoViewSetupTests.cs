@@ -3,6 +3,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Rendering.Composition;
 using Avalonia.Threading;
 using FrameFlow.Avalonia.Windows;
+using FrameFlow.Graph;
 using FrameFlow.Player;
 
 namespace FrameFlow.Avalonia.Tests;
@@ -80,7 +81,7 @@ public sealed class CompositionInteropVideoViewSetupTests
 
         view.Initialize(log);
         sink.FramePresented += (_, _) => throw new InvalidOperationException("overlay failed");
-        sink.RaiseFramePresented(TimeSpan.FromMilliseconds(16));
+        sink.RaiseFramePresented(TimeSpan.FromMilliseconds(16), TimelineId.None);
         await view.DisposeAsync(); // the view logs how its teardown went before this completes
 
         Assert.Contains(log.MessagesFrom<CompositionInteropVideoSink>(), m => m.Contains("FramePresented handler threw", StringComparison.Ordinal));

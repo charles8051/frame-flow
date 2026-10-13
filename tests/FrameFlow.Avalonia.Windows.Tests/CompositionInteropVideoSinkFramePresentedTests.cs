@@ -46,9 +46,23 @@ public sealed class CompositionInteropVideoSinkFramePresentedTests
         var presented = new List<TimeSpan>();
         sink.FramePresented += (_, e) => presented.Add(e.PresentationTime);
 
-        sink.RaiseFramePresented(Pts(7));
+        sink.RaiseFramePresented(Pts(7), TimelineId.None);
 
         Assert.Equal([Pts(7)], presented);
+    }
+
+    [Fact]
+    public void TheEventCarriesTheTimelineThePresenterReported()
+    {
+        // The view passes the presented frame's timeline with its PTS (ADR-0084, decision 4).
+        var sink = NewSink();
+        var timeline = TimelineId.Next();
+        var presented = new List<(TimeSpan, TimelineId)>();
+        sink.FramePresented += (_, e) => presented.Add((e.PresentationTime, e.Timeline));
+
+        sink.RaiseFramePresented(Pts(7), timeline);
+
+        Assert.Equal([(Pts(7), timeline)], presented);
     }
 
     [Fact]
@@ -58,7 +72,7 @@ public sealed class CompositionInteropVideoSinkFramePresentedTests
         object? sender = null;
         sink.FramePresented += (s, _) => sender = s;
 
-        sink.RaiseFramePresented(Pts(1));
+        sink.RaiseFramePresented(Pts(1), TimelineId.None);
 
         Assert.Same(sink, sender);
     }
@@ -70,7 +84,7 @@ public sealed class CompositionInteropVideoSinkFramePresentedTests
         DateTime? stamp = null;
         sink.FramePresented += (_, e) => stamp = e.PresentedAtUtc;
 
-        sink.RaiseFramePresented(Pts(1));
+        sink.RaiseFramePresented(Pts(1), TimelineId.None);
 
         Assert.Equal(DateTimeKind.Utc, stamp!.Value.Kind);
     }
@@ -99,7 +113,7 @@ public sealed class CompositionInteropVideoSinkFramePresentedTests
         sink.FramePresented += (_, e) => presented.Add(e.PresentationTime);
 
         for (int i = 1; i <= 5; i++)
-            sink.RaiseFramePresented(Pts(i));
+            sink.RaiseFramePresented(Pts(i), TimelineId.None);
 
         Assert.Equal([Pts(1), Pts(2), Pts(3), Pts(4), Pts(5)], presented);
     }
@@ -115,8 +129,8 @@ public sealed class CompositionInteropVideoSinkFramePresentedTests
         sink.FramePresented += (_, _) => throw new InvalidOperationException("handler failed");
         sink.FramePresented += (_, e) => seen.Add(e.PresentationTime);
 
-        sink.RaiseFramePresented(Pts(2));
-        sink.RaiseFramePresented(Pts(3));
+        sink.RaiseFramePresented(Pts(2), TimelineId.None);
+        sink.RaiseFramePresented(Pts(3), TimelineId.None);
 
         Assert.Equal([Pts(2), Pts(3)], seen);
     }
@@ -129,8 +143,8 @@ public sealed class CompositionInteropVideoSinkFramePresentedTests
         var sink = NewSink();
         sink.FramePresented += (_, _) => throw new InvalidOperationException("handler failed");
 
-        sink.RaiseFramePresented(Pts(1));
-        sink.RaiseFramePresented(Pts(2));
+        sink.RaiseFramePresented(Pts(1), TimelineId.None);
+        sink.RaiseFramePresented(Pts(2), TimelineId.None);
     }
 
     [Fact]
@@ -141,9 +155,9 @@ public sealed class CompositionInteropVideoSinkFramePresentedTests
         void Handler(object? _, FramePresentedInfo e) => presented.Add(e.PresentationTime);
 
         sink.FramePresented += Handler;
-        sink.RaiseFramePresented(Pts(1));
+        sink.RaiseFramePresented(Pts(1), TimelineId.None);
         sink.FramePresented -= Handler;
-        sink.RaiseFramePresented(Pts(2));
+        sink.RaiseFramePresented(Pts(2), TimelineId.None);
 
         Assert.Equal([Pts(1)], presented);
     }
@@ -155,7 +169,7 @@ public sealed class CompositionInteropVideoSinkFramePresentedTests
         // drives the same present loop.
         var sink = NewSink();
 
-        sink.RaiseFramePresented(Pts(1));
+        sink.RaiseFramePresented(Pts(1), TimelineId.None);
     }
 
     private sealed class StubFrame : IVideoFrame

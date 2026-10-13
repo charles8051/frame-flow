@@ -294,3 +294,27 @@ static FrameFlow.Graph.FrameDomainRule.Accepting(FrameFlow.Graph.FrameMemoryDoma
 static FrameFlow.Graph.FrameDomainRule.Any.get -> FrameFlow.Graph.FrameDomainRule!
 static FrameFlow.Graph.FrameDomainRule.CpuOnly.get -> FrameFlow.Graph.FrameDomainRule!
 static FrameFlow.Graph.FrameDomainRule.ToCpu.get -> FrameFlow.Graph.FrameDomainRule!
+FrameFlow.Graph.Core.PresentedTimeline
+FrameFlow.Graph.Core.PresentedTimeline.Classify(FrameFlow.Graph.TimelineId item) -> FrameFlow.Graph.Core.TimelineRelation
+FrameFlow.Graph.Core.PresentedTimeline.Current.get -> FrameFlow.Graph.TimelineId
+FrameFlow.Graph.Core.PresentedTimeline.HistoryCapacity.get -> int
+FrameFlow.Graph.Core.PresentedTimeline.Present(FrameFlow.Graph.TimelineId presented) -> FrameFlow.Graph.Core.PresentedTimeline!
+FrameFlow.Graph.Core.PresentedTimeline.PresentedTimeline() -> void
+FrameFlow.Graph.Core.PresentedTimeline.PresentedTimeline(int history) -> void
+const FrameFlow.Graph.Core.PresentedTimeline.DefaultHistory = 16 -> int
+FrameFlow.Graph.Core.TimelineFollower
+FrameFlow.Graph.Core.TimelineFollower.Current.get -> FrameFlow.Graph.TimelineId
+FrameFlow.Graph.Core.TimelineFollower.Follow(FrameFlow.Graph.TimelineId item) -> FrameFlow.Graph.Core.TimelineFollower
+FrameFlow.Graph.Core.TimelineFollower.StartsNewTimeline(FrameFlow.Graph.TimelineId item) -> bool
+FrameFlow.Graph.Core.TimelineFollower.TimelineFollower() -> void
+FrameFlow.Graph.Core.TimelineRelation
+FrameFlow.Graph.Core.TimelineRelation.Current = 0 -> FrameFlow.Graph.Core.TimelineRelation
+FrameFlow.Graph.Core.TimelineRelation.Past = 1 -> FrameFlow.Graph.Core.TimelineRelation
+FrameFlow.Graph.Core.TimelineRelation.Upcoming = 2 -> FrameFlow.Graph.Core.TimelineRelation
+FrameFlow.Graph.IAudioBuffer.Timeline.get -> FrameFlow.Graph.TimelineId
+FrameFlow.Graph.IFrame.Timeline.get -> FrameFlow.Graph.TimelineId
+FrameFlow.Graph.TimelineId
+FrameFlow.Graph.TimelineId.TimelineId() -> void
+override FrameFlow.Graph.TimelineId.ToString() -> string!
+static FrameFlow.Graph.TimelineId.Next() -> FrameFlow.Graph.TimelineId
+static FrameFlow.Graph.TimelineId.None.get -> FrameFlow.Graph.TimelineId

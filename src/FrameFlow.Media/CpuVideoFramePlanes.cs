@@ -5,11 +5,11 @@ namespace FrameFlow.Media;
 
 /// <summary>
 /// Fills the planes of a new <see cref="CpuVideoFrame"/>. Called once, synchronously, by
-/// <see cref="CpuVideoFrame.Create{TState}"/> before the frame is published.
+/// <c>CpuVideoFrame.Create</c> before the frame is published.
 /// </summary>
 /// <typeparam name="TState">The state the caller passes through, so the callback can be static.</typeparam>
 /// <param name="planes">The frame's writable planes. They exist only for the call.</param>
-/// <param name="state">The state passed to <see cref="CpuVideoFrame.Create{TState}"/>.</param>
+/// <param name="state">The state passed to <c>CpuVideoFrame.Create</c>.</param>
 public delegate void CpuVideoFrameFill<in TState>(CpuVideoFramePlanes planes, TState state);
 
 /// <summary>

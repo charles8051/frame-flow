@@ -29,4 +29,7 @@
     <!-- The child process ProcessExitTests starts (#633); built and copied next to the tests. -->
     <ProjectReference Include="..\FrameFlow.Audio.ExitProbe\FrameFlow.Audio.ExitProbe.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\DerivedItemConformance.cs" Link="Shared\DerivedItemConformance.cs" />
+  </ItemGroup>
 </Project>

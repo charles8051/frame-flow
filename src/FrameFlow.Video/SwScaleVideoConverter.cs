@@ -78,6 +78,8 @@ internal sealed unsafe class SwScaleVideoConverter : IVideoConverter
             dstHeight,
             source.Pts,
             source.Duration,
+            // The converted frame is the same picture, on the same timeline (ADR-0084).
+            source.Timeline,
             (Sws: _sws!.DangerousGetHandle(), Source: cpuData, SrcHeight: srcHeight),
             static (planes, s) => ScaleInto(planes, s.Sws, s.Source, s.SrcHeight),
             // The same picture on another grid shows at the same shape (#542).

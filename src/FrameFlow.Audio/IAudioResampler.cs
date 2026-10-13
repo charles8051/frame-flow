@@ -58,14 +58,15 @@ public interface IAudioResampler : IDisposable
     /// </param>
     /// <returns>
     /// A freshly-allocated output buffer at the target format, with
-    /// <c>PresentationTime</c> copied from <paramref name="input"/>.
+    /// <c>PresentationTime</c> and <c>Timeline</c> copied from <paramref name="input"/>.
     /// Never <see langword="null"/>; check <c>SampleCount</c> for zero.
     /// </returns>
     PcmAudioBuffer Process(PcmAudioBuffer input);
 
     /// <summary>
     /// Drains any samples buffered inside the resampler at end-of-stream.
-    /// Returns <see langword="null"/> when there's nothing to flush.
+    /// Returns <see langword="null"/> when there's nothing to flush. The buffer is on the
+    /// timeline of the last input processed.
     /// </summary>
     /// <param name="finalPresentationTime">
     /// The presentation timestamp to attach to the flushed buffer.

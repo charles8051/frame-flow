@@ -21,5 +21,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\Shared\RefCountConformance.cs" Link="Shared\RefCountConformance.cs" />
+    <Compile Include="..\Shared\DerivedItemConformance.cs" Link="Shared\DerivedItemConformance.cs" />
   </ItemGroup>
 </Project>

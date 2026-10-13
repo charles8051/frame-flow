@@ -2,9 +2,10 @@
 
 ## Status
 
-**Accepted (2026-10-13).** Not yet implemented. Proposed on 2026-10-12, and revised on acceptance
-for items prepared ahead (#674): ids identify a timeline but carry no order, and order comes from
-presentation. [Revision history](#revision-history) lists what changed.
+**Accepted (2026-10-13).** Staging slice 1 is implemented (#678); slices 2 to 4 are not yet.
+Proposed on 2026-10-12, and revised on acceptance for items prepared ahead (#674): ids identify a
+timeline but carry no order, and order comes from presentation.
+[Revision history](#revision-history) lists what changed.
 
 Motivating issues: #621 (`PresentedResults` has no item boundary), #641 (LiveCaptioning shows
 captions for audio from before a seek or loop) and #624 (a PRESENT GAP warning when a new item

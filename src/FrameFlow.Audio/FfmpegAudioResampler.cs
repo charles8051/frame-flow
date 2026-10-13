@@ -26,6 +26,10 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
     private int _sourceSampleRate;
     private int _sourceChannels;
 
+    // The timeline of the last buffer that gave samples, for the samples a flush drains: they came
+    // from it and the buffers before it (ADR-0084). An empty buffer gives none, so it leaves this.
+    private TimelineId _lastTimeline;
+
     public int TargetSampleRate { get; }
     public int TargetChannels { get; }
 
@@ -46,8 +50,10 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
             // Empty input — still emit an empty output (with the input's PTS)
             // rather than null, so consumers that don't check SampleCount
             // before disposing aren't surprised.
-            return CreateEmpty(input.PresentationTime);
+            return CreateEmpty(input.PresentationTime, input.Timeline);
         }
+
+        _lastTimeline = input.Timeline;
 
         var swrPtr = _swr!.DangerousGetHandle();
 
@@ -67,6 +73,7 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
             TargetSampleRate,
             TargetChannels,
             input.PresentationTime,
+            input.Timeline,
             (
                 Swr: swrPtr,
                 Input: input,
@@ -115,6 +122,7 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
             TargetSampleRate,
             TargetChannels,
             finalPresentationTime,
+            _lastTimeline,
             (Swr: swrPtr, MaxOutput: maxOutputFramesPerChannel, Channels: TargetChannels),
             static (samples, s) =>
                 Math.Max(0, RunSwrFlush(s.Swr, samples, s.MaxOutput)) * s.Channels
@@ -241,7 +249,7 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
             _ => $"{channels}c",
         };
 
-    private PcmAudioBuffer CreateEmpty(TimeSpan pts)
+    private PcmAudioBuffer CreateEmpty(TimeSpan pts, TimelineId timeline)
     {
         // A zero-sample buffer: capacity 0, and a fill that writes nothing.
         return PcmAudioBuffer.Create(
@@ -249,6 +257,7 @@ internal sealed unsafe class FfmpegAudioResampler : IAudioResampler
             TargetSampleRate,
             TargetChannels,
             pts,
+            timeline,
             0,
             static (_, _) => 0
         );

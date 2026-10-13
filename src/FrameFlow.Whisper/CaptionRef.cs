@@ -32,10 +32,23 @@ public sealed class CaptionRef : IRefCounted
     /// <summary>The wrapped caption.</summary>
     public Caption Value { get; }
 
+    /// <summary>
+    /// The timeline of the audio the caption was transcribed from (ADR-0084, decision 3), or
+    /// <see cref="TimelineId.None"/> when that is not known. A node that builds a caption from
+    /// another copies it.
+    /// </summary>
+    public TimelineId Timeline { get; }
+
+    /// <summary>Wraps <paramref name="value"/> on no known timeline.</summary>
     public CaptionRef(Caption value)
+        : this(value, TimelineId.None) { }
+
+    /// <summary>Wraps <paramref name="value"/>, transcribed from audio on <paramref name="timeline"/>.</summary>
+    public CaptionRef(Caption value, TimelineId timeline)
     {
         ArgumentNullException.ThrowIfNull(value);
         Value = value;
+        Timeline = timeline;
         _refCount = 1;
     }
 

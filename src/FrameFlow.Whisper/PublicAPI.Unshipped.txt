@@ -15,7 +15,9 @@ FrameFlow.Whisper.CaptionOperators
 FrameFlow.Whisper.CaptionRef
 FrameFlow.Whisper.CaptionRef.AddRef() -> FrameFlow.Graph.IRefCounted!
 FrameFlow.Whisper.CaptionRef.CaptionRef(FrameFlow.Whisper.Caption! value) -> void
+FrameFlow.Whisper.CaptionRef.CaptionRef(FrameFlow.Whisper.Caption! value, FrameFlow.Graph.TimelineId timeline) -> void
 FrameFlow.Whisper.CaptionRef.Dispose() -> void
+FrameFlow.Whisper.CaptionRef.Timeline.get -> FrameFlow.Graph.TimelineId
 FrameFlow.Whisper.CaptionRef.Value.get -> FrameFlow.Whisper.Caption!
 FrameFlow.Whisper.CaptionTimeline
 FrameFlow.Whisper.CaptionTimeline.Add(FrameFlow.Whisper.Caption! caption, System.TimeSpan enqueuedAtPts) -> void

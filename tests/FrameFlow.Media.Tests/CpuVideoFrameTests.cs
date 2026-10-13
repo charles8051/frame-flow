@@ -4,7 +4,7 @@ using FrameFlow.Media.Tests.Doubles;
 namespace FrameFlow.Media.Tests;
 
 /// <summary>
-/// <see cref="CpuVideoFrame.Create{TState}"/>: the one way to make a CPU frame (ADR-0080,
+/// <c>CpuVideoFrame.Create</c>: the one way to make a CPU frame (ADR-0080,
 /// decision 5). It lays the planes out from the format, runs the fill once, and publishes a frame
 /// nothing can write to afterwards.
 /// </summary>

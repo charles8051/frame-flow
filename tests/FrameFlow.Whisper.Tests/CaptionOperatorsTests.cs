@@ -91,7 +91,82 @@ public sealed class CaptionOperatorsTests
         Assert.Equal(input.To, captured[^1].To);
     }
 
+    // ─── Timeline (ADR-0084, decision 3) ─────────────────────────────
+
+    [Theory]
+    [InlineData("Hello world")]                  // passes through
+    [InlineData("One. Two? Three! Four.")]       // split into pieces
+    public async Task SplitOnPunctuation_EveryPieceKeepsTheInputsTimeline(string text)
+    {
+        var timeline = TimelineId.Next();
+        var input = new Caption(TimeSpan.Zero, TimeSpan.FromSeconds(4), text);
+
+        var captured = await RunOperator(CaptionOperators.SplitOnPunctuation("split"), input, timeline);
+
+        Assert.NotEmpty(captured);
+        Assert.All(captured, c => Assert.Equal(timeline, c.Timeline));
+    }
+
+    [Theory]
+    [InlineData("Hello")]                        // passes through
+    [InlineData("One two three four")]           // revealed word by word
+    public async Task AnimatedReveal_EverySubCaptionKeepsTheInputsTimeline(string text)
+    {
+        var timeline = TimelineId.Next();
+        var input = new Caption(TimeSpan.Zero, TimeSpan.FromSeconds(1), text);
+
+        var captured = await RunOperator(CaptionOperators.AnimatedReveal("reveal", 200.0), input, timeline);
+
+        Assert.NotEmpty(captured);
+        Assert.All(captured, c => Assert.Equal(timeline, c.Timeline));
+    }
+
+    [Fact]
+    public void ACaptionBuiltWithoutATimeline_IsOnNone()
+    {
+        using var caption = new CaptionRef(new Caption(TimeSpan.Zero, TimeSpan.FromSeconds(1), "Hi"));
+
+        Assert.Equal(TimelineId.None, caption.Timeline);
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────
+
+    private static async Task<List<(Caption Value, TimelineId Timeline)>> RunOperator(
+        MultiOperatorNode<CaptionRef, CaptionRef> node,
+        Caption input,
+        TimelineId timeline
+    )
+    {
+        var captured = new List<(Caption, TimelineId)>();
+        var emitted = false;
+
+        var source = new SourceNode<CaptionRef>(
+            "src",
+            (ct) =>
+            {
+                if (emitted)
+                    return ValueTask.FromResult<CaptionRef?>(null);
+                emitted = true;
+                return ValueTask.FromResult<CaptionRef?>(new CaptionRef(input, timeline));
+            }
+        );
+
+        var sink = new SinkNode<CaptionRef>(
+            "sink",
+            (item, ct) =>
+            {
+                lock (captured)
+                    captured.Add((item.Value, item.Timeline));
+                return ValueTask.CompletedTask;
+            }
+        );
+
+        var graph = new Graph.Graph();
+        graph.Pipeline(source).Then(node).To(sink);
+        await graph.RunAsync();
+
+        return captured;
+    }
 
     private static async Task<List<Caption>> RunSplit(Caption input)
     {

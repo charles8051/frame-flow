@@ -94,13 +94,13 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     /// A throwing handler is swallowed and logged: a consumer that cannot process one present
     /// is not a reason to stall the UI thread's present loop.
     /// </remarks>
-    internal void RaiseFramePresented(TimeSpan pts)
+    internal void RaiseFramePresented(TimeSpan pts, TimelineId timeline)
     {
         var handler = FramePresented;
         if (handler is null)
             return;
 
-        var info = new FramePresentedInfo(pts, DateTime.UtcNow);
+        var info = new FramePresentedInfo(pts, DateTime.UtcNow) { Timeline = timeline };
 
         // One subscriber at a time: a chain invocation abandons every handler after the one
         // that threw, so a broken consumer would silently stop an unrelated overlay updating.

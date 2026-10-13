@@ -13,7 +13,7 @@ public static class VideoFrameExtensions
     /// <summary>
     /// Returns a fresh, independently-disposable CPU copy of
     /// <paramref name="frame"/>. Every plane is copied; metadata (PTS,
-    /// duration, format) is preserved.
+    /// duration, format, pixel shape, rotation and timeline) is preserved.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -25,7 +25,7 @@ public static class VideoFrameExtensions
     /// </para>
     /// <para>
     /// <b>Layout.</b> The clone is tightly packed, the layout
-    /// <see cref="CpuVideoFrame.Create{TState}"/> gives its format. A source
+    /// <c>CpuVideoFrame.Create</c> gives its format. A source
     /// whose rows carry padding is copied row by row, so the clone's
     /// strides can be smaller than the source's. NV12's interleaved chroma
     /// is read from and written to <c>PlaneU</c>.
@@ -56,6 +56,7 @@ public static class VideoFrameExtensions
             frame.Height,
             frame.Pts,
             frame.Duration,
+            frame.Timeline,
             cpu,
             static (planes, source) =>
             {

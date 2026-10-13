@@ -16,7 +16,7 @@ namespace FrameFlow.Inference;
 /// <remarks>
 /// <para>
 /// Each model's decoder configures one <see cref="TensorToImageOptions"/> and calls
-/// <see cref="ToFrame"/> per run, or
+/// <c>ToFrame</c> per run, or
 /// <see cref="Write(ReadOnlySpan{float}, TensorToImageOptions, Span{byte}, int)"/> to fill a buffer of its own.
 /// </para>
 /// <para>
@@ -68,11 +68,46 @@ public static class TensorToImage
     /// finite, or a per-channel normalization for a single-channel tensor; or the tensor is not 32-bit float or does not hold
     /// exactly <see cref="TensorToImageOptions.ElementCount"/> elements.
     /// </exception>
+    /// <remarks>
+    /// The frame's <see cref="CpuVideoFrame.Timeline"/> is <see cref="TimelineId.None"/>. A model
+    /// whose output stands for a frame it was given takes the overload that names that frame's
+    /// timeline (ADR-0084).
+    /// </remarks>
     public static CpuVideoFrame ToFrame(
         ICpuTensor tensor,
         TensorToImageOptions options,
         TimeSpan presentationTime,
         TimeSpan duration,
+        ArrayPool<byte>? pool = null)
+        => ToFrame(tensor, options, presentationTime, duration, TimelineId.None, pool);
+
+    /// <summary>
+    /// Creates a <see cref="CpuVideoFrame"/> in <see cref="TensorToImageOptions.Format"/> from
+    /// <paramref name="tensor"/>, on <paramref name="timeline"/>. The frame owns its pixels, so the
+    /// tensor can be reused once this returns.
+    /// </summary>
+    /// <param name="tensor">A 32-bit float tensor of <see cref="TensorToImageOptions.ElementCount"/> elements.</param>
+    /// <param name="options">The tensor's layout and normalization, and the frame's format.</param>
+    /// <param name="presentationTime">The frame's presentation timestamp.</param>
+    /// <param name="duration">How long the frame is displayed.</param>
+    /// <param name="timeline">
+    /// The timeline the frame belongs to (ADR-0084): the <see cref="IFrame.Timeline"/> of the frame
+    /// the model was given, so the image it made follows that frame's run.
+    /// </param>
+    /// <param name="pool">Where the frame's storage comes from. Defaults to <see cref="ArrayPool{T}.Shared"/>.</param>
+    /// <returns>The frame, holding one reference.</returns>
+    /// <exception cref="NotSupportedException">The options ask for a format other than Bgra32 or Rgba32.</exception>
+    /// <exception cref="ArgumentException">
+    /// The options name an undefined mode, a normalization whose inverse or 255-sample span is not
+    /// finite, or a per-channel normalization for a single-channel tensor; or the tensor is not 32-bit float or does not hold
+    /// exactly <see cref="TensorToImageOptions.ElementCount"/> elements.
+    /// </exception>
+    public static CpuVideoFrame ToFrame(
+        ICpuTensor tensor,
+        TensorToImageOptions options,
+        TimeSpan presentationTime,
+        TimeSpan duration,
+        TimelineId timeline,
         ArrayPool<byte>? pool = null)
     {
         ArgumentNullException.ThrowIfNull(tensor);
@@ -98,6 +133,7 @@ public static class TensorToImage
             options.Height,
             presentationTime,
             duration,
+            timeline,
             (Tensor: tensor, Options: options),
             static (planes, state) => Write(
                 MemoryMarshal.Cast<byte, float>(state.Tensor.Bytes.Span),
