@@ -12,12 +12,17 @@ namespace FrameFlow.Whisper.Core;
 /// <param name="ArrivedAt">Presentation time of the frame it arrived with.</param>
 internal readonly record struct TimedCaption(Caption Caption, TimeSpan ArrivedAt);
 
-/// <summary>A caption of a timeline that has not been presented yet, waiting for it.</summary>
+/// <summary>
+/// A caption waiting for a frame: one added since the last frame while a timeline is on screen, or
+/// one of a timeline not presented yet.
+/// </summary>
 /// <param name="Caption">The caption.</param>
-/// <param name="Timeline">The timeline it was transcribed on.</param>
+/// <param name="Timeline">
+/// The timeline it was transcribed on, or <see cref="TimelineId.None"/> when it names none.
+/// </param>
 /// <param name="ArrivedAt">
-/// Presentation time of the frame on screen when it arrived, on the timeline on screen then. It
-/// only groups the captions that arrived together.
+/// Presentation time given with it, on the timeline on screen then. It only groups the captions
+/// that arrived together.
 /// </param>
 internal readonly record struct HeldCaption(Caption Caption, TimelineId Timeline, TimeSpan ArrivedAt);
 
@@ -31,20 +36,29 @@ internal readonly record struct HeldCaption(Caption Caption, TimelineId Timeline
 /// <b>Tracked timelines (ADR-0084).</b> Captions are derived items matched against what is shown,
 /// so the order comes from presentation, through a <see cref="PresentedTimeline"/>. A frame on a
 /// timeline other than the one on screen starts a new timeline with nothing from the one it left,
-/// whichever way its time moved. A caption of a timeline the screen has left is dropped. A caption
-/// of a timeline not yet presented is held, and joins the screen with the first frame of its
-/// timeline, as if it arrived with that frame. Held captions are bounded by count, not by age:
-/// only what could show then is kept, the latest batch, or with <see cref="MaxStackedLines"/>
-/// above one, that many of the latest captions. On one tracked timeline the time is continuous,
-/// so a time below <see cref="Now"/> is not a jump.
+/// whichever way its time moved. Once a timeline is on screen, a caption added waits for the next
+/// frame and is matched against that frame's timeline, so a caption that arrives with the first
+/// frame of a new timeline is judged on it: shown if it is of that timeline or names none, dropped
+/// if the screen has left its timeline, and held otherwise. A held caption joins the screen with
+/// the first frame of its timeline, as if it arrived with that frame. On one tracked timeline the
+/// time is continuous, so a time below <see cref="Now"/> is not a jump.
 /// </para>
 /// <para>
-/// <b>Untracked.</b> Where the frame or the screen names no timeline, frames present in rising
-/// PTS order until a seek, a loop or the next item. A time below <see cref="Now"/> can only be one
-/// of those, so it starts a new timeline with nothing on it. A caption from before the jump is not
-/// kept to show again when playback reaches its stamp, and the time before the jump no longer sets
-/// the cutoff that evicts the captions after it. A caption on <see cref="TimelineId.None"/> belongs
-/// to the timeline on screen.
+/// <b>Untracked.</b> Until a frame names a timeline, and for a frame that names none, frames
+/// present in rising PTS order until a seek, a loop or the next item. A time below
+/// <see cref="Now"/> can only be one of those, so it starts a new timeline with nothing on it. A
+/// caption from before the jump is not kept to show again when playback reaches its stamp, and the
+/// time before the jump no longer sets the cutoff that evicts the captions after it. A caption on
+/// <see cref="TimelineId.None"/> belongs to the timeline on screen.
+/// </para>
+/// <para>
+/// <b>Bounds.</b> A caption on screen is dropped once it is more than
+/// <see cref="DisplayDuration"/> behind <see cref="Now"/>, and once it can no longer show: past
+/// the latest batch, or with <see cref="MaxStackedLines"/> above one, past that many of the latest
+/// captions. A held caption has no clock to age on, since its timeline has not been presented, so
+/// it is bounded by count alone. Each timeline keeps what could show once it presents, and the
+/// captions of at most <see cref="PresentedTimeline.HistoryCapacity"/> timelines wait at once; past
+/// that, the timeline heard from least recently is dropped.
 /// </para>
 /// </remarks>
 internal sealed record CaptionTimelineState
@@ -69,12 +83,12 @@ internal sealed record CaptionTimelineState
     public int MaxStackedLines { get; }
 
     /// <summary>
-    /// The captions of the timeline on screen within <see cref="DisplayDuration"/> of
-    /// <see cref="Now"/>, in the order they arrived.
+    /// The captions of the timeline on screen that can still show at <see cref="Now"/>, in the
+    /// order they arrived.
     /// </summary>
     public ImmutableArray<TimedCaption> Entries { get; private init; } = [];
 
-    /// <summary>The captions of timelines not presented yet, in the order they arrived.</summary>
+    /// <summary>The captions waiting for a frame, in the order they arrived.</summary>
     public ImmutableArray<HeldCaption> Held { get; private init; } = [];
 
     /// <summary>The timeline on screen, and the ones it has left.</summary>
@@ -90,47 +104,37 @@ internal sealed record CaptionTimelineState
     public CaptionTimelineState MoveTo(TimeSpan pts) => MoveTo(pts, TimelineId.None);
 
     /// <summary>
-    /// Moves to the frame at <paramref name="pts"/> on <paramref name="timeline"/>. A timeline
-    /// other than the one on screen starts a new timeline there, with the captions held for it. On
-    /// the timeline on screen the captions that have aged out are dropped. Where either side names
-    /// no timeline, a time below <see cref="Now"/> starts a new, empty timeline there.
+    /// Moves to the frame at <paramref name="pts"/> on <paramref name="timeline"/>, then matches
+    /// the held captions against it. A timeline other than the one on screen starts a new timeline
+    /// there. On the timeline on screen the captions that have aged out are dropped. Where either
+    /// side names no timeline, a time below <see cref="Now"/> starts a new, empty timeline there.
     /// </summary>
     public CaptionTimelineState MoveTo(TimeSpan pts, TimelineId timeline)
     {
         var screen = Presented.Present(timeline);
-        if (Presented.Current != TimelineId.None && screen.Current != Presented.Current)
-            return Start(screen, pts);
-
-        var known = timeline != TimelineId.None && timeline == Presented.Current;
-        if (!known && Now is { } now && pts < now)
-            return this with { Presented = screen, Entries = [], Now = pts };
-
-        int expired = 0;
-        while (expired < Entries.Length && pts - Entries[expired].ArrivedAt > DisplayDuration)
-            expired++;
-
-        if (expired == 0 && Now == pts && ReferenceEquals(screen, Presented))
-            return this;
-        return this with { Presented = screen, Entries = Entries.RemoveRange(0, expired), Now = pts };
+        var moved =
+            Presented.Current != TimelineId.None && screen.Current != Presented.Current
+                ? this with { Presented = screen, Entries = [], Now = pts }
+                : Advance(screen, pts, known: timeline != TimelineId.None && timeline == Presented.Current);
+        return moved.Match(pts);
     }
 
     /// <summary>Adds <paramref name="caption"/>, on no known timeline, as arriving at <paramref name="pts"/>.</summary>
     public CaptionTimelineState Add(Caption caption, TimeSpan pts) => Add(caption, pts, TimelineId.None);
 
     /// <summary>
-    /// Moves to <paramref name="pts"/> on the timeline on screen, then takes
-    /// <paramref name="caption"/>, transcribed on <paramref name="timeline"/>, as arriving there:
-    /// shown if its timeline is on screen, dropped if the screen has left it, and held otherwise.
+    /// Takes <paramref name="caption"/>, transcribed on <paramref name="timeline"/>, as arriving
+    /// with the frame at <paramref name="pts"/>. Before a frame has named a timeline, it moves to
+    /// <paramref name="pts"/> and shows the caption. After, the caption waits for the next frame,
+    /// which matches it.
     /// </summary>
     public CaptionTimelineState Add(Caption caption, TimeSpan pts, TimelineId timeline)
     {
-        var moved = MoveTo(pts, Presented.Current);
-        return moved.Presented.Classify(timeline) switch
-        {
-            TimelineRelation.Past => moved,
-            TimelineRelation.Upcoming => moved with { Held = moved.Hold(new HeldCaption(caption, timeline, pts)) },
-            _ => moved with { Entries = moved.Entries.Add(new TimedCaption(caption, pts)) },
-        };
+        if (Presented.Current != TimelineId.None)
+            return this with { Held = BoundHeld(Held.Add(new HeldCaption(caption, timeline, pts))) };
+
+        var moved = Advance(Presented, pts, known: false);
+        return moved with { Entries = BoundEntries(moved.Entries.Add(new TimedCaption(caption, pts))) };
     }
 
     /// <summary>
@@ -169,51 +173,141 @@ internal sealed record CaptionTimelineState
         return shown;
     }
 
-    // A new timeline on screen at pts: nothing from the one it replaces, and the captions held
-    // for it as if they arrived with this frame. The rest stay held while still upcoming.
-    private CaptionTimelineState Start(PresentedTimeline screen, TimeSpan pts)
+    // On the timeline on screen: a time below Now is a jump only where a side names no timeline;
+    // otherwise the captions that aged out are dropped.
+    private CaptionTimelineState Advance(PresentedTimeline screen, TimeSpan pts, bool known)
     {
-        var entries = ImmutableArray.CreateBuilder<TimedCaption>();
-        var held = ImmutableArray.CreateBuilder<HeldCaption>();
-        foreach (var waiting in Held)
+        if (!known && Now is { } now && pts < now)
+            return this with { Presented = screen, Entries = [], Now = pts };
+
+        var kept = Expire(pts);
+        if (kept.Length == Entries.Length && Now == pts && ReferenceEquals(screen, Presented))
+            return this;
+        return this with { Presented = screen, Entries = kept, Now = pts };
+    }
+
+    // Every caption more than the display duration behind pts. Arrival order is not stamp order:
+    // on one tracked timeline a frame can step back, and a caption arrive below an earlier one.
+    private ImmutableArray<TimedCaption> Expire(TimeSpan pts)
+    {
+        int expired = 0;
+        foreach (var entry in Entries)
         {
-            if (waiting.Timeline == screen.Current)
-                entries.Add(new TimedCaption(waiting.Caption, pts));
-            // Defensive: no held caption is of a timeline left, since presenting a timeline
-            // takes every caption held for it and Add never holds a past one.
-            else if (screen.Classify(waiting.Timeline) == TimelineRelation.Upcoming)
-                held.Add(waiting);
+            if (pts - entry.ArrivedAt > DisplayDuration)
+                expired++;
         }
+
+        if (expired == 0)
+            return Entries;
+
+        var kept = ImmutableArray.CreateBuilder<TimedCaption>(Entries.Length - expired);
+        foreach (var entry in Entries)
+        {
+            if (pts - entry.ArrivedAt <= DisplayDuration)
+                kept.Add(entry);
+        }
+
+        return kept.MoveToImmutable();
+    }
+
+    // The held captions against the frame at pts, now on screen: of its timeline or of none, they
+    // join it as if they arrived with it; of a timeline it has left, they are dropped; of one not
+    // presented yet, they keep waiting.
+    private CaptionTimelineState Match(TimeSpan pts)
+    {
+        if (Held.IsEmpty)
+            return this;
+
+        var joined = ImmutableArray.CreateBuilder<TimedCaption>();
+        var waiting = ImmutableArray.CreateBuilder<HeldCaption>();
+        foreach (var held in Held)
+        {
+            switch (Presented.Classify(held.Timeline))
+            {
+                case TimelineRelation.Current:
+                    joined.Add(new TimedCaption(held.Caption, pts));
+                    break;
+                case TimelineRelation.Upcoming:
+                    waiting.Add(held);
+                    break;
+            }
+        }
+
+        if (waiting.Count == Held.Length)
+            return this;
 
         return this with
         {
-            Presented = screen,
-            Entries = entries.ToImmutable(),
-            Held = held.ToImmutable(),
-            Now = pts,
+            Entries = joined.Count == 0 ? Entries : BoundEntries(Entries.AddRange(joined.ToImmutable())),
+            Held = waiting.ToImmutable(),
         };
     }
 
-    // Held captions are kept only while they could still show once their timeline presents, as
-    // if they all arrived with its first frame: with stacking, the latest MaxStackedLines; without
-    // it, the latest batch, every caption that arrived with the same frame as the newest, as
-    // OnScreen groups them. A batch can hold captions of two timelines, and each shows when its
-    // own timeline presents.
-    private ImmutableArray<HeldCaption> Hold(HeldCaption caption)
+    private ImmutableArray<TimedCaption> BoundEntries(ImmutableArray<TimedCaption> entries) =>
+        Bound(entries, groups: 1, static _ => TimelineId.None, static e => e.ArrivedAt);
+
+    private ImmutableArray<HeldCaption> BoundHeld(ImmutableArray<HeldCaption> held) =>
+        Bound(held, Presented.HistoryCapacity, static h => h.Timeline, static h => h.ArrivedAt);
+
+    // What could still show, for each of the `groups` timelines heard from most recently: with
+    // stacking, its latest MaxStackedLines captions; without it, its latest batch, the captions
+    // that arrived one after another with the same frame as its newest, as OnScreen groups them.
+    private ImmutableArray<T> Bound<T>(
+        ImmutableArray<T> items,
+        int groups,
+        Func<T, TimelineId> timelineOf,
+        Func<T, TimeSpan> arrivedAt
+    )
     {
-        var held = Held.Add(caption);
-        int first;
-        if (MaxStackedLines > 1)
+        if (items.Length <= 1)
+            return items;
+
+        var keep = new bool[items.Length];
+        var seen = new List<Group>(Math.Min(groups, items.Length));
+        int kept = 0;
+        for (int i = items.Length - 1; i >= 0; i--)
         {
-            first = Math.Max(0, held.Length - MaxStackedLines);
-        }
-        else
-        {
-            first = held.Length - 1;
-            while (first > 0 && held[first - 1].ArrivedAt == caption.ArrivedAt)
-                first--;
+            var timeline = timelineOf(items[i]);
+            var at = arrivedAt(items[i]);
+            int g = 0;
+            while (g < seen.Count && seen[g].Timeline != timeline)
+                g++;
+
+            if (g == seen.Count)
+            {
+                if (seen.Count == groups)
+                    continue;
+                seen.Add(new Group(timeline, Count: 1, Batch: at, Closed: false));
+                keep[i] = true;
+                kept++;
+                continue;
+            }
+
+            var group = seen[g];
+            if (group.Closed)
+                continue;
+
+            bool takes = MaxStackedLines > 1 ? group.Count < MaxStackedLines : at == group.Batch;
+            seen[g] = takes ? group with { Count = group.Count + 1 } : group with { Closed = true };
+            if (takes)
+            {
+                keep[i] = true;
+                kept++;
+            }
         }
 
-        return first == 0 ? held : held.RemoveRange(0, first);
+        if (kept == items.Length)
+            return items;
+
+        var bounded = ImmutableArray.CreateBuilder<T>(kept);
+        for (int i = 0; i < items.Length; i++)
+        {
+            if (keep[i])
+                bounded.Add(items[i]);
+        }
+
+        return bounded.MoveToImmutable();
     }
+
+    private readonly record struct Group(TimelineId Timeline, int Count, TimeSpan Batch, bool Closed);
 }

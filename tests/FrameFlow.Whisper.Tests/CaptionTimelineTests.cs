@@ -291,6 +291,22 @@ public sealed class CaptionTimelineTests
     }
 
     [Fact]
+    public void HeldCaptionsOfOneTimeline_AreNotDroppedForThoseOfAnother()
+    {
+        // A short item ahead, and the one after it, both transcribed before either presents.
+        var timeline = new CaptionTimeline(Display);
+        var playing = TimelineId.Next();
+        var next = TimelineId.Next();
+        var after = TimelineId.Next();
+        Present(timeline, Seconds(39), playing);
+        Present(timeline, Seconds(40), playing, ("next", next));
+        Present(timeline, Seconds(41), playing, ("after", after));
+
+        Assert.Equal(["next"], Present(timeline, Seconds(0), next));
+        Assert.Equal(["after"], Present(timeline, Seconds(0), after));
+    }
+
+    [Fact]
     public void HeldCaptionsOfTwoTimelines_ArrivingTogether_EachShowWithTheirOwn()
     {
         // Captions of two timelines not presented yet arrive with one frame: one batch, and each
@@ -321,6 +337,25 @@ public sealed class CaptionTimelineTests
         Assert.Equal(["two"], Present(timeline, Seconds(1), loop, ("two", loop)));
         Assert.Equal(["three"], Present(timeline, Seconds(2), prepared, ("three", prepared), ("late", loop)));
         Assert.Equal(["three"], Present(timeline, Seconds(3), prepared, ("later", firstPass)));
+    }
+
+    [Fact]
+    public void OnOneTimeline_ACaptionStampedBelowAnother_AgesOutOnItsOwnStamp()
+    {
+        // The second caption arrives with a frame 20 ms below the first's, on the same timeline.
+        var playing = TimelineId.Next();
+        var oneLine = new CaptionTimeline(Display);
+        var stacked = new CaptionTimeline(Display, maxStackedLines: 2);
+        foreach (var timeline in new[] { oneLine, stacked })
+        {
+            Present(timeline, Seconds(10), playing, ("a", playing));
+            Present(timeline, Seconds(9.98), playing, ("b", playing));
+        }
+
+        Assert.Equal(["b"], Present(oneLine, Seconds(15.97), playing));
+        Assert.Empty(Present(oneLine, Seconds(15.99), playing));
+        Assert.Equal(["a", "b"], Present(stacked, Seconds(15.97), playing));
+        Assert.Equal(["a"], Present(stacked, Seconds(15.99), playing));
     }
 
     [Fact]
@@ -388,6 +423,19 @@ public sealed class CaptionTimelineTests
 
         Assert.Empty(Present(timeline, Seconds(12), after));
         Assert.Equal(["b"], Present(timeline, Seconds(12.5), after, ("b", TimelineId.None)));
+    }
+
+    [Fact]
+    public void ACaptionWithoutATimeline_ArrivingWithTheFirstFrameOfANewOne_Shows()
+    {
+        // Captions from a source that names no timeline, over frames that do.
+        var timeline = new CaptionTimeline(Display);
+        var before = TimelineId.Next();
+        var after = TimelineId.Next();
+        Assert.Equal(["a"], Present(timeline, Seconds(10), before, ("a", TimelineId.None)));
+
+        Assert.Equal(["b"], Present(timeline, Seconds(2), after, ("b", TimelineId.None)));
+        Assert.Equal(["b"], Present(timeline, Seconds(8), after));
     }
 
     [Fact]
@@ -480,7 +528,10 @@ public sealed class CaptionTimelineStateTests
     [Fact]
     public void MoveTo_Forward_DropsOnlyTheCaptionsThatAgedOut()
     {
-        var state = Empty().Add(Said("a"), Seconds(3)).Add(Said("b"), Seconds(5)).Add(Said("c"), Seconds(7));
+        var state = Empty(maxStackedLines: 3)
+            .Add(Said("a"), Seconds(3))
+            .Add(Said("b"), Seconds(5))
+            .Add(Said("c"), Seconds(7));
 
         // a is 8 s old, b exactly the display duration, c 4 s.
         var moved = state.MoveTo(Seconds(11));
@@ -547,10 +598,15 @@ public sealed class CaptionTimelineStateTests
         var next = TimelineId.Next();
         var state = Empty().MoveTo(Seconds(10), left).MoveTo(Seconds(1), playing);
 
-        var current = state.Add(Said("current"), Seconds(2), playing);
-        var past = state.Add(Said("past"), Seconds(2), left);
-        var upcoming = state.Add(Said("upcoming"), Seconds(2), next);
-        var none = state.Add(Said("none"), Seconds(2), TimelineId.None);
+        // Each waits for the frame it arrived with, which matches it.
+        var waiting = state.Add(Said("current"), Seconds(2), playing);
+        Assert.Empty(waiting.Entries);
+        Assert.Equal([new HeldCaption(Said("current"), playing, Seconds(2))], waiting.Held.ToArray());
+
+        var current = waiting.MoveTo(Seconds(2), playing);
+        var past = state.Add(Said("past"), Seconds(2), left).MoveTo(Seconds(2), playing);
+        var upcoming = state.Add(Said("upcoming"), Seconds(2), next).MoveTo(Seconds(2), playing);
+        var none = state.Add(Said("none"), Seconds(2), TimelineId.None).MoveTo(Seconds(2), playing);
 
         Assert.Equal([new TimedCaption(Said("current"), Seconds(2))], current.Entries.ToArray());
         Assert.Empty(current.Held);
@@ -559,6 +615,25 @@ public sealed class CaptionTimelineStateTests
         Assert.Empty(upcoming.Entries);
         Assert.Equal([new HeldCaption(Said("upcoming"), next, Seconds(2))], upcoming.Held.ToArray());
         Assert.Equal([new TimedCaption(Said("none"), Seconds(2))], none.Entries.ToArray());
+        Assert.Empty(none.Held);
+    }
+
+    [Fact]
+    public void HeldCaptions_OfAtMostTheHistorysCountOfTimelines_TheLeastRecentlyHeardFromGoesFirst()
+    {
+        var playing = TimelineId.Next();
+        var state = Empty(maxStackedLines: 2).MoveTo(Seconds(1), playing);
+        var upcoming = Enumerable.Range(0, state.Presented.HistoryCapacity + 1).Select(_ => TimelineId.Next()).ToArray();
+        foreach (var (timeline, i) in upcoming.Select((t, i) => (t, i)))
+            state = state.Add(Said($"{i}"), Seconds(1), timeline).MoveTo(Seconds(1), playing);
+
+        Assert.Equal(upcoming.Skip(1), state.Held.Select(h => h.Timeline));
+
+        // Heard from again, the oldest kept is now the newest, and the next oldest goes.
+        state = state.Add(Said("again"), Seconds(1), upcoming[1]).Add(Said("new"), Seconds(1), TimelineId.Next());
+
+        Assert.DoesNotContain(state.Held, h => h.Timeline == upcoming[2]);
+        Assert.Equal(["1", "again"], state.Held.Where(h => h.Timeline == upcoming[1]).Select(h => h.Caption.Text));
     }
 
     [Fact]
