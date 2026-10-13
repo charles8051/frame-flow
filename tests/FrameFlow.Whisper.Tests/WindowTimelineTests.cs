@@ -1,10 +1,12 @@
+using FrameFlow.Graph.Core;
 using FrameFlow.Whisper.Core;
 
 namespace FrameFlow.Whisper.Tests;
 
 /// <summary>
-/// The transcription window's timeline: contiguous audio accumulates, a jump starts a new window
-/// at the jump's own time, and closed windows carry the times of their first samples.
+/// The transcription window's timeline: contiguous audio accumulates, a new timeline (or, on a
+/// stream that names none, a jump in time) starts a new window at the buffer's own time, and
+/// closed windows carry the times and the timeline of their samples.
 /// </summary>
 public sealed class WindowTimelineTests
 {
@@ -129,6 +131,11 @@ public sealed class WindowTimelineTests
 
     // ─── Timeline (ADR-0084) ─────────────────────────────────────────
 
+    private static TimelineFollower Following(TimelineId timeline) => default(TimelineFollower).Follow(timeline);
+
+    private static WindowClock Holding(double startSeconds, double heldSeconds, TimelineId timeline) =>
+        new(Seconds(startSeconds), SamplesFor(heldSeconds), Rate, Following(timeline));
+
     [Fact]
     public void TheBufferThatStartsAWindow_GivesItsTimeline()
     {
@@ -139,38 +146,89 @@ public sealed class WindowTimelineTests
         Assert.Equal(timeline, admission.Clock.Timeline);
     }
 
-    [Fact]
-    public void ABufferThatContinuesTheWindow_KeepsTheWindowsTimeline()
+    [Theory]
+    [InlineData(0.0)]     // exactly where the held audio ends
+    [InlineData(-0.040)]  // within the tolerance either way
+    [InlineData(0.002)]
+    [InlineData(0.040)]
+    [InlineData(-5)]      // a seek back
+    public void ABufferOfAnotherTimeline_DropsTheHeldAudio_HoweverCloseItsTime(double offsetSeconds)
     {
-        var started = TimelineId.Next();
-        var held = new WindowClock(Seconds(10), SamplesFor(1), Rate, started);
+        var held = Holding(10, 2, TimelineId.Next());
+        var next = TimelineId.Next();
+        var at = held.End + Seconds(offsetSeconds);
 
-        var admission = WindowTimeline.Admit(held, held.End, SamplesFor(0.1), Rate, TimelineId.Next());
+        var admission = WindowTimeline.Admit(held, at, SamplesFor(0.1), Rate, next);
+
+        Assert.True(admission.Discard);
+        Assert.Equal(at, admission.Clock.Start);
+        Assert.Equal(SamplesFor(0.1), admission.Clock.Samples);
+        Assert.Equal(next, admission.Clock.Timeline);
+    }
+
+    [Theory]
+    [InlineData(-10)]
+    [InlineData(-0.1)]
+    [InlineData(0.1)]
+    [InlineData(47)]
+    public void OnTheTimelineFollowed_TheTimeDoesNotDropTheWindow(double offsetSeconds)
+    {
+        var timeline = TimelineId.Next();
+        var held = Holding(10, 2, timeline);
+
+        var admission = WindowTimeline.Admit(held, held.End + Seconds(offsetSeconds), SamplesFor(0.1), Rate, timeline);
 
         Assert.False(admission.Discard);
-        Assert.Equal(started, admission.Clock.Timeline);
+        Assert.Equal(Seconds(10), admission.Clock.Start);
+        Assert.Equal(SamplesFor(2.1), admission.Clock.Samples);
+        Assert.Equal(timeline, admission.Clock.Timeline);
     }
 
     [Fact]
-    public void AJump_StartsTheNewWindowOnTheJumpingBuffersTimeline()
+    public void ABufferOnNone_IsJudgedByItsTime_AndTheWindowKeepsItsTimeline()
     {
-        var held = new WindowClock(Seconds(10), SamplesFor(1), Rate, TimelineId.Next());
-        var after = TimelineId.Next();
+        var timeline = TimelineId.Next();
+        var held = Holding(10, 2, timeline);
+        var tolerance = WindowTimeline.DiscontinuityTolerance;
+        var tick = TimeSpan.FromTicks(1);
 
-        var admission = WindowTimeline.Admit(held, Seconds(2), SamplesFor(0.1), Rate, after);
+        var within = WindowTimeline.Admit(held, held.End + tolerance, SamplesFor(0.1), Rate, TimelineId.None);
+        var beyond = WindowTimeline.Admit(held, held.End + tolerance + tick, SamplesFor(0.1), Rate, TimelineId.None);
 
-        Assert.True(admission.Discard);
-        Assert.Equal(after, admission.Clock.Timeline);
+        Assert.False(within.Discard);
+        Assert.Equal(SamplesFor(2.1), within.Clock.Samples);
+        Assert.Equal(timeline, within.Clock.Timeline);
+        Assert.True(beyond.Discard);
+        Assert.Equal(timeline, beyond.Clock.Timeline);
+    }
+
+    [Fact]
+    public void TheFirstTimelineNamed_IsJudgedByItsTime_AndAdopted()
+    {
+        var held = Holding(10, 2, TimelineId.None);
+        var timeline = TimelineId.Next();
+
+        var continues = WindowTimeline.Admit(held, held.End, SamplesFor(0.1), Rate, timeline);
+        var jumps = WindowTimeline.Admit(held, held.End + Seconds(1), SamplesFor(0.1), Rate, timeline);
+
+        Assert.False(continues.Discard);
+        Assert.Equal(Seconds(10), continues.Clock.Start);
+        Assert.Equal(SamplesFor(2.1), continues.Clock.Samples);
+        Assert.Equal(timeline, continues.Clock.Timeline);
+        Assert.True(jumps.Discard);
+        Assert.Equal(held.End + Seconds(1), jumps.Clock.Start);
+        Assert.Equal(timeline, jumps.Clock.Timeline);
     }
 
     [Fact]
     public void AnEmptyWindow_TakesTheBuffersTimeline()
     {
-        var empty = new WindowClock(Seconds(15), 0, Rate, TimelineId.Next());
+        var empty = new WindowClock(Seconds(15), 0, Rate, Following(TimelineId.Next()));
         var timeline = TimelineId.Next();
 
         var admission = WindowTimeline.Admit(empty, Seconds(15), SamplesFor(0.1), Rate, timeline);
 
+        Assert.False(admission.Discard);
         Assert.Equal(timeline, admission.Clock.Timeline);
     }
 
@@ -178,7 +236,7 @@ public sealed class WindowTimelineTests
     public void AClosedWindow_AndWhatRemains_CarryTheWindowsTimeline()
     {
         var timeline = TimelineId.Next();
-        var clock = new WindowClock(Seconds(10), FiveSeconds + SamplesFor(0.5), Rate, timeline);
+        var clock = new WindowClock(Seconds(10), FiveSeconds + SamplesFor(0.5), Rate, Following(timeline));
 
         var closed = WindowTimeline.CloseOne(clock, FiveSeconds)!.Value;
 
@@ -214,6 +272,41 @@ public sealed class WindowTimelineTests
             Feed(30 + i * 0.1, after);
 
         Assert.Equal(new[] { (Seconds(0), before), (Seconds(30), after) }, closed);
+    }
+
+    [Fact]
+    public void AfterAJumpTheTimeCannotShow_TheNextWindowHoldsOnlyTheNewTimelinesAudio()
+    {
+        // Three seconds on one timeline from 0 s, then a seek to 20 ms past where it was and six
+        // seconds from there on the next, in 100 ms buffers. The jump is inside the tolerance, so
+        // only the timeline shows it. The first window to close must hold the new audio alone.
+        var before = TimelineId.Next();
+        var after = TimelineId.Next();
+        WindowClock? clock = null;
+        var closed = new List<(TimeSpan Start, TimelineId Timeline)>();
+        var held = 0L;
+
+        void Feed(double pts, TimelineId timeline)
+        {
+            var admission = WindowTimeline.Admit(clock, Seconds(pts), SamplesFor(0.1), Rate, timeline);
+            held = admission.Discard ? SamplesFor(0.1) : held + SamplesFor(0.1);
+            var current = admission.Clock;
+            while (WindowTimeline.CloseOne(current, FiveSeconds) is { } window)
+            {
+                closed.Add((window.Start, window.Timeline));
+                held -= FiveSeconds;
+                current = window.Remainder;
+            }
+            clock = current;
+            Assert.Equal(held, current.Samples);
+        }
+
+        for (int i = 0; i < 30; i++)
+            Feed(i * 0.1, before);
+        for (int i = 0; i < 60; i++)
+            Feed(3.02 + i * 0.1, after);
+
+        Assert.Equal(new[] { (Seconds(3.02), after) }, closed);
     }
 
     // ─── A seek, end to end ──────────────────────────────────────────
