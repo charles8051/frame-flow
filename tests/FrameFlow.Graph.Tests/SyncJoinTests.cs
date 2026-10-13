@@ -103,7 +103,7 @@ public sealed class SyncJoinTests
     /// duration is involved at all (ADR-0072). The join has no event for "an item was
     /// retained", so polling the count it does expose is the observation available.
     /// </remarks>
-    private static async Task SpinUntil(Func<bool> condition, CancellationToken ct)
+    internal static async Task SpinUntil(Func<bool> condition, CancellationToken ct)
     {
         while (!condition())
         {

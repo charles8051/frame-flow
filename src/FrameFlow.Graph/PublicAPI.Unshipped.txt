@@ -208,8 +208,12 @@ FrameFlow.Graph.SourceNode<TOut>.SourceNode(string! id, FrameFlow.Graph.Producer
 FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>
 FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.PrimaryTime.get -> System.Func<TPrimary!, System.TimeSpan>!
 FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.PrimaryTime.init -> void
+FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.PrimaryTimeline.get -> System.Func<TPrimary!, FrameFlow.Graph.TimelineId>?
+FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.PrimaryTimeline.init -> void
 FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.SecondaryInterval.get -> System.Func<TSecondary!, (System.TimeSpan From, System.TimeSpan To)>!
 FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.SecondaryInterval.init -> void
+FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.SecondaryTimeline.get -> System.Func<TSecondary!, FrameFlow.Graph.TimelineId>?
+FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.SecondaryTimeline.init -> void
 FrameFlow.Graph.SyncJoinKeys<TPrimary, TSecondary>.SyncJoinKeys(System.Func<TPrimary!, System.TimeSpan>! PrimaryTime, System.Func<TSecondary!, (System.TimeSpan From, System.TimeSpan To)>! SecondaryInterval) -> void
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>
 FrameFlow.Graph.SyncJoinNode<TPrimary, TSecondary, TOut>.Body.get -> FrameFlow.Graph.SyncJoinOperator<TPrimary!, TSecondary!, TOut!>!
