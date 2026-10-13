@@ -7,6 +7,7 @@ using System.Threading.Channels;
 using FFmpeg.AutoGen.Abstractions;
 using FrameFlow.Decoding.Diagnostics;
 using FrameFlow.Decoding.Internal;
+using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
@@ -83,6 +84,19 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
 
     /// <summary>The packet queue's depth, as resolved from the options.</summary>
     internal int PacketQueueCapacity => _packetQueueCapacity;
+
+    /// <summary>
+    /// The timeline this decoder stamps on every buffer it makes (ADR-0084, decision 2).
+    /// <see cref="TimelineId.None"/> until whoever runs the decoder sets one.
+    /// </summary>
+    /// <remarks>
+    /// Set only between runs: once the previous run's tasks have stopped and
+    /// <see cref="ISeekResettable.ResetForSeek"/> has dropped every packet read before the break
+    /// and flushed the codec, and before the next run starts. Nothing from before the break is
+    /// then left to decode under the new id. Starting the run's task publishes the value to the
+    /// thread that decodes.
+    /// </remarks>
+    internal TimelineId Timeline { get; set; }
 
     // ADR-0055 follow-up: PTS synthesis is a pure fold (AudioPtsSynthesis); this is the
     // threaded accumulator value (cumulative output samples), reset on Flush.
@@ -656,6 +670,7 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
             _targetSampleRate,
             TargetChannels,
             pts,
+            Timeline,
             (Swr: swrPtr, Frame: framePtr, MaxOutput: maxOutputSamples, Channels: TargetChannels),
             static (samples, s) => ConvertInto(samples, s.Swr, s.Frame, s.MaxOutput) * s.Channels
         );

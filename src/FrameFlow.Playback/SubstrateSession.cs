@@ -1993,6 +1993,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
         Interlocked.Exchange(ref _eofFired, 0);
 
+        InstallNewTimeline();
+
         var graph = _graph;
         if (graph is null)
         {
@@ -2101,6 +2103,35 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             },
             CancellationToken.None
         );
+    }
+
+    /// <summary>
+    /// Gives the run about to launch a timeline of its own, and has the decoders stamp it on
+    /// everything they decode from now on (ADR-0084, decision 2).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Called by <see cref="LaunchSessionTasks"/> and nowhere else, so every run gets a new id: an
+    /// item's first run at warm-up, which its first play opens the gates on rather than replacing,
+    /// every relaunch after <see cref="RepositionAsync"/>, a prepared runtime's run at its
+    /// warm-up, and the first run of every new session.
+    /// </para>
+    /// <para>
+    /// The place is the guarantee. A launch follows the previous run's stop and, after a break,
+    /// the <c>ResetForSeek</c> pass that drops every packet read before it and flushes the codecs
+    /// (<see cref="RepositionAsync"/> steps 2 and 5), and it precedes the tasks that decode. So
+    /// nothing from before the break can come out under the new id, and nothing from the new run
+    /// under the old one. Starting the tasks publishes the id to the decode threads.
+    /// </para>
+    /// </remarks>
+    private void InstallNewTimeline()
+    {
+        var timeline = TimelineId.Next();
+        if (_videoDecoder is { } video)
+            video.Timeline = timeline;
+        if (_audioDecoder is { } audio)
+            audio.Timeline = timeline;
+        _logger.LogDebug("Run {RunNumber} launches on {Timeline}.", RunNumber, timeline);
     }
 
     /// <summary>

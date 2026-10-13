@@ -166,6 +166,14 @@ public sealed class MediaPass : IAsyncDisposable
             );
         }
 
+        // A pass is one run, so it is one timeline (ADR-0084, decision 2). Installed before the run
+        // starts, which publishes it to the threads that decode.
+        var timeline = TimelineId.Next();
+        if (_videoDecoder is not null)
+            _videoDecoder.Timeline = timeline;
+        if (_audioDecoder is not null)
+            _audioDecoder.Timeline = timeline;
+
         var graph = new Graph.Graph();
 
         if (hasVideo)

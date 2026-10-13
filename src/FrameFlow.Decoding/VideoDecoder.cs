@@ -222,6 +222,19 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// </summary>
     internal TimeSpan PoolWatchdogInterval { get; set; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// The timeline this decoder stamps on every frame it makes (ADR-0084, decision 2).
+    /// <see cref="TimelineId.None"/> until whoever runs the decoder sets one.
+    /// </summary>
+    /// <remarks>
+    /// Set only between runs: once the previous run's tasks have stopped and
+    /// <see cref="ISeekResettable.ResetForSeek"/> has dropped every packet read before the break
+    /// and flushed the codec, and before the next run starts. Nothing from before the break is
+    /// then left to decode under the new id. Starting the run's task publishes the value to the
+    /// thread that decodes.
+    /// </remarks>
+    internal TimelineId Timeline { get; set; }
+
     // ADR-0038: when true, hwaccel-active decoders yield GpuVideoFrame
     // (cloned AVFrame*) instead of doing the internal readback path.
     // Stored as int + Volatile so the decode worker reads a consistent
@@ -1149,7 +1162,8 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
             backend: HardwareBackend ?? HardwareDecodeBackendKind.Other,
             pool: _pool,
             sampleAspectRatio: DisplayGeometry.Resolve(_containerSampleAspectRatio, accessor.SampleAspectRatio, _codecSampleAspectRatio),
-            rotation: _rotation
+            rotation: _rotation,
+            timeline: Timeline
         );
 
         if (managed is null)
@@ -1258,6 +1272,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 srcHeight,
                 presentationTime,
                 duration,
+                Timeline,
                 (SwsCtx: _swsCtx.DangerousGetHandle(), Source: framePtr),
                 static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source),
                 sampleAspectRatio: DisplayGeometry.Resolve(_containerSampleAspectRatio, accessor.SampleAspectRatio, _codecSampleAspectRatio),
