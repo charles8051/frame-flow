@@ -1,6 +1,8 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Graph;
+using FrameFlow.Graph.Core;
 using FrameFlow.Media;
 
 namespace FrameFlow.Avalonia.Core;
@@ -53,31 +55,57 @@ internal readonly record struct PresentGap(TimeSpan Interval, TimeSpan Held)
 /// next frame can be judged against it (#576). Pure: the caller supplies each arrival, and the next
 /// state is returned rather than stored.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>A new timeline starts it over (ADR-0084, #624).</b> The tracker follows the timeline of the
+/// frames it is given with a <see cref="TimelineFollower"/>, because a sink receives them in the
+/// player's order. The first frame of a new timeline (the next item, a seek, a loop) has no gap
+/// before it, as the sink's first frame has none: the wait before it is the player moving to
+/// another timeline, such as sitting at the end of one item until it is given the next, and not
+/// upstream stopping partway through a timeline. Frames after it are judged from it. Were frames
+/// of two timelines ever to interleave, each change would only start the tracker over: a wait
+/// could go unjudged, but none would be reported as a stall.
+/// </para>
+/// <para>
+/// A frame on <see cref="TimelineId.None"/> belongs to the timeline being followed, and the first
+/// id the tracker sees is adopted without starting over, so frames from a source that carries no
+/// timeline are judged as they were before timelines.
+/// </para>
+/// </remarks>
 internal readonly struct PresentGapTracker
 {
     // Null until the first frame: there is no gap before it.
     private readonly TimeSpan? _lastArrival;
     private readonly TimeSpan _lastDuration;
+    private readonly TimelineFollower _timeline;
 
-    private PresentGapTracker(TimeSpan lastArrival, TimeSpan lastDuration)
+    private PresentGapTracker(TimeSpan lastArrival, TimeSpan lastDuration, TimelineFollower timeline)
     {
         _lastArrival = lastArrival;
         _lastDuration = lastDuration;
+        _timeline = timeline;
     }
 
     /// <summary>
-    /// Folds in a frame that arrived at <paramref name="arrival"/> and is meant to show for
-    /// <paramref name="duration"/>.
+    /// Folds in a frame that arrived at <paramref name="arrival"/>, is meant to show for
+    /// <paramref name="duration"/> and belongs to <paramref name="timeline"/>.
     /// </summary>
     /// <param name="arrival">When the frame arrived, on any clock that only moves forward.</param>
     /// <param name="duration">The frame's <see cref="IVideoFrame.Duration"/>.</param>
+    /// <param name="timeline">The frame's <see cref="IFrame.Timeline"/>.</param>
     /// <returns>
     /// The next state, and the gap before this frame, judged on the previous frame's duration.
-    /// <see langword="null"/> for the first frame.
+    /// <see langword="null"/> for the first frame, and for the first frame of a new timeline.
     /// </returns>
-    public (PresentGapTracker Next, PresentGap? Gap) Observe(TimeSpan arrival, TimeSpan duration) =>
+    public (PresentGapTracker Next, PresentGap? Gap) Observe(
+        TimeSpan arrival,
+        TimeSpan duration,
+        TimelineId timeline
+    ) =>
         (
-            new PresentGapTracker(arrival, duration),
-            _lastArrival is { } last ? new PresentGap(arrival - last, _lastDuration) : null
+            new PresentGapTracker(arrival, duration, _timeline.Follow(timeline)),
+            _lastArrival is { } last && !_timeline.StartsNewTimeline(timeline)
+                ? new PresentGap(arrival - last, _lastDuration)
+                : null
         );
 }

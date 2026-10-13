@@ -49,9 +49,10 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     private readonly long _createdTimestamp;
     private volatile bool _disposed;
 
-    // Stall-detection state: when the most recent PresentAsync frame arrived and how long it is
-    // meant to show. Used to flag a frame arriving > 500 ms after the previous one finished showing
-    // as a Warning, so post-mortem log inspection can see when the sink stopped receiving frames.
+    // Stall-detection state: when the most recent PresentAsync frame arrived, how long it is meant
+    // to show, and the timeline it belongs to. Used to flag a frame arriving > 500 ms after the
+    // previous one finished showing as a Warning, so post-mortem log inspection can see when the
+    // sink stopped receiving frames. A frame of a new timeline starts it over (ADR-0084, #624).
     // Only PresentAsync touches it, and its calls do not overlap: a graph's sink pump awaits each
     // one before taking the next frame, a player's pacers present through one VideoFormatAnnouncer
     // whose semaphore serializes them even while two items overlap at a queue boundary, and
@@ -206,9 +207,12 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
         // that pins where a video freeze actually lives. The previous frame's
         // own duration is not part of the gap: a still is one frame held for
         // its whole dwell, and the next item's frame follows it by design (#576).
+        // The first frame of a new timeline has no gap before it: the wait is
+        // the player moving on, such as a new item after Ended (#624).
         (_gapTracker, var gap) = _gapTracker.Observe(
             _timeProvider.GetElapsedTime(_createdTimestamp),
-            frame.Duration
+            frame.Duration,
+            frame.Timeline
         );
         if (gap is { } g)
         {

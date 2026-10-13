@@ -6,8 +6,9 @@ using Microsoft.Extensions.Time.Testing;
 namespace FrameFlow.Avalonia.Tests;
 
 /// <summary>
-/// Pins #576 through the sink: a still held for its dwell logs no PRESENT GAP, and a frame that
-/// arrives late past the previous frame's display still does.
+/// Pins #576 and #624 through the sink: a still held for its dwell, and the next item after the
+/// player sat at Ended, log no PRESENT GAP, and a frame that arrives late past the previous frame's
+/// display still does.
 /// </summary>
 /// <remarks>
 /// The sink reads arrivals from a <see cref="FakeTimeProvider"/> the test advances, and each present
@@ -80,19 +81,59 @@ public sealed class AvaloniaVideoSinkPresentGapTests
         Assert.Single(_log.Gaps);
     }
 
-    private static async Task PresentAsync(AvaloniaVideoSink sink, TimeSpan duration)
+    [Fact]
+    public async Task ANewItemAfterThePlayerSatAtEnded_LogsNoGap()
     {
-        await sink.PresentAsync(new HeldFrame(duration), CancellationToken.None);
+        // #624: the item played to its end, and the player was given the next one 3 s later.
+        await using var sink = new AvaloniaVideoSink(_log, _time);
+        var ended = TimelineId.Next();
+        var given = TimelineId.Next();
+
+        await PresentAsync(sink, FrameInterval, ended);
+        _time.Advance(TimeSpan.FromMilliseconds(3193));
+        await PresentAsync(sink, FrameInterval, given);
+
+        Assert.Empty(_log.Gaps);
+    }
+
+    [Fact]
+    public async Task AFrameLateInTheNewItem_LogsAGap()
+    {
+        await using var sink = new AvaloniaVideoSink(_log, _time);
+        var ended = TimelineId.Next();
+        var given = TimelineId.Next();
+
+        await PresentAsync(sink, FrameInterval, ended);
+        _time.Advance(TimeSpan.FromMilliseconds(3193));
+        await PresentAsync(sink, FrameInterval, given);
+        _time.Advance(FrameInterval + TimeSpan.FromMilliseconds(600));
+        await PresentAsync(sink, FrameInterval, given);
+
+        var gap = Assert.Single(_log.Gaps);
+        Assert.Contains("PRESENT GAP 633ms after a frame meant to show for 33ms", gap);
+    }
+
+    private static async Task PresentAsync(
+        AvaloniaVideoSink sink,
+        TimeSpan duration,
+        TimelineId timeline = default
+    )
+    {
+        await sink.PresentAsync(new HeldFrame(duration, timeline), CancellationToken.None);
         sink.RenderPendingFrame()?.Dispose();
     }
 
-    /// <summary>A frame that only says how long it shows. Nothing here reads its pixels.</summary>
-    private sealed class HeldFrame(TimeSpan duration) : IVideoFrame
+    /// <summary>
+    /// A frame that only says how long it shows and which timeline it belongs to. Nothing here
+    /// reads its pixels.
+    /// </summary>
+    private sealed class HeldFrame(TimeSpan duration, TimelineId timeline) : IVideoFrame
     {
         public int Width => 16;
         public int Height => 16;
         public TimeSpan Pts => TimeSpan.Zero;
         public TimeSpan Duration => duration;
+        public TimelineId Timeline => timeline;
         public PixelFormat Format => PixelFormat.Bgra32;
         public FrameMemoryDomain MemoryDomain => FrameMemoryDomain.Cpu;
 
