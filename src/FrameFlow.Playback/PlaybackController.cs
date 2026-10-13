@@ -274,6 +274,10 @@ public static class PlaybackController
     /// <see cref="VideoStreamInfo.CodecName"/> reports them, such as <c>"av1"</c>. Null or empty
     /// excludes none. Under <see cref="HardwareDecodeMode.Required"/> an excluded codec fails to load.
     /// </param>
+    /// <param name="prepareNextItem">
+    /// Whether the playlist prepares the item its queue would take next while the current one
+    /// plays (media-clips decision 8).
+    /// </param>
     internal static IPlaybackController CreatePlaylist(
         PlaylistCoordinator coordinator,
         IVideoSink? videoSink = null,
@@ -290,7 +294,8 @@ public static class PlaybackController
         TimeProvider? timeProvider = null,
         HardwareDevice? hardwareDevice = null,
         IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
-        IReadOnlyList<string>? excludedCodecs = null
+        IReadOnlyList<string>? excludedCodecs = null,
+        bool prepareNextItem = false
     )
     {
         ArgumentNullException.ThrowIfNull(coordinator);
@@ -309,7 +314,8 @@ public static class PlaybackController
                 latenessRecovery,
                 hardwareDevice: hardwareDevice,
                 preferredBackends: preferredBackends,
-                excludedCodecs: excludedCodecs
+                excludedCodecs: excludedCodecs,
+                prepareNextItem: prepareNextItem
             ),
             initialRepeatMode,
             clock,

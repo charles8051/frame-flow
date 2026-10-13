@@ -40,6 +40,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
     private HardwareDecodeBackendKind[] _preferredBackends = [];
     private string[] _excludedCodecs = [];
     private bool _activateAudioSink = true;
+    private bool _prepareNextItem;
 
     public IPlayerBuilder WithMedia(string path)
     {
@@ -177,6 +178,12 @@ internal sealed class PlayerBuilder : IPlayerBuilder
         return this;
     }
 
+    public IPlayerBuilder WithNextItemPrepared(bool prepare = true)
+    {
+        _prepareNextItem = prepare;
+        return this;
+    }
+
     public IPlayerBuilder WithAudioActivation(bool activateAudioSink = true)
     {
         _activateAudioSink = activateAudioSink;
@@ -235,6 +242,7 @@ internal sealed class PlayerBuilder : IPlayerBuilder
             hardwareDevice: _hardwareDevice,
             preferredBackends: _preferredBackends,
             excludedCodecs: _excludedCodecs,
+            prepareNextItem: _prepareNextItem,
             cancellationToken: cancellationToken
         );
     }

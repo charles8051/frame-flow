@@ -151,6 +151,35 @@ public interface IMediaPlayer : IMediaTransport
     Task<Result> JumpToAsync(PlaylistItem item, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Prepares <paramref name="item"/> ahead: opens it, positions it at its start and decodes up
+    /// to it, so that a later jump, skip or advance to it starts at once. Completes once it is open
+    /// and decoding.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One item is prepared at a time, and a later call replaces an earlier one: the earlier call
+    /// then completes with a failed <see cref="Result"/>. A prepared item stays prepared until it
+    /// becomes current or another is prepared, and while it is, the player does not prepare its
+    /// next item in its place (<see cref="IPlayerBuilder.WithNextItemPrepared"/>).
+    /// </para>
+    /// <para>
+    /// The current item, and another clip of its source, need nothing: the player reaches them by
+    /// repositioning the open item, and the call succeeds at once. Preparing does not disturb the
+    /// item that is playing.
+    /// </para>
+    /// <para>
+    /// The decode from the keyframe before the start goes on after the call completes, and a jump
+    /// that comes before it finishes waits for the rest.
+    /// </para>
+    /// </remarks>
+    /// <returns>
+    /// A failed <see cref="Result"/> with <see cref="ErrorCategory.InvalidOperation"/> when the
+    /// item is not in the player, nothing is loaded, the playlist has ended, or another item was
+    /// prepared first; or the failure opening the item met.
+    /// </returns>
+    Task<Result> PrepareAsync(PlaylistItem item, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Removes <paramref name="item"/> from the queue. The current item is never stopped:
     /// removing it lets it play on, and when it ends the player takes the next item as usual,
     /// without repeating it under <see cref="RepeatMode.One"/>.

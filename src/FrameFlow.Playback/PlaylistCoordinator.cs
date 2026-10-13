@@ -44,6 +44,7 @@ internal sealed class PlaylistCoordinator
 
     private Action? _skipHandler;
     private Action? _jumpHandler;
+    private Func<PlaylistItem, CancellationToken, Task<Result>>? _prepareHandler;
     private object? _sessionToken;
 
     /// <summary>
@@ -256,6 +257,39 @@ internal sealed class PlaylistCoordinator
     /// <summary>A copy of the queue, taken under the coordinator's lock.</summary>
     public PlaylistSnapshot Snapshot() => Queue.Snapshot();
 
+    /// <summary>
+    /// Asks the attached session to prepare <paramref name="item"/> ahead, and completes when it
+    /// is ready (media-clips decision 8).
+    /// </summary>
+    /// <returns>
+    /// A failed <see cref="Result"/> with <see cref="ErrorCategory.InvalidOperation"/> when the
+    /// item is not in the player or no session is attached, or the failure preparing it met.
+    /// </returns>
+    public Task<Result> RequestPrepareAsync(PlaylistItem item, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        Func<PlaylistItem, CancellationToken, Task<Result>>? handler;
+        bool inPlayer;
+        lock (_gate)
+        {
+            inPlayer = _queue.InPlayer(item) || ReferenceEquals(_queue.Current, item);
+            handler = _prepareHandler;
+        }
+
+        if (!inPlayer)
+        {
+            return Task.FromResult(
+                Result.Fail(ErrorCategory.InvalidOperation, $"Cannot prepare '{item}': it is not in the player.")
+            );
+        }
+
+        return handler is null
+            ? Task.FromResult(
+                Result.Fail(ErrorCategory.InvalidOperation, $"Cannot prepare '{item}': nothing is loaded yet.")
+            )
+            : handler(item, cancellationToken);
+    }
+
     // ── Session-facing (internal) ───────────────────────────────────────────
 
     /// <summary>
@@ -333,7 +367,11 @@ internal sealed class PlaylistCoordinator
     /// Wires the active session's skip and jump entry points. Set by the session in its
     /// <c>InitializeAsync</c>. Returns a token for <see cref="DetachSession"/>.
     /// </summary>
-    internal object AttachSession(Action onSkip, Action onJump)
+    internal object AttachSession(
+        Action onSkip,
+        Action onJump,
+        Func<PlaylistItem, CancellationToken, Task<Result>>? onPrepare = null
+    )
     {
         ArgumentNullException.ThrowIfNull(onSkip);
         ArgumentNullException.ThrowIfNull(onJump);
@@ -342,6 +380,7 @@ internal sealed class PlaylistCoordinator
         {
             _skipHandler = onSkip;
             _jumpHandler = onJump;
+            _prepareHandler = onPrepare;
             _sessionToken = token;
         }
         return token;
@@ -359,6 +398,7 @@ internal sealed class PlaylistCoordinator
                 return;
             _skipHandler = null;
             _jumpHandler = null;
+            _prepareHandler = null;
             _sessionToken = null;
         }
     }

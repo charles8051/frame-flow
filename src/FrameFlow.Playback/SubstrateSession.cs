@@ -115,10 +115,24 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     // at open, and by a rewind that hands the runtime to another item of the same source.
     private TimeSpan? _itemEnd;
 
+    // Whether this runtime may act on what it shares with the item that is playing: the position
+    // clock, the audio sink, and the audio sink's clock. A runtime prepared ahead is opened
+    // detached while another item plays, positions and warms up without touching any of them,
+    // and is attached when it becomes current (media-clips decision 8).
+    private bool _attached = true;
+
+    // Where a detached runtime was positioned, for Attach to seat the shared clocks on.
+    private TimeSpan _detachedOrigin;
+
     // The end the current run stops at, in ticks, or long.MaxValue when it has none. Written only
     // before a run launches, and read by the end filter on the graph's sources as each frame or
     // buffer is decoded (media-clips decision 6).
     private long _runEndTicks = long.MaxValue;
+
+    // Where the current run starts, for each of the graph's sources. The floor filter on each
+    // releases what is presented before it as soon as it is decoded. Armed before a run launches.
+    private readonly RunFloor _videoFloor = new();
+    private readonly RunFloor _audioFloor = new();
 
     // Whether the launch that consumes _pendingSeekFloor is one this session will follow
     // with a clock reseat. Only the reposition's play branch does; the launches that run on
@@ -180,6 +194,30 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// from when no device is lent. Null when there is none.
     /// </summary>
     internal HardwareDeviceCache? DeviceCache { get; init; }
+
+    /// <summary>
+    /// Opens the runtime detached: prepared ahead while another item plays, it leaves the shared
+    /// position clock, audio sink and audio clock alone until <see cref="Attach"/>.
+    /// </summary>
+    internal bool Detached
+    {
+        init => _attached = !value;
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Seats the shared position clock and the master clock's baseline on where the runtime was
+    /// positioned, as a positioning while attached would have. The caller has stopped the
+    /// position clock and disposed the item that was playing, so nothing else is using them.
+    /// </remarks>
+    public void Attach()
+    {
+        if (_attached)
+            return;
+        _attached = true;
+        _clock.Seek(_detachedOrigin);
+        (_clockSource as ISeekableClock)?.SeekBaseline(_detachedOrigin);
+    }
 
     private bool _renderersActivated;
 
@@ -1311,7 +1349,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // closing here is defensive symmetry that also covers the AwaitClean safety path.)
         CloseGates();
 
-        if (_hasAudio)
+        // A session that has not played never activated the audio sink, so it has nothing to
+        // pause. A detached one shares the sink with the item that is playing, and must not.
+        if (_hasAudio && _renderersActivated)
             await _audioSink!.PauseAsync(cancellationToken).ConfigureAwait(false);
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -1353,8 +1393,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // matters on the AwaitClean safety path, where StopGraphAsync stopped a live run.)
         _videoPacer?.Flush();
 
-        // Step 3: deactivate audio so we can reactivate fresh at the target position.
-        if (_hasAudio)
+        // Step 3: deactivate audio so we can reactivate fresh at the target position. As in
+        // step 1, only a session that has played activated it.
+        if (_hasAudio && _renderersActivated)
             await _audioSink!.DeactivateAsync(cancellationToken).ConfigureAwait(false);
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -1379,25 +1420,35 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        // Step 6: reset the clock to the target position.
-        _clock.Seek(target);
-        // Reseat the master pacing clock's origin to the exact target, uniformly across
-        // clock masters: WallClockSource (no audio) and the OpenAL sink (audio) both
-        // implement ISeekableClock. This replaces the old `_ownedClockSource?.Seek` — a
-        // no-op precisely in the audio-mastered case, where the sink was left to re-discover
-        // its origin from the first post-seek buffer's PTS. A stale or keyframe-rounded first
-        // buffer there anchored the clock off the target and hung PaceUntil (the frozen-video
-        // / choppy-seek root cause). For the audio sink this seeds the origin; its next
-        // ActivateAsync (Step 7) applies it.
-        //
-        // This same reseat deterministically seats the AUDIO-MASTERED gapless-loop origin
-        // (perf survey B5): a RepeatMode.One single-clip loop reaches here with target == 0,
-        // so a signage surface's looping clip realigns its OpenAL sample-counter
-        // origin to the loop epoch at every boundary instead of re-discovering it from the
-        // first post-loop buffer's PTS — no per-loop epoch drift. Keep this uniform across
-        // user seeks and loop-seeks; do not special-case the user-seek path, or the
-        // gapless-loop drift returns (covered by AudioMasteredLoopOriginTests).
-        (_clockSource as ISeekableClock)?.SeekBaseline(target);
+        // Step 6: reset the clock to the target position. A detached runtime records the
+        // target instead, and Attach seats the shared clocks on it (media-clips decision 8). The
+        // clock it owns, a wallclock, it seats now.
+        if (!_attached)
+        {
+            _detachedOrigin = target;
+            _ownedClockSource?.SeekBaseline(target);
+        }
+        else
+        {
+            _clock.Seek(target);
+            // Reseat the master pacing clock's origin to the exact target, uniformly across
+            // clock masters: WallClockSource (no audio) and the OpenAL sink (audio) both
+            // implement ISeekableClock. This replaces the old `_ownedClockSource?.Seek` — a
+            // no-op precisely in the audio-mastered case, where the sink was left to re-discover
+            // its origin from the first post-seek buffer's PTS. A stale or keyframe-rounded first
+            // buffer there anchored the clock off the target and hung PaceUntil (the frozen-video
+            // / choppy-seek root cause). For the audio sink this seeds the origin; its next
+            // ActivateAsync (Step 7) applies it.
+            //
+            // This same reseat deterministically seats the AUDIO-MASTERED gapless-loop origin
+            // (perf survey B5): a RepeatMode.One single-clip loop reaches here with target == 0,
+            // so a signage surface's looping clip realigns its OpenAL sample-counter
+            // origin to the loop epoch at every boundary instead of re-discovering it from the
+            // first post-loop buffer's PTS — no per-loop epoch drift. Keep this uniform across
+            // user seeks and loop-seeks; do not special-case the user-seek path, or the
+            // gapless-loop drift returns (covered by AudioMasteredLoopOriginTests).
+            (_clockSource as ISeekableClock)?.SeekBaseline(target);
+        }
 
         // The clock now reads `target` while the demuxer restarts at the keyframe at or
         // before it, so the frames in between arrive already due and would present at
@@ -1478,7 +1529,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
         // Open the gates so any blocked operator bodies unblock and the
         // subsequent cancellation propagates through cleanly.
-        OpenGates();
+        //
+        // A detached runtime keeps them shut. What waits at them would reach
+        // the sinks it shares with the item that is playing, and the gate's
+        // wait ends on the cancellation anyway.
+        if (_attached)
+            OpenGates();
 
         try
         {
@@ -1507,7 +1563,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             _videoPacer = null;
         }
 
-        if (_hasAudio)
+        // A detached runtime shares the audio sink and the position clock with the item that is
+        // playing, and never touched either, so it leaves them as they are.
+        if (_hasAudio && _attached)
         {
             try
             {
@@ -1519,7 +1577,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             }
         }
 
-        _clock.Stop();
+        if (_attached)
+            _clock.Stop();
 
         if (_pipeline is not null)
         {
@@ -1675,7 +1734,14 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             // edges and returns its trunk open.
             WireVideo(
                 graph,
-                BeforeRunEnd(_videoDecoder!.AsSourceNode("video-source"), static frame => frame.Pts),
+                BeforeRunEnd(
+                    FromRunFloor(
+                        _videoDecoder!.AsSourceNode("video-source"),
+                        static frame => frame.Pts,
+                        _videoFloor
+                    ),
+                    static frame => frame.Pts
+                ),
                 _videoGate.AsOperator("video-gate"),
                 _videoConfigurator,
                 (_videoPacer ?? (IVideoSink)_videoSink!).AsSinkNode("video-sink")
@@ -1689,7 +1755,11 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             // configurator wires as well as the sink.
             var chain = graph.Pipeline(
                     BeforeRunEnd(
-                        _audioDecoder!.AsSourceNode("audio-source"),
+                        FromRunFloor(
+                            _audioDecoder!.AsSourceNode("audio-source"),
+                            static buffer => buffer.PresentationTime,
+                            _audioFloor
+                        ),
                         static buffer => buffer.PresentationTime
                     )
                 )
@@ -1730,6 +1800,70 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             source.OnBudget,
             source.Emits
         );
+
+    /// <summary>
+    /// <paramref name="source"/>, delivering nothing presented before the current run's
+    /// <paramref name="floor"/>. An item before it is released as soon as it is decoded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A run that starts past a keyframe decodes from the keyframe. The pacer refuses the video
+    /// frames before the start, but only once the pause gate passes them, and nothing refused the
+    /// audio. Refusing both here lets a run behind a closed gate decode on to its start: a runtime
+    /// that has warmed up, and one prepared ahead, go on decoding until what they play first waits
+    /// at the gate (media-clips decision 8). Otherwise audio from the keyframe fills its queue at
+    /// the gate, and the demuxer stops feeding the video decoder before it reaches the start.
+    /// </para>
+    /// <para>
+    /// Audio is held to the same rule as video, by when an item starts, as a pass's range is.
+    /// </para>
+    /// </remarks>
+    private static SourceNode<T> FromRunFloor<T>(
+        SourceNode<T> source,
+        Func<T, TimeSpan> timestamp,
+        RunFloor floor
+    )
+        where T : class, IRefCounted =>
+        new(
+            source.Id,
+            async ct =>
+            {
+                while (await source.Body(ct).ConfigureAwait(false) is { } item)
+                {
+                    if (floor.Admits(timestamp(item)))
+                        return item;
+                    item.Dispose();
+                }
+                return null;
+            },
+            source.OnError,
+            source.Cleanup,
+            source.OnBudget,
+            source.Emits
+        );
+
+    /// <summary>
+    /// Where a run starts on one of the graph's sources: armed before the run launches, and spent
+    /// by the first item at or past it, as <see cref="ClockSelectBuffer.Admit"/> spends the pacer's
+    /// floor. Read and spent only by the source's own filter while the run is under way.
+    /// </summary>
+    private sealed class RunFloor
+    {
+        private long _ticks = long.MinValue;
+
+        public void Arm(TimeSpan floor) =>
+            Volatile.Write(ref _ticks, floor > TimeSpan.Zero ? floor.Ticks : long.MinValue);
+
+        public bool Admits(TimeSpan timestamp)
+        {
+            var floor = Volatile.Read(ref _ticks);
+            if (timestamp.Ticks < floor)
+                return false;
+            if (floor != long.MinValue)
+                Volatile.Write(ref _ticks, long.MinValue);
+            return true;
+        }
+    }
 
     /// <summary>
     /// The video path's one shape: source, then the pause gate, then the consumer's
@@ -1853,6 +1987,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         TimeSpan? runEnd = _itemEnd is { } end && _pendingSeekFloor < end ? end : null;
         Volatile.Write(ref _runEndTicks, runEnd?.Ticks ?? long.MaxValue);
         _pipeline.ReadUntil = runEnd;
+
+        // The run starts at the seek floor. The sources refuse what comes before it, so a run
+        // behind a closed gate decodes on to its start, and the pacer holds the same floor for the
+        // destination frame it settles on.
+        _videoFloor.Arm(_pendingSeekFloor);
+        _audioFloor.Arm(_pendingSeekFloor);
 
         _videoPacer?.BeginRun(_pendingSeekFloor, _pendingSeekSettles);
         _pendingSeekFloor = TimeSpan.Zero;

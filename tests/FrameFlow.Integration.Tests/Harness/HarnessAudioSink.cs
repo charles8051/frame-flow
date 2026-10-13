@@ -30,6 +30,7 @@ internal sealed class HarnessAudioSink : IAudioSink
     private int _deactivateCount;
     private int _isActive;
     private TimeSpan _lastBlockPts;
+    private long _earliestBlockTicks = long.MaxValue;
 
     // ── Thread-safe read accessors ──────────────────────────────────
     public int BlockCount => Volatile.Read(ref _blockCount);
@@ -46,6 +47,12 @@ internal sealed class HarnessAudioSink : IAudioSink
     public int DeactivateCount => Volatile.Read(ref _deactivateCount);
     public bool IsActive => Volatile.Read(ref _isActive) == 1;
     public TimeSpan LastBlockPts => _lastBlockPts;
+
+    /// <summary>The earliest presentation time of any block presented, or null before the first.</summary>
+    public TimeSpan? EarliestBlockPts =>
+        Volatile.Read(ref _earliestBlockTicks) is var ticks && ticks != long.MaxValue
+            ? TimeSpan.FromTicks(ticks)
+            : null;
     public TimeSpan TimeAtPause { get; private set; }
 
     public double DecodedDurationSeconds =>
@@ -82,6 +89,14 @@ internal sealed class HarnessAudioSink : IAudioSink
                 Interlocked.Add(ref _sessionSamplesPerChannel, block.SampleCount / block.Channels);
             }
             _lastBlockPts = block.PresentationTime;
+            var ticks = block.PresentationTime.Ticks;
+            for (var seen = Volatile.Read(ref _earliestBlockTicks); ticks < seen; )
+            {
+                var was = Interlocked.CompareExchange(ref _earliestBlockTicks, ticks, seen);
+                if (was == seen)
+                    break;
+                seen = was;
+            }
             return ValueTask.CompletedTask;
         }
         finally

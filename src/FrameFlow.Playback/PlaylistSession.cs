@@ -80,6 +80,14 @@ internal sealed class PlaylistSession : IPlaybackSession
     private PlaylistSessionState _state = PlaylistSessionState.Initial;
     private IPlaylistItemRuntime? _runtime;
 
+    // The runtime prepared ahead, and those discarded and still being disposed (media-clips
+    // decision 8). Read and written by the reader, and by DisposeAsync once the reader has exited.
+    private PreparedRuntime? _prepared;
+    private readonly List<Task> _discarding = [];
+
+    // Queue edits, delivered as QueueChanged so the session can prepare what now comes next.
+    private IDisposable? _queueChanges;
+
     // Published by the reader after each step, for the synchronous members and the skip handler.
     private IPlaylistItemRuntime? _published;
     private int _publishedRun;
@@ -111,6 +119,9 @@ internal sealed class PlaylistSession : IPlaybackSession
     /// Whether <see cref="InitializeAsync"/> makes the loaded source the queue's only item. Set for
     /// a controller that plays one source at a time.
     /// </param>
+    /// <param name="prepareNext">
+    /// Whether the session prepares the item its queue would take next while the current one plays.
+    /// </param>
     public PlaylistSession(
         PlaylistCoordinator coordinator,
         IPlaybackClock clock,
@@ -118,7 +129,8 @@ internal sealed class PlaylistSession : IPlaybackSession
         IPlaylistItemRuntimeFactory itemFactory,
         ILoggerFactory? loggerFactory = null,
         IPlaylistSessionScheduler? scheduler = null,
-        bool loadsSource = false
+        bool loadsSource = false,
+        bool prepareNext = false
     )
     {
         ArgumentNullException.ThrowIfNull(coordinator);
@@ -126,6 +138,7 @@ internal sealed class PlaylistSession : IPlaybackSession
         ArgumentNullException.ThrowIfNull(itemFactory);
 
         _loadsSource = loadsSource;
+        _state = PlaylistSessionState.Initial with { PrepareNext = prepareNext };
         _coordinator = coordinator;
         _clock = clock;
         _controllerCallbacks = controllerCallbacks;
@@ -238,6 +251,19 @@ internal sealed class PlaylistSession : IPlaybackSession
             }
 
             await _reader.ConfigureAwait(false);
+            _queueChanges?.Dispose();
+
+            // The reader discards a prepared runtime when it handles Dispose. The disposals it
+            // started are awaited here, after it has exited, so nothing else touches the list.
+            DiscardPrepared();
+            try
+            {
+                await Task.WhenAll(_discarding).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LogItemDisposeFailed(_logger, ex);
+            }
 
             // The reader disposes the runtime it holds when it handles Dispose. One is left only if
             // the reader stopped before that. The reader has exited, so nothing else reads the field.
@@ -535,7 +561,8 @@ internal sealed class PlaylistSession : IPlaybackSession
             case PlaylistSessionAction.AttachToCoordinator:
                 if (Volatile.Read(ref _disposing) != 0)
                     break;
-                var attached = _coordinator.AttachSession(OnSkipRequested, OnJumpRequested);
+                var attached = _coordinator.AttachSession(OnSkipRequested, OnJumpRequested, PrepareAsync);
+                _queueChanges ??= _coordinator.PlaylistChanged.Subscribe(new QueueChangedObserver(this));
                 // Written with a full fence, as DisposeAsync writes its flag, so one of the two
                 // sees the other: disposal may have started between the check and the attach, and
                 // found nothing to detach.
@@ -546,6 +573,14 @@ internal sealed class PlaylistSession : IPlaybackSession
 
             case PlaylistSessionAction.StopClock:
                 _clock.Stop();
+                break;
+
+            case PlaylistSessionAction.PrepareItem prepare:
+                Prepare(prepare.Item, prepare.Command);
+                break;
+
+            case PlaylistSessionAction.DiscardPrepared:
+                DiscardPrepared();
                 break;
 
             case PlaylistSessionAction.ReportCurrentItemChanged changed:
@@ -641,6 +676,9 @@ internal sealed class PlaylistSession : IPlaybackSession
             case PlaylistSessionAction.RewindItem rewind:
                 return await RunItemAsync(rewind.Command, t => _runtime!.RewindToAsync(rewind.Position, rewind.End, t))
                     .ConfigureAwait(false);
+
+            case PlaylistSessionAction.PromotePrepared promote:
+                return await PromoteAsync(promote).ConfigureAwait(false);
 
             case PlaylistSessionAction.DisposeItem:
             {
@@ -763,7 +801,288 @@ internal sealed class PlaylistSession : IPlaybackSession
             case PlaylistSessionLog.KeptItemPauseFailed:
                 LogKeptItemPauseFailed(_logger, log.Source ?? "(unknown)", log.Error);
                 break;
+            case PlaylistSessionLog.PreparedFellBack:
+                LogPreparedFellBack(_logger, log.Source ?? "(unknown)", log.Error);
+                break;
         }
+    }
+
+    // ── Preparing ahead (media-clips decision 8) ────────────────────────────
+
+    /// <summary>
+    /// Prepares <paramref name="item"/> ahead, through the protocol, and completes when it is
+    /// ready. The coordinator's prepare entry point.
+    /// </summary>
+    internal async Task<Result> PrepareAsync(PlaylistItem item, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await RunCommandAsync(id => new PlaylistSessionInput.PrepareRequested(item, id), cancellationToken)
+                .ConfigureAwait(false);
+            return Result.Ok();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException ex)
+        {
+            return Result.Fail(
+                ErrorCategory.InvalidOperation,
+                $"Preparing '{item}' stopped before it was ready: another item was prepared, or it was discarded.",
+                ex
+            );
+        }
+        catch (ObjectDisposedException ex)
+        {
+            return Result.Fail(ErrorCategory.InvalidOperation, $"Cannot prepare '{item}': the player is disposed.", ex);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Result.Fail(ErrorCategory.InvalidOperation, ex.Message, ex);
+        }
+        catch (Exception ex)
+        {
+            return Result.Fail(ErrorCategory.Source, $"Preparing '{item}' failed: {ex.Message}", ex);
+        }
+    }
+
+    // Starts preparing item in the background, detached, replacing any other prepared runtime. A
+    // request for the item already being prepared joins it.
+    private void Prepare(PlaylistItem item, int? command)
+    {
+        if (_prepared is { } existing && ReferenceEquals(existing.Item, item))
+        {
+            if (command is { } joining)
+                existing.Await(joining, this);
+            return;
+        }
+
+        DiscardPrepared();
+        var prepared = new PreparedRuntime(item);
+        prepared.Runtime = _itemFactory.CreatePreparedItem(_clock, CreatePreparedCallbacks(prepared));
+        if (command is { } id)
+            prepared.Await(id, this);
+        prepared.Ready = Task.Run(() => PrepareRuntimeAsync(prepared));
+        _prepared = prepared;
+    }
+
+    private async Task<PlaylistSessionInput.Outcome> PrepareRuntimeAsync(PreparedRuntime prepared)
+    {
+        var token = prepared.Cancellation.Token;
+        PlaylistSessionInput.Outcome outcome;
+        try
+        {
+            var item = prepared.Item;
+            await prepared.Runtime.InitializeAsync(item.Source, item.Start, item.End, token).ConfigureAwait(false);
+            await prepared.Runtime.WarmUpAsync(token).ConfigureAwait(false);
+            outcome = new(PlaylistOutcome.Ok, prepared.Runtime.RunNumber, prepared.Runtime.MediaInfo);
+        }
+        catch (OperationCanceledException ex) when (token.IsCancellationRequested)
+        {
+            outcome = new(PlaylistOutcome.Cancelled, Error: ex);
+        }
+        catch (Exception ex)
+        {
+            LogPrepareFailed(_logger, prepared.Item.ToString(), ex);
+            outcome = new(PlaylistOutcome.Failed, Error: ex);
+        }
+
+        prepared.Settle(outcome, this);
+        return outcome;
+    }
+
+    // Makes the prepared runtime the current one once it is ready, or reports why it cannot be.
+    private async ValueTask<PlaylistSessionInput.Outcome> PromoteAsync(PlaylistSessionAction.PromotePrepared promote)
+    {
+        var prepared = _prepared;
+        if (prepared is null || !ReferenceEquals(prepared.Item, promote.Item))
+        {
+            return new(
+                PlaylistOutcome.Failed,
+                Error: new InvalidOperationException($"Nothing is prepared for '{promote.Item}'.")
+            );
+        }
+        _prepared = null;
+
+        PlaylistSessionInput.Outcome ready;
+        try
+        {
+            ready = await prepared.Ready.WaitAsync(_disposal.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex) when (_disposal.IsCancellationRequested)
+        {
+            Retire(prepared);
+            return new(PlaylistOutcome.Cancelled, Error: ex);
+        }
+
+        if (ready.Kind != PlaylistOutcome.Ok)
+        {
+            Retire(prepared);
+            return ready.Kind == PlaylistOutcome.Cancelled ? ready with { Kind = PlaylistOutcome.Failed } : ready;
+        }
+
+        // From here its notifications carry the item's generation, and it acts on the clock and
+        // the audio sink it shares with the playlist.
+        Volatile.Write(ref prepared.Generation, promote.Generation);
+        prepared.Runtime.Attach();
+        _runtime = prepared.Runtime;
+        prepared.Cancellation.Dispose();
+        LogPromoted(_logger, prepared.Item.ToString());
+        return new(PlaylistOutcome.Ok, prepared.Runtime.RunNumber, prepared.Runtime.MediaInfo);
+    }
+
+    private void DiscardPrepared()
+    {
+        var prepared = _prepared;
+        if (prepared is null)
+            return;
+        _prepared = null;
+        Retire(prepared);
+    }
+
+    // Stops a prepared runtime that will not be used, completes anything waiting on it, and
+    // disposes it in the background. A detached runtime leaves the shared clock and sinks alone.
+    private void Retire(PreparedRuntime prepared)
+    {
+        try
+        {
+            prepared.Cancellation.Cancel();
+        }
+        catch (ObjectDisposedException) { }
+
+        prepared.Settle(
+            new PlaylistSessionInput.Outcome(PlaylistOutcome.Cancelled, Error: new OperationCanceledException()),
+            this
+        );
+        _discarding.RemoveAll(t => t.IsCompleted);
+        _discarding.Add(DisposePreparedAsync(prepared));
+    }
+
+    private async Task DisposePreparedAsync(PreparedRuntime prepared)
+    {
+        try
+        {
+            await prepared.Ready.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Its outcome was already reported to anything waiting.
+        }
+
+        try
+        {
+            await prepared.Runtime.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LogItemDisposeFailed(_logger, ex);
+        }
+        prepared.Cancellation.Dispose();
+    }
+
+    // The prepared runtime's notifications are dropped until it is promoted: until then nothing
+    // it raises is about the item the playlist is playing.
+    private SessionCallbacks CreatePreparedCallbacks(PreparedRuntime prepared) =>
+        new(
+            OnEndOfStream: () =>
+            {
+                if (Volatile.Read(ref prepared.Generation) is var g and >= 0)
+                    Deliver(new PlaylistSessionInput.EndOfStream(g, prepared.Runtime.RunNumber));
+            },
+            OnWorkerFaulted: ex =>
+            {
+                if (Volatile.Read(ref prepared.Generation) is var g and >= 0)
+                    Deliver(new PlaylistSessionInput.Fault(g, ex, _clock.Position));
+            },
+            OnBufferReady: () =>
+            {
+                if (Volatile.Read(ref prepared.Generation) is var g and >= 0)
+                    Deliver(new PlaylistSessionInput.BufferReady(g));
+            },
+            OnBufferUnderrun: () =>
+            {
+                if (Volatile.Read(ref prepared.Generation) is var g and >= 0)
+                    Deliver(new PlaylistSessionInput.BufferUnderrun(g));
+            },
+            OnRecoverableError: error =>
+            {
+                if (Volatile.Read(ref prepared.Generation) >= 0)
+                    _controllerCallbacks.OnRecoverableError(error);
+            },
+            OnCurrentItemChanged: info =>
+            {
+                if (Volatile.Read(ref prepared.Generation) >= 0)
+                    _controllerCallbacks.OnCurrentItemChanged(info);
+            },
+            OnLoopRestarted: static (_, _) => { },
+            OnItemFailed: static (_, _, _) => { }
+        );
+
+    private void CompleteCommand(int command, PlaylistSessionInput.Outcome outcome)
+    {
+        if (_commands.TryGetValue(command, out var pending))
+            pending.Complete(PlaylistCommandResult.From(outcome));
+    }
+
+    /// <summary>A runtime prepared ahead for one item, and the commands waiting on it.</summary>
+    private sealed class PreparedRuntime(PlaylistItem item)
+    {
+        private readonly Lock _gate = new();
+        private readonly List<int> _waiting = [];
+        private PlaylistSessionInput.Outcome? _settled;
+
+        public PlaylistItem Item { get; } = item;
+
+        public IPlaylistItemRuntime Runtime { get; set; } = null!;
+
+        public CancellationTokenSource Cancellation { get; } = new();
+
+        public Task<PlaylistSessionInput.Outcome> Ready { get; set; } = Task.FromResult(
+            new PlaylistSessionInput.Outcome(PlaylistOutcome.Cancelled)
+        );
+
+        // The generation its notifications carry once it is promoted, or -1 before.
+        public int Generation = -1;
+
+        // Completes command when the preparation settles, or now if it has.
+        public void Await(int command, PlaylistSession session)
+        {
+            PlaylistSessionInput.Outcome? settled;
+            lock (_gate)
+            {
+                settled = _settled;
+                if (settled is null)
+                    _waiting.Add(command);
+            }
+            if (settled is { } outcome)
+                session.CompleteCommand(command, outcome);
+        }
+
+        // The first outcome wins: a preparation that finished is not undone by a later discard.
+        public void Settle(PlaylistSessionInput.Outcome outcome, PlaylistSession session)
+        {
+            int[] waiting;
+            lock (_gate)
+            {
+                if (_settled is not null)
+                    return;
+                _settled = outcome;
+                waiting = [.. _waiting];
+                _waiting.Clear();
+            }
+            foreach (var command in waiting)
+                session.CompleteCommand(command, outcome);
+        }
+    }
+
+    private sealed class QueueChangedObserver(PlaylistSession session) : IObserver<PlaylistSnapshot>
+    {
+        public void OnCompleted() { }
+
+        public void OnError(Exception error) { }
+
+        public void OnNext(PlaylistSnapshot value) => session.Deliver(new PlaylistSessionInput.QueueChanged());
     }
 
     // ── Commands in flight ──────────────────────────────────────────────────
@@ -910,4 +1229,33 @@ internal sealed class PlaylistSession : IPlaybackSession
 
     private static void LogAdvanceIgnoredAtEnd(ILogger logger, bool faulted) =>
         LogAdvanceIgnoredAtEndMessage(logger, faulted, null);
+
+    private static readonly Action<ILogger, string, Exception?> LogPromotedMessage =
+        LoggerMessage.Define<string>(
+            LogLevel.Information,
+            new EventId(10, nameof(LogPromoted)),
+            "Playlist item '{Item}' starts on the runtime prepared ahead for it."
+        );
+
+    private static readonly Action<ILogger, string, Exception?> LogPreparedFellBackMessage =
+        LoggerMessage.Define<string>(
+            LogLevel.Information,
+            new EventId(11, nameof(LogPreparedFellBack)),
+            "The runtime prepared for playlist item '{Source}' could not be used; opening it instead."
+        );
+
+    private static readonly Action<ILogger, string, Exception?> LogPrepareFailedMessage =
+        LoggerMessage.Define<string>(
+            LogLevel.Warning,
+            new EventId(12, nameof(LogPrepareFailed)),
+            "Preparing playlist item '{Item}' ahead failed."
+        );
+
+    private static void LogPromoted(ILogger logger, string item) => LogPromotedMessage(logger, item, null);
+
+    private static void LogPreparedFellBack(ILogger logger, string source, Exception? error) =>
+        LogPreparedFellBackMessage(logger, source, error);
+
+    private static void LogPrepareFailed(ILogger logger, string item, Exception error) =>
+        LogPrepareFailedMessage(logger, item, error);
 }

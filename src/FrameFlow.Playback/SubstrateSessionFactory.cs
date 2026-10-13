@@ -115,7 +115,10 @@ internal sealed class SubstrateSessionFactory
     public IPlaylistItemRuntime CreateItem(IPlaybackClock clock, SessionCallbacks callbacks) =>
         Create(clock, callbacks);
 
-    private SubstrateSession Create(IPlaybackClock clock, SessionCallbacks callbacks)
+    public IPlaylistItemRuntime CreatePreparedItem(IPlaybackClock clock, SessionCallbacks callbacks) =>
+        Create(clock, callbacks, detached: true);
+
+    private SubstrateSession Create(IPlaybackClock clock, SessionCallbacks callbacks, bool detached = false)
     {
         ArgumentNullException.ThrowIfNull(clock);
 
@@ -138,6 +141,7 @@ internal sealed class SubstrateSessionFactory
             LatenessRecovery = _latenessRecovery,
             FormatAnnouncer = _formatAnnouncer,
             DeviceCache = _deviceCache,
+            Detached = detached,
         };
     }
 

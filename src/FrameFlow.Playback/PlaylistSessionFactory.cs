@@ -23,6 +23,7 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
     private readonly IPlaylistItemRuntimeFactory _itemFactory;
     private readonly ILoggerFactory _loggerFactory;
     private readonly bool _loadsSource;
+    private readonly bool _prepareNextItem;
 
     /// <param name="coordinator">The queue every session plays.</param>
     /// <param name="videoSink">Warm video sink, reused across every item.</param>
@@ -54,6 +55,9 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
     /// Codecs every item's decoder decodes in software, named as
     /// <see cref="VideoStreamInfo.CodecName"/> reports them; null or empty excludes none.
     /// </param>
+    /// <param name="prepareNextItem">
+    /// Whether the session prepares the item its queue would take next while the current one plays.
+    /// </param>
     public PlaylistSessionFactory(
         PlaylistCoordinator coordinator,
         IVideoSink? videoSink = null,
@@ -68,10 +72,12 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
         bool loadsSource = false,
         HardwareDevice? hardwareDevice = null,
         IReadOnlyList<HardwareDecodeBackendKind>? preferredBackends = null,
-        IReadOnlyList<string>? excludedCodecs = null
+        IReadOnlyList<string>? excludedCodecs = null,
+        bool prepareNextItem = false
     )
     {
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+        _prepareNextItem = prepareNextItem;
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
         _loadsSource = loadsSource;
 
@@ -121,7 +127,8 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
             callbacks,
             _itemFactory,
             _loggerFactory,
-            loadsSource: _loadsSource
+            loadsSource: _loadsSource,
+            prepareNext: _prepareNextItem
         );
     }
 

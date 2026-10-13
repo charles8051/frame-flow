@@ -240,6 +240,14 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
         );
     }
 
+    public Task<Result> PrepareAsync(PlaylistItem item, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        if (RefusalWhileUnusable("prepare an item") is { } refused)
+            return Task.FromResult(Result.Fail(refused));
+        return _coordinator.RequestPrepareAsync(item, cancellationToken);
+    }
+
     public Task<Result> RemoveAsync(PlaylistItem item, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(item);

@@ -1354,6 +1354,160 @@ public sealed class PlaylistSessionProtocolTests
         Assert.Equal(expectedFailures, after.ConsecutiveFailures);
     }
 
+    // ── Preparing ahead ─────────────────────────────────────────────────────
+
+    private static (PlaylistSessionState State, PlaylistQueue Queue, PlaylistItem B, PlaylistItem C) PlayingOnA(
+        bool prepareNext = false
+    )
+    {
+        var a = new PlaylistItem(new FakeSource("a"));
+        var b = new PlaylistItem(new FakeSource("b"));
+        var c = new PlaylistItem(new FakeSource("c"));
+        var queue = PlaylistQueue.Create([a, b, c], RepeatMode.Off);
+        (queue, _) = queue.TakeStart();
+        (queue, _) = queue.ReportCurrent(a, Info);
+        return (PlayingWith(a) with { PrepareNext = prepareNext }, queue, b, c);
+    }
+
+    [Fact]
+    public void AnAdvanceToThePreparedItem_PromotesItInsteadOfOpeningOne()
+    {
+        var (state, queue, b, _) = PlayingOnA();
+
+        var drive = RunToIdle(
+            state with { Prepared = b, PreparedExplicitly = true },
+            queue,
+            new PlaylistSessionInput.EndOfStream(CurrentGeneration, CurrentRun)
+        );
+
+        Assert.Equal(
+            [typeof(PlaylistSessionAction.DisposeItem), typeof(PlaylistSessionAction.PromotePrepared), typeof(PlaylistSessionAction.PlayItem)],
+            drive.Awaited.Select(a => a.GetType())
+        );
+        Assert.Same(b, Assert.Single(drive.Awaited.OfType<PlaylistSessionAction.PromotePrepared>()).Item);
+        Assert.Null(drive.State.Prepared);
+    }
+
+    [Fact]
+    public void APromotionThatFails_OpensTheItemInstead()
+    {
+        var (state, queue, b, _) = PlayingOnA();
+
+        var drive = RunToIdle(
+            state with { Prepared = b, PreparedExplicitly = true },
+            queue,
+            new PlaylistSessionInput.EndOfStream(CurrentGeneration, CurrentRun),
+            fail: a => a is PlaylistSessionAction.PromotePrepared
+        );
+
+        Assert.Equal(
+            [
+                typeof(PlaylistSessionAction.DisposeItem),
+                typeof(PlaylistSessionAction.PromotePrepared),
+                typeof(PlaylistSessionAction.OpenItem),
+                typeof(PlaylistSessionAction.WarmUpItem),
+                typeof(PlaylistSessionAction.PlayItem),
+            ],
+            drive.Awaited.Select(a => a.GetType())
+        );
+        Assert.Same(b.Source, Assert.Single(drive.Awaited.OfType<PlaylistSessionAction.OpenItem>()).Source);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AnItemThatStarts_PreparesTheNextOnlyWhenTheSessionPreparesAhead(bool prepareNext)
+    {
+        var (state, queue, _, c) = PlayingOnA(prepareNext);
+
+        // a ends, b starts, and c is what b's end would take.
+        var drive = RunToIdle(state, queue, new PlaylistSessionInput.EndOfStream(CurrentGeneration, CurrentRun));
+
+        var prepared = drive.Actions.OfType<PlaylistSessionAction.PrepareItem>().ToList();
+        if (prepareNext)
+        {
+            Assert.Same(c, Assert.Single(prepared).Item);
+            Assert.Same(c, drive.State.Prepared);
+            Assert.False(drive.State.PreparedExplicitly);
+        }
+        else
+        {
+            Assert.Empty(prepared);
+            Assert.Null(drive.State.Prepared);
+        }
+    }
+
+    [Fact]
+    public void AnotherClipOfTheOpenSource_IsNotPrepared()
+    {
+        var source = new FakeSource("a");
+        var first = new PlaylistItem(new MediaClip(source, TimeSpan.FromSeconds(1)));
+        var second = new PlaylistItem(new MediaClip(source, ClipStart));
+        var queue = PlaylistQueue.Create([first, second], RepeatMode.Off);
+        (queue, _) = queue.TakeStart();
+        (queue, _) = queue.ReportCurrent(first, Info);
+
+        var (after, _, step) = Step(
+            PlayingWith(first) with { PrepareNext = true },
+            queue,
+            new PlaylistSessionInput.QueueChanged()
+        );
+
+        Assert.DoesNotContain(step.Actions, a => a is PlaylistSessionAction.PrepareItem);
+        Assert.Null(after.Prepared);
+
+        var (_, _, request) = Step(PlayingWith(first), queue, new PlaylistSessionInput.PrepareRequested(second, Command));
+        Assert.DoesNotContain(request.Actions, a => a is PlaylistSessionAction.PrepareItem);
+        Assert.Contains(
+            request.Actions,
+            a => a is PlaylistSessionAction.CompleteCommand { Command: Command, Result.Kind: PlaylistOutcome.Ok }
+        );
+    }
+
+    [Fact]
+    public void ARequestedItem_IsPrepared_AndHoldsAgainstTheNext()
+    {
+        var (state, queue, _, c) = PlayingOnA(prepareNext: true);
+
+        var (requested, _, step) = Step(state, queue, new PlaylistSessionInput.PrepareRequested(c, Command));
+
+        var prepare = Assert.Single(step.Actions.OfType<PlaylistSessionAction.PrepareItem>());
+        Assert.Equal((c, (int?)Command), (prepare.Item, prepare.Command));
+        Assert.True(requested.PreparedExplicitly);
+
+        // A queue edit that leaves c in the player keeps it, though b is what comes next.
+        var (kept, _, edited) = Step(requested, queue, new PlaylistSessionInput.QueueChanged());
+        Assert.DoesNotContain(edited.Actions, a => a is PlaylistSessionAction.PrepareItem or PlaylistSessionAction.DiscardPrepared);
+        Assert.Same(c, kept.Prepared);
+    }
+
+    [Fact]
+    public void AQueueEditThatRemovesThePreparedItem_DiscardsIt()
+    {
+        var (state, queue, _, c) = PlayingOnA();
+        var (removed, _) = queue.Remove(c);
+
+        var (after, _, step) = Step(
+            state with { Prepared = c, PreparedExplicitly = true },
+            removed,
+            new PlaylistSessionInput.QueueChanged()
+        );
+
+        Assert.Contains(step.Actions, a => a is PlaylistSessionAction.DiscardPrepared);
+        Assert.Null(after.Prepared);
+    }
+
+    [Fact]
+    public void Disposal_DiscardsThePreparedItem()
+    {
+        var (state, queue, b, _) = PlayingOnA();
+
+        var (after, _, step) = Step(state with { Prepared = b }, queue, new PlaylistSessionInput.Dispose());
+
+        Assert.Contains(step.Actions, a => a is PlaylistSessionAction.DiscardPrepared);
+        Assert.Null(after.Prepared);
+    }
+
     private static PlaylistSessionState PlayingWith(PlaylistItem item) =>
         PlaylistSessionState.Initial with
         {
