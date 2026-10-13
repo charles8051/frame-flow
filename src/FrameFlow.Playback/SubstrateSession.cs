@@ -1735,11 +1735,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             WireVideo(
                 graph,
                 BeforeRunEnd(
-                    FromRunFloor(
-                        _videoDecoder!.AsSourceNode("video-source"),
-                        static frame => frame.Pts,
-                        _videoFloor
-                    ),
+                    FromRunFloor(_videoDecoder!.AsSourceNode("video-source"), AdmitVideo),
                     static frame => frame.Pts
                 ),
                 _videoGate.AsOperator("video-gate"),
@@ -1755,11 +1751,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             // configurator wires as well as the sink.
             var chain = graph.Pipeline(
                     BeforeRunEnd(
-                        FromRunFloor(
-                            _audioDecoder!.AsSourceNode("audio-source"),
-                            static buffer => buffer.PresentationTime,
-                            _audioFloor
-                        ),
+                        FromRunFloor(_audioDecoder!.AsSourceNode("audio-source"), AdmitAudio),
                         static buffer => buffer.PresentationTime
                     )
                 )
@@ -1802,27 +1794,19 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         );
 
     /// <summary>
-    /// <paramref name="source"/>, delivering nothing presented before the current run's
-    /// <paramref name="floor"/>. An item before it is released as soon as it is decoded.
+    /// <paramref name="source"/>, delivering what <paramref name="admit"/> lets through of each
+    /// item as it is decoded. <paramref name="admit"/> owns the item it is given: it returns it,
+    /// returns what replaces it, or releases it and returns null.
     /// </summary>
     /// <remarks>
-    /// <para>
     /// A run that starts past a keyframe decodes from the keyframe. The pacer refuses the video
     /// frames before the start, but only once the pause gate passes them, and nothing refused the
-    /// audio. Refusing both here lets a run behind a closed gate decode on to its start: a runtime
-    /// that has warmed up, and one prepared ahead, go on decoding until what they play first waits
-    /// at the gate (media-clips decision 8). Otherwise audio from the keyframe fills its queue at
-    /// the gate, and the demuxer stops feeding the video decoder before it reaches the start.
-    /// </para>
-    /// <para>
-    /// Audio is held to the same rule as video, by when an item starts, as a pass's range is.
-    /// </para>
+    /// audio. Refusing both at the source lets a run behind a closed gate decode on to its start: a
+    /// runtime that has warmed up, and one prepared ahead, go on decoding until what they play first
+    /// waits at the gate (media-clips decision 8). Otherwise audio from the keyframe fills its queue
+    /// at the gate, and the demuxer stops feeding the video decoder before it reaches the start.
     /// </remarks>
-    private static SourceNode<T> FromRunFloor<T>(
-        SourceNode<T> source,
-        Func<T, TimeSpan> timestamp,
-        RunFloor floor
-    )
+    private static SourceNode<T> FromRunFloor<T>(SourceNode<T> source, Func<T, T?> admit)
         where T : class, IRefCounted =>
         new(
             source.Id,
@@ -1830,9 +1814,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             {
                 while (await source.Body(ct).ConfigureAwait(false) is { } item)
                 {
-                    if (floor.Admits(timestamp(item)))
-                        return item;
-                    item.Dispose();
+                    if (admit(item) is { } admitted)
+                        return admitted;
                 }
                 return null;
             },
@@ -1841,6 +1824,42 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             source.OnBudget,
             source.Emits
         );
+
+    // A frame presented before the run's start is released.
+    private IVideoFrame? AdmitVideo(IVideoFrame frame)
+    {
+        if (_videoFloor.Admits(frame.Pts))
+            return frame;
+        frame.Dispose();
+        return null;
+    }
+
+    // Audio that ends at or before the run's start is released, and a buffer that crosses the start
+    // is cut at it, so the audio starts where the picture does.
+    private PcmAudioBuffer? AdmitAudio(PcmAudioBuffer buffer)
+    {
+        if (_audioFloor.Pending is not { } floor)
+            return buffer;
+
+        var before = PcmAudioTrim.FramesBefore(buffer.PresentationTime, buffer.SampleRate, floor);
+        if (before >= buffer.FrameCount)
+        {
+            buffer.Dispose();
+            return null;
+        }
+
+        _audioFloor.Spend();
+        if (before == 0)
+            return buffer;
+        try
+        {
+            return PcmAudioTrim.Cut(buffer, (int)before);
+        }
+        finally
+        {
+            buffer.Dispose();
+        }
+    }
 
     /// <summary>
     /// Where a run starts on one of the graph's sources: armed before the run launches, and spent
@@ -1854,13 +1873,18 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         public void Arm(TimeSpan floor) =>
             Volatile.Write(ref _ticks, floor > TimeSpan.Zero ? floor.Ticks : long.MinValue);
 
+        /// <summary>The floor, or null once it is spent or when the run has none.</summary>
+        public TimeSpan? Pending =>
+            Volatile.Read(ref _ticks) is var ticks && ticks != long.MinValue ? TimeSpan.FromTicks(ticks) : null;
+
+        public void Spend() => Volatile.Write(ref _ticks, long.MinValue);
+
+        /// <summary>Whether an item at <paramref name="timestamp"/> is delivered, spending the floor if so.</summary>
         public bool Admits(TimeSpan timestamp)
         {
-            var floor = Volatile.Read(ref _ticks);
-            if (timestamp.Ticks < floor)
+            if (Pending is { } floor && timestamp < floor)
                 return false;
-            if (floor != long.MinValue)
-                Volatile.Write(ref _ticks, long.MinValue);
+            Spend();
             return true;
         }
     }

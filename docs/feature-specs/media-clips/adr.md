@@ -299,12 +299,17 @@ result in a list, or the one under the cursor (#25).
 - **Promotion.** When the protocol opens an item that is the prepared one, by reference, it
   promotes the prepared runtime instead of opening another. A promotion waits for the prepared
   runtime's warm-up. A prepared runtime that failed falls back to an ordinary open of the item.
+- **A runtime that fails before it is used is released.** A preparation that fails disposes its
+  runtime at once. A run that faults after warm-up, while the runtime is detached, is held rather
+  than reported, the runtime is disposed, and its promotion is refused, so the item is opened
+  instead.
 - **Nothing before the start leaves the source.** Each run's video and audio sources drop what is
   presented before the run's start, as it is decoded. Before this, the pacer refused those frames,
   but only once the pause gate passed them, and nothing refused the audio. A runtime waiting behind
   closed gates now decodes on to its start, and the frame it shows first waits at the gate. Audio
   is filtered as well because audio from the keyframe would otherwise fill its queue at the gate,
-  and the demuxer, which feeds both decoders, would stop before the video reached the start.
+  and the demuxer, which feeds both decoders, would stop before the video reached the start. An
+  audio buffer that crosses the start is cut at it, so the audio starts where the picture does.
 - **Ready means warmed up.** `PrepareAsync` completes when the prepared runtime has warmed up, as a
   load does: at the decoder's first frame. The walk to the start goes on after that.
 - **A detached runtime keeps its gates shut when it is disposed.** Disposal opened the gates so

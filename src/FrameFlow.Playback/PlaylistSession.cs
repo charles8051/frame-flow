@@ -863,11 +863,11 @@ internal sealed class PlaylistSession : IPlaybackSession
         prepared.Runtime = _itemFactory.CreatePreparedItem(_clock, CreatePreparedCallbacks(prepared));
         if (command is { } id)
             prepared.Await(id, this);
-        prepared.Ready = Task.Run(() => PrepareRuntimeAsync(prepared));
+        _ = Task.Run(() => PrepareRuntimeAsync(prepared));
         _prepared = prepared;
     }
 
-    private async Task<PlaylistSessionInput.Outcome> PrepareRuntimeAsync(PreparedRuntime prepared)
+    private async Task PrepareRuntimeAsync(PreparedRuntime prepared)
     {
         var token = prepared.Cancellation.Token;
         PlaylistSessionInput.Outcome outcome;
@@ -888,8 +888,19 @@ internal sealed class PlaylistSession : IPlaybackSession
             outcome = new(PlaylistOutcome.Failed, Error: ex);
         }
 
-        prepared.Settle(outcome, this);
-        return outcome;
+        try
+        {
+            prepared.Settle(outcome, this);
+
+            // A runtime that failed is not used, so it is released now rather than when the item
+            // is next taken, or another is prepared.
+            if (outcome.Kind == PlaylistOutcome.Failed)
+                await DisposeQuietlyAsync(prepared).ConfigureAwait(false);
+        }
+        finally
+        {
+            prepared.CompleteReady(outcome);
+        }
     }
 
     // Makes the prepared runtime the current one once it is ready, or reports why it cannot be.
@@ -923,8 +934,13 @@ internal sealed class PlaylistSession : IPlaybackSession
         }
 
         // From here its notifications carry the item's generation, and it acts on the clock and
-        // the audio sink it shares with the playlist.
-        Volatile.Write(ref prepared.Generation, promote.Generation);
+        // the audio sink it shares with the playlist. A run that faulted while it was detached is
+        // not used: the protocol opens the item instead.
+        if (prepared.Promote(promote.Generation) is { } fault)
+        {
+            Retire(prepared);
+            return new(PlaylistOutcome.Failed, Error: fault);
+        }
         prepared.Runtime.Attach();
         _runtime = prepared.Runtime;
         prepared.Cancellation.Dispose();
@@ -961,24 +977,28 @@ internal sealed class PlaylistSession : IPlaybackSession
 
     private async Task DisposePreparedAsync(PreparedRuntime prepared)
     {
-        try
-        {
-            await prepared.Ready.ConfigureAwait(false);
-        }
-        catch
-        {
-            // Its outcome was already reported to anything waiting.
-        }
+        await prepared.Ready.ConfigureAwait(false);
+        await DisposeQuietlyAsync(prepared).ConfigureAwait(false);
+        prepared.Cancellation.Dispose();
+    }
 
+    // Releases a runtime that faulted while it was detached, once its preparation has finished.
+    private async Task ReleaseFaultedAsync(PreparedRuntime prepared)
+    {
+        await prepared.Ready.ConfigureAwait(false);
+        await DisposeQuietlyAsync(prepared).ConfigureAwait(false);
+    }
+
+    private async Task DisposeQuietlyAsync(PreparedRuntime prepared)
+    {
         try
         {
-            await prepared.Runtime.DisposeAsync().ConfigureAwait(false);
+            await prepared.DisposeRuntimeAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             LogItemDisposeFailed(_logger, ex);
         }
-        prepared.Cancellation.Dispose();
     }
 
     // The prepared runtime's notifications are dropped until it is promoted: until then nothing
@@ -992,8 +1012,14 @@ internal sealed class PlaylistSession : IPlaybackSession
             },
             OnWorkerFaulted: ex =>
             {
-                if (Volatile.Read(ref prepared.Generation) is var g and >= 0)
-                    Deliver(new PlaylistSessionInput.Fault(g, ex, _clock.Position));
+                // Held while it is detached, for the promotion to refuse it. Released off the
+                // faulting worker, which its disposal waits for.
+                if (prepared.HoldFault(ex))
+                {
+                    _ = Task.Run(() => ReleaseFaultedAsync(prepared));
+                    return;
+                }
+                Deliver(new PlaylistSessionInput.Fault(Volatile.Read(ref prepared.Generation), ex, _clock.Position));
             },
             OnBufferReady: () =>
             {
@@ -1038,12 +1064,67 @@ internal sealed class PlaylistSession : IPlaybackSession
 
         public CancellationTokenSource Cancellation { get; } = new();
 
-        public Task<PlaylistSessionInput.Outcome> Ready { get; set; } = Task.FromResult(
-            new PlaylistSessionInput.Outcome(PlaylistOutcome.Cancelled)
+        private readonly TaskCompletionSource<PlaylistSessionInput.Outcome> _ready = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
         );
+
+        // The fault its run raised while it was detached, which makes it unusable.
+        private Exception? _fault;
+
+        private int _disposing;
+        private readonly TaskCompletionSource _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Completes when its preparation has finished, and a failed runtime has been released.
+        public Task<PlaylistSessionInput.Outcome> Ready => _ready.Task;
 
         // The generation its notifications carry once it is promoted, or -1 before.
         public int Generation = -1;
+
+        public void CompleteReady(PlaylistSessionInput.Outcome outcome) => _ready.TrySetResult(outcome);
+
+        // Records a fault its run raised while detached. False once it has been promoted: the fault
+        // is then the playing item's, and the caller delivers it.
+        public bool HoldFault(Exception error)
+        {
+            lock (_gate)
+            {
+                if (Generation >= 0)
+                    return false;
+                _fault ??= error;
+                return true;
+            }
+        }
+
+        // Gives it the generation its notifications carry from now on, unless its run faulted
+        // first. Returns that fault instead.
+        public Exception? Promote(int generation)
+        {
+            lock (_gate)
+            {
+                if (_fault is { } fault)
+                    return fault;
+                Volatile.Write(ref Generation, generation);
+                return null;
+            }
+        }
+
+        // Disposes the runtime once, however many ask. A later caller waits for the first.
+        public async Task DisposeRuntimeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposing, 1) != 0)
+            {
+                await _disposed.Task.ConfigureAwait(false);
+                return;
+            }
+            try
+            {
+                await Runtime.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                _disposed.TrySetResult();
+            }
+        }
 
         // Completes command when the preparation settles, or now if it has.
         public void Await(int command, PlaylistSession session)

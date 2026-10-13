@@ -32,6 +32,7 @@ public sealed class MediaClipPrepareTests : IClassFixture<FfmpegBootstrapFixture
     private static readonly TimeSpan HalfFrame = TimeSpan.FromSeconds(1.0 / 120);
     private static readonly TimeSpan PastStart = TimeSpan.FromMilliseconds(30);
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan LongestSample = TimeSpan.FromSeconds(1.0 / 8000); // at 8 kHz
 
     private readonly FfmpegBootstrapFixture _fixture;
 
@@ -184,12 +185,20 @@ public sealed class MediaClipPrepareTests : IClassFixture<FfmpegBootstrapFixture
             Assert.True((await player.PlayAsync()).IsSuccess);
 
             // Frames reach the tap in order, before the sink, so once the sink has a frame past
-            // the start, every frame decoded before it has passed the tap.
+            // the start, every frame decoded before it has passed the tap. The audio sink's first
+            // block is the first the run delivers.
             await video.WhenPresented(pts => pts >= clip.Start + PastStart).WaitAsync(Bound);
+            await audio.FirstBlockPresented.WaitAsync(Bound);
         }
 
         Assert.DoesNotContain(tapped, pts => pts < clip.Start - HalfFrame);
-        Assert.True(audio.EarliestBlockPts >= clip.Start, $"audio from {audio.EarliestBlockPts} was presented");
+
+        // The block that crosses the start is cut there rather than dropped, so the audio starts
+        // within a sample of it.
+        Assert.True(
+            audio.EarliestBlockPts >= clip.Start && audio.EarliestBlockPts < clip.Start + LongestSample,
+            $"audio from {audio.EarliestBlockPts} was presented"
+        );
     }
 
     private static MediaSource Corpus(string name) =>

@@ -220,7 +220,8 @@ async Task OnClick(PlaylistItem hit) => await player.JumpToAsync(hit);
   again. An end past the source's end is reached at the source's end.
 - **Before the start.** A run that starts past a keyframe decodes from the keyframe. What it
   decodes before its start is dropped where it is decoded: no frame reaches a configurator or the
-  sink, and no audio reaches the audio sink. This holds for a seek as well as for a clip's start.
+  sink, and no audio reaches the audio sink. An audio buffer that crosses the start is cut at it.
+  This holds for a seek as well as for a clip's start.
 - **A prepared item.** One item is prepared at a time, and preparing another discards the first.
   It shares the sinks and the position clock with the item that is playing, and touches none of
   them until it becomes current. A jump, skip or advance to it uses it. Another clip of the current

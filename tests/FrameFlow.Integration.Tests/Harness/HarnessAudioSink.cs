@@ -31,6 +31,7 @@ internal sealed class HarnessAudioSink : IAudioSink
     private int _isActive;
     private TimeSpan _lastBlockPts;
     private long _earliestBlockTicks = long.MaxValue;
+    private readonly TaskCompletionSource _firstBlock = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // ── Thread-safe read accessors ──────────────────────────────────
     public int BlockCount => Volatile.Read(ref _blockCount);
@@ -47,6 +48,9 @@ internal sealed class HarnessAudioSink : IAudioSink
     public int DeactivateCount => Volatile.Read(ref _deactivateCount);
     public bool IsActive => Volatile.Read(ref _isActive) == 1;
     public TimeSpan LastBlockPts => _lastBlockPts;
+
+    /// <summary>Completes when the first block is presented, with its earliest time already recorded.</summary>
+    public Task FirstBlockPresented => _firstBlock.Task;
 
     /// <summary>The earliest presentation time of any block presented, or null before the first.</summary>
     public TimeSpan? EarliestBlockPts =>
@@ -97,6 +101,7 @@ internal sealed class HarnessAudioSink : IAudioSink
                     break;
                 seen = was;
             }
+            _firstBlock.TrySetResult();
             return ValueTask.CompletedTask;
         }
         finally

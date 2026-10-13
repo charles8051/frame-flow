@@ -30,22 +30,54 @@ public sealed class PlaylistSessionPrepareTests
     }
 
     [Fact]
-    public async Task APreparationThatFails_IsReported_AndTheItemIsOpenedWhenItIsTaken()
+    public async Task APreparationThatFails_IsReported_Released_AndTheItemIsOpenedWhenItIsTaken()
     {
         await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b");
         var b = rig.PlaylistItem("b");
         rig.Fail("b", ItemOp.Open, new InvalidOperationException("boom"));
+        var disposal = rig.Hold("b", ItemOp.Dispose);
 
         var prepared = await rig.Session.PrepareAsync(b, CancellationToken.None);
-        await rig.SettleAsync();
         Assert.False(prepared.IsSuccess);
-        rig.TakeLog();
+
+        // Released at once, with a playing on and nothing taking b.
+        await disposal.EnteredAsync();
+        disposal.Release();
+        await rig.SettleAsync();
+        Assert.Equal(["b#1.Open", "b#1.Dispose"], rig.TakeLog());
 
         rig.Coordinator.RequestJump(b);
         await rig.SettleAsync();
 
         Assert.Equal(
-            ["a#1.Dispose", "clock.Stop", "b#1.Dispose", "b#2.Open", "b#2.WarmUp", "b#2.Play", "ctl.ItemChanged(b)", "transition(b)"],
+            ["a#1.Dispose", "clock.Stop", "b#2.Open", "b#2.WarmUp", "b#2.Play", "ctl.ItemChanged(b)", "transition(b)"],
+            rig.TakeLog()
+        );
+    }
+
+    [Fact]
+    public async Task APreparedRuntimeThatFaultsBeforeItIsUsed_IsReleased_AndTheItemIsOpenedWhenItIsTaken()
+    {
+        await using var rig = await PlaylistSessionRig.PlayingAsync(RepeatMode.Off, "a", "b");
+        var b = rig.PlaylistItem("b");
+        Assert.True((await rig.Session.PrepareAsync(b, CancellationToken.None)).IsSuccess);
+        await rig.SettleAsync();
+        rig.TakeLog();
+        var disposal = rig.Hold("b", ItemOp.Dispose);
+
+        // Its decode goes on after its warm-up, and fails while it is detached. Nothing is reported
+        // about the item that is playing, and the runtime is released.
+        rig.Runtime("b#1").RaiseFault(new InvalidOperationException("decoder lost"));
+        await disposal.EnteredAsync();
+        disposal.Release();
+        await rig.SettleAsync();
+        Assert.Equal(["b#1.Dispose"], rig.TakeLog());
+
+        rig.Coordinator.RequestJump(b);
+        await rig.SettleAsync();
+
+        Assert.Equal(
+            ["a#1.Dispose", "clock.Stop", "b#2.Open", "b#2.WarmUp", "b#2.Play", "ctl.ItemChanged(b)", "transition(b)"],
             rig.TakeLog()
         );
     }
