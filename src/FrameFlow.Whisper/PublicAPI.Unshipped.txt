@@ -21,8 +21,10 @@ FrameFlow.Whisper.CaptionRef.Timeline.get -> FrameFlow.Graph.TimelineId
 FrameFlow.Whisper.CaptionRef.Value.get -> FrameFlow.Whisper.Caption!
 FrameFlow.Whisper.CaptionTimeline
 FrameFlow.Whisper.CaptionTimeline.Add(FrameFlow.Whisper.Caption! caption, System.TimeSpan enqueuedAtPts) -> void
+FrameFlow.Whisper.CaptionTimeline.Add(FrameFlow.Whisper.Caption! caption, System.TimeSpan enqueuedAtPts, FrameFlow.Graph.TimelineId timeline) -> void
 FrameFlow.Whisper.CaptionTimeline.CaptionTimeline(System.TimeSpan displayDuration, int maxStackedLines = 1) -> void
 FrameFlow.Whisper.CaptionTimeline.GetActive(System.TimeSpan framePts) -> System.Collections.Generic.IReadOnlyList<FrameFlow.Whisper.Caption!>!
+FrameFlow.Whisper.CaptionTimeline.GetActive(System.TimeSpan framePts, FrameFlow.Graph.TimelineId timeline) -> System.Collections.Generic.IReadOnlyList<FrameFlow.Whisper.Caption!>!
 FrameFlow.Whisper.CaptionTimeline.Reset() -> void
 FrameFlow.Whisper.WhisperOperators
 FrameFlow.Whisper.WhisperOptions
