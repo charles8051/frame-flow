@@ -205,7 +205,7 @@ internal static class PlaylistSessionProtocol
             }
 
             Await(
-                new PlaylistSessionAction.OpenItem(State.Generation, item.Source, command, item.Start),
+                new PlaylistSessionAction.OpenItem(State.Generation, item.Source, command, item.Start, item.End),
                 new PlaylistSessionWork.InitializeOpening(command, item)
             );
         }
@@ -325,7 +325,7 @@ internal static class PlaylistSessionProtocol
             }
 
             Await(
-                new PlaylistSessionAction.RewindItem(command, State.Item.Item.Start),
+                new PlaylistSessionAction.RewindItem(command, State.Item.Item.Start, State.Item.Item.End),
                 new PlaylistSessionWork.ItemCommand(command, PlaylistItemCommand.Rewind)
             );
         }
@@ -465,11 +465,12 @@ internal static class PlaylistSessionProtocol
             );
 
             // The position clock reads the source's time, so an item that starts partway in has
-            // played for its reading less its start, out of what follows the start.
+            // played for its reading less its start, out of what lies between its start and its
+            // end, or the end of the source.
             var start = State.Item!.Item.Start;
             var (queue, giveUp) = Queue.ItemFailed(
                 Remaining(playedFor, start),
-                Remaining(State.Item.Duration, start)
+                Remaining(EndOf(State.Item), start)
             );
             Queue = queue;
             if (giveUp)
@@ -705,7 +706,8 @@ internal static class PlaylistSessionProtocol
                     State.Generation,
                     decision.Item!.Source,
                     work.Command,
-                    decision.Item.Start
+                    decision.Item.Start,
+                    decision.Item.End
                 ),
                 new PlaylistSessionWork.InitializeOpening(work.Command, decision.Item)
             );
@@ -815,7 +817,7 @@ internal static class PlaylistSessionProtocol
             )
             {
                 Await(
-                    new PlaylistSessionAction.RewindItem(Command: null, decision.Item!.Start),
+                    new PlaylistSessionAction.RewindItem(Command: null, decision.Item!.Start, decision.Item.End),
                     new PlaylistSessionWork.Replaying(advance, decision)
                 );
                 return;
@@ -955,7 +957,8 @@ internal static class PlaylistSessionProtocol
                     State.Generation,
                     pending.Item!.Source,
                     Command: null,
-                    pending.Item.Start
+                    pending.Item.Start,
+                    pending.Item.End
                 ),
                 new PlaylistSessionWork.Opening(advance, pending)
             );
@@ -1216,6 +1219,15 @@ internal static class PlaylistSessionProtocol
                     + "consecutive item failures.",
                 last
             );
+
+        /// <summary>
+        /// Where an item stops: its end when it has one before the end of the source, otherwise the
+        /// source's duration, which is zero when the source reports none.
+        /// </summary>
+        private static TimeSpan EndOf(PlaylistItemSlot slot) =>
+            slot.Item.End is { } end && (slot.Duration <= TimeSpan.Zero || end < slot.Duration)
+                ? end
+                : slot.Duration;
 
         /// <summary>How much of <paramref name="time"/> lies past <paramref name="start"/>, never negative.</summary>
         private static TimeSpan Remaining(TimeSpan time, TimeSpan start) =>

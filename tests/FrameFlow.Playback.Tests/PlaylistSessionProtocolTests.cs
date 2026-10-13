@@ -1284,6 +1284,76 @@ public sealed class PlaylistSessionProtocolTests
         Assert.Equal(expectedFailures, after.ConsecutiveFailures);
     }
 
+    private static readonly TimeSpan ClipEnd = TimeSpan.FromSeconds(22);
+
+    [Fact]
+    public void AnOpenAndARewind_CarryTheItemsEnd()
+    {
+        var source = new FakeSource("a");
+        var first = new PlaylistItem(new MediaClip(source, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(3)));
+        var second = new PlaylistItem(new MediaClip(source, ClipStart, ClipEnd));
+        var queue = PlaylistQueue.Create([first, second], RepeatMode.Off);
+
+        var (_, _, opening) = Step(PlaylistSessionState.Initial, queue, new PlaylistSessionInput.Initialize(Command));
+        Assert.Equal(TimeSpan.FromSeconds(3), Assert.IsType<PlaylistSessionAction.OpenItem>(opening.Awaited).End);
+
+        (queue, _) = queue.TakeStart();
+        (queue, _) = queue.ReportCurrent(first, Info);
+        var (_, _, handOff) = Step(
+            PlayingWith(first),
+            queue,
+            new PlaylistSessionInput.SkipRequested(CurrentGeneration, PlaylistRunState.Playing)
+        );
+        var rewind = Assert.IsType<PlaylistSessionAction.RewindItem>(handOff.Awaited);
+        Assert.Equal((ClipStart, (TimeSpan?)ClipEnd), (rewind.Position, rewind.End));
+    }
+
+    [Fact]
+    public void AnAdvance_OpensTheNextItemWithItsEnd()
+    {
+        var a = new PlaylistItem(new FakeSource("a"));
+        var b = new PlaylistItem(new MediaClip(new FakeSource("b"), ClipStart, ClipEnd));
+        var queue = PlaylistQueue.Create([a, b], RepeatMode.Off);
+        (queue, _) = queue.TakeStart();
+        (queue, _) = queue.ReportCurrent(a, Info);
+
+        var drive = RunToIdle(PlayingWith(a), queue, new PlaylistSessionInput.EndOfStream(CurrentGeneration, CurrentRun));
+
+        var open = Assert.Single(drive.Awaited.OfType<PlaylistSessionAction.OpenItem>());
+        Assert.Equal((ClipStart, (TimeSpan?)ClipEnd), (open.Start, open.End));
+    }
+
+    [Theory]
+    // One failure already counted. 1.2 s past the start of a two-second clip is more than the half
+    // of it that clears the count. Measured against the sixty-second source instead, it would
+    // need five seconds, and would count.
+    [InlineData(true, 0)]
+    [InlineData(false, 2)]
+    public void AFaultedClipWithAnEnd_SizesTheProgressItNeedsFromItsEnd(bool hasEnd, int expectedFailures)
+    {
+        var clip = new PlaylistItem(
+            new MediaClip(new FakeSource("a"), ClipStart, hasEnd ? ClipStart + TimeSpan.FromSeconds(2) : null)
+        );
+        var b = new PlaylistItem(new FakeSource("b"));
+        var queue = PlaylistQueue.Create([clip, b], RepeatMode.Off);
+        (queue, _) = queue.TakeStart();
+        (queue, _) = queue.ReportCurrent(clip, Info);
+        (queue, _) = queue.ItemFailed(TimeSpan.Zero, TimeSpan.Zero);
+        var sixtySeconds = new MediaInfo("a", TimeSpan.FromSeconds(60), [], []);
+        var state = PlayingWith(clip) with
+        {
+            Item = new PlaylistItemSlot(CurrentGeneration, clip, Played: true, AwaitsPlay: false, CurrentRun, sixtySeconds),
+        };
+
+        var (_, after, _) = Step(
+            state,
+            queue,
+            new PlaylistSessionInput.Fault(CurrentGeneration, new InvalidOperationException(), ClipStart + TimeSpan.FromSeconds(1.2))
+        );
+
+        Assert.Equal(expectedFailures, after.ConsecutiveFailures);
+    }
+
     private static PlaylistSessionState PlayingWith(PlaylistItem item) =>
         PlaylistSessionState.Initial with
         {

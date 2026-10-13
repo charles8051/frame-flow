@@ -617,7 +617,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                 _runtime = runtime;
                 return await RunItemAsync(
                         open.Command,
-                        t => runtime.InitializeAsync(open.Source, open.Start, t)
+                        t => runtime.InitializeAsync(open.Source, open.Start, open.End, t)
                     )
                     .ConfigureAwait(false);
             }
@@ -639,7 +639,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                     .ConfigureAwait(false);
 
             case PlaylistSessionAction.RewindItem rewind:
-                return await RunItemAsync(rewind.Command, t => _runtime!.RewindToAsync(rewind.Position, t))
+                return await RunItemAsync(rewind.Command, t => _runtime!.RewindToAsync(rewind.Position, rewind.End, t))
                     .ConfigureAwait(false);
 
             case PlaylistSessionAction.DisposeItem:

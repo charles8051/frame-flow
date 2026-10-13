@@ -111,6 +111,15 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     // per item and disposes the previous one.
     private TimeSpan _pendingSeekFloor = TimeSpan.Zero;
 
+    // The end of the item this runtime plays, or null when it plays to the end of the source. Set
+    // at open, and by a rewind that hands the runtime to another item of the same source.
+    private TimeSpan? _itemEnd;
+
+    // The end the current run stops at, in ticks, or long.MaxValue when it has none. Written only
+    // before a run launches, and read by the end filter on the graph's sources as each frame or
+    // buffer is decoded (media-clips decision 6).
+    private long _runEndTicks = long.MaxValue;
+
     // Whether the launch that consumes _pendingSeekFloor is one this session will follow
     // with a clock reseat. Only the reposition's play branch does; the launches that run on
     // the controller's command loop cannot wait for the destination frame, so their runs
@@ -433,15 +442,17 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     public ValueTask InitializeAsync(
         IMediaSource source,
         CancellationToken cancellationToken = default
-    ) => InitializeAsync(source, TimeSpan.Zero, cancellationToken);
+    ) => InitializeAsync(source, TimeSpan.Zero, end: null, cancellationToken);
 
     /// <inheritdoc/>
     public async ValueTask InitializeAsync(
         IMediaSource source,
         TimeSpan start,
+        TimeSpan? end,
         CancellationToken cancellationToken
     )
     {
+        _itemEnd = end;
         await OpenAsync(source, cancellationToken).ConfigureAwait(false);
         if (start > TimeSpan.Zero)
             await PositionAtStartAsync(start, cancellationToken).ConfigureAwait(false);
@@ -1151,18 +1162,21 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// </para>
     /// </remarks>
     public ValueTask RewindToStartAsync(CancellationToken cancellationToken = default) =>
-        RewindToAsync(TimeSpan.Zero, cancellationToken);
+        RewindToAsync(TimeSpan.Zero, _itemEnd, cancellationToken);
 
     /// <inheritdoc/>
     /// <remarks>
     /// The rewind <see cref="RewindToStartAsync"/> describes, to <paramref name="position"/>
     /// rather than to zero: the start of the item this runtime now plays, which for a clip is
-    /// partway into the source.
+    /// partway into the source. The runs that follow stop at <paramref name="end"/>, that item's
+    /// end.
     /// </remarks>
-    public ValueTask RewindToAsync(TimeSpan position, CancellationToken cancellationToken)
+    public ValueTask RewindToAsync(TimeSpan position, TimeSpan? end, CancellationToken cancellationToken)
     {
         if (_pipeline is null || _demux is null)
             return ValueTask.CompletedTask;
+
+        _itemEnd = end;
 
         // A hand-off to another clip of this source positions it here rather than at open, so
         // the open's check applies here too. The rewind then fails, the playlist rebuilds the
@@ -1654,7 +1668,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             // edges and returns its trunk open.
             WireVideo(
                 graph,
-                _videoDecoder!.AsSourceNode("video-source"),
+                BeforeRunEnd(_videoDecoder!.AsSourceNode("video-source"), static frame => frame.Pts),
                 _videoGate.AsOperator("video-gate"),
                 _videoConfigurator,
                 (_videoPacer ?? (IVideoSink)_videoSink!).AsSinkNode("video-sink")
@@ -1666,7 +1680,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             // Audio needs no pacer: the sink consumes at realtime by feeding the device. The
             // gate still runs upstream of the configurator, so a pause halts the taps a
             // configurator wires as well as the sink.
-            var chain = graph.Pipeline(_audioDecoder!.AsSourceNode("audio-source"))
+            var chain = graph.Pipeline(
+                    BeforeRunEnd(
+                        _audioDecoder!.AsSourceNode("audio-source"),
+                        static buffer => buffer.PresentationTime
+                    )
+                )
                 .Then(_audioGate.AsOperator("audio-gate"));
             if (_audioConfigurator is not null)
                 chain = _audioConfigurator(chain);
@@ -1675,6 +1694,35 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
         return graph;
     }
+
+    /// <summary>
+    /// <paramref name="source"/>, delivering nothing presented at or after the current run's end.
+    /// An item past it is released as soon as it is decoded, and the source reads on until the
+    /// decoder finishes the packets the pump fed before the end.
+    /// </summary>
+    /// <remarks>
+    /// The end is read for each item rather than captured, because a rewind re-runs the retained
+    /// graph for a run whose end may differ: the next clip of the same source.
+    /// </remarks>
+    private SourceNode<T> BeforeRunEnd<T>(SourceNode<T> source, Func<T, TimeSpan> timestamp)
+        where T : class, IRefCounted =>
+        new(
+            source.Id,
+            async ct =>
+            {
+                while (await source.Body(ct).ConfigureAwait(false) is { } item)
+                {
+                    if (timestamp(item).Ticks < Volatile.Read(ref _runEndTicks))
+                        return item;
+                    item.Dispose();
+                }
+                return null;
+            },
+            source.OnError,
+            source.Cleanup,
+            source.OnBudget,
+            source.Emits
+        );
 
     /// <summary>
     /// The video path's one shape: source, then the pause gate, then the consumer's
@@ -1792,6 +1840,13 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // per-launch path (not in BuildGraph) so a cheap RewindToStartAsync re-launch over
         // the retained graph re-arms it too — A1 (ClockSelectVideoSink) composing with B2
         // (cheap rewind).
+        // A run that starts before the item's end stops there: the pump reads no further, and
+        // the end filter drops what was decoded at or past it. A run that starts at or past the
+        // end, after a seek, plays to the end of the source (media-clips decision 6).
+        TimeSpan? runEnd = _itemEnd is { } end && _pendingSeekFloor < end ? end : null;
+        Volatile.Write(ref _runEndTicks, runEnd?.Ticks ?? long.MaxValue);
+        _pipeline.ReadUntil = runEnd;
+
         _videoPacer?.BeginRun(_pendingSeekFloor, _pendingSeekSettles);
         _pendingSeekFloor = TimeSpan.Zero;
         _pendingSeekSettles = false;

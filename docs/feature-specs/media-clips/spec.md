@@ -1,7 +1,7 @@
-# Media clips: playlist items that start at a position
+# Media clips: playlist items that start and end at a position
 
-**Status:** Phases 1 (start positions) and 2 (reuse across clips of one file) built. Phases 3
-and 4 open. Living document, rewritten as the feature changes.
+**Status:** Phases 1 to 3 built: start positions, reuse across clips of one file, and end
+positions. Phase 4 open. Living document, rewritten as the feature changes.
 
 **Date:** 2026-10-12.
 
@@ -83,7 +83,8 @@ of ten hops between random clips of one file, from `JumpToAsync` (phase 1 reopen
    the clip's start and sizes the progress it needs from what remains after the start, so a clip
    late in a file that faults at once is not counted as having played. *Phase 1.*
 6. **A clip can end at a position.** The item ends when playback reaches the clip's end, as at
-   end of stream: it advances, loops or ends the queue by the repeat mode. *Phase 3.*
+   end of stream: it advances, loops or ends the queue by the repeat mode. Nothing presented at or
+   after the end is shown, and the source is not read past it. *Phase 3, decision 6.*
 7. **The next clip can be ready before the current one ends.** The next item is opened and
    positioned at its start while the current one plays, so the switch costs a hand-off rather than
    an open (#25). *Phase 4.*
@@ -95,12 +96,13 @@ Phase 1:
 ```csharp
 namespace FrameFlow.Media;
 
-// A source and where to start in it.
+// A source, where to start in it, and optionally where to stop.
 public readonly record struct MediaClip
 {
-    public MediaClip(IMediaSource source, TimeSpan start = default);
+    public MediaClip(IMediaSource source, TimeSpan start = default, TimeSpan? end = null);
     public IMediaSource Source { get; }
-    public TimeSpan Start { get; init; }    // not negative
+    public TimeSpan Start { get; init; }    // not negative, before End
+    public TimeSpan? End { get; init; }     // exclusive; null plays to the end of the source
 }
 ```
 
@@ -130,6 +132,7 @@ public sealed class PlaylistItem
 {
     public PlaylistItem(MediaClip clip);
     public TimeSpan Start { get; }          // zero for an item built from a source
+    public TimeSpan? End { get; }
 }
 ```
 
@@ -142,7 +145,7 @@ var items = await player.ReplaceAsync(
 await player.JumpToAsync(items.Value[3]);             // the fourth hit, in the open file
 ```
 
-Phase 3 adds `MediaClip.End` as an `init` property, so no overload changes.
+Phase 3 added `MediaClip.End` and `PlaylistItem.End`, with no overload changes.
 
 ## Semantics
 
@@ -158,6 +161,10 @@ Phase 3 adds `MediaClip.End` as an `init` property, so no overload changes.
 - **Shared sources.** Two clips of one file should share one source object. Reuse is decided by
   reference (`PlaylistQueue.Take`). Two `MediaSource` records for the same path are equal as
   values but are different sources to the queue.
+- **The end.** It is exclusive. No frame presented at or after it is shown. An audio buffer that
+  starts before it plays whole, as a pass's range does it. A seek to or past the end lets that run
+  play on to the end of the source. A loop or replay returns to the start and stops at the end
+  again. An end past the source's end is reached at the source's end.
 - **An empty collection expression.** `ReplaceAsync([])` is ambiguous between the source and clip
   overloads. It always threw, and the breaking-changes log says what to write instead. The builder
   takes a single clip only, so `WithMedia([])`, which builds a player with nothing loaded, still
@@ -174,6 +181,13 @@ Phase 3 adds `MediaClip.End` as an `init` property, so no overload changes.
 3. **End positions.** `MediaClip.End`. The item ends at its end position.
 4. **The next clip prepared ahead** (#25), and a decision on whether the player lends itself one
    hardware device by default.
+
+## Known limitations
+
+- **The loop-stall watchdog watches the source's duration.** A clip under `RepeatMode.One` that
+  loops short of the end of its source never reaches that duration. A loop that wedges at the
+  clip's end is reported only once the position passes the source's end, later than it would be
+  for a whole-file loop. Nothing is reported falsely. #666.
 
 ## Open questions
 

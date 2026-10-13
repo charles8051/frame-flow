@@ -177,3 +177,48 @@ state.
 
 - **Keep rebuilding outside the playing, played case.** It is correct, and costs an open per hop,
   which for clips of one file is most hops in a paused or not-yet-started player.
+
+## Decision 6: a clip's end stops reading, filters what was decoded, and ends the item
+
+**Date:** 2026-10-12
+**Status:** Accepted
+
+### Context
+
+A clip can carry an end: a search hit or a chapter is a span, not only a start. A pass already
+bounds a run to a range (#483). Its pump stops reading at the end through `ReadBound`, and it drops
+each decoded frame or buffer at or past the end. `ReadBound` leaves that drop to its consumer,
+because a frame can decode before the end and present after it.
+
+### Decision
+
+- **The same two mechanisms.** Before each run launches, `SubstrateSession` sets
+  `DecodingPipeline.ReadUntil` to the item's end, and a filter on the graph's video and audio
+  sources drops what is presented at or after it. The run then ends as at the end of the source: the
+  decoders drain, the pacer holds the last frame for its interval, and the playlist advances, loops
+  or ends by its repeat mode.
+- **The end is exclusive.** No frame at or after it is shown. An audio buffer that starts before it
+  plays whole, as a pass's range does it.
+- **A run that starts at or past the end is not bounded.** The end is armed at each launch from the
+  run's origin, the position the run starts at. A seek to or past the end therefore plays on to the
+  end of the source, and a seek back before it arms it again. A loop or replay starts at the clip's
+  start and is bounded again.
+- **The end travels with the item.** The playlist protocol passes it with the start when it opens
+  an item and when it rewinds the open item for another clip of the same source.
+
+### Consequences
+
+- An item with an end costs no read or decode past it.
+- `Duration` stays the source's (decision 4). The failure guard sizes the progress it needs from
+  the item's end when it has one.
+- The loop-stall watchdog still watches the source's duration, so a wedged loop of a clip that ends
+  short of the source is reported late (#666).
+
+### Alternatives considered
+
+- **A seek past the end ends the item.** Simpler to state, and consistent with treating the clip as
+  a hard span. It was rejected because a consumer that shows the whole file's timeline and lets the
+  viewer scrub would see the item end, and the next one start, on a scrub past the clip.
+- **Only filter, without stopping the read.** Correct output, but the rest of the source is read and
+  decoded before the item ends. For a short clip in a long file that delays the hand-off by the time
+  it takes to decode the rest of the file.
