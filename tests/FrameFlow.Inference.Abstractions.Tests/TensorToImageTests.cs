@@ -332,6 +332,22 @@ public sealed class TensorToImageTests
     }
 
     [Fact]
+    public void ToFrame_IsOnTheTimelineItIsGiven_AndOnNoneWithoutOne()
+    {
+        // The image a model makes for a frame follows that frame's run (ADR-0084, decision 3).
+        var options = new TensorToImageOptions(4, 4);
+        using var pool = new CpuTensorPool();
+        using var tensor = pool.Rent<float>(new TensorShape(1, 3, 4, 4));
+        var timeline = TimelineId.Next();
+
+        using var onTimeline = TensorToImage.ToFrame(tensor, options, TimeSpan.Zero, TimeSpan.Zero, timeline);
+        using var untracked = TensorToImage.ToFrame(tensor, options, TimeSpan.Zero, TimeSpan.Zero);
+
+        Assert.Equal(timeline, onTimeline.Timeline);
+        Assert.Equal(TimelineId.None, untracked.Timeline);
+    }
+
+    [Fact]
     public void ToFrame_RefusesATensorItCannotRead()
     {
         var options = new TensorToImageOptions(4, 4);

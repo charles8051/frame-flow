@@ -42,6 +42,23 @@ public sealed class InferenceOperatorTests
         Assert.Equal([60 / 255f, 40 / 255f, 20 / 255f], result.Result, new ToleranceComparer(1e-6f));
     }
 
+    [Fact]
+    public void AResult_IsOnItsFramesTimeline()
+    {
+        // A result can arrive before its frame is presented, so it carries the frame's timeline
+        // for a consumer to match against what is on screen (ADR-0084, decision 3).
+        var runner = new InferenceRunner<float[]>(new ChannelMeanModel(new ChannelMeanSession()), stage: null);
+        var timeline = TimelineId.Next();
+        using var frame = CpuVideoFrame.Create(
+            PixelFormat.Bgra32, 4, 4, TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(40), timeline,
+            0, static (planes, _) => planes.Y.Fill(128));
+
+        var result = runner.Run(frame);
+
+        Assert.Equal(timeline, result.Timeline);
+        Assert.Equal(timeline, ((IFrame)result).Timeline);
+    }
+
     /// <summary>
     /// The host input takes the element type the model's options name, so a model that takes bytes
     /// gets the frame's bytes with no second pass.

@@ -34,7 +34,8 @@ internal static class PcmAudioTrim
 
     /// <summary>
     /// A new buffer holding <paramref name="buffer"/>'s frames from <paramref name="frames"/> on,
-    /// stamped with when the first of them starts. The caller keeps its reference to
+    /// stamped with when the first of them starts, on <paramref name="buffer"/>'s timeline. The
+    /// caller keeps its reference to
     /// <paramref name="buffer"/>.
     /// </summary>
     /// <param name="buffer">The buffer to cut. It must have a sample rate and channels.</param>
@@ -56,6 +57,7 @@ internal static class PcmAudioTrim
             buffer.SampleRate,
             buffer.Channels,
             buffer.PresentationTime + skipped,
+            buffer.Timeline,
             (Buffer: buffer, Offset: offset, Count: count),
             static (samples, cut) =>
             {

@@ -32,6 +32,7 @@ public static class ColorFilters
             frame.Height,
             frame.Pts,
             frame.Duration,
+            frame.Timeline,
             (Source: frame.ToCpu(), Filter: filter),
             static (target, state) => Fill(state.Source, target, state.Filter),
             sampleAspectRatio: frame.SampleAspectRatio,

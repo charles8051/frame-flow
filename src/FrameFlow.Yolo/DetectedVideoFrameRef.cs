@@ -59,6 +59,9 @@ public sealed class DetectedVideoFrameRef : IRefCounted, IFrame
     /// <summary>The frame's presentation time.</summary>
     public TimeSpan Timestamp => Video.Timestamp;
 
+    /// <summary>The frame's timeline (ADR-0084).</summary>
+    public TimelineId Timeline => Video.Timeline;
+
     /// <inheritdoc />
     /// <exception cref="ObjectDisposedException">The item has already been released.</exception>
     public IRefCounted AddRef()

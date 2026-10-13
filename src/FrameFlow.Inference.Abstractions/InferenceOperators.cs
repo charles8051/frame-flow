@@ -175,7 +175,10 @@ internal sealed class InferenceRunner<TResult>(IImageModel<TResult> model, IDevi
                         + "the session. Put ToCpu before the node, or give it a device stage for this frame's API.");
         }
 
-        return new InferenceResult<TResult>(model.Decode(outputs, transform, frame), frame.Timestamp, frame.Width, frame.Height, path);
+        return new InferenceResult<TResult>(model.Decode(outputs, transform, frame), frame.Timestamp, frame.Width, frame.Height, path)
+        {
+            Timeline = frame.Timeline,
+        };
     }
 
     /// <summary>The host input, in the element type the model's options name.</summary>

@@ -19,4 +19,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\FrameFlow.Video\FrameFlow.Video.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\DerivedItemConformance.cs" Link="Shared\DerivedItemConformance.cs" />
+  </ItemGroup>
 </Project>

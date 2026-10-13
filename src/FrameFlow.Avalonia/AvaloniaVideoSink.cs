@@ -101,10 +101,10 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     /// copied into the back buffer and then overwritten before the UI thread swapped it is a
     /// drop only.
     /// </remarks>
-    internal void RecordPresented(TimeSpan pts)
+    internal void RecordPresented(TimeSpan pts, TimelineId timeline)
     {
         _telemetry.RecordPresented(pts);
-        RaiseFramePresented(pts);
+        RaiseFramePresented(pts, timeline);
     }
 
     /// <inheritdoc />
@@ -120,13 +120,13 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     /// cannot process one present is not a reason to stop the presenter. The exception is
     /// logged once per occurrence, like the copy path's.
     /// </remarks>
-    private void RaiseFramePresented(TimeSpan pts)
+    private void RaiseFramePresented(TimeSpan pts, TimelineId timeline)
     {
         var handler = FramePresented;
         if (handler is null)
             return;
 
-        var info = new FramePresentedInfo(pts, DateTime.UtcNow);
+        var info = new FramePresentedInfo(pts, DateTime.UtcNow) { Timeline = timeline };
 
         // Invoked one subscriber at a time rather than as a chain: a single delegate
         // invocation abandons every handler after the one that threw, so one broken consumer
@@ -281,7 +281,7 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
         var frame = _slot.Take(taken =>
         {
             _telemetry.RecordPresented(taken.Pts);
-            RaiseFramePresented(taken.Pts);
+            RaiseFramePresented(taken.Pts, taken.Timeline);
         });
 
         return frame;

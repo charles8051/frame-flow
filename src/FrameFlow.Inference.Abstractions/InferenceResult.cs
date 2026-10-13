@@ -48,6 +48,16 @@ public sealed class InferenceResult<TResult> : IRefCounted, IFrame
     /// <summary>Where the input was prepared.</summary>
     public InferencePath Path { get; }
 
+    /// <summary>
+    /// The timeline of the frame the result is for (ADR-0084): set from the frame by the node that
+    /// ran the model, <see cref="TimelineId.None"/> when the result was built without one.
+    /// </summary>
+    /// <remarks>
+    /// A result can arrive before its frame is presented, so a consumer matches it against what is
+    /// shown through a <see cref="Graph.Core.PresentedTimeline"/>.
+    /// </remarks>
+    public TimelineId Timeline { get; init; }
+
     /// <inheritdoc />
     public IRefCounted AddRef() => this;
 

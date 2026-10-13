@@ -45,7 +45,7 @@ namespace FrameFlow.Media;
 /// </para>
 /// <para>
 /// <b>Immutable once created (ADR-0080, decision 5).</b> A buffer is made
-/// by <see cref="Create{TState}"/>, which rents storage, runs a fill
+/// by <c>Create</c>, which rents storage, runs a fill
 /// callback over it, and returns the buffer. <see cref="Samples"/> is
 /// read-only, and no holder can reach the storage to free it. A debug
 /// build fills released storage with a fixed value, so a read through a
@@ -119,13 +119,17 @@ public sealed class PcmAudioBuffer : IAudioBuffer
     /// <inheritdoc />
     public FrameMemoryDomain MemoryDomain => FrameMemoryDomain.Cpu;
 
+    /// <inheritdoc />
+    public TimelineId Timeline { get; }
+
     private PcmAudioBuffer(
         short[] storage,
         ArrayPool<short> pool,
         int sampleCount,
         int sampleRate,
         int channels,
-        TimeSpan presentationTime
+        TimeSpan presentationTime,
+        TimelineId timeline
     )
     {
         _storage = storage;
@@ -134,6 +138,7 @@ public sealed class PcmAudioBuffer : IAudioBuffer
         SampleRate = sampleRate;
         Channels = channels;
         PresentationTime = presentationTime;
+        Timeline = timeline;
     }
 
     /// <summary>
@@ -159,6 +164,59 @@ public sealed class PcmAudioBuffer : IAudioBuffer
     /// <param name="pool">Where the storage comes from. Defaults to <see cref="ArrayPool{T}.Shared"/>.</param>
     /// <returns>The buffer, holding one reference.</returns>
     /// <remarks>
+    /// <para>
+    /// The buffer's <see cref="Timeline"/> is <see cref="TimelineId.None"/>. A buffer made from
+    /// another, or by a source that numbers its runs, takes the overload that names one
+    /// (ADR-0084).
+    /// </para>
+    /// <para>
+    /// If <paramref name="fill"/> throws, the storage goes back to
+    /// <paramref name="pool"/> and the exception propagates unchanged, even
+    /// when the pool's <c>Return</c> throws too. No buffer is created.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="fill"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="capacity"/> is negative.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="fill"/> reported a count below 0 or above <paramref name="capacity"/>.
+    /// </exception>
+    public static PcmAudioBuffer Create<TState>(
+        int capacity,
+        int sampleRate,
+        int channels,
+        TimeSpan presentationTime,
+        TState state,
+        PcmAudioFill<TState> fill,
+        ArrayPool<short>? pool = null
+    ) => Create(capacity, sampleRate, channels, presentationTime, TimelineId.None, state, fill, pool);
+
+    /// <summary>
+    /// Creates a buffer on <paramref name="timeline"/>: rents room for
+    /// <paramref name="capacity"/> scalar samples, runs <paramref name="fill"/> over it, and
+    /// returns a buffer holding the samples the callback reports writing.
+    /// </summary>
+    /// <typeparam name="TState">State passed through to <paramref name="fill"/>.</typeparam>
+    /// <param name="capacity">
+    /// The most scalar samples (interleaved) the callback may write. A
+    /// producer that learns its count only while filling, such as a
+    /// resampler, passes an upper bound.
+    /// </param>
+    /// <param name="sampleRate">Sample rate in Hz.</param>
+    /// <param name="channels">Number of channels.</param>
+    /// <param name="presentationTime">Presentation timestamp.</param>
+    /// <param name="timeline">
+    /// The timeline the buffer belongs to (ADR-0084): the run that decoded it, or, for a buffer
+    /// made from another, that buffer's <see cref="Timeline"/>.
+    /// </param>
+    /// <param name="state">Passed to <paramref name="fill"/>, so it can be a static lambda that allocates nothing.</param>
+    /// <param name="fill">
+    /// Writes interleaved samples from the start of the span and returns how
+    /// many it wrote, between 0 and <paramref name="capacity"/>. It runs once,
+    /// before the buffer exists.
+    /// </param>
+    /// <param name="pool">Where the storage comes from. Defaults to <see cref="ArrayPool{T}.Shared"/>.</param>
+    /// <returns>The buffer, holding one reference.</returns>
+    /// <remarks>
     /// If <paramref name="fill"/> throws, the storage goes back to
     /// <paramref name="pool"/> and the exception propagates unchanged, even
     /// when the pool's <c>Return</c> throws too. No buffer is created.
@@ -173,6 +231,7 @@ public sealed class PcmAudioBuffer : IAudioBuffer
         int sampleRate,
         int channels,
         TimeSpan presentationTime,
+        TimelineId timeline,
         TState state,
         PcmAudioFill<TState> fill,
         ArrayPool<short>? pool = null
@@ -203,7 +262,7 @@ public sealed class PcmAudioBuffer : IAudioBuffer
             );
         }
 
-        return new PcmAudioBuffer(storage, pool, written, sampleRate, channels, presentationTime);
+        return new PcmAudioBuffer(storage, pool, written, sampleRate, channels, presentationTime, timeline);
     }
 
     /// <summary>

@@ -147,3 +147,4 @@ static FrameFlow.Face.BlazeFaceModelDescriptor.Front128Options.get -> FrameFlow.
 static FrameFlow.Face.FaceOperators.DetectWith(string! id, System.Func<FrameFlow.Media.IVideoFrame!, System.Collections.Generic.IReadOnlyList<FrameFlow.Face.FaceDetection>!>! detect) -> FrameFlow.Graph.OperatorNode<FrameFlow.Media.IVideoFrame!, FrameFlow.Face.DetectedFaceFrameRef!>!
 static FrameFlow.Face.FaceRoi.Full(FrameFlow.Media.IVideoFrame! frame) -> FrameFlow.Face.FaceRoi
 static FrameFlow.Face.SsdAnchorGenerator.Generate(FrameFlow.Face.SsdAnchorOptions! options) -> System.Collections.Generic.IReadOnlyList<FrameFlow.Face.SsdAnchor>!
+FrameFlow.Face.DetectedFaceFrameRef.Timeline.get -> FrameFlow.Graph.TimelineId

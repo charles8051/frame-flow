@@ -11,7 +11,7 @@ namespace FrameFlow.Media;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A frame is created by <see cref="Create{TState}"/>, which rents storage, runs a fill
+/// A frame is created by <c>Create</c>, which rents storage, runs a fill
 /// callback over the writable planes, and returns the frame. Nothing writes to it after that
 /// (ADR-0080, decision 5): <see cref="AsCpu"/> is read-only, and no holder can reach the
 /// storage to free it.
@@ -68,6 +68,9 @@ public sealed class CpuVideoFrame : IVideoFrame
     /// <inheritdoc />
     public VideoRotation Rotation { get; }
 
+    /// <inheritdoc />
+    public TimelineId Timeline { get; }
+
     private CpuVideoFrame(
         byte[] storage,
         ArrayPool<byte> pool,
@@ -77,12 +80,14 @@ public sealed class CpuVideoFrame : IVideoFrame
         int height,
         TimeSpan presentationTime,
         TimeSpan duration,
+        TimelineId timeline,
         SampleAspectRatio sampleAspectRatio,
         VideoRotation rotation
     )
     {
         SampleAspectRatio = sampleAspectRatio.IsKnown ? sampleAspectRatio : SampleAspectRatio.Square;
         Rotation = rotation;
+        Timeline = timeline;
         _storage = storage;
         _pool = pool;
         _layout = layout;
@@ -110,6 +115,68 @@ public sealed class CpuVideoFrame : IVideoFrame
     /// <param name="sampleAspectRatio">The shape of the pixels. Unknown, the default, is square.</param>
     /// <param name="rotation">How far the frame turns clockwise to display upright.</param>
     /// <returns>The frame, holding one reference.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="fill"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">A dimension is negative, or the frame does not fit in one array.</exception>
+    /// <exception cref="ArgumentException"><paramref name="format"/> is not a known pixel format.</exception>
+    /// <remarks>
+    /// <para>
+    /// The frame's <see cref="Timeline"/> is <see cref="TimelineId.None"/>. A frame made from
+    /// another item, or by a source that numbers its runs, takes the overload that names one
+    /// (ADR-0084).
+    /// </para>
+    /// <para>
+    /// If <paramref name="fill"/> throws, the storage goes back to <paramref name="pool"/> and
+    /// the exception propagates unchanged, even when the pool's <c>Return</c> throws too. No
+    /// frame is created.
+    /// </para>
+    /// </remarks>
+    public static CpuVideoFrame Create<TState>(
+        PixelFormat format,
+        int width,
+        int height,
+        TimeSpan presentationTime,
+        TimeSpan duration,
+        TState state,
+        CpuVideoFrameFill<TState> fill,
+        ArrayPool<byte>? pool = null,
+        SampleAspectRatio sampleAspectRatio = default,
+        VideoRotation rotation = VideoRotation.None
+    ) =>
+        Create(
+            format,
+            width,
+            height,
+            presentationTime,
+            duration,
+            TimelineId.None,
+            state,
+            fill,
+            pool,
+            sampleAspectRatio,
+            rotation
+        );
+
+    /// <summary>
+    /// Creates a frame on <paramref name="timeline"/>: rents storage for
+    /// <paramref name="format"/> at the given size, runs <paramref name="fill"/> over its planes,
+    /// and returns the frame.
+    /// </summary>
+    /// <typeparam name="TState">State passed through to <paramref name="fill"/>.</typeparam>
+    /// <param name="format">The pixel format, which sets the planes and their strides.</param>
+    /// <param name="width">Width in pixels.</param>
+    /// <param name="height">Height in pixels.</param>
+    /// <param name="presentationTime">Presentation timestamp.</param>
+    /// <param name="duration">How long the frame is displayed.</param>
+    /// <param name="timeline">
+    /// The timeline the frame belongs to (ADR-0084): the run that decoded it, or, for a frame made
+    /// from another item, that item's <see cref="Graph.IFrame.Timeline"/>.
+    /// </param>
+    /// <param name="state">Passed to <paramref name="fill"/>, so it can be a static lambda that allocates nothing.</param>
+    /// <param name="fill">Writes the pixels. It runs once, before the frame exists.</param>
+    /// <param name="pool">Where the storage comes from. Defaults to <see cref="ArrayPool{T}.Shared"/>.</param>
+    /// <param name="sampleAspectRatio">The shape of the pixels. Unknown, the default, is square.</param>
+    /// <param name="rotation">How far the frame turns clockwise to display upright.</param>
+    /// <returns>The frame, holding one reference.</returns>
     /// <remarks>
     /// If <paramref name="fill"/> throws, the storage goes back to <paramref name="pool"/> and
     /// the exception propagates unchanged, even when the pool's <c>Return</c> throws too. No
@@ -124,6 +191,7 @@ public sealed class CpuVideoFrame : IVideoFrame
         int height,
         TimeSpan presentationTime,
         TimeSpan duration,
+        TimelineId timeline,
         TState state,
         CpuVideoFrameFill<TState> fill,
         ArrayPool<byte>? pool = null,
@@ -156,6 +224,7 @@ public sealed class CpuVideoFrame : IVideoFrame
             height,
             presentationTime,
             duration,
+            timeline,
             sampleAspectRatio,
             rotation
         );

@@ -3,7 +3,7 @@ using FrameFlow.Media.Tests.Doubles;
 namespace FrameFlow.Media.Tests;
 
 /// <summary>
-/// <see cref="PcmAudioBuffer.Create{TState}"/>: the one way to make a PCM buffer (ADR-0080,
+/// <c>PcmAudioBuffer.Create</c>: the one way to make a PCM buffer (ADR-0080,
 /// decision 5). The fill writes up to the capacity and reports how many samples it wrote.
 /// </summary>
 public sealed class PcmAudioBlockTests

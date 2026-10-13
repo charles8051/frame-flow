@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using FrameFlow.Media;
+using FrameFlow.Graph;
 using FrameFlow.Media.Diagnostics;
 using FrameFlow.Native.Interop;
 
@@ -34,6 +35,7 @@ internal static unsafe class GpuFrameReadback
     /// <param name="duration">Display duration for the output frame.</param>
     /// <param name="sampleAspectRatio">The pixel shape to carry (#542). Unknown, the default, is square.</param>
     /// <param name="rotation">The turn to display the frame upright (#542).</param>
+    /// <param name="timeline">The timeline the frame read back belongs to (ADR-0084).</param>
     /// <returns>A new <see cref="CpuVideoFrame"/> owned by the caller.</returns>
     /// <exception cref="InvalidOperationException">
     /// Thrown when the native readback or scale call fails.
@@ -45,7 +47,8 @@ internal static unsafe class GpuFrameReadback
         TimeSpan pts,
         TimeSpan duration,
         SampleAspectRatio sampleAspectRatio = default,
-        VideoRotation rotation = VideoRotation.None
+        VideoRotation rotation = VideoRotation.None,
+        TimelineId timeline = default
     )
     {
         // Allocate the intermediate CPU AVFrame for av_hwframe_transfer_data
@@ -100,6 +103,7 @@ internal static unsafe class GpuFrameReadback
                 height,
                 pts,
                 duration,
+                timeline,
                 (SwsCtx: swsCtx, Source: cpuPtr),
                 static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source),
                 sampleAspectRatio: sampleAspectRatio,

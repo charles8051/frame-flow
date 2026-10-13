@@ -46,6 +46,43 @@ public sealed class AvaloniaVideoSinkFramePresentedTests
     }
 
     [AvaloniaFact]
+    public void TheEventCarriesTheTimelineOfTheFrameTheSwapPublished()
+    {
+        // The first frame is staged and drawn once the buffers exist (#287); the second is
+        // copied straight into the back buffer. Both paths carry the frame's timeline to the
+        // swap, which is how a consumer learns which timeline is on screen (ADR-0084, decision 4).
+        var (_, sink) = NewAttachedView();
+        var presented = new List<(TimeSpan, TimelineId)>();
+        sink.FramePresented += (_, e) => presented.Add((e.PresentationTime, e.Timeline));
+        var before = TimelineId.Next();
+        var after = TimelineId.Next();
+
+        PresentOffUiThread(sink, Pts(1), before);
+        Dispatcher.UIThread.RunJobs();
+        PresentOffUiThread(sink, Pts(2), after);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal([(Pts(1), before), (Pts(2), after)], presented);
+    }
+
+    [AvaloniaFact]
+    public void ThePullPath_ReportsTheTimelineOfTheFrameItTook()
+    {
+        // A host that drives RenderPendingFrame itself is told the same thing the view's swap
+        // tells it.
+        var sink = NewSink();
+        var timeline = TimelineId.Next();
+        var presented = new List<TimelineId>();
+        sink.FramePresented += (_, e) => presented.Add(e.Timeline);
+
+        PresentOffUiThread(sink, Pts(1), timeline);
+        using var taken = sink.RenderPendingFrame();
+
+        Assert.NotNull(taken);
+        Assert.Equal([timeline], presented);
+    }
+
+    [AvaloniaFact]
     public void TheEventIsNotRaisedBeforeTheSwapRuns()
     {
         var (_, sink) = NewAttachedView();
@@ -187,19 +224,20 @@ public sealed class AvaloniaVideoSinkFramePresentedTests
         return (view, sink);
     }
 
-    private static void PresentOffUiThread(AvaloniaVideoSink sink, TimeSpan pts) =>
-        Task.Run(async () => await sink.PresentAsync(new BgraFrame(W, H, pts), CancellationToken.None))
+    private static void PresentOffUiThread(AvaloniaVideoSink sink, TimeSpan pts, TimelineId timeline = default) =>
+        Task.Run(async () => await sink.PresentAsync(new BgraFrame(W, H, pts, timeline), CancellationToken.None))
             .GetAwaiter()
             .GetResult();
 
     /// <summary>Packed BGRA32 frame over a real buffer, so the memcpy has something to copy.</summary>
-    private sealed class BgraFrame(int width, int height, TimeSpan pts) : IVideoFrame
+    private sealed class BgraFrame(int width, int height, TimeSpan pts, TimelineId timeline) : IVideoFrame
     {
         private readonly byte[] _pixels = new byte[width * height * 4];
 
         public int Width => width;
         public int Height => height;
         public TimeSpan Pts => pts;
+        public TimelineId Timeline => timeline;
         public TimeSpan Duration => TimeSpan.FromMilliseconds(16);
         public PixelFormat Format => PixelFormat.Bgra32;
         public FrameMemoryDomain MemoryDomain => FrameMemoryDomain.Cpu;
