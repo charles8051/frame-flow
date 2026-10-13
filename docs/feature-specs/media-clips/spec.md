@@ -1,10 +1,10 @@
 # Media clips: playlist items that start and end at a position
 
-**Status:** Phases 1 to 3 and 4a built: start positions, reuse across clips of one file, end
-positions, and hardware devices kept across items. Phase 4b, preparing an item ahead, is open.
-Living document, rewritten as the feature changes.
+**Status:** Phases 1 to 4 built: start positions, reuse across clips of one file, end positions,
+hardware devices kept across items, and items prepared ahead. Living document, rewritten as the
+feature changes.
 
-**Date:** 2026-10-12.
+**Date:** 2026-10-13.
 
 **Decision record:** [adr.md](adr.md).
 
@@ -67,6 +67,18 @@ and seeking to a random target, medians of five, with no device lent:
 
 The default player now switches as fast as one lent a device.
 
+With phase 4b, an item can be prepared before the jump to it. Jumping to a clip of another file at
+a random target, medians of eight, with no device lent:
+
+| | Keyframe every 2 s | Keyframe every 10 s |
+|---|---|---|
+| Not prepared | 41 ms | 282 ms |
+| Prepared, jump as `PrepareAsync` completes | 18 ms | 249 ms |
+| Prepared, jump 1 s after `PrepareAsync` completes | 7 ms | 17 ms |
+
+`PrepareAsync` completes once the item is open and decoding. The decode from the keyframe to the
+start goes on after that, so a jump that follows at once waits for the rest of it.
+
 With phase 2, a hop to another clip of the open file while paused repositions the open item. Medians
 of ten hops between random clips of one file, from `JumpToAsync` (phase 1 reopened the file):
 
@@ -102,7 +114,7 @@ of ten hops between random clips of one file, from `JumpToAsync` (phase 1 reopen
 8. **An item can be ready before it is needed.** An item is opened and positioned at its start
    ahead of time, so switching to it costs a hand-off rather than an open and a decode walk. The
    player prepares the queue's next item, and the application can name another, such as the result
-   under the cursor (#25). *Phase 4b.*
+   under the cursor (#25). *Phase 4b, decision 8.*
 
 ## Public surface
 
@@ -162,6 +174,32 @@ await player.JumpToAsync(items.Value[3]);             // the fourth hit, in the 
 
 Phase 3 added `MediaClip.End` and `PlaylistItem.End`, with no overload changes.
 
+Phase 4b:
+
+```csharp
+namespace FrameFlow.Player;
+
+public interface IMediaPlayer
+{
+    // Opens the item, positions it at its start and decodes toward it, while the current item
+    // plays. Completes once it is open and decoding.
+    Task<Result> PrepareAsync(PlaylistItem item, CancellationToken cancellationToken = default);
+}
+
+public interface IPlayerBuilder
+{
+    // Prepares the item the queue would advance to next, whenever an item starts.
+    IPlayerBuilder WithNextItemPrepared(bool prepare = true);
+}
+```
+
+A search-results view that prepares the hit under the cursor:
+
+```csharp
+void OnHover(PlaylistItem hit) => _ = player.PrepareAsync(hit);   // replaces the last one
+async Task OnClick(PlaylistItem hit) => await player.JumpToAsync(hit);
+```
+
 ## Semantics
 
 - **File time.** `Position`, `Duration`, `SeekAsync` and the PTS a sink sees stay in the source's
@@ -180,6 +218,16 @@ Phase 3 added `MediaClip.End` and `PlaylistItem.End`, with no overload changes.
   starts before it plays whole, as a pass's range does it. A seek to or past the end lets that run
   play on to the end of the source. A loop or replay returns to the start and stops at the end
   again. An end past the source's end is reached at the source's end.
+- **Before the start.** A run that starts past a keyframe decodes from the keyframe. What it
+  decodes before its start is dropped where it is decoded: no frame reaches a configurator or the
+  sink, and no audio reaches the audio sink. An audio buffer that crosses the start is cut at it.
+  This holds for a seek as well as for a clip's start.
+- **A prepared item.** One item is prepared at a time, and preparing another discards the first.
+  It shares the sinks and the position clock with the item that is playing, and touches none of
+  them until it becomes current. A jump, skip or advance to it uses it. Another clip of the current
+  item's source is never prepared: the open item is repositioned instead (decision 5). An explicitly
+  prepared item stays prepared until it is used, replaced or removed from the queue, and the
+  player prepares nothing else automatically meanwhile.
 - **An empty collection expression.** `ReplaceAsync([])` is ambiguous between the source and clip
   overloads. It always threw, and the breaking-changes log says what to write instead. The builder
   takes a single clip only, so `WithMedia([])`, which builds a player with nothing loaded, still
@@ -196,7 +244,7 @@ Phase 3 added `MediaClip.End` and `PlaylistItem.End`, with no overload changes.
 3. **End positions.** `MediaClip.End`. The item ends at its end position.
 4. **a. Hardware devices kept across items.** A per-backend cache, on by default (decision 7).
    **b. An item prepared ahead** (#25): the queue's next item automatically, and an explicit
-   prepare for one the application chooses. One prepared item at a time.
+   prepare for one the application chooses. One prepared item at a time (decision 8).
 
 ## Known limitations
 
@@ -204,6 +252,10 @@ Phase 3 added `MediaClip.End` and `PlaylistItem.End`, with no overload changes.
   loops short of the end of its source never reaches that duration. A loop that wedges at the
   clip's end is reported only once the position passes the source's end, later than it would be
   for a whole-file loop. Nothing is reported falsely. #666.
+- **A prepared item can stall short of its start.** It decodes behind closed gates. Audio from its
+  start waits at the audio gate, and once the audio queue is full the demuxer stops. When a file's
+  audio is muxed further ahead of its video than that queue holds, about 2.7 s of 48 kHz AAC, the
+  video decoder stops short of the start, and the jump decodes the rest.
 
 ## Open questions
 

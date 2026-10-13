@@ -43,6 +43,13 @@ internal interface IPlaylistItemRuntime : IPlaybackSession
     /// <paramref name="position"/> is at or past it.
     /// </remarks>
     ValueTask RewindToAsync(TimeSpan position, TimeSpan? end, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Attaches a runtime that was created detached, when it becomes the current item: from here
+    /// on it acts on the position clock and the audio sink it shares with the playlist. A no-op on
+    /// a runtime that was never detached.
+    /// </summary>
+    void Attach();
 }
 
 /// <summary>Creates the runtime for each item a <see cref="PlaylistSession"/> opens.</summary>
@@ -53,4 +60,10 @@ internal interface IPlaylistItemRuntimeFactory
     /// <paramref name="callbacks"/>.
     /// </summary>
     IPlaylistItemRuntime CreateItem(IPlaybackClock clock, SessionCallbacks callbacks);
+
+    /// <summary>
+    /// Creates an item runtime that is prepared ahead while another item plays: detached from the
+    /// shared clock and audio sink until <see cref="IPlaylistItemRuntime.Attach"/>.
+    /// </summary>
+    IPlaylistItemRuntime CreatePreparedItem(IPlaybackClock clock, SessionCallbacks callbacks);
 }

@@ -237,6 +237,24 @@ public interface IPlayerBuilder
     IPlayerBuilder WithExcludedCodecs(params string[] codecs);
 
     /// <summary>
+    /// Has the built player prepare the item its queue would take next while the current one
+    /// plays: open it, position it at its start and decode up to it, so moving on to it costs a
+    /// hand-off rather than an open and a decode walk. Off by default.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// While an item plays, a second one is open and decoding, which costs a second decoder's
+    /// memory and a burst of decode work after every item starts. Another clip of the current
+    /// item's source is not prepared: the player reaches it by repositioning the open item.
+    /// </para>
+    /// <para>
+    /// <see cref="IMediaPlayer.PrepareAsync"/> prepares an item the caller chooses instead, and
+    /// works whether or not this is on.
+    /// </para>
+    /// </remarks>
+    IPlayerBuilder WithNextItemPrepared(bool prepare = true);
+
+    /// <summary>
     /// Controls whether <see cref="IAudioSink.ActivateAsync"/> is called before the built player
     /// is handed back. Defaults to <see langword="true"/>; pass <see langword="false"/> to
     /// activate the sink yourself later.

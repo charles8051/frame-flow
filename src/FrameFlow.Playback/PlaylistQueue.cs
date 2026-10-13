@@ -404,6 +404,16 @@ internal sealed record PlaylistQueue
     }
 
     /// <summary>
+    /// The item the current item's end would take next, when that is an advance to another item
+    /// rather than a replay or the end of the queue. The queue itself is unchanged.
+    /// </summary>
+    public PlaylistItem? PeekAdvance()
+    {
+        var (_, decision) = DecideNext(PlaylistAdvance.EndOfStream);
+        return decision.Kind == NextKind.Advance ? decision.Item : null;
+    }
+
+    /// <summary>
     /// Records that <paramref name="item"/> has started with <paramref name="info"/>. The result is
     /// the start's transition index.
     /// </summary>

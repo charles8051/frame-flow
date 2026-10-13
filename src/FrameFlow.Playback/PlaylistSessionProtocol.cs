@@ -172,6 +172,12 @@ internal static class PlaylistSessionProtocol
                 case PlaylistSessionInput.JumpRequested:
                     OnJumpRequested();
                     break;
+                case PlaylistSessionInput.PrepareRequested p:
+                    OnPrepareRequested(p.Item, p.Command);
+                    break;
+                case PlaylistSessionInput.QueueChanged:
+                    OnQueueChanged();
+                    break;
                 default:
                     // An outcome or continue with nothing under way means nothing.
                     Done();
@@ -332,6 +338,8 @@ internal static class PlaylistSessionProtocol
 
         private void OnDispose()
         {
+            DiscardPrepared();
+
             if (State.Item is null)
             {
                 Done();
@@ -592,6 +600,9 @@ internal static class PlaylistSessionProtocol
                 case PlaylistSessionWork.Opening w:
                     OnOpened(w, outcome);
                     break;
+                case PlaylistSessionWork.Promoting w:
+                    OnPromoted(w, outcome);
+                    break;
                 case PlaylistSessionWork.Warming w:
                     OnWarmed(w, outcome);
                     break;
@@ -653,6 +664,7 @@ internal static class PlaylistSessionProtocol
                         Reason: PlaylistTransitionReason.FirstItem
                     )
                 );
+                PrepareAhead();
             }
 
             Complete(work.Command, PlaylistCommandResult.Ok);
@@ -952,6 +964,19 @@ internal static class PlaylistSessionProtocol
             }
 
             State = State with { Generation = State.Generation + 1 };
+
+            // The item was prepared ahead: its runtime is open, positioned and warm, and takes over
+            // instead of a new one opening (media-clips decision 8).
+            if (State.Prepared is { } prepared && ReferenceEquals(prepared, pending.Item))
+            {
+                State = State with { Prepared = null, PreparedExplicitly = false };
+                Await(
+                    new PlaylistSessionAction.PromotePrepared(State.Generation, prepared),
+                    new PlaylistSessionWork.Promoting(advance, pending)
+                );
+                return;
+            }
+
             Await(
                 new PlaylistSessionAction.OpenItem(
                     State.Generation,
@@ -961,6 +986,64 @@ internal static class PlaylistSessionProtocol
                     pending.Item.End
                 ),
                 new PlaylistSessionWork.Opening(advance, pending)
+            );
+        }
+
+        private void OnPromoted(PlaylistSessionWork.Promoting work, PlaylistSessionInput.Outcome outcome)
+        {
+            var item = work.Pending.Item!;
+            if (outcome.Kind != PlaylistOutcome.Ok)
+            {
+                if (Disposing)
+                {
+                    EndAdvance(work.Advance);
+                    return;
+                }
+
+                // The preparation failed or is gone. The item is opened as it would have been
+                // without one, and a failure to open it is reported then.
+                Emit(
+                    new PlaylistSessionAction.Log(
+                        PlaylistSessionLog.PreparedFellBack,
+                        Source: item.Source.DisplayName,
+                        Error: outcome.Error
+                    )
+                );
+                Await(
+                    new PlaylistSessionAction.OpenItem(State.Generation, item.Source, Command: null, item.Start, item.End),
+                    new PlaylistSessionWork.Opening(work.Advance, work.Pending)
+                );
+                return;
+            }
+
+            State = State with
+            {
+                Item = new PlaylistItemSlot(
+                    State.Generation,
+                    item,
+                    Played: false,
+                    AwaitsPlay: !work.Advance.Playing,
+                    outcome.Run,
+                    outcome.Info
+                ),
+            };
+
+            if (Disposing)
+            {
+                EndAdvance(work.Advance);
+                return;
+            }
+
+            // It warmed up while it was prepared, so it continues as a warmed item does.
+            if (!work.Advance.Playing)
+            {
+                StartSettled(work.Advance, work.Pending);
+                return;
+            }
+
+            Await(
+                new PlaylistSessionAction.PlayItem(Command: null),
+                new PlaylistSessionWork.Starting(work.Advance, work.Pending)
             );
         }
 
@@ -1151,6 +1234,8 @@ internal static class PlaylistSessionProtocol
 
             // The next step reads the queue again, after a transition subscriber has run.
             State = State with { Work = new PlaylistSessionWork.Started(advance) };
+
+            PrepareAhead();
         }
 
         /// <summary>
@@ -1177,6 +1262,7 @@ internal static class PlaylistSessionProtocol
 
         private void EndQueue(PlaylistAdvanceRun advance)
         {
+            DiscardPrepared();
             State = State with { Run = PlaylistRunState.Ended };
             Emit(new PlaylistSessionAction.ReportEndOfStream());
             EndAdvance(advance);
@@ -1188,6 +1274,92 @@ internal static class PlaylistSessionProtocol
                 Complete(command, PlaylistCommandResult.Ok);
             else
                 Done();
+        }
+
+        // ── Preparing ahead (media-clips decision 8) ───────────────────────
+
+        private void OnPrepareRequested(PlaylistItem item, int command)
+        {
+            if (Stopping)
+            {
+                Complete(command, PlaylistCommandResult.Ok);
+                return;
+            }
+
+            if (State.Run == PlaylistRunState.Ended)
+            {
+                Complete(
+                    command,
+                    PlaylistCommandResult.Failed(
+                        new InvalidOperationException("The playlist has ended, so nothing is prepared.")
+                    )
+                );
+                return;
+            }
+
+            // The open item, or another clip of its source, is reached by rewinding it in place,
+            // so there is nothing to prepare.
+            if (State.Item is { } current && ReferenceEquals(current.Item.Source, item.Source))
+            {
+                Complete(command, PlaylistCommandResult.Ok);
+                return;
+            }
+
+            State = State with { Prepared = item, PreparedExplicitly = true };
+            Emit(new PlaylistSessionAction.PrepareItem(item, command));
+            Done();
+        }
+
+        private void OnQueueChanged()
+        {
+            if (Stopping)
+            {
+                Done();
+                return;
+            }
+
+            // An item removed from the player can no longer be taken, however it was prepared.
+            if (State.Prepared is { } prepared && !Queue.InPlayer(prepared))
+                DiscardPrepared();
+
+            PrepareAhead();
+            Done();
+        }
+
+        /// <summary>
+        /// Prepares the item the queue would take next, when the session prepares ahead and the
+        /// caller has not asked for another. Another clip of the open item's source is not
+        /// prepared: it is reached by rewinding in place.
+        /// </summary>
+        private void PrepareAhead()
+        {
+            if (Stopping || State.Run == PlaylistRunState.Ended)
+                return;
+            if (State.PreparedExplicitly && State.Prepared is not null)
+                return;
+
+            var next = State.PrepareNext ? Queue.PeekAdvance() : null;
+            if (next is not null && State.Item is { } current && ReferenceEquals(next.Source, current.Item.Source))
+                next = null;
+            if (ReferenceEquals(next, State.Prepared))
+                return;
+
+            if (next is null)
+            {
+                DiscardPrepared();
+                return;
+            }
+
+            State = State with { Prepared = next, PreparedExplicitly = false };
+            Emit(new PlaylistSessionAction.PrepareItem(next, Command: null));
+        }
+
+        private void DiscardPrepared()
+        {
+            if (State.Prepared is null)
+                return;
+            State = State with { Prepared = null, PreparedExplicitly = false };
+            Emit(new PlaylistSessionAction.DiscardPrepared());
         }
 
         // ── Helpers ─────────────────────────────────────────────────────────
@@ -1209,6 +1381,7 @@ internal static class PlaylistSessionProtocol
 
         private void GiveUp(Exception? last)
         {
+            DiscardPrepared();
             State = State with { GaveUp = true };
             Emit(new PlaylistSessionAction.ReportFatal(GiveUpException(last)));
         }
@@ -1281,6 +1454,7 @@ internal static class PlaylistSessionProtocol
                 PlaylistSessionInput.Pause p => p.Command,
                 PlaylistSessionInput.Seek s => s.Command,
                 PlaylistSessionInput.Rewind r => r.Command,
+                PlaylistSessionInput.PrepareRequested p => p.Command,
                 _ => null,
             };
 

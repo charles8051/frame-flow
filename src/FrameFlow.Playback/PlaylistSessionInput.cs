@@ -72,6 +72,15 @@ internal abstract record PlaylistSessionInput
     /// <summary>The caller recorded a jump on the coordinator.</summary>
     public sealed record JumpRequested : PlaylistSessionInput;
 
+    /// <summary>
+    /// The caller asks for <paramref name="Item"/> to be prepared ahead. The command completes
+    /// when it is ready, or at once when there is nothing to prepare.
+    /// </summary>
+    public sealed record PrepareRequested(PlaylistItem Item, int Command) : PlaylistSessionInput;
+
+    /// <summary>The queue was edited, so what is prepared may no longer be what comes next.</summary>
+    public sealed record QueueChanged : PlaylistSessionInput;
+
     // ── Fed back by the shell ───────────────────────────────────────────────
 
     /// <summary>The awaited action has finished.</summary>
@@ -125,6 +134,9 @@ internal enum PlaylistSessionLog
 
     /// <summary>A skipped item's pause failed at the end of the queue, and it is disposed.</summary>
     KeptItemPauseFailed,
+
+    /// <summary>The prepared runtime could not be used, and the item is opened instead.</summary>
+    PreparedFellBack,
 }
 
 /// <summary>An effect <see cref="PlaylistSessionProtocol.Step"/> asks the shell to perform.</summary>
@@ -169,10 +181,26 @@ internal abstract record PlaylistSessionAction
     /// <summary>Dispose the runtime. It never fails: the shell logs a throw and carries on.</summary>
     public sealed record DisposeItem : PlaylistSessionAction;
 
+    /// <summary>
+    /// Make the runtime prepared for <paramref name="Item"/> the current one, tagged with
+    /// <paramref name="Generation"/>, once its preparation has finished. It fails when the
+    /// preparation did, or there is none for the item, and the protocol then opens the item.
+    /// </summary>
+    public sealed record PromotePrepared(int Generation, PlaylistItem Item) : PlaylistSessionAction;
+
     // ── Immediate ───────────────────────────────────────────────────────────
 
     /// <summary>Attach the session's skip and jump handlers to the coordinator.</summary>
     public sealed record AttachToCoordinator : PlaylistSessionAction;
+
+    /// <summary>
+    /// Prepare a runtime for <paramref name="Item"/> in the background, detached, replacing any
+    /// other prepared runtime. A <paramref name="Command"/> completes when it is ready.
+    /// </summary>
+    public sealed record PrepareItem(PlaylistItem Item, int? Command) : PlaylistSessionAction;
+
+    /// <summary>Dispose the prepared runtime, if there is one, in the background.</summary>
+    public sealed record DiscardPrepared : PlaylistSessionAction;
 
     /// <summary>Stop the controller's position clock, so the next item starts from zero.</summary>
     public sealed record StopClock : PlaylistSessionAction;

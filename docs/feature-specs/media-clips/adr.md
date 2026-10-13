@@ -268,3 +268,75 @@ found another backend.
 - **Lend one device by default.** It narrows every decoder to that device's backend, which changes
   which codecs decode on hardware.
 - **Keep creating a device per item.** Correct, and the largest single cost of a switch.
+
+## Decision 8: an item is prepared ahead on a detached runtime, one at a time
+
+**Date:** 2026-10-13
+**Status:** Accepted
+
+### Context
+
+After phase 4a, a jump to another file costs opening it and decoding from the keyframe before the
+clip's start up to the start. That walk grows with the keyframe interval: 282 ms median on 10 s
+keyframes. An application often knows the next item before the viewer commits to it: the next
+result in a list, or the one under the cursor (#25).
+
+### Decision
+
+- **A detached runtime.** A prepared item gets its own runtime, opened, positioned at its start and
+  warmed up while the current item plays. It shares the video sink, the audio sink and the position
+  clock with the current item, so it is created detached. It positions its own clock only, and it
+  leaves the shared clock, the audio sink's lifecycle and its own gates alone. When it becomes
+  current it is attached: the shared clocks are seated on its start, and from then on it is an
+  ordinary item runtime.
+- **One prepared item.** The session holds at most one. Preparing another retires the first, and
+  its runtime is disposed in the background. The player's disposal waits for those disposals.
+- **Two ways in.** With `WithNextItemPrepared`, the session prepares the item the queue's
+  end-of-item decision would advance to, reconsidered when an item starts and when the queue
+  changes. `IMediaPlayer.PrepareAsync` prepares one the caller names, and that item replaces the
+  automatic one until it is used, replaced or removed from the queue. Another clip of the current
+  item's source is never prepared, because decision 5 reaches it by repositioning the open item.
+- **Promotion.** When the protocol opens an item that is the prepared one, by reference, it
+  promotes the prepared runtime instead of opening another. A promotion waits for the prepared
+  runtime's warm-up. A prepared runtime that failed falls back to an ordinary open of the item.
+- **A runtime that fails before it is used is released.** A preparation that fails disposes its
+  runtime at once. A run that faults after warm-up, while the runtime is detached, is held rather
+  than reported, the runtime is disposed, and its promotion is refused, so the item is opened
+  instead.
+- **Nothing before the start leaves the source.** Each run's video and audio sources drop what is
+  presented before the run's start, as it is decoded. Before this, the pacer refused those frames,
+  but only once the pause gate passed them, and nothing refused the audio. A runtime waiting behind
+  closed gates now decodes on to its start, and the frame it shows first waits at the gate. Audio
+  is filtered as well because audio from the keyframe would otherwise fill its queue at the gate,
+  and the demuxer, which feeds both decoders, would stop before the video reached the start. An
+  audio buffer that crosses the start is cut at it, so the audio starts where the picture does.
+- **Ready means warmed up.** `PrepareAsync` completes when the prepared runtime has warmed up, as a
+  load does: at the decoder's first frame. The walk to the start goes on after that.
+- **A detached runtime keeps its gates shut when it is disposed.** Disposal opened the gates so
+  that operators blocked on them would unblock. What waits at a detached runtime's gates would then
+  reach the sinks it shares with the item that is playing. The gate's wait ends on the run's
+  cancellation without them.
+
+### Consequences
+
+- A jump to a prepared item 1 s after `PrepareAsync` completes took 7 ms on 2 s keyframes and 17 ms
+  on 10 s keyframes, medians of eight, against 41 and 282 ms unprepared. A jump as soon as it
+  completes waits for the rest of the walk: 18 and 249 ms.
+- A prepared item costs a second decoder's memory, and decode work while the current item plays.
+- Every run drops what precedes its start, so after a seek the audio sink is given audio from the
+  target rather than from the keyframe before it, and a configurator sees no frame before the
+  target.
+- A file whose audio is muxed further ahead of its video than the audio queue holds stalls the walk
+  until the gates open. The jump then decodes the rest.
+- The playlist explorer's model does not prepare items, so its invariants do not cover preparing.
+
+### Alternatives considered
+
+- **Wait for the walk in warm-up.** `PrepareAsync`, and a load, would complete with the start frame
+  decoded, so a jump straight after would cost only the hand-off. A load's warm-up runs on the
+  controller's command loop, so every command would queue behind the walk, and a walk that stalls
+  behind the closed gates needed a timer to bound the wait. Rejected for both.
+- **Several prepared items.** A results grid could prepare a row. Each costs a decoder and its
+  memory, and one covers both the next item and the one under the cursor.
+- **Preparing by opening the file only.** It saves the open, which is the smaller cost on long
+  keyframe intervals, and leaves the walk.

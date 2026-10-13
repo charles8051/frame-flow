@@ -355,8 +355,34 @@ view.Initialize(loggerFactory);
 
 Call `DisposeAsync` to end the view for good.
 
+### 13. `IMediaPlayer` and `IPlayerBuilder` gained members for media clips
+
+**A compile error for a type that implements either interface.** Code that calls them compiles
+unchanged.
+
+`IMediaPlayer` gained `EnqueueAsync`, `SetNextAsync`, `AddAsync` and `ReplaceAsync` overloads that
+take a `MediaClip`, and `PrepareAsync`. `IPlayerBuilder` gained a `WithMedia` overload that takes a
+`MediaClip`, and `WithNextItemPrepared` (#656). A type outside FrameFlow that implements either, such
+as a test double or a decorator, stops compiling until it adds them. One compiled against `v0.15.1`
+and not rebuilt fails to load with `TypeLoadException` when the application uses the type.
+
+**Who hits this.** An implementer of either interface. FrameFlow's own come from
+`FrameFlowPlayer.Create`.
+
+**What to write instead.** Implement them, or forward them to the instance you wrap:
+
+```csharp
+public Task<Result> PrepareAsync(PlaylistItem item, CancellationToken cancellationToken = default) =>
+    _inner.PrepareAsync(item, cancellationToken);
+```
+
 ### Not breaking, but worth knowing
 
+- **Nothing from before a seek's target reaches a configurator or the audio sink.** A seek lands on
+  the keyframe before its target, and the decoder walks from there. The frames before the target
+  went through a video configurator before the pacer refused them, and the audio before it went to
+  the audio sink and played. Both are now dropped where they are decoded, so a configurator's taps
+  and the audio sink start at the target. The same holds at a media clip's start. #656.
 - **A player keeps its hardware decode devices across items.** A player or controller that is not
   lent a device with `WithHardwareDevice` used to create a device for each item and dispose it at
   the item's end. It now keeps one per backend for its lifetime and lends it to every item, which

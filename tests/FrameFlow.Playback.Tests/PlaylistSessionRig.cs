@@ -57,7 +57,7 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
     private readonly InlineScheduler _scheduler = new();
     private readonly IDisposable _transitions;
 
-    private PlaylistSessionRig(RepeatMode repeat, string[] sources)
+    private PlaylistSessionRig(RepeatMode repeat, string[] sources, bool prepareNext = false)
     {
         Coordinator = new PlaylistCoordinator(sources.Select(s => new FakeSource(s)), repeat);
         _transitions = Coordinator.SourceTransitioned.Subscribe(new Observer(OnTransition));
@@ -76,7 +76,8 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
                     Record($"ctl.ItemFailed({item},{failure},{error.Message})")
             ),
             new FakeItemFactory(this),
-            scheduler: _scheduler
+            scheduler: _scheduler,
+            prepareNext: prepareNext
         );
     }
 
@@ -101,6 +102,23 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
         await rig.Session.WarmUpAsync();
         await rig.SettleAsync();
         rig.TakeLog();
+        return rig;
+    }
+
+    /// <summary>
+    /// A rig whose session prepares the item its queue would take next, loaded and playing its
+    /// first item. The log is not taken: the preparation runs in the background.
+    /// </summary>
+    public static async Task<PlaylistSessionRig> PlayingPreparingNextAsync(
+        RepeatMode repeat,
+        params string[] sources
+    )
+    {
+        var rig = new PlaylistSessionRig(repeat, sources, prepareNext: true);
+        await rig.Session.InitializeAsync(rig.Coordinator.Snapshot().Playlist[0].Source);
+        await rig.Session.WarmUpAsync();
+        await rig.Session.PlayAsync();
+        await rig.SettleAsync();
         return rig;
     }
 
@@ -319,6 +337,9 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
     {
         public IPlaylistItemRuntime CreateItem(IPlaybackClock clock, SessionCallbacks callbacks) =>
             new FakeItem(rig, callbacks);
+
+        public IPlaylistItemRuntime CreatePreparedItem(IPlaybackClock clock, SessionCallbacks callbacks) =>
+            new FakeItem(rig, callbacks);
     }
 
     /// <summary>
@@ -428,6 +449,8 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
                 (_, null) => $"{op}({start})",
                 _ => $"{op}({start}..{end})",
             };
+
+        public void Attach() => rig.Record($"{Name}.Attach");
 
         public async ValueTask DisposeAsync()
         {

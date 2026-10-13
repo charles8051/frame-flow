@@ -108,6 +108,20 @@ internal sealed record PlaylistSessionState
     public PlaylistSessionWork? Work { get; init; }
 
     /// <summary>
+    /// The item a runtime is being prepared for ahead of time, or null (media-clips decision 8).
+    /// </summary>
+    public PlaylistItem? Prepared { get; init; }
+
+    /// <summary>
+    /// Whether <see cref="Prepared"/> was asked for by the caller. It then holds until it is used
+    /// or replaced, and the session does not prepare the next item in its place.
+    /// </summary>
+    public bool PreparedExplicitly { get; init; }
+
+    /// <summary>Whether the session prepares the item the queue would take next.</summary>
+    public bool PrepareNext { get; init; }
+
+    /// <summary>
     /// Whether the input under way is an advance that repeats the current item. While it is, the
     /// session expects a repeat whatever the queue now says, so a removal made during the repeat does
     /// not hide a rewind that hangs from the loop-stall watchdog.
@@ -118,6 +132,7 @@ internal sealed record PlaylistSessionState
             PlaylistSessionWork.Replaying w => w.Advance.Loop,
             PlaylistSessionWork.DisposingOld w => w.Advance.Loop,
             PlaylistSessionWork.Opening w => w.Advance.Loop,
+            PlaylistSessionWork.Promoting w => w.Advance.Loop,
             PlaylistSessionWork.Warming w => w.Advance.Loop,
             PlaylistSessionWork.Starting w => w.Advance.Loop,
             PlaylistSessionWork.DiscardingFailedStart w => w.Advance.Loop,
@@ -168,6 +183,10 @@ internal abstract record PlaylistSessionWork
 
     /// <summary>An advance's open of the item it took.</summary>
     public sealed record Opening(PlaylistAdvanceRun Advance, PlaylistQueue.NextDecision Pending)
+        : PlaylistSessionWork;
+
+    /// <summary>The prepared runtime is being made the current item.</summary>
+    public sealed record Promoting(PlaylistAdvanceRun Advance, PlaylistQueue.NextDecision Pending)
         : PlaylistSessionWork;
 
     /// <summary>An advance's warm-up of the item it opened.</summary>
