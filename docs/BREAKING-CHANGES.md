@@ -186,9 +186,9 @@ next item can call `Reset()` instead, or rely on the new rule for a jump back.
 surface and the GPU interop waited for `Initialize(ILoggerFactory)`, so
 `WithVideoSink(view.EnsureSink())`, the `FrameFlowVideoView` pattern, built and played a black
 window and logged nothing (#613). `EnsureSink` now runs `Initialize`, without a logger, when it
-has not run: it starts the stall watchdog and, once the view is attached, sets up the compositor
-surface. A later `Initialize` call moves the view's logging, and its own sink's, to the factory it
-is given. On a view that has been torn down it starts neither.
+has not run: once the view is attached, it sets up the compositor surface and starts the stall
+watchdog (entry 12). A later `Initialize` call moves the view's logging, and its own sink's, to the
+factory it is given. After `DisposeAsync` both throw `ObjectDisposedException` (entry 12).
 
 **Who hits this.** A caller that calls `EnsureSink` off the UI thread on a view already in the
 visual tree: it now touches the compositor and must run on the UI thread, as `Initialize` always
@@ -309,6 +309,51 @@ threw `ArgumentException` before, because a replacement needs at least one item,
 
 **What to write instead.** Name the element type, `player.ReplaceAsync(Array.Empty<IMediaSource>())`,
 if a test exercises the refusal. Nothing else needs to change.
+
+### 12. `CompositionInteropVideoView` presents again after it rejoins the visual tree
+
+**A change in behaviour, not a compile error.**
+
+The zero-copy view treated its first detach from the visual tree as a dispose (#650). A view that
+rejoined the tree, as in a `TabControl` that unloads its inactive tabs, a docking layout, or a
+`FrameFlowPlayerView` whose `VideoSurface` was swapped away and back, set no surface up and showed a
+black rectangle, and a second detach released nothing. A detach now tears the compositor side down
+and leaves the view reusable, as `FrameFlowVideoView` is: rejoining the tree sets the surface up
+again and restarts the stall watchdog. Only `DisposeAsync` is final.
+
+- The view's own sink is still disposed on each detach. `EnsureSink` after a detach returns a new
+  one, which the view presents once it is back in the tree and disposes on the next detach or
+  `DisposeAsync`. Before, that sink was never presented and never disposed. The disposed sink's
+  `GetDiagnostics` reads its final counts until the new one exists, and
+  `VideoSinkDiagnosticsSnapshot.Empty` from then on, as a sink replaced through `Sink` does.
+- A sink assigned through `Sink` stays assigned across a detach, and the view presents it again
+  when it rejoins the tree. `Sink` used to read `null` after a detach; it now does after
+  `DisposeAsync`.
+- The stall watchdog runs only while the view is in the tree. It used to start on `Initialize`
+  whether or not the view was attached, so `PresenterStalled` could be raised for a view that was
+  not on screen.
+- `DisposeAsync` after a detach releases a sink made since, without a second teardown.
+- After `DisposeAsync`, `EnsureSink`, `Initialize`, `IVideoSurface.AttachSink` and assigning a sink
+  through `Sink` throw `ObjectDisposedException` (#665). They used to make or bind a sink that the
+  view never presented and nothing disposed, along with the last frame it was given.
+
+**Who hits this.** Code that read `Sink` after a detach and took `null` to mean the view was done
+with a sink it had assigned, code that counted on the stall watchdog before the view joined the
+tree, and code that wires a view it has already disposed. Code that worked around the bug by
+building a new view for each attach keeps working.
+
+**What to write instead.** Nothing, to reuse a view. The player keeps the sink it was built with,
+and the view's own sink is disposed on a detach. Where one player outlives the view's trips out of
+the tree, give the view a sink it does not own, which it keeps across them:
+
+```csharp
+var sink = new CompositionInteropVideoSink();
+view.Sink = sink;
+view.Initialize(loggerFactory);
+// ... .WithVideoSink(sink)
+```
+
+Call `DisposeAsync` to end the view for good.
 
 ### Not breaking, but worth knowing
 
