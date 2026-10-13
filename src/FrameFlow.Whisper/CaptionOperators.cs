@@ -43,7 +43,7 @@ public static class CaptionOperators
     /// (<c>. , ! ? ; :</c>) into multiple shorter captions. Each piece
     /// gets a sub-range of the original <c>[From, To]</c> proportional
     /// to its character count. Captions with no internal punctuation
-    /// pass through unchanged.
+    /// pass through unchanged. Every piece keeps the input's timeline.
     /// </summary>
     public static MultiOperatorNode<CaptionRef, CaptionRef> SplitOnPunctuation(string id)
     {
@@ -62,7 +62,7 @@ public static class CaptionOperators
             foreach (var piece in SplitCaption(input.Value))
             {
                 ct.ThrowIfCancellationRequested();
-                yield return new CaptionRef(piece);
+                yield return new CaptionRef(piece, input.Timeline);
             }
         }
     }
@@ -117,7 +117,8 @@ public static class CaptionOperators
     /// <summary>
     /// Reveals each upstream caption progressively word-by-word over
     /// wallclock time, emitting a sequence of progressively-longer
-    /// sub-captions at <paramref name="wordsPerSecond"/>.
+    /// sub-captions at <paramref name="wordsPerSecond"/>. Every sub-caption
+    /// keeps the input's timeline.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -157,7 +158,7 @@ public static class CaptionOperators
             );
             if (words.Length <= 1)
             {
-                yield return new CaptionRef(caption);
+                yield return new CaptionRef(caption, input.Timeline);
                 yield break;
             }
 
@@ -176,7 +177,10 @@ public static class CaptionOperators
                 accumulated.Append(words[i]);
 
                 var subTo = i == words.Length - 1 ? caption.To : cursor + perWord;
-                yield return new CaptionRef(new Caption(cursor, subTo, accumulated.ToString()));
+                yield return new CaptionRef(
+                    new Caption(cursor, subTo, accumulated.ToString()),
+                    input.Timeline
+                );
                 cursor = subTo;
 
                 if (i < words.Length - 1)

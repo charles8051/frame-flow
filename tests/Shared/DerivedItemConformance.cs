@@ -10,9 +10,32 @@ namespace FrameFlow.Tests.Shared;
 /// every test project that owns such a producer; each runs it over its own.
 /// </summary>
 /// <remarks>
+/// <para>
 /// A copy that is missed turns the timeline into <see cref="TimelineId.None"/> downstream, which a
 /// consumer reads as continuous and nothing warns about. These checks are the guard, so a new
-/// producer adds a case to its project's conformance test.
+/// producer adds a case to its project's conformance test, and a line to the list below.
+/// </para>
+/// <para>
+/// The producers that build a new item from an input, and where each is checked:
+/// </para>
+/// <list type="bullet">
+/// <item><c>VideoFrameExtensions.CloneCpu</c>: Media.Tests, <c>TimelineCarryTests</c>.</item>
+/// <item><c>SwScaleVideoConverter</c>, the convert node and resize: Video.Tests, <c>DerivedItemConformanceTests</c>.</item>
+/// <item><c>FfmpegAudioResampler</c> (resampled, empty and flushed buffers) and the resample node: Audio.Tests, <c>DerivedItemConformanceTests</c>.</item>
+/// <item><c>PcmAudioTrim.Cut</c>: Playback.Tests, <c>PcmAudioTrimTests</c>.</item>
+/// <item><c>GpuFrameUpload</c> and <c>GpuFrameReadback</c>: Decoding.Tests, <c>GpuDerivedItemConformanceTests</c>.</item>
+/// <item><c>TensorToImage.ToFrame</c>: Inference.Abstractions.Tests, <c>TensorToImageTests</c>.</item>
+/// <item><c>InferenceResult&lt;T&gt;</c> from the inference node: Inference.Abstractions.Tests, <c>InferenceOperatorTests</c>.</item>
+/// <item><c>DetectedVideoFrameRef</c>: Yolo.Tests, <c>DetectedVideoFrameRefTimelineTests</c>.</item>
+/// <item><c>DetectedFaceFrameRef</c>: Face.Tests, <c>DetectedFaceFrameRefTimelineTests</c>.</item>
+/// <item><c>CaptionRef</c> from the transcription window, <c>SplitOnPunctuation</c> and <c>AnimatedReveal</c>: Whisper.Tests, <c>WindowTimelineTests</c> and <c>CaptionOperatorsTests</c>.</item>
+/// <item>The Multicast example's <c>ColorFilters.Apply</c>: no test project covers the examples.</item>
+/// </list>
+/// <para>
+/// Sources stay on <see cref="TimelineId.None"/> by design: <c>SyntheticSceneSource</c> and the
+/// camera frames (ADR-0084, open question 1). The decoders stamp rather than copy, and are checked
+/// in Decoding.Tests, <c>DecoderTimelineStampTests</c>.
+/// </para>
 /// </remarks>
 internal static class DerivedItemConformance
 {

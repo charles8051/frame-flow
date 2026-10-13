@@ -384,8 +384,8 @@ become ambiguous, and a custom node that builds frames or buffers has a new duty
 Each frame and audio buffer now says which timeline it belongs to: one continuous run of
 presentation times, which a load, a seek, a loop or the next item ends (ADR-0084, #677). The player
 gives every run a new `TimelineId`, the decoders stamp it on everything they decode, and every
-in-repo node that builds a new item from an input copies the input's. Frames from a camera, and from
-a synthetic source, are on `None` for now.
+in-repo node that builds a new frame, buffer, inference result or caption from an input copies the
+input's. Frames from a camera, and from a synthetic source, are on `None` for now.
 
 - `IFrame` and `IAudioBuffer` gained `Timeline`, a default interface member that returns
   `TimelineId.None`. An existing implementation compiles and runs unchanged and reports `None`.
@@ -399,6 +399,10 @@ a synthetic source, are on `None` for now.
   now compare equal only when their timelines do as well.
 - `InferenceResult<T>` gained an init-only `Timeline`, which the inference node sets from the frame.
   `DetectedVideoFrameRef` and `DetectedFaceFrameRef` report their frame's.
+- `CaptionRef` gained `Timeline` and a constructor that takes it; the existing constructor stays and
+  produces `None`. The transcription node gives each caption the timeline of the audio its window
+  started on, and `SplitOnPunctuation` and `AnimatedReveal` copy it. The `Caption` record is
+  unchanged.
 - `FrameFlow.Graph` gained `TimelineId`, and `FrameFlow.Graph.Core` gained `TimelineFollower`,
   `PresentedTimeline` and `TimelineRelation`, the two pure followers a stateful consumer uses to
   tell a new timeline from the current one. Nothing in the library follows them yet.
@@ -409,9 +413,10 @@ a synthetic source, are on `None` for now.
   (CS0419), and an error where warnings are.
 - A file that imports `FrameFlow.Graph` and another namespace with a type of its own named
   `TimelineId`: the name is now ambiguous (CS0104).
-- A node outside FrameFlow that builds a new frame or buffer from an input, such as a filter or a
-  converter. It compiles and runs as before, but what it hands on is on `None`, so a consumer that
-  follows timelines treats it as continuous across every seek and loop, as it did before.
+- A node outside FrameFlow that builds a new frame, buffer or caption from an input, such as a
+  filter or a converter. It compiles and runs as before, but what it hands on is on `None`, so a
+  consumer that follows timelines treats it as continuous across every seek and loop, as it did
+  before.
 - A type that implements `IFrame` or `IAudioBuffer` and already has a member named `Timeline` of
   another type. It does not implement the new member, so a caller through the interface reads
   `None`.

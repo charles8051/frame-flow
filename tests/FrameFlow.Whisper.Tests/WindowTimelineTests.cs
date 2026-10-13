@@ -127,6 +127,95 @@ public sealed class WindowTimelineTests
             () => WindowTimeline.CloseOne(new WindowClock(Seconds(0), 10, Rate), 0)
         );
 
+    // ─── Timeline (ADR-0084) ─────────────────────────────────────────
+
+    [Fact]
+    public void TheBufferThatStartsAWindow_GivesItsTimeline()
+    {
+        var timeline = TimelineId.Next();
+
+        var admission = WindowTimeline.Admit(null, Seconds(10), SamplesFor(0.1), Rate, timeline);
+
+        Assert.Equal(timeline, admission.Clock.Timeline);
+    }
+
+    [Fact]
+    public void ABufferThatContinuesTheWindow_KeepsTheWindowsTimeline()
+    {
+        var started = TimelineId.Next();
+        var held = new WindowClock(Seconds(10), SamplesFor(1), Rate, started);
+
+        var admission = WindowTimeline.Admit(held, held.End, SamplesFor(0.1), Rate, TimelineId.Next());
+
+        Assert.False(admission.Discard);
+        Assert.Equal(started, admission.Clock.Timeline);
+    }
+
+    [Fact]
+    public void AJump_StartsTheNewWindowOnTheJumpingBuffersTimeline()
+    {
+        var held = new WindowClock(Seconds(10), SamplesFor(1), Rate, TimelineId.Next());
+        var after = TimelineId.Next();
+
+        var admission = WindowTimeline.Admit(held, Seconds(2), SamplesFor(0.1), Rate, after);
+
+        Assert.True(admission.Discard);
+        Assert.Equal(after, admission.Clock.Timeline);
+    }
+
+    [Fact]
+    public void AnEmptyWindow_TakesTheBuffersTimeline()
+    {
+        var empty = new WindowClock(Seconds(15), 0, Rate, TimelineId.Next());
+        var timeline = TimelineId.Next();
+
+        var admission = WindowTimeline.Admit(empty, Seconds(15), SamplesFor(0.1), Rate, timeline);
+
+        Assert.Equal(timeline, admission.Clock.Timeline);
+    }
+
+    [Fact]
+    public void AClosedWindow_AndWhatRemains_CarryTheWindowsTimeline()
+    {
+        var timeline = TimelineId.Next();
+        var clock = new WindowClock(Seconds(10), FiveSeconds + SamplesFor(0.5), Rate, timeline);
+
+        var closed = WindowTimeline.CloseOne(clock, FiveSeconds)!.Value;
+
+        Assert.Equal(timeline, closed.Timeline);
+        Assert.Equal(timeline, closed.Remainder.Timeline);
+    }
+
+    [Fact]
+    public void AfterASeek_WindowsCloseOnTheTimelineTheAudioCameFrom()
+    {
+        // Six seconds on one timeline, a seek, then six on the next, in 100 ms buffers. The
+        // window closed before the seek is on the first timeline and the one after it on the
+        // second, so each caption is on the timeline of the audio it was transcribed from.
+        var before = TimelineId.Next();
+        var after = TimelineId.Next();
+        WindowClock? clock = null;
+        var closed = new List<(TimeSpan Start, TimelineId Timeline)>();
+
+        void Feed(double pts, TimelineId timeline)
+        {
+            var current = WindowTimeline.Admit(clock, Seconds(pts), SamplesFor(0.1), Rate, timeline).Clock;
+            while (WindowTimeline.CloseOne(current, FiveSeconds) is { } window)
+            {
+                closed.Add((window.Start, window.Timeline));
+                current = window.Remainder;
+            }
+            clock = current;
+        }
+
+        for (int i = 0; i < 60; i++)
+            Feed(i * 0.1, before);
+        for (int i = 0; i < 60; i++)
+            Feed(30 + i * 0.1, after);
+
+        Assert.Equal(new[] { (Seconds(0), before), (Seconds(30), after) }, closed);
+    }
+
     // ─── A seek, end to end ──────────────────────────────────────────
 
     [Fact]

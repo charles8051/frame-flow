@@ -85,7 +85,8 @@ public static class WhisperOperators
     /// window and starts a new one at its own time, so captions are never built from audio of two
     /// places and their times match the media position. A node kept across seeks, so the model
     /// loads once, therefore needs no reset. Multi-channel input is mixed to mono, which is what
-    /// Whisper reads.
+    /// Whisper reads. Each caption carries the timeline of the buffer that started its window
+    /// (ADR-0084).
     /// </remarks>
     public static MultiOperatorNode<PcmAudioBuffer, CaptionRef> TranscribeWithWhisper(
         string id,
@@ -147,7 +148,8 @@ public static class WhisperOperators
                 clock,
                 buffer.PresentationTime,
                 buffer.FrameCount,
-                opts.InputSampleRate
+                opts.InputSampleRate,
+                buffer.Timeline
             );
             if (admission.Discard)
                 windowBuffer.Clear();
@@ -167,7 +169,7 @@ public static class WhisperOperators
                 clock = current;
 
                 await foreach (
-                    var caption in InferCaptionsAsync(processor!, slice, closed.Start, ct)
+                    var caption in InferCaptionsAsync(processor!, slice, closed.Start, closed.Timeline, ct)
                         .ConfigureAwait(false)
                 )
                 {
@@ -180,12 +182,14 @@ public static class WhisperOperators
     /// <summary>
     /// Wraps one <c>WhisperProcessor.ProcessAsync</c> call. Each
     /// non-empty segment becomes one <see cref="CaptionRef"/> with PTS
-    /// anchored to <paramref name="windowStartPts"/>.
+    /// anchored to <paramref name="windowStartPts"/>, on the window's
+    /// <paramref name="timeline"/>.
     /// </summary>
     private static async IAsyncEnumerable<CaptionRef> InferCaptionsAsync(
         WhisperProcessor processor,
         float[] samples,
         TimeSpan windowStartPts,
+        TimelineId timeline,
         [EnumeratorCancellation] CancellationToken ct
     )
     {
@@ -200,7 +204,8 @@ public static class WhisperOperators
                     From: windowStartPts + segment.Start,
                     To: windowStartPts + segment.End,
                     Text: text
-                )
+                ),
+                timeline
             );
         }
     }
