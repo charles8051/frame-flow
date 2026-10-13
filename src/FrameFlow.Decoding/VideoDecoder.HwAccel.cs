@@ -235,6 +235,7 @@ public sealed partial class VideoDecoder
                 codecParPtr,
                 heldHardwareFrames,
                 videoOptions?.Device,
+                videoOptions?.Device is null ? videoOptions?.DeviceCache : null,
                 attempts,
                 logger
             );
@@ -357,6 +358,7 @@ public sealed partial class VideoDecoder
         nint codecParPtr,
         int heldHardwareFrames,
         HardwareDevice? device,
+        HardwareDeviceCache? deviceCache,
         List<HardwareDecodeAttempt> attempts,
         ILogger logger
     )
@@ -383,6 +385,7 @@ public sealed partial class VideoDecoder
                 codecParPtr,
                 heldHardwareFrames,
                 device,
+                deviceCache,
                 attempts,
                 logger
             );
@@ -581,6 +584,7 @@ public sealed partial class VideoDecoder
         nint codecParPtr,
         int heldHardwareFrames,
         HardwareDevice? device,
+        HardwareDeviceCache? deviceCache,
         List<HardwareDecodeAttempt> attempts,
         ILogger logger
     )
@@ -596,9 +600,13 @@ public sealed partial class VideoDecoder
         {
             // A borrowed device is shared: this decoder owns one reference, as it would own a
             // device it created, and the device lives on after the decoder releases it.
+            // A cached device is borrowed the same way, and when the cache has none for this
+            // backend the decoder creates its own, as it would without one.
             int rc = 0;
             if (device is not null)
                 deviceCtxRef = device.Borrow();
+            else if (deviceCache?.Borrow(candidate.Kind) is { } cached && cached != nint.Zero)
+                deviceCtxRef = cached;
             else
                 rc = FFAvUtil.av_hwdevice_ctx_create(
                     out deviceCtxRef,

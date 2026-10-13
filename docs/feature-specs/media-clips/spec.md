@@ -1,7 +1,8 @@
 # Media clips: playlist items that start and end at a position
 
-**Status:** Phases 1 to 3 built: start positions, reuse across clips of one file, and end
-positions. Phase 4 open. Living document, rewritten as the feature changes.
+**Status:** Phases 1 to 3 and 4a built: start positions, reuse across clips of one file, end
+positions, and hardware devices kept across items. Phase 4b, preparing an item ahead, is open.
+Living document, rewritten as the feature changes.
 
 **Date:** 2026-10-12.
 
@@ -56,6 +57,16 @@ With phase 1, on the same files and setup, with a lent device, to a random targe
 Opening at the start saves the warm-up at zero and the second graph build, and no frame from the
 file's start is shown. The decode walk to the target is unchanged, and it is now most of the cost.
 
+With phase 4a, a player that is not lent a device keeps one per backend. Switching to another file
+and seeking to a random target, medians of five, with no device lent:
+
+| | Before | After |
+|---|---|---|
+| Keyframe every 2 s | 240 ms | 77 ms |
+| Keyframe every 10 s | 526 ms | 436 ms |
+
+The default player now switches as fast as one lent a device.
+
 With phase 2, a hop to another clip of the open file while paused repositions the open item. Medians
 of ten hops between random clips of one file, from `JumpToAsync` (phase 1 reopened the file):
 
@@ -85,9 +96,13 @@ of ten hops between random clips of one file, from `JumpToAsync` (phase 1 reopen
 6. **A clip can end at a position.** The item ends when playback reaches the clip's end, as at
    end of stream: it advances, loops or ends the queue by the repeat mode. Nothing presented at or
    after the end is shown, and the source is not read past it. *Phase 3, decision 6.*
-7. **The next clip can be ready before the current one ends.** The next item is opened and
-   positioned at its start while the current one plays, so the switch costs a hand-off rather than
-   an open (#25). *Phase 4.*
+7. **A switch does not create a hardware device.** A player keeps the devices its items decode
+   on, one per backend, so an item boundary borrows one rather than creating one. *Phase 4a,
+   decision 7.*
+8. **An item can be ready before it is needed.** An item is opened and positioned at its start
+   ahead of time, so switching to it costs a hand-off rather than an open and a decode walk. The
+   player prepares the queue's next item, and the application can name another, such as the result
+   under the cursor (#25). *Phase 4b.*
 
 ## Public surface
 
@@ -179,8 +194,9 @@ Phase 3 added `MediaClip.End` and `PlaylistItem.End`, with no overload changes.
    current source repositions the open item while paused, and before the current item has
    played.
 3. **End positions.** `MediaClip.End`. The item ends at its end position.
-4. **The next clip prepared ahead** (#25), and a decision on whether the player lends itself one
-   hardware device by default.
+4. **a. Hardware devices kept across items.** A per-backend cache, on by default (decision 7).
+   **b. An item prepared ahead** (#25): the queue's next item automatically, and an explicit
+   prepare for one the application chooses. One prepared item at a time.
 
 ## Known limitations
 
@@ -191,7 +207,5 @@ Phase 3 added `MediaClip.End` and `PlaylistItem.End`, with no overload changes.
 
 ## Open questions
 
-- Should a player create and lend itself one hardware device by default? It is the largest single
-  cost of a switch. ADR-0064 and the borrowed-device decision keep it opt-in today.
 - How should a clip be shown while paused, without playing, for a results grid or hover preview?
   Today a seek while paused presents nothing until Play. That belongs with #544.

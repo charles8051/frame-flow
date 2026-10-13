@@ -150,5 +150,9 @@ internal sealed class PlaylistSessionFactory : IPlaybackSessionFactory, IDisposa
     {
         if (_loadsSource)
             _coordinator.Dispose();
+
+        // The item factory holds the hardware devices the items shared, which live as long as
+        // the controller does.
+        (_itemFactory as IDisposable)?.Dispose();
     }
 }

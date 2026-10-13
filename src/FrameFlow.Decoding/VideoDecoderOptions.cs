@@ -84,4 +84,11 @@ public sealed class VideoDecoderOptions
     /// <see cref="FrameFlow.Media.HardwareDecodeMode.Disabled"/>.
     /// </summary>
     public HardwareDevice? Device { get; init; }
+
+    /// <summary>
+    /// The devices a player keeps across its items. The decoder borrows the cached device for
+    /// each backend it tries instead of creating one, and still chooses the backend as it would
+    /// without it. Ignored when <see cref="Device"/> is set.
+    /// </summary>
+    internal HardwareDeviceCache? DeviceCache { get; init; }
 }

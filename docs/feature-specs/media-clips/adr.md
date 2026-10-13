@@ -222,3 +222,49 @@ because a frame can decode before the end and present after it.
 - **Only filter, without stopping the read.** Correct output, but the rest of the source is read and
   decoded before the item ends. For a short clip in a long file that delays the hand-off by the time
   it takes to decode the rest of the file.
+
+## Decision 7: a player keeps one hardware device per backend for its lifetime
+
+**Date:** 2026-10-12
+**Status:** Accepted
+**Amends:** the borrowed-device decision (`docs/adr/borrowed-hardware-device.md`), which kept
+sharing a device opt-in: "a player without one keeps a device per decoder, as before".
+
+### Context
+
+Each decoder created its own hardware device, and a player opens a decoder per item, so every item
+boundary created a device. That was about 220 ms of a 250 ms switch on a discrete GPU. Lending one
+device with `WithHardwareDevice` removes it, but a lent device narrows every decoder to its backend:
+a codec with no configuration for that backend decodes in software, where it would otherwise have
+found another backend.
+
+### Decision
+
+- **A per-backend cache, on by default.** A player that is not lent a device keeps a
+  `HardwareDeviceCache`: one device per backend, created the first time a decoder binds that backend
+  and lent to every decoder after it. The decoder chooses its backend exactly as it did, and borrows
+  the cached device for the backend it tries.
+- **A lent device still wins.** With `WithHardwareDevice`, every decoder borrows that device and the
+  cache is not created. With hardware decode disabled there is no cache.
+- **A failure drops the device.** When an item's pump or graph faults, the device its decoder bound
+  is dropped, and the next item to bind that backend creates a new one. A device left unusable by a
+  driver reset is therefore replaced at the next item rather than failing every item after it, which
+  is what creating a device per item gave for free.
+- **The player owns the devices.** The session factory owns the cache and disposes it with the
+  controller. Decoders hold their own references, so disposing or dropping never pulls a device from
+  under one that is decoding.
+
+### Consequences
+
+- A default player switches files as fast as one that is lent a device, without the backend
+  restriction.
+- Items decode on the same device context, which is what the GPU presenter keys its bridge on
+  (ADR-0064), so it no longer rebinds at every boundary.
+- A device that fails without faulting the item, for example by refusing every hardware decode so
+  that each item falls back to software, stays cached until the player is disposed.
+
+### Alternatives considered
+
+- **Lend one device by default.** It narrows every decoder to that device's backend, which changes
+  which codecs decode on hardware.
+- **Keep creating a device per item.** Correct, and the largest single cost of a switch.

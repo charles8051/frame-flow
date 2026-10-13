@@ -87,3 +87,11 @@ the device context, which is released last, after the session.
 - **Two decoders on one device run at once in a playlist's handover.** FFmpeg's device contexts
   serialize their own use (`AVD3D12VADeviceContext.lock`), and each decoder keeps its own frames
   context and pool.
+
+## Amendment (2026-10-12)
+
+A player that is not lent a device no longer keeps a device per decoder. It keeps one per backend
+for its lifetime, created on first use and lent to every decoder after it, and drops a backend's
+device when an item that decoded on it faults. A device lent here still wins, and every decoder
+borrows it as before. See decision 7 of the media-clips record
+(`docs/feature-specs/media-clips/adr.md`).
