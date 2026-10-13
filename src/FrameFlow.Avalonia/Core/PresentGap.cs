@@ -16,7 +16,12 @@ namespace FrameFlow.Avalonia.Core;
 /// The previous frame's <see cref="IVideoFrame.Duration"/>: one frame interval for video, the whole
 /// dwell for a still. Zero when the frame did not say.
 /// </param>
-internal readonly record struct PresentGap(TimeSpan Interval, TimeSpan Held)
+/// <param name="NewTimeline">
+/// Whether this frame is the first of a timeline other than the previous frame's (ADR-0084). The
+/// wait before it is then the player moving on, such as sitting at Ended until it is given the next
+/// item, and is never a stall (#624).
+/// </param>
+internal readonly record struct PresentGap(TimeSpan Interval, TimeSpan Held, bool NewTimeline = false)
 {
     /// <summary>
     /// How late a frame may arrive, past the end of the previous frame's display, before the wait
@@ -39,15 +44,22 @@ internal readonly record struct PresentGap(TimeSpan Interval, TimeSpan Held)
 
     /// <summary>
     /// <see langword="true"/> when upstream stopped delivering: the frame arrived more than
-    /// <see cref="StallThreshold"/> after the previous frame finished showing.
+    /// <see cref="StallThreshold"/> after the previous frame finished showing, on the same
+    /// timeline.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A still held through <see cref="MediaSource.FromStill"/> is one frame whose duration is the
     /// dwell, and the next item's first frame follows it a dwell later by design. Measured from the
     /// still's arrival that is a gap of seconds; measured from the end of its display it is the
     /// transition, which is what a stall is judged on.
+    /// </para>
+    /// <para>
+    /// A <see cref="NewTimeline"/> wait is not judged at all: it is how long the player took to move
+    /// on, which can be any length.
+    /// </para>
     /// </remarks>
-    public bool IsStall => Overrun > StallThreshold;
+    public bool IsStall => !NewTimeline && Overrun > StallThreshold;
 }
 
 /// <summary>
@@ -59,12 +71,13 @@ internal readonly record struct PresentGap(TimeSpan Interval, TimeSpan Held)
 /// <para>
 /// <b>A new timeline starts it over (ADR-0084, #624).</b> The tracker follows the timeline of the
 /// frames it is given with a <see cref="TimelineFollower"/>, because a sink receives them in the
-/// player's order. The first frame of a new timeline (the next item, a seek, a loop) has no gap
-/// before it, as the sink's first frame has none: the wait before it is the player moving to
-/// another timeline, such as sitting at the end of one item until it is given the next, and not
-/// upstream stopping partway through a timeline. Frames after it are judged from it. Were frames
-/// of two timelines ever to interleave, each change would only start the tracker over: a wait
-/// could go unjudged, but none would be reported as a stall.
+/// player's order. The first frame of a new timeline (the next item, a seek, a loop) is not judged
+/// on the wait before it: that wait is the player moving to another timeline, such as sitting at
+/// the end of one item until it is given the next, and not upstream stopping partway through a
+/// timeline. Its <see cref="PresentGap"/> says so with <see cref="PresentGap.NewTimeline"/>, so the
+/// caller can still record the wait. Frames after it are judged from it. Were frames of two
+/// timelines ever to interleave, each change would only start the tracker over: a wait could go
+/// unjudged, but none would be reported as a stall.
 /// </para>
 /// <para>
 /// A frame on <see cref="TimelineId.None"/> belongs to the timeline being followed, and the first
@@ -95,7 +108,8 @@ internal readonly struct PresentGapTracker
     /// <param name="timeline">The frame's <see cref="IFrame.Timeline"/>.</param>
     /// <returns>
     /// The next state, and the gap before this frame, judged on the previous frame's duration.
-    /// <see langword="null"/> for the first frame, and for the first frame of a new timeline.
+    /// <see langword="null"/> for the first frame. For the first frame of a new timeline, a gap
+    /// marked <see cref="PresentGap.NewTimeline"/>, which is never a stall.
     /// </returns>
     public (PresentGapTracker Next, PresentGap? Gap) Observe(
         TimeSpan arrival,
@@ -104,8 +118,8 @@ internal readonly struct PresentGapTracker
     ) =>
         (
             new PresentGapTracker(arrival, duration, _timeline.Follow(timeline)),
-            _lastArrival is { } last && !_timeline.StartsNewTimeline(timeline)
-                ? new PresentGap(arrival - last, _lastDuration)
+            _lastArrival is { } last
+                ? new PresentGap(arrival - last, _lastDuration, _timeline.StartsNewTimeline(timeline))
                 : null
         );
 }

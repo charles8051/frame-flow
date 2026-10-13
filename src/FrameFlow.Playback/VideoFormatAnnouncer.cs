@@ -35,12 +35,14 @@ namespace FrameFlow.Playback;
 /// </remarks>
 internal sealed class VideoFormatAnnouncer
 {
-    // Serializes announcement-with-presentation for one sink. A sink is a single consumer,
-    // and during a queue boundary two sessions are live at once — the next item is created
-    // and warmed while the current one still plays — so two pacers can reach the same sink.
-    // Without this, pacer B could announce its format and present before pacer A presented
-    // the frame A had already announced, and the sink would be handed a frame that does not
-    // match the last thing it was told.
+    // Serializes announcement-with-presentation for one sink. A sink is a single consumer.
+    // During a queue boundary two sessions can be live at once, since the next item can be
+    // prepared and warmed while the current one still plays (#674), but the prepared item keeps
+    // its gates shut until the item before it has been disposed (ADR-0084), so its pacer reaches
+    // the sink only after the previous one has stopped. The semaphore keeps the pair one step
+    // whatever the callers: without it, pacer B could announce its format and present before
+    // pacer A presented the frame A had already announced, and the sink would be handed a frame
+    // that does not match the last thing it was told.
     private readonly SemaphoreSlim _serial = new(1, 1);
 
     // Read and written only under _serial. Nothing outside the critical section writes it,

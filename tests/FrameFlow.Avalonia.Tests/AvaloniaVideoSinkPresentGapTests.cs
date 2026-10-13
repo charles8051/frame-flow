@@ -8,7 +8,7 @@ namespace FrameFlow.Avalonia.Tests;
 /// <summary>
 /// Pins #576 and #624 through the sink: a still held for its dwell, and the next item after the
 /// player sat at Ended, log no PRESENT GAP, and a frame that arrives late past the previous frame's
-/// display still does.
+/// display still does. The wait before a new item is logged at Debug instead.
 /// </summary>
 /// <remarks>
 /// The sink reads arrivals from a <see cref="FakeTimeProvider"/> the test advances, and each present
@@ -97,6 +97,22 @@ public sealed class AvaloniaVideoSinkPresentGapTests
     }
 
     [Fact]
+    public async Task ANewItemAfterThePlayerSatAtEnded_LogsTheWaitAtDebug()
+    {
+        // Not a stall, but a slow seek, loop or open stays visible to someone reading the log.
+        await using var sink = new AvaloniaVideoSink(_log, _time);
+        var ended = TimelineId.Next();
+        var given = TimelineId.Next();
+
+        await PresentAsync(sink, FrameInterval, ended);
+        _time.Advance(TimeSpan.FromMilliseconds(3193));
+        await PresentAsync(sink, FrameInterval, given);
+
+        var wait = Assert.Single(_log.Waits);
+        Assert.Contains($"present gap=3193.0ms starts {given}", wait);
+    }
+
+    [Fact]
     public async Task AFrameLateInTheNewItem_LogsAGap()
     {
         await using var sink = new AvaloniaVideoSink(_log, _time);
@@ -111,6 +127,7 @@ public sealed class AvaloniaVideoSinkPresentGapTests
 
         var gap = Assert.Single(_log.Gaps);
         Assert.Contains("PRESENT GAP 633ms after a frame meant to show for 33ms", gap);
+        Assert.Contains($"on {given})", gap);
     }
 
     private static async Task PresentAsync(
@@ -147,12 +164,17 @@ public sealed class AvaloniaVideoSinkPresentGapTests
         public CpuFrameData ToCpu() => throw new NotSupportedException();
     }
 
-    /// <summary>Keeps the PRESENT GAP warnings the sink logs.</summary>
+    /// <summary>
+    /// Keeps the PRESENT GAP warnings the sink logs, and the Debug lines for waits before the first
+    /// frame of a new timeline.
+    /// </summary>
     private sealed class RecordingLogger : ILogger<AvaloniaVideoSink>
     {
         private readonly List<string> _gaps = [];
+        private readonly List<string> _waits = [];
 
         public IReadOnlyList<string> Gaps => _gaps;
+        public IReadOnlyList<string> Waits => _waits;
 
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull => null;
@@ -170,6 +192,8 @@ public sealed class AvaloniaVideoSinkPresentGapTests
             var message = formatter(state, exception);
             if (logLevel == LogLevel.Warning && message.Contains("PRESENT GAP", StringComparison.Ordinal))
                 _gaps.Add(message);
+            else if (logLevel == LogLevel.Debug && message.Contains(" starts ", StringComparison.Ordinal))
+                _waits.Add(message);
         }
     }
 }

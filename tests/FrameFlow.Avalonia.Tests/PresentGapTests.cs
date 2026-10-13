@@ -6,8 +6,8 @@ namespace FrameFlow.Avalonia.Tests;
 /// <summary>
 /// Pins #576: the wait before a frame is judged from the end of the previous frame's display, not
 /// from its arrival, so a still held for its dwell is not reported as upstream having stopped. And
-/// #624: the first frame of a new timeline has no gap before it, so the next item after the player
-/// sat at Ended is not reported either.
+/// #624: the wait before the first frame of a new timeline is not judged, so the next item after
+/// the player sat at Ended is not reported either.
 /// </summary>
 /// <remarks>
 /// Values in, verdicts out: no sink, no clock. <see cref="AvaloniaVideoSinkPresentGapTests"/>
@@ -18,8 +18,7 @@ public sealed class PresentGapTests
     private static readonly TimeSpan FrameInterval = TimeSpan.FromTicks(333_333); // 30 fps
     private static readonly TimeSpan Dwell = TimeSpan.FromSeconds(3);
 
-    // A source that carries no timeline. The cases above the timeline section use it, so they pin
-    // the judgement every frame had before timelines.
+    // A source that carries no timeline: it pins the judgement every frame had before timelines.
     private static readonly TimelineId Untracked = TimelineId.None;
 
     // What moving from a still to the next item took when this was reproduced.
@@ -161,14 +160,24 @@ public sealed class PresentGapTests
     private static readonly TimeSpan SatAtEnded = TimeSpan.FromMilliseconds(3193);
 
     [Fact]
-    public void TheFirstFrameOfANewTimeline_HasNoGap()
+    public void ANewTimelinesWait_IsNeverAStall()
+    {
+        var gap = new PresentGap(TimeSpan.FromMinutes(5), Held: FrameInterval, NewTimeline: true);
+
+        Assert.False(gap.IsStall);
+    }
+
+    [Fact]
+    public void TheWaitBeforeANewTimelinesFirstFrame_IsNotJudged()
     {
         var tracker = default(PresentGapTracker);
 
         (tracker, _) = tracker.Observe(At(0), FrameInterval, Ended); // the item's last frame
         var (_, gap) = tracker.Observe(At(0) + SatAtEnded, FrameInterval, Given);
 
-        Assert.Null(gap);
+        // The wait is still reported, so the sink can log it, but marked as the player moving on.
+        Assert.Equal(new PresentGap(SatAtEnded, Held: FrameInterval, NewTimeline: true), gap);
+        Assert.False(gap!.Value.IsStall);
     }
 
     [Fact]
@@ -231,7 +240,26 @@ public sealed class PresentGapTests
         (tracker, _) = tracker.Observe(At(0) + FrameInterval, FrameInterval, Untracked);
         var (_, gap) = tracker.Observe(At(0) + SatAtEnded, FrameInterval, Given);
 
-        Assert.Null(gap);
+        Assert.True(gap!.Value.NewTimeline);
+        Assert.False(gap.Value.IsStall);
+    }
+
+    [Fact]
+    public void TimelinesThatInterleave_AreNeverReportedAsStalls()
+    {
+        // A sink receives frames in the player's order, so this does not arise. Were it to, each
+        // change would only start the tracker over: a wait goes unjudged, and none reads as a stall.
+        var tracker = default(PresentGapTracker);
+        var gaps = new List<PresentGap?>();
+
+        foreach (var (arrival, timeline) in new[] { (At(0), Ended), (At(2), Given), (At(4), Ended), (At(6), Given) })
+        {
+            (tracker, var gap) = tracker.Observe(arrival, FrameInterval, timeline);
+            gaps.Add(gap);
+        }
+
+        Assert.All(gaps.Skip(1), g => Assert.True(g!.Value.NewTimeline));
+        Assert.All(gaps.Skip(1), g => Assert.False(g!.Value.IsStall));
     }
 
     private static TimeSpan At(double seconds) => TimeSpan.FromSeconds(seconds);
