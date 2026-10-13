@@ -118,15 +118,24 @@ the items already in flight into before and after.
 - **Promise.** Within one id, presentation times lie on one continuous media timeline. Across ids,
   nothing about presentation times is promised.
 - **Scope.** Ids are opaque, process-local and not persisted.
+- **Lineage.** Ids are compared only within one lineage: the items one session produces. Its
+  video and its audio carry the same id for a run, and so does anything derived from them, such as
+  an inference result or a caption. Items from independent sources, such as two sessions or a
+  camera and a file, are never compared. Process-wide order says which id was minted later, not
+  that another source's items are stale.
 
 ### 2. The session mints one per run, and the decoders stamp it
 
 `SubstrateSession` allocates a new id each time it launches a run: the first play of an item, every
 relaunch after `RepositionAsync`, and every new session. `MediaPass` allocates one for its run.
 
-The session hands the id to the decoders in the same pass that runs `ResetForSeek`, before the
-run's first packet is decoded. The decoders put it on every frame and buffer they create. So every
-item a run produces carries that run's id, and nothing decoded before the reposition does. A paused
+The decoders put the current id on every frame and buffer they create. The session installs a new
+one on a fixed point of the reposition order: after the run's tasks have stopped
+(`SubstrateSession.cs:1321-1332`), and after `ResetForSeek` has replaced each decoder's packet
+queue, flushed its codec and dropped the pipeline's retained packet (`IVideoDecoder.cs:33-44`,
+`SubstrateSession.cs:1368-1371`). The next run launches after that. No packet read before the break
+is left to decode, and no codec state built from one is left to drain, so nothing from before the
+break can come out under the new id. A new session has new decoders and no earlier work. A paused
 seek launches no run until Play, so the first frame after it is produced by the new run and carries
 the new id.
 
@@ -138,8 +147,11 @@ may derive them from the id.
 - `IFrame.Timeline` and `IAudioBuffer.Timeline` are default interface members returning
   `TimelineId.None`, so external implementations keep compiling. Sample aspect ratio and rotation
   took the same route (`IVideoFrame.cs:58`, `:61`).
-- `CpuVideoFrame`, `GpuVideoFrame` and `PcmAudioBuffer` store it. Their `Create` factories take it
-  as a trailing optional parameter (ADR-0080's fill pattern).
+- `CpuVideoFrame`, `GpuVideoFrame` and `PcmAudioBuffer` store it. Each `Create` factory gains an
+  overload that takes it (ADR-0080's fill pattern). The existing signatures stay and produce
+  `None`, so a binary built against an earlier release keeps running. A trailing optional parameter
+  would keep source compatibility but remove the old signature, and a binary that calls it would
+  fail with `MissingMethodException`.
 - A node that builds a new item from an input copies the input's id, as the converters copy sample
   aspect ratio and rotation today (`SwScaleVideoConverter.cs:78-87`). That covers the converters,
   GPU readback and upload, `CloneCpu`, `TensorToImage`, the resampler, `InferenceResult<T>` (from
@@ -156,10 +168,11 @@ order with the frames, without listening to transport events.
 ### 5. Stateful consumers follow one rule
 
 A pure core, `TimelineFollower` in `FrameFlow.Graph.Core`, answers one question: given the timeline
-a consumer is on and the timeline of an arriving item, is the item **current**, **newer** (reset,
-then take it) or **older** (drop it)? An item or a consumer on `None` is treated as current, so a
-consumer fed by an untracked source keeps its present behaviour, including any presentation-time
-rule.
+a stream is on and the timeline of an arriving item of that stream, is the item **current**,
+**newer** (reset, then take it) or **older** (drop it)? A follower tracks one lineage (decision 1);
+a consumer with two independent inputs keeps one follower per input. An item or a follower on
+`None` is treated as current, so a consumer fed by an untracked source keeps its present behaviour,
+including any presentation-time rule.
 
 The consumers in the table above adopt it:
 
@@ -168,11 +181,12 @@ The consumers in the table above adopt it:
 | Whisper window | drops the partial window | drops the buffer |
 | `CaptionTimeline` (fed the presented frame's timeline, and each caption's) | starts empty | drops the caption (#641) |
 | `PresentedResults` | clears results of older timelines (#621) | drops the result |
-| `SyncJoinNode` | clears the secondary window | drops the item |
+| `SyncJoinNode`, one follower per input | on the primary, clears the secondary window | drops the item on that input |
 | PRESENT GAP tracker | starts over (#624) | not applicable |
 
-The Whisper window keeps its 50 ms rule and `SyncJoinNode` its backward-step rule for `None`
-only. `CaptionTimeline` keeps `Reset()` for callers with no tracked source.
+A join's inputs need not come from the same session, so it never compares one input's id with
+the other's. The Whisper window keeps its 50 ms rule and `SyncJoinNode` its backward-step rule for
+`None` only. `CaptionTimeline` keeps `Reset()` for callers with no tracked source.
 
 ### 6. `ISeekResettable` stays for what the session constructs
 
@@ -190,6 +204,8 @@ it cannot tell an item already in flight from one produced after it. An id on th
      different-source item, `ReplaceAsync`, clip start), the first video frame and the first audio
      buffer after it carry a larger id than everything before it, and the items between two breaks
      share one id.
+   - A reposition while the decoders hold queued packets and codec delay: no item stamped with the
+     new id has a presentation time from the old position.
    - A conformance test over every in-repo producer of `IVideoFrame` and `IAudioBuffer`: a derived
      item has its input's id. Sample aspect ratio and rotation should be added to the same test.
 2. **Follow it.** `TimelineFollower` and the adopters in decision 5. Closes #621 and #624; moves
@@ -216,7 +232,7 @@ it cannot tell an item already in flight from one produced after it. An id on th
 - Every node that builds a new frame or buffer must copy the id. A missed copy turns it into
   `None` downstream, which consumers treat as continuous: today's behaviour, without a warning. The
   conformance test in slice 1 is the guard, and it has to grow with every new producer.
-- The `Create` factories change binary signature. Source that calls them compiles unchanged.
+- Each `Create` factory has two overloads, one with the timeline and one without.
 - External `IVideoFrame` and `IAudioBuffer` implementations report `None` until they store an id,
   and their consumers keep today's behaviour.
 - Each frame and buffer carries eight more bytes.
