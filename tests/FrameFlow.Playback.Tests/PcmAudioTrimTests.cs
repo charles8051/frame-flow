@@ -1,3 +1,4 @@
+using System.Numerics;
 using FrameFlow.Media;
 
 namespace FrameFlow.Playback.Tests;
@@ -35,6 +36,21 @@ public sealed class PcmAudioTrimTests
 
         Assert.Equal(300L * 86_400 * 48_000 + 1, frames);
     }
+
+    [Fact]
+    public void FramesBefore_CountsAcrossTheWholeRangeOfTimes()
+    {
+        // The difference itself is outside what a TimeSpan holds.
+        var frames = PcmAudioTrim.FramesBefore(TimeSpan.MinValue, 48_000, TimeSpan.MaxValue);
+
+        var ticks = (BigInteger)TimeSpan.MaxValue.Ticks - TimeSpan.MinValue.Ticks;
+        var expected = (ticks * 48_000 + TimeSpan.TicksPerSecond - 1) / TimeSpan.TicksPerSecond;
+        Assert.Equal((long)expected, frames);
+    }
+
+    [Fact]
+    public void FramesBefore_SaturatesACountBeyondALong() =>
+        Assert.Equal(long.MaxValue, PcmAudioTrim.FramesBefore(TimeSpan.MinValue, int.MaxValue, TimeSpan.MaxValue));
 
     [Fact]
     public void FramesBefore_IsZeroWithoutASampleRate() =>

@@ -12,16 +12,24 @@ internal static class PcmAudioTrim
     /// How many frames of audio that starts at <paramref name="start"/>, at
     /// <paramref name="sampleRate"/>, come before <paramref name="floor"/>. The frame at that index
     /// is the first that starts at or past it. Zero when the audio starts at or past the floor, or
-    /// has no sample rate.
+    /// has no sample rate, and <see cref="long.MaxValue"/> when the count is larger than that.
     /// </summary>
     public static long FramesBefore(TimeSpan start, int sampleRate, TimeSpan floor)
     {
         if (floor <= start || sampleRate <= 0)
             return 0;
-        // Whole seconds and the rest apart, so the product cannot overflow however far apart they
-        // are.
-        var seconds = Math.DivRem((floor - start).Ticks, TimeSpan.TicksPerSecond, out var rest);
-        return seconds * sampleRate + (rest * sampleRate + TimeSpan.TicksPerSecond - 1) / TimeSpan.TicksPerSecond;
+
+        // The difference in ticks fits an unsigned long whatever the two are. Whole seconds and
+        // the rest are multiplied apart, so neither product overflows.
+        const ulong perSecond = TimeSpan.TicksPerSecond;
+        var ticks = unchecked((ulong)floor.Ticks - (ulong)start.Ticks);
+        var seconds = ticks / perSecond;
+        var rest = ticks % perSecond;
+        var rate = (ulong)sampleRate;
+        if (seconds > (ulong)long.MaxValue / rate)
+            return long.MaxValue;
+        var frames = seconds * rate + (rest * rate + perSecond - 1) / perSecond;
+        return frames > long.MaxValue ? long.MaxValue : (long)frames;
     }
 
     /// <summary>
