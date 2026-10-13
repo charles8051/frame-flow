@@ -1,8 +1,10 @@
-# Frames carry the timeline they belong to
+# ADR-0084: Frames carry the timeline they belong to
 
 ## Status
 
-Draft, pending number assignment at merge. **Proposed** (2026-10-12). Not implemented.
+**Accepted (2026-10-13).** Not yet implemented. Proposed on 2026-10-12, and revised on acceptance
+for items prepared ahead (#674): ids identify a timeline but carry no order, and order comes from
+presentation. [Revision history](#revision-history) lists what changed.
 
 Motivating issues: #621 (`PresentedResults` has no item boundary), #641 (LiveCaptioning shows
 captions for audio from before a seek or loop) and #624 (a PRESENT GAP warning when a new item
@@ -11,7 +13,7 @@ Whisper window and to `CaptionTimeline`, and the example machinery in #670. Not 
 audio-only file leaves the previous file's caption on screen) and #671 (audio that ends before its
 video stalls the picture). [What it does not fix](#what-it-does-not-fix) says why.
 
-Line numbers are on `main` at 2452a17.
+Line numbers are on `main` at 2452a17, except where the revision added them, which are at 45acf7e.
 
 **Related:**
 
@@ -54,6 +56,18 @@ Counters for these breaks already exist: the controller's session generation
 (`PlaybackControllerCore.cs:121-130`), the playlist's item generation
 (`PlaylistSessionProtocol.cs:703`), the session's run number (`SubstrateSession.cs:194`), the
 pacer's run id (`ClockSelectVideoSink.cs:458`). None of them reaches a frame.
+
+### An item prepared ahead decodes before it plays
+
+An item can be prepared while another plays (#674). Its runtime opens detached, positions at its
+start and warms up without touching the shared sinks or clock (`SubstrateSession.cs:119-120`,
+`:199`, `:835`), so its run starts, and its decoders produce items, before it is promoted.
+
+Those items wait behind its closed gates. Every graph is wired source, gate, configurator, sink
+(`SubstrateSession.cs:1735-1760`, `:1899-1911`), so no configured operator, tap or sink sees them
+until the runtime is promoted and its gates open. Downstream of the gates, one player's items
+therefore arrive in presentation order, whichever runtime made them. The order in which runs
+start does not match: a prepared run starts before the playing item's later loops and seeks.
 
 ### Nothing downstream is told
 
@@ -113,16 +127,17 @@ the items already in flight into before and after.
 `TimelineId` is a `readonly record struct` over a `long`, in `FrameFlow.Graph` beside `IFrame` and
 `IAudioBuffer`. `TimelineId.None` (0) means unknown.
 
-- **Order.** Ids come from one process-wide counter and only increase, so a larger id is a later
-  timeline. Equality says "same timeline"; order says "older" or "newer".
+- **Identity, not order.** Ids come from one process-wide counter, so no two runs share one, but
+  an id minted later is not a later timeline. An item prepared ahead mints its id at warm-up,
+  before the ids the playing item mints at its later loops and seeks. Order comes from
+  presentation (decision 5).
 - **Promise.** Within one id, presentation times lie on one continuous media timeline. Across ids,
   nothing about presentation times is promised.
 - **Scope.** Ids are opaque, process-local and not persisted.
-- **Lineage.** Ids are compared only within one lineage: the items one session produces. Its
-  video and its audio carry the same id for a run, and so does anything derived from them, such as
-  an inference result or a caption. Items from independent sources, such as two sessions or a
-  camera and a file, are never compared. Process-wide order says which id was minted later, not
-  that another source's items are stale.
+- **Lineage.** Ids are compared only within one lineage: the items that reach one player's sinks,
+  whichever of its runtimes made them. A run's video and audio carry the same id, and so does
+  anything derived from them, such as an inference result or a caption. Items from independent
+  sources, such as two players or a camera and a file, are never compared.
 
 ### 2. The session mints one per run, and the decoders stamp it
 
@@ -138,6 +153,10 @@ is left to decode, and no codec state built from one is left to drain, so nothin
 break can come out under the new id. A new session has new decoders and no earlier work. A paused
 seek launches no run until Play, so the first frame after it is produced by the new run and carries
 the new id.
+
+A prepared runtime (#674) mints its id when its run launches at warm-up. Its items wait behind its
+closed gates until it is promoted (see Context), so no consumer downstream of the gates sees them
+before the playing item's last item.
 
 The run number (`SubstrateSession.cs:194`) and the pacer's run id stay as they are for now. Slice 4
 may derive them from the id.
@@ -165,26 +184,36 @@ may derive them from the id.
 graph (an overlay, a caption display, `PresentedResults`) learns which timeline is on screen, in
 order with the frames, without listening to transport events.
 
-### 5. Stateful consumers follow one rule
+### 5. Stateful consumers take order from presentation
 
-A pure core, `TimelineFollower` in `FrameFlow.Graph.Core`, answers one question: given the timeline
-a stream is on and the timeline of an arriving item of that stream, is the item **current**,
-**newer** (reset, then take it) or **older** (drop it)? A follower tracks one lineage (decision 1);
-a consumer with two independent inputs keeps one follower per input. An item or a follower on
-`None` is treated as current, so a consumer fed by an untracked source keeps its present behaviour,
-including any presentation-time rule.
+Two pure cores in `FrameFlow.Graph.Core` answer the question for the two kinds of consumer:
 
-The consumers in the table above adopt it:
+- **`TimelineFollower`, for one stream in order.** A consumer downstream of the gates sees one
+  player's items in presentation order. An item whose id differs from the stream's current id
+  starts a new timeline: the consumer resets, then takes it. No item of an earlier timeline can
+  follow it in the same stream.
+- **`PresentedTimeline`, for derived items matched against what is shown.** It is fed the
+  presented frame's id (decision 4), and keeps the current id and the few ids it left most
+  recently. A derived item, such as an inference result or a caption, is **current** when its id is
+  on screen, **past** when its id has been left (drop it), and **upcoming** otherwise (hold it,
+  within the consumer's existing bounds, until its id is presented). A derived item can arrive
+  before its frame presents, which is why upcoming is not the same as past.
 
-| Consumer | Newer | Older |
-| -------- | ----- | ----- |
-| Whisper window | drops the partial window | drops the buffer |
-| `CaptionTimeline` (fed the presented frame's timeline, and each caption's) | starts empty | drops the caption (#641) |
-| `PresentedResults` | clears results of older timelines (#621) | drops the result |
-| `SyncJoinNode`, one follower per input | on the primary, clears the secondary window | drops the item on that input |
-| PRESENT GAP tracker | starts over (#624) | not applicable |
+A follower tracks one lineage (decision 1). A consumer with two independent inputs keeps one
+follower per input. An item or a follower on `None` is treated as current, so a consumer fed by
+an untracked source keeps its present behaviour, including any presentation-time rule.
 
-A join's inputs need not come from the same session, so it never compares one input's id with
+The consumers in the table above adopt them:
+
+| Consumer | Follows | On a new timeline | On a past item |
+| -------- | ------- | ----------------- | -------------- |
+| Whisper window | its input stream | drops the partial window | does not arise |
+| `SyncJoinNode` | each input's stream, separately | on the primary, clears the secondary window | does not arise |
+| PRESENT GAP tracker | the presented frames | starts over (#624) | does not arise |
+| `PresentedResults` | the presented timeline | clears results of the timeline it left (#621) | drops the result |
+| `CaptionTimeline` | the presented timeline | starts empty | drops the caption (#641) |
+
+A join's inputs need not come from the same player, so it never compares one input's id with
 the other's. The Whisper window keeps its 50 ms rule and `SyncJoinNode` its backward-step rule for
 `None` only. `CaptionTimeline` keeps `Reset()` for callers with no tracked source.
 
@@ -202,13 +231,15 @@ it cannot tell an item already in flight from one produced after it. An id on th
    `FramePresentedInfo.Timeline`. Tests:
    - For each break (load, seek while playing, seek while paused, loop, same-source hand-off,
      different-source item, `ReplaceAsync`, clip start), the first video frame and the first audio
-     buffer after it carry a larger id than everything before it, and the items between two breaks
+     buffer after it carry an id no earlier item carries, and the items between two breaks
      share one id.
    - A reposition while the decoders hold queued packets and codec delay: no item stamped with the
      new id has a presentation time from the old position.
+   - An item prepared ahead (#674) and promoted after the playing item has looped: its items start
+     a new timeline for every follower, although its id was minted first.
    - A conformance test over every in-repo producer of `IVideoFrame` and `IAudioBuffer`: a derived
      item has its input's id. Sample aspect ratio and rotation should be added to the same test.
-2. **Follow it.** `TimelineFollower` and the adopters in decision 5. Closes #621 and #624; moves
+2. **Follow it.** The two followers and the adopters in decision 5. Closes #621 and #624; moves
    the Whisper window and `CaptionTimeline` off presentation-time rules for tracked sources.
 3. **Use it in the example.** LiveCaptioning drops its graph counter and its presentation-time
    checks, and keys captions on the presented timeline. Closes #641; #670 is closed as superseded.
@@ -224,7 +255,8 @@ it cannot tell an item already in flight from one produced after it. An id on th
 - It reaches consumers outside the graph and past asynchronous boundaries, because it travels with
   the data.
 - It does not depend on the order of transport events.
-- Because ids are ordered, a consumer can drop stale items as well as reset on new ones.
+- Presentation gives the order, so a consumer can drop stale items as well as reset on new ones,
+  and an item prepared ahead needs no special case.
 - Forwarding and fan-out need nothing (ADR-0080).
 
 ### Negative
@@ -236,14 +268,17 @@ it cannot tell an item already in flight from one produced after it. An id on th
 - External `IVideoFrame` and `IAudioBuffer` implementations report `None` until they store an id,
   and their consumers keep today's behaviour.
 - Each frame and buffer carries eight more bytes.
+- A consumer of derived items keeps a short history of the timelines it has left. A late item from
+  a timeline older than that history is held as upcoming until the consumer's bounds evict it. It
+  never shows, because its timeline is never presented again.
 - Two mechanisms remain, `ISeekResettable` for the session's components and the id for everything
   else. Decision 6 says which is which.
 
 ### Neutral
 
 - Presentation-time semantics do not change.
-- Two players in one process interleave ids. A consumer follows one stream, so only equality and
-  order within that stream matter.
+- Two players in one process interleave ids. A consumer follows one lineage and compares ids only
+  for equality, so the interleaving does not matter.
 
 ### What it does not fix
 
@@ -292,6 +327,13 @@ frames ([Events cannot carry it](#events-cannot-carry-it)).
 not unique across items, and it does not leave the session. Making it process-wide and putting it
 on the items is this decision.
 
+### Order ids by when they are minted
+
+The draft did this, and it fails once an item is prepared ahead (#674). The prepared item mints its
+id at warm-up, so after the playing item loops, the next timeline on screen has the older id, and a
+drop-older rule discards it. Minting at promotion instead does not work: the prepared item's frames
+are decoded, and stamped, before promotion, and a frame is immutable once published (ADR-0080).
+
 ### Call it an epoch
 
 "Epoch" is the usual word, but ADR-0036 and ADR-0022 already use it for a cancellation scope.
@@ -311,3 +353,13 @@ on the items is this decision.
    path.
 5. **Audio-only display.** Should the transport also expose the current timeline id, for example
    on `PlaylistTransition`, so a consumer with no presented frames (#669) can follow it?
+
+## Revision history
+
+- **2026-10-13, on acceptance.** #674 landed while the draft was in review: an item prepared ahead
+  starts its run, and mints its id, while another item still plays. The draft's ordered ids would
+  have made a prepared item look older than the loop it follows. Decision 1 now makes ids identity
+  only. Decision 5 takes order from presentation, with a follower for in-order streams and one for
+  derived items matched against what is shown. Context and decision 2 say why a prepared item's
+  items still reach consumers in presentation order. Staging gains the test, and Alternatives the
+  minted-order design.
