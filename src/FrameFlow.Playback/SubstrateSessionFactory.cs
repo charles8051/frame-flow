@@ -20,7 +20,11 @@ namespace FrameFlow.Playback;
 /// The factory captures the long-lived sinks + options + optional
 /// consumer-side configurators at construction time and produces a
 /// fresh session per controller load. The controller owns session
-/// disposal; the factory owns nothing beyond the captured config.
+/// disposal. The factory owns one resource of its own: the hardware
+/// device cache every session it creates borrows from, which lives as
+/// long as the controller and is released by <see cref="Dispose"/>, after
+/// the controller has disposed its session. The sinks it captured stay
+/// the caller's.
 /// </remarks>
 internal sealed class SubstrateSessionFactory
     : IPlaybackSessionFactory,
