@@ -20,9 +20,16 @@ namespace FrameFlow.Playback;
 /// The factory captures the long-lived sinks + options + optional
 /// consumer-side configurators at construction time and produces a
 /// fresh session per controller load. The controller owns session
-/// disposal; the factory owns nothing beyond the captured config.
+/// disposal. The factory owns one resource of its own: the hardware
+/// device cache every session it creates borrows from, which lives as
+/// long as the controller and is released by <see cref="Dispose"/>, after
+/// the controller has disposed its session. The sinks it captured stay
+/// the caller's.
 /// </remarks>
-internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlaylistItemRuntimeFactory
+internal sealed class SubstrateSessionFactory
+    : IPlaybackSessionFactory,
+        IPlaylistItemRuntimeFactory,
+        IDisposable
 {
     private readonly IVideoSink? _videoSink;
     private readonly IAudioSink? _audioSink;
@@ -47,6 +54,11 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
     // One per factory, because the factory owns the sink and the sink is what the
     // announcement is about. Every item it creates shares it (#287).
     private readonly VideoFormatAnnouncer _formatAnnouncer = new();
+
+    // The hardware devices every item this factory creates shares, one per backend, so an item
+    // boundary does not create a device. None when the caller lends a device, which every item
+    // borrows instead, or when hardware decode is disabled.
+    private readonly HardwareDeviceCache? _deviceCache;
 
     /// <summary>
     /// The lateness-recovery tuning every session this factory creates carries, for the tests
@@ -92,6 +104,9 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         // Copied: a caller's array changed after Create would otherwise reorder later items.
         _preferredBackends = preferredBackends is null ? [] : [.. preferredBackends];
         _excludedCodecs = excludedCodecs is null ? [] : [.. excludedCodecs];
+        _deviceCache = hardwareDevice is null && hwMode != HardwareDecodeMode.Disabled
+            ? new HardwareDeviceCache(_loggerFactory.CreateLogger<HardwareDeviceCache>())
+            : null;
     }
 
     public IPlaybackSession CreateSession(IPlaybackClock clock, SessionCallbacks callbacks) =>
@@ -122,6 +137,13 @@ internal sealed class SubstrateSessionFactory : IPlaybackSessionFactory, IPlayli
         {
             LatenessRecovery = _latenessRecovery,
             FormatAnnouncer = _formatAnnouncer,
+            DeviceCache = _deviceCache,
         };
     }
+
+    /// <summary>
+    /// Releases the shared hardware devices. Decoders still open hold their own references, so
+    /// this never pulls a device from under one.
+    /// </summary>
+    public void Dispose() => _deviceCache?.Dispose();
 }

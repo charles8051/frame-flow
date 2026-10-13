@@ -175,6 +175,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// </summary>
     internal VideoFormatAnnouncer? FormatAnnouncer { get; init; }
 
+    /// <summary>
+    /// The hardware devices the items of one player share, which this session's decoder borrows
+    /// from when no device is lent. Null when there is none.
+    /// </summary>
+    internal HardwareDeviceCache? DeviceCache { get; init; }
+
     private bool _renderersActivated;
 
     // The graph topology built by BuildGraph. A graph instance is re-runnable:
@@ -593,12 +599,13 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                     },
                     _hwCapabilities,
                     _loggerFactory,
-                    videoBudget is null && _hardwareDevice is null
+                    videoBudget is null && _hardwareDevice is null && DeviceCache is null
                         ? null
                         : new VideoDecoderOptions
                         {
                             HeldHardwareFrames = videoBudget?.Frames ?? 0,
                             Device = _hardwareDevice,
+                            DeviceCache = DeviceCache,
                         }
                 );
                 videoDecoder = videoFactory(demux) as VideoDecoder;
@@ -1865,7 +1872,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
                 catch (Exception ex)
                 {
-                    _callbacks.OnWorkerFaulted(ex);
+                    ReportWorkerFault(ex);
                     return;
                 }
 
@@ -1925,11 +1932,23 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
                 catch (Exception ex)
                 {
-                    _callbacks.OnWorkerFaulted(ex);
+                    ReportWorkerFault(ex);
                 }
             },
             CancellationToken.None
         );
+    }
+
+    /// <summary>
+    /// Reports a fault in the pump or the graph. The shared hardware device this item decoded on
+    /// is dropped first: a fault can mean the device is no longer usable, after a driver reset
+    /// for instance, and the next item then creates a new one rather than failing on it too.
+    /// </summary>
+    private void ReportWorkerFault(Exception ex)
+    {
+        if (_videoDecoder?.BoundBackend is { } backend)
+            DeviceCache?.Drop(backend);
+        _callbacks.OnWorkerFaulted(ex);
     }
 
     private async ValueTask StopGraphAsync(CancellationToken cancellationToken)

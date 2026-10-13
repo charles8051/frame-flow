@@ -170,6 +170,92 @@ public sealed class HardwareDeviceTests(FfmpegBootstrapFixture fixture)
         Assert.Contains("Other", error.Message);
     }
 
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D12Va, H264)]
+    public async Task DecodersBorrowingFromACache_ShareOneDeviceContext()
+    {
+        using var cache = new HardwareDeviceCache();
+
+        nint first;
+        await using (var demux = await OpenAsync(H264))
+        await using (var decoder = OpenCached(demux, cache))
+        {
+            using var frame = await FirstFrameAsync(demux, decoder);
+            first = frame.HwDeviceContext;
+        }
+
+        // The first decoder and its frames are gone. The cache kept the device.
+        await using var secondDemux = await OpenAsync(H264);
+        await using var second = OpenCached(secondDemux, cache);
+        using var secondFrame = await FirstFrameAsync(secondDemux, second);
+
+        Assert.NotEqual(nint.Zero, first);
+        Assert.Equal(first, secondFrame.HwDeviceContext);
+    }
+
+    /// <summary>
+    /// The first frame is held while the second decoder opens, so the first device context is
+    /// still allocated and the second cannot land at its address.
+    /// </summary>
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D12Va, H264)]
+    public async Task ADroppedDevice_IsReplacedForTheNextDecoder()
+    {
+        using var cache = new HardwareDeviceCache();
+        await using var firstDemux = await OpenAsync(H264);
+        await using var first = OpenCached(firstDemux, cache);
+        using var firstFrame = await FirstFrameAsync(firstDemux, first);
+
+        cache.Drop(HardwareDecodeBackendKind.D3D12Va);
+
+        await using var secondDemux = await OpenAsync(H264);
+        await using var second = OpenCached(secondDemux, cache);
+        using var secondFrame = await FirstFrameAsync(secondDemux, second);
+
+        Assert.NotEqual(firstFrame.HwDeviceContext, secondFrame.HwDeviceContext);
+    }
+
+    [RequiresHardwareDecodeBackendFact(HardwareDecodeBackendKind.D3D12Va, H264)]
+    public async Task ADisposedCache_LendsNothing_AndTheDecoderMakesItsOwnDevice()
+    {
+        var cache = new HardwareDeviceCache();
+        cache.Dispose();
+
+        Assert.Equal(nint.Zero, cache.Borrow(HardwareDecodeBackendKind.D3D12Va));
+
+        await using var demux = await OpenAsync(H264);
+        await using var decoder = OpenCached(demux, cache);
+        using var frame = await FirstFrameAsync(demux, decoder);
+        Assert.NotEqual(nint.Zero, frame.HwDeviceContext);
+    }
+
+    [RequiresFfmpegFact]
+    public void ABackendThatCannotBeCreatedHere_LendsNothing()
+    {
+        using var cache = new HardwareDeviceCache();
+        var absent = OperatingSystem.IsMacOS()
+            ? HardwareDecodeBackendKind.D3D11Va
+            : HardwareDecodeBackendKind.VideoToolbox;
+
+        Assert.Equal(nint.Zero, cache.Borrow(absent));
+    }
+
+    private VideoDecoder OpenCached(DemuxSession demux, HardwareDeviceCache cache)
+    {
+        var decoder = VideoDecoder.Open(
+            demux.FormatContextPtr,
+            demux.MediaInfo.VideoStreams[0].StreamIndex,
+            new HardwareDecodeOptions
+            {
+                Mode = HardwareDecodeMode.Required,
+                PreferredBackends = [HardwareDecodeBackendKind.D3D12Va],
+            },
+            fixture.Capabilities,
+            loggerFactory: null,
+            new VideoDecoderOptions { DeviceCache = cache }
+        );
+        decoder.YieldHardwareFrames = true;
+        return decoder;
+    }
+
     private VideoDecoder Open(DemuxSession demux, HardwareDevice? device, HardwareDecodeMode mode)
     {
         var decoder = VideoDecoder.Open(

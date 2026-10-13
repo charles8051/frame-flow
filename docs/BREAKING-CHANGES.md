@@ -357,6 +357,12 @@ Call `DisposeAsync` to end the view for good.
 
 ### Not breaking, but worth knowing
 
+- **A player keeps its hardware decode devices across items.** A player or controller that is not
+  lent a device with `WithHardwareDevice` used to create a device for each item and dispose it at
+  the item's end. It now keeps one per backend for its lifetime and lends it to every item, which
+  takes about 200 ms off a switch on a discrete GPU. A backend's device is dropped and created again
+  after an item that decoded on it faults. Frames from different items now carry the same device
+  context. #656.
 - **A video view's logger factory applies whenever it is given.** `FrameFlowVideoView` builds its
   sink when it joins the visual tree, and gave the sink the factory it held at that moment: the
   null one, unless `LoggerFactory` had been assigned first. `IVideoSurface.AttachSink`,
