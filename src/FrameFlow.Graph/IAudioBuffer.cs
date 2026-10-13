@@ -84,6 +84,13 @@ public interface IAudioBuffer : IRefCounted
     FrameMemoryDomain MemoryDomain { get; }
 
     /// <summary>
+    /// The timeline the buffer belongs to (ADR-0084): the run that produced it, or the run of the
+    /// buffer it was derived from. <see cref="TimelineId.None"/> unless the implementation stores
+    /// one, so an implementation from before timelines keeps compiling and reports none.
+    /// </summary>
+    TimelineId Timeline => TimelineId.None;
+
+    /// <summary>
     /// Atomically adds one reference and returns the same instance for
     /// fluent usage. Each <see cref="AddRef"/> requires a balancing
     /// <see cref="IDisposable.Dispose"/>; the underlying buffer
