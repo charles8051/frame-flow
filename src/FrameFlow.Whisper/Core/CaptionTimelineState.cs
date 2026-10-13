@@ -36,12 +36,13 @@ internal readonly record struct HeldCaption(Caption Caption, TimelineId Timeline
 /// <b>Tracked timelines (ADR-0084).</b> Captions are derived items matched against what is shown,
 /// so the order comes from presentation, through a <see cref="PresentedTimeline"/>. A frame on a
 /// timeline other than the one on screen starts a new timeline with nothing from the one it left,
-/// whichever way its time moved. Once a timeline is on screen, a caption added waits for the next
-/// frame and is matched against that frame's timeline, so a caption that arrives with the first
-/// frame of a new timeline is judged on it: shown if it is of that timeline or names none, dropped
-/// if the screen has left its timeline, and held otherwise. A held caption joins the screen with
-/// the first frame of its timeline, as if it arrived with that frame. On one tracked timeline the
-/// time is continuous, so a time below <see cref="Now"/> is not a jump.
+/// whichever way its time moved. A caption that names a timeline, and once a timeline is on screen
+/// any caption, waits for the next frame and is matched against that frame's timeline, so a
+/// caption that arrives with the first frame of a new timeline is judged on it: shown if it is of
+/// that timeline or names none, or while no frame has named a timeline; dropped if the screen has
+/// left its timeline; and held otherwise. A held caption joins the screen with the first frame of
+/// its timeline, as if it arrived with that frame. On one tracked timeline the time is continuous,
+/// so a time below <see cref="Now"/> is not a jump.
 /// </para>
 /// <para>
 /// <b>Untracked.</b> Until a frame names a timeline, and for a frame that names none, frames
@@ -49,7 +50,9 @@ internal readonly record struct HeldCaption(Caption Caption, TimelineId Timeline
 /// <see cref="Now"/> can only be one of those, so it starts a new timeline with nothing on it. A
 /// caption from before the jump is not kept to show again when playback reaches its stamp, and the
 /// time before the jump no longer sets the cutoff that evicts the captions after it. A caption on
-/// <see cref="TimelineId.None"/> belongs to the timeline on screen.
+/// <see cref="TimelineId.None"/> belongs to the timeline on screen. While no frame has named a
+/// timeline, a caption that names one waits for the next frame, and joins it if that frame names
+/// none too.
 /// </para>
 /// <para>
 /// <b>Bounds.</b> A caption on screen is dropped once it is more than
@@ -124,13 +127,16 @@ internal sealed record CaptionTimelineState
 
     /// <summary>
     /// Takes <paramref name="caption"/>, transcribed on <paramref name="timeline"/>, as arriving
-    /// with the frame at <paramref name="pts"/>. Before a frame has named a timeline, it moves to
-    /// <paramref name="pts"/> and shows the caption. After, the caption waits for the next frame,
-    /// which matches it.
+    /// with the frame at <paramref name="pts"/>. A caption that names a timeline, and any caption
+    /// once a frame has named one, waits for the next frame, which matches it. Otherwise it moves
+    /// to <paramref name="pts"/> and shows the caption.
     /// </summary>
     public CaptionTimelineState Add(Caption caption, TimeSpan pts, TimelineId timeline)
     {
-        if (Presented.Current != TimelineId.None)
+        // Before the first frame that names a timeline, a caption that names one is not known to
+        // be current: it can be of an item that presented nothing, such as an audio-only file.
+        // The first frame judges it, as it judges one added once a timeline is on screen (#687).
+        if (Presented.Current != TimelineId.None || timeline != TimelineId.None)
             return this with { Held = BoundHeld(Held.Add(new HeldCaption(caption, timeline, pts))) };
 
         var moved = Advance(Presented, pts, known: false);

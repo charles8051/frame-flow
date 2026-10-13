@@ -24,12 +24,13 @@ namespace FrameFlow.Whisper;
 /// <see cref="Add(Caption, TimeSpan, TimelineId)"/> each caption's, <see cref="CaptionRef.Timeline"/>.
 /// The order comes from what is presented. A frame on a timeline other than the one on screen (a
 /// seek, a loop, the next item) starts a new timeline with nothing from the one it left, whichever
-/// way its time moved. Once a frame has named a timeline, a caption added is matched against the
-/// frame given to the next <see cref="GetActive(TimeSpan, TimelineId)"/>, so one that arrives with
-/// the first frame of a new timeline is judged on that timeline. A caption of that frame's timeline,
-/// or of none, shows from that frame. A caption of a timeline the screen has left, still in flight
-/// when it was left, is dropped. A caption of a timeline not presented yet is held, and shows from
-/// the first frame of its timeline; one of a timeline that is never presented never shows.
+/// way its time moved. A caption that names a timeline, and once a frame has named one any caption,
+/// is matched against the frame given to the next <see cref="GetActive(TimeSpan, TimelineId)"/>, so
+/// one that arrives with the first frame of a new timeline is judged on that timeline. A caption of
+/// that frame's timeline, or of none, shows from that frame. A caption of a timeline the screen has
+/// left, still in flight when it was left, is dropped. A caption of a timeline not presented yet is
+/// held, and shows from the first frame of its timeline; one of a timeline that is never presented
+/// never shows, even when it arrives before the first frame.
 /// </para>
 /// <para>
 /// <b>Without timelines.</b> Until a frame names a timeline (frames on <see cref="TimelineId.None"/>,
@@ -40,7 +41,8 @@ namespace FrameFlow.Whisper;
 /// a timeline has been named too. A jump the PTS does not show, such as a seek forward by less
 /// than the display duration, needs <see cref="Reset"/>. A caption for audio from before a jump
 /// that arrives after it lands on the new timeline, since nothing tells it apart; a caption on
-/// <see cref="TimelineId.None"/> always belongs to the timeline on screen.
+/// <see cref="TimelineId.None"/> always belongs to the timeline on screen. A caption that names a
+/// timeline joins the next frame that names none, while no frame has named one.
 /// </para>
 /// <para>
 /// <b>Which PTS.</b> Give both calls the PTS of the frame just presented. Not a caption's own
@@ -83,8 +85,8 @@ public sealed class CaptionTimeline(TimeSpan displayDuration, int maxStackedLine
 
     /// <summary>
     /// Adds <paramref name="caption"/>, transcribed on <paramref name="timeline"/>, as arriving
-    /// with the frame at <paramref name="enqueuedAtPts"/>, the frame just presented. Once a frame
-    /// has named a timeline, the caption is matched at the next
+    /// with the frame at <paramref name="enqueuedAtPts"/>, the frame just presented. When the
+    /// caption names a timeline, or a frame has named one, the caption is matched at the next
     /// <see cref="GetActive(TimeSpan, TimelineId)"/>, against that frame's timeline: shown if it is
     /// of that timeline or of none, dropped if the screen has left its timeline, and held if its
     /// timeline has not been presented.

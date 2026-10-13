@@ -278,6 +278,19 @@ public sealed class CaptionTimelineTests
     }
 
     [Fact]
+    public void BeforeTheFirstFrame_ACaptionOfAnotherTimeline_DoesNotShowOnIt()
+    {
+        // Captions of an item that presented no frame, such as an audio-only file, arrive with
+        // the first frame ever presented, which is the next item's.
+        var timeline = new CaptionTimeline(Display);
+        var audioOnly = TimelineId.Next();
+        var playing = TimelineId.Next();
+
+        Assert.Equal(["mine"], Present(timeline, Seconds(0), playing, ("unseen", audioOnly), ("mine", playing)));
+        Assert.Equal(["mine"], Present(timeline, Seconds(1), playing));
+    }
+
+    [Fact]
     public void HeldCaptions_KeepOnlyTheLatestBatch()
     {
         var timeline = new CaptionTimeline(Display);
@@ -588,6 +601,21 @@ public sealed class CaptionTimelineStateTests
 
         Assert.Equal(playing, moved.Presented.Current);
         Assert.Equal(["a"], moved.Entries.Select(e => e.Caption.Text));
+    }
+
+    [Fact]
+    public void BeforeAFrameNamesATimeline_ACaptionThatNamesOne_WaitsForTheFirstFrameToJudgeIt()
+    {
+        var other = TimelineId.Next();
+        var first = TimelineId.Next();
+
+        var added = Empty().Add(Said("other"), TimeSpan.Zero, other);
+        Assert.Empty(added.Entries);
+        Assert.Equal([new HeldCaption(Said("other"), other, TimeSpan.Zero)], added.Held.ToArray());
+
+        var moved = added.MoveTo(TimeSpan.FromMilliseconds(10), first);
+        Assert.Empty(moved.OnScreen());
+        Assert.Equal([new HeldCaption(Said("other"), other, TimeSpan.Zero)], moved.Held.ToArray());
     }
 
     [Fact]
