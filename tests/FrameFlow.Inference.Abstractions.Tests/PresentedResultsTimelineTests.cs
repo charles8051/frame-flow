@@ -136,6 +136,27 @@ public sealed class PresentedResultsTimelineTests
     }
 
     [Fact]
+    public void AResultOnNone_IsNotDroppedWhenANewTimelineReachesTheScreen()
+    {
+        // ADR-0084 decision 5: an item on None is current, so it keeps the timestamp rules. Nothing
+        // says whether a result posted before the new timeline presented is for the timeline left
+        // or, as a branch runs ahead of the picture, for the new one.
+        var (a, b) = (TimelineId.Next(), TimelineId.Next());
+        var (state, _) = Empty().Present(Ms(0), a);
+        state = state.Post(Result("showing", 0, TimelineId.None));
+        (state, _) = state.Present(Ms(10), a);
+        state = state.Post(Result("waiting", 100, TimelineId.None));
+
+        (state, var change) = state.Present(Ms(20), b);
+        Assert.Equal(PresentedChange.None, change);
+        Assert.Equal("showing", state.Current?.Result);
+
+        (state, change) = state.Present(Ms(120), b);
+        Assert.Equal(PresentedChange.Presented, change);
+        Assert.Equal("waiting", state.Current?.Result);
+    }
+
+    [Fact]
     public void APresenterThatNamesNoTimeline_KeepsTheTimestampRules_ForResultsThatNameOne()
     {
         // The presenter cannot say which timeline is on screen, so a result earlier than the last

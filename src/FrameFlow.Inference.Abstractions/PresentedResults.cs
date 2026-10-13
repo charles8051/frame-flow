@@ -31,7 +31,9 @@ namespace FrameFlow.Inference;
 /// means the timeline went back, by a seek or a loop, and the results still waiting are dropped. A
 /// presented frame earlier than the result showing, with no result of its own, means the same on the
 /// presenting side: the result is cleared until one arrives for the new position. These rules miss
-/// a new item whose timestamps do not go back.
+/// a new item whose timestamps do not go back. A result on <see cref="Graph.TimelineId.None"/>
+/// keeps them even when the presenter names its timelines: nothing says which timeline the result
+/// belongs to, so a new timeline on screen does not drop it, and it matches whichever is on screen.
 /// </para>
 /// <para>
 /// <see cref="Presented"/> and <see cref="Cleared"/> are raised on whichever thread presented the

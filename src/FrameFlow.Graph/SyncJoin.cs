@@ -183,13 +183,18 @@ public delegate ValueTask<TOut?> SyncJoinOperator<in TPrimary, in TSecondary, TO
 /// says where the join reads each item's timeline.
 /// </para>
 /// <para>
-/// Because the two breaks are not paired, a join prefers an unmatched primary to one matched with
-/// a secondary from another timeline. When the secondary leads, as <see cref="SyncMatch.Within"/>
-/// expects, its break arrives first: the primary's last items on the old timeline can then match
-/// nothing, and its first items on the new one match nothing until a secondary arrives after the
-/// primary's break. This only concerns a graph that outlives a break, such as one fed through a
-/// channel. A join inside a player's own graph sees none, since every break starts a new run, and
-/// each run starts with an empty window.
+/// The join does not pair one input's break with the other's: that would compare their timelines,
+/// and two independent inputs break at unrelated times. Each input's own break releases what it
+/// shows to be left behind. Between the two breaks the join matches by time, as it does without
+/// timelines, so a secondary of one timeline can match a primary of another where their times meet.
+/// When the secondary leads, as <see cref="SyncMatch.Within"/> expects, its break comes first and
+/// releases what the primary's last items on the old timeline would have matched; the primary's
+/// break then releases the secondaries that arrived ahead of it, so its first items on the new
+/// timeline match nothing until a secondary arrives after that. When the secondary lags, the
+/// primary's break releases the window, and secondaries still arriving from the old timeline can
+/// match by time until the secondary's own break releases them. This only concerns a graph that
+/// outlives a break, such as one fed through a channel. A join inside a player's own graph sees
+/// none, since every break starts a new run, and each run starts with an empty window.
 /// </para>
 /// </remarks>
 public sealed class SyncJoinNode<TPrimary, TSecondary, TOut>
