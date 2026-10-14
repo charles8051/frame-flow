@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Media.Diagnostics;
@@ -462,8 +463,13 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     // "re-evaluate", not an error.
     private CancellationTokenSource _recheck = new();
 
+    // Cancelled first thing in the dispose: it wakes a producer waiting for room in the ring, and
+    // is the token the delivery loop was started with, so the loop's cancellation is as prompt.
     private readonly CancellationTokenSource _shutdownCts = new();
-    private readonly Task _deliveryLoop;
+
+    // Holds the delivery loop until it ends (ADR-0086, decision 1). The dispose stops it and waits
+    // for it before it frees what the loop uses.
+    private readonly WorkScope _delivery = new();
 
     // Runs the teardown once and has every other dispose wait for it (ADR-0086, decision 3). Its
     // HasBegun is the pacer's disposed flag, set before the teardown runs.
@@ -657,7 +663,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         _onSinkFailed = onSinkFailed;
         _onFaulted = onFaulted;
 
-        _deliveryLoop = Task.Run(() => RunDeliveryLoopAsync(_shutdownCts.Token));
+        _delivery.TryStart("delivery loop", RunDeliveryLoopAsync, _shutdownCts.Token);
     }
 
     /// <inheritdoc/>
@@ -1162,6 +1168,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     {
         var dropped = new List<IVideoFrame>(_capacity);
         var waitSw = new Stopwatch();
+        Exception? teardownFailure;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -1562,18 +1569,45 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         }
         finally
         {
-            // Dispose anything left buffered on teardown and release its slots so
-            // a blocked PresentAsync (if any) unblocks.
-            List<IVideoFrame> remaining = new();
-            lock (_gate)
-            {
-                _buffer.DrainInto(remaining);
-            }
-            foreach (var f in remaining)
-                f.Dispose();
-            if (remaining.Count > 0)
-                _space.Release(remaining.Count);
+            teardownFailure = DrainRing();
         }
+
+        // What disposing the frames left in the ring threw is the loop's end, which the pacer's
+        // dispose throws (ADR-0086, decision 3).
+        if (teardownFailure is not null)
+            ExceptionDispatchInfo.Throw(teardownFailure);
+    }
+
+    // Disposes anything left buffered on teardown and releases its slots so a blocked PresentAsync
+    // (if any) unblocks. A frame whose dispose throws does not keep the rest from being disposed;
+    // what they threw is returned, one exception or an AggregateException of several.
+    private Exception? DrainRing()
+    {
+        List<IVideoFrame> remaining = new();
+        lock (_gate)
+        {
+            _buffer.DrainInto(remaining);
+        }
+        List<Exception>? failures = null;
+        foreach (var f in remaining)
+        {
+            try
+            {
+                f.Dispose();
+            }
+            catch (Exception ex)
+            {
+                (failures ??= []).Add(ex);
+            }
+        }
+        if (remaining.Count > 0)
+            _space.Release(remaining.Count);
+        return failures switch
+        {
+            null => null,
+            [var one] => one,
+            _ => new AggregateException(failures),
+        };
     }
 
     // Elapsed time on the provider's own timestamp scale, which every pacer over one sink shares,
@@ -1646,6 +1680,11 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// ignores its token holds the dispose, and after <see cref="DisposeWarningInterval"/> the
     /// pacer logs once, at Warning, that it is still waiting and on which sink.
     /// </para>
+    /// <para>
+    /// A fault in the loop's delivery was reported through <c>onFaulted</c> when it happened, and
+    /// is not thrown here. What the loop's teardown throws, a buffered frame whose dispose throws,
+    /// is thrown once the pacer has freed what it holds (ADR-0086, decisions 3 and 5).
+    /// </para>
     /// </remarks>
     public ValueTask DisposeAsync() =>
         _dispose.TryBegin() ? _dispose.EndAsync(TearDownAsync()) : _dispose.WaitAsync();
@@ -1664,25 +1703,36 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
             _seekTargetReached.TrySetResult(null);
         // Wake a parked loop so it observes cancellation and runs its finally.
         _arrival.Set();
-        try
-        {
-            await SlowWorkWarning
-                .AwaitAsync(
-                    _deliveryLoop,
-                    DisposeWarningInterval,
-                    _timeProvider,
-                    () => LogDisposeWaiting(_logger, DisposeWarningInterval.TotalSeconds, _inner.GetType().Name)
-                )
-                .ConfigureAwait(false);
-        }
-        catch
-        {
-            // loop swallows its own cancellation; nothing else should surface.
-        }
+
+        // The loop reports a fault in its delivery through onFaulted and ends without one, and a
+        // cancellation the stop asked for is not one, so what the stop returns is what its
+        // teardown threw. The stop's own wait never throws.
+        var stopping = _delivery.StopAsync(CancellationToken.None);
+        await SlowWorkWarning
+            .AwaitAsync(
+                stopping,
+                DisposeWarningInterval,
+                _timeProvider,
+                () => LogDisposeWaiting(_logger, DisposeWarningInterval.TotalSeconds, _inner.GetType().Name)
+            )
+            .ConfigureAwait(false);
+        var faults = await stopping.ConfigureAwait(false);
+
         _shutdownCts.Dispose();
         _space.Dispose();
         lock (_gate)
             _recheck.Dispose();
+
+        switch (faults)
+        {
+            case []:
+                break;
+            case [var one]:
+                ExceptionDispatchInfo.Throw(one.Error);
+                break;
+            default:
+                throw new AggregateException(faults.Select(f => f.Error));
+        }
     }
 
     /// <summary>How long a dispose waits for the delivery loop before it says what it waits for.</summary>
