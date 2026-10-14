@@ -13,8 +13,8 @@ internal interface IPlaylistItemRuntime : IPlaybackSession
 {
     /// <summary>
     /// The number of the item's current run. It advances each time a seek or a rewind stops the
-    /// run in progress, once that run's tasks have ended and before the next run launches. A seek
-    /// cancelled while it waits for them does not advance it. See
+    /// run in progress, once that run's work has ended and before the next run starts. A seek
+    /// cancelled while it waits for that work does not advance it. See
     /// <see cref="SubstrateSession.RunNumber"/>.
     /// </summary>
     int RunNumber { get; }
@@ -49,7 +49,8 @@ internal interface IPlaylistItemRuntime : IPlaybackSession
     /// <summary>
     /// Attaches a runtime that was created detached, when it becomes the current item: from here
     /// on it acts on the position clock and the audio sink it shares with the playlist. A no-op on
-    /// a runtime that was never detached.
+    /// a runtime that was never detached. It takes effect in order with the runtime's commands, so
+    /// a command called after it finds the runtime attached.
     /// </summary>
     void Attach();
 }

@@ -45,11 +45,12 @@ public sealed class SubstrateSessionSeekWaitTests
     private const string ShortAvFile = "test-subsecond.mp4";
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
 
+    // In reverse allocation order: the decoders are made video first, then audio (ADR-0005).
     private static readonly Step[] Teardown =
     [
         Step.DisposingPipeline,
-        Step.DisposingVideoDecoder,
         Step.DisposingAudioDecoder,
+        Step.DisposingVideoDecoder,
         Step.DisposingDemux,
     ];
 

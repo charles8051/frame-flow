@@ -111,9 +111,9 @@ public sealed class SeekPreTargetFramesTests : IClassFixture<FfmpegBootstrapFixt
     [RequiresFfmpegAndCorpusFact]
     public async Task SeekingBeforeTheFirstPlay_StillDiscardsThem()
     {
-        // Load, seek, then play. This launches through PlayAsync's first-play branch, the
-        // one path that seats the timeline without going through RepositionAsync, so it is
-        // where the floor is re-derived from the run's origin rather than carried.
+        // Load, seek, then play. The seek before the first play holds, and the first play starts
+        // the run from where the clock stands, the one start that does not follow a reposition
+        // directly, so it is where the floor is taken from the run's origin.
         var target = TimeSpan.FromSeconds(7);
         var video = new PtsRecordingVideoSink();
         var controller = PlaybackController.Create(

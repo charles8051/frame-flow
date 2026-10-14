@@ -1,101 +1,155 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
-using FrameFlow.Media;
+using System.Runtime.ExceptionServices;
+using System.Threading.Channels;
 using FrameFlow.Decoding;
+using FrameFlow.Graph;
+using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Media.Diagnostics;
 using FrameFlow.Playback.Core;
 using FrameFlow.Playback.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using FrameFlow.Graph;
+using Input = FrameFlow.Playback.Core.ItemRuntimeInput;
+using RuntimeAction = FrameFlow.Playback.Core.ItemRuntimeAction;
 
 namespace FrameFlow.Playback;
 
 /// <summary>
-/// Substrate-backed implementation of the controller-facing session
-/// contract. Opens one item's <see cref="IItemMedia"/> (demux, decoders, decoding pipeline,
-/// pacer, and a long-lived <see cref="Graph.Graph"/> wired with
-/// <see cref="PausableGate{T}"/> operators) and sequences its runs: pause and resume through
-/// the gates, seek and rewind through one reposition recipe, and the teardown.
+/// The item runtime: plays one playlist item's media on the playlist's shared sinks and position
+/// clock. The shell of <see cref="ItemRuntimeProtocol"/> (ADR-0086, decision 2): the core decides
+/// what happens and in what order, and this performs it.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Pause/resume via gates, not cancel-rebuild.</b> The graph, the decoders and the demux pump
-/// keep running across a pause; the gates hold the frames. See <see cref="SubstrateMedia"/>.
+/// <b>One input at a time.</b> Every command, every awaited action's outcome and every end of a
+/// run's work is an input, queued and stepped one at a time by a single reader, never re-entrantly.
+/// The reader performs a step's immediate actions in order, then starts its awaited action, if
+/// any, with the command's token, and queues the action's outcome when it finishes. Nothing that
+/// runs while an action is under way, a cancellation's callback included, steps the core: it
+/// queues an input.
 /// </para>
 /// <para>
-/// <b>Seek still rebuilds.</b> <see cref="SeekAsync"/> stops the run, waits for its work,
-/// seeks the demuxer, resets the decoders, and starts a fresh run over a fresh graph.
+/// <b>What the shell holds.</b> The item's <see cref="IItemMedia"/> (the demux session, the
+/// decoders, the pipeline, the pacer and the graph), a <see cref="WorkScope"/> for each run, the
+/// clocks, and the commands its callers are waiting on. The core decides when a run starts, when it
+/// is cancelled, and when anything is sought, reset or freed: only once no work of any run is
+/// pending. The run number advances only then, so an end of stream a run raises carries its own.
+/// </para>
+/// <para>
+/// <b>A run's work.</b> A run is a pump, a graph and, when it is enabled, a lateness-recovery walk,
+/// or for an item with no stream to play only its end of stream, each started under the run's
+/// scope and fed back as it ends: Completed, Cancelled on the run's cancellation, or Faulted. The
+/// core reports each fault and raises the end of stream once, from those inputs.
+/// </para>
+/// <para>
+/// <b>A caller's cancellation is the caller's.</b> It ends that caller's command, and the stop the
+/// command was waiting for goes on. A command's task completes when the core completes the command,
+/// never earlier on its token. A command whose token is cancelled when it is called does nothing,
+/// and its task is cancelled.
+/// </para>
+/// <para>
+/// <b>Pause and resume by gates.</b> The graph, the decoders and the demux pump keep running
+/// across a pause, behind the gates (<see cref="SubstrateMedia"/>). A seek, a rewind, and a play
+/// or a warm-up after a seek cut short, reposition: stop the run, wait for its work, seek, reset,
+/// and start the next run over a fresh graph, or over the last one for a rewind. Superseding seeks
+/// coalesce into one unwind and one seek.
 /// </para>
 /// </remarks>
 internal sealed class SubstrateSession : IPlaylistItemRuntime
 {
+    /// <summary>
+    /// Upper bound on waiting for a post-seek run's destination frame before giving up and
+    /// leaving the clocks where they are.
+    /// </summary>
+    /// <remarks>
+    /// The wait is the decoder walking from the keyframe to the seek target — tens of
+    /// milliseconds on ordinary content, and 0.73 s measured on a 1080p60 file whose only
+    /// keyframe is at 0.0. Five seconds is far past any of that, so this only trips when the
+    /// frame is never coming: a target past the end of the stream, or a stalled decoder.
+    /// </remarks>
+    private static readonly TimeSpan SeekSettleCap = TimeSpan.FromSeconds(5);
+
+    // The teardown's frees after the media's, in the order the core asks for them.
+    private static readonly ItemResources[] MediaResources =
+    [
+        ItemResources.Pacer,
+        ItemResources.Pipeline,
+        ItemResources.AudioDecoder,
+        ItemResources.VideoDecoder,
+        ItemResources.Demux,
+    ];
+
     private readonly IVideoSink? _videoSink;
     private readonly IAudioSink? _audioSink;
     private readonly IPlaybackClock _clock;
-
-    // The master pacing clock (IClockSource consumed by the pacer). Selected
-    // per item at the open once the stream probe reveals whether THIS
-    // item actually has a decodable audio stream the sink will play — not in
-    // the constructor, where "an IClockSource audio sink is attached" is the
-    // wrong question (a video-only item paced against an unactivated audio
-    // sink's frozen sample counter would stall). _ownedClockSource is non-null
-    // only when this session owns a WallClockSource and must dispose it.
-    private IClockSource _clockSource;
-    private WallClockSource? _ownedClockSource;
     private readonly SessionCallbacks _callbacks;
     private readonly HardwareDecodeMode _hwMode;
-    private readonly Func<
-        GraphChain<IVideoFrame>,
-        GraphChain<IVideoFrame>
-    >? _videoConfigurator;
-    private readonly Func<
-        GraphChain<PcmAudioBuffer>,
-        GraphChain<PcmAudioBuffer>
-    >? _audioConfigurator;
+    private readonly Func<GraphChain<IVideoFrame>, GraphChain<IVideoFrame>>? _videoConfigurator;
+    private readonly Func<GraphChain<PcmAudioBuffer>, GraphChain<PcmAudioBuffer>>? _audioConfigurator;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger _logger;
+    private readonly FrameFlow.Media.HardwareDecodeCapabilities? _hwCapabilities;
+    private readonly bool? _yieldHardwareFrames;
+    private readonly HardwareDevice? _hardwareDevice;
+    private readonly IReadOnlyList<HardwareDecodeBackendKind> _preferredBackends;
+    private readonly IReadOnlyList<string> _excludedCodecs;
 
-    // ── Initialize-time runtime resources ──────────────────────────
-    private IItemMedia? _media;
-    private IMediaSource? _source;
+    // The master pacing clock (IClockSource consumed by the pacer). Selected per item at the open,
+    // once the stream probe reveals whether THIS item actually has a decodable audio stream the
+    // sink will play — not in the constructor, where "an IClockSource audio sink is attached" is
+    // the wrong question (a video-only item paced against an unactivated audio sink's frozen sample
+    // counter would stall). _ownedClock is the wallclock the runtime was constructed with, until the
+    // open replaces it with the audio sink's clock or the teardown frees it.
+    private IClockSource _clockSource;
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Reliability", "CA2213", Justification = "Freed by the open that replaces it, or by the teardown's Free(Clock).")]
+    private WallClockSource? _ownedClock;
 
-    // Seek target awaiting the launch that will play from it, or Zero when none is pending.
-    // Set once a reposition commits (RepositionAsync step 6) and consumed by the next
-    // LaunchSessionTasks, which is not necessarily the same call: a seek taken while paused
-    // relaunches on the following PlayAsync.
-    private TimeSpan _pendingSeekFloor = TimeSpan.Zero;
-
-    // The end of the item this runtime plays, or null when it plays to the end of the source. Set
-    // at open, and by a rewind that hands the runtime to another item of the same source.
-    private TimeSpan? _itemEnd;
-
-    // Whether this runtime may act on what it shares with the item that is playing: the position
-    // clock, the audio sink, and the audio sink's clock. A runtime prepared ahead is opened
-    // detached while another item plays, positions and warms up without touching any of them,
-    // and is attached when it becomes current (media-clips decision 8).
-    private bool _attached = true;
-
-    // Where a detached runtime was positioned, for Attach to seat the shared clocks on.
+    // Where a detached runtime was positioned, for the attach to seat the shared clocks on. Read
+    // and written by the reader only.
     private TimeSpan _detachedOrigin;
 
-    // Whether the launch that consumes _pendingSeekFloor is one this session will follow
-    // with a clock reseat. Only the reposition's play branch does.
-    private bool _pendingSeekSettles;
+    // What the open opened. Written by the open's action, before its outcome is queued; read by
+    // the reader, the run's work and the diagnostics.
+    private volatile IItemMedia? _media;
+    private IMediaSource? _source;
 
-    // Set at the open once we know whether the source has a decodable audio stream. Gates every
-    // _audioSink lifecycle call so a video-only file doesn't spuriously activate (and later
-    // deactivate) an audio sink that has nothing to play.
-    private bool _hasAudio;
+    // ── The core and its queue ──────────────────────────────────────────────
 
-    // ── Long-lived per-session runtime ────────────────────────────
-    private CancellationTokenSource? _sessionCts;
+    private readonly Channel<Arrival> _inputs = Channel.CreateUnbounded<Arrival>(
+        new UnboundedChannelOptions { SingleReader = true }
+    );
+    private readonly Task _reader;
 
-    // The demux pump, graph and lateness-recovery tasks of the current run, held until they have
-    // ended: a stop whose wait is cut short leaves them here for the next stop, the dispose's above
-    // all, to wait for (#707).
-    private RunTasks<Task> _runTasks = RunTasks<Task>.None;
+    // The core's state. Made at the first input, once the init-only settings are in, and stepped
+    // by the reader only.
+    private ItemRuntimeState? _state;
+    private bool _detached;
+    private int _runNumber;
+    private int _nextCommand;
+
+    // The commands whose callers are waiting, by number. The reader's only.
+    private readonly Dictionary<int, Call> _calls = [];
+
+    // Each run's scope, held until its work has ended and a later run, or the teardown, has seen
+    // its stop complete (ADR-0086, decision 1). The reader cancels; a run's start adds and lets go.
+    private readonly Lock _runsGate = new();
+    private readonly Dictionary<int, RunScope> _runs = [];
+
+    // The awaited actions: one at a time, and the core waits for each before a dispose begins.
+    private readonly WorkScope _actions = new();
+    private volatile string? _actionUnderWay;
+
+    // Which command, or the dispose (-1), last began waiting for a run's work: for Step.WaitingForRun.
+    private int? _waiting;
+
+    private readonly DisposeOnce _dispose = new();
+    private readonly TaskCompletionSource _disposeBegun = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _tornDown = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly List<Exception> _teardownFailures = [];
 
     /// <summary>
     /// Lateness-recovery policy. Off unless a caller opts in — the ADR gates
@@ -132,46 +186,22 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     internal IItemMediaOpener? MediaOpener { get; init; }
 
     /// <summary>
+    /// Whose timers measure how long a stop has waited for work that has not ended, before the
+    /// session says what it is (ADR-0086, decision 3.3). Internal: tests run it on a fake.
+    /// </summary>
+    internal TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+
+    /// <summary>How long a stop waits for its work before it names what has not ended.</summary>
+    internal static TimeSpan StopWarningInterval => SlowWorkWarning.DefaultInterval;
+
+    /// <summary>
     /// Opens the runtime detached: prepared ahead while another item plays, it leaves the shared
     /// position clock, audio sink and audio clock alone until <see cref="Attach"/>.
     /// </summary>
     internal bool Detached
     {
-        init => _attached = !value;
+        init => _detached = value;
     }
-
-    /// <inheritdoc/>
-    /// <remarks>
-    /// Seats the shared position clock and the master clock's baseline on where the runtime was
-    /// positioned, as a positioning while attached would have. The caller has stopped the
-    /// position clock and disposed the item that was playing, so nothing else is using them.
-    /// </remarks>
-    public void Attach()
-    {
-        if (_attached)
-            return;
-        _attached = true;
-        _clock.Seek(_detachedOrigin);
-        (_clockSource as ISeekableClock)?.SeekBaseline(_detachedOrigin);
-    }
-
-    private bool _renderersActivated;
-
-    // Whether a run has built a graph a rewind can run again.
-    private bool _graphBuilt;
-
-    // ── EOF coordination ────────────────────────────────────────────
-    private int _eofFired;
-
-    // Numbers the runs of the graph; see RunNumber. Advanced by RepositionAsync once it has
-    // stopped the run it interrupts, and before anything relaunches.
-    private int _runNumber;
-    private bool _disposed;
-    private readonly FrameFlow.Media.HardwareDecodeCapabilities? _hwCapabilities;
-    private readonly bool? _yieldHardwareFrames;
-    private readonly HardwareDevice? _hardwareDevice;
-    private readonly IReadOnlyList<HardwareDecodeBackendKind> _preferredBackends;
-    private readonly IReadOnlyList<string> _excludedCodecs;
 
     public SubstrateSession(
         IVideoSink? videoSink,
@@ -209,34 +239,38 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // Provisional master clock: a wallclock the session owns. The open upgrades this to the
         // audio sink's IClockSource iff this item actually has a decodable audio stream the sink
         // will play (the ADR-0003 audio-master rule, evaluated per item), and frees it then.
-        _ownedClockSource = new WallClockSource();
-        _clockSource = _ownedClockSource;
+        _ownedClock = new WallClockSource();
+        _clockSource = _ownedClock;
+
+        // It waits for the first input, and the dispose waits for it.
+        _reader = ReadAsync();
     }
 
-    // ── IPlaybackSession read-only surface ──────────────────────────
+    // ── Read-only surface ───────────────────────────────────────────────────
 
     public MediaInfo? MediaInfo => _media?.MediaInfo;
 
     public TimeSpan Duration => _media?.Duration ?? TimeSpan.Zero;
 
     /// <summary>
-    /// The number of the graph's current run. It advances each time a seek or a rewind stops
-    /// the run in progress, before the next run launches.
+    /// The number of the item's current run. It advances each time a seek, a rewind, or a play or
+    /// warm-up after a seek cut short stops the run in progress, once that run's work has ended and
+    /// before the next run starts.
     /// </summary>
     /// <remarks>
-    /// Read it inside <see cref="SessionCallbacks.OnEndOfStream"/>. The run raising the
-    /// end-of-stream cannot have been stopped yet, because stopping a run waits for the task
-    /// that raises it, so the number read there is that run's. A seek whose wait for those tasks
-    /// is cancelled does not advance it, since the run has not ended (#707). A caller that handles
-    /// the end-of-stream later, on another thread, compares it with this property then, and drops
-    /// the end-of-stream if a seek or rewind has replaced the run in between.
+    /// Read it inside <see cref="SessionCallbacks.OnEndOfStream"/>. The session raises a run's end
+    /// of stream while that run is the current one, before it steps anything else, so the number
+    /// read there is that run's. A seek whose wait for the run is cancelled does not advance it,
+    /// since the run has not ended (#707). A caller that handles the end of stream later, on
+    /// another thread, compares it with this property then, and drops the end of stream if a seek
+    /// or rewind has replaced the run in between.
     /// </remarks>
     public int RunNumber => Volatile.Read(ref _runNumber);
 
     /// <summary>
-    /// What a session does around its run's tasks: their start and end, a stop's wait for them,
-    /// and what a reposition and the dispose then do to the state they use. Internal: tests read
-    /// the order the steps are taken in, and act at one to drive a race (#707).
+    /// What a session does around its run's work: its start and end, a stop's wait for it, and
+    /// what a reposition and the dispose then do to the state it uses. Internal: tests read the
+    /// order the steps are taken in, and act at one to drive a race (#707).
     /// </summary>
     internal enum Step
     {
@@ -258,7 +292,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         /// <summary>A run's lateness-recovery walk is ending: it sets nothing more on the decoder.</summary>
         RecoveryEnded,
 
-        /// <summary>A stop, a reposition's or the dispose's, begins waiting for the run's tasks.</summary>
+        /// <summary>A stop, a command's or the dispose's, begins waiting for the run's work.</summary>
         WaitingForRun,
 
         /// <summary>A reposition is about to seek the demuxer.</summary>
@@ -290,7 +324,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
     /// <summary>
     /// Called with the token the end-of-stream flush of the decoders is given, before the flush,
-    /// on the pump's thread. Internal: a seam for tests, set before the session opens.
+    /// on the pump's thread. Internal: a seam for tests.
     /// </summary>
     internal Action<CancellationToken>? OnFlushingDecoders { get; set; }
 
@@ -315,64 +349,509 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         };
     }
 
-    // ── IPlaybackSession lifecycle ──────────────────────────────────
+    // ── Commands ────────────────────────────────────────────────────────────
 
-    public ValueTask InitializeAsync(
-        IMediaSource source,
-        CancellationToken cancellationToken = default
-    ) => InitializeAsync(source, TimeSpan.Zero, end: null, cancellationToken);
+    public ValueTask InitializeAsync(IMediaSource source, CancellationToken cancellationToken = default) =>
+        InitializeAsync(source, TimeSpan.Zero, end: null, cancellationToken);
 
     /// <inheritdoc/>
-    public async ValueTask InitializeAsync(
-        IMediaSource source,
-        TimeSpan start,
-        TimeSpan? end,
-        CancellationToken cancellationToken
-    )
-    {
-        _itemEnd = end;
-        await OpenAsync(source, cancellationToken).ConfigureAwait(false);
-        if (start > TimeSpan.Zero)
-            await PositionAtStartAsync(start, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Positions a session that has opened but not yet warmed up at <paramref name="start"/>.
-    /// </summary>
     /// <remarks>
     /// <para>
-    /// This is the seek recipe, not a copy of it (ADR-0056). Before the first play a reposition
-    /// holds the session: it moves the demuxer, resets the decoders, seats both clocks on the
-    /// start and records the pacer's floor, and starts nothing (#639).
+    /// Before the first play a positioning holds the session: it moves the demuxer, resets the
+    /// decoders, seats both clocks on the start, and starts nothing (#639). The warm-up that
+    /// follows decodes from the keyframe at or before the start, and the floor keeps every frame
+    /// before the start off the sink.
     /// </para>
     /// <para>
-    /// A start at or past a known end is refused. The item would open with nothing in it and end
-    /// at once, and under <c>RepeatMode.One</c> it would then loop with no content.
+    /// An open that fails frees everything it allocated, in reverse order (#725). A second open
+    /// of a session that has opened is refused with <see cref="InvalidOperationException"/>.
     /// </para>
     /// </remarks>
-    private ValueTask PositionAtStartAsync(TimeSpan start, CancellationToken cancellationToken)
+    public ValueTask InitializeAsync(IMediaSource source, TimeSpan start, TimeSpan? end, CancellationToken cancellationToken)
     {
-        ThrowIfPastTheEnd(start);
-        return RepositionAsync(start, ItemGraphPolicy.Rebuild, TaskPolicy.Cancel, cancellationToken);
+        ArgumentNullException.ThrowIfNull(source);
+        return Issue(new Call(ItemCommandKind.Initialize, cancellationToken) { Source = source, Position = start, End = end });
     }
 
     /// <summary>
-    /// Refuses an item start at or past the source's known duration, wherever the item is
-    /// positioned: at open, and in a rewind that hands the open runtime to another clip of the
-    /// same source.
+    /// Starts the run behind the closed gates and waits for its first frame, so the hardware
+    /// decoder's cold start is paid before the first play. Only video has one: an item without it
+    /// warms up at once.
     /// </summary>
-    private void ThrowIfPastTheEnd(TimeSpan start)
+    public ValueTask WarmUpAsync(CancellationToken cancellationToken = default) =>
+        Issue(new Call(ItemCommandKind.WarmUp, cancellationToken));
+
+    /// <summary>
+    /// The first play, or a resume. A play after a seek cut short repositions where the clock
+    /// stands before it starts a run (#714).
+    /// </summary>
+    public ValueTask PlayAsync(CancellationToken cancellationToken = default) =>
+        Issue(new Call(ItemCommandKind.Play, cancellationToken));
+
+    public ValueTask PauseAsync(CancellationToken cancellationToken = default) =>
+        Issue(new Call(ItemCommandKind.Pause, cancellationToken));
+
+    /// <summary>
+    /// Seeks to <paramref name="position"/>: stops the run, waits for its work, seeks the demuxer,
+    /// resets the decoders and seats the clocks, then, on an item that is playing, starts the next
+    /// run over a fresh graph and settles the clocks on its destination frame.
+    /// </summary>
+    /// <remarks>
+    /// A seek that arrives while another waits for the run supersedes it: the earlier one is
+    /// cancelled, and the two cost one unwind and one seek.
+    /// </remarks>
+    public ValueTask SeekAsync(TimeSpan position, CancellationToken cancellationToken = default) =>
+        Issue(new Call(ItemCommandKind.Seek, cancellationToken) { Position = position });
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// A <c>RepeatMode.One</c> loop boundary is reached at the end of the stream, so the run's
+    /// pump and graph have already ended. The rewind is a seek to the start that runs the graph it
+    /// has again rather than building another, which saves the per-loop teardown and rebuild on a
+    /// looping item.
+    /// </remarks>
+    public ValueTask RewindToStartAsync(CancellationToken cancellationToken = default) =>
+        Issue(new Call(ItemCommandKind.Rewind, cancellationToken) { Position = TimeSpan.Zero, KeepsEnd = true });
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The rewind <see cref="RewindToStartAsync"/> describes, to <paramref name="position"/>
+    /// rather than to zero: the start of the item this runtime now plays, which for a clip is
+    /// partway into the source. The runs that follow stop at <paramref name="end"/>, that item's
+    /// end.
+    /// </remarks>
+    public ValueTask RewindToAsync(TimeSpan position, TimeSpan? end, CancellationToken cancellationToken) =>
+        Issue(new Call(ItemCommandKind.Rewind, cancellationToken) { Position = position, End = end });
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Seats the shared position clock and the master clock's baseline on where the runtime was
+    /// positioned, as a positioning while attached would have. It takes effect in order with the
+    /// runtime's commands: a command called after it finds the runtime attached. The caller has
+    /// stopped the position clock and disposed the item that was playing, so nothing else is using
+    /// them.
+    /// </remarks>
+    public void Attach() => Post(new Input.Attach());
+
+    private ValueTask Issue(Call call)
     {
-        var duration = Duration;
-        if (duration > TimeSpan.Zero && start >= duration)
+        // Cancelled before it was called: the command does nothing.
+        if (call.Caller.IsCancellationRequested)
+            return ValueTask.FromCanceled(call.Caller);
+
+        call.Id = Interlocked.Increment(ref _nextCommand);
+        if (!_inputs.Writer.TryWrite(new Called(call)))
+            return ValueTask.FromException(new ObjectDisposedException(nameof(SubstrateSession)));
+        return new ValueTask(call.Done.Task);
+    }
+
+    private void Post(Input input) => _inputs.Writer.TryWrite(new Fed(input));
+
+    // ── The reader ──────────────────────────────────────────────────────────
+
+    private async Task ReadAsync()
+    {
+        var reader = _inputs.Reader;
+        while (await reader.WaitToReadAsync().ConfigureAwait(false))
         {
-            throw new ArgumentOutOfRangeException(
-                nameof(start),
-                start,
-                $"'{_source?.DisplayName}' cannot start at {start}: it is {duration} long."
-            );
+            while (reader.TryRead(out var arrival))
+            {
+                try
+                {
+                    await StepAsync(arrival).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    // A defect in the shell. The input is lost, and the runtime goes on.
+                    _logger.LogError(ex, "The item runtime could not take {Input}.", arrival);
+                }
+            }
         }
     }
+
+    private async Task StepAsync(Arrival arrival)
+    {
+        var state = _state ??= ItemRuntimeState.Initial(
+            attached: !_detached,
+            latenessRecovery: LatenessRecovery is { Enabled: true }
+        );
+
+        Input input;
+        if (arrival is Called { Call: var call })
+        {
+            _calls[call.Id] = call;
+            call.Action = CancellationTokenSource.CreateLinkedTokenSource(call.Caller);
+            input = InputOf(call, state);
+        }
+        else
+        {
+            input = ((Fed)arrival).Input;
+        }
+
+        if (input is Input.Performed or Input.Opened)
+            _actionUnderWay = null;
+
+        var (next, step) = ItemRuntimeProtocol.Step(state, input);
+        _state = next;
+        Volatile.Write(ref _runNumber, next.Run);
+
+        // A dispose waits for the action under way, and cuts it short.
+        if (next.DisposeRequested && !state.DisposeRequested && next.Command is { } busy && _calls.TryGetValue(busy.Id, out var under))
+            under.Action?.Cancel();
+        if (next.Phase is ItemRuntimePhase.Disposing or ItemRuntimePhase.Disposed)
+            _disposeBegun.TrySetResult();
+
+        foreach (var action in step.Actions)
+            await PerformAsync(action).ConfigureAwait(false);
+
+        TakeWaiting(next);
+
+        // The caller's cancellation is stepped as an input, once the command has been: it ends a
+        // command that waits for work, and one whose action is under way ends with the action,
+        // whose token it also cancels.
+        if (arrival is Called { Call: var issued } && _calls.ContainsKey(issued.Id) && issued.Caller.CanBeCanceled)
+        {
+            issued.Registration = issued.Caller.UnsafeRegister(
+                static state =>
+                {
+                    var (session, id) = ((SubstrateSession, int))state!;
+                    session.Post(new Input.CallerCancelled(id));
+                },
+                (this, issued.Id)
+            );
+        }
+
+        if (step.Awaited is { } awaited)
+            StartAwaited(awaited, next);
+    }
+
+    private Input InputOf(Call call, ItemRuntimeState state) =>
+        call.Kind switch
+        {
+            ItemCommandKind.Initialize => new Input.Initialize(call.Id, call.Position, call.End),
+            ItemCommandKind.WarmUp => new Input.WarmUp(call.Id, ClockPosition(state)),
+            ItemCommandKind.Play => new Input.Play(call.Id, ClockPosition(state), ClockPaused(state)),
+            ItemCommandKind.Pause => new Input.Pause(call.Id),
+            ItemCommandKind.Seek => new Input.Seek(call.Id, call.Position, ClockPaused(state)),
+            ItemCommandKind.Rewind => new Input.Rewind(
+                call.Id,
+                call.Position,
+                call.KeepsEnd ? state.ItemEnd : call.End,
+                ClockPaused(state)
+            ),
+            _ => throw new ArgumentOutOfRangeException(nameof(call), call.Kind, "Not a command."),
+        };
+
+    // Where the position clock stands as a command arrives. A runtime prepared ahead leaves the
+    // shared clock alone: it stands where the runtime was positioned.
+    private TimeSpan ClockPosition(ItemRuntimeState state) => state.Attached ? _clock.Position : _detachedOrigin;
+
+    // Whether the position clock is paused as a command arrives. A detached runtime has not played,
+    // so whether a reposition plays on does not depend on it.
+    private bool ClockPaused(ItemRuntimeState state) => !state.Attached || _clock.IsPaused;
+
+    // Takes Step.WaitingForRun when a command, or the dispose, begins waiting for a run's work.
+    private void TakeWaiting(ItemRuntimeState state)
+    {
+        int? waiting = state.Command is { Stage: ItemCommandStage.Stopping } command
+            ? command.Id
+            : state.Phase == ItemRuntimePhase.Disposing && state.Status == ItemRunStatus.Stopping
+                ? -1
+                : null;
+        if (waiting is not null && waiting != _waiting)
+            Take(Step.WaitingForRun);
+        _waiting = waiting;
+    }
+
+    // ── Immediate actions ───────────────────────────────────────────────────
+
+    private async ValueTask PerformAsync(RuntimeAction action)
+    {
+        switch (action)
+        {
+            // The teardown's: what fails is collected, and the dispose throws it (decision 3.4).
+            case RuntimeAction.Free free:
+                await FreeAsync(free.Resource).ConfigureAwait(false);
+                return;
+            case RuntimeAction.DeactivateAudio:
+                try
+                {
+                    await _audioSink!.DeactivateAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _teardownFailures.Add(ex);
+                }
+                return;
+        }
+
+        try
+        {
+            Perform(action);
+        }
+        catch (Exception ex)
+        {
+            // The core takes these to succeed. One that throws leaves the item where it cannot be
+            // trusted to play on, so it is reported as a fault of the item, which ends it.
+            _logger.LogError(ex, "The item runtime's {Action} threw.", action);
+            TryReportWorkerFault(ex);
+        }
+    }
+
+    private void Perform(RuntimeAction action)
+    {
+        switch (action)
+        {
+            case RuntimeAction.CancelRun cancel:
+                CancelRun(cancel.Run);
+                break;
+            case RuntimeAction.CloseGates:
+                _media?.CloseGates();
+                break;
+            case RuntimeAction.OpenGates:
+                _media?.OpenGates();
+                break;
+            case RuntimeAction.FlushPacer:
+                _media?.FlushPacer();
+                break;
+            case RuntimeAction.ReleaseSettle:
+                if (_media is { } held)
+                    held.ReleaseSettle(held.PacerRun);
+                break;
+            case RuntimeAction.ResetDecoders:
+                Take(Step.ResettingForSeek);
+                _media!.ResetForSeek();
+                break;
+            case RuntimeAction.SeatClocks seat:
+                if (seat.Shared)
+                {
+                    _clock.Seek(seat.Target);
+                    // Reseats the master pacing clock's origin to the exact target, uniformly across
+                    // clock masters: the wallclock and the audio sink both implement ISeekableClock.
+                    // For the audio sink this seeds the origin its next activation applies, which
+                    // also realigns a looping item's audio-mastered origin at every boundary
+                    // (perf survey B5, covered by AudioMasteredLoopOriginTests).
+                    (_clockSource as ISeekableClock)?.SeekBaseline(seat.Target);
+                }
+                else
+                {
+                    // A detached runtime records the target, and the attach seats the shared clocks
+                    // on it (media-clips decision 8). The clock it owns it seats now.
+                    _detachedOrigin = seat.Target;
+                    _ownedClock?.SeekBaseline(seat.Target);
+                }
+                break;
+            case RuntimeAction.SeatBaseline baseline:
+                // Seats the master clock's origin before the audio sink activates, so an
+                // audio-mastered clock does not rediscover it from the first buffer and drift
+                // behind the decoded video across a gapless boundary.
+                (_clockSource as ISeekableClock)?.SeekBaseline(baseline.Origin);
+                break;
+            case RuntimeAction.StartClocks start:
+                _clock.Start(start.Origin);
+                // Start runs the wallclock from zero and discards the baseline seated before it,
+                // because the owned wallclock is the master. It is seated again once running, or
+                // a seek before the first play paced the target's frames against a clock at zero
+                // (#639).
+                if (_ownedClock is { } wallclock)
+                {
+                    wallclock.Start();
+                    wallclock.Seek(start.Origin);
+                }
+                break;
+            case RuntimeAction.PauseClocks:
+                _clock.Pause();
+                _ownedClock?.Pause();
+                break;
+            case RuntimeAction.ResumeClocks:
+                _clock.Resume();
+                _ownedClock?.Resume();
+                break;
+            case RuntimeAction.StopClock:
+                _clock.Stop();
+                break;
+            case RuntimeAction.AttachClocks:
+                _clock.Seek(_detachedOrigin);
+                (_clockSource as ISeekableClock)?.SeekBaseline(_detachedOrigin);
+                break;
+            case RuntimeAction.ReportFault fault:
+                ReportFault(fault);
+                break;
+            case RuntimeAction.RaiseEndOfStream:
+                // In step order, so RunNumber read in the callback is the run's.
+                _callbacks.OnEndOfStream();
+                break;
+            case RuntimeAction.CompleteCommand complete:
+                Complete(complete);
+                break;
+            case RuntimeAction.CompleteDispose:
+                _inputs.Writer.TryComplete();
+                _tornDown.TrySetResult();
+                break;
+            default:
+                throw new InvalidOperationException($"'{action}' is not an immediate action.");
+        }
+    }
+
+    private async ValueTask FreeAsync(ItemResources resource)
+    {
+        switch (resource)
+        {
+            case ItemResources.Pipeline:
+                Take(Step.DisposingPipeline);
+                break;
+            case ItemResources.VideoDecoder:
+                Take(Step.DisposingVideoDecoder);
+                break;
+            case ItemResources.AudioDecoder:
+                Take(Step.DisposingAudioDecoder);
+                break;
+            case ItemResources.Demux:
+                Take(Step.DisposingDemux);
+                break;
+        }
+
+        try
+        {
+            if (resource == ItemResources.Clock)
+            {
+                var wallclock = _ownedClock;
+                _ownedClock = null;
+                if (wallclock is not null)
+                    await wallclock.DisposeAsync().ConfigureAwait(false);
+            }
+            else if (_media is { } media)
+            {
+                await media.FreeAsync(resource).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            _teardownFailures.Add(ex);
+        }
+    }
+
+    private void Complete(RuntimeAction.CompleteCommand complete)
+    {
+        if (!_calls.Remove(complete.Command, out var call))
+            return;
+
+        call.Registration.Dispose();
+        call.Action?.Dispose();
+        var result = complete.Result;
+        switch (result.Outcome)
+        {
+            case ItemCommandOutcome.Ok:
+                call.Done.TrySetResult();
+                break;
+            case ItemCommandOutcome.Cancelled:
+                call.Done.TrySetCanceled(call.Caller.IsCancellationRequested ? call.Caller : CancellationToken.None);
+                break;
+            case ItemCommandOutcome.Failed:
+                call.Done.TrySetException(
+                    result.Error ?? new InvalidOperationException($"The item runtime's {call.Kind} failed.")
+                );
+                break;
+            default:
+                call.Done.TrySetException(Refusal(call, result.Refusal));
+                break;
+        }
+    }
+
+    // A command the core refused, as the exception its caller sees.
+    private Exception Refusal(Call call, ItemRefusal refusal) =>
+        refusal switch
+        {
+            ItemRefusal.Disposed => new ObjectDisposedException(nameof(SubstrateSession)),
+            // A start at or past a known end: the item would open with nothing in it and end at
+            // once, and under RepeatMode.One it would then loop with no content. Refused at the
+            // open, or at a rewind that hands the runtime to another clip of the same source, it
+            // fails to start, and the playlist's failure guard counts it.
+#pragma warning disable CA2208 // The open's and the rewind's start, which the message has always named.
+            ItemRefusal.PastTheEnd => new ArgumentOutOfRangeException(
+                "start",
+                call.Position,
+                $"'{_source?.DisplayName}' cannot start at {call.Position}: it is {Duration} long."
+            ),
+#pragma warning restore CA2208
+            ItemRefusal.AlreadyOpen => new InvalidOperationException("The item runtime has opened already."),
+            ItemRefusal.Detached => new InvalidOperationException(
+                "A runtime prepared ahead does not play or pause until it is attached."
+            ),
+            _ => new InvalidOperationException(
+                $"The item runtime's {call.Kind} arrived while another command's action was under way; "
+                    + "its caller serialises its commands."
+            ),
+        };
+
+    // ── Awaited actions ─────────────────────────────────────────────────────
+
+    private void StartAwaited(RuntimeAction action, ItemRuntimeState state)
+    {
+        var call = state.Command is { } command && _calls.TryGetValue(command.Id, out var c) ? c : null;
+        var token = call?.Action?.Token ?? CancellationToken.None;
+        var name = NameOf(action);
+        _actionUnderWay = name;
+        if (!_actions.TryStart(name, t => PerformAwaitedAsync(action, call, t), token))
+            Post(new Input.Performed(ItemActionOutcome.Cancelled, new ObjectDisposedException(nameof(SubstrateSession))));
+    }
+
+    private async Task PerformAwaitedAsync(RuntimeAction action, Call? call, CancellationToken token)
+    {
+        Input outcome;
+        try
+        {
+            switch (action)
+            {
+                case RuntimeAction.Open:
+                    outcome = await OpenAsync(call!.Source!, token).ConfigureAwait(false);
+                    break;
+                case RuntimeAction.StartRun start:
+                    await StartRunAsync(start).ConfigureAwait(false);
+                    outcome = Ok;
+                    break;
+                case RuntimeAction.SeekDemux seek:
+                    Take(Step.SeekingDemux);
+                    await _media!.SeekAsync(seek.Target, token).ConfigureAwait(false);
+                    outcome = Ok;
+                    break;
+                case RuntimeAction.ActivateAudio:
+                    await _audioSink!.ActivateAsync(token).ConfigureAwait(false);
+                    outcome = Ok;
+                    break;
+                case RuntimeAction.PauseAudio:
+                    await _audioSink!.PauseAsync(token).ConfigureAwait(false);
+                    outcome = Ok;
+                    break;
+                case RuntimeAction.ResumeAudio:
+                    await _audioSink!.ResumeAsync(token).ConfigureAwait(false);
+                    outcome = Ok;
+                    break;
+                case RuntimeAction.DeactivateAudio:
+                    await _audioSink!.DeactivateAsync(token).ConfigureAwait(false);
+                    outcome = Ok;
+                    break;
+                case RuntimeAction.Settle:
+                    await SettleAsync(token).ConfigureAwait(false);
+                    outcome = Ok;
+                    break;
+                default:
+                    throw new InvalidOperationException($"'{action}' is not an awaited action.");
+            }
+        }
+        catch (OperationCanceledException ex) when (token.IsCancellationRequested)
+        {
+            outcome = new Input.Performed(ItemActionOutcome.Cancelled, ex);
+        }
+        catch (Exception ex)
+        {
+            outcome = new Input.Performed(ItemActionOutcome.Failed, ex);
+        }
+
+        Post(outcome);
+    }
+
+    private static readonly Input Ok = new Input.Performed(ItemActionOutcome.Ok);
 
     /// <summary>
     /// Opens the item's media, then builds the pacer against the item's master clock, then, once
@@ -382,19 +861,20 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// An open that fails frees everything it allocated, in reverse order, and leaves the session
     /// holding only the wallclock it was constructed with (#725).
     /// </remarks>
-    private async ValueTask OpenAsync(IMediaSource source, CancellationToken cancellationToken)
+    private async Task<Input> OpenAsync(IMediaSource source, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(source);
         cancellationToken.ThrowIfCancellationRequested();
-
         _source = source;
         var media = await Opener().OpenAsync(source, cancellationToken).ConfigureAwait(false);
 
         // Per-item master-clock selection (ADR-0003). The audio sink masters the clock only when
         // THIS item has a decodable audio stream the sink will play AND the sink can publish a
-        // sample-counter clock. Otherwise the provisional wallclock remains the master.
-        var hasAudio = (media.Resources & ItemResources.AudioDecoder) != 0 && _audioSink is not null;
-        IClockSource master = hasAudio && _audioSink is IClockSource audioClock ? audioClock : _ownedClockSource!;
+        // sample-counter clock. Otherwise the provisional wallclock remains the master. This is
+        // what lets one warm audio sink span a playlist of mixed audio and silent items, and it
+        // removes the stall a video-only item would hit when paced against an attached but
+        // unactivated audio sink's frozen counter.
+        var hasAudio = (media.Resources & ItemResources.AudioDecoder) != 0;
+        IClockSource master = hasAudio && _audioSink is IClockSource audioClock ? audioClock : _ownedClock!;
         try
         {
             media.OpenPacer(master);
@@ -402,7 +882,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         catch (Exception failure)
         {
             var failures = new List<Exception> { failure };
-            foreach (var resource in new[] { ItemResources.Pipeline, ItemResources.AudioDecoder, ItemResources.VideoDecoder, ItemResources.Demux })
+            foreach (var resource in MediaResources)
             {
                 if ((media.Resources & resource) == 0)
                     continue;
@@ -420,14 +900,36 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             throw;
         }
 
+        // Nothing below fails: the media is the runtime's.
         _media = media;
-        _hasAudio = hasAudio;
-        if (!ReferenceEquals(master, _ownedClockSource) && _ownedClockSource is { } provisional)
+        if (!ReferenceEquals(master, _ownedClock) && _ownedClock is { } provisional)
         {
             _clockSource = master;
-            _ownedClockSource = null;
-            await provisional.DisposeAsync().ConfigureAwait(false);
+            _ownedClock = null;
+            try
+            {
+                await provisional.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // It is disposed whatever its cancellation's callbacks threw, and nothing used it.
+                _logger.LogWarning(ex, "Freeing the provisional wallclock threw; the audio sink's clock masters the item.");
+            }
         }
+
+        // The core waits on the first frame for the warm-up.
+        media.FirstFrameDecoded?.ContinueWith(
+            static (_, session) => ((SubstrateSession)session!).Post(new Input.FirstFrameDecoded()),
+            this,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default
+        );
+
+        return new Input.Opened(
+            media.Resources | (_ownedClock is null ? ItemResources.None : ItemResources.Clock),
+            media.Duration
+        );
     }
 
     private IItemMediaOpener Opener() =>
@@ -449,567 +951,197 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             FormatAnnouncer = FormatAnnouncer,
             SinkFailures = SinkFailures,
             Callbacks = _callbacks,
-            OnPacerFaulted = ReportWorkerFault,
+            // The pacer's own delivery fault is reported straight away, not through a run's work
+            // (#711): the pacer is no run's.
+            OnPacerFaulted = TryReportWorkerFault,
             OnFlushingDecoders = token => OnFlushingDecoders?.Invoke(token),
             LoggerFactory = _loggerFactory,
         };
 
-    private bool HasGraph =>
-        _media is { } media && (media.Resources & (ItemResources.VideoDecoder | ItemResources.AudioDecoder)) != 0;
-
-    public async ValueTask WarmUpAsync(CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Starts a run: readies the media for it, then starts each piece of its work under a scope of
+    /// its own, which holds it until it ends.
+    /// </summary>
+    /// <remarks>
+    /// The core starts a run only once every earlier run's work has ended. Their scopes may still
+    /// be letting go of it, so they are waited for here and forgotten, and a run starts only when
+    /// no older scope holds any work (ADR-0086, decision 1).
+    /// </remarks>
+    private async Task StartRunAsync(RuntimeAction.StartRun start)
     {
-        if (_media is not { } media || _renderersActivated)
-            return;
-
-        // Audio-only sources skip warmup entirely: software audio decode has no meaningful
-        // cold-start cost. The warmup window is specifically there to absorb hardware-video-
-        // decoder cold-start latency; with no video, there's nothing to warm up.
-        if (media.FirstFrameDecoded is not { } firstFrame)
-            return;
-
-        // Start the long-lived graph + demux pump now, while gates are still closed. Decoded
-        // frames pile up in the bounded edge channels upstream of the gates; the hardware codec
-        // session is set up and its expensive first decode is paid here. By the time PlayAsync
-        // opens the gates, a frame is already waiting at t=0 and audio can't race ahead.
-        //
-        // Idempotent: re-entry while a task is still running is a no-op beyond the first-frame
-        // await below. A run launched beside it would read the same demuxer and decode on the
-        // same decoders.
-        _runTasks = _runTasks.ForgetEnded(HasEnded);
-        if (_runTasks.IsEmpty)
+        RunScope[] older;
+        lock (_runsGate)
         {
-            StartSessionTasks();
+            older = [.. _runs.Values];
+            _runs.Clear();
         }
+        foreach (var run in older)
+            await ForgetAsync(run).ConfigureAwait(false);
 
-        // Wait for either: the first frame to land, or the pump/graph to complete (typically
-        // meaning a fault, or the rare edge case of an empty / sub-first-frame stream).
-        var watch = new List<Task>(3) { firstFrame };
-        if (_runTasks.Pump is { } pump)
-            watch.Add(pump);
-        if (_runTasks.Graph is { } graph)
-            watch.Add(graph);
+        var timeline = _media!.BeginRun(start.Graph, start.Floor, start.End, start.HoldForSettle);
+        _logger.LogDebug(RunLaunchedMessage, start.Run, timeline);
 
-        var winner = await Task.WhenAny(watch)
-            .WaitAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        if (winner.IsFaulted)
+        var scope = new RunScope(start.Run, new WorkScope());
+        lock (_runsGate)
+            _runs.Add(start.Run, scope);
+        foreach (var work in (ReadOnlySpan<ItemWork>)[ItemWork.Pump, ItemWork.Graph, ItemWork.Recovery, ItemWork.EmptyEnd])
         {
-            await winner.ConfigureAwait(false);
+            if ((start.Work & work) != 0)
+                scope.Scope.TryStart(NameOf(work), t => RunWorkAsync(start.Run, work, t));
         }
     }
 
-    public async ValueTask PlayAsync(CancellationToken cancellationToken = default)
-    {
-        if (_media is not { } media)
-            return;
+    /// <summary>
+    /// The Debug line each run's start writes, with the run number and the timeline it starts on
+    /// as its two arguments. The integration tests read starts from it.
+    /// </summary>
+    internal const string RunLaunchedMessage = "Run {RunNumber} launches on {Timeline}.";
 
-        // A seek cancelled before it committed, by a pause sent during it for instance, left the
-        // run stopped, and neither branch below would start another (#714).
-        await FinishCutShortRepositionAsync(cancellationToken).ConfigureAwait(false);
-
-        if (!_renderersActivated)
+    private static string NameOf(RuntimeAction action) =>
+        action switch
         {
-            // First play: activate sinks, start clock, open the gates so frames flow. Seat the
-            // master pacing clock's origin to this item's start position deterministically,
-            // before activating the audio sink.
-            var itemOrigin = _clock.Position;
-            (_clockSource as ISeekableClock)?.SeekBaseline(itemOrigin);
+            RuntimeAction.Open => "the open",
+            RuntimeAction.StartRun => "a run's start",
+            RuntimeAction.SeekDemux => "the demuxer's seek",
+            RuntimeAction.ActivateAudio => "the audio sink's activation",
+            RuntimeAction.PauseAudio => "the audio sink's pause",
+            RuntimeAction.ResumeAudio => "the audio sink's resume",
+            RuntimeAction.DeactivateAudio => "the audio sink's deactivation",
+            RuntimeAction.Settle => "the wait for a seek's destination frame",
+            _ => action.GetType().Name,
+        };
 
-            _pendingSeekFloor = itemOrigin;
-            _pendingSeekSettles = false;
-
-            if (_hasAudio)
-                await _audioSink!.ActivateAsync(cancellationToken).ConfigureAwait(false);
-
-            _clock.Start(itemOrigin);
-
-            // Start runs the wallclock from zero and discards the baseline seated above,
-            // because the owned wallclock is the same object as _clockSource. It is seated
-            // again once running (#639).
-            if (_ownedClockSource is { } wallclock)
-            {
-                wallclock.Start();
-                wallclock.Seek(itemOrigin);
-            }
-
-            if (_runTasks.IsEmpty)
-            {
-                StartSessionTasks();
-            }
-
-            media.OpenGates();
-
-            _renderersActivated = true;
-            return;
-        }
-
-        // Resume from pause. Only the seek-while-paused teardown sets _sessionCts to null; a
-        // plain pause leaves the live session CT in place, and resume only reopens the gate.
-        if (_sessionCts is null)
+    private static string NameOf(ItemWork work) =>
+        work switch
         {
-            StartSessionTasks();
-        }
-
-        _clock.Resume();
-        _ownedClockSource?.Resume();
-
-        media.OpenGates();
-
-        if (_hasAudio)
-            await _audioSink!.ResumeAsync(cancellationToken).ConfigureAwait(false);
-    }
+            ItemWork.Pump => "the demux pump",
+            ItemWork.Graph => "the graph",
+            ItemWork.Recovery => "the lateness-recovery walk",
+            _ => "the end of stream of an item with nothing to play",
+        };
 
     /// <summary>
-    /// Repositions at the clock's position when a reposition was cancelled before it committed,
-    /// so the play that follows launches a run instead of opening the gates on a stopped one.
+    /// Runs one piece of run <paramref name="run"/>'s work, and queues how it ended: Completed,
+    /// Cancelled for an <see cref="OperationCanceledException"/> once the run is cancelled, or
+    /// Faulted. It reports nothing itself: the core reports the fault, or raises the end of stream.
     /// </summary>
-    private ValueTask FinishCutShortRepositionAsync(CancellationToken cancellationToken) =>
-        _sessionCts is { IsCancellationRequested: true }
-            ? RepositionAsync(_clock.Position, ItemGraphPolicy.Rebuild, TaskPolicy.Cancel, cancellationToken)
-            : ValueTask.CompletedTask;
-
-    /// <summary>
-    /// Upper bound on waiting for a post-seek run's destination frame before giving up and
-    /// leaving the clocks where they are.
-    /// </summary>
-    private static readonly TimeSpan SeekSettleCap = TimeSpan.FromSeconds(5);
-
-    /// <summary>
-    /// Reseats the clocks onto the first frame a post-seek run actually delivers, so the
-    /// decode-forward that produced it does not count as playback time (#161).
-    /// </summary>
-    private async ValueTask SettleClocksOnSeekTargetAsync(CancellationToken cancellationToken)
+    private async Task RunWorkAsync(int run, ItemWork work, CancellationToken token)
     {
-        // _ownedClockSource is non-null only when this session masters with a wallclock.
-        if (_media is not { } media || (media.Resources & ItemResources.Pacer) == 0 || _ownedClockSource is null)
-            return;
+        var (started, ended) = work switch
+        {
+            ItemWork.Pump => (Step.PumpStarted, Step.PumpEnded),
+            ItemWork.Graph => (Step.GraphStarted, Step.GraphEnded),
+            ItemWork.Recovery => (Step.RecoveryStarted, Step.RecoveryEnded),
+            _ => ((Step?)null, (Step?)null),
+        };
 
-        // Captured before the wait, so a settle that finishes late releases the hold it
-        // armed rather than one a newer run has since taken.
-        var runId = media.PacerRun;
+        var ending = ItemWorkEnding.Completed;
+        Exception? error = null;
         try
         {
-            var reached = await media.WaitForSeekTargetAsync(runId, SeekSettleCap, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (reached is not { } pts)
-                return;
-
-            _clock.Seek(pts);
-            _ownedClockSource.Seek(pts);
+            if (started is { } s)
+                Take(s);
+            await (
+                work switch
+                {
+                    ItemWork.Pump => _media!.RunPumpAsync(token),
+                    ItemWork.Graph => _media!.RunGraphAsync(token),
+                    ItemWork.Recovery => _media!.RunRecoveryWalkAsync(token),
+                    _ => EndOfEmptyRun(token),
+                }
+            ).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            ending = ItemWorkEnding.Cancelled;
+        }
+        catch (Exception ex)
+        {
+            ending = ItemWorkEnding.Faulted;
+            error = ex;
         }
         finally
         {
-            media.ReleaseSettle(runId);
+            if (ended is { } e)
+                Take(e);
         }
+
+        Post(new Input.WorkEnded(run, work, ending, error));
     }
 
-    public async ValueTask PauseAsync(CancellationToken cancellationToken = default)
+    // The end of stream of an item with nothing to play, raised off the thread that started the
+    // run, unless the run was stopped first.
+    private static Task EndOfEmptyRun(CancellationToken token)
     {
-        if (_hasAudio)
-            await _audioSink!.PauseAsync(cancellationToken).ConfigureAwait(false);
-
-        _media?.CloseGates();
-
-        _clock.Pause();
-        _ownedClockSource?.Pause();
-    }
-
-    public ValueTask SeekAsync(
-        TimeSpan position,
-        CancellationToken cancellationToken = default
-    ) =>
-        RepositionAsync(position, ItemGraphPolicy.Rebuild, TaskPolicy.Cancel, cancellationToken);
-
-    /// <inheritdoc/>
-    public ValueTask RewindToStartAsync(CancellationToken cancellationToken = default) =>
-        RewindToAsync(TimeSpan.Zero, _itemEnd, cancellationToken);
-
-    /// <inheritdoc/>
-    public ValueTask RewindToAsync(TimeSpan position, TimeSpan? end, CancellationToken cancellationToken)
-    {
-        if (_media is null)
-            return ValueTask.CompletedTask;
-
-        _itemEnd = end;
-
-        if (position > TimeSpan.Zero)
-            ThrowIfPastTheEnd(position);
-
-        if (!_graphBuilt)
-            return RepositionAsync(position, ItemGraphPolicy.Rebuild, TaskPolicy.Cancel, cancellationToken);
-
-        return RepositionAsync(position, ItemGraphPolicy.Reuse, TaskPolicy.AwaitClean, cancellationToken);
-    }
-
-    /// <summary>How the running work is stopped in <see cref="RepositionAsync"/>.</summary>
-    private enum TaskPolicy
-    {
-        /// <summary>Always cancel the session CTS and wait.</summary>
-        Cancel,
-
-        /// <summary>Await the (normally already-completed) tasks without cancelling.</summary>
-        AwaitClean,
+        token.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
     }
 
     /// <summary>
-    /// The single ordered discontinuity recipe shared by <see cref="SeekAsync"/> and the rewinds:
-    /// close gates → pause audio → settle tasks → flush the pacer → deactivate audio → reposition
-    /// the demuxer → uniform <c>ResetForSeek</c> pass → reseat both clocks → relaunch → reactivate
-    /// + resume.
+    /// Cancels run <paramref name="run"/>'s scope, once, and does not wait for it: the core waits
+    /// for the work's ends, which the reader steps. A stop not ended after
+    /// <see cref="StopWarningInterval"/> names the work that has not (ADR-0086, decision 3.3).
     /// </summary>
-    private async ValueTask RepositionAsync(
-        TimeSpan target,
-        ItemGraphPolicy graphPolicy,
-        TaskPolicy taskPolicy,
-        CancellationToken cancellationToken
-    )
+    private void CancelRun(int run)
     {
-        if (_media is not { } media)
+        RunScope? scope;
+        lock (_runsGate)
+            _runs.TryGetValue(run, out scope);
+        if (scope is null || scope.Stopping is not null)
             return;
 
-        var wasPaused = _clock.IsPaused || !_renderersActivated;
-
-        _pendingSeekFloor = TimeSpan.Zero;
-        _pendingSeekSettles = false;
-
-        media.CloseGates();
-
-        if (_hasAudio && _renderersActivated)
-            await _audioSink!.PauseAsync(cancellationToken).ConfigureAwait(false);
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (taskPolicy == TaskPolicy.Cancel)
-        {
-            await StopGraphAsync(cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            if (_runTasks.ForgetEnded(HasEnded).IsEmpty)
-                await WaitForSessionTasksAsync(cancellationToken).ConfigureAwait(false);
-            else
-                await StopGraphAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        Interlocked.Increment(ref _runNumber);
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        media.FlushPacer();
-
-        if (_hasAudio && _renderersActivated)
-            await _audioSink!.DeactivateAsync(cancellationToken).ConfigureAwait(false);
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        Take(Step.SeekingDemux);
-        await media.SeekAsync(target, cancellationToken).ConfigureAwait(false);
-
-        Take(Step.ResettingForSeek);
-        media.ResetForSeek();
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (!_attached)
-        {
-            _detachedOrigin = target;
-            _ownedClockSource?.SeekBaseline(target);
-        }
-        else
-        {
-            _clock.Seek(target);
-            (_clockSource as ISeekableClock)?.SeekBaseline(target);
-        }
-
-        _pendingSeekFloor = target;
-        _pendingSeekSettles = !wasPaused && _ownedClockSource is not null;
-
-        RetireSessionToken();
-
-        if (graphPolicy == ItemGraphPolicy.Reuse)
-            cancellationToken.ThrowIfCancellationRequested();
-
-        if (wasPaused)
-        {
-            if (_hasAudio && _renderersActivated)
-            {
-                await _audioSink!.ActivateAsync(cancellationToken).ConfigureAwait(false);
-                await _audioSink!.PauseAsync(cancellationToken).ConfigureAwait(false);
-            }
-        }
-        else
-        {
-            if (_hasAudio)
-                await _audioSink!.ActivateAsync(cancellationToken).ConfigureAwait(false);
-
-            LaunchSessionTasks(graphPolicy);
-
-            media.OpenGates();
-
-            if (_hasAudio)
-                await _audioSink!.ResumeAsync(cancellationToken).ConfigureAwait(false);
-
-            await SettleClocksOnSeekTargetAsync(cancellationToken).ConfigureAwait(false);
-        }
+        // The cancellation's callbacks, the work's own unwinding among them, run on the thread
+        // pool rather than on the reader.
+        scope.Stopping = WarnIfSlowAsync(scope.Scope.StopAsync(), scope);
     }
 
-    /// <summary>
-    /// Stops the run and waits for its tasks to end, then frees the pacer, the pump pipeline, the
-    /// decoders and the demux session.
-    /// </summary>
-    public async ValueTask DisposeAsync()
+    private async Task<IReadOnlyList<WorkFault>> WarnIfSlowAsync(Task<IReadOnlyList<WorkFault>> stopping, RunScope scope)
     {
-        if (_disposed)
-            return;
-        _disposed = true;
-
-        var failures = new List<Exception>();
-
-        if (_attached)
-            _media?.OpenGates();
-
-        try
-        {
-            await StopGraphAsync(CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            failures.Add(ex);
-        }
-
-        var media = _media;
-        if (media is not null && (media.Resources & ItemResources.Pacer) != 0)
-            await FreeAsync(media, ItemResources.Pacer, null, failures).ConfigureAwait(false);
-
-        if (_hasAudio && _attached)
-        {
-            try
-            {
-                await _audioSink!.DeactivateAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                failures.Add(ex);
-            }
-        }
-
-        if (_attached)
-            _clock.Stop();
-
-        if (media is not null)
-        {
-            await FreeAsync(media, ItemResources.Pipeline, Step.DisposingPipeline, failures).ConfigureAwait(false);
-            await FreeAsync(media, ItemResources.VideoDecoder, Step.DisposingVideoDecoder, failures).ConfigureAwait(false);
-            await FreeAsync(media, ItemResources.AudioDecoder, Step.DisposingAudioDecoder, failures).ConfigureAwait(false);
-            await FreeAsync(media, ItemResources.Demux, Step.DisposingDemux, failures).ConfigureAwait(false);
-        }
-
-        if (_ownedClockSource is not null)
-        {
-            try
-            {
-                await _ownedClockSource.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                failures.Add(ex);
-            }
-        }
-
-        try
-        {
-            _sessionCts?.Dispose();
-        }
-        catch { }
-        _sessionCts = null;
-
-        if (failures.Count == 1)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
-        if (failures.Count > 1)
-            throw new AggregateException(
-                "SubstrateSession teardown encountered multiple failures.",
-                failures
-            );
+        await SlowWorkWarning
+            .AwaitAsync(stopping, StopWarningInterval, TimeProvider, () => WarnRunNotEnded(scope))
+            .ConfigureAwait(false);
+        return await stopping.ConfigureAwait(false);
     }
 
-    private async ValueTask FreeAsync(IItemMedia media, ItemResources resource, Step? step, List<Exception> failures)
-    {
-        if ((media.Resources & resource) == 0)
-            return;
-        if (step is { } taken)
-            Take(taken);
-        try
-        {
-            await media.FreeAsync(resource).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            failures.Add(ex);
-        }
-    }
-
-    // ── Session-task lifecycle (single graph per session run) ───────
-
-    private void StartSessionTasks()
-    {
-        if (_media is null)
-            return;
-
-        ThrowIfRunGoing();
-        LaunchSessionTasks(ItemGraphPolicy.Rebuild);
-    }
-
-    /// <summary>
-    /// Refuses a launch while a task of the last run has not ended (#707).
-    /// </summary>
-    private void ThrowIfRunGoing()
-    {
-        _runTasks = _runTasks.ForgetEnded(HasEnded);
-        if (!_runTasks.IsEmpty)
-        {
-            throw new InvalidOperationException(
-                "A playback run cannot launch while the run before it is still going."
-            );
-        }
-    }
-
-    private static bool HasEnded(Task task) => task.IsCompleted;
-
-    /// <summary>
-    /// Cancels the session token, unless it is cancelled already, then disposes its source.
-    /// </summary>
-    private void RetireSessionToken()
-    {
-        if (_sessionCts is not { } cts)
-            return;
-        _sessionCts = null;
-        try
-        {
-            cts.Cancel();
-        }
-        catch (ObjectDisposedException) { }
-        cts.Dispose();
-    }
-
-    /// <summary>
-    /// Starts the demux-pump and graph-run tasks over the media's graph on a fresh session CTS.
-    /// With no stream to pump, fires end-of-stream directly.
-    /// </summary>
-    private void LaunchSessionTasks(ItemGraphPolicy graphPolicy)
-    {
-        if (_media is not { } media)
-            return;
-
-        ThrowIfRunGoing();
-
-        RetireSessionToken();
-        _sessionCts = new CancellationTokenSource();
-        var ct = _sessionCts.Token;
-
-        Interlocked.Exchange(ref _eofFired, 0);
-
-        TimeSpan? runEnd = _itemEnd is { } end && _pendingSeekFloor < end ? end : null;
-        var timeline = media.BeginRun(graphPolicy, _pendingSeekFloor, runEnd, _pendingSeekSettles);
-        _logger.LogDebug(RunLaunchedMessage, RunNumber, timeline);
-        _pendingSeekFloor = TimeSpan.Zero;
-        _pendingSeekSettles = false;
-
-        if (!HasGraph)
-        {
-            _ = Task.Run(() => FireEndOfStreamAsync(), CancellationToken.None);
-            return;
-        }
-        _graphBuilt = true;
-
-        var pumpTask = Task.Run(
-            async () =>
-            {
-                try
-                {
-                    Take(Step.PumpStarted);
-                    await media.RunPumpAsync(ct).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-                catch (Exception ex)
-                {
-                    ReportWorkerFault(ex);
-                }
-                finally
-                {
-                    Take(Step.PumpEnded);
-                }
-            },
-            CancellationToken.None
+    private void WarnRunNotEnded(RunScope scope) =>
+        _logger.LogWarning(
+            "The item runtime has waited {Seconds:F0}s for run {Run} to end, which is still running: {Work}. "
+                + "A sink, a configurator's node or the source's read is not observing cancellation; the runtime waits for it.",
+            StopWarningInterval.TotalSeconds,
+            scope.Run,
+            string.Join(", ", scope.Scope.Pending)
         );
 
-        Task? recoveryTask = null;
-        if (LatenessRecovery is { Enabled: true })
-        {
-            recoveryTask = Task.Run(
-                async () =>
-                {
-                    try
-                    {
-                        Take(Step.RecoveryStarted);
-                        await media.RunRecoveryWalkAsync(ct).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-                    catch (Exception ex)
-                    {
-                        _callbacks.OnRecoverableError(
-                            new PlaybackError(
-                                ErrorCategory.System,
-                                $"Lateness recovery stopped after a fault: {ex.Message}",
-                                ex
-                            )
-                        );
-                    }
-                    finally
-                    {
-                        Take(Step.RecoveryEnded);
-                    }
-                },
-                CancellationToken.None
-            );
-        }
-
-        var graphTask = Task.Run(
-            async () =>
-            {
-                try
-                {
-                    Take(Step.GraphStarted);
-                    await media.RunGraphAsync(ct).ConfigureAwait(false);
-
-                    if (!ct.IsCancellationRequested && Interlocked.Exchange(ref _eofFired, 1) == 0)
-                    {
-                        _callbacks.OnEndOfStream();
-                    }
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-                catch (Exception ex)
-                {
-                    ReportWorkerFault(ex);
-                }
-                finally
-                {
-                    Take(Step.GraphEnded);
-                }
-            },
-            CancellationToken.None
-        );
-
-        _runTasks = RunTasks<Task>.Launched(pumpTask, graphTask, recoveryTask);
+    // Waits for a run's stop to complete, and logs a fault its cancellation's callbacks threw: the
+    // core has reported every fault the work itself ended with.
+    private async Task ForgetAsync(RunScope run)
+    {
+        foreach (var fault in await (run.Stopping ?? run.Scope.StopAsync()).ConfigureAwait(false))
+            _logger.LogWarning(fault.Error, "Stopping run {Run}'s {Work} threw.", run.Run, fault.Work);
     }
 
     /// <summary>
-    /// The Debug line each launch writes, with the run number and the timeline it launches on as
-    /// its two arguments. The integration tests read launches from it.
+    /// Reports the fault the core asks for. A pump's or a graph's is the item's: its run is
+    /// cancelled at once, so the rest of the run does not wait on it (#713) — a pump parked on a
+    /// full decoder queue that a faulted graph no longer drains ends — then the shared device is
+    /// dropped and the fault goes to <see cref="SessionCallbacks.OnWorkerFaulted"/>. A
+    /// lateness-recovery walk's is recoverable: the walk is an optimisation, and playback carries
+    /// on at whatever rung it had reached.
     /// </summary>
-    internal const string RunLaunchedMessage = "Run {RunNumber} launches on {Timeline}.";
+    private void ReportFault(RuntimeAction.ReportFault fault)
+    {
+        var error = fault.Error ?? new InvalidOperationException($"Run {fault.Run}'s {NameOf(fault.Work)} faulted.");
+        if (fault.Work == ItemWork.Recovery)
+        {
+            _callbacks.OnRecoverableError(
+                new PlaybackError(ErrorCategory.System, $"Lateness recovery stopped after a fault: {error.Message}", error)
+            );
+            return;
+        }
+
+        CancelRun(fault.Run);
+        ReportWorkerFault(error);
+    }
 
     /// <summary>
     /// Reports a fault in the pump, the graph or the video pacer: a sink that keeps throwing, or a
@@ -1040,61 +1172,182 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         _callbacks.OnWorkerFaulted(ex);
     }
 
-    /// <summary>
-    /// Cancels the run, unless it is cancelled already, and waits for its tasks to end.
-    /// </summary>
-    private async ValueTask StopGraphAsync(CancellationToken cancellationToken)
+    private void TryReportWorkerFault(Exception ex)
     {
-        var cts = _sessionCts;
-        if (cts is null || cts.IsCancellationRequested)
-        {
-            await WaitForSessionTasksAsync(cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
         try
         {
-            cts.Cancel();
+            ReportWorkerFault(ex);
         }
-        catch (ObjectDisposedException) { }
-
-        await WaitForSessionTasksAsync(cancellationToken).ConfigureAwait(false);
+        catch (Exception reportFailure)
+        {
+            _logger.LogError(reportFailure, "Reporting the item's fault threw.");
+        }
     }
 
     /// <summary>
-    /// Waits for the run's tasks to end, and forgets them once they have. A wait that
-    /// <paramref name="cancellationToken"/> cuts short forgets only the tasks that have ended,
-    /// and throws <see cref="OperationCanceledException"/> (#707).
+    /// Reseats the clocks onto the first frame a post-seek run actually delivers, so the
+    /// decode-forward that produced it does not count as playback time (#161), and releases the
+    /// pacer's hold on that frame however the wait ends.
     /// </summary>
-    private async ValueTask WaitForSessionTasksAsync(CancellationToken cancellationToken)
+    /// <remarks>
+    /// <para>
+    /// A seek repositions the demuxer to the keyframe at or before the target and seats the clocks
+    /// on the target. The decoder then has to walk from that keyframe to the target before anything
+    /// can be shown — 0.73 s on a file with sparse keyframes. The clocks count that walk as
+    /// playback, so by the time the destination frame arrives they are already past it. Reseating
+    /// onto the frame that arrived removes the run-up. It is a backwards step in reported position,
+    /// which is why it happens inside the seek, where a discontinuity is expected.
+    /// </para>
+    /// <para>
+    /// Only a seek on an item that is playing settles; one taken while paused decodes forward on
+    /// the following resume. And only a wallclock master is reseated: an audio-mastered clock does
+    /// not advance during the walk, and reseating its origin from a video frame's time is the move
+    /// ADR-0057 §B5 exists to prevent. The core asks for a settle only then.
+    /// </para>
+    /// </remarks>
+    private async Task SettleAsync(CancellationToken cancellationToken)
     {
-        if (_runTasks.IsEmpty)
+        if (_media is not { } media || _ownedClock is not { } wallclock)
             return;
 
-        Take(Step.WaitingForRun);
+        // Captured as the settle starts, so one that finishes late releases the hold its run
+        // armed rather than one a newer run has since taken.
+        var run = media.PacerRun;
         try
         {
-            await Task.WhenAll(_runTasks.Held).WaitAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            // Cut short by the token, or a task faulted. Which tasks have ended decides.
-        }
+            var reached = await media.WaitForSeekTargetAsync(run, SeekSettleCap, cancellationToken).ConfigureAwait(false);
 
-        _runTasks = _runTasks.ForgetEnded(HasEnded);
-        if (!_runTasks.IsEmpty)
+            // Null means the run had no floor, or the target never arrived: leave the clocks alone.
+            if (reached is not { } pts)
+                return;
+
+            _clock.Seek(pts);
+            wallclock.Seek(pts);
+        }
+        finally
         {
-            throw new OperationCanceledException(
-                "The wait for the playback run's tasks was cancelled before they ended.",
-                cancellationToken
-            );
+            // The pacer holds delivery from the moment it admits the destination frame until this
+            // runs, so that no frame is presented against the clock this is correcting. However
+            // the settle ends, the picture is not left held.
+            media.ReleaseSettle(run);
         }
     }
 
-    private Task FireEndOfStreamAsync()
+    // ── Dispose ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Stops the run and waits for its work to end, then frees the pacer, deactivates the audio
+    /// sink, stops the position clock, and frees the pipeline, the decoders, the demux session and
+    /// the wallclock, in reverse allocation order. A second call waits for the first and ends as it
+    /// did.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A command's action under way is cut short, and the dispose begins once it has ended. The
+    /// wait lasts as long as the run takes to unwind once cancelled: a sink or a configurator's
+    /// node that ignores its token holds it until the call returns, and after five seconds the
+    /// session names what it is waiting for. A demuxer read that waits on a stalled source does not
+    /// hold it, since the run's cancellation interrupts it (#709). A caller that cannot wait bounds
+    /// its own wait; nothing is freed until the work ends.
+    /// </para>
+    /// <para>
+    /// It throws what freeing threw, and what deactivating the audio sink threw: one exception, or
+    /// an <see cref="AggregateException"/> of several. A fault a run's work ended with was reported
+    /// when it ended, and is not thrown again. Do not await it from a callback the session raises,
+    /// which the teardown would be waiting behind.
+    /// </para>
+    /// </remarks>
+    public ValueTask DisposeAsync() => _dispose.RunAsync(TearDownAsync);
+
+    private async ValueTask TearDownAsync()
     {
-        if (Interlocked.Exchange(ref _eofFired, 1) == 0)
-            _callbacks.OnEndOfStream();
-        return Task.CompletedTask;
+        Post(new Input.Dispose());
+
+        // An action under way, such as an open or a sink's call that ignores its token, holds the
+        // dispose's start, and is named if it does for long; the run's stop names its own work.
+        await SlowWorkWarning
+            .AwaitAsync(_disposeBegun.Task, StopWarningInterval, TimeProvider, WarnActionHoldsDispose)
+            .ConfigureAwait(false);
+        await _tornDown.Task.ConfigureAwait(false);
+        await _reader.ConfigureAwait(false);
+
+        // The core freed nothing before every run's work had ended; this waits for the scopes to
+        // let it go, and for the last action's task to end.
+        var failures = new List<Exception>(_teardownFailures);
+        RunScope[] runs;
+        lock (_runsGate)
+        {
+            runs = [.. _runs.Values];
+            _runs.Clear();
+        }
+        foreach (var run in runs)
+        {
+            foreach (var fault in await (run.Stopping ?? run.Scope.StopAsync()).ConfigureAwait(false))
+                failures.Add(fault.Error);
+        }
+        foreach (var fault in await _actions.StopAsync().ConfigureAwait(false))
+            failures.Add(fault.Error);
+
+        if (failures.Count == 1)
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures.Count > 1)
+            throw new AggregateException("SubstrateSession teardown encountered multiple failures.", failures);
+    }
+
+    private void WarnActionHoldsDispose() =>
+        _logger.LogWarning(
+            "The item runtime's dispose has waited {Seconds:F0}s for {Action} to end. "
+                + "A sink or the source is not observing cancellation; the dispose waits for it.",
+            StopWarningInterval.TotalSeconds,
+            _actionUnderWay ?? "a command's action"
+        );
+
+    // ── Types ───────────────────────────────────────────────────────────────
+
+    /// <summary>What the reader steps: a command, or an input fed back.</summary>
+    private abstract record Arrival;
+
+    private sealed record Fed(Input Input) : Arrival;
+
+    private sealed record Called(Call Call) : Arrival;
+
+    /// <summary>A command and its caller, waiting for the core to complete it.</summary>
+    private sealed class Call(ItemCommandKind kind, CancellationToken caller)
+    {
+        public ItemCommandKind Kind { get; } = kind;
+
+        public CancellationToken Caller { get; } = caller;
+
+        public int Id { get; set; }
+
+        /// <summary>Completes as the core completes the command, and never earlier.</summary>
+        public TaskCompletionSource Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>The token the command's actions get: the caller's, which a dispose also cancels.</summary>
+        public CancellationTokenSource? Action { get; set; }
+
+        public CancellationTokenRegistration Registration { get; set; }
+
+        public IMediaSource? Source { get; init; }
+
+        /// <summary>An open's start, a seek's target or a rewind's position.</summary>
+        public TimeSpan Position { get; init; }
+
+        public TimeSpan? End { get; init; }
+
+        /// <summary>A rewind that keeps the item's end rather than handing the runtime another.</summary>
+        public bool KeepsEnd { get; init; }
+
+        public override string ToString() => $"{Kind} #{Id}";
+    }
+
+    /// <summary>A run's scope, and its stop once it has been cancelled.</summary>
+    private sealed class RunScope(int run, WorkScope scope)
+    {
+        public int Run { get; } = run;
+
+        public WorkScope Scope { get; } = scope;
+
+        public Task<IReadOnlyList<WorkFault>>? Stopping { get; set; }
     }
 }

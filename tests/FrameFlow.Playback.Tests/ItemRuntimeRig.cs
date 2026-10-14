@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using FrameFlow.Decoding.Diagnostics;
 using FrameFlow.Playback.Core;
+using Microsoft.Extensions.Logging;
 using Step = FrameFlow.Playback.SubstrateSession.Step;
 
 namespace FrameFlow.Playback.Tests;
@@ -29,7 +30,10 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
     private readonly List<(Step Step, TaskCompletionSource Taken)> _awaitedSteps = [];
     private readonly List<(int Count, TaskCompletionSource Raised)> _awaitedEnds = [];
 
-    private ItemRuntimeRig(MediaShape shape, bool detached, bool latenessRecovery)
+    private readonly TaskCompletionSource<Exception> _workerFault = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<PlaybackError> _recoverableError = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private ItemRuntimeRig(MediaShape shape, bool detached, bool latenessRecovery, TimeProvider? time)
     {
         Log = new RigLog();
         Media = new FakeItemMedia(shape, Log);
@@ -41,18 +45,28 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
             Clock,
             new SessionCallbacks(
                 OnEndOfStream: OnEndOfStream,
-                OnWorkerFaulted: _workerFaults.Enqueue,
+                OnWorkerFaulted: fault =>
+                {
+                    _workerFaults.Enqueue(fault);
+                    _workerFault.TrySetResult(fault);
+                },
                 OnBufferReady: static () => { },
                 OnBufferUnderrun: static () => { },
-                OnRecoverableError: _recoverableErrors.Enqueue,
+                OnRecoverableError: error =>
+                {
+                    _recoverableErrors.Enqueue(error);
+                    _recoverableError.TrySetResult(error);
+                },
                 OnCurrentItemChanged: static _ => { },
                 OnLoopRestarted: static (_, _) => { },
                 OnItemFailed: static (_, _, _) => { }
             ),
-            HardwareDecodeMode.Disabled
+            HardwareDecodeMode.Disabled,
+            loggerFactory: Warnings
         )
         {
             MediaOpener = Opener,
+            TimeProvider = time ?? TimeProvider.System,
             Detached = detached,
             LatenessRecovery = latenessRecovery ? new LatenessRecoveryOptions { Enabled = true } : null,
         };
@@ -69,6 +83,15 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
 
     public PlaybackClock Clock { get; } = new();
 
+    /// <summary>What the session logged at Warning and above.</summary>
+    public WarningLog Warnings { get; } = new();
+
+    /// <summary>Completes with the first fault the session reports on OnWorkerFaulted.</summary>
+    public Task<Exception> WorkerFault => _workerFault.Task;
+
+    /// <summary>Completes with the first error the session reports on OnRecoverableError.</summary>
+    public Task<PlaybackError> RecoverableError => _recoverableError.Task;
+
     public SubstrateSession Session { get; }
 
     /// <summary>The run number the session read out, inside each end-of-stream callback.</summary>
@@ -81,8 +104,12 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
     /// <summary>The steps the session has taken, in order.</summary>
     public Step[] Steps => [.. _steps];
 
-    public static ItemRuntimeRig Create(MediaShape? shape = null, bool detached = false, bool latenessRecovery = false) =>
-        new(shape ?? MediaShape.AudioAndVideo, detached, latenessRecovery);
+    public static ItemRuntimeRig Create(
+        MediaShape? shape = null,
+        bool detached = false,
+        bool latenessRecovery = false,
+        TimeProvider? time = null
+    ) => new(shape ?? MediaShape.AudioAndVideo, detached, latenessRecovery, time);
 
     /// <summary>Opens the session, positioned at <paramref name="start"/>: no run starts.</summary>
     public async Task<ItemRuntimeRig> OpenAsync(TimeSpan start = default, TimeSpan? end = null)
@@ -188,6 +215,46 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
         {
             // A test that fails a free has asserted on it already.
         }
+    }
+}
+
+/// <summary>Keeps what is logged at Warning and above, for every category.</summary>
+internal sealed class WarningLog : ILoggerFactory, ILogger
+{
+    private readonly List<string> _lines = [];
+
+    public string[] Lines
+    {
+        get
+        {
+            lock (_lines)
+                return [.. _lines];
+        }
+    }
+
+    public ILogger CreateLogger(string categoryName) => this;
+
+    public void AddProvider(ILoggerProvider provider) { }
+
+    public void Dispose() { }
+
+    public IDisposable? BeginScope<TState>(TState state)
+        where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+
+    public void Log<TState>(
+        LogLevel logLevel,
+        EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter
+    )
+    {
+        if (logLevel < LogLevel.Warning)
+            return;
+        lock (_lines)
+            _lines.Add(formatter(state, exception));
     }
 }
 
@@ -446,12 +513,14 @@ internal sealed class FakeItemMedia : IItemMedia
             return _works.Last(w => w.Kind == kind);
     }
 
-    /// <summary>Holds the next demuxer seek until <see cref="ReleaseSeek"/>, or until its token is cancelled.</summary>
-    public Task HoldSeeks()
+    /// <summary>
+    /// Holds the next demuxer seek until <see cref="ReleaseSeek"/>, whatever its token, as a call
+    /// that cannot be interrupted would. Released, it ends as cancelled if its token was.
+    /// </summary>
+    public void HoldSeeks()
     {
         lock (_gate)
             _seekHold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        return Task.CompletedTask;
     }
 
     public void ReleaseSeek()
@@ -562,7 +631,7 @@ internal sealed class FakeItemMedia : IItemMedia
         lock (_gate)
             hold = _seekHold?.Task;
         if (hold is not null)
-            await hold.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await hold.ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
     }
 
@@ -630,6 +699,9 @@ internal sealed class FakeMediaOpener(FakeItemMedia media, RigLog log) : IItemMe
     /// <summary>Whether the open waits for <see cref="Release"/>, or for its token to be cancelled.</summary>
     public bool Hold { get; set; }
 
+    /// <summary>Whether a held open ignores its token, as one over a source that stalls may.</summary>
+    public bool IgnoresCancellation { get; set; }
+
     /// <summary>What the open throws, having freed what it opened.</summary>
     public Exception? Fail { get; set; }
 
@@ -642,8 +714,11 @@ internal sealed class FakeMediaOpener(FakeItemMedia media, RigLog log) : IItemMe
     {
         log.Add("Open");
         _entered.TrySetResult();
-        if (Hold)
+        if (Hold && IgnoresCancellation)
+            await _released.Task.ConfigureAwait(false);
+        else if (Hold)
             await _released.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         if (Fail is { } failure)
             throw failure;
         media.Opened = true;

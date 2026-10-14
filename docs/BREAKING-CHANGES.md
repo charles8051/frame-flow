@@ -1395,6 +1395,65 @@ end. Every owner now cancels its work, waits for it, and only then frees what it
 decision 3). A failure a dispose swallowed left its caller believing everything was freed; it is now
 returned to every caller, as a second dispose already returns what the first threw (entry 27).
 
+### 31. A player's item follows one order for its seeks, plays and pauses, and one cut short leaves it at rest
+
+**A change in behaviour, not a compile error.**
+
+The runtime a player plays each item on decided the order of its seeks, plays, pauses and teardown
+in a dozen fields that each path read and wrote in its own order. Its decisions are now one pure
+core (ADR-0086, decision 2), and it holds each run's work until that work ends (decision 1). What
+you can see:
+
+- **Superseding seeks coalesce.** A seek that arrives while an earlier one waits for the run it
+  stopped replaces the earlier one's target: the earlier seek is cancelled, as it already was, and
+  the two cost one unwind of the old run and one seek to the newer target.
+- **The audio comes first.** A resume resumes the audio sink before it runs the clock and opens the
+  picture, and a seek pauses the audio sink before it shuts the picture. A resume whose
+  `ResumeAsync` throws now leaves the picture paused with the clock, where the picture used to move
+  in silence. A seek whose `PauseAsync` throws now leaves the item playing as it was, where the
+  picture used to stop with the sound still playing.
+- **A resume after a failed seek activates the audio sink.** A seek that failed once it had
+  deactivated the sink, because its `ActivateAsync` threw, left the item silent until the next seek.
+  The next play now activates the sink.
+- **A command cut short leaves the item at rest.** A seek cancelled once its audio has paused stops
+  its run, and the next play repositions where the clock stands (as entry 26 describes for a seek
+  cancelled during its wait). A play cancelled once its run has started holds the item paused with
+  its clock. A first play cancelled while the audio sink activates ends with nothing started: no
+  run, no clock, the picture shut. `OpenAlAudioSink`'s activation does not observe its token, so
+  such a play used to go on and play.
+- **A first play starts its run before its clock.** A first play whose run cannot start, because a
+  configurator throws when the graph is built, leaves the position clock stopped, where it used to
+  leave it running over nothing.
+- **A run whose graph faults cancels the rest of the run** at once: the demux pump, which may be
+  waiting for room in a decoder queue the faulted graph no longer drains, ends then, not when the
+  item is disposed (#713). A pump that faults cancels the graph the same way. The item fails as
+  before, and the fault is reported once, on the item's fault path. A fault in the decoders'
+  end-of-stream flush, which was swallowed, is reported as the pump's.
+- **A command whose token is cancelled when it reaches the item does nothing.** A seek whose token
+  was already cancelled used to shut the picture and pause the audio before it gave up.
+- **A stop that waits five seconds** for a run's work that has not ended, at a seek or at the
+  dispose, logs once, at Warning, which work it is: the demux pump, the graph or the
+  lateness-recovery walk. A dispose that waits five seconds for a call that has not returned, such
+  as an audio sink's activation, names the call. Both go on waiting.
+
+**Who hits this.**
+- An audio sink of your own whose `PauseAsync`, `ResumeAsync` or `ActivateAsync` can throw: the
+  picture now follows the sound, as above.
+- Code that pauses or disposes a player while a play or a seek is in progress, and then reads the
+  position clock or what is on screen.
+- A video or audio configurator that throws when the graph is built.
+- Log filters that match the warnings a player writes.
+
+**What to write instead.** Nothing, in most code. Retry a resume that failed, as for any command
+that fails; the picture is where the sound is. To land on a seek's target after cancelling it,
+seek to it again.
+
+**Why.** Seeking the demuxer, resetting the decoders, starting a run and freeing what a run uses
+are now decided only where no work of any run is still going, and the run number advances only
+then, so an end of stream a run raises always carries its own number (ADR-0086, decision 2). The
+order each path took before was its own, and several left the picture, the sound and the clock
+disagreeing. Refs #707, #714.
+
 ### Not breaking, but worth knowing
 
 - **A new timeline is not a stall to the PRESENT GAP check.** `AvaloniaVideoSink` warned PRESENT
