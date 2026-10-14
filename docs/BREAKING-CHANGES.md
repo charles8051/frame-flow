@@ -746,6 +746,68 @@ working, and is no longer needed for that. Dispose the view to release its own s
 **Why.** A player depends on its sink, not on where the view sits in the visual tree, and a sink
 disposed on every detach stranded the player built with it on every tab switch.
 
+### 20. `FrameFlowVideoView` keeps its sink until it is disposed
+
+**A change in behaviour, not a compile error.** The view also gains `IAsyncDisposable`.
+
+The CPU view disposed its own sink on every detach from the visual tree and made a new one on the
+next attach. A player built with the first sink went on feeding a disposed sink, which disposed every
+frame it was given, and the picture froze until the app built the player again. A sink assigned
+through `Sink` stayed assigned across the detach but was never bound again, so it froze the same way
+(#663). The view now keeps one sink for its whole life, its own or one assigned through `Sink`, and a
+detach only stops it presenting: a reattach binds the same sink again and presents it. A player
+built before the trip keeps working (ADR-0085, decision 2; #691).
+
+- The view's own sink is no longer disposed on a detach; only `DisposeAsync` disposes it. `Sink` no
+  longer reads `null` after a detach, and `EnsureSink` and `IVideoSurface.AttachSink` return the same
+  sink after a reattach.
+- The view no longer copies, presents or counts a frame before its first attach, and no longer
+  raises `FramePresented` for one (decision 3). Until then, as after a detach, its sink keeps only its
+  newest frame, and only while a player holds its claim (entry 18), and the attach presents that
+  frame: a paused, ended or single-frame picture is on screen at once. With no claim, as when a graph
+  built by hand feeds it, the sink disposes each frame it is given, and releasing the claim disposes
+  the frame it kept.
+- The picture the view drew last stays in its bitmaps across a detach and is drawn again on the
+  reattach. `Clear` and `DisposeAsync` release them.
+- The new `AvaloniaVideoSink.FramesDiscardedOffScreen` counts the frames let go of while no view
+  presented the sink, and a copy the view had made and not yet drawn when it stopped presenting the
+  sink. `DroppedFrameCount` and the diagnostics snapshot's `FramesDropped` leave them out. A copy
+  stranded by a detach or by assigning `Sink` used to be counted as a drop.
+- A caller's sink the view lets go of, by `Sink` or `DisposeAsync`, stays as no view presents it.
+  With no claim it disposes every frame it is given, until a view takes it up again.
+- `DisposeAsync` disposes the view's own sink, lets go of a caller's, and releases the bitmaps.
+  Afterwards `EnsureSink`, `IVideoSurface.AttachSink` and assigning a sink through `Sink` throw
+  `ObjectDisposedException`, and attaching the view does nothing.
+- Assigning `Sink` first claims the outgoing sink. While a player or pass holds it, the assignment
+  throws `InvalidOperationException` naming the holder, and nothing changes. Otherwise the outgoing
+  sink is disposed, if the view made it, or let go of, as before.
+
+**Who hits this.** Code that relied on a detach to dispose the view's own sink, or read `Sink` after
+a detach and took `null` to mean the view was done with it. Code that took a sink from `EnsureSink`
+after a reattach and built a new player with it while the old player was still alive: the sink is
+the old one, and the build fails at its claim. Code that counted on frames being copied, or
+`FramePresented` raised, before the view joined the visual tree. Code that assigns `Sink` while a
+player built against the outgoing sink is alive.
+
+**What to write instead.** Nothing, to keep a player across a tab switch, a panel swap or a docking
+move: build it once against the view. To replace the sink, dispose the player first:
+
+```csharp
+await player.DisposeAsync(); // the sink stays claimed until this completes
+view.Sink = replacement;     // disposes the view's own sink, or lets a caller's go
+```
+
+Avalonia never disposes a control. To release the view's own sink and its bitmaps, dispose the view
+after the player built against it:
+
+```csharp
+await player.DisposeAsync();
+await view.DisposeAsync();
+```
+
+**Why.** A player depends on its sink, not on where the view sits in the visual tree, and the CPU
+view now follows the same lifecycle as the zero-copy view (entry 19).
+
 ### Not breaking, but worth knowing
 
 - **A new timeline is not a stall to the PRESENT GAP check.** `AvaloniaVideoSink` warned PRESENT
