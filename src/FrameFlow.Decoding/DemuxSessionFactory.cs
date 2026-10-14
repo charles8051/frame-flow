@@ -25,6 +25,12 @@ namespace FrameFlow.Decoding;
 /// returns (ADR-0005).
 /// </para>
 /// <para>
+/// Every context it opens carries an interrupt callback (<see cref="FormatContextInterrupt"/>,
+/// #709), set before the open so every protocol context the open creates carries it too. The
+/// open and its stream probe observe the open's token; once the session exists, each of its
+/// operations observes its own.
+/// </para>
+/// <para>
 /// The factory is stateless and may be registered as a singleton in a DI container.
 /// </para>
 /// </remarks>
@@ -78,6 +84,11 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
     ///   <item><see cref="DemuxSession.BuildMediaInfo"/> — reads stream metadata into managed types.</item>
     /// </list>
     /// If any step fails, all allocated native resources are freed before the exception propagates.
+    /// <para>
+    /// The open runs on the calling thread. Over a network source the first two steps wait on the
+    /// source, and <paramref name="cancellationToken"/> interrupts them there (#709); over a local
+    /// file they seldom wait, and a cancellation is seen between reads.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="source"/> is <see langword="null"/>.
@@ -85,6 +96,10 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
     /// <exception cref="InvalidOperationException">
     /// Thrown when FFmpeg cannot open the source (e.g. file not found, unsupported format)
     /// or when stream info probing fails.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled before the open, or by the time the open
+    /// and the probe had ended. Either may have given up for it partway.
     /// </exception>
     public ValueTask<IDemuxSession> OpenAsync(
         IMediaSource source,
@@ -96,11 +111,11 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
 
         try
         {
-            return OpenCore(source, forcedVideoCodec: null);
+            return OpenCore(source, forcedVideoCodec: null, cancellationToken);
         }
         catch (ReopenWithCodecException reopen)
         {
-            return OpenCore(source, reopen.CodecId);
+            return OpenCore(source, reopen.CodecId, cancellationToken);
         }
     }
 
@@ -110,7 +125,12 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
     /// which <c>image2</c> uses as the decoder where it cannot name one from the extension (#575).
     /// <see langword="null"/> for none.
     /// </param>
-    private ValueTask<IDemuxSession> OpenCore(IMediaSource source, int? forcedVideoCodec)
+    /// <param name="cancellationToken">The token the open and the probe observe.</param>
+    private ValueTask<IDemuxSession> OpenCore(
+        IMediaSource source,
+        int? forcedVideoCodec,
+        CancellationToken cancellationToken
+    )
     {
         // Resolve the URL string FFmpeg will open.
         string url = ResolveUrl(source);
@@ -127,25 +147,46 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
         // specific to the demuxer this names, and would then all come back unrecognised.
         nint inputFormat = ResolveInputFormat(source);
 
+        // The callback's state is the context's for its whole life (#709). Until a handle owns
+        // both, it is freed here once the context is gone: after a failed open, which frees the
+        // context itself, or after the close below. CA2000 cannot follow the hand-off to the
+        // FormatContextHandle, which frees it from then on.
+#pragma warning disable CA2000
+        var interrupt = new FormatContextInterrupt();
+#pragma warning restore CA2000
+
         // avformat_open_input returns a context on success or fails and leaves ctx at Zero.
         nint ctx = nint.Zero;
-        nint options = BuildDemuxerOptions(source);
+        nint options = nint.Zero;
         int openResult;
         try
         {
+            options = BuildDemuxerOptions(source);
+
+            // avformat_open_input takes this context, and frees it if the open fails. It is
+            // allocated here rather than by the open so the callback is set before anything opens.
+            ctx = FFAvFormat.avformat_alloc_context();
+            if (ctx == nint.Zero)
+                throw new OutOfMemoryException("FFmpeg avformat_alloc_context returned null.");
+            interrupt.Install(ctx);
+
             if (forcedVideoCodec is { } codecId)
             {
-                // avformat_open_input takes this context, and frees it if the open fails.
-                ctx = FFAvFormat.avformat_alloc_context();
-                if (ctx == nint.Zero)
-                    throw new OutOfMemoryException("FFmpeg avformat_alloc_context returned null.");
                 unsafe
                 {
                     Unsafe.AsRef<AVFormatContext>((void*)ctx).video_codec_id = (AVCodecID)codecId;
                 }
             }
 
-            openResult = FFAvFormat.avformat_open_input(ref ctx, url, inputFormat, ref options);
+            var replaced = interrupt.Enter(cancellationToken);
+            try
+            {
+                openResult = FFAvFormat.avformat_open_input(ref ctx, url, inputFormat, ref options);
+            }
+            finally
+            {
+                interrupt.Exit(replaced);
+            }
 
             if (openResult >= 0 && ctx != nint.Zero)
             {
@@ -165,6 +206,13 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
                 }
             }
         }
+        catch
+        {
+            // Nothing holds the context any more: the open freed it, the close above did, or
+            // it was never allocated.
+            interrupt.Dispose();
+            throw;
+        }
         finally
         {
             // The dictionary is ours on every path, including the failure ones, and holds
@@ -174,6 +222,12 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
 
         if (openResult < 0 || ctx == nint.Zero)
         {
+            // avformat_open_input freed the context it failed to open.
+            interrupt.Dispose();
+
+            // An open that fails once its token is cancelled was given up for it (#709).
+            ThrowIfCancelled(source, cancellationToken);
+
             _logger.LogError(
                 "Failed to open media source {DisplayName} (url={Url}, error code {ErrorCode})",
                 source.DisplayName,
@@ -188,10 +242,12 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
             );
         }
 
-        // Wrap the context immediately so it is freed on any subsequent failure.
-        var formatCtx = new FormatContextHandle(ctx);
+        // Wrap the context immediately so it is freed on any subsequent failure. The handle owns
+        // the interrupt state from here, and frees it after the context.
+        var formatCtx = new FormatContextHandle(ctx, interrupt);
 
         int findResult;
+        var probing = interrupt.Enter(cancellationToken);
         try
         {
             findResult = FFAvFormat.avformat_find_stream_info(
@@ -204,20 +260,34 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
             formatCtx.Dispose();
             throw;
         }
+        finally
+        {
+            interrupt.Exit(probing);
+        }
 
         if (findResult < 0)
         {
+            formatCtx.Dispose();
+            ThrowIfCancelled(source, cancellationToken);
+
             _logger.LogError(
                 "Failed to find stream info for {DisplayName} (error code {ErrorCode})",
                 source.DisplayName,
                 findResult
             );
 
-            formatCtx.Dispose();
             throw new InvalidOperationException(
                 $"FFmpeg could not find stream info for '{source.DisplayName}' "
                     + $"(error code {findResult})."
             );
+        }
+
+        // A probe the interrupt cut short still succeeds once any stream has its parameters, and
+        // would hand back a session probed partway (#709). An open cancelled by then throws.
+        if (cancellationToken.IsCancellationRequested)
+        {
+            formatCtx.Dispose();
+            ThrowIfCancelled(source, cancellationToken);
         }
 
         // Allocate the reusable packet buffer.
@@ -355,6 +425,23 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Throws <see cref="OperationCanceledException"/> for a step that failed once
+    /// <paramref name="cancellationToken"/> was cancelled: the interrupt callback gave it up, and
+    /// the code FFmpeg returned for that is <c>AVERROR_EXIT</c> or whatever the protocol made of it.
+    /// </summary>
+    private void ThrowIfCancelled(IMediaSource source, CancellationToken cancellationToken)
+    {
+        if (!cancellationToken.IsCancellationRequested)
+            return;
+
+        _logger.LogInformation(
+            "Opening media source {DisplayName} was cancelled",
+            source.DisplayName
+        );
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     /// <summary>Carries the decoder to open again with, out of <see cref="OpenCore"/>'s cleanup.</summary>

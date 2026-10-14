@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using FFmpeg.AutoGen.Abstractions;
 using FrameFlow.Decoding.Core;
 using FrameFlow.Decoding.Diagnostics;
+using FrameFlow.Decoding.Internal;
 using FrameFlow.Media;
 using FrameFlow.Native.Interop;
 using Microsoft.Extensions.Logging;
@@ -35,8 +36,29 @@ namespace FrameFlow.Decoding;
 /// </para>
 /// <para>
 /// Cancellation (ADR-0013): <see cref="CancellationToken"/> parameters cancel only the
-/// current operation, not the session. The session remains open and readable after
-/// cancellation.
+/// current operation, not the session. The session remains open after cancellation, and
+/// readable unless a read or a seek was given up partway, as the next paragraph says.
+/// </para>
+/// <para>
+/// A cancellation reaches a call blocked in FFmpeg as well (#709). The format context carries an
+/// interrupt callback (<see cref="FormatContextInterrupt"/>) that answers from the token of the
+/// operation using the context: a read's, a seek's, and the token a demux pump runs on
+/// (<see cref="BeginUse"/>). A read or a seek over a stalled network source then gives up once its
+/// token is cancelled, and throws <see cref="OperationCanceledException"/>.
+/// </para>
+/// <para>
+/// A read given up partway leaves the demuxer's position unreliable: <c>mov</c>, for one, has
+/// already moved past the packet it was reading, and a protocol can be left midway through its own
+/// framing. So a read that the interrupt cut short, or that returned once its token was cancelled,
+/// returns no packet, and the session reads nothing more until a seek has put it somewhere known:
+/// <see cref="ReadPacketAsync"/> and a demux pump throw <see cref="InvalidOperationException"/>
+/// until then. A seek that does not complete, cancelled or failed, may have moved the demuxer
+/// partway, and leaves the session the same way. After a cancelled read or seek, seek before
+/// reading on.
+/// </para>
+/// <para>
+/// Disposal (ADR-0086, decision 3.5): no lock fences the native calls, so the owner ends every
+/// use, a pump's included, before it disposes the session. A Debug build checks that.
 /// </para>
 /// </remarks>
 public sealed class DemuxSession : IDemuxSession
@@ -46,7 +68,18 @@ public sealed class DemuxSession : IDemuxSession
     private readonly nint _packet; // AVPacket* — reused for every av_read_frame call
     private readonly ILogger _logger;
 
+    // What the context's interrupt callback reads (#709). Owned and freed by _formatCtx.
+    private readonly FormatContextInterrupt? _interrupt;
+
+    // Debug-only: the uses of the context in flight, which the dispose checks is zero.
+    private UseCounter _uses;
+
     private bool _disposed;
+
+    // Set when a read was given up partway, or while a seek is under way and when one does not
+    // complete (#709): the demuxer's position is not reliable, and reads are refused until a seek
+    // completes. Written and read only by uses, which do not overlap.
+    private bool _positionLost;
 
     // ADR-0034: diagnostics counters. Single-writer (demux pump per ADR-0009)
     // + multi-reader (snapshot call from any thread). Interlocked is sufficient
@@ -82,6 +115,7 @@ public sealed class DemuxSession : IDemuxSession
     )
     {
         _formatCtx = formatCtx ?? throw new ArgumentNullException(nameof(formatCtx));
+        _interrupt = formatCtx.Interrupt;
         _packet = packet;
         MediaInfo = mediaInfo ?? throw new ArgumentNullException(nameof(mediaInfo));
         _logger = logger ?? NullLogger.Instance;
@@ -117,16 +151,25 @@ public sealed class DemuxSession : IDemuxSession
 
     /// <inheritdoc/>
     /// <exception cref="ObjectDisposedException">Thrown when the session has been disposed.</exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled, before the read or while it ran. A read
+    /// that returns once the token is cancelled returns no packet, and the next read needs a seek
+    /// first.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A read or a seek before this one was given up partway and no seek has completed since, or
+    /// FFmpeg gave up this read although nothing cancelled it, or the read failed.
+    /// </exception>
     public ValueTask<DemuxPacket?> ReadPacketAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
         // av_read_frame is a synchronous call and returns quickly for file-backed sources.
-        // For streaming sources it may block on I/O; for Phase 02 we target local files
-        // and do not run this on a background thread. Future phases may move I/O-bound reads
-        // to Task.Run if streaming latency becomes an issue (ADR-0009).
-        var packet = ReadNextPacket();
+        // For streaming sources it may block on I/O, on the caller's thread; the token
+        // interrupts it there (#709).
+        using var use = BeginRead(cancellationToken);
+        var packet = ReadNextPacket(cancellationToken);
         return ValueTask.FromResult(packet);
     }
 
@@ -158,16 +201,34 @@ public sealed class DemuxSession : IDemuxSession
     /// </para>
     /// </remarks>
     /// <exception cref="ObjectDisposedException">Thrown when the session has been disposed.</exception>
-    /// <exception cref="InvalidOperationException">Thrown when the container fails to seek.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the container fails to seek, or when FFmpeg gave up on the seek although
+    /// <paramref name="cancellationToken"/> was not cancelled. Reads then wait for a seek that
+    /// completes.
+    /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled, before the seek, while it ran, or by the
+    /// time it returned. The seek may have moved the container partway, so reads wait for a seek
+    /// that completes.
+    /// </exception>
     public ValueTask SeekAsync(TimeSpan position, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
+        // The seek observes its own token, whatever a run before it was cancelled with (#709).
+        // Until it completes, it may have moved the demuxer partway, and reads wait for one that
+        // does: a seek cancelled while FFmpeg ran it, or by the time it returned, has not.
+        using var use = BeginUse(cancellationToken);
+        _positionLost = true;
         if (KeyframeStream() is { } stream)
             SeekToKeyframe(position, stream, cancellationToken);
         else
-            SeekContainer(position);
+            SeekContainer(position, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // The demuxer is somewhere known again, whatever a read or a seek before this one gave up.
+        _positionLost = false;
 
         _logger.LogDebug("Seek completed to position {Position}", position);
         Interlocked.Increment(ref _seeksPerformed);
@@ -186,13 +247,13 @@ public sealed class DemuxSession : IDemuxSession
     {
         for (var search = KeyframeSearch.For(position); ; search = search.Back())
         {
-            SeekContainer(search.Probe);
+            SeekContainer(search.Probe, cancellationToken);
 
             while (!search.Finished)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                int result = ReadProbePacket(out var packet);
+                int result = ReadProbePacket(out var packet, cancellationToken);
                 if (result == FFAvUtil.AvErrorEof)
                     break;
                 if (result < 0)
@@ -203,7 +264,7 @@ public sealed class DemuxSession : IDemuxSession
                         position,
                         result
                     );
-                    SeekContainer(position);
+                    SeekContainer(position, cancellationToken);
                     return;
                 }
 
@@ -213,7 +274,7 @@ public sealed class DemuxSession : IDemuxSession
 
             if (search.Landing is { } landing)
             {
-                SeekContainer(landing);
+                SeekContainer(landing, cancellationToken);
                 return;
             }
         }
@@ -251,7 +312,7 @@ public sealed class DemuxSession : IDemuxSession
     /// Seeks the container to <paramref name="position"/>, on whichever packet it lands on, and
     /// drops what it had read ahead.
     /// </summary>
-    private void SeekContainer(TimeSpan position)
+    private void SeekContainer(TimeSpan position, CancellationToken cancellationToken)
     {
         // Seek using the global time base (stream_index = -1, timestamp in microseconds).
         //
@@ -270,6 +331,7 @@ public sealed class DemuxSession : IDemuxSession
 
         if (result < 0)
         {
+            ThrowIfInterrupted(result, cancellationToken, "seeking");
             _logger.LogWarning(
                 "Seek failed for position {Position} (error code {ErrorCode})",
                 position,
@@ -291,6 +353,113 @@ public sealed class DemuxSession : IDemuxSession
         // PaceUntil waited for the clock to advance 24.5 s of realtime
         // before forwarding the first post-seek video frame.
         FFAvFormat.avformat_flush(ctxPtr);
+    }
+
+    /// <summary>
+    /// Forgets a read the interrupt callback gave up, so the operation about to begin reads from
+    /// the source again rather than taking that interrupt for an end or a failure of its own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A read the callback cut short leaves <c>AVERROR_EXIT</c> on the I/O context and marks it at
+    /// its end (#709). libavformat answers the next read with that error, or with the end of the
+    /// stream where the demuxer checks the mark, and once a seek has cleared the mark, it answers
+    /// the read that finds no more data with the old error rather than the end. A packet read after
+    /// a cancelled one would fail, and a run after a seek would end in a fault where the source
+    /// ended.
+    /// </para>
+    /// <para>
+    /// The interrupt sets both together, and nothing reads past the mark, so an error of
+    /// <c>AVERROR_EXIT</c> says the mark is the interrupt's. Any other error, and a real end, are
+    /// left as they are.
+    /// </para>
+    /// <para>
+    /// Only the context's own I/O is cleared. A demuxer that reads through I/O contexts of its own,
+    /// the segment readers of HLS and DASH or the external references of <c>mov</c>, keeps the
+    /// error on those.
+    /// </para>
+    /// </remarks>
+    private unsafe void ForgetInterruptedRead()
+    {
+        AVIOContext* io = Io;
+        if (io == null || io->error != FFAvUtil.AvErrorExit)
+            return;
+
+        io->error = 0;
+        io->eof_reached = 0;
+    }
+
+    /// <summary>The format context's I/O context, or null for a demuxer that has none.</summary>
+    private unsafe AVIOContext* Io =>
+        Unsafe.AsRef<AVFormatContext>((void*)_formatCtx.DangerousGetHandle()).pb;
+
+    /// <summary>
+    /// Gives up a read the interrupt cut short, or one that returned once its token was cancelled,
+    /// and returns for any other read, which the caller reports as before.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A read cut short partway through a packet returns the part that arrived, as a packet, and
+    /// leaves <c>AVERROR_EXIT</c> on the I/O context; one cut short before any data arrived returns
+    /// <c>AVERROR_EXIT</c> itself (#709). Either way the demuxer may have moved past the packet. The
+    /// part is unreferenced, and so is a whole packet read as the token was cancelled, and the
+    /// session refuses reads until a seek (<see cref="BeginRead"/>).
+    /// </para>
+    /// <para>
+    /// Then the read throws <see cref="OperationCanceledException"/> when
+    /// <paramref name="cancellationToken"/> is cancelled, whatever FFmpeg returned, and
+    /// <see cref="InvalidOperationException"/> naming <c>AVERROR_EXIT</c> for an interrupt nothing
+    /// asked for. A read that ended or failed once the token was cancelled, with no interrupt, also
+    /// throws <see cref="OperationCanceledException"/>, and leaves the position as it was.
+    /// </para>
+    /// </remarks>
+    /// <param name="result">What <c>av_read_frame</c> returned.</param>
+    /// <param name="packet">The <c>AVPacket*</c> it read into.</param>
+    /// <param name="cancellationToken">The read's token.</param>
+    /// <param name="doing">What the read was for, for the message.</param>
+    internal unsafe void ThrowIfReadGivenUp(
+        int result,
+        nint packet,
+        CancellationToken cancellationToken,
+        string doing
+    )
+    {
+        AVIOContext* io = Io;
+        bool interrupted =
+            result == FFAvUtil.AvErrorExit || (io != null && io->error == FFAvUtil.AvErrorExit);
+        if (!interrupted && !cancellationToken.IsCancellationRequested)
+            return;
+
+        if (result >= 0)
+            FFAvCodec.av_packet_unref(packet);
+        if (interrupted || result >= 0)
+            _positionLost = true;
+
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new InvalidOperationException(
+            $"FFmpeg gave up {doing} although the operation was not cancelled (AVERROR_EXIT)."
+        );
+    }
+
+    /// <summary>
+    /// Throws for a native call other than a read that failed because the operation was cancelled
+    /// or interrupted, and returns for any other failure, which the caller reports as before.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="OperationCanceledException"/> when <paramref name="cancellationToken"/> is
+    /// cancelled: the interrupt callback gave up the call for it, whatever code FFmpeg passed
+    /// back (#709). <see cref="InvalidOperationException"/> for <c>AVERROR_EXIT</c> with the token
+    /// not cancelled: an interrupt this operation did not ask for, a fault rather than an end.
+    /// </remarks>
+    private static void ThrowIfInterrupted(int result, CancellationToken cancellationToken, string doing)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (result == FFAvUtil.AvErrorExit)
+        {
+            throw new InvalidOperationException(
+                $"FFmpeg gave up {doing} although the operation was not cancelled (AVERROR_EXIT)."
+            );
+        }
     }
 
     /// <summary>
@@ -330,6 +499,7 @@ public sealed class DemuxSession : IDemuxSession
     public unsafe void DiscardStream(int streamIndex)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        using var use = BeginUse(CancellationToken.None);
 
         nint ctx = _formatCtx.DangerousGetHandle();
         ref AVFormatContext fmtCtx = ref Unsafe.AsRef<AVFormatContext>((void*)ctx);
@@ -350,11 +520,17 @@ public sealed class DemuxSession : IDemuxSession
     }
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// The owner ends every use first, a demux pump's included (ADR-0086, decision 3.5). In a Debug
+    /// build a use still in flight makes this throw <see cref="InvalidOperationException"/> and
+    /// free nothing.
+    /// </remarks>
     public ValueTask DisposeAsync()
     {
         if (_disposed)
             return ValueTask.CompletedTask;
 
+        _uses.ThrowIfInUse(this);
         _disposed = true;
         _logger.LogDebug("DemuxSession disposing.");
 
@@ -364,10 +540,74 @@ public sealed class DemuxSession : IDemuxSession
         if (pkt != nint.Zero)
             FFAvCodec.av_packet_free(ref pkt);
 
-        // Free the format context. FormatContextHandle calls avformat_close_input.
+        // Free the format context. FormatContextHandle interrupts any call still blocked in it,
+        // calls avformat_close_input, and then frees the interrupt state.
         _formatCtx.Dispose();
 
         return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// Begins a use of the format context by one operation: counts it in a Debug build, forgets a
+    /// read the last operation's cancellation gave up, and has the interrupt callback observe
+    /// <paramref name="cancellationToken"/> until the use ends.
+    /// </summary>
+    /// <remarks>
+    /// Call it on the thread that makes the operation's native calls, and dispose the result when
+    /// the operation is over. The demux pump begins one for its whole run with the run's token,
+    /// since it reads the context directly (<see cref="DecodingPipeline.RunDemuxPumpAsync"/>).
+    /// Uses do not overlap: the session is not thread-safe.
+    /// </remarks>
+    /// <exception cref="ObjectDisposedException">The session has been disposed.</exception>
+    internal Use BeginUse(CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _uses.Enter();
+        ForgetInterruptedRead();
+        var replaced = _interrupt?.Enter(cancellationToken) ?? default;
+        return new Use(this, replaced);
+    }
+
+    /// <summary>
+    /// Begins a use that reads packets: <see cref="BeginUse"/>, refused while a read or a seek
+    /// given up partway has not been followed by a seek that completes.
+    /// </summary>
+    /// <exception cref="ObjectDisposedException">The session has been disposed.</exception>
+    /// <exception cref="InvalidOperationException">The demuxer's position is not reliable.</exception>
+    internal Use BeginRead(CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_positionLost)
+        {
+            throw new InvalidOperationException(
+                "A read or a seek of this demux session was given up partway (#709), so the "
+                    + "demuxer's position is not reliable. Seek before reading on."
+            );
+        }
+
+        return BeginUse(cancellationToken);
+    }
+
+    /// <summary>One operation's use of the format context, ended by <see cref="Dispose"/>.</summary>
+    internal readonly struct Use : IDisposable
+    {
+        private readonly DemuxSession? _session;
+        private readonly CancellationToken _replaced;
+
+        internal Use(DemuxSession session, CancellationToken replaced)
+        {
+            _session = session;
+            _replaced = replaced;
+        }
+
+        /// <summary>Restores the token the use replaced, and ends the use.</summary>
+        public void Dispose()
+        {
+            if (_session is null)
+                return;
+            _session._interrupt?.Exit(_replaced);
+            _session._uses.Exit();
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -378,11 +618,12 @@ public sealed class DemuxSession : IDemuxSession
     /// Reads the next packet from the format context.
     /// Returns <see langword="null"/> at end of stream.
     /// </summary>
-    private unsafe DemuxPacket? ReadNextPacket()
+    private unsafe DemuxPacket? ReadNextPacket(CancellationToken cancellationToken)
     {
         nint ctx = _formatCtx.DangerousGetHandle();
 
         int result = FFAvFormat.av_read_frame(ctx, _packet);
+        ThrowIfReadGivenUp(result, _packet, cancellationToken, "reading a packet");
 
         if (result == FFAvUtil.AvErrorEof)
         {
@@ -528,12 +769,15 @@ public sealed class DemuxSession : IDemuxSession
     /// without copying its data or counting it in the diagnostics.
     /// </summary>
     /// <returns>0 for a packet, <c>AVERROR_EOF</c> at the end, or another negative FFmpeg error code.</returns>
-    private unsafe int ReadProbePacket(out ProbePacket packet)
+    /// <exception cref="OperationCanceledException">The seek's token was cancelled.</exception>
+    /// <exception cref="InvalidOperationException">FFmpeg gave up the read with nothing cancelled.</exception>
+    private unsafe int ReadProbePacket(out ProbePacket packet, CancellationToken cancellationToken)
     {
         packet = default;
         nint ctx = _formatCtx.DangerousGetHandle();
 
         int result = FFAvFormat.av_read_frame(ctx, _packet);
+        ThrowIfReadGivenUp(result, _packet, cancellationToken, "reading a packet while seeking");
         if (result < 0)
             return result;
 

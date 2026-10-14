@@ -35,4 +35,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/FrameFlow.Graph/FrameFlow.Graph.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\StalledHttpSource.cs" Link="Shared\StalledHttpSource.cs" />
+  </ItemGroup>
 </Project>
