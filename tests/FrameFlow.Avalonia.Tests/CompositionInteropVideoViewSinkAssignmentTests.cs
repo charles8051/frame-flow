@@ -86,6 +86,25 @@ public sealed class CompositionInteropVideoViewSinkAssignmentTests
     }
 
     [AvaloniaFact]
+    public async Task AssigningASink_OverACallersSinkItsOwnerDisposed_GoesAhead()
+    {
+        // A disposed sink cannot be claimed, and presents nothing whoever still feeds it.
+        var view = new CompositionInteropVideoView();
+        var callers = new CompositionInteropVideoSink();
+        view.Sink = callers;
+        view.Initialize(new RecordingLoggerFactory());
+        var window = Show(view);
+        await callers.DisposeAsync();
+        var replacement = new CompositionInteropVideoSink();
+
+        view.Sink = replacement;
+
+        Assert.Same(replacement, view.Sink);
+        Assert.NotNull(replacement.FrameArrived);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void ClearingTheSink_WhileAttached_TakesTheCompositorSideDown()
     {
         // Presenting needs a sink. The last frame no longer stays up.

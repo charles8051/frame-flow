@@ -248,6 +248,56 @@ public sealed class CompositionInteropVideoViewReattachTests
     }
 
     [AvaloniaFact]
+    public void AStallSampledOnceTheViewHasStopped_IsNotRaised()
+    {
+        // The watchdog's timer can be mid-sample as the view stops presenting.
+        var view = new CompositionInteropVideoView();
+        var window = Show(view);
+        ((IVideoSurface)view).AttachSink(new RecordingLoggerFactory());
+        var raised = 0;
+        view.PresenterStalled += (_, _) => raised++;
+        var stall = new PresenterStallInfo(3000, 10, PresenterStalledReason.PresentLoopWedged);
+
+        view.OnStallDetected(stall);
+        Assert.Equal(1, raised);
+
+        Detach(window);
+        view.OnStallDetected(stall);
+
+        Assert.Equal(1, raised);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void AReattach_PresentsNothing_UntilThePreviousD3D12ConverterIsDisposed()
+    {
+        // The interop is what the presents wait on; the headless backend has none, and says so
+        // once the attachment stops waiting.
+        const string NoInterop = "ICompositionGpuInterop unavailable";
+        var view = new CompositionInteropVideoView();
+        var log = new RecordingLoggerFactory();
+        var window = Show(view);
+        ((IVideoSurface)view).AttachSink(log);
+        Detach(window);
+        var retired = new TaskCompletionSource();
+        view.D3D12Retired = retired.Task; // a D3D12 converter still being torn down
+        int Count(string text) => log.MessagesFrom<CompositionInteropVideoView>().Count(m => m.Contains(text, StringComparison.Ordinal));
+        var before = Count(NoInterop);
+
+        Reattach(window, view);
+
+        Assert.Equal(before, Count(NoInterop));
+        Assert.Equal(1, Count("waits for the previous attachment's D3D12 converter"));
+
+        retired.SetResult();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(before + 1, Count(NoInterop));
+        Assert.Equal(1, Count("Presenter resumes"));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public async Task DisposeAfterADetach_DisposesTheViewsOwnSink_WithoutASecondTeardown()
     {
         var view = new CompositionInteropVideoView();

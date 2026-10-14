@@ -113,6 +113,61 @@ public sealed class CompositionInteropVideoViewPausedPictureTests
     }
 
     [AvaloniaFact]
+    public async Task OneFrameSentTwice_LeavesOneReferenceHeld()
+    {
+        // A producer that yields one frame twice, as an operator passing input.AddRef() on twice
+        // does, has sent two references to the same instance. The view holds one of them.
+        var (view, window, sink) = ShowWithItsOwnSink();
+        var frame = await PresentAsync(view, sink);
+        frame.AddRef();
+
+        await PresentAsync(view, sink, frame);
+
+        Assert.Equal(1, frame.References);
+        await view.DisposeAsync();
+        Assert.Equal(0, frame.References);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task ReleasingTheClaim_WhilePresenting_ReleasesTheFramePresentedLast()
+    {
+        // The player is gone: its decoder surface is let go of, and the picture stays up as the
+        // compositor's copy.
+        var (view, window, sink) = ShowWithItsOwnSink();
+        var player = ((IClaimableSink)sink).TryClaim("a player")!;
+        var frame = await PresentAsync(view, sink);
+
+        player.Dispose();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, frame.References);
+        Assert.NotNull(sink.FrameArrived); // still presenting
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task TheReleaseAtAClaimsEnd_LeavesAFrameANewPlayerPresentedSince()
+    {
+        var (view, window, sink) = ShowWithItsOwnSink();
+        var first = ((IClaimableSink)sink).TryClaim("the first player")!;
+        var old = await PresentAsync(view, sink);
+        first.Dispose(); // posts the release; it has not run yet
+        using var second = ((IClaimableSink)sink).TryClaim("the second player");
+        var fresh = new CountedFrame();
+        await sink.PresentAsync(fresh, CancellationToken.None);
+        view.KeepPresented(sink.TakePendingFrame()!); // presented before the posted release runs
+
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, old.References); // released by the present that took over
+        Assert.Equal(1, fresh.References);
+        await view.DisposeAsync();
+        Assert.Equal(0, fresh.References);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public async Task DisposeAsync_ReleasesTheFramePresentedLast_EvenFromACallersSinkAPlayerHolds()
     {
         // The caller's sink outlives the view, and the player holding it keeps what it is given.
@@ -153,9 +208,15 @@ public sealed class CompositionInteropVideoViewPausedPictureTests
     /// Gives the sink a frame and plays the present: takes it as the present does, and keeps it as
     /// presented.
     /// </summary>
-    private static async Task<CountedFrame> PresentAsync(CompositionInteropVideoView view, CompositionInteropVideoSink sink)
+    private static Task<CountedFrame> PresentAsync(CompositionInteropVideoView view, CompositionInteropVideoSink sink) =>
+        PresentAsync(view, sink, new CountedFrame());
+
+    private static async Task<CountedFrame> PresentAsync(
+        CompositionInteropVideoView view,
+        CompositionInteropVideoSink sink,
+        CountedFrame frame
+    )
     {
-        var frame = new CountedFrame();
         await sink.PresentAsync(frame, CancellationToken.None);
         Dispatcher.UIThread.RunJobs();
         var taken = sink.TakePendingFrame();

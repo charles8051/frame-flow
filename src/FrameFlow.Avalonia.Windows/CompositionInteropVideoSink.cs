@@ -56,12 +56,10 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
         _logger = logger ?? NullLogger<CompositionInteropVideoSink>.Instance;
 
         // A frame kept while no view presents the sink is kept for the player that holds the
-        // claim. The gate runs this before it takes another claim, so it lets go of that player's
-        // frame and nothing the next one sends (ADR-0085, decision 2).
-        _claims = new SinkClaimGate(
-            typeof(CompositionInteropVideoSink),
-            released: () => _slot.SetKeepOffScreen(false)
-        );
+        // claim, and so is the frame a view bound to it presented last. The gate runs the release
+        // before it takes another claim, so it lets go of that player's frames and nothing the next
+        // one sends (ADR-0085, decision 2).
+        _claims = new SinkClaimGate(typeof(CompositionInteropVideoSink), released: OnClaimReleased);
     }
 
     /// <summary>
@@ -199,10 +197,11 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     /// <inheritdoc/>
     /// <remarks>
     /// The frame slot, the frame the view is presenting on the UI thread, and two more: the frame the
-    /// view presented last, which it holds until it has presented the next one, so that a paused
-    /// picture can be presented again after a trip out of the visual tree, and, for D3D12VA, the
-    /// frames of the converter's outstanding draws, which it holds until the GPU has read them and
-    /// of which the frame presented last is one.
+    /// view presented last, which it holds until it has drawn the next one into its ring, so that a
+    /// paused picture can be presented again after a trip out of the visual tree, and, for D3D12VA,
+    /// the frames of the converter's outstanding draws, which it holds until the GPU has read them
+    /// and of which the frame presented last is one. The view keeps a frame once it has been drawn,
+    /// even if its import or hand-off then fails, so that frame stays one of the draws.
     /// </remarks>
     public int? MaxHeldFrames => 2 + D3D12YuvSharedConverter.InFlight;
 
@@ -269,6 +268,27 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     /// retrying.
     /// </summary>
     internal bool HasPendingFrame => _slot.HasPending;
+
+    // Runs once per released claim, before the gate takes another, on the releasing thread.
+    private void OnClaimReleased()
+    {
+        try
+        {
+            _slot.SetKeepOffScreen(false);
+        }
+        finally
+        {
+            ClaimReleased?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// Raised, on the thread that released it, when a claim on this sink is released.
+    /// <see cref="CompositionInteropVideoView"/> sets this while it is bound to the sink, to let go
+    /// of the frame it presented last once the player that sent it is gone. The handler must not
+    /// block or throw: it runs inside the release.
+    /// </summary>
+    internal Action? ClaimReleased { get; set; }
 
     /// <inheritdoc />
     IDisposable? IClaimableSink.TryClaim(string claimant)
