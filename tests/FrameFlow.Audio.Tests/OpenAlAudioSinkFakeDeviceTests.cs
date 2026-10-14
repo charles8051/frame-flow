@@ -3,7 +3,9 @@
 
 using FrameFlow.Audio.OpenAL;
 using FrameFlow.Audio.TestKit;
+using FrameFlow.Graph;
 using FrameFlow.Media;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 
 namespace FrameFlow.Audio.Tests;
@@ -357,6 +359,58 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
         Assert.Single(device.CallNames, name => name == "DeleteSource");
     }
 
+    /// <summary>
+    /// A wait on the sink's clock made after its dispose ends as one in flight at the dispose
+    /// does, cancelled. It read the disposed shutdown source and threw
+    /// <see cref="ObjectDisposedException"/>, which a pacer reports as a fault of its item (#723).
+    /// </summary>
+    [Fact]
+    public async Task AClockWaitMadeAfterTheDispose_EndsCancelled()
+    {
+        var device = new FakeOpenAlDevice();
+        var sink = FakeOpenAlSink.Create(device, timeProvider: new FakeTimeProvider());
+        await sink.ActivateAsync(CancellationToken.None);
+        await sink.DisposeAsync();
+
+        var wait = ((IClockSource)sink).WaitUntilAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wait.AsTask());
+    }
+
+    /// <summary>
+    /// A present that has checked the sink is live, and is overtaken by a dispose before it
+    /// flushes, returns quietly. Its flush read the disposed shutdown source and threw
+    /// <see cref="ObjectDisposedException"/> (#723). The dispose lands at that point through the
+    /// sink's logger: the first block seats the clock's origin and logs it, after the check and
+    /// before the flush, on the presenting thread, which the dispose then runs on.
+    /// </summary>
+    /// <remarks>
+    /// That interleaving is stronger than production can produce: the logger runs under the sink's
+    /// lock, so the dispose re-enters it and gives the device back in the middle of the present's
+    /// critical section, where a real dispose on another thread would wait for the lock. What it
+    /// pins is the part a real race reaches too: the flush, after the dispose, reads the shutdown
+    /// token.
+    /// </remarks>
+    [Fact]
+    public async Task APresentOvertakenByADisposeBeforeItsFlush_ReturnsQuietly()
+    {
+        var device = new FakeOpenAlDevice();
+        OpenAlAudioSink? sink = null;
+        var logger = new DisposingLogger(
+            "BaseSourceTime DISCOVERED",
+            () => sink!.DisposeAsync().AsTask().GetAwaiter().GetResult()
+        );
+        sink = FakeOpenAlSink.Create(device, logger, new FakeTimeProvider());
+        await sink.ActivateAsync(CancellationToken.None);
+
+        // One block is the coalesce target, so the present flushes it.
+        await PresentBlockAsync(sink, amplitude: 500, blockIndex: 0);
+
+        Assert.True(logger.Disposed);
+        Assert.Equal(0, device.LeasesOutstanding);
+        Assert.DoesNotContain(device.CallNames, name => name == "SourceQueueBuffers");
+    }
+
     // ── The clock, headless ─────────────────────────────────────────────────
 
     /// <summary>
@@ -661,6 +715,36 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
                 hold._released.Task.Wait(TimeSpan.FromSeconds(30));
                 inner.Dispose();
             }
+        }
+    }
+
+    /// <summary>
+    /// Runs an action, once, when the sink logs a message that starts with a given text, on the
+    /// thread that logs it.
+    /// </summary>
+    private sealed class DisposingLogger(string startsWith, Action dispose) : ILogger<OpenAlAudioSink>
+    {
+        private int _ran;
+
+        /// <summary>Whether the action has run.</summary>
+        public bool Disposed => Volatile.Read(ref _ran) != 0;
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter
+        )
+        {
+            if (formatter(state, exception).StartsWith(startsWith, StringComparison.Ordinal)
+                && Interlocked.Exchange(ref _ran, 1) == 0)
+                dispose();
         }
     }
 

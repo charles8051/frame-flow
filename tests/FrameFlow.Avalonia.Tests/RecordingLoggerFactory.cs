@@ -11,7 +11,7 @@ internal sealed class RecordingLoggerFactory : ILoggerFactory
     private readonly object _gate = new();
     private readonly List<Entry> _entries = [];
 
-    public sealed record Entry(string Category, LogLevel Level, string Message);
+    public sealed record Entry(string Category, LogLevel Level, string Message, Exception? Error = null);
 
     public IReadOnlyList<Entry> Entries
     {
@@ -51,6 +51,6 @@ internal sealed class RecordingLoggerFactory : ILoggerFactory
             TState state,
             Exception? exception,
             Func<TState, Exception?, string> formatter
-        ) => owner.Add(new Entry(category, logLevel, formatter(state, exception)));
+        ) => owner.Add(new Entry(category, logLevel, formatter(state, exception), exception));
     }
 }
