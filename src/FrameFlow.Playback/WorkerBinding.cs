@@ -89,14 +89,19 @@ internal sealed partial class WorkerBinding<TWorker>
     }
 
     /// <summary>
-    /// Creates a worker via the factory and starts its loop on a fresh scope. Returns once the
-    /// loop has been started: the worker's long-running loop runs on the scope, which holds it
+    /// Creates a worker via the factory and starts its loop on a fresh scope, which holds the loop
     /// until it ends.
     /// </summary>
-    /// <returns><see cref="Task.CompletedTask"/>, also when the binding is already running or
-    /// stopping (double-start guard).</returns>
+    /// <returns>
+    /// A task that completes once the worker's <see cref="IStateBoundWorker.StartAsync"/> has been
+    /// called on the scope and has returned its loop, so what the worker sets up before its first
+    /// wait, such as the ticker's timer, is in place when the caller goes on, as it was when the
+    /// binding called it on the caller's thread. A completed task when the binding is already
+    /// running or stopping (double-start guard).
+    /// </returns>
     public Task StartAsync()
     {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (_gate)
         {
             if (_cycle is not null)
@@ -107,12 +112,20 @@ internal sealed partial class WorkerBinding<TWorker>
 
             var worker = _factory();
             var scope = new WorkScope();
-            scope.TryStart(WorkerTypeName, ct => RunWorkerAsync(worker, ct));
+            scope.TryStart(
+                WorkerTypeName,
+                ct =>
+                {
+                    var loop = RunWorkerAsync(worker, ct);
+                    started.TrySetResult();
+                    return loop;
+                }
+            );
             _cycle = new Cycle(worker, scope);
         }
 
         LogWorkerStarted(_logger);
-        return Task.CompletedTask;
+        return started.Task;
     }
 
     /// <summary>

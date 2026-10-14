@@ -24,6 +24,29 @@ public sealed class WorkerBindingTests
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
 
     [Fact]
+    public async Task AStart_CompletesOnlyOnceTheWorkerHasStartedItsLoop()
+    {
+        // The worker's start runs on the thread pool. What it sets up before its first wait, the
+        // ticker's timer for one, has to be in place when the caller goes on: a test that advances
+        // a fake clock right after a play otherwise advances it before the timer exists, and the
+        // tick never comes. The worker's start blocks here until the test lets it return, so the
+        // binding's start cannot complete before that.
+        var workers = new Workers { BlockStart = true };
+        var binding = new WorkerBinding<HeldWorker>(workers.Create);
+
+        var start = binding.StartAsync();
+        var worker = workers.Single();
+        await worker.Started.WaitAsync(Bound);
+
+        Assert.False(start.IsCompleted, "The start completed before the worker's own start had returned.");
+        worker.UnblockStart();
+        await start.WaitAsync(Bound);
+
+        worker.Release();
+        await binding.StopAsync().WaitAsync(Bound);
+    }
+
+    [Fact]
     public async Task AStop_CancelsTheWorker_WaitsForItsLoop_ThenDisposesIt()
     {
         var workers = new Workers();
@@ -175,6 +198,8 @@ public sealed class WorkerBindingTests
 
         public Exception? LoopThrows { get; init; }
 
+        public bool BlockStart { get; init; }
+
         public int Count
         {
             get
@@ -186,7 +211,7 @@ public sealed class WorkerBindingTests
 
         public HeldWorker Create()
         {
-            var worker = new HeldWorker(IgnoreToken, DisposeThrows, LoopThrows);
+            var worker = new HeldWorker(IgnoreToken, DisposeThrows, LoopThrows, BlockStart);
             lock (_created)
                 _created.Add(worker);
             return worker;
@@ -207,14 +232,16 @@ public sealed class WorkerBindingTests
 
     /// <summary>
     /// A worker whose loop runs until its token is cancelled or, when it ignores its token, until
-    /// <see cref="Release"/>. Records its stops and disposals, and whether it was disposed while
-    /// its loop still ran.
+    /// <see cref="Release"/>. Its start, when it blocks, holds the calling thread until
+    /// <see cref="UnblockStart"/>, as a start that sets something up before its first wait does.
+    /// Records its stops and disposals, and whether it was disposed while its loop still ran.
     /// </summary>
-    private sealed class HeldWorker(bool ignoreToken, Exception? disposeThrows, Exception? loopThrows)
+    private sealed class HeldWorker(bool ignoreToken, Exception? disposeThrows, Exception? loopThrows, bool blockStart)
         : IStateBoundWorker
     {
         private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ManualResetEventSlim _unblocked = new(initialState: !blockStart);
         private int _loopEnded;
         private int _stops;
         private int _disposals;
@@ -232,11 +259,14 @@ public sealed class WorkerBindingTests
 
         public void Release() => _released.TrySetResult();
 
+        public void UnblockStart() => _unblocked.Set();
+
         public async Task StartAsync(CancellationToken cancellationToken)
         {
             try
             {
                 _started.TrySetResult();
+                _unblocked.Wait();
                 if (loopThrows is not null)
                     throw loopThrows;
                 if (ignoreToken)
