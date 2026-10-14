@@ -137,8 +137,8 @@ public sealed class CompositionInteropVideoViewReattachTests
     [AvaloniaFact]
     public async Task AFrameKeptWhileDetached_IsPresentedOnReattach()
     {
-        // A paused, ended or single-frame item gives no other: the frame the player left is the one
-        // meant to be on screen when the view comes back.
+        // A player that pauses or ends while the view is away sends no other: the frame it sent
+        // last is the one meant to be on screen when the view comes back.
         var view = new CompositionInteropVideoView();
         var window = Show(view);
         var sink = (CompositionInteropVideoSink)((IVideoSurface)view).AttachSink(new RecordingLoggerFactory());

@@ -264,10 +264,11 @@ public sealed class LatestWinsFrameSlot
 
     /// <summary>
     /// Says whether the slot keeps its newest frame while it is off screen. An in-box sink keeps one
-    /// while a player holds its claim: the frame a paused or ended player left is the one meant to
-    /// be on screen when the view comes back. Letting go of it while off screen disposes it, so a
-    /// view out of sight pins nothing for a player that is gone. On screen it changes nothing until
-    /// the slot goes off screen.
+    /// while a player holds its claim: the newest frame a player sent while no view presented the
+    /// slot is the one meant to be on screen when a view comes back, and a player that has paused
+    /// or ended since sends no other. Letting go of it while off screen disposes it, so a view out
+    /// of sight pins nothing for a player that is gone. On screen it changes nothing until the slot
+    /// goes off screen.
     /// </summary>
     /// <param name="keep">Whether to keep the newest frame off screen.</param>
     internal void SetKeepOffScreen(bool keep) => Set(onScreen: null, keep);

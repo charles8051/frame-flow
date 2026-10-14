@@ -626,9 +626,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
 
         SetupComposition();
 
-        // The frame the sink kept while the view did not present, from a paused, ended or
-        // single-frame item, is the one meant to be on screen, and no later arrival is sure to
-        // come for it. The interop's readiness sweeps again.
+        // A frame the sink kept while the view did not present is the newest the player sent,
+        // and no later arrival is sure to come for it: the player may have paused or ended since.
+        // The interop's readiness sweeps again.
         SchedulePresentIfPending();
     }
 
