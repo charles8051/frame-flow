@@ -22,6 +22,8 @@ FrameFlow.Inference.WinML.WinMLInferenceSessionOptions.OptimizationLevel.get -> 
 FrameFlow.Inference.WinML.WinMLInferenceSessionOptions.OptimizationLevel.init -> void
 FrameFlow.Inference.WinML.WinMLInferenceSessionOptions.ProviderOptions.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>!
 FrameFlow.Inference.WinML.WinMLInferenceSessionOptions.ProviderOptions.init -> void
+FrameFlow.Inference.WinML.WinMLInferenceSessionOptions.SessionConfigEntries.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>!
+FrameFlow.Inference.WinML.WinMLInferenceSessionOptions.SessionConfigEntries.init -> void
 FrameFlow.Inference.WinML.WinMLProvider
 FrameFlow.Inference.WinML.WinMLProvider.AdapterLuid.get -> ulong?
 FrameFlow.Inference.WinML.WinMLProvider.AdapterLuid.init -> void
