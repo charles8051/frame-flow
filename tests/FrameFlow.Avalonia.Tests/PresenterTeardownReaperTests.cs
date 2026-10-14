@@ -7,7 +7,8 @@ namespace FrameFlow.Avalonia.Tests;
 /// <summary>
 /// Pins ADR-0086 decision 3 on <see cref="PresenterTeardownReaper"/>, the one route by which the
 /// interop view frees a producer it cannot free at once: nothing is disposed before the ring it
-/// filled is released, a wait that goes on is named once, the disposal runs on the thread pool
+/// filled is released, a wait for the release or for a dispose that goes on is named once, the
+/// disposal runs on the thread pool
 /// rather than on whatever thread released the ring, and every producer is disposed even when one
 /// throws, with the fault logged.
 /// </summary>
@@ -48,6 +49,33 @@ public sealed class PresenterTeardownReaperTests
         Assert.True(producer.DisposedAfterRelease);
         time.Advance(WarningInterval);
         Assert.Single(Warnings(log)); // said once, and nothing went wrong
+    }
+
+    [Fact]
+    public async Task ARetiredProducerWhoseDisposeDoesNotReturn_IsNamedOnce()
+    {
+        // As a lost device's Release can stall in the driver. The ring is released already, so the
+        // warning names the dispose, and the producer.
+        var log = new RecordingLoggerFactory();
+        var time = new FakeTimeProvider();
+        var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var producer = new RecordingProducer(holdDispose: hang.Task);
+
+        var retired = PresenterTeardownReaper.Retire(
+            Task.CompletedTask, log.CreateLogger("reaper"), time, producer);
+        await producer.WhenDisposed.WaitAsync(Bound);
+        time.Advance(WarningInterval);
+
+        Assert.Single(
+            Warnings(log),
+            m => m.Contains("has not returned", StringComparison.Ordinal)
+                && m.Contains(nameof(RecordingProducer), StringComparison.Ordinal));
+        Assert.False(retired.IsCompleted);
+
+        hang.SetResult();
+        await retired.WaitAsync(Bound);
+        time.Advance(WarningInterval);
+        Assert.Single(Warnings(log));
     }
 
     [Fact]

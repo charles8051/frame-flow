@@ -75,8 +75,8 @@ namespace FrameFlow.Avalonia.Windows;
 /// attachment's ring and producers on the UI thread before it waits, so a view that rejoins the
 /// tree meanwhile builds new ones, and the teardown never disposes or presents those. A producer
 /// the view drops while it presents, to rebuild or resize a converter, goes to the same reaper in
-/// the same order, gated on the presents that used its ring, and the teardown waits for it with
-/// its drain (ADR-0086, decision 3).
+/// the same order, gated on the presents that used the rings it filled, and the teardown waits for
+/// it within its bounded drain (ADR-0086, decision 3).
 /// </para>
 /// </remarks>
 public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBoxVideoSurface, IAsyncDisposable
@@ -210,11 +210,17 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     // until it is disposed.
     private Task _d3d12Retired = Task.CompletedTask;
 
-    // Completes once everything this attachment let go of while presenting is gone: each producer it
-    // dropped has been disposed by the reaper, and each ring it detached on a source flip has been
-    // released by the compositor (ADR-0086, decision 3). Never faults. UI thread only. The teardown
-    // takes it and waits for it with the drain.
-    private Task _retiring = Task.CompletedTask;
+    // Completes once the compositor has released every ring this attachment detached while
+    // presenting, on a source flip or with a producer it dropped (ADR-0064's order). A flip keeps the
+    // old ring's producer, so a later drop of that producer, and the teardown's producers, wait for
+    // all of them, not only the ring current then. Never faults. UI thread only.
+    private Task _ringsReleased = Task.CompletedTask;
+
+    // Completes once every producer this attachment dropped while presenting has been disposed by the
+    // reaper (ADR-0086, decision 3). Never faults. UI thread only. The teardown waits for it within
+    // its bounded drain, apart from its own producers: a dispose that hangs holds nothing else, and
+    // the reaper names it.
+    private Task _retirements = Task.CompletedTask;
 
     // Present cadence/cost instrumentation (#128). UI thread only — PresentPending is the
     // sole caller — so it needs no synchronization. Reports about every 2 s at 60 Hz, and is
@@ -1743,9 +1749,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         // the compositor's open copy of the old ring's keyed mutex; clearing the array without
         // disposing leaks those opens and leaves the old ring co-owned. DetachImported also clears
         // the present tasks, which is what frees the whole ring for the plan's index-0 pick. The old
-        // ring's producer stays, so nothing is retired: the teardown waits for the release instead.
+        // ring's producer stays, so nothing is retired: its release is kept for whatever disposes
+        // that producer later.
         if (plan.ReimportRing)
-            _retiring = Join(_retiring, DetachImported());
+            DetachRing();
 
         // Apply the planned source/size/cursor back onto the live fields so the rest of the shell
         // (and the next frame's snapshot) sees the threaded-forward state. The plan advances the
@@ -2064,36 +2071,49 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
         SuperResolutionLease.Process.Release(this);
 
         // The next attachment waits for this to present (InitInteropAsync): a D3D12 converter
-        // holds decoder frames for its draws until it is disposed (ADR-0085, decision 2). Joined
-        // with any this attachment dropped while presenting, which it waits for as well.
+        // holds decoder frames for its draws until it is disposed (ADR-0085, decision 2).
         var producersDisposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (d3d12Converter is not null)
-            _d3d12Retired = Join(_d3d12Retired, producersDisposed.Task);
+        _d3d12Retired = D3D12GateAfterTeardown(_d3d12Retired, d3d12Converter is not null, producersDisposed.Task);
 
-        // What this attachment let go of while presenting: the producers it dropped, which the
-        // reaper disposes once their rings are released, and the rings a source flip detached.
-        var retiring = _retiring;
-        _retiring = Task.CompletedTask;
+        // What this attachment let go of while presenting: the rings it detached, whose release the
+        // producers taken above wait for, since a source flip kept their producer; and the producers
+        // it dropped, which the reaper disposes on its own.
+        var ringsReleased = _ringsReleased;
+        var retirements = _retirements;
+        _ringsReleased = Task.CompletedTask;
+        _retirements = Task.CompletedTask;
 
         // Step 3: drain in-flight presents (a present holding key 1 must finish and release
         // to 0). Both the imported disposal and the drain need the compositor render thread
-        // to make progress, so wait on them together under one bounded timeout, with what this
-        // attachment let go of while presenting.
+        // to make progress, so wait on them together under one bounded timeout, with the rings
+        // this attachment detached earlier.
         var presentDrain = DrainPresentsAsync(presentSnapshot);
-        var gating = Task.WhenAll(importedDisposal, presentDrain, retiring);
+        var gating = Task.WhenAll(importedDisposal, presentDrain, ringsReleased);
         return FinishTeardownAsync(
-            gating, watchdogStopped, teardownStart, _logger, producersDisposed, converter, d3d12Converter, uploader);
+            gating, retirements, watchdogStopped, teardownStart, _logger, producersDisposed, converter, d3d12Converter, uploader);
     }
 
     /// <summary>
+    /// The gate the next attachment waits on once a teardown has run (ADR-0085, decision 2): the
+    /// gate as it stood, joined with the disposal of the teardown's producers when it took a D3D12
+    /// converter, which holds decoder frames for its draws until it is disposed. Joined, never
+    /// replaced: a D3D12 converter dropped while presenting and still being disposed holds the next
+    /// attachment as well.
+    /// </summary>
+    internal static Task D3D12GateAfterTeardown(Task gate, bool tookD3D12Converter, Task producersDisposed) =>
+        tookD3D12Converter ? Join(gate, producersDisposed) : gate;
+
+    /// <summary>
     /// Steps 3 and 4 of <see cref="StopPresenting"/>: waits for the compositor to drain, then
-    /// disposes the producers it was handed, or hands them to the reaper, and ends once the stall
-    /// watchdog's check in flight has returned. Static, so it can reach nothing of the view's but
-    /// what one teardown took from it. Completes <paramref name="producersDisposed"/> once they are
+    /// disposes the producers it was handed, or hands them to the reaper; waits, within the same
+    /// bound, for the producers the attachment dropped earlier; and ends once the stall watchdog's
+    /// check in flight has returned. Static, so it can reach nothing of the view's but what one
+    /// teardown took from it. Completes <paramref name="producersDisposed"/> once they are
     /// disposed, by either path.
     /// </summary>
     private static async Task FinishTeardownAsync(
         Task gating,
+        Task retirements,
         Task watchdogStopped,
         long teardownStart,
         ILogger logger,
@@ -2105,16 +2125,22 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     {
         try
         {
-            var drained = await AwaitBoundedAsync(gating, PresentDrainTimeout).ConfigureAwait(false);
+            // One bound for the drain and for the producers dropped earlier.
+            var deadline = gating.IsCompleted && retirements.IsCompleted
+                ? Task.CompletedTask
+                : Task.Delay(PresentDrainTimeout);
+            var drained = await CompletesByAsync(gating, deadline).ConfigureAwait(false);
 
             if (drained)
             {
                 // Compositor released the keyed mutex; destroying the producer ring is now safe.
-                // We're on a thread-pool continuation (ConfigureAwait(false)), never the UI
-                // thread — so even the borrowed-device Release at the converter's tail can't
-                // hang the UI. Each is disposed even when one before it throws, and what they
-                // threw ends the teardown (ADR-0086, decision 3.4).
-                var fault = PresenterTeardownReaper.DisposeEach([converter, d3d12Converter, uploader]);
+                // Disposed on the thread pool, never the UI thread, which a drain that had already
+                // completed would still be on — so even the borrowed-device Release at the
+                // converter's tail can't hang the UI. Each is disposed even when one before it
+                // throws, and what they threw ends the teardown (ADR-0086, decision 3.4).
+                var fault = await PresenterTeardownReaper
+                    .DisposeOffThreadAsync([converter, d3d12Converter, uploader])
+                    .ConfigureAwait(false);
                 producersDisposed.TrySetResult();
                 if (fault is not null)
                     ExceptionDispatchInfo.Throw(fault);
@@ -2148,6 +2174,11 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
                         TaskScheduler.Default
                     );
             }
+
+            // The producers the attachment dropped earlier, waited for within the same bound and
+            // never handed to the reaper again: each is already held by a retirement, which names
+            // a dispose that does not return (ADR-0086, decision 3.3).
+            await CompletesByAsync(retirements, deadline).ConfigureAwait(false);
         }
         finally
         {
@@ -2220,17 +2251,15 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     }
 
     /// <summary>
-    /// Awaits <paramref name="task"/> but returns <see langword="false"/> if it does not
-    /// complete within <paramref name="timeout"/> (instead of blocking forever). The
+    /// Awaits <paramref name="task"/> but returns <see langword="false"/> if it has not
+    /// completed by <paramref name="deadline"/> (instead of blocking forever). The
     /// timed-out task is left running for the reaper to observe.
     /// </summary>
-    private static async Task<bool> AwaitBoundedAsync(Task task, TimeSpan timeout)
+    private static async Task<bool> CompletesByAsync(Task task, Task deadline)
     {
-        if (task.IsCompleted)
-            return true;
-        var delay = Task.Delay(timeout);
-        var winner = await Task.WhenAny(task, delay).ConfigureAwait(false);
-        return ReferenceEquals(winner, task);
+        if (!task.IsCompleted)
+            await Task.WhenAny(task, deadline).ConfigureAwait(false);
+        return task.IsCompleted;
     }
 
     /// <summary>
@@ -2256,10 +2285,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
 
     /// <summary>
     /// Hands producers the view dropped while presenting to the reaper, which disposes them off the
-    /// UI thread once the compositor has released the ring they filled: its imported images
+    /// UI thread once the compositor has released the rings they filled: each ring's imported images
     /// disposed and the presents that used it drained (ADR-0064's keyed-mutex order; ADR-0086,
-    /// decision 3). Detaches that ring, so the next present imports a new one. The teardown waits
-    /// for the disposal with its drain. UI thread.
+    /// decision 3). Detaches the current ring, so the next present imports a new one. The teardown
+    /// waits for the disposal within its bounded drain. UI thread.
     /// </summary>
     /// <param name="holdsDecoderFrames">
     /// Whether a producer is a D3D12 converter, which holds decoder frames for its draws until it is
@@ -2269,15 +2298,22 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     /// <returns>The disposal, which completes once they are disposed. Never faults.</returns>
     internal Task RetireProducers(bool holdsDecoderFrames, params IDisposable?[] producers)
     {
-        var released = DetachImported();
-        var retired = PresenterTeardownReaper.Retire(released, _logger, RetirementTime, producers);
-
-        // The release too, for a call that dropped nothing: the teardown waits for the ring either way.
-        _retiring = Join(_retiring, Join(released, retired));
+        // Gated on every ring detached so far, not only this one: a ring a source flip detached
+        // earlier may be one of these producers' own.
+        DetachRing();
+        var retired = PresenterTeardownReaper.Retire(_ringsReleased, _logger, RetirementTime, producers);
+        _retirements = Join(_retirements, retired);
         if (holdsDecoderFrames)
             _d3d12Retired = Join(_d3d12Retired, retired);
         return retired;
     }
+
+    /// <summary>
+    /// Detaches the imported ring, as a source flip does, and keeps its release with those of the
+    /// rings detached before it, for whatever disposes their producers. UI thread. The flip calls
+    /// it; tests call it in place of a flip, which needs frames from two sources.
+    /// </summary>
+    internal void DetachRing() => _ringsReleased = Join(_ringsReleased, DetachImported());
 
     /// <summary>
     /// A task that completes once <paramref name="held"/> and <paramref name="added"/> both have,

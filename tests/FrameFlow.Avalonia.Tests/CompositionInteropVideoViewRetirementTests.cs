@@ -8,9 +8,11 @@ namespace FrameFlow.Avalonia.Tests;
 
 /// <summary>
 /// Pins ADR-0086 decision 3 on <see cref="CompositionInteropVideoView"/>'s work in flight: a producer
-/// it drops while presenting is disposed only once the presents that used its ring have drained, a
-/// D3D12 converter dropped that way holds back the next attachment as one a teardown took does, the
-/// teardown waits for what was dropped, and it waits for a stall check already running.
+/// it drops while presenting is disposed only once the presents on every ring it may have filled have
+/// drained, a source flip's ring included; a D3D12 converter dropped that way holds back the next
+/// attachment as one a teardown took does; the teardown's producers wait for the rings, and for a
+/// dropped producer's dispose only within the teardown's bound; and the teardown waits for a stall
+/// check already running.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -113,11 +115,12 @@ public sealed class CompositionInteropVideoViewRetirementTests
     }
 
     [AvaloniaFact]
-    public async Task TheDispose_WaitsWithItsDrain_ForAProducerDroppedWhilePresenting()
+    public async Task TheDispose_WaitsWithItsDrain_ForTheRingsDetachedWhilePresenting()
     {
-        // The hand-off is held past the drain's bound, so the teardown cannot drain cleanly if it
-        // waits for the dropped producer: it hands its own to the reaper, and the dropped one is
-        // still undisposed when the dispose returns.
+        // The hand-off is held past the drain's bound, so the ring the dropped producer filled is
+        // not released. The teardown's own producers wait for every ring the attachment detached,
+        // since a source flip may have kept one's producer: it cannot drain cleanly, hands its own
+        // to the reaper, and the dropped one is still undisposed when the dispose returns.
         var view = new CompositionInteropVideoView();
         var log = new RecordingLoggerFactory();
         var window = Show(view);
@@ -137,6 +140,109 @@ public sealed class CompositionInteropVideoViewRetirementTests
         await retired.WaitAsync(Bound);
         Assert.True(producer.DisposedAfterRelease);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task AProducerDroppedAfterASourceFlip_WaitsForThePresentsOnTheRingTheFlipDetached()
+    {
+        // A flip detaches the ring and keeps its producer. Dropped later, that producer waits for
+        // the presents still on the ring the flip detached, not only for the ring current at the
+        // drop, which has none here.
+        var time = new FakeTimeProvider();
+        var view = new CompositionInteropVideoView { RetirementTime = time };
+        var log = new RecordingLoggerFactory();
+        var window = Show(view);
+        ((IVideoSurface)view).AttachSink(log);
+        var oldRing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        view.TrackHandOff(0, oldRing.Task);
+        view.DetachRing();
+        var producer = new RecordingProducer(oldRing.Task);
+
+        var retired = view.RetireProducers(holdsDecoderFrames: false, producer);
+        time.Advance(WarningInterval);
+
+        Assert.Equal(1, Count(log, "waits for the compositor to release the ring"));
+        Assert.False(producer.Disposed);
+
+        oldRing.SetResult();
+        await retired.WaitAsync(Bound);
+
+        Assert.True(producer.DisposedAfterRelease);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task AProducerWhoseDisposeDoesNotReturn_HoldsNeitherTheDrainNorTheDispose()
+    {
+        // Its ring is released at once, and then its dispose does not return until the test says, as
+        // a lost device's Release can stall in the driver. The teardown waits for it only within its
+        // bound, beside the drain: it drains cleanly, disposes its own producers, and completes.
+        var view = new CompositionInteropVideoView();
+        var log = new RecordingLoggerFactory();
+        var window = Show(view);
+        ((IVideoSurface)view).AttachSink(log);
+        var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var producer = new RecordingProducer(holdDispose: hang.Task);
+        var retired = view.RetireProducers(holdsDecoderFrames: false, producer);
+        await producer.WhenDisposed.WaitAsync(Bound);
+
+        var disposing = view.DisposeAsync().AsTask();
+
+        // It waits for the stuck dispose, within its bound: everything else completed at once.
+        Assert.False(disposing.IsCompleted);
+        await disposing.WaitAsync(Bound);
+
+        Assert.Equal(1, Count(log, "Presenter teardown completed cleanly"));
+        Assert.Equal(0, Count(log, "did not drain in-flight presents"));
+        Assert.False(retired.IsCompleted); // still in its dispose
+
+        hang.SetResult();
+        await retired.WaitAsync(Bound);
+        window.Close();
+    }
+
+    [Fact]
+    public async Task TheGateAfterATeardownThatTookAD3D12Converter_StillWaitsForOneDroppedWhilePresenting()
+    {
+        // The teardown joins the gate rather than replacing it: a D3D12 converter dropped while
+        // presenting, still being disposed, holds the next attachment as the teardown's own does.
+        var droppedEarlier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tookAtTeardown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var gate = CompositionInteropVideoView.D3D12GateAfterTeardown(
+            droppedEarlier.Task, tookD3D12Converter: true, tookAtTeardown.Task);
+        tookAtTeardown.SetResult();
+        await tookAtTeardown.Task;
+
+        Assert.False(gate.IsCompleted);
+
+        droppedEarlier.SetResult();
+        await gate.WaitAsync(Bound);
+    }
+
+    [Fact]
+    public async Task TheGateAfterATeardownThatTookAD3D12Converter_WaitsForItsDisposal()
+    {
+        var tookAtTeardown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var gate = CompositionInteropVideoView.D3D12GateAfterTeardown(
+            Task.CompletedTask, tookD3D12Converter: true, tookAtTeardown.Task);
+
+        Assert.False(gate.IsCompleted);
+        tookAtTeardown.SetResult();
+        await gate.WaitAsync(Bound);
+    }
+
+    [Fact]
+    public void TheGateAfterATeardownThatTookNoD3D12Converter_IsTheGateAsItStood()
+    {
+        var droppedEarlier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tookAtTeardown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var gate = CompositionInteropVideoView.D3D12GateAfterTeardown(
+            droppedEarlier.Task, tookD3D12Converter: false, tookAtTeardown.Task);
+
+        Assert.Same(droppedEarlier.Task, gate);
     }
 
     [AvaloniaFact]

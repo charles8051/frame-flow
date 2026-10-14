@@ -67,16 +67,21 @@ internal static class PresenterTeardownReaper
     /// compositor has let go of the ring they filled, its imported images disposed and the presents
     /// that used it drained. Returns immediately; disposal happens on a thread-pool thread.
     /// </summary>
-    /// <param name="gating">The release of the ring the producers filled.</param>
-    /// <param name="logger">Where the disposal, a fault, and a wait that goes on are logged.</param>
+    /// <param name="gating">
+    /// The release of every ring the producers may have filled: the one current when they were
+    /// dropped, and any a source flip detached before it.
+    /// </param>
+    /// <param name="logger">Where the disposal, a fault, and a retirement that goes on are logged.</param>
     /// <param name="timeProvider">
-    /// Times the wait. Once it has gone on for <see cref="SlowWorkWarning.DefaultInterval"/>, a
-    /// warning says so, once (ADR-0086, decision 3.3); the producers stay held, not freed.
+    /// Times the retirement. Once it has gone on for <see cref="SlowWorkWarning.DefaultInterval"/>, a
+    /// warning says once what it is still waiting for, the compositor's release or the producers'
+    /// dispose (ADR-0086, decision 3.3). The producers stay held, not freed, until the release.
     /// </param>
     /// <param name="producers">The producers to dispose.</param>
     /// <returns>
     /// A task that completes once the producers have been disposed, which may be never if the
-    /// compositor never lets go. It never faults: what a dispose throws is logged.
+    /// compositor never lets go or a dispose never returns. It never faults: what a dispose throws
+    /// is logged.
     /// </returns>
     public static Task Retire(
         Task gating,
@@ -124,27 +129,24 @@ internal static class PresenterTeardownReaper
     )
     {
         var dropped = timeProvider.GetTimestamp();
+        var retirement = new Retirement(gating, producers, logger);
+        var retiring = retirement.RunAsync();
         try
         {
+            // One warning for the whole retirement, naming the stage it is stuck in: a dispose that
+            // never returns holds the producer as surely as a release that never comes.
             await SlowWorkWarning
-                .AwaitAsync(
-                    gating,
-                    SlowWorkWarning.DefaultInterval,
-                    timeProvider,
-                    () =>
-                        logger.LogWarning(
-                            "Presenter waits for the compositor to release the ring of a producer it dropped while "
-                                + "presenting; the producer is held, not freed, until it does (ADR-0086)."
-                        )
-                )
+                .AwaitAsync(retiring, SlowWorkWarning.DefaultInterval, timeProvider, retirement.Warn)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Presenter gating for a dropped producer faulted; disposing it anyway.");
+            // RunAsync catches everything; a guard, so a retirement never faults.
+            logger.LogDebug(ex, "Presenter retirement of a dropped producer faulted.");
+            return;
         }
 
-        if (await DisposeOffThreadAsync(producers).ConfigureAwait(false) is { } fault)
+        if (await retiring.ConfigureAwait(false) is { } fault)
         {
             logger.LogWarning(fault, "Presenter hit an error disposing a producer it dropped while presenting.");
             return;
@@ -158,13 +160,63 @@ internal static class PresenterTeardownReaper
     }
 
     /// <summary>
+    /// One retirement: waits for the ring's release, then disposes the producers off the thread
+    /// that completed it, and knows which of the two it is in, for the warning.
+    /// </summary>
+    private sealed class Retirement(Task gating, IDisposable?[] producers, ILogger logger)
+    {
+        private int _disposing;
+
+        public async Task<Exception?> RunAsync()
+        {
+            try
+            {
+                await gating.ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // A faulted present has still released its keyed mutex.
+                logger.LogDebug(ex, "Presenter gating for a dropped producer faulted; disposing it anyway.");
+            }
+
+            Volatile.Write(ref _disposing, 1);
+            return await DisposeOffThreadAsync(producers).ConfigureAwait(false);
+        }
+
+        public void Warn()
+        {
+            if (Volatile.Read(ref _disposing) == 0)
+            {
+                logger.LogWarning(
+                    "Presenter waits for the compositor to release the ring of {Producers}, which it dropped while "
+                        + "presenting; it is held, not freed, until the compositor does (ADR-0086).",
+                    Names(producers)
+                );
+            }
+            else
+            {
+                logger.LogWarning(
+                    "Presenter's dispose of {Producers}, which it dropped while presenting, has not returned (ADR-0086).",
+                    Names(producers)
+                );
+            }
+        }
+    }
+
+    private static string Names(IDisposable?[] producers) =>
+        string.Join(", ", producers.OfType<IDisposable>().Select(p => p.GetType().FullName?.Split('.')[^1]));
+
+    /// <summary>
     /// Disposes every producer on a thread-pool thread, each on its own, and returns what they
     /// threw: the one exception, or an <see cref="AggregateException"/> of several, or
-    /// <see langword="null"/>. The gating may complete on the compositor's thread, and a
-    /// producer's dispose can wait on the GPU.
+    /// <see langword="null"/>. The gating may complete on the compositor's thread, or have completed
+    /// already on the UI thread, and a producer's dispose can wait on the GPU. With nothing to
+    /// dispose, it completes at once.
     /// </summary>
-    private static Task<Exception?> DisposeOffThreadAsync(IDisposable?[] producers) =>
-        Task.Run(() => DisposeEach(producers));
+    internal static Task<Exception?> DisposeOffThreadAsync(IReadOnlyList<IDisposable?> producers) =>
+        producers.All(p => p is null)
+            ? Task.FromResult<Exception?>(null)
+            : Task.Run(() => DisposeEach(producers));
 
     /// <summary>
     /// Disposes every producer in <paramref name="producers"/>, skipping null entries, each even
