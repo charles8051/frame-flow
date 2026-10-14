@@ -681,6 +681,58 @@ a view's sink for the view's whole life, so two players built against one view w
 it for as long as both live. A claim taken at build fails before anything is decoded, and names the
 cause.
 
+### 19. `CompositionInteropVideoView` keeps its sink until it is disposed
+
+**A change in behaviour, not a compile error.**
+
+The zero-copy view disposed its own sink on every detach from the visual tree and made a new one on
+the next `EnsureSink`. A player built with the first sink went on feeding a disposed sink, and the
+view showed nothing until the app built the player again. The view now keeps one sink for its whole
+life, its own or one assigned through `Sink`, and a detach only stops it presenting: the compositor
+side and the stall watchdog go, as before, and a reattach presents the same sink again. A player
+built before the trip keeps working (ADR-0085, decision 2; #691).
+
+- The view's own sink is no longer disposed on a detach; only `DisposeAsync` disposes it. `Sink`
+  no longer reads `null` after a detach, and `EnsureSink` and `IVideoSurface.AttachSink` return the
+  same sink after a reattach. This replaces what entry 12 says about the view's own sink.
+- While the view does not present, before its first attach as after a detach, its sink keeps only
+  its newest frame, and only while a player holds its claim (entry 18). The reattach presents that
+  frame first. A frame the view presented before the detach is not kept, so a picture paused
+  before the detach comes back with the next frame the player sends. With no claim, as when a graph
+  built by hand feeds it, the sink disposes each frame it is given and does not count it in
+  `FramesAccepted`, and releasing the claim disposes the frame it kept. Nothing is presented and
+  `FramePresented` is not raised. The new `CompositionInteropVideoSink.FramesDiscardedOffScreen`
+  counts these frames; `FramesSuperseded` and the diagnostics snapshot's `FramesDropped` do not.
+- Assigning `Sink` first claims the outgoing sink. While a player or pass holds it, the assignment
+  throws `InvalidOperationException` naming the holder, and nothing changes. Otherwise the outgoing
+  sink is disposed, if the view made it, or let go of, as before.
+- Assigning `null` to `Sink` while the view is in the visual tree takes the compositor side down and
+  stops the stall watchdog, as a detach does. The last frame used to stay on screen.
+- `DisposeAsync` on a view that never joined the visual tree runs no compositor teardown, and logs
+  none.
+- A reattach after the view presented D3D12VA frames presents nothing until the previous D3D12
+  converter has been disposed, which releases the decoder frames it still held.
+
+**Who hits this.** Code that relied on a detach to dispose the view's own sink, or read `Sink` after
+a detach and took `null` to mean the view was done with it. Code that took a sink from `EnsureSink`
+after a reattach and built a new player with it while the old player was still alive: the sink is
+the old one, and the build fails at its claim. Code that assigns `Sink` while a player built against
+the outgoing sink is alive, or clears `Sink` to blank the view and expects the last frame to stay.
+
+**What to write instead.** Nothing, to keep a player across a tab switch, a panel swap or a docking
+move: build it once against the view. To replace the sink, dispose the player first:
+
+```csharp
+await player.DisposeAsync(); // the sink stays claimed until this completes
+view.Sink = replacement;     // disposes the view's own sink, or lets a caller's go
+```
+
+A sink of your own that you gave the view only to outlive a detach, as entry 12 suggested, keeps
+working, and is no longer needed for that. Dispose the view to release its own sink.
+
+**Why.** A player depends on its sink, not on where the view sits in the visual tree, and a sink
+disposed on every detach stranded the player built with it on every tab switch.
+
 ### Not breaking, but worth knowing
 
 - **A new timeline is not a stall to the PRESENT GAP check.** `AvaloniaVideoSink` warned PRESENT
