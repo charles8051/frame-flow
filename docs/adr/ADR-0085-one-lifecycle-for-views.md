@@ -438,6 +438,10 @@ Each slice carries its own BREAKING-CHANGES entry.
 #704 fixed what slice 3 found in the pacer (#701): when a sink's present threw, the pacer disposed
 the frame the sink already owned. A sink now owns the frame from the call, even when the call
 throws, which decision 8 already said of a fan-out's targets. BREAKING-CHANGES entry 22 records it.
+A sink that throws no longer stops the pacer for the rest of the item without a word (#703). Each
+failure costs its frame and is reported on `ErrorOccurred`, and a sink that throws on more than
+eight calls in a row faults the item, as a fault in its decoding does. BREAKING-CHANGES entry 24
+records it.
 
 What differs from the decisions, slice by slice. None reverses one.
 
@@ -524,8 +528,6 @@ What is left:
   order is still open.
 - #698: the interop view can keep a gone player's last frame, when that frame was pending as the
   claim ended and was presented after it, until the next present, a detach or its dispose.
-- #703: a video sink that throws once stops the pacer's delivery loop for the rest of the item, and
-  nothing reports it. That predates this record too; it was found while fixing #701.
 
 ## Consequences
 

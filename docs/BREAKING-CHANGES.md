@@ -986,6 +986,57 @@ feeds the surface, and it keeps a build from claiming the surface while the swap
 controls had their own ways of following a transport across trips out of the visual tree; they now
 share the views' lifecycle and its binding number.
 
+### 24. A video sink that throws is reported, and one that keeps throwing fails the item
+
+**A change in behaviour, not a compile error.**
+
+When a player's video sink threw from `PresentAsync` or `OnFormatChangedAsync`, the player stopped
+handing it frames for the rest of the item. The picture stopped on the last frame presented, the
+player stayed in `Playing` and raised nothing, and the item did not end on its own, so a queue did
+not move on (#703).
+
+Each call that throws now costs the frame it was for, and the player goes on with the next frame:
+
+- The player raises the failure on `ErrorOccurred` and stays in its state. The `PlaybackError` has
+  `ErrorCategory.System`, names the sink's type, and carries what the sink threw as `Inner`. An
+  `OperationCanceledException` the sink throws while the player is not stopping counts the same way.
+- A frame whose `OnFormatChangedAsync` threw is not presented, and the next frame announces its format
+  again first, so no frame of a format the sink refused reaches `PresentAsync`.
+- A sink that throws on more than eight calls in a row fails the item, as a fault in its decoding
+  does. The player raises `ItemFailed` with `FaultedDuringPlayback`, and `ErrorOccurred`, with an
+  error that wraps what the sink threw last, and moves on. Under `RepeatMode.Off` a last item that
+  fails ends the queue in `Ended`. A sink that fails every item puts the player in `Error` once more
+  than eight items have failed in a row. A frame the sink takes starts its count of calls again.
+- The first failure is logged at Warning, then at most one more every five seconds, with how many
+  went to Debug in between. The failure that fails the item has a Warning of its own.
+
+A pass does not change. It stops at the first call that throws, and `RunToCompletionAsync` throws a
+`GraphFaultException` naming the `video-sink` node, with what the sink threw as its inner exception.
+
+**Who hits this.** An app with a video sink of its own that can throw, which used to see its video
+freeze without a word. It now sees `ErrorOccurred` for each failure, and the item ends if the sink
+keeps failing. Code that treats every `ErrorOccurred` as the end of playback now stops on one dropped
+frame.
+
+**What to write instead.** Read the player's state, or `ItemFailed`, to tell a dropped frame from an
+item or a player that failed:
+
+```csharp
+player.ErrorOccurred.Subscribe(error =>
+{
+    if (player.State != PlaybackState.Error)
+        logger.LogWarning(error.Inner, "Playback carried on after: {Message}", error.Message);
+});
+```
+
+A sink that cannot draw a frame it can afford to lose can dispose it and return rather than throw.
+
+**Why.** A sink that failed once, a surface rebuild that failed at the boundary to an item of a new
+size for instance, stopped the video for the whole item, and the item never ended, where the failure
+could have cost one frame. The pacer already kept a throwing callback from ending its delivery; a
+throwing sink now gets the same treatment, and one that cannot present at all is reported rather than
+hidden (ADR-0085, #703).
+
 ### Not breaking, but worth knowing
 
 - **A new timeline is not a stall to the PRESENT GAP check.** `AvaloniaVideoSink` warned PRESENT

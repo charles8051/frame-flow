@@ -61,6 +61,16 @@ namespace FrameFlow.Playback;
 /// than at decode speed. <see cref="BeginRun"/> resets that state per run.
 /// </para>
 /// <para>
+/// <b>A sink that throws (#703).</b> A call to the inner sink's
+/// <c>OnFormatChangedAsync</c> or <c>PresentAsync</c> that throws costs the frame it was for, and
+/// delivery goes on with the next one. Each failure is reported through the session's
+/// recoverable-error path. A sink that fails more than
+/// <see cref="PacerSinkFailures.MaxConsecutiveFailures"/> calls in a row is reported as a worker
+/// fault, and delivery stops until the session disposes the pacer. A frame whose format the sink
+/// refused never reaches its <c>PresentAsync</c>: the next frame announces the format again first
+/// (<see cref="VideoFormatAnnouncer"/>).
+/// </para>
+/// <para>
 /// <b>Lifecycle / ownership.</b> Constructed and owned by
 /// <see cref="SubstrateSession"/> around the consumer's sink. The decorator does
 /// <b>not</b> own the inner sink (ADR-0044: sessions are users, not owners, of
@@ -205,7 +215,21 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         }
         catch (Exception ex)
         {
-            LogStarvationCallbackFailed(_logger, what, ex);
+            LogCallbackFailed(_logger, what, ex);
+        }
+    }
+
+    private void Raise<T>(Action<T>? callback, T argument, string what)
+    {
+        if (callback is null)
+            return;
+        try
+        {
+            callback(argument);
+        }
+        catch (Exception ex)
+        {
+            LogCallbackFailed(_logger, what, ex);
         }
     }
 
@@ -474,6 +498,13 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     private readonly Action? _onStarved;
     private readonly Action? _onFed;
 
+    // Report a call to the sink that threw, and a sink that keeps throwing (#703). Raised on the
+    // delivery loop, outside _gate. The run of failures they decide on is the loop's own, and the
+    // timestamp is what the logging measures its interval from.
+    private readonly Action<PlaybackError>? _onSinkFailed;
+    private readonly Action<Exception>? _onSinkFaulted;
+    private readonly long _createdAt;
+
     /// <summary>
     /// How long delivery may stay held waiting for a reseat that never comes. A backstop:
     /// every path that arms the hold has a matching release, and the reseat itself runs in
@@ -552,6 +583,16 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// playing, with more input to come (#547). Once per underrun.
     /// </param>
     /// <param name="onFed">Raised when a frame arrives, or the input completes, after <paramref name="onStarved"/>.</param>
+    /// <param name="onSinkFailed">
+    /// Raised for each call to <paramref name="inner"/> that throws while the pacer is not stopping,
+    /// with the frame it was for dropped and delivery going on (#703). Not raised for the call that
+    /// escalates, or after it.
+    /// </param>
+    /// <param name="onSinkFaulted">
+    /// Raised once, when <paramref name="inner"/> has thrown on more than
+    /// <see cref="PacerSinkFailures.MaxConsecutiveFailures"/> calls in a row. Delivery stops there,
+    /// and the pacer waits to be disposed.
+    /// </param>
     public ClockSelectVideoSink(
         IVideoSink inner,
         IClockSource clock,
@@ -561,7 +602,9 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         TimeProvider? timeProvider = null,
         VideoFormatAnnouncer? formatAnnouncer = null,
         Action? onStarved = null,
-        Action? onFed = null
+        Action? onFed = null,
+        Action<PlaybackError>? onSinkFailed = null,
+        Action<Exception>? onSinkFaulted = null
     )
     {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
@@ -583,6 +626,9 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         _space = new SemaphoreSlim(capacity, capacity);
         _onStarved = onStarved;
         _onFed = onFed;
+        _onSinkFailed = onSinkFailed;
+        _onSinkFaulted = onSinkFaulted;
+        _createdAt = _timeProvider.GetTimestamp();
 
         _deliveryLoop = Task.Run(() => RunDeliveryLoopAsync(_shutdownCts.Token));
     }
@@ -616,7 +662,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     internal static int? MaxHeldFramesOver(IVideoSink inner, int capacity = DefaultCapacity) =>
         inner.MaxHeldFrames is { } kept ? capacity + 1 + kept : null;
 
-    /// <summary>Total frames delivered to the inner sink (selected as due).</summary>
+    /// <summary>Total frames delivered to the inner sink (selected as due) that it took without throwing.</summary>
     public int Presented => Volatile.Read(ref _presented);
 
     /// <summary>Total frames dropped because a fresher due frame superseded them.</summary>
@@ -1089,6 +1135,9 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     {
         var dropped = new List<IVideoFrame>(_capacity);
         var waitSw = new Stopwatch();
+        // The calls to the sink that have failed in a row (#703). Only this loop calls the sink,
+        // so only this loop reads or writes it.
+        var sinkFailures = default(PacerSinkFailures);
         try
         {
             while (!ct.IsCancellationRequested)
@@ -1436,11 +1485,40 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                 // wait for the sink or a throwing OnFormatChangedAsync, and the sink owns it
                 // from IVideoSink.PresentAsync on, even when that throws. Disposing it here as
                 // well would release a reference the sink has already given back, or still
-                // holds. A cancellation leaves through the shutdown catch below, and any other
-                // failure faults the loop, which nothing reports yet (#703).
-                await _formatAnnouncer
-                    .PresentAsync(_inner, present, ct)
-                    .ConfigureAwait(false);
+                // holds.
+                try
+                {
+                    await _formatAnnouncer
+                        .PresentAsync(_inner, present, ct)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception) when (ct.IsCancellationRequested)
+                {
+                    // Stopping. Whatever the sink threw on the way out is not a failure to report.
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    // A sink that throws costs this frame and is reported, and delivery goes on:
+                    // ending the loop here stopped the video for the rest of the item, with
+                    // nothing said (#703). An OperationCanceledException the sink raised while the
+                    // pacer is not stopping is a failure like any other.
+                    (sinkFailures, var verdict) = sinkFailures.Failed(
+                        _timeProvider.GetElapsedTime(_createdAt)
+                    );
+                    if (!ReportSinkFailure(verdict, ex))
+                        continue;
+
+                    // The sink has failed too many calls in a row, and the session tears this
+                    // item down as it does for any worker that faults. Delivery stops until then:
+                    // the frames still in the ring stay there, and the teardown below releases
+                    // them. Carrying on would hand more frames to a sink that has failed on every
+                    // one, and could let the run drain to an end of stream after its fault.
+                    await ParkedAwaitAsync(Task.Delay(Timeout.InfiniteTimeSpan, ct)).ConfigureAwait(false);
+                    break;
+                }
+
+                sinkFailures = sinkFailures.Presented();
                 Interlocked.Increment(ref _presented);
             }
         }
@@ -1461,6 +1539,50 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                 f.Dispose();
             if (remaining.Count > 0)
                 _space.Release(remaining.Count);
+        }
+    }
+
+    /// <summary>
+    /// Logs a call to the sink that threw and reports it as <paramref name="verdict"/> says.
+    /// Returns <see langword="true"/> when it escalated, and delivery has to stop.
+    /// </summary>
+    private bool ReportSinkFailure(SinkFailureVerdict verdict, Exception ex)
+    {
+        var sinkType = _inner.GetType().Name;
+        switch (verdict.Action)
+        {
+            case SinkFailureAction.Report:
+                if (verdict.Warn)
+                    LogSinkFailed(_logger, sinkType, verdict.InARow, verdict.NotWarned, ex);
+                else
+                    LogSinkFailedQuietly(_logger, sinkType, verdict.InARow, ex);
+                Raise(
+                    _onSinkFailed,
+                    new PlaybackError(
+                        ErrorCategory.System,
+                        $"The video sink {sinkType} threw on a frame, which was dropped: {ex.Message}",
+                        ex
+                    ),
+                    "sink failed"
+                );
+                return false;
+
+            case SinkFailureAction.Escalate:
+                // The exception goes with the fault, which the session logs as the item's.
+                LogSinkFaulted(_logger, sinkType, verdict.InARow);
+                Raise<Exception>(
+                    _onSinkFaulted,
+                    new InvalidOperationException(
+                        $"The video sink {sinkType} threw on {verdict.InARow} calls in a row.",
+                        ex
+                    ),
+                    "sink faulted"
+                );
+                return true;
+
+            default:
+                // Already faulted: delivery stopped at the escalation.
+                return true;
         }
     }
 
@@ -1512,7 +1634,25 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     private static partial void LogFed(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "ClockSelect's {What} callback threw; delivery continues.")]
-    private static partial void LogStarvationCallbackFailed(ILogger logger, string what, Exception ex);
+    private static partial void LogCallbackFailed(ILogger logger, string what, Exception ex);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "ClockSelect's video sink {SinkType} threw ({InARow} in a row, {NotWarned} more logged at Debug since the last warning); the frame is dropped and delivery continues."
+    )]
+    private static partial void LogSinkFailed(ILogger logger, string sinkType, int inARow, int notWarned, Exception ex);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "ClockSelect's video sink {SinkType} threw ({InARow} in a row); the frame is dropped and delivery continues."
+    )]
+    private static partial void LogSinkFailedQuietly(ILogger logger, string sinkType, int inARow, Exception ex);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "ClockSelect's video sink {SinkType} threw on {InARow} calls in a row; delivery stops and the sink is reported as faulted."
+    )]
+    private static partial void LogSinkFaulted(ILogger logger, string sinkType, int inARow);
 
     [LoggerMessage(
         Level = LogLevel.Debug,

@@ -151,6 +151,9 @@ public interface IPlaybackController : IAsyncDisposable
     /// changing state. Failed items put it in <see cref="PlaybackState.Error"/> only when
     /// they keep failing in a row. A controller created with lateness recovery enabled
     /// raises an error if the recovery walk faults, and plays on without changing state.
+    /// So does a controller whose video sink throws on a frame: the frame is dropped and the
+    /// next one presented. A sink that throws on more than eight calls in a row fails the item,
+    /// as a fault in its decoding does (#703).
     /// </remarks>
     IObservable<PlaybackError> ErrorOccurred { get; }
 

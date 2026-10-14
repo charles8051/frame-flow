@@ -91,6 +91,15 @@ internal sealed class VideoFormatAnnouncer
     /// successfully told — which is what recording the baseline first would have done.
     /// </para>
     /// <para>
+    /// <b>A sink that refuses a format (#703).</b> That is the whole rule for one. The frame whose
+    /// announcement threw is dropped, and the pacer counts it as one of the sink's failures. Each
+    /// later frame of that format asks again before it is presented, rather than being dropped
+    /// unasked, so a sink that fails once, rebuilding a surface for instance, takes the format up at
+    /// the next frame, and no frame of it reaches <see cref="IVideoSink.PresentAsync"/> before the
+    /// sink has taken it. A sink that refuses every time fails every call, and the pacer reports it
+    /// as faulted.
+    /// </para>
+    /// <para>
     /// <b>Ownership (#701).</b> This takes ownership of <paramref name="frame"/> on entry, and the
     /// caller does not dispose it afterwards, whatever the outcome. A failure before the hand-off,
     /// a cancelled wait for the sink or a throwing <see cref="IVideoSink.OnFormatChangedAsync"/>,

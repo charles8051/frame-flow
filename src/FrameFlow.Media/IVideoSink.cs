@@ -89,9 +89,18 @@ public interface IVideoSink : IAsyncDisposable
     /// <c>SinkNode&lt;IVideoFrame&gt;</c> body.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The sink owns the frame from the call, even when the call throws or is cancelled. A caller
     /// never disposes a frame it has handed over, so a sink that fails disposes the frame, or
     /// leaves it with whatever it handed it to, before it throws (#701).
+    /// </para>
+    /// <para>
+    /// Under a player, a call that throws costs that frame: the player reports the exception on its
+    /// <c>ErrorOccurred</c> and presents the next frame. A sink that throws on more than eight
+    /// calls in a row, counting <see cref="OnFormatChangedAsync"/>, faults the item, as a fault in
+    /// its decoding does (#703). A pass stops at the first call that throws, and its run throws
+    /// the failure.
+    /// </para>
     /// </remarks>
     /// <param name="frame">The frame to present. Ownership transfers to the sink.</param>
     /// <param name="ct">Cancellation token observed during async work (rare).</param>
@@ -101,6 +110,12 @@ public interface IVideoSink : IAsyncDisposable
     /// Called when the video stream format changes (resolution, pixel format).
     /// The sink should reconfigure its rendering surfaces accordingly.
     /// </summary>
+    /// <remarks>
+    /// A player calls this before the first frame of each new format. When it throws, the frame is
+    /// not presented and counts as a failed <see cref="PresentAsync"/> does, and the next frame
+    /// calls this again before it is presented, so no frame of a format the sink refused reaches
+    /// <see cref="PresentAsync"/> (#703).
+    /// </remarks>
     /// <param name="format">The new video format.</param>
     /// <param name="ct">Cancellation token.</param>
     ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct);

@@ -765,7 +765,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                     // A source that stops delivering starves the ring; the controller reports
                     // Rebuffering until frames flow again (#547).
                     onStarved: _callbacks.OnBufferUnderrun,
-                    onFed: _callbacks.OnBufferReady
+                    onFed: _callbacks.OnBufferReady,
+                    // A sink that throws costs the frame, and the controller reports it on
+                    // ErrorOccurred and plays on. One that keeps throwing faults the item, as a
+                    // fault in the graph or the pump does (#703).
+                    onSinkFailed: _callbacks.OnRecoverableError,
+                    onSinkFaulted: ReportWorkerFault
                 );
                 // Seat the cap on the gate state this pacer is born into — a session
                 // prepared while paused (a playlist advance mid-pause) must not arm the cap

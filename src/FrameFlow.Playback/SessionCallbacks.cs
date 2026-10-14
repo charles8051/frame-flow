@@ -32,8 +32,8 @@ namespace FrameFlow.Playback;
 /// <param name="OnBufferUnderrun">Invoked when the buffer underruns during playback.</param>
 /// <param name="OnRecoverableError">
 /// Invoked when the session hits an error and carries on, such as a playlist item that
-/// fails and is skipped. The controller reports it on <c>ErrorOccurred</c> and does not
-/// change state.
+/// fails and is skipped, or a video sink that throws on a frame (#703). The controller reports
+/// it on <c>ErrorOccurred</c> and does not change state.
 /// </param>
 /// <param name="OnCurrentItemChanged">
 /// Invoked when a session that presents several items, a playlist, makes a new item

@@ -205,7 +205,9 @@ public interface IMediaTransport : IAsyncDisposable
     /// An error does not always stop playback. A single-source player raises it
     /// as it enters <see cref="PlaybackState.Error"/>. An
     /// <see cref="IMediaPlayer"/> also raises it for an item that fails,
-    /// and keeps playing; see that interface.
+    /// and keeps playing; see that interface. A video sink that throws on a frame
+    /// is raised here too, the frame is dropped, and the next one is presented. A
+    /// sink that throws on more than eight calls in a row fails the item (#703).
     /// </para>
     /// <para>
     /// <b>Paired with <see cref="IMediaPlayer.ItemFailed"/>.</b> An item failure reaches both,
