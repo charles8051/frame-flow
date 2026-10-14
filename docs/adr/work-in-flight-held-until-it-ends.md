@@ -204,6 +204,10 @@ scope:
   `OperationCanceledException`, and the scope still holds the work, so the next `StopAsync` waits
   for it.
 
+A scope serves one run. Once stopped, it starts nothing new, and the next run gets a fresh scope.
+The owner keeps the current run's scope and every older scope that still holds work, and decision 2
+starts a run only when no older scope holds any. Disposal stops all of them.
+
 Nothing that touches an owned resource is started with `_ = Task.Run(...)` or held in a bare task
 field. A cancellation source is cancelled before it is disposed, and only by its scope.
 
@@ -255,11 +259,18 @@ way:
 2. **Cancel, then await, then free.** Cancel the owner's work and await it through its scope. Then
    free resources in reverse allocation order (ADR-0005, ADR-0020) and release claims last
    (ADR-0085 decision 6).
-3. **No bound, no abandon.** The wait has no timeout, and no task is abandoned. Work that native
-   code holds is made cancellable by decision 4. Where work truly cannot be cancelled or confirmed
-   finished, such as a GPU fence on a device that never signals, the owner leaks the resource
-   rather than freeing it and logs once, as `D3D12YuvSharedConverter` and `PresenterTeardownReaper`
-   already do.
+3. **Nothing is freed early; the caller's wait is the caller's.** No task is abandoned, and no
+   resource or claim is released before the work that uses it has ended. The dispose's task
+   completes when the teardown does. A caller that cannot wait that long, such as an application
+   closing its window, bounds its own await (`DisposeAsync().AsTask().WaitAsync(timeout)`); the
+   owner keeps the work, the resources and the claims, and frees them when the work ends, as the
+   reaper does. Work the library runs is made to observe cancellation by decision 4. Work an
+   application supplies, such as a sink or a graph node that ignores its token, is the case a
+   caller's bound exists for. After a warning interval (for example 5 s), the owner logs once which
+   work has not ended, so a stuck dispose names its cause. Where work can never be confirmed
+   finished, such as a GPU fence on a device that never signals, the owner leaks the resource rather
+   than freeing it and logs once, as `D3D12YuvSharedConverter` and `PresenterTeardownReaper` already
+   do.
 4. **Faults are returned, not swallowed.** The first call collects the failures of its own steps and
    returns them as one exception, which every caller sees. A work fault caused by the dispose's own
    cancellation is not a failure. A work fault from before the dispose was already reported
@@ -347,7 +358,8 @@ Each slice carries its own BREAKING-CHANGES entry where an app can see a change.
 
 - A dispose or a seek now waits for the old work to observe its cancellation. With decision 4 that
   is short for the library's own work. An application's node or sink that ignores its token holds
-  it for as long as it ignores it.
+  the teardown, its resources and its claims for as long as it ignores it. The caller can bound its
+  own wait, and the warning names the work, but the resources stay held until it ends.
 - A seek completes after the old run has unwound, not as soon as it is accepted. Scrubbing feels
   the unwind; coalescing keeps it to one unwind per burst. The runtime slice measures it.
 - Slice 4 rewrites the reposition and teardown of a 2,219-line class on the main playback path. It
@@ -370,6 +382,31 @@ Each slice carries its own BREAKING-CHANGES entry where an app can see a change.
 right. The audit that found them also found more of the same shape: the overwritten task fields,
 the never-awaited recovery task, the pacer and OpenAL second dispose, and the interop view's
 untracked disposals. Ten mechanisms stay ten, and the next owner picks an eleventh.
+
+### Join the tasks and stop there
+
+Keep each task until it completes and make every stop and dispose join it, as
+`PlaylistSession.DisposeAsync` and `PreparedRuntime.DisposeRuntimeAsync` do, without a core for
+the item runtime. That fixes #707's use after free, and the local #707 fix does exactly this. It
+lands first and is decision 1 applied to one class.
+
+It does not fix the defects in `SubstrateSession` that are about phase rather than tasks:
+
+- the run number advances on an interrupted stop (`:1384`);
+- a resume after an interrupted reposition finds a cancelled source that is not null and starts
+  nothing (`:1022`);
+- nothing stops a second warm-up from starting a graph beside a live one (`:869-877`), though no
+  caller is known to warm a runtime twice;
+- the reposition paths (`TaskPolicy`, `Reuse`, `Rebuild`) were never decided anywhere.
+
+Each of these follows from a phase spread over a dozen fields and flags, which each path reads and
+writes in its own order. ADR-0055 and ADR-0076 met the same problem one layer up and answered it with a core,
+and their exhaustive walks are what keep the decode loop and the queue correct today. Decision 2 is
+that answer for the runtime.
+
+Coalescing superseding seeks is not needed for safety. It is needed because safety makes a seek wait
+for the old run to unwind, and without coalescing a scrub would pay that wait once per superseded
+target.
 
 ### Bound the wait, then free
 
@@ -415,3 +452,12 @@ Cancelled or Failed upward, as today.
 3. **The views.** The interop view's 250 ms bounded drain before it defers to the reaper is a bounded
    wait on the UI thread. Should it follow decision 3, or is the reaper's deferral the right answer
    on a UI thread that must not block?
+
+## Revision history
+
+- **2026-10-14, review turn 1.** Decision 3 bounded nothing for an application's sink or node that
+  ignores its token, so a dispose could hang for good. It now separates the caller's wait from the
+  teardown: a caller may bound its own wait, nothing is freed or released until the work ends, and
+  the owner logs which work has not ended. Decision 1 now says a scope serves one run and how older
+  scopes are kept. A new alternative, "Join the tasks and stop there", says why the runtime needs a
+  core and not only joined tasks.
