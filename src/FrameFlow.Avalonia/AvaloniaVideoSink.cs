@@ -37,6 +37,15 @@ namespace FrameFlow.Avalonia;
 /// It is an <see cref="IClaimableSink"/>: a second player or pass built against it while the
 /// first holds it fails (ADR-0085, decision 6).
 /// </para>
+/// <para>
+/// <b>While no view presents it</b> (ADR-0085, decisions 2 and 3): before the view's first attach,
+/// after a detach, and once a view has let it go, the sink keeps only its newest frame while a
+/// player holds its claim, and disposes the one that frame replaces. With no claim it keeps nothing
+/// and disposes each frame it is given, and releasing the claim disposes the frame it kept. Nothing
+/// is copied or presented and <see cref="FramePresented"/> is not raised. Those frames are counted
+/// in <see cref="FramesDiscardedOffScreen"/>, not as drops. A sink no view has taken up, such as one
+/// a host drains through <see cref="RenderPendingFrame"/>, works as it always has.
+/// </para>
 /// </remarks>
 public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSource, IClaimableSink
 {
@@ -48,11 +57,15 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
 
     private readonly ILogger<AvaloniaVideoSink> _logger;
     private readonly LatestWinsFrameSlot _slot = new();
-    private readonly SinkClaimGate _claims = new(typeof(AvaloniaVideoSink));
+    private readonly SinkClaimGate _claims;
     private readonly VideoSinkTelemetry _telemetry;
     private readonly TimeProvider _timeProvider;
     private readonly long _createdTimestamp;
     private volatile bool _disposed;
+
+    // Frames the view had taken from the slot and copied, and let go of undrawn when it stopped
+    // presenting this sink. The slot counts its own off-screen discards.
+    private long _discardedByView;
 
     // Stall-detection state: when the most recent PresentAsync frame arrived, how long it is meant
     // to show, and the timeline it belongs to. Used to flag a frame arriving > 500 ms after the
@@ -72,15 +85,30 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     /// <summary>
     /// Gets the total number of frames that never reached the screen: superseded in the
     /// slot before anything took them, plus copied into the back buffer but overwritten
-    /// before the UI thread swapped them in.
+    /// before the UI thread swapped them in. Frames let go of while no view presented the
+    /// sink are not counted here; see <see cref="FramesDiscardedOffScreen"/>.
     /// </summary>
     public int DroppedFrameCount => (int)_telemetry.DroppedCount;
+
+    /// <summary>
+    /// Total frames this sink discarded while no view presented it (ADR-0085, decision 2): replaced
+    /// by a newer frame while a player held its claim, disposed on arrival while none did, let go
+    /// when the claim was released or the view stopped presenting the sink, or copied by the view
+    /// and not yet drawn when it stopped.
+    /// </summary>
+    /// <remarks>
+    /// Not a drop. <see cref="DroppedFrameCount"/> and the diagnostics snapshot's
+    /// <c>FramesDropped</c> leave these out, so a view in a background tab, fed at 60 fps, does not
+    /// read as a presenter that cannot keep up.
+    /// </remarks>
+    public long FramesDiscardedOffScreen => _slot.DiscardedOffScreen + Interlocked.Read(ref _discardedByView);
 
     /// <summary>
     /// Raised on the presenting (graph) thread once <see cref="PresentAsync"/> has installed
     /// a frame. <see cref="FrameFlowVideoView"/> sets this so it can take the frame and copy
     /// it into the back buffer off the UI thread (ADR-0016 Decision 1). Null when no view is
-    /// attached, in which case frames sit in the slot until something pulls them.
+    /// bound, in which case frames sit in the slot until something pulls them, or, while no view
+    /// presents the sink, are kept or disposed as the type's remarks say.
     /// </summary>
     /// <remarks>
     /// The handler runs inline on the presenting thread, so its cost is paid by the pacing
@@ -166,6 +194,28 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     }
 
     /// <summary>
+    /// Records that a frame the view took and copied never drew because the view stopped
+    /// presenting this sink first: a detach, a dispose, or the view letting the sink go. Counted
+    /// into <see cref="FramesDiscardedOffScreen"/>, not as a drop (ADR-0085, decision 2).
+    /// </summary>
+    internal void RecordDiscardedOffScreen() => Interlocked.Increment(ref _discardedByView);
+
+    /// <summary>
+    /// Whether a view presents this sink. <see cref="FrameFlowVideoView"/> sets it as it starts and
+    /// stops presenting the sink, and as it takes the sink up or lets it go; see the type's remarks
+    /// for what the sink keeps while it is <see langword="false"/>. A sink starts presented, so one
+    /// no view has taken up works as it always has.
+    /// </summary>
+    internal void SetPresented(bool presented) => _slot.SetOnScreen(presented);
+
+    /// <summary>
+    /// Whether a frame is waiting in the slot: one the sink kept while no view presented it, or
+    /// one installed in the instant before the view's callback went on. The view sweeps for it as
+    /// it binds and as it starts presenting. A point-in-time observation.
+    /// </summary>
+    internal bool HasPendingFrame => _slot.HasPending;
+
+    /// <summary>
     /// Initializes an Avalonia video sink.
     /// </summary>
     /// <param name="logger">Optional logger for diagnostics.</param>
@@ -182,6 +232,11 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
         _createdTimestamp = timeProvider.GetTimestamp();
         _telemetry = new VideoSinkTelemetry(Meters, _slot);
         _logger = logger ?? NullLogger<AvaloniaVideoSink>.Instance;
+
+        // A frame kept while no view presents the sink is kept for the player that holds the
+        // claim. The gate runs the release before it takes another claim, so it lets go of that
+        // player's frame and nothing the next one sends (ADR-0085, decision 2).
+        _claims = new SinkClaimGate(typeof(AvaloniaVideoSink), released: () => _slot.SetKeepOffScreen(false));
         LogSinkCreated(_logger);
     }
 
@@ -197,7 +252,8 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     /// <inheritdoc />
     /// <remarks>
     /// After <see cref="DisposeAsync"/> the sink disposes the frame and neither counts nor keeps
-    /// it (ADR-0085, decision 4).
+    /// it (ADR-0085, decision 4). While no view presents it, it keeps or disposes the frame as the
+    /// type's remarks say.
     /// </remarks>
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
     {
@@ -255,8 +311,11 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
         }
 
         // Latest-wins: the slot disposes any superseded frame and counts the drop, and once
-        // DisposeAsync has closed it, disposes this frame instead of installing it. The result
-        // drives this sink's drop telemetry (meter + log) outside the slot.
+        // DisposeAsync has closed it, disposes this frame instead of installing it. So does a
+        // slot no view presents while no player holds the claim (ADR-0085, decision 2); one that
+        // keeps the frame installs it, replacing the one it kept without counting a drop, and the
+        // view leaves it there until it presents. The result drives this sink's drop telemetry
+        // (meter + log) outside the slot.
         switch (_slot.Install(frame))
         {
             case FrameSlotInstall.Refused:
@@ -331,7 +390,7 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     /// <remarks>
     /// The frame slot, and a frame taken by <see cref="RenderPendingFrame"/>, which its caller
     /// holds while it renders and the slot fills again. A bound view copies the frame out and
-    /// releases it in the call.
+    /// releases it in the call. The frame the sink keeps while no view presents it is the slot's.
     /// </remarks>
     public int? MaxHeldFrames => 2;
 
@@ -340,7 +399,16 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Cpu;
 
     /// <inheritdoc />
-    IDisposable? IClaimableSink.TryClaim(string claimant) => _claims.TryClaim(claimant);
+    IDisposable? IClaimableSink.TryClaim(string claimant)
+    {
+        // Kept from here until the lease is released, which runs the gate's hook. The two cannot
+        // cross: the hook for the claim before this one has run before this claim could be taken,
+        // and this lease is not out yet.
+        var lease = _claims.TryClaim(claimant);
+        if (lease is not null)
+            _slot.SetKeepOffScreen(true);
+        return lease;
+    }
 
     /// <inheritdoc />
     string? IClaimableSink.Claimant => _claims.Claimant;
