@@ -9,10 +9,10 @@ namespace FrameFlow.Avalonia.Tests;
 /// <remarks>
 /// The named cases pin the sequences the ADR's decisions describe, among them #663's: a caller's
 /// sink, a detach and a reattach. <see cref="EverySequence_KeepsTheLifecycleInvariants"/> then walks
-/// every sequence of the seven events up to <see cref="MaxSequenceLength"/> long, from both initial
-/// states, playing the shell: it does each transition's work, in order, on numbered targets, and
-/// checks the properties the shell relies on after every step. It grew out of
-/// <c>InteropViewLifecycleTests</c>, which walks the four events of the interop view's own core.
+/// every sequence of the seven events, of any length, from both initial states, playing the shell:
+/// it does each transition's work, in order, on numbered targets, and checks the properties the
+/// shell relies on after every step. It grew out of <c>InteropViewLifecycleTests</c>, which walks
+/// the four events of the interop view's own core.
 /// </remarks>
 public sealed class SurfaceLifecycleTests
 {
@@ -31,8 +31,6 @@ public sealed class SurfaceLifecycleTests
 
         EnsureOwned,
     }
-
-    private const int MaxSequenceLength = 8;
 
     private static readonly Event[] Events = Enum.GetValues<Event>();
 
@@ -385,44 +383,60 @@ public sealed class SurfaceLifecycleTests
     [Fact]
     public void EverySequence_KeepsTheLifecycleInvariants()
     {
-        var path = new Event[MaxSequenceLength];
-        long sequences = 0;
+        var seen = new HashSet<(SurfacePhase, bool, SurfaceTarget, ShellModel)>();
         foreach (var initial in new[] { SurfaceLifecycle.Initial, SurfaceLifecycle.AwaitingInitialize })
-            Walk(initial, initial, ShellModel.Empty, path, depth: 0, ref sequences);
+            Walk(initial, initial, ShellModel.Empty, [], seen);
 
-        long perStart = 0;
-        long ofLength = 1;
-        for (var n = 0; n <= MaxSequenceLength; n++)
-        {
-            perStart += ofLength;
-            ofLength *= Events.Length;
-        }
-
-        Assert.Equal(2 * perStart, sequences);
+        // The walk reached every phase holding every kind of target, initialised or not, except
+        // that a disposed control holds nothing.
+        var expected =
+            from phase in Enum.GetValues<SurfacePhase>()
+            from initialized in new[] { false, true }
+            from target in Enum.GetValues<SurfaceTarget>()
+            where phase != SurfacePhase.Disposed || target == SurfaceTarget.None
+            select (phase, initialized, target);
+        var reached = seen.Select(s => (s.Item1, s.Item2, s.Item3)).Distinct();
+        Assert.Equal(expected.Order(), reached.Order());
     }
 
-    // Depth first: each prefix runs once, for every sequence that starts with it.
+    // Depth first over the states the walk can be in, each visited once. What a transition does,
+    // and what Check finds, depends on the lifecycle's phase, initialisation and target, on which
+    // of the shell's targets are held and bound, and on the history the model keeps. It does not
+    // depend on a target's number, only on which numbers are equal, or on the binding number's
+    // value: the machine only adds to it, and Check compares it before and after. So a state is
+    // visited once under its canonical key, and that covers every sequence that reaches it, of any
+    // length. The path is the sequence that first reached it, for the failure message.
     private static void Walk(
         SurfaceLifecycle initial,
         SurfaceLifecycle state,
         ShellModel shell,
-        Event[] path,
-        int depth,
-        ref long sequences
+        List<Event> path,
+        HashSet<(SurfacePhase, bool, SurfaceTarget, ShellModel)> seen
     )
     {
-        sequences++;
-        if (depth == MaxSequenceLength)
+        if (!seen.Add((state.Phase, state.Initialized, state.Target, Canonical(shell))))
             return;
 
         foreach (var e in Events)
         {
-            path[depth] = e;
+            path.Add(e);
             var t = Step(state, e);
-            var after = Check(initial, state, shell, t, path, depth + 1);
-            Walk(initial, t.Next, after, path, depth + 1, ref sequences);
+            var after = Check(initial, state, shell, t, path);
+            Walk(initial, t.Next, after, path, seen);
+            path.RemoveAt(path.Count - 1);
         }
     }
+
+    // Renumbers the shell's targets: 1 for the one it holds, 2 for one bound but not held, and the
+    // next new target 3. Every check compares target numbers only for equality, and a new target's
+    // number is unlike any other, so the renumbered model checks the same.
+    private static ShellModel Canonical(ShellModel shell) =>
+        shell with
+        {
+            Held = shell.Held == 0 ? 0 : 1,
+            Bound = shell.Bound == 0 ? 0 : shell.Bound == shell.Held ? 1 : 2,
+            NextTarget = 3,
+        };
 
     /// <summary>
     /// What the shell holds once it has done the work so far. Targets are numbered as they are
@@ -449,24 +463,23 @@ public sealed class SurfaceLifecycleTests
         SurfaceLifecycle before,
         ShellModel shell,
         SurfaceTransition t,
-        Event[] path,
-        int length
+        List<Event> path
     )
     {
-        var e = path[length - 1];
+        var e = path[^1];
         var work = t.Work;
         var next = t.Next;
         var heldBefore = shell.Held;
         var heldOwnedBefore = shell.HeldOwned;
         var boundBefore = shell.Bound;
 
-        // Built only on a failure: there are millions of steps.
+        // Built only on a failure.
         void Ensure(bool ok, string what)
         {
             if (!ok)
             {
                 Assert.Fail(
-                    $"{what}. From {initial}, sequence {string.Join(",", path.Take(length))}: {e} from {before} "
+                    $"{what}. From {initial}, sequence {string.Join(",", path)}: {e} from {before} "
                         + $"gave {work}{(t.Refused ? " (refused)" : "")}, now {next}, shell {shell}."
                 );
             }
