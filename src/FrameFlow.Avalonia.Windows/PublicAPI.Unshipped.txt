@@ -4,6 +4,7 @@ FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.CompositionInteropVideoSi
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramePresented -> System.EventHandler<FrameFlow.Media.FramePresentedInfo>?
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramesAccepted.get -> long
+FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramesDiscardedOffScreen.get -> long
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.FramesSuperseded.get -> long
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
 FrameFlow.Avalonia.Windows.CompositionInteropVideoSink.MaxHeldFrames.get -> int?
