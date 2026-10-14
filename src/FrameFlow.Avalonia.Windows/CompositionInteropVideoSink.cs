@@ -34,7 +34,6 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
 {
     private readonly ILogger _logger;
     private readonly LatestWinsFrameSlot _slot = new();
-    private bool _disposed;
     private long _framesAccepted;
 
     /// <summary>Creates a sink.</summary>
@@ -154,20 +153,26 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
         FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D11 | FrameMemoryDomains.D3D12;
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// After <see cref="DisposeAsync"/> the sink disposes the frame, does not count it in
+    /// <see cref="FramesAccepted"/> and keeps nothing (ADR-0085, decision 4).
+    /// </remarks>
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
     {
+        // Latest-wins: keep only the newest frame; the slot disposes any prior unconsumed
+        // one. The view routes by memory domain (GPU → zero-copy, CPU → upload fallback).
+        // The supersede is accounted by the slot itself (FramesSuperseded) and folded into
+        // the view's DiagnosticsSource; the sink has no per-drop log or meter of its own.
+        // Once DisposeAsync has closed the slot, it disposes the frame instead, and the frame
+        // is neither counted nor presented (#664).
+        if (_slot.Install(frame) == FrameSlotInstall.Refused)
+            return ValueTask.CompletedTask;
+
         // Delivery-cadence telemetry (perf survey §A1 A/B): one record per frame
         // this real sink accepts. Uniform across pacing variants — both PaceUntil
         // and ClockSelectVideoSink ultimately deliver here at clock cadence.
         PresentCadenceMetrics.RecordPresent();
         Interlocked.Increment(ref _framesAccepted);
-
-        // Latest-wins: keep only the newest frame; the slot disposes any prior unconsumed
-        // one. The view routes by memory domain (GPU → zero-copy, CPU → upload fallback).
-        // The supersede is accounted by the slot itself (FramesSuperseded) and folded into
-        // the view's DiagnosticsSource, so the bool TrySet returns here would be redundant;
-        // the sink has no per-drop log or meter of its own to drive with it.
-        _slot.TrySet(frame);
 
         // Schedule the present from here rather than waiting for a tick. Bounded catch: this
         // runs presenter code inline on the pacing chain, and a throw — a dispatcher in
@@ -199,12 +204,12 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     internal bool HasPendingFrame => _slot.HasPending;
 
     /// <inheritdoc/>
+    /// <remarks>A second call does nothing.</remarks>
     public ValueTask DisposeAsync()
     {
-        if (_disposed)
-            return default;
-        _disposed = true;
-        _slot.Take()?.Dispose();
+        // Takes the pending frame and closes the slot in one step, so a present racing this call
+        // cannot leave a frame in it.
+        _slot.Close();
         return default;
     }
 }

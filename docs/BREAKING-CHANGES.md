@@ -573,6 +573,38 @@ var keys = new SyncJoinKeys<IVideoFrame, CaptionRef>(
 - In a presenter of your own, set the presented frame's timeline on what it raises:
   `new FramePresentedInfo(pts, presentedAt) { Timeline = frame.Timeline }`.
 
+### 17. A disposed video sink disposes the frames it is given
+
+**A change in behaviour, not a compile error.**
+
+`CompositionInteropVideoSink` went on taking frames after `DisposeAsync`. It counted each one in
+`FramesAccepted` and kept the newest in its slot, where nothing would take or dispose it (#664). A
+player still presenting into it, such as one built against a view that had since left the visual
+tree, pinned a decoder frame there until the sink was collected. It now disposes a frame it is given
+after its disposal, does not count it and keeps nothing, as the other in-box sinks do (ADR-0085,
+decision 4).
+
+`AvaloniaVideoSink`, `SdlVideoSink` and `CompositionInteropVideoSink` keep their newest frame in a
+`LatestWinsFrameSlot`, and a present that raced the sink's dispose could install its frame after the
+dispose had emptied the slot. The dispose now closes the slot in the same step, and a frame given to
+a closed slot is disposed. A second `AvaloniaVideoSink.DisposeAsync` does nothing; it used to log
+its disposal line again.
+
+`LatestWinsFrameSlot` gained `Close` and `Install`. `Install` returns a `FrameSlotInstall` that says
+whether the frame was installed, superseded a pending one, or was refused by a closed slot. `TrySet`
+into a closed slot disposes the frame and returns `false`. A slot that is never closed works as
+before.
+
+**Who hits this.** Code that read `FramesAccepted` from a disposed `CompositionInteropVideoSink` to
+see whether a player still fed it: it now stays where the dispose left it. Also a log check that
+counted two disposal lines from one `AvaloniaVideoSink` disposed twice.
+
+**What to write instead.** Read `FramesAccepted` from the sink the view presents now, and ask the
+player whether it is still playing.
+
+**Why.** A kept frame can be a decoder surface from a fixed hardware pool. A disposed sink that keeps
+one takes that surface out of the pool for as long as the sink object lives.
+
 ### Not breaking, but worth knowing
 
 - **A new timeline is not a stall to the PRESENT GAP check.** `AvaloniaVideoSink` warned PRESENT

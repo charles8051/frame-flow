@@ -189,18 +189,19 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
         new(logger);
 
     /// <inheritdoc />
+    /// <remarks>
+    /// After <see cref="DisposeAsync"/> the sink disposes the frame and neither counts nor keeps
+    /// it (ADR-0085, decision 4).
+    /// </remarks>
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
     {
+        // Spares a frame given after dispose the gap tracker and its logs. The slot's closed state
+        // is what disposes a frame whose present races the dispose past this check.
         if (_disposed)
         {
             frame.Dispose();
             return ValueTask.CompletedTask;
         }
-
-        // Delivery-cadence telemetry (perf survey §A1 A/B): one record per frame
-        // this real sink accepts. Uniform across pacing variants — both PaceUntil
-        // and ClockSelectVideoSink ultimately deliver here at clock cadence.
-        PresentCadenceMetrics.RecordPresent();
 
         // Stall-detection: log a Warning if a frame arrives more than 500 ms
         // after the previous one finished showing. That gap means the chain
@@ -245,13 +246,23 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
             }
         }
 
-        // Latest-wins: the slot disposes any superseded frame and counts the drop. The
-        // returned flag drives this sink's drop telemetry (meter + log) outside the slot.
-        if (_slot.TrySet(frame))
+        // Latest-wins: the slot disposes any superseded frame and counts the drop, and once
+        // DisposeAsync has closed it, disposes this frame instead of installing it. The result
+        // drives this sink's drop telemetry (meter + log) outside the slot.
+        switch (_slot.Install(frame))
         {
-            _telemetry.RecordSupersededDrop();
-            LogFrameDropped(_logger, RenderedFrameCount);
+            case FrameSlotInstall.Refused:
+                return ValueTask.CompletedTask;
+            case FrameSlotInstall.Superseded:
+                _telemetry.RecordSupersededDrop();
+                LogFrameDropped(_logger, RenderedFrameCount);
+                break;
         }
+
+        // Delivery-cadence telemetry (perf survey §A1 A/B): one record per frame
+        // this real sink accepts. Uniform across pacing variants — both PaceUntil
+        // and ClockSelectVideoSink ultimately deliver here at clock cadence.
+        PresentCadenceMetrics.RecordPresent();
 
         // Hand off on THIS thread (ADR-0016 Decision 1). The view takes the frame and does
         // its pixel copy here, not on the UI thread. With a view attached the slot is drained
@@ -321,13 +332,16 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Cpu;
 
     /// <inheritdoc />
+    /// <remarks>A second call does nothing and logs nothing.</remarks>
     public ValueTask DisposeAsync()
     {
         _disposed = true;
 
-        _slot.Take()?.Dispose();
+        // Takes the pending frame and closes the slot in one step, so a present racing this call
+        // cannot leave a frame in it. Only the call that closed it logs.
+        if (_slot.Close())
+            LogSinkDisposed(_logger, RenderedFrameCount, DroppedFrameCount);
 
-        LogSinkDisposed(_logger, RenderedFrameCount, DroppedFrameCount);
         return ValueTask.CompletedTask;
     }
 
