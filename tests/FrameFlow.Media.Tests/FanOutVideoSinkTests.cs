@@ -393,6 +393,9 @@ public sealed class FanOutVideoSinkTests
         Assert.Null(new FanOutVideoSink(two, unbounded, three).MaxHeldFrames);
         Assert.Equal(5, FanOutRules.MaxHeldFrames([2, 3]));
         Assert.Null(FanOutRules.MaxHeldFrames([2, null]));
+        // A sum past int.MaxValue reads as unbounded rather than wrapping to a negative count.
+        Assert.Null(FanOutRules.MaxHeldFrames([int.MaxValue, 1]));
+        Assert.Equal(int.MaxValue, FanOutRules.MaxHeldFrames([int.MaxValue - 1, 1]));
     }
 
     [Fact]

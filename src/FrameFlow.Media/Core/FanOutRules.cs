@@ -28,19 +28,22 @@ internal static class FanOutRules
 
     /// <summary>
     /// The most frames the fan-out keeps: the sum of what the targets keep, or
-    /// <see langword="null"/> when any of them is unbounded. The targets hold the same frames, so
-    /// the sum counts some twice, which is the safe direction for a pool sized from it.
+    /// <see langword="null"/> when any of them is unbounded or the sum does not fit an
+    /// <see cref="int"/>. The targets hold the same frames, so the sum counts some twice, which is
+    /// the safe direction for a pool sized from it.
     /// </summary>
     public static int? MaxHeldFrames(IEnumerable<int?> eachTarget)
     {
-        var sum = 0;
+        long sum = 0;
         foreach (var held in eachTarget)
         {
             if (held is not { } kept)
                 return null;
             sum += kept;
+            if (sum > int.MaxValue)
+                return null;
         }
-        return sum;
+        return (int)sum;
     }
 
     /// <summary>

@@ -244,9 +244,9 @@ public sealed partial class FanOutVideoSink : IVideoSink, IClaimForwardingSink
 
     /// <inheritdoc />
     /// <remarks>
-    /// The sum of the targets' counts, or <see langword="null"/> when any target's is. The targets
-    /// keep the same frames, so the sum can count one frame more than once, which is the safe
-    /// direction for a pool sized from it.
+    /// The sum of the targets' counts, or <see langword="null"/> when any target's is or the sum
+    /// does not fit an <see cref="int"/>. The targets keep the same frames, so the sum can count
+    /// one frame more than once, which is the safe direction for a pool sized from it.
     /// </remarks>
     public int? MaxHeldFrames { get; }
 
