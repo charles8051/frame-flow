@@ -384,6 +384,13 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
     /// sink's logger: the first block seats the clock's origin and logs it, after the check and
     /// before the flush, on the presenting thread, which the dispose then runs on.
     /// </summary>
+    /// <remarks>
+    /// That interleaving is stronger than production can produce: the logger runs under the sink's
+    /// lock, so the dispose re-enters it and gives the device back in the middle of the present's
+    /// critical section, where a real dispose on another thread would wait for the lock. What it
+    /// pins is the part a real race reaches too: the flush, after the dispose, reads the shutdown
+    /// token.
+    /// </remarks>
     [Fact]
     public async Task APresentOvertakenByADisposeBeforeItsFlush_ReturnsQuietly()
     {

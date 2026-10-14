@@ -1210,22 +1210,26 @@ does. The view's dispose did not wait for a stall check already running, so `Pre
 `ObjectDisposedException` from a wait on its clock, and from a present the dispose overtook (#723).
 
 Now a replaced converter or uploader is disposed off the UI thread once the compositor has disposed
-its imported images and finished the presents that used its ring. A failure to dispose it is logged
-at Warning, and so, once, is a wait for the compositor that goes on past five seconds: the converter
-is held, not freed, until the compositor lets go. A replaced D3D12 converter holds back the view's
-next attachment until it is disposed. `DisposeAsync` waits for what the view replaced within the
-bounded wait it already makes for the compositor, and completes once a stall check already running,
-with any handler it raised, has returned. `PresenterStallWatchdog` gained `DisposeAsync`, which waits
-for a check the same way, and a second dispose waits for the first. A wait on the clock of a disposed
-`OpenAlAudioSink` ends with `OperationCanceledException`, as one in flight at the dispose does, and a
-present the dispose overtakes returns.
+the imported images and finished the presents of every ring it may have filled, including one a
+switch between hardware and software frames set aside earlier. A failure to dispose it is logged at
+Warning, and so, once, is a wait that goes on past five seconds, naming the converter and whether it
+waits for the compositor or for its own dispose to return. The converter is held, not freed, until
+the compositor lets go. A replaced D3D12 converter holds back the view's next attachment until it is
+disposed. `DisposeAsync` waits for the rings within the bounded wait it already makes for the
+compositor, and for the replaced converters' disposal within the same bound, then completes once a
+stall check already running, with any handler it raised, has returned. `PresenterStallWatchdog`
+gained `DisposeAsync`, which waits for a check the same way, says once after five seconds which
+handler or sampler it is still waiting for, and makes a second dispose wait for the first. A wait on
+the clock of a disposed `OpenAlAudioSink` ends with `OperationCanceledException`, as one in flight at
+the dispose does, and a present the dispose overtakes returns.
 
 **Who hits this.**
 - A `PresenterStalled` or `PresenterRecovered` handler that waits for the view's `DisposeAsync`, or
   for anything that awaits it. The dispose waits for the handler, so neither ends.
 - Code that disposes the view just after it replaced a converter, at a resize, an item of another
-  size or a toggle of `DriverSuperResolution`. The dispose waits for that converter too, and when the
-  compositor does not let go in time it hands it to the background reaper with the rest.
+  size or a toggle of `DriverSuperResolution`. The dispose waits for that converter too, within its
+  bound. A replaced converter whose dispose does not return no longer holds the view's own producers
+  or reads as a compositor that did not drain: it is named on its own after five seconds.
 - A view taken out of the visual tree and put back just after it replaced a D3D12 converter. It
   presents nothing until that converter is disposed, as after a teardown.
 - Code that waits on a disposed `OpenAlAudioSink`'s clock and catches `ObjectDisposedException`.
