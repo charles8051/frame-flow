@@ -1,10 +1,10 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Runtime.ExceptionServices;
 using FrameFlow.Media;
 using FrameFlow.Playback;
 using FrameFlow.Playback.Diagnostics;
-using Microsoft.Extensions.Logging;
 
 namespace FrameFlow.Player;
 
@@ -28,7 +28,6 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
     private readonly IPlaybackController _controller;
     private readonly PlaylistCoordinator _coordinator;
     private readonly IAudioSink? _audioSink;
-    private readonly ILogger _logger;
 
     private readonly ProjectionObservable<
         StateTransition<PlaybackState>,
@@ -38,15 +37,13 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
     internal PlaylistMediaPlayerCore(
         IPlaybackController controller,
         PlaylistCoordinator coordinator,
-        IAudioSink? audioSink,
-        ILogger logger
+        IAudioSink? audioSink
     )
     {
         _controller = controller;
         _coordinator = coordinator;
         _audioSink = audioSink;
         _volumeControl = audioSink as IVolumeControl;
-        _logger = logger;
 
         _stateChanged = new ProjectionObservable<StateTransition<PlaybackState>, PlaybackState>(
             controller.PlaybackStateChanged,
@@ -333,24 +330,49 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
 
     /// <summary>
     /// Disposes the controller, which releases the claims on the sinks once its session is gone,
-    /// and then the coordinator. The first call tears down. A call made while it runs, or after,
-    /// waits for it, so it returns only once the claims are released and the coordinator is
-    /// disposed, and the coordinator is disposed once, after the controller (#708).
+    /// and then the coordinator, whatever the controller's dispose threw. The first call tears
+    /// down. A call made while it runs, or after, waits for it and ends as it did, so it returns
+    /// only once the claims are released and the coordinator is disposed, and the coordinator is
+    /// disposed once, after the controller (#708).
     /// </summary>
+    /// <remarks>
+    /// Throws what the controller's dispose threw, once the coordinator is disposed, where it used
+    /// to log it and return: one exception, or an <see cref="AggregateException"/> with what the
+    /// coordinator's dispose threw too (ADR-0086, decision 3.4).
+    /// </remarks>
     public ValueTask DisposeAsync() => _dispose.RunAsync(TearDownAsync);
 
     /// <summary>The teardown the first <see cref="DisposeAsync"/> runs.</summary>
     private async ValueTask TearDownAsync()
     {
+        List<Exception>? failures = null;
         try
         {
             await _controller.DisposeAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Playlist player controller dispose threw.");
+            (failures ??= []).Add(ex);
         }
 
-        _coordinator.Dispose();
+        try
+        {
+            _coordinator.Dispose();
+        }
+        catch (Exception ex)
+        {
+            (failures ??= []).Add(ex);
+        }
+
+        switch (failures)
+        {
+            case null:
+                break;
+            case [var one]:
+                ExceptionDispatchInfo.Throw(one);
+                break;
+            default:
+                throw new AggregateException(failures);
+        }
     }
 }

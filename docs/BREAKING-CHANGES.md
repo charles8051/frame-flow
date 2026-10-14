@@ -1160,7 +1160,7 @@ Warning, naming the sink.
   shutdown. The second dispose now takes as long as the first.
 - Code that disposes again after a dispose that threw, such as an `await using` around a controller
   already disposed by hand. The second dispose throws the same exception, where it used to return. A
-  player's dispose does not throw: it logs a failure of its controller and goes on.
+  player's dispose does the same, and throws what its controller's dispose threw (entry 30).
 - Code that disposes a player from inside a call the player makes, such as a video sink's
   `PresentAsync`, while another dispose of it is under way. The first waits for that call to return,
   and the call now waits for the first, so neither ends. A call made there with no other dispose
@@ -1283,16 +1283,117 @@ given up ends as cancelled, not as having reached the end of the source.
   is cancelled by the time it returns throws `OperationCanceledException`. A seek's keyframe search that FFmpeg gives up without a cancellation is an
   `InvalidOperationException`; it no longer falls back to the container's own seek.
 - A player whose first item opens during `BuildPlayerAsync`, from a source that stalls before it
-  answers. The open does not see the build's token, and the cleanup of a cancelled build waits for
-  it, as does disposing a player while its command loop opens an item (#719).
+  answers. The open does not see the build's token itself, but the cleanup of a cancelled build
+  disposes the player's controller, which cancels the open, as disposing a player while its command
+  loop opens an item does (entry 30, #719).
 
 **What to write instead.** To stop a pass or a player that is waiting on its source, cancel the
 token you gave it, or dispose it, or seek. Keep `rw_timeout` where a stall should fail a run that
-nothing cancels, and to bound `BuildPlayerAsync` until #719 is fixed.
+nothing cancels.
 
 **Why.** ADR-0086 makes every stop and dispose wait for the work it stops, rather than free what that
 work is still using (decision 3). That is safe only if the work can be made to stop: decision 4 has
 the cancellation reach the native call.
+
+### 30. A pass whose graph faults ends, and a dispose cancels its work first and throws what its teardown threw
+
+**A change in behaviour, not a compile error.**
+
+A pass whose sink, or a node in its graph, threw while the demux pump waited for room in a decoder
+queue never ended: `RunToCompletionAsync` neither returned nor threw until its caller cancelled it
+(#713). The run cancelled the pump only once both the pump and the graph had ended, and the graph
+that had faulted no longer drained the queue. Now the first of them to fault cancels the other, and
+`RunToCompletionAsync` throws the fault, a `GraphFaultException` naming the node, once both have
+ended.
+
+A controller's dispose made while its command loop was opening or playing an item waited for that
+open or play before it cancelled anything. Over a source that stalls, it waited for the source, and
+a `BuildPlayerAsync` whose token was cancelled during its first load did not return either, because
+its cleanup disposes the controller (#719). The dispose now cancels that open or play before it
+waits for it, and the cancellation interrupts the wait on the source (entry 29), so the dispose no
+longer waits for the source.
+The `LoadAsync`, `PlayAsync` or `PauseAsync` that was waiting on it returns a failed `Result` that
+says the controller is disposing, as a command still queued when the dispose began already did, and
+nothing is raised on `ErrorOccurred` for it. A seek the controller started that is still going is
+cancelled too, and the dispose waits for it before it disposes the item.
+
+A pass's run now starts on the thread pool. Its audio sink's `ActivateAsync`, and the functions
+given to `ConfigureVideo` and `ConfigureAudio`, are called there, where they used to be called on
+the thread that called `RunToCompletionAsync`, before the run's first wait.
+
+What a teardown throws now reaches its caller (ADR-0086, decision 3.4):
+
+- A player's `DisposeAsync` logged a failure of its controller's dispose at Warning and returned. It
+  now throws it, once it has disposed its queue's coordinator. The controller still releases the
+  claims on the sinks first.
+- `MediaPass.DisposeAsync` swallowed what freeing its pipeline, its decoders or its demux session
+  threw. It now throws it, once the claims are released: one exception, or an `AggregateException`
+  of several. It still throws neither the run's cancellation nor a fault the run ended with, which
+  the run's caller sees.
+
+Every other dispose made while the first runs, or after, throws the same exception. A pass's
+dispose that has waited five seconds for its run logs once, at Warning, which of the run's work is
+still running, and a controller's that has waited five seconds for its command loop, or for a
+seek, says so too. Both go on waiting.
+
+**Who hits this.**
+- Code that awaits `RunToCompletionAsync` on a pass whose sink or node can throw. It used to hang
+  when the fault came while the pump waited on a full queue, which was more likely on a cold start,
+  and now sees the fault.
+- Code that disposes a player or a pass and goes on as if the dispose cannot throw, such as a
+  `finally` that disposes and then cleans up something else. The rest of that `finally` does not run
+  when the dispose throws.
+- Code that disposes a player or a controller while a load, play or pause it issued is still under
+  way, and expects that command to succeed. It now returns a failed `Result`.
+- Code that runs a pass inside `await using`. When the run throws and the dispose then throws too,
+  the dispose's exception is the one that leaves the block, and the run's fault is lost.
+- An audio sink whose `ActivateAsync`, or a configurator, has to run on the thread that started the
+  pass's run, such as a UI thread.
+
+**What to write instead.**
+- Where cleanup has to go on whatever the dispose does, catch around the dispose:
+
+```csharp
+try
+{
+    await player.DisposeAsync();
+}
+catch (Exception ex)
+{
+    logger.LogWarning(ex, "Disposing the player failed.");
+}
+```
+
+- To keep a run's fault when the dispose throws as well, dispose in a `finally` of your own:
+
+```csharp
+var pass = await FrameFlowPass.Create(path).WithVideoSink(sink).BuildAsync();
+try
+{
+    await pass.RunToCompletionAsync();
+}
+finally
+{
+    try
+    {
+        await pass.DisposeAsync();
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Disposing the pass failed.");
+    }
+}
+```
+
+- Check `Result.IsSuccess` on a command that can race a dispose, as for any command.
+- In a sink or a configurator that needs a particular thread, move to that thread there, as a
+  player's already has to: a player's sinks are called on the thread pool.
+
+**Why.** A dispose that waits for work it has not cancelled waits for whatever that work is waiting
+on, and a run that cancels its other side only once both have ended waits for a side that cannot
+end. Every owner now cancels its work, waits for it, and only then frees what it used (ADR-0086,
+decision 3). A failure a dispose swallowed left its caller believing everything was freed; it is now
+returned to every caller, as a second dispose already returns what the first threw (entry 27).
 
 ### Not breaking, but worth knowing
 

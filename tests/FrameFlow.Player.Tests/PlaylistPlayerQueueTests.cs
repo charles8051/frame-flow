@@ -1,7 +1,6 @@
 using FrameFlow.Media;
 using FrameFlow.Playback;
 using FrameFlow.Playback.Diagnostics;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Player.Tests;
 
@@ -242,8 +241,7 @@ public sealed class PlaylistPlayerQueueTests
         await using var player = new PlaylistMediaPlayerCore(
             new StubController { State = PlaybackState.Paused },
             coordinator,
-            audioSink: null,
-            NullLogger.Instance
+            audioSink: null
         );
         var seen = new List<long>();
 
@@ -325,8 +323,7 @@ public sealed class PlaylistPlayerQueueTests
         return new PlaylistMediaPlayerCore(
             new StubController { State = state },
             coordinator,
-            audioSink: null,
-            NullLogger.Instance
+            audioSink: null
         );
     }
 

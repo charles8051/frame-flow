@@ -1,7 +1,6 @@
 using FrameFlow.Media;
 using FrameFlow.Playback;
 using FrameFlow.Playback.Diagnostics;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Player.Tests;
 
@@ -139,7 +138,7 @@ public sealed class PlayerErrorModelTests
     private static PlaylistMediaPlayerCore NewPlaylistPlayer(
         IPlaybackController controller,
         PlaylistCoordinator coordinator
-    ) => new(controller, coordinator, audioSink: null, NullLogger.Instance);
+    ) => new(controller, coordinator, audioSink: null);
 
     // ── Doubles ──────────────────────────────────────────────────────────────
 
