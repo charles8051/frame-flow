@@ -14,9 +14,15 @@
 //   dotnet run scripts/generate-test-corpus.cs
 //   dotnet run scripts/generate-test-corpus.cs -- --force
 //   dotnet run scripts/generate-test-corpus.cs -- --include-benchmarks
+//   dotnet run scripts/generate-test-corpus.cs -- --allow-unavailable
 //
 // Benchmark fixtures are opt-in: they are large and slow to produce, and no
 // conformance test needs them. See Category 6.
+//
+// A fixture whose encoder this FFmpeg build lacks fails the run, so a corpus
+// that is missing files says so. --allow-unavailable reports those fixtures and
+// exits 0 when nothing else failed; CI's Debug leg passes it, because the
+// pinned LGPL build cannot make them and the tests that need them skip.
 
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -25,6 +31,7 @@ using System.Text.Json.Serialization;
 
 var force = args.Contains("--force", StringComparer.OrdinalIgnoreCase);
 var includeBenchmarks = args.Contains("--include-benchmarks", StringComparer.OrdinalIgnoreCase);
+var allowUnavailable = args.Contains("--allow-unavailable", StringComparer.OrdinalIgnoreCase);
 string? ffmpegOverride = null;
 var ffmpegIdx = Array.FindIndex(
     args,
@@ -644,7 +651,7 @@ if (failed > 0)
     Console.ResetColor();
 }
 
-return failed > 0 || unavailable > 0 ? 1 : 0;
+return failed > 0 || (unavailable > 0 && !allowUnavailable) ? 1 : 0;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Helpers
