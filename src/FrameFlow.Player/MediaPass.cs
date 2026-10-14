@@ -43,7 +43,12 @@ namespace FrameFlow.Player;
 /// <b>Sink claims (ADR-0085, decision 6).</b> The pass builder claims each sink that implements
 /// <see cref="IClaimableSink"/>, and the pass holds the claim until it is disposed, not until its
 /// run ends: a pass built against a sink this one holds fails until this one has been disposed.
-/// A run still in flight when the pass is disposed keeps the claim until it ends.
+/// </para>
+/// <para>
+/// <b>Dispose.</b> <see cref="DisposeAsync"/> cancels a run still in flight and waits for it to
+/// end. Only then does it free the pump pipeline, the decoders and the demux session the run reads
+/// from, and it releases the claims last, so nothing the run sends reaches a sink after the release
+/// (#696). A run cannot start once the dispose has begun.
 /// </para>
 /// </remarks>
 public sealed class MediaPass : IAsyncDisposable
@@ -59,14 +64,22 @@ public sealed class MediaPass : IAsyncDisposable
     private readonly ILogger _logger;
     private readonly PassRange _range;
 
-    private int _started;
-    private bool _disposed;
-
-    // The claims on the sinks, released once the pass is disposed and no run is in flight. The
-    // hold is read and advanced under the lock.
+    // The claims on the sinks, released at the end of the dispose, after the run. Which run starts
+    // and what the dispose waits for are the lifecycle's, read and advanced under the lock.
     private readonly IDisposable? _sinkClaims;
-    private readonly object _claimLock = new();
-    private PassClaimHold _claimHold = PassClaimHold.Built;
+    private readonly object _lifecycleLock = new();
+    private PassLifecycle _lifecycle = PassLifecycle.Built;
+
+    // The pass's own cancellation, linked into the run's token, so the dispose can stop a run.
+    private readonly CancellationTokenSource _lifetime = new();
+
+    // Completed once a run that started has ended, with what it threw or null. The dispose waits on
+    // it before it frees anything the run uses.
+    private readonly TaskCompletionSource<Exception?> _runEnded =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // Completed once the first dispose has finished, for a later one to wait on.
+    private readonly TaskCompletionSource _tornDown = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>
     /// The clock a pass is given and never reads.
@@ -128,6 +141,42 @@ public sealed class MediaPass : IAsyncDisposable
     internal Task WaitUntilPumpParkedAsync() => _pipeline.WaitUntilParkedAsync();
 
     /// <summary>
+    /// What a pass does at the edges of its run and through its dispose. Internal: tests read the
+    /// order the steps are taken in, and act at one to drive a race (#696).
+    /// </summary>
+    internal enum Step
+    {
+        /// <summary>A run has been let start, and has not yet linked the pass's token.</summary>
+        RunStarted,
+
+        /// <summary>The run has ended: its pump and graph have finished, and it has made its last call on a sink.</summary>
+        RunEnded,
+
+        /// <summary>The dispose is about to free the pump pipeline.</summary>
+        DisposingPipeline,
+
+        /// <summary>The dispose is about to free the video decoder.</summary>
+        DisposingVideoDecoder,
+
+        /// <summary>The dispose is about to free the audio decoder.</summary>
+        DisposingAudioDecoder,
+
+        /// <summary>The dispose is about to free the demux session.</summary>
+        DisposingDemux,
+
+        /// <summary>The dispose is about to release the claims on the sinks.</summary>
+        ReleasingClaims,
+    }
+
+    /// <summary>
+    /// Called with each <see cref="Step"/> as the pass takes it, on the thread that takes it.
+    /// Internal: a seam for tests, set before the run.
+    /// </summary>
+    internal Action<Step>? OnStep { get; set; }
+
+    private void Take(Step step) => OnStep?.Invoke(step);
+
+    /// <summary>
     /// Runs the graph to natural end-of-stream (both decoders EOF) or
     /// until <paramref name="ct"/> cancels. Single-shot per session —
     /// throws on second call.
@@ -154,12 +203,27 @@ public sealed class MediaPass : IAsyncDisposable
     /// first awaits <see cref="IAudioSink.DrainAsync"/>, so the run returns once the device has
     /// played the last sample rather than once the last buffer was handed over (#609).
     /// </para>
+    /// <para>
+    /// <b>Disposing the pass.</b> <see cref="DisposeAsync"/> cancels a run in flight, which then
+    /// throws <see cref="OperationCanceledException"/> here as it would for <paramref name="ct"/>,
+    /// and waits for it to end before it frees anything the run uses (#696). A dispose awaited
+    /// from inside the run, such as in a sink, would wait for the run, which waits for that sink,
+    /// so neither would end: cancel <paramref name="ct"/> there instead.
+    /// </para>
     /// </remarks>
+    /// <exception cref="ObjectDisposedException">The pass's dispose has begun.</exception>
+    /// <exception cref="InvalidOperationException">The pass has run before.</exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="ct"/> was cancelled, or the pass was disposed, before the run ended.
+    /// </exception>
     public async Task RunToCompletionAsync(CancellationToken ct = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        PassRunStart start;
+        lock (_lifecycleLock)
+            (_lifecycle, start) = _lifecycle.StartRun();
 
-        if (Interlocked.Exchange(ref _started, 1) != 0)
+        ObjectDisposedException.ThrowIf(start == PassRunStart.Disposed, this);
+        if (start == PassRunStart.AlreadyRan)
         {
             throw new InvalidOperationException(
                 "MediaPass.RunToCompletionAsync is single-use. "
@@ -167,24 +231,32 @@ public sealed class MediaPass : IAsyncDisposable
             );
         }
 
-        // The claims on the sinks stay held while the run is in flight, even past a dispose, so
-        // nothing it sends reaches a sink after the next pass has claimed it.
-        bool started;
-        lock (_claimLock)
-            (_claimHold, started) = _claimHold.StartRun();
-        ObjectDisposedException.ThrowIf(!started, this);
-
+        // From here the run ends through the finally whatever throws, a step's callback included,
+        // so a dispose waiting on it is always released.
+        Exception? failure = null;
         try
         {
-            await RunGraphToEndAsync(ct).ConfigureAwait(false);
+            Take(Step.RunStarted);
+            using var run = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
+            await RunGraphToEndAsync(run.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+            throw;
         }
         finally
         {
-            bool release;
-            lock (_claimLock)
-                (_claimHold, release) = _claimHold.EndRun();
-            if (release)
-                _sinkClaims?.Dispose();
+            try
+            {
+                Take(Step.RunEnded);
+            }
+            finally
+            {
+                lock (_lifecycleLock)
+                    _lifecycle = _lifecycle.EndRun();
+                _runEnded.TrySetResult(failure);
+            }
         }
     }
 
@@ -453,15 +525,85 @@ public sealed class MediaPass : IAsyncDisposable
             Graph.FrameDomainMismatchFor(Source, HardwareFrameDomains.Of(backend), FrameDomainRule.CpuOnly);
     }
 
+    /// <summary>
+    /// Cancels a run in flight and waits for it to end, then frees the pump pipeline, the decoders
+    /// and the demux session, and releases the claims on the sinks last.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The dispose waits as long as the run takes to unwind once cancelled. A sink's present, drain
+    /// or activation, a node in a configurator, or a video sink's
+    /// <see cref="IVideoSink.OnFormatChangedAsync"/> that ignores its token holds it there, and so
+    /// does a source whose read blocks, such as a stalled network stream: nothing interrupts the
+    /// demuxer's read (#709).
+    /// </para>
+    /// <para>
+    /// Throws for neither the run's cancellation nor a fault the run ends with: the run's caller
+    /// sees both. A fault is logged here only when this dispose cancelled the run that ended with
+    /// it. A call made while another is under way waits for it to finish. The sinks are the
+    /// caller's, and are not disposed.
+    /// </para>
+    /// </remarks>
     public async ValueTask DisposeAsync()
     {
-        if (_disposed)
-            return;
-        _disposed = true;
+        PassTeardown teardown;
+        lock (_lifecycleLock)
+            (_lifecycle, teardown) = _lifecycle.Dispose();
 
-        // Dispose in reverse construction order:
-        //   pipeline (clears any pending packet) → decoders → demux.
-        // Sinks are owned by the caller and not disposed here.
+        if (teardown == PassTeardown.Begun)
+        {
+            await _tornDown.Task.ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            if (teardown == PassTeardown.AfterTheRun)
+                await EndRunInFlightAsync().ConfigureAwait(false);
+
+            await FreeAsync().ConfigureAwait(false);
+
+            // Last, once the run has ended, so nothing it sent reaches a sink after a pass built
+            // next has claimed it, and that pass cannot claim the sinks while this one still holds
+            // a decoder.
+            Take(Step.ReleasingClaims);
+            _sinkClaims?.Dispose();
+            _lifetime.Dispose();
+        }
+        finally
+        {
+            _tornDown.TrySetResult();
+        }
+    }
+
+    /// <summary>Cancels the run in flight and waits for it to end, logging a fault it ends with.</summary>
+    private async Task EndRunInFlightAsync()
+    {
+        _logger.LogDebug("A pass disposed during its run cancels the run and waits for it to end.");
+
+        // Asynchronously, so the callbacks the cancellation runs, the run's own unwinding among
+        // them, run on the thread pool rather than on the caller's thread.
+        try
+        {
+            await _lifetime.CancelAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Cancelling the run of a pass being disposed threw.");
+        }
+
+        if (await _runEnded.Task.ConfigureAwait(false) is { } failure and not OperationCanceledException)
+            _logger.LogWarning(failure, "The run of a pass being disposed ended with a fault.");
+    }
+
+    /// <summary>
+    /// Frees what a run reads from, in reverse construction order: the pipeline, which frees any
+    /// packet it holds, then the decoders, then the demux session. Each is best-effort, and runs
+    /// whatever the one before it threw.
+    /// </summary>
+    private async ValueTask FreeAsync()
+    {
+        Take(Step.DisposingPipeline);
         try
         {
             await _pipeline.DisposeAsync().ConfigureAwait(false);
@@ -472,6 +614,7 @@ public sealed class MediaPass : IAsyncDisposable
 
         if (_videoDecoder is not null)
         {
+            Take(Step.DisposingVideoDecoder);
             try
             {
                 await _videoDecoder.DisposeAsync().ConfigureAwait(false);
@@ -483,6 +626,7 @@ public sealed class MediaPass : IAsyncDisposable
 
         if (_audioDecoder is not null)
         {
+            Take(Step.DisposingAudioDecoder);
             try
             {
                 await _audioDecoder.DisposeAsync().ConfigureAwait(false);
@@ -492,6 +636,7 @@ public sealed class MediaPass : IAsyncDisposable
             }
         }
 
+        Take(Step.DisposingDemux);
         try
         {
             await _demux.DisposeAsync().ConfigureAwait(false);
@@ -499,13 +644,5 @@ public sealed class MediaPass : IAsyncDisposable
         catch
         { /* best-effort */
         }
-
-        // Last, so a pass built next cannot claim the sinks while this one still holds a decoder.
-        // A run still in flight releases them when it ends instead.
-        bool release;
-        lock (_claimLock)
-            (_claimHold, release) = _claimHold.Dispose();
-        if (release)
-            _sinkClaims?.Dispose();
     }
 }

@@ -297,6 +297,15 @@ land.
   into an `InFlight` sink that hands encoded frames to the application's own worker for a live
   source. The abandonable node it named is not pursued. The record and
   [the GenAI exploration](../explorations/generative-inference.md) are kept as the evidence.
+- [Work in flight is held until it ends: one owner, one disposal](work-in-flight-held-until-it-ends.md)
+  — the pure cores decide what happens, but the layer that owns work in flight has no core, and
+  five defects in a row (#696, #701, #703, #707, #708) freed, reset or forgot something while work
+  that used it still ran. Proposes a scope that holds each task until it completes; a pure core for
+  the item runtime whose state includes its pending work, so a free, a demuxer seek or a decoder
+  reset is emitted only when nothing is pending, and superseding seeks coalesce; one disposal
+  contract (joined, cancel then await then free, no bound, faults returned); an interrupt callback
+  so cancellation reaches `av_read_frame` (#709); and every loop reporting its end. Supersedes
+  ADR-0013's bounded disposal timeout and amends ADR-0026 and ADR-0044.
 
 ## Recently numbered
 
