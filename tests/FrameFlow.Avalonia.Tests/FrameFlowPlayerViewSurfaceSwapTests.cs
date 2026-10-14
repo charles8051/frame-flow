@@ -112,6 +112,34 @@ public sealed class FrameFlowPlayerViewSurfaceSwapTests
     }
 
     [AvaloniaFact]
+    public void ASwappedOutDefaultSurface_RefusesASinkReplacement_SoItsClaimCannotBeBypassed()
+    {
+        // The view's Sink setter claims the outgoing sink before it changes anything, and the player
+        // view holds it: a replacement cannot slip an unclaimed sink under the hidden surface.
+        var view = new FrameFlowPlayerView();
+        var window = Show(view);
+        try
+        {
+            var surface = (FrameFlowVideoView)view.VideoSurface;
+            var sink = surface.Sink!;
+            view.VideoSurface = new FrameFlowVideoView();
+
+            var error = Assert.Throws<InvalidOperationException>(() => surface.Sink = new AvaloniaVideoSink());
+            Assert.Throws<InvalidOperationException>(() => surface.Sink = null);
+
+            Assert.Contains(DefaultHolder, error.Message, StringComparison.Ordinal);
+            Assert.Same(sink, surface.Sink);
+            Assert.Throws<InvalidOperationException>(() =>
+                PlaybackController.Create(videoSink: ((IVideoSurface)surface).AttachSink(NullLoggerFactory.Instance))
+            );
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void TheDefaultSurface_SwappedOutAgain_IsClaimedAgain()
     {
         var view = new FrameFlowPlayerView();
