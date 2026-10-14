@@ -140,6 +140,15 @@ jobs:
         with:
           fetch-depth: 0  # MinVer needs full history.
 
+      # Several runner instances share the self-hosted Windows machine and its TEMP,
+      # and pull request builds run there alongside this job. See build.yml.
+      - name: Use the runner's own temp directory (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "TEMP=$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TMP=$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       # Hosted-only: the self-hosted Windows box has .NET 8/10 baked on the host
       # (no global.json pin, so 10.0.x is satisfied by the baked SDK).
       - uses: actions/setup-dotnet@v5
@@ -172,8 +181,8 @@ jobs:
         run: dotnet build FrameFlow.slnx --configuration Release --no-restore -p:FrameFlowLocalFeedDisable=true
 
       - name: Test
-        # Default shell (bash on Linux, Windows PowerShell on the self-hosted Windows box). The
-        # dotnet test invocation is a single command that runs identically in either.
+        # Default shell (bash on Linux, PowerShell 7 on Windows). The dotnet test
+        # invocation is a single command that runs identically in either.
         # --blame-hang-timeout 5m: dump a stack trace + fail the test if
         # any individual test hangs >5 min. Without this, a wedged test
         # can pin the CI runner at the GitHub Actions 6-hour cap. The

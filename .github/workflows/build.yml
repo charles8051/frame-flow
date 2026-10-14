@@ -180,6 +180,19 @@ jobs:
           # code shares a workspace with a usable token.
           persist-credentials: false
 
+      # Several runner instances share the self-hosted Windows machine, all as one
+      # account, so they share its TEMP. scripts/fetch-ffmpeg.cs downloads into a fixed
+      # directory there, scripts/package-smoke.cs works in one, and an OpenVINO test
+      # clears its earlier runs' directories, so two jobs at once collide. RUNNER_TEMP
+      # belongs to the instance and is emptied at every job. A hosted runner has one
+      # instance, and it does no harm there.
+      - name: Use the runner's own temp directory (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "TEMP=$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TMP=$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       # Container only, for the reason publish.yml gives: the job runs as root over
       # runner-owned files, git calls the checkout "dubious ownership", and MinVer's
       # own git call falls back to 0.0.0-alpha.0.
@@ -255,8 +268,8 @@ jobs:
         # (the runner shouldn't scribble into ~/.nuget/local-feed).
         run: dotnet build FrameFlow.slnx --configuration Release --no-restore -p:FrameFlowLocalFeedDisable=true
 
-      # The default shell, as in publish.yml: bash on Linux and macOS, Windows
-      # PowerShell on the self-hosted Windows box, which is not known to have bash.
+      # The default shell, as in publish.yml: bash on Linux and macOS, PowerShell 7 on
+      # Windows, hosted and self-hosted.
       # --blame-hang-timeout fails a test that hangs, rather than letting it hold a
       # shared self-hosted runner until the job's timeout.
       - name: Test
@@ -286,7 +299,7 @@ jobs:
       # Last in the job, because they rebuild those projects with other packages.
       #
       # One command per step, so no step depends on its shell stopping at a failed command:
-      # Windows PowerShell does not, and reports only the last command's exit code.
+      # PowerShell does not, and the step reports only the last command's exit code.
       - name: Avalonia 12 (FrameFlow.Avalonia.Tests)
         run: dotnet test tests/FrameFlow.Avalonia.Tests --configuration Release -p:FrameFlowLocalFeedDisable=true "-p:FrameFlowAvaloniaVersion=12.*"
 
