@@ -66,7 +66,7 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
             new FakeClock(this),
             new SessionCallbacks(
                 OnEndOfStream: () => Record("ctl.EndOfStream"),
-                OnWorkerFaulted: ex => Record($"ctl.Fatal({ex.Message})"),
+                OnWorkerFaulted: ex => ReportFatal($"ctl.Fatal({ex.Message})"),
                 OnBufferReady: () => Record("ctl.BufferReady"),
                 OnBufferUnderrun: () => Record("ctl.BufferUnderrun"),
                 OnRecoverableError: error => Record($"ctl.RecoverableError({error.Message})"),
@@ -234,10 +234,23 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
         Coordinator.Dispose();
     }
 
+    /// <summary>
+    /// What the controller's fault callback throws once it has recorded the fault, when set. The
+    /// session's reader stops on it, as on any failure outside an input's handling.
+    /// </summary>
+    public Exception? FatalCallbackThrows { get; set; }
+
     private void Record(string line)
     {
         lock (_gate)
             _log.Add(line);
+    }
+
+    private void ReportFatal(string line)
+    {
+        Record(line);
+        if (FatalCallbackThrows is { } ex)
+            throw ex;
     }
 
     private void OnTransition(PlaylistTransition t)

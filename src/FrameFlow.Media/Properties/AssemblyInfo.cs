@@ -22,4 +22,8 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("FrameFlow.Avalonia")]
 [assembly: InternalsVisibleTo("FrameFlow.Avalonia.Windows")]
 
+// WorkScope and DisposeOnce (ADR-0086): every owner of work in flight disposes the same way, and
+// the player is one. The assemblies above that own work take them through the grants already made.
+[assembly: InternalsVisibleTo("FrameFlow.Player")]
+
 [assembly: InternalsVisibleTo("FrameFlow.Media.Tests")]

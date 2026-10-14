@@ -172,7 +172,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     // LoopRestarted carries it; a playlist's carries the session's per-item count instead.
     private int _loopCount;
     private readonly TimeProvider _timeProvider;
-    private bool _disposed;
+
+    // Runs the teardown once and has every other dispose wait for it (ADR-0086, decision 3). Its
+    // HasBegun is the controller's disposed flag, read on the ticker's thread, on the session's
+    // threads through the callbacks, and on callers' threads, so it is a volatile read.
+    private readonly DisposeOnce _dispose = new();
 
     // The claims on the sinks the controller was built with (ADR-0085, decision 6). Released once
     // DisposeAsync has completed, which is after the last frame the controller sends has reached
@@ -250,7 +254,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// </summary>
     private void OnPositionTickForLoopStall(TimeSpan position)
     {
-        if (_disposed)
+        if (_dispose.HasBegun)
             return;
 
         // One read, before the fold, of one value. The session answers the repeat expectation and
@@ -521,7 +525,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         Exception? error = null
     )
     {
-        if (_disposed)
+        if (_dispose.HasBegun)
         {
             LogInternalTriggerIgnoredAfterDisposal(trigger.ToString());
             return;
@@ -555,7 +559,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         PlaylistItemFailure failure = PlaylistItemFailure.CouldNotStart
     )
     {
-        if (_disposed)
+        if (_dispose.HasBegun)
             return;
 
         var cmd = new RecoverableErrorCommand(error, sessionGeneration, item, failure);
@@ -570,7 +574,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// </summary>
     private void PostLoopRestarted(int loopCount, int sessionGeneration, PlaylistItem? item = null)
     {
-        if (_disposed)
+        if (_dispose.HasBegun)
             return;
 
         if (
@@ -594,7 +598,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// </remarks>
     private void PostCurrentItemChanged(MediaInfo? info, int sessionGeneration)
     {
-        if (_disposed)
+        if (_dispose.HasBegun)
             return;
 
         // A report from a session the controller has replaced is dropped here, before it can
@@ -1481,7 +1485,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 cmd.CancellationToken.ThrowIfCancellationRequested();
                 LogDispatchCommand(cmd.GetType().Name);
 
-                if (_disposed)
+                if (_dispose.HasBegun)
                 {
                     HandleDisposedCommand(cmd);
                     continue;
@@ -1718,7 +1722,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         CancellationToken ct = default
     )
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(_dispose.HasBegun, this);
         ct.ThrowIfCancellationRequested();
 
         await using var reg = ct.Register(() => command.Completion.TrySetCanceled(ct));
@@ -1796,17 +1800,23 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
     /// <inheritdoc />
     /// <remarks>
+    /// <para>
     /// Releases the claims on the controller's sinks last, once the session and with it the graph
     /// and the pacer's delivery loop have been awaited, so nothing the controller sent can reach
     /// a sink after another player has claimed it (ADR-0085, decision 6). A dispose that throws
     /// releases them too, and still only after the session has been disposed.
+    /// </para>
+    /// <para>
+    /// The first call tears down. A call made while it runs, or after, waits for it and ends as it
+    /// did, so every caller returns only once the claims are released (ADR-0086, decision 3; #708).
+    /// </para>
     /// </remarks>
-    public async ValueTask DisposeAsync()
-    {
-        if (_disposed)
-            return;
-        _disposed = true;
+    public ValueTask DisposeAsync() =>
+        _dispose.TryBegin() ? _dispose.EndAsync(TearDownAsync()) : _dispose.WaitAsync();
 
+    /// <summary>The teardown the first <see cref="DisposeAsync"/> runs.</summary>
+    private async ValueTask TearDownAsync()
+    {
         try
         {
             try
