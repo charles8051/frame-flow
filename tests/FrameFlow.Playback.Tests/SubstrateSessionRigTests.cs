@@ -130,8 +130,8 @@ public sealed class SubstrateSessionRigTests
         await rig.EndOfStream().WaitAsync(Bound);
 
         await rig.Session.SeekAsync(TimeSpan.FromSeconds(1)).AsTask().WaitAsync(Bound);
-        (await rig.Media.Started(ItemWork.Pump, 2)).Complete();
-        (await rig.Media.Started(ItemWork.Graph, 2)).Complete();
+        (await rig.Media.Started(ItemWork.Pump, 2).WaitAsync(Bound)).Complete();
+        (await rig.Media.Started(ItemWork.Graph, 2).WaitAsync(Bound)).Complete();
         await rig.EndOfStream(2).WaitAsync(Bound);
 
         Assert.Equal([0, 1], rig.EndsOfStream);
@@ -170,7 +170,7 @@ public sealed class SubstrateSessionRigTests
         await using var rig = ItemRuntimeRig.Create();
         await rig.OpenAsync();
         await rig.Session.WarmUpAsync().AsTask().WaitAsync(Bound);
-        var pump = await rig.Media.Started(ItemWork.Pump);
+        var pump = await rig.Media.Started(ItemWork.Pump).WaitAsync(Bound);
 
         await rig.Session.SeekAsync(TimeSpan.FromSeconds(1)).AsTask().WaitAsync(Bound);
 
@@ -426,7 +426,7 @@ public sealed class SubstrateSessionRigTests
         rig.Media.ReleaseSeek();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => seek.WaitAsync(Bound));
-        Assert.True(await endedAfterTheSeekReturned, "The seek's task completed before its action had ended.");
+        Assert.True(await endedAfterTheSeekReturned.WaitAsync(Bound), "The seek's task completed before its action had ended.");
         await rig.Session.PauseAsync().AsTask().WaitAsync(Bound);
         Assert.Empty(rig.Log.Violations);
     }
@@ -591,7 +591,7 @@ public sealed class SubstrateSessionRigTests
 
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => first.WaitAsync(Bound));
         Assert.Same(thrown, await Assert.ThrowsAsync<InvalidOperationException>(() => second.WaitAsync(Bound)));
-        Assert.True(await graphEndedFirst, "The second dispose ended before the run the first was stopping.");
+        Assert.True(await graphEndedFirst.WaitAsync(Bound), "The second dispose ended before the run the first was stopping.");
         Assert.Equal(Teardown, rig.Log.Of("Free("));
     }
 
