@@ -224,6 +224,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                     _logger
                 ),
             onError: null,
+            timeProvider: _timeProvider,
             logger: _logger
         );
 

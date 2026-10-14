@@ -10,10 +10,11 @@ namespace FrameFlow.Playback;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Implementations should return promptly from <see cref="StartAsync"/>,
-/// spawning any long-running loops internally. The cancellation token
-/// provided to <see cref="StartAsync"/> is cancelled when the owning
-/// state is exited.
+/// <see cref="StartAsync"/> returns the worker's loop: its task ends when
+/// the loop does. The binding holds it until then, so a worker runs no
+/// loop of its own that the binding cannot wait for (ADR-0086, decision 1).
+/// The cancellation token provided to <see cref="StartAsync"/> is
+/// cancelled when the owning state is exited.
 /// </para>
 /// <para>
 /// See ADR-0026 §1 for the design rationale.
@@ -22,8 +23,8 @@ namespace FrameFlow.Playback;
 internal interface IStateBoundWorker : IAsyncDisposable
 {
     /// <summary>
-    /// Begin execution. The implementation should start its internal loop
-    /// and return promptly. Long-running work should be spawned internally.
+    /// Runs the worker's loop until the token is cancelled. The returned task
+    /// is the loop, and ends when it does.
     /// The token is cancelled when the owning state is exited.
     /// </summary>
     Task StartAsync(CancellationToken cancellationToken);
@@ -31,9 +32,10 @@ internal interface IStateBoundWorker : IAsyncDisposable
     /// <summary>
     /// Cooperatively stop execution. Called after the cancellation token
     /// has been signalled. Implementations should drain any pending work
-    /// and return within a reasonable time. If this method does not return
-    /// within the shutdown timeout, the binding will abandon the task and
-    /// proceed with disposal.
+    /// and return promptly. The binding passes a token that is never
+    /// cancelled: it waits for this method and for the loop
+    /// <see cref="StartAsync"/> returned, however long they take, and
+    /// disposes the worker only once both have ended (ADR-0086, decision 3).
     /// </summary>
     Task StopAsync(CancellationToken cancellationToken);
 }
