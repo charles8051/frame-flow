@@ -8,7 +8,8 @@ namespace FrameFlow.Media;
 /// (ADR-0085, decisions 6 and 8). Disposing it releases them all.
 /// </summary>
 /// <remarks>
-/// The controller factories and the pass builder claim a build's video and audio sinks through it.
+/// The controller factories and the pass builder claim a build's video and audio sinks through it,
+/// and <see cref="FanOutVideoSink"/> claims its targets through it when it is claimed itself.
 /// It replaces each <see cref="IClaimForwardingSink"/> with its targets, flattened through nested
 /// ones, and takes what remains in <see cref="IClaimableSink.ClaimOrder"/>. So the order is global
 /// over the sinks that hold state, two builds racing for overlapping sets cannot both fail, and a

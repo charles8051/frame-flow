@@ -72,13 +72,13 @@ public interface IClaimableSink
     /// </para>
     /// <para>
     /// <b>A sink that presents to several.</b> The order is over the sinks that hold state, not
-    /// over the sinks that forward to them. An in-box sink that presents to several targets, such as
-    /// a fan-out, is replaced by its targets, flattened through nested ones, before a build's sinks
+    /// over the sinks that forward to them. <see cref="FanOutVideoSink"/>, which presents to several
+    /// targets, is replaced by its targets, flattened through nested ones, before a build's sinks
     /// are put in order; otherwise a build of a fan-out over two views and an audio sink, and
     /// another over an overlapping pair and the same audio sink, could take the shared sinks in
-    /// opposite orders and both fail. Such a sink reports an order of its own, which a build never
-    /// uses. A sink of your own that presents to several claimable sinks is not flattened: forward
-    /// a claim to exactly one sink, or present to several through the in-box fan-out.
+    /// opposite orders and both fail. It reports an order of its own, which a build never uses. A
+    /// sink of your own that presents to several claimable sinks is not flattened: forward a claim
+    /// to exactly one sink, or present to several through <see cref="FanOutVideoSink"/>.
     /// </para>
     /// </remarks>
     long ClaimOrder { get; }
