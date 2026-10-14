@@ -22,7 +22,9 @@ namespace FrameFlow.Player.Tests;
 /// from inside the graph, where a video frame goes to the pacer first. The order is read from the
 /// steps the session reports through <see cref="SubstrateSession.OnStep"/>, and the races are driven
 /// by acting at them. Every wait is on a signal the session or a sink raises; the bound only limits a
-/// failure.
+/// failure. A run's pump, graph and recovery walk take their start step on the thread pool, which can
+/// be after the call that launched the run has returned, so a test that counts those starts first
+/// waits for the start it expects, or for a dispose, which waits for the run.
 /// </para>
 /// <para>
 /// A play after such a seek, the first play or a resume, repositions where the clock stands and
@@ -79,8 +81,13 @@ public sealed class SubstrateSessionSeekWaitTests
         await rig.SeekCutShortAsync(TimeSpan.FromSeconds(1));
 
         rig.Steps.At(Step.WaitingForRun, rig.Audio.Release);
+        var nextPump = rig.Steps.Next(Step.PumpStarted);
+        var nextGraph = rig.Steps.Next(Step.GraphStarted);
 
         await rig.Session.SeekAsync(TimeSpan.FromSeconds(2)).AsTask().WaitAsync(Bound);
+        // The next run's pump and graph start on the thread pool, maybe after the seek returns.
+        await nextPump.WaitAsync(Bound);
+        await nextGraph.WaitAsync(Bound);
 
         Assert.Empty(rig.RunStillGoingAt);
         var taken = rig.Steps.Taken;
@@ -145,6 +152,9 @@ public sealed class SubstrateSessionSeekWaitTests
         await pumpEnded.WaitAsync(Bound);
 
         await rig.Session.WarmUpAsync().AsTask().WaitAsync(Bound);
+        // A run launched here would start on the thread pool, possibly after the warm-up returns.
+        // The dispose waits for the run the session holds, so after it any start is on the log.
+        await rig.Session.DisposeAsync().AsTask().WaitAsync(Bound);
 
         var taken = rig.Steps.Taken;
         Assert.Equal(1, taken.Count(s => s == Step.PumpStarted));
@@ -211,8 +221,11 @@ public sealed class SubstrateSessionSeekWaitTests
         // since the rewind has closed the gates in front of it.
         await using var rig = await Rig.PlayingAsync();
         rig.Steps.At(Step.WaitingForRun, rig.Audio.Release);
+        var nextPump = rig.Steps.Next(Step.PumpStarted);
 
         await rig.Session.RewindToStartAsync().AsTask().WaitAsync(Bound);
+        // The next run's pump starts on the thread pool, maybe after the rewind returns.
+        await nextPump.WaitAsync(Bound);
 
         Assert.Empty(rig.RunStillGoingAt);
         Assert.Equal(Reposition, rig.Steps.Taken.Where(Reposition.Contains));
@@ -241,7 +254,10 @@ public sealed class SubstrateSessionSeekWaitTests
         Assert.Equal(1, rig.Steps.RecoveriesGoing);
 
         rig.Steps.At(Step.WaitingForRun, () => walkHold.TrySetResult());
+        var nextWalk = rig.Steps.Next(Step.RecoveryStarted);
         await rig.Session.RewindToStartAsync().AsTask().WaitAsync(Bound);
+        // The next run's walk starts on the thread pool, maybe after the rewind returns.
+        await nextWalk.WaitAsync(Bound);
 
         Assert.Empty(rig.RunStillGoingAt);
         var taken = rig.Steps.Taken;
