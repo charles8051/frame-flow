@@ -655,3 +655,29 @@ FrameFlow.Media.SinkClaimGate.Claimant.get -> string?
 FrameFlow.Media.SinkClaimGate.Close() -> bool
 FrameFlow.Media.SinkClaimGate.SinkClaimGate(System.Type! owner) -> void
 FrameFlow.Media.SinkClaimGate.TryClaim(string! claimant) -> System.IDisposable?
+FrameFlow.Media.DelegatingVideoSink
+FrameFlow.Media.DelegatingVideoSink.AcceptedDomains.get -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Media.DelegatingVideoSink.AcceptedDomains.init -> void
+FrameFlow.Media.DelegatingVideoSink.DelegatingVideoSink(System.Func<FrameFlow.Media.IVideoFrame!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! present) -> void
+FrameFlow.Media.DelegatingVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.DelegatingVideoSink.MaxHeldFrames.get -> int?
+FrameFlow.Media.DelegatingVideoSink.MaxHeldFrames.init -> void
+FrameFlow.Media.DelegatingVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.DelegatingVideoSink.PreferredBackends.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Media.HardwareDecodeBackendKind>!
+FrameFlow.Media.DelegatingVideoSink.PreferredBackends.init -> void
+FrameFlow.Media.DelegatingVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.FanOutTarget
+FrameFlow.Media.FanOutTarget.Sink.get -> FrameFlow.Media.IVideoSink!
+static FrameFlow.Media.FanOutTarget.Of(FrameFlow.Media.IVideoSink! sink) -> FrameFlow.Media.FanOutTarget!
+static FrameFlow.Media.FanOutTarget.Transform(FrameFlow.Media.IVideoSink! sink, System.Func<FrameFlow.Media.IVideoFrame!, FrameFlow.Media.IVideoFrame!>! transform, FrameFlow.Graph.FrameMemoryDomains acceptedDomains = FrameFlow.Graph.FrameMemoryDomains.Cpu) -> FrameFlow.Media.FanOutTarget!
+FrameFlow.Media.FanOutVideoSink
+FrameFlow.Media.FanOutVideoSink.AcceptedDomains.get -> FrameFlow.Graph.FrameMemoryDomains
+FrameFlow.Media.FanOutVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.FanOutVideoSink.FanOutVideoSink(params FrameFlow.Media.FanOutTarget![]! targets) -> void
+FrameFlow.Media.FanOutVideoSink.FanOutVideoSink(params FrameFlow.Media.IVideoSink![]! targets) -> void
+FrameFlow.Media.FanOutVideoSink.FanOutVideoSink(System.Collections.Generic.IEnumerable<FrameFlow.Media.FanOutTarget!>! targets, Microsoft.Extensions.Logging.ILogger<FrameFlow.Media.FanOutVideoSink!>? logger = null) -> void
+FrameFlow.Media.FanOutVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
+FrameFlow.Media.FanOutVideoSink.MaxHeldFrames.get -> int?
+FrameFlow.Media.FanOutVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
+FrameFlow.Media.FanOutVideoSink.PreferredBackends.get -> System.Collections.Generic.IReadOnlyList<FrameFlow.Media.HardwareDecodeBackendKind>!
+FrameFlow.Media.FanOutVideoSink.PresentAsync(FrameFlow.Media.IVideoFrame! frame, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask

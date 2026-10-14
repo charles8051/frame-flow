@@ -146,6 +146,58 @@ public sealed class ControllerSinkClaimTests
         Assert.Equal(["session disposed", "claims released"], log);
     }
 
+    // ─── A fan-out sink (decision 8) ────────────────────────────────
+
+    [Fact]
+    public async Task AControllerOverAFanOut_HoldsEverySinkBeneathIt_UntilItIsDisposed()
+    {
+        await using var direct = new HeadlessVideoSink();
+        await using var nested = new HeadlessVideoSink();
+        await using var fanOut = new FanOutVideoSink(direct, new FanOutVideoSink(nested));
+        var controller = PlaybackController.Create(videoSink: fanOut);
+
+        Assert.Equal("a controller from PlaybackController.Create", ((IClaimableSink)direct).Claimant);
+        Assert.Equal("a controller from PlaybackController.Create", ((IClaimableSink)nested).Claimant);
+
+        await controller.DisposeAsync();
+
+        Assert.Null(((IClaimableSink)direct).Claimant);
+        Assert.Null(((IClaimableSink)nested).Claimant);
+    }
+
+    [Fact]
+    public async Task AControllerOverAFanOutSharingAHeldSink_Fails_NamingThatSink_AndClaimsNoneOfTheOthers()
+    {
+        // The free sink is made first, so it is claimed before the shared one is found held.
+        await using var free = new HeadlessVideoSink();
+        await using var shared = new HeadlessVideoSink();
+        await using var first = PlaybackController.Create(
+            videoSink: new FanOutVideoSink(shared, new HeadlessVideoSink())
+        );
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            PlaybackController.Create(videoSink: new FanOutVideoSink(free, shared))
+        );
+
+        Assert.Contains(
+            "video sink HeadlessVideoSink is held by a controller from PlaybackController.Create",
+            error.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Null(((IClaimableSink)free).Claimant);
+    }
+
+    [Fact]
+    public async Task AControllerOverADisposedFanOut_Fails_WithObjectDisposed()
+    {
+        await using var view = new HeadlessVideoSink();
+        var fanOut = new FanOutVideoSink(view);
+        await fanOut.DisposeAsync();
+
+        Assert.Throws<ObjectDisposedException>(() => PlaybackController.Create(videoSink: fanOut));
+        Assert.Null(((IClaimableSink)view).Claimant);
+    }
+
     [Fact]
     public void HeldMessage_SaysWhoHoldsTheSink_OrThatAnotherPlayerOrPassDid()
     {

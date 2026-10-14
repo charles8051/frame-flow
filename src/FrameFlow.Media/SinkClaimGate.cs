@@ -67,8 +67,14 @@ public sealed class SinkClaimGate
         ArgumentNullException.ThrowIfNull(owner);
         _owner = owner;
         _released = released;
-        ClaimOrder = Interlocked.Increment(ref s_lastClaimOrder);
+        ClaimOrder = NextClaimOrder();
     }
+
+    /// <summary>
+    /// The next claim order in the one sequence every gate takes its own from: for a sink that
+    /// needs an order without a gate, such as <see cref="FanOutVideoSink"/>.
+    /// </summary>
+    internal static long NextClaimOrder() => Interlocked.Increment(ref s_lastClaimOrder);
 
     /// <summary>
     /// The sink's place in the claim order, unique in the process: gates made later have larger
