@@ -81,7 +81,10 @@ internal abstract record ItemRuntimeInput
     /// <param name="Duration">The source's duration, or zero when it is not known.</param>
     public sealed record Opened(ItemResources Resources, TimeSpan Duration) : ItemRuntimeInput;
 
-    /// <summary>The awaited action has finished. The success of an open is <see cref="Opened"/>.</summary>
+    /// <summary>
+    /// The awaited action has finished. The success of an open is <see cref="Opened"/>, and an Ok
+    /// here for an open is not one.
+    /// </summary>
     /// <param name="Outcome">Whether it succeeded, failed, or was cancelled through the command's token.</param>
     /// <param name="Error">The failure or the cancellation.</param>
     public sealed record Performed(ItemActionOutcome Outcome, Exception? Error = null) : ItemRuntimeInput;
@@ -222,7 +225,8 @@ internal abstract record ItemRuntimeAction
     public sealed record DeactivateAudio : ItemRuntimeAction;
 
     /// <summary>
-    /// Wait for the run's destination frame, seat the clocks on it, and release the pacer's hold.
+    /// Wait for the run's destination frame, seat the clocks on it, and release the pacer's hold,
+    /// however the wait ends.
     /// </summary>
     public sealed record Settle : ItemRuntimeAction;
 
@@ -239,6 +243,12 @@ internal abstract record ItemRuntimeAction
 
     /// <summary>Drop the frames the pacer holds from the run before.</summary>
     public sealed record FlushPacer : ItemRuntimeAction;
+
+    /// <summary>
+    /// Release the pacer's hold on the current run's destination frame: the run was started to be
+    /// settled, and the command that started it ended before it asked for the <see cref="Settle"/>.
+    /// </summary>
+    public sealed record ReleaseSettle : ItemRuntimeAction;
 
     /// <summary>Reset the decoders and the pipeline for the seek (ADR-0056).</summary>
     public sealed record ResetDecoders : ItemRuntimeAction;

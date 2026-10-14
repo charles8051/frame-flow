@@ -211,6 +211,15 @@ internal sealed record ItemCommand(int Id, ItemCommandKind Kind, ItemCommandStag
     public bool Abandoned { get; init; }
 
     /// <summary>
+    /// The run the command started holds its destination frame for a settle that has not been
+    /// asked for yet. A command that ends before asking releases the hold.
+    /// </summary>
+    public bool SettleHeld { get; init; }
+
+    /// <summary>Whether the command is starting a run: the run's work may already be under way.</summary>
+    public bool IsStartingRun => Stage is ItemCommandStage.StartingRun or ItemCommandStage.RepositionStartingRun;
+
+    /// <summary>
     /// Whether the command waits for its run's work rather than for an action, so a newer command,
     /// its caller's cancellation or a dispose ends it at once.
     /// </summary>
@@ -253,8 +262,18 @@ internal sealed record ItemRuntimeState
     /// </summary>
     public int Run { get; init; }
 
-    /// <summary>The current run's work that has not ended.</summary>
+    /// <summary>
+    /// The current run's work that has not ended. Empty while the run is starting: the work started
+    /// is <see cref="ItemRuntimeProtocol.WorkOf"/> less <see cref="EndedBeforeStart"/> until the start's
+    /// outcome comes back.
+    /// </summary>
     public ItemWork Pending { get; init; }
+
+    /// <summary>
+    /// The work of the run being started that ended before the start's outcome came back, as the
+    /// end of stream of an item with nothing to play, or a pump over a tiny or failing source, can.
+    /// </summary>
+    public ItemWork EndedBeforeStart { get; init; }
 
     /// <summary>What the runtime holds.</summary>
     public ItemResources Resources { get; init; }
@@ -315,4 +334,7 @@ internal sealed record ItemRuntimeState
 
     /// <summary>Whether an action of the command in progress is under way.</summary>
     public bool IsBusy => Command is { IsWaiting: false };
+
+    /// <summary>Whether a run is starting, so its work may already be under way.</summary>
+    public bool IsStartingRun => Command is { IsStartingRun: true };
 }

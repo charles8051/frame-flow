@@ -577,6 +577,197 @@ public sealed class ItemRuntimeProtocolTests
         Assert.Equal(PumpAndGraph, t.State.Pending);
     }
 
+    // ── Work that ends before its start's outcome ───────────────────────────
+
+    [Fact]
+    public void APumpThatEndsBeforeItsStartsOutcome_IsTakenOffTheRun_SoTheDisposeEnds()
+    {
+        // The audit's sequence: a pump over a tiny source ends before the warm-up's start returns.
+        var t = new ItemRuntimeTranscript();
+        t.Initialize();
+        t.Opened();
+        t.WarmUp();
+
+        t.Send(new Input.WorkEnded(0, ItemWork.Pump, ItemWorkEnding.Completed));
+        Assert.Empty(t.Actions);
+        Assert.Equal(ItemWork.Pump, t.State.EndedBeforeStart);
+
+        t.Ok();
+        Assert.Equal(ItemWork.Graph, t.State.Pending);
+        Assert.Equal(ItemWork.None, t.State.EndedBeforeStart);
+        t.FirstFrame();
+
+        t.Dispose();
+        t.Send(new Input.WorkEnded(0, ItemWork.Graph, ItemWorkEnding.Cancelled));
+
+        Assert.Equal(ItemRuntimePhase.Disposed, t.State.Phase);
+        Assert.IsType<Action.CompleteDispose>(t.Actions[^1]);
+    }
+
+    [Fact]
+    public void AnEmptyItemsEndThatCompletesBeforeItsStartsOutcome_IsRaisedThen_AndTheRunHasNothingPending()
+    {
+        var t = new ItemRuntimeTranscript();
+        t.Initialize();
+        t.Opened(ItemResources.Clock | ItemResources.Demux | ItemResources.Pipeline);
+        var play = t.Play();
+        Assert.Equal(new Action.StartRun(0, ItemWork.EmptyEnd, ItemGraphPolicy.Rebuild, TimeSpan.Zero, null, false), t.Last.Awaited);
+
+        t.Ends(ItemWork.EmptyEnd, ItemWorkEnding.Completed);
+        Assert.Equal([new Action.RaiseEndOfStream(0)], t.Actions);
+
+        t.Ok();
+        Assert.Equal([new Action.OpenGates(), new Action.CompleteCommand(play, ItemCommandResult.Ok)], t.Actions);
+        Assert.Equal(ItemRunStatus.Running, t.State.Status);
+        Assert.Equal(ItemWork.None, t.State.Pending);
+
+        // A seek finds nothing to wait for.
+        t.Seek(At3);
+        Assert.Equal([new Action.CloseGates(), new Action.CancelRun(0)], t.Actions); // no pacer to flush
+        Assert.Equal(new Action.SeekDemux(At3), t.Last.Awaited);
+        Assert.Single(t.All.OfType<Action.RaiseEndOfStream>());
+    }
+
+    [Fact]
+    public void AFaultBeforeItsStartsOutcome_IsReportedOnce_AndThePieceIsNotPending()
+    {
+        var t = ItemRuntimeTranscript.Playing();
+        t.Seek(At3);
+        t.Ok();
+        t.Ends(ItemWork.Pump);
+        t.Ends(ItemWork.Graph);
+        t.Ok(); // deactivated
+        t.Ok(); // sought
+        t.Ok(); // activated
+        Assert.IsType<Action.StartRun>(t.Last.Awaited);
+
+        t.Send(new Input.WorkEnded(1, ItemWork.Pump, ItemWorkEnding.Faulted, Boom));
+        Assert.Equal([new Action.ReportFault(1, ItemWork.Pump, Boom)], t.Actions);
+        t.Send(new Input.WorkEnded(1, ItemWork.Pump, ItemWorkEnding.Faulted, Boom)); // once only
+        Assert.Empty(t.Actions);
+
+        t.Ok();
+        Assert.Equal(ItemWork.Graph, t.State.Pending);
+        Assert.Single(t.All.OfType<Action.ReportFault>());
+    }
+
+    // ── A relaunch that ends before its settle ──────────────────────────────
+
+    [Fact]
+    public void ARelaunchThatEndsBeforeItsSettle_ReleasesTheHoldItsRunTook()
+    {
+        var t = ItemRuntimeTranscript.Playing();
+        var seek = t.Seek(At3);
+        t.Ok();
+        t.Ends(ItemWork.Pump);
+        t.Ends(ItemWork.Graph);
+        t.Ok(); // deactivated
+        t.Ok(); // sought
+        t.Ok(); // activated
+        Assert.Equal(new Action.StartRun(1, PumpAndGraph, ItemGraphPolicy.Rebuild, At3, null, HoldForSettle: true), t.Last.Awaited);
+        t.Ok();
+        Assert.True(t.State.Command!.SettleHeld);
+        Assert.Equal(new Action.ResumeAudio(), t.Last.Awaited);
+
+        t.Cancelled();
+
+        Assert.Equal(
+            [new Action.ReleaseSettle(), new Action.CompleteCommand(seek, ItemCommandResult.Cancelled)],
+            t.Actions
+        );
+    }
+
+    [Fact]
+    public void ARelaunchCancelledByItsCallerAsItsRunStarts_ReleasesTheHold()
+    {
+        var t = ItemRuntimeTranscript.Playing();
+        var seek = t.Seek(At3);
+        t.Ok();
+        t.Ends(ItemWork.Pump);
+        t.Ends(ItemWork.Graph);
+        t.Ok();
+        t.Ok();
+        t.Ok();
+        t.CallerCancels(seek);
+
+        t.Ok(); // the run started
+
+        Assert.Equal(
+            [new Action.ReleaseSettle(), new Action.CompleteCommand(seek, ItemCommandResult.Cancelled)],
+            t.Actions
+        );
+        Assert.Equal(ItemRunStatus.Running, t.State.Status);
+    }
+
+    [Fact]
+    public void ARelaunchThatSettles_ReleasesNothingMore()
+    {
+        var t = ItemRuntimeTranscript.Playing();
+        t.Seek(At3);
+        t.Ok();
+        t.Ends(ItemWork.Pump);
+        t.Ends(ItemWork.Graph);
+        t.OkUntilIdle();
+
+        Assert.Single(t.All.OfType<Action.Settle>());
+        Assert.Empty(t.All.OfType<Action.ReleaseSettle>());
+
+        // Cancelled during the settle: the settle releases the hold itself.
+        var u = ItemRuntimeTranscript.Playing();
+        u.Seek(At3);
+        u.Ok();
+        u.Ends(ItemWork.Pump);
+        u.Ends(ItemWork.Graph);
+        while (u.Last.Awaited is not Action.Settle)
+            u.Ok();
+        u.Cancelled();
+        Assert.Empty(u.All.OfType<Action.ReleaseSettle>());
+    }
+
+    // ── A seek at or past the item's end ────────────────────────────────────
+
+    [Theory]
+    [InlineData(5)] // at the end
+    [InlineData(7)] // past it
+    public void ASeekAtOrPastTheItemsEnd_StartsARunThatPlaysToTheEndOfTheSource(int seconds)
+    {
+        var end = TimeSpan.FromSeconds(5);
+        var target = TimeSpan.FromSeconds(seconds);
+        var t = new ItemRuntimeTranscript();
+        t.Initialize(TimeSpan.Zero, end);
+        t.Opened();
+        t.WarmUp();
+        Assert.Equal(new Action.StartRun(0, PumpAndGraph, ItemGraphPolicy.Rebuild, TimeSpan.Zero, end, false), t.Last.Awaited);
+        t.Ok();
+        t.FirstFrame();
+        t.Play();
+        t.OkUntilIdle();
+
+        t.Seek(target);
+        t.Ok();
+        t.Ends(ItemWork.Pump);
+        t.Ends(ItemWork.Graph);
+        while (t.Last.Awaited is not Action.StartRun)
+            t.Ok();
+
+        Assert.Equal(new Action.StartRun(1, PumpAndGraph, ItemGraphPolicy.Rebuild, target, null, HoldForSettle: true), t.Last.Awaited);
+    }
+
+    [Fact]
+    public void ASeekBeforeTheItemsEnd_StopsTheRunThere()
+    {
+        var end = TimeSpan.FromSeconds(5);
+        var t = new ItemRuntimeTranscript();
+        t.Initialize(TimeSpan.Zero, end);
+        t.Opened();
+
+        t.Seek(At3, clockPaused: true);
+        t.OkUntilIdle();
+        t.WarmUp(At3);
+
+        Assert.Equal(new Action.StartRun(1, PumpAndGraph, ItemGraphPolicy.Rebuild, At3, end, false), t.Last.Awaited);
+    }
+
     // ── Warm-up ─────────────────────────────────────────────────────────────
 
     [Fact]
@@ -850,6 +1041,29 @@ public sealed class ItemRuntimeProtocolTests
             Assert.Null(t.Last.Awaited);
             Assert.Equal(before, t.State);
         }
+    }
+
+    [Fact]
+    public void AnOkThatIsNotOpened_IsNotAnOpensSuccess()
+    {
+        var t = new ItemRuntimeTranscript();
+        t.Initialize();
+        var opening = t.State;
+
+        t.Ok();
+
+        Assert.Empty(t.Actions);
+        Assert.Null(t.Last.Awaited);
+        Assert.Equal(opening, t.State);
+        Assert.Equal(ItemRuntimePhase.Opening, t.State.Phase);
+
+        // An Opened while something else is awaited is not one either.
+        var u = ItemRuntimeTranscript.Playing();
+        u.Seek(At3);
+        var pausing = u.State;
+        u.Opened();
+        Assert.Empty(u.Actions);
+        Assert.Equal(pausing, u.State);
     }
 
     // ── Behaviour that differs from SubstrateSession ────────────────────────

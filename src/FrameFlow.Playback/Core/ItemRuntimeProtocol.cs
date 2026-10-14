@@ -27,6 +27,8 @@ namespace FrameFlow.Playback.Core;
 /// number. A completion or a command may be stepped while an awaited action is under way: a
 /// completion is taken in, a dispose waits for the action, and any other command is refused as
 /// <see cref="ItemRefusal.Busy"/>. The caller serialises its commands, so none is refused in practice.
+/// A run's work is under way from the moment the shell starts it, so a piece that ends before the
+/// start's outcome is stepped, its fault or its end of stream with it, is taken in then.
 /// </para>
 /// <para>
 /// <b>A reposition.</b> A seek, a rewind, and a play, warm-up or open that has to position first
@@ -35,7 +37,8 @@ namespace FrameFlow.Playback.Core;
 /// audio sink deactivate and the demuxer seek. Once the seek has succeeded the decoders are reset and the clocks seated, and
 /// the reposition has committed. One on an item that is playing then relaunches: it activates the
 /// audio sink, starts the next run, opens the gates, resumes the audio sink and settles the clocks
-/// on the destination frame. One on an item that is paused, or has not played, holds, and leaves the
+/// on the destination frame; one that ends before its settle releases the hold its run took on that
+/// frame. One on an item that is paused, or has not played, holds, and leaves the
 /// launch to the next play. A seek and a play build a fresh graph; a rewind runs the last one again
 /// once one is built. Every path cancels a run that is still running and waits for its work, so
 /// what <c>SubstrateSession</c> chose between with <c>TaskPolicy</c> is one rule here.
@@ -346,14 +349,15 @@ internal static class ItemRuntimeProtocol
 
         private void OnOutcome(ItemActionOutcome outcome, Exception? error, ItemRuntimeInput.Opened? opened)
         {
-            // Nothing is awaited: a stray outcome changes nothing.
-            if (State.Command is not { IsWaiting: false } command)
+            // Nothing is awaited: a stray outcome changes nothing. Only Opened is an open's success.
+            if (State.Command is not { IsWaiting: false } awaiting)
                 return;
-            if (opened is not null && command.Stage != ItemCommandStage.Opening)
+            if ((opened is not null) != (awaiting.Stage == ItemCommandStage.Opening && outcome == ItemActionOutcome.Ok))
                 return;
 
             var ok = outcome == ItemActionOutcome.Ok;
-            TakeEffect(command, ok, opened);
+            TakeEffect(awaiting, ok, opened);
+            var command = Command;
 
             if (!ok)
             {
@@ -391,16 +395,24 @@ internal static class ItemRuntimeProtocol
                     break;
 
                 case ItemCommandStage.StartingRun or ItemCommandStage.RepositionStartingRun when ok:
-                    var graph = command.Stage == ItemCommandStage.RepositionStartingRun
-                        ? command.Reposition!.Value.Graph
-                        : ItemGraphPolicy.Rebuild;
+                    var relaunch = command.Stage == ItemCommandStage.RepositionStartingRun;
+                    var graph = relaunch ? command.Reposition!.Value.Graph : ItemGraphPolicy.Rebuild;
+
+                    // The run's work started with the action, and some of it may have ended already.
                     State = State with
                     {
                         Status = ItemRunStatus.Running,
-                        Pending = WorkOf(State),
+                        Pending = WorkOf(State) & ~State.EndedBeforeStart,
+                        EndedBeforeStart = ItemWork.None,
                         Floor = TimeSpan.Zero,
                         GraphBuilt = State.GraphBuilt || (graph == ItemGraphPolicy.Rebuild && State.HasGraph),
+                        Command = command with { SettleHeld = relaunch && Settles },
                     };
+                    break;
+
+                case ItemCommandStage.StartingRun or ItemCommandStage.RepositionStartingRun:
+                    // A start that fails starts nothing.
+                    State = State with { EndedBeforeStart = ItemWork.None };
                     break;
 
                 case ItemCommandStage.ActivatingAudio
@@ -688,10 +700,15 @@ internal static class ItemRuntimeProtocol
 
         private void RepositionSettle()
         {
-            if (Settles)
-                Await(ItemCommandStage.RepositionSettling, new ItemRuntimeAction.Settle());
-            else
+            if (!Settles)
+            {
                 RepositionDone();
+                return;
+            }
+
+            // The settle releases the hold however it ends.
+            State = State with { Command = Command with { SettleHeld = false } };
+            Await(ItemCommandStage.RepositionSettling, new ItemRuntimeAction.Settle());
         }
 
         // Only a wallclock master advances while the decoder walks to the target, so only it is
@@ -724,11 +741,20 @@ internal static class ItemRuntimeProtocol
             if (
                 ended.Run != State.Run
                 || ended.Work is not (ItemWork.Pump or ItemWork.Graph or ItemWork.Recovery or ItemWork.EmptyEnd)
-                || (State.Pending & ended.Work) == ItemWork.None
             )
             {
                 return;
             }
+
+            if (State.IsStartingRun)
+            {
+                if ((WorkOf(State) & ~State.EndedBeforeStart & ended.Work) != ItemWork.None)
+                    OnWorkEndedBeforeStart(ended);
+                return;
+            }
+
+            if ((State.Pending & ended.Work) == ItemWork.None)
+                return;
 
             State = State with { Pending = State.Pending & ~ended.Work };
 
@@ -757,6 +783,19 @@ internal static class ItemRuntimeProtocol
                 FinishDispose();
             else if (State.Command is { Stage: ItemCommandStage.Stopping })
                 RepositionAfterStop();
+        }
+
+        // Work of a run whose start is still under way has ended. The run is live and nothing has
+        // stopped it, so its fault and its end of stream are reported now, as for a running run; the
+        // start's outcome takes the work off what is pending.
+        private void OnWorkEndedBeforeStart(ItemRuntimeInput.WorkEnded ended)
+        {
+            State = State with { EndedBeforeStart = State.EndedBeforeStart | ended.Work };
+
+            if (ended.Ending == ItemWorkEnding.Faulted)
+                Emit(new ItemRuntimeAction.ReportFault(ended.Run, ended.Work, ended.Error));
+            if (ended.Work is ItemWork.Graph or ItemWork.EmptyEnd && ended.Ending == ItemWorkEnding.Completed)
+                Emit(new ItemRuntimeAction.RaiseEndOfStream(ended.Run));
         }
 
         private void OnFirstFrame()
@@ -852,9 +891,12 @@ internal static class ItemRuntimeProtocol
 
         private void Finish() => End(Command, ItemCommandResult.Ok);
 
-        // Ends a command, handing its caller the result.
+        // Ends a command, handing its caller the result. A run it started to settle, and did not,
+        // would hold its destination frame until the pacer's backstop gave up on it.
         private void End(ItemCommand command, ItemCommandResult result)
         {
+            if (command.SettleHeld)
+                Emit(new ItemRuntimeAction.ReleaseSettle());
             Complete(command.Id, result);
             State = State with { Command = null };
             if (State.DisposeRequested)
