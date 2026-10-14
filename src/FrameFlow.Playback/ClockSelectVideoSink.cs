@@ -1524,6 +1524,11 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                     // ending the loop here stopped the video for the rest of the item, with
                     // nothing said (#703). An OperationCanceledException the sink raised while the
                     // pacer is not stopping is a failure like any other.
+                    //
+                    // The frame is not disposed here, on either kind of failure. One that came
+                    // before the hand-off, a throwing OnFormatChangedAsync, was disposed by the
+                    // announcer before it rethrew, and one from IVideoSink.PresentAsync left the
+                    // frame with the sink (#701). A dispose here would release it a second time.
                     if (!ReportSinkFailure(_sinkFailures.Failed(Now()), ex))
                         continue;
 
