@@ -18,7 +18,14 @@ namespace FrameFlow.Player.Core;
 /// <para>
 /// A run and a dispose that race each take the shell's lock, in one order or the other, and each
 /// order is one sequence of these transitions: a dispose first refuses the run, and a run first is
-/// the run the dispose cancels and waits for.
+/// the run the dispose cancels and waits for. The shell starts a run that is let start on its
+/// scope under the same lock, so the dispose's stop of that scope always finds it (ADR-0086,
+/// decision 1).
+/// </para>
+/// <para>
+/// The shell asks <see cref="Dispose"/> once: its second dispose waits for the first through
+/// <c>DisposeOnce</c> (ADR-0086, decision 3). A second ask is still answered, with
+/// <see cref="PassTeardown.Begun"/>.
 /// </para>
 /// </remarks>
 /// <param name="Running">Whether a run is in flight.</param>
