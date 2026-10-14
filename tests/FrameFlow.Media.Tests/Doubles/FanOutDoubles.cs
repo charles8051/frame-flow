@@ -14,7 +14,8 @@ internal sealed class CountedFrame(
     int height = 4,
     PixelFormat format = PixelFormat.Bgra32,
     SampleAspectRatio sampleAspectRatio = default,
-    VideoRotation rotation = VideoRotation.None
+    VideoRotation rotation = VideoRotation.None,
+    FrameMemoryDomain memoryDomain = FrameMemoryDomain.Cpu
 ) : IVideoFrame
 {
     private int _references = 1;
@@ -31,7 +32,7 @@ internal sealed class CountedFrame(
     public TimeSpan Pts { get; init; }
     public TimeSpan Duration => TimeSpan.FromMilliseconds(33);
     public PixelFormat Format { get; } = format;
-    public FrameMemoryDomain MemoryDomain => FrameMemoryDomain.Cpu;
+    public FrameMemoryDomain MemoryDomain { get; } = memoryDomain;
 
     public SampleAspectRatio SampleAspectRatio { get; } =
         sampleAspectRatio == default ? SampleAspectRatio.Square : sampleAspectRatio;

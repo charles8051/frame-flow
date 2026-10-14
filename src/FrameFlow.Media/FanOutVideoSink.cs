@@ -29,8 +29,8 @@ namespace FrameFlow.Media;
 /// (<see cref="FanOutTarget.Transform"/>), such as a filtered copy.
 /// </para>
 /// <para>
-/// <b>Delivery.</b> <see cref="PresentAsync"/> presents to each target in turn, on the calling
-/// thread, so a slow target or transform delays the ones after it. A plain target is given a
+/// <b>Delivery.</b> <see cref="PresentAsync"/> presents to the targets one after another, so a
+/// slow target or transform delays the ones after it. A plain target is given a
 /// reference taken just before its call, and a transformed one the transform's output; either way
 /// the target owns what it is given, even when its call throws. Every target is called even when
 /// one before it throws or is cancelled. Then the fan-out disposes the reference it was given,
@@ -42,7 +42,8 @@ namespace FrameFlow.Media;
 /// <para>
 /// <b>What it declares</b> is read from its targets when it is made.
 /// <see cref="MaxHeldFrames"/> is the sum of theirs, <see cref="AcceptedDomains"/> the domains
-/// every target takes, and <see cref="PreferredBackends"/> the first list a target names. A
+/// every target takes, and <see cref="PreferredBackends"/> the first list a target without a
+/// transform names, keeping the backends whose frames the fan-out takes. A
 /// fan-out whose targets take no domain in common is refused. One that takes fewer domains than a
 /// target would alone logs it once, when it is made: a fan-out over a zero-copy view and a CPU
 /// view hands both CPU frames.
@@ -136,7 +137,10 @@ public sealed partial class FanOutVideoSink : IVideoSink, IClaimForwardingSink
             _targets.Select(static target => target.Sink.MaxHeldFrames)
         );
         PreferredBackends = FanOutRules.PreferredBackends(
-            _targets.Select(static target => target.Sink.PreferredBackends)
+            _targets
+                .Where(static target => !target.HasTransform)
+                .Select(static target => target.Sink.PreferredBackends),
+            AcceptedDomains
         );
 
         // A build claims these in the fan-out's place. The fan-out's own entry among them makes a
@@ -253,7 +257,11 @@ public sealed partial class FanOutVideoSink : IVideoSink, IClaimForwardingSink
     public FrameMemoryDomains AcceptedDomains { get; }
 
     /// <inheritdoc />
-    /// <remarks>The first non-empty list among the targets, in order.</remarks>
+    /// <remarks>
+    /// The first list, in target order, among the targets without a transform that names a backend
+    /// whose frames the fan-out takes, keeping only those backends. A transformed target's sink is
+    /// given its transform's frames, not the decoder's.
+    /// </remarks>
     public IReadOnlyList<HardwareDecodeBackendKind> PreferredBackends { get; }
 
     /// <inheritdoc />

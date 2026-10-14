@@ -250,6 +250,90 @@ public sealed class FanOutVideoSinkTests
     }
 
     [Fact]
+    public async Task ATargetThatFaultsAfterItYields_LeaksNoReference_AndTheOthersStillGetTheFrame()
+    {
+        var failure = new InvalidOperationException("the surface went away");
+        var faulting = new FaultingLaterSink(failure);
+        var after = new RecordingSink("after");
+        var fanOut = new FanOutVideoSink(faulting, after);
+        var frame = new CountedFrame();
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await fanOut.PresentAsync(frame, CancellationToken.None)
+        );
+
+        Assert.Same(failure, thrown);
+        Assert.Single(after.Frames);
+        Assert.Equal(0, frame.References);
+        Assert.Equal(0, frame.OverReleases);
+    }
+
+    [Fact]
+    public async Task ATransformThatReturnsNothing_FailsItsTargetsCall()
+    {
+        var filtered = new RecordingSink("filtered");
+        var after = new RecordingSink("after");
+        var fanOut = new FanOutVideoSink(
+            FanOutTarget.Transform(filtered, _ => null!),
+            FanOutTarget.Of(after)
+        );
+        var frame = new CountedFrame();
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await fanOut.PresentAsync(frame, CancellationToken.None)
+        );
+
+        Assert.Contains("returned no frame", thrown.Message, StringComparison.Ordinal);
+        Assert.Empty(filtered.Frames);
+        Assert.Single(after.Frames);
+        Assert.Equal(0, frame.References);
+    }
+
+    [Theory]
+    [InlineData(FrameMemoryDomain.Gpu, FrameMemoryDomains.Cpu)]
+    [InlineData(FrameMemoryDomain.Cpu, FrameMemoryDomains.D3D11)]
+    public async Task ATransformWhoseFrameIsInMemoryItsSinkDoesNotTake_FailsItsTargetsCall_AndItsFrameIsDisposed(
+        FrameMemoryDomain made,
+        FrameMemoryDomains sinkTakes
+    )
+    {
+        var log = new List<string>();
+        var filtered = new RecordingSink("filtered", log) { AcceptedDomains = sinkTakes };
+        var after = new RecordingSink("after", log);
+        var output = new CountedFrame(memoryDomain: made);
+        var fanOut = new FanOutVideoSink(
+            FanOutTarget.Transform(filtered, _ => output),
+            FanOutTarget.Of(after)
+        );
+        var frame = new CountedFrame();
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await fanOut.PresentAsync(frame, CancellationToken.None)
+        );
+
+        Assert.Contains($"made a frame in {made} memory", thrown.Message, StringComparison.Ordinal);
+        Assert.Equal(["after"], log);
+        Assert.Equal(0, output.References);
+        Assert.Equal(0, output.OverReleases);
+        Assert.Equal(0, frame.References);
+    }
+
+    [Fact]
+    public async Task ATransformsGpuFrame_ReachesASinkThatTakesAGpuDomain()
+    {
+        var zeroCopy = new RecordingSink("zero-copy")
+        {
+            AcceptedDomains = FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D11,
+        };
+        var output = new CountedFrame(memoryDomain: FrameMemoryDomain.Gpu);
+        var fanOut = new FanOutVideoSink(FanOutTarget.Transform(zeroCopy, _ => output));
+
+        await fanOut.PresentAsync(new CountedFrame(), CancellationToken.None);
+
+        Assert.Same(output, Assert.Single(zeroCopy.Frames));
+    }
+
+    [Fact]
     public async Task ATransformThatThrows_FailsOnlyItsTarget()
     {
         var failure = new NotSupportedException("the filter reads Bgra32");
@@ -388,14 +472,57 @@ public sealed class FanOutVideoSinkTests
     }
 
     [Fact]
-    public void PreferredBackends_IsTheFirstNonEmptyListAmongTheTargets()
+    public void PreferredBackends_IsTheFirstListAPlainTargetNames()
     {
-        var none = new RecordingSink("none");
-        var d3d12 = new RecordingSink("d3d12") { PreferredBackends = [HardwareDecodeBackendKind.D3D12Va] };
-        var cuda = new RecordingSink("cuda") { PreferredBackends = [HardwareDecodeBackendKind.Cuda] };
+        const FrameMemoryDomains gpus = FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D12 | FrameMemoryDomains.Cuda;
+        var none = new RecordingSink("none") { AcceptedDomains = gpus };
+        var d3d12 = new RecordingSink("d3d12")
+        {
+            AcceptedDomains = gpus,
+            PreferredBackends = [HardwareDecodeBackendKind.D3D12Va],
+        };
+        var cuda = new RecordingSink("cuda")
+        {
+            AcceptedDomains = gpus,
+            PreferredBackends = [HardwareDecodeBackendKind.Cuda],
+        };
 
         Assert.Equal([HardwareDecodeBackendKind.D3D12Va], new FanOutVideoSink(none, d3d12, cuda).PreferredBackends);
-        Assert.Empty(new FanOutVideoSink(none, new RecordingSink("none too")).PreferredBackends);
+        Assert.Empty(new FanOutVideoSink(none, new RecordingSink("none too") { AcceptedDomains = gpus }).PreferredBackends);
+        // A transformed target's sink is given the transform's frames, not the decoder's.
+        Assert.Equal(
+            [HardwareDecodeBackendKind.D3D12Va],
+            new FanOutVideoSink(
+                FanOutTarget.Transform(cuda, frame => frame.AddRef(), gpus),
+                FanOutTarget.Of(d3d12)
+            ).PreferredBackends
+        );
+    }
+
+    [Fact]
+    public void PreferredBackends_KeepsOnlyTheBackendsWhoseFramesTheFanOutTakes()
+    {
+        var cudaFirst = new RecordingSink("cuda first")
+        {
+            AcceptedDomains = FrameMemoryDomains.Any,
+            PreferredBackends = [HardwareDecodeBackendKind.Cuda],
+        };
+        var zeroCopy = new RecordingSink("zero-copy")
+        {
+            AcceptedDomains = FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D11,
+            PreferredBackends = [HardwareDecodeBackendKind.D3D12Va, HardwareDecodeBackendKind.D3D11Va],
+        };
+
+        // The fan-out takes CPU and D3D11 frames: the first list names no backend it takes, and
+        // the second keeps D3D11VA only.
+        Assert.Equal([HardwareDecodeBackendKind.D3D11Va], new FanOutVideoSink(cudaFirst, zeroCopy).PreferredBackends);
+        Assert.Equal(
+            [HardwareDecodeBackendKind.D3D11Va],
+            FanOutRules.PreferredBackends(
+                [[HardwareDecodeBackendKind.Cuda], [HardwareDecodeBackendKind.D3D12Va, HardwareDecodeBackendKind.D3D11Va]],
+                FrameMemoryDomains.Cpu | FrameMemoryDomains.D3D11
+            )
+        );
     }
 
     // ─── Counts ─────────────────────────────────────────────────────
@@ -482,6 +609,30 @@ public sealed class FanOutVideoSinkTests
         Assert.True(FanOutRules.KeepsFormat(frame, new CountedFrame()));
         foreach (var what in new[] { "width", "height", "pixel format", "pixel shape", "rotation" })
             Assert.False(FanOutRules.KeepsFormat(frame, OfAnotherFormat(what)), what);
+    }
+
+    [Fact]
+    public void Takes_ACpuFrameWhereCpuIsTaken_AndAGpuFrameWhereAnyGpuDomainIs()
+    {
+        Assert.True(FanOutRules.Takes(FrameMemoryDomains.Cpu, FrameMemoryDomain.Cpu));
+        Assert.False(FanOutRules.Takes(FrameMemoryDomains.D3D11, FrameMemoryDomain.Cpu));
+        Assert.True(FanOutRules.Takes(FrameMemoryDomains.Cpu | FrameMemoryDomains.Cuda, FrameMemoryDomain.Gpu));
+        Assert.False(FanOutRules.Takes(FrameMemoryDomains.Cpu, FrameMemoryDomain.Gpu));
+    }
+
+    /// <summary>A sink that yields before it disposes its frame, as its owner, and throws.</summary>
+    private sealed class FaultingLaterSink(Exception failure) : IVideoSink
+    {
+        public async ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
+        {
+            await Task.Yield();
+            frame.Dispose();
+            throw failure;
+        }
+
+        public ValueTask OnFormatChangedAsync(VideoFormatInfo format, CancellationToken ct) => default;
+
+        public ValueTask DisposeAsync() => default;
     }
 
     /// <summary>A logger that keeps what it is given.</summary>

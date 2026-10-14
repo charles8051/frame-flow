@@ -43,10 +43,35 @@ internal static class FanOutRules
         return sum;
     }
 
-    /// <summary>The first non-empty list of preferred backends among the targets, in order.</summary>
+    /// <summary>
+    /// The backends the fan-out handles best: the first list, in target order, that names a backend
+    /// whose frames <paramref name="accepted"/> takes, keeping only those backends.
+    /// </summary>
+    /// <param name="plainTargets">
+    /// The lists of the targets without a transform. A transformed target's sink never sees the
+    /// decoder's frames, only its transform's, so what it prefers says nothing about them.
+    /// </param>
+    /// <param name="accepted">The domains the fan-out takes.</param>
     public static IReadOnlyList<HardwareDecodeBackendKind> PreferredBackends(
-        IEnumerable<IReadOnlyList<HardwareDecodeBackendKind>> eachTarget
-    ) => eachTarget.FirstOrDefault(static backends => backends.Count > 0) ?? [];
+        IEnumerable<IReadOnlyList<HardwareDecodeBackendKind>> plainTargets,
+        FrameMemoryDomains accepted
+    ) =>
+        plainTargets
+            .Select(backends => backends.Where(backend => Takes(accepted, backend)).ToArray())
+            .FirstOrDefault(static backends => backends.Length > 0) ?? [];
+
+    // Whether the fan-out takes the frames a backend decodes into.
+    private static bool Takes(FrameMemoryDomains accepted, HardwareDecodeBackendKind backend) =>
+        (HardwareFrameDomains.Of(backend) & accepted) != FrameMemoryDomains.None;
+
+    /// <summary>
+    /// Whether a sink that takes <paramref name="accepted"/> takes a frame in
+    /// <paramref name="domain"/>. A frame says only whether it is in CPU or GPU memory, not which
+    /// GPU API holds it, so a GPU frame passes for a sink that takes any GPU domain.
+    /// </summary>
+    public static bool Takes(FrameMemoryDomains accepted, FrameMemoryDomain domain) =>
+        (accepted & (domain == FrameMemoryDomain.Cpu ? FrameMemoryDomains.Cpu : FrameMemoryDomains.Gpu))
+        != FrameMemoryDomains.None;
 
     /// <summary>
     /// Whether a transform's <paramref name="output"/> keeps the format of the frame it was made

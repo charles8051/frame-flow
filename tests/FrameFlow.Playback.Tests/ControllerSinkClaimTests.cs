@@ -171,12 +171,13 @@ public sealed class ControllerSinkClaimTests
         // The free sink is made first, so it is claimed before the shared one is found held.
         await using var free = new HeadlessVideoSink();
         await using var shared = new HeadlessVideoSink();
-        await using var first = PlaybackController.Create(
-            videoSink: new FanOutVideoSink(shared, new HeadlessVideoSink())
-        );
+        await using var other = new HeadlessVideoSink();
+        await using var firstFanOut = new FanOutVideoSink(shared, other);
+        await using var secondFanOut = new FanOutVideoSink(free, shared);
+        await using var first = PlaybackController.Create(videoSink: firstFanOut);
 
         var error = Assert.Throws<InvalidOperationException>(() =>
-            PlaybackController.Create(videoSink: new FanOutVideoSink(free, shared))
+            PlaybackController.Create(videoSink: secondFanOut)
         );
 
         Assert.Contains(

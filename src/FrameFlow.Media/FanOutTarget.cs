@@ -23,6 +23,7 @@ namespace FrameFlow.Media;
 public sealed class FanOutTarget
 {
     private readonly Func<IVideoFrame, IVideoFrame>? _transform;
+    private readonly FrameMemoryDomains _sinkDomains;
 
     private FanOutTarget(
         IVideoSink sink,
@@ -32,6 +33,7 @@ public sealed class FanOutTarget
     {
         Sink = sink;
         _transform = transform;
+        _sinkDomains = sink.AcceptedDomains;
         AcceptedDomains = acceptedDomains;
     }
 
@@ -51,10 +53,12 @@ public sealed class FanOutTarget
     /// <param name="transform">
     /// Makes the target's frame. It borrows the frame it is passed, which it must not dispose,
     /// and returns a frame the target then owns: a new frame, or another reference to the one it
-    /// was passed (<see cref="IVideoFrame.AddRef"/>). The frame it returns keeps the dimensions,
-    /// pixel format, pixel shape and rotation of the one it was passed, so the format the target
-    /// was told stays true. One that does not is disposed, and that target's call fails. A change
-    /// of format belongs in the graph, as a node before the sink.
+    /// was passed (<see cref="IVideoFrame.AddRef"/>). Once it returns it keeps no reference to the
+    /// frame it was passed, other than one it returned: <see cref="FanOutVideoSink.MaxHeldFrames"/>
+    /// cannot count one it keeps. The frame it returns keeps the dimensions, pixel format, pixel
+    /// shape and rotation of the one it was passed, so the format the target was told stays true,
+    /// and is in memory the sink takes. One that does not is disposed, and that target's call
+    /// fails. A change of format belongs in the graph, as a node before the sink.
     /// </param>
     /// <param name="acceptedDomains">
     /// The memory domains of the frames <paramref name="transform"/> takes, which stand in for the
@@ -90,7 +94,8 @@ public sealed class FanOutTarget
     /// what it is given, even when its call throws.
     /// </summary>
     /// <exception cref="InvalidOperationException">
-    /// The transform returned nothing, or a frame of another format, which is disposed.
+    /// The transform returned nothing, or a frame of another format or in memory the sink does not
+    /// take, which is disposed.
     /// </exception>
     internal ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
     {
@@ -110,6 +115,15 @@ public sealed class FanOutTarget
                 $"The transform for {Sink.GetType().Name} made a {made} frame from a {Describe(frame)} "
                     + "one. A transform keeps the frame's dimensions, pixel format, pixel shape and "
                     + "rotation; change the format in the graph, before the sink."
+            );
+        }
+        if (!FanOutRules.Takes(_sinkDomains, output.MemoryDomain))
+        {
+            var domain = output.MemoryDomain;
+            output.Dispose();
+            throw new InvalidOperationException(
+                $"The transform for {Sink.GetType().Name} made a frame in {domain} memory, and the "
+                    + $"sink takes {_sinkDomains} frames."
             );
         }
 
