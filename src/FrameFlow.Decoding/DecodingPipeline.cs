@@ -28,6 +28,11 @@ namespace FrameFlow.Decoding;
 /// (per ADR-0009), then routes each packet to the appropriate decoder via its
 /// internal queue. The decoders drain their queues independently.
 /// </para>
+/// <para>
+/// Disposal (ADR-0086, decision 3.5): no lock fences the pump's packet or the pending packet, so
+/// the owner ends the pump, the decoder flush and any seek reset before it disposes the pipeline.
+/// A Debug build checks that.
+/// </para>
 /// </remarks>
 public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
 {
@@ -44,6 +49,9 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
     private readonly long _audioPacketOffset;
     private int _pendingPacketStreamIndex = -1;
     private bool _disposed;
+
+    // Debug-only: the pump, flushes and resets in flight, which the dispose checks is zero.
+    private UseCounter _uses;
 
     // ── Park seam (test observability, ADR-0072) ────────────────────────────
     //
@@ -176,8 +184,34 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
     /// <para>
     /// Call this from a dedicated Task. It runs until EOF or cancellation.
     /// </para>
+    /// <para>
+    /// <paramref name="cancellationToken"/> also reaches a read blocked in FFmpeg, on a stalled
+    /// network source for instance: the demux session's interrupt callback observes it for the
+    /// whole run, and the read gives up (#709). A read that returns, ends or fails once the token
+    /// is cancelled ends the pump as a cancellation does, not as the end of the source or a fault,
+    /// and the part of a packet a read cut short brought back is dropped, not routed. Such a read
+    /// leaves the demuxer's position unreliable, so the next run, like any read of the session,
+    /// is refused until a seek (<see cref="DemuxSession.ReadPacketAsync"/>).
+    /// </para>
     /// </remarks>
     public async Task RunDemuxPumpAsync(CancellationToken cancellationToken)
+    {
+        // The run is one use of this pipeline and of the demux session, from the first read to
+        // the last, and the session's interrupt callback observes the run's token throughout.
+        _uses.Enter();
+        try
+        {
+            using var demuxUse = _demuxSession.BeginRead(cancellationToken);
+            await PumpAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _uses.Exit();
+        }
+    }
+
+    /// <summary>The body of <see cref="RunDemuxPumpAsync"/>, inside the run's use.</summary>
+    private async Task PumpAsync(CancellationToken cancellationToken)
     {
         var fmtCtx = _demuxSession.FormatContextPtr;
 
@@ -220,6 +254,13 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
 
                 // step.Action == DemuxPumpAction.ReadNext
                 int readRet = FFAvFormat.av_read_frame(fmtCtx, packetPtr);
+
+                // A read the interrupt cut short, or that returned once the run was cancelled, is
+                // given up before anything is routed: the part of a packet it brought back is
+                // dropped, and it ends the run as a cancellation, or as a fault naming the
+                // interrupt if nothing cancelled the run (#709).
+                _demuxSession.ThrowIfReadGivenUp(readRet, packetPtr, cancellationToken, "reading a packet");
+
                 var readKind = ClassifyDemuxReadResult(readRet);
 
                 int streamIndex = -1;
@@ -376,26 +417,34 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
     /// </summary>
     public async Task FinalizeDecodersAsync(CancellationToken cancellationToken = default)
     {
-        if (_videoDecoder is not null)
+        _uses.Enter();
+        try
         {
-            try
+            if (_videoDecoder is not null)
             {
-                await _videoDecoder.FlushAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await _videoDecoder.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { }
+                catch (ChannelClosedException) { }
+                _videoDecoder.CompletePacketQueue();
             }
-            catch (OperationCanceledException) { }
-            catch (ChannelClosedException) { }
-            _videoDecoder.CompletePacketQueue();
-        }
 
-        if (_audioDecoder is not null)
-        {
-            try
+            if (_audioDecoder is not null)
             {
-                await _audioDecoder.FlushAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await _audioDecoder.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { }
+                catch (ChannelClosedException) { }
+                _audioDecoder.CompletePacketQueue();
             }
-            catch (OperationCanceledException) { }
-            catch (ChannelClosedException) { }
-            _audioDecoder.CompletePacketQueue();
+        }
+        finally
+        {
+            _uses.Exit();
         }
     }
 
@@ -416,18 +465,26 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
     /// </remarks>
     public void DiscardPendingPacket()
     {
-        // Drive the drop/no-op decision through the pure core's Seek transition: the phase is
-        // re-derived from whether the native clone field is set (the pointer lives only in the
-        // shell, ADR-0005). DropPending => free the retained clone; None => nothing was held.
-        var phase =
-            _pendingPacketPtr != nint.Zero ? DemuxPumpPhase.HavePending : DemuxPumpPhase.NeedRead;
-        var transition = DemuxPump.Seek(new DemuxPumpState(phase));
-
-        if (transition.Action == DemuxPumpAction.DropPending)
+        _uses.Enter();
+        try
         {
-            LogDiscardPendingPacket(_logger, _pendingPacketStreamIndex);
-            FFAvCodec.av_packet_free(ref _pendingPacketPtr);
-            _pendingPacketStreamIndex = -1;
+            // Drive the drop/no-op decision through the pure core's Seek transition: the phase is
+            // re-derived from whether the native clone field is set (the pointer lives only in the
+            // shell, ADR-0005). DropPending => free the retained clone; None => nothing was held.
+            var phase =
+                _pendingPacketPtr != nint.Zero ? DemuxPumpPhase.HavePending : DemuxPumpPhase.NeedRead;
+            var transition = DemuxPump.Seek(new DemuxPumpState(phase));
+
+            if (transition.Action == DemuxPumpAction.DropPending)
+            {
+                LogDiscardPendingPacket(_logger, _pendingPacketStreamIndex);
+                FFAvCodec.av_packet_free(ref _pendingPacketPtr);
+                _pendingPacketStreamIndex = -1;
+            }
+        }
+        finally
+        {
+            _uses.Exit();
         }
     }
 
@@ -437,10 +494,20 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
     /// </summary>
     public void ResetForSeek() => DiscardPendingPacket();
 
+    /// <summary>
+    /// Frees the packet the pump retained, if any. The decoders and the demux session are the
+    /// caller's.
+    /// </summary>
+    /// <remarks>
+    /// The owner ends the pump, the decoder flush and any seek reset first (ADR-0086, decision
+    /// 3.5). In a Debug build one still in flight makes this throw
+    /// <see cref="InvalidOperationException"/> and free nothing.
+    /// </remarks>
     public ValueTask DisposeAsync()
     {
         if (_disposed)
             return ValueTask.CompletedTask;
+        _uses.ThrowIfInUse(this);
         _disposed = true;
 
         if (_pendingPacketPtr != nint.Zero)

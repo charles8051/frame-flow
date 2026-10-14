@@ -533,9 +533,9 @@ public sealed class MediaPass : IAsyncDisposable
     /// <para>
     /// The dispose waits as long as the run takes to unwind once cancelled. A sink's present, drain
     /// or activation, a node in a configurator, or a video sink's
-    /// <see cref="IVideoSink.OnFormatChangedAsync"/> that ignores its token holds it there, and so
-    /// does a source whose read blocks, such as a stalled network stream: nothing interrupts the
-    /// demuxer's read (#709).
+    /// <see cref="IVideoSink.OnFormatChangedAsync"/> that ignores its token holds it there. A
+    /// demuxer read that waits on a stalled source, such as a network stream, does not: the
+    /// cancellation interrupts it (#709).
     /// </para>
     /// <para>
     /// Throws for neither the run's cancellation nor a fault the run ends with: the run's caller

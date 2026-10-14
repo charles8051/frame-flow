@@ -168,6 +168,13 @@ internal static partial class FFAvUtil
     /// </summary>
     internal const int AvErrorEof = unchecked((int)0xDFB9B0BB); // FFERRTAG('E','O','F',' ') = -(('E')|('O'<<8)|('F'<<16)|(' '<<24))
 
+    /// <summary>
+    /// AVERROR_EXIT — returned by a call that gave up because the format context's interrupt
+    /// callback asked it to (<see cref="FormatContextInterrupt"/>, #709).
+    /// Defined as <c>FFERRTAG('E','X','I','T')</c> in FFmpeg headers.
+    /// </summary>
+    internal const int AvErrorExit = unchecked((int)0xABB6A7BB); // FFERRTAG('E','X','I','T') = -(('E')|('X'<<8)|('I'<<16)|('T'<<24))
+
     /// <summary>AV_NOPTS_VALUE — sentinel used by FFmpeg when a timestamp is not known.</summary>
     internal const long AvNoPtsValue = unchecked((long)0x8000000000000000);
 

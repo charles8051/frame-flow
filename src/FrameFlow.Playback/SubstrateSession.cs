@@ -1645,7 +1645,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// The wait covers tasks a seek left held when its own wait for them was cancelled, so nothing
     /// is freed while a pump or a graph from before the seek still uses it (#707). It lasts as long
     /// as the run takes to unwind once cancelled: a sink or a configurator's node that ignores its
-    /// token holds it until the call returns, and so does a demuxer read that blocks (#709).
+    /// token holds it until the call returns. A demuxer read that waits on a stalled source does
+    /// not, since the run's cancellation interrupts it (#709).
     /// </remarks>
     public async ValueTask DisposeAsync()
     {

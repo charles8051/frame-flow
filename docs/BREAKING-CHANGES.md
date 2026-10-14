@@ -1010,9 +1010,8 @@ it, where it used to return at once.
 - A sink whose `PresentAsync`, `OnFormatChangedAsync`, `ActivateAsync` or `DrainAsync`, or a node
   in a configurator, that ignores the token it is given. A dispose during that call waits until it
   returns.
-- A source whose read blocks, such as a network stream that has stalled. Nothing interrupts the
-  demuxer's read (#709), so a dispose waits until it returns. Passing FFmpeg's `rw_timeout` option
-  through `MediaSource.DemuxerOptions` bounds it.
+- A source whose read blocks, such as a network stream that has stalled. The dispose's
+  cancellation now interrupts the demuxer's read (entry 29, #709), so the dispose returns.
 
 **What to write instead.**
 - To stop a pass early, dispose it, or cancel the token given to `RunToCompletionAsync`. Either ends
@@ -1124,9 +1123,8 @@ the picture stayed frozen until the next seek, and a first play launched a run b
   node in a video or audio configurator that does. A seek that supersedes another while such a call
   is in progress now waits until the call returns, where it used to go ahead beside it, and a
   dispose waits too. A scrub stalls for that long.
-- A source whose read blocks, such as a stalled network stream. Nothing interrupts the demuxer's
-  read (#709), so the next seek, or the dispose, waits until it returns. Passing FFmpeg's
-  `rw_timeout` option through `MediaSource.DemuxerOptions` bounds it.
+- A source whose read blocks, such as a stalled network stream. The run's cancellation now
+  interrupts the demuxer's read (entry 29, #709), so the next seek, or the dispose, goes on.
 - Code that pauses while a seek is in progress and then plays. The play resumes where the clock
   stood when the seek was cancelled, not at the seek's target, which the cancelled seek never took.
 
@@ -1243,6 +1241,58 @@ the dispose does, and a present the dispose overtakes returns.
 **Why.** Freeing a converter under a present in flight is what the teardown's order exists to
 prevent (ADR-0064), and the live path skipped it. Every owner of work now holds that work until it
 ends and reports how it ended (ADR-0086, decisions 1, 3 and 5).
+
+### 29. A cancellation reaches a demuxer call that waits on a stalled source
+
+**A change in behaviour, not a compile error.**
+
+A demuxer call that waited on a network source that had stopped sending could not be interrupted:
+the open, a read in a pass's or a player's run, and a seek. Cancelling, disposing the pass or the
+player, or seeking waited for as long as the source stalled, which without FFmpeg's `rw_timeout`
+was for good (#709). Since entries 24 and 26 made a dispose and a seek wait for the run they stop,
+that wait was a hang.
+
+Now every source opens with an interrupt callback, and a call waiting on the source gives up as
+soon as the token of the operation it belongs to is cancelled:
+
+- the open observes the token given to `FrameFlowPass.BuildAsync` or
+  `DemuxSessionFactory.OpenAsync`;
+- a run's reads observe the run's token, which the token given to `RunToCompletionAsync`, a pass's
+  dispose, and a player's seek and dispose all cancel;
+- a seek observes its own token, never the token of the run it stopped.
+
+The caller sees `OperationCanceledException`, as for any cancellation, and a run whose read was
+given up ends as cancelled, not as having reached the end of the source.
+
+**Who hits this.**
+- Code that opens a network source and cancels the open: `DemuxSessionFactory.OpenAsync` and
+  `BuildAsync` used to check the token only before the open began, and to finish the open whatever
+  happened to it after. A cancellation during the open now throws `OperationCanceledException`,
+  including one that comes once the streams were found and the probe was reading on; the open no
+  longer returns a session probed partway.
+- Code that passes `rw_timeout` through `MediaSource.DemuxerOptions` so that a dispose or a seek
+  ends. It still bounds a read that stalls while nothing is cancelled, but cancelling now ends one
+  on its own.
+- Code that calls `IDemuxSession.ReadPacketAsync` or `SeekAsync` itself. A read or a seek whose
+  token is cancelled while FFmpeg waits on the source throws `OperationCanceledException`, and so
+  does one that returns, fails or reaches the end of the source once the token is cancelled. A read
+  cut short partway through a packet returns no part of it. A read given up this way leaves the
+  demuxer's position unreliable (`mov`, for one, has already moved past the packet), and so does a
+  seek that does not complete, so the session then refuses reads with `InvalidOperationException`
+  until a seek completes: after a cancelled read or seek, seek before reading on. A seek whose token
+  is cancelled by the time it returns throws `OperationCanceledException`. A seek's keyframe search that FFmpeg gives up without a cancellation is an
+  `InvalidOperationException`; it no longer falls back to the container's own seek.
+- A player whose first item opens during `BuildPlayerAsync`, from a source that stalls before it
+  answers. The open does not see the build's token, and the cleanup of a cancelled build waits for
+  it, as does disposing a player while its command loop opens an item (#719).
+
+**What to write instead.** To stop a pass or a player that is waiting on its source, cancel the
+token you gave it, or dispose it, or seek. Keep `rw_timeout` where a stall should fail a run that
+nothing cancels, and to bound `BuildPlayerAsync` until #719 is fixed.
+
+**Why.** ADR-0086 makes every stop and dispose wait for the work it stops, rather than free what that
+work is still using (decision 3). That is safe only if the work can be made to stop: decision 4 has
+the cancellation reach the native call.
 
 ### Not breaking, but worth knowing
 
