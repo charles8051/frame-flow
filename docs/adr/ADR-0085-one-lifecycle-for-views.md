@@ -439,6 +439,10 @@ Each slice carries its own BREAKING-CHANGES entry.
 the frame the sink already owned. A sink now owns the frame from the call, even when the call
 throws, which decision 8 already said of a fan-out's targets. BREAKING-CHANGES entry 22 records it.
 
+The fix for #696 makes a pass's dispose cancel a run still in flight and wait for it to end before it
+frees the pipeline, the decoders and the demux session the run reads from. The pass then releases
+its claims at the end of its dispose, as the controller does. BREAKING-CHANGES entry 24 records it.
+
 What differs from the decisions, slice by slice. None reverses one.
 
 **The core (slice 4, #692).** Every control on the core relies on these.
@@ -462,8 +466,8 @@ What differs from the decisions, slice by slice. None reverses one.
 - `IClaimableSink` has a third member, `ClaimOrder`, the one process-wide order a claim on several
   sinks follows, so a sink of an app's own can take part in decision 8's ordering. `SinkClaimGate`
   is public for the same reason.
-- A pass disposed during its run keeps its claim until the run ends, because its dispose does not
-  wait for the run.
+- A pass disposed during its run kept its claim until the run ended, because its dispose did not
+  wait for the run. The fix for #696 closed this.
 - The player builder claims after the FFmpeg bootstrap, and the pass builder before it.
 
 **The fan-out (slice 3, #702).**
@@ -519,9 +523,6 @@ What is left:
 
 - Open question 1, whether a graph built by hand claims its sinks for its run, is #694. Until it is
   settled, a view fed only by such a graph keeps no frame while detached.
-- #696: a pass disposed during its run frees the pipeline, decoders and demux the run still uses.
-  That predates this record. Slice 2 keeps the claim until the run ends, and the native teardown
-  order is still open.
 - #698: the interop view can keep a gone player's last frame, when that frame was pending as the
   claim ended and was presented after it, until the next present, a detach or its dispose.
 - #703: a video sink that throws once stops the pacer's delivery loop for the rest of the item, and

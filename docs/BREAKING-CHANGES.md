@@ -627,9 +627,9 @@ picture, and two sessions on one `OpenAlAudioSink` raced its activation and both
 The claim is released once the holder's `DisposeAsync` has completed, which is after the last frame
 it sends has reached the sink. A player that is paused, has ended or is in `Error` still holds it,
 and so does a pass whose run has ended: a pass holds its claim until it is disposed, not until its
-run ends. A pass disposed while its run is still going keeps the claim until that run ends, because
-its dispose does not wait for the run. A build that fails or is cancelled releases its claims before
-it throws. A build against an in-box sink that has been disposed throws `ObjectDisposedException`,
+run ends. A pass disposed while its run is still going cancels the run, and releases the claim once
+the run has ended (entry 24). A build that fails or is cancelled releases its claims before it
+throws. A build against an in-box sink that has been disposed throws `ObjectDisposedException`,
 where it used to build a player whose every frame the sink discarded.
 
 The items of one player's queue, including one it prepares ahead, share that player's claim. A graph
@@ -645,8 +645,7 @@ should claim its sinks for its run.
   awaiting, or builds the new one first and disposes the old one after.
 - Code that runs several passes over one sink while each stays in scope, for example a series of
   `await using var pass = ...` declarations in one method, which are disposed only when the method
-  returns. Also code that disposes a pass without awaiting its run, or cancelling it and awaiting
-  it, before building the next pass.
+  returns.
 - Code that builds against an in-box sink that has been disposed, such as a view's own sink after
   the view's `DisposeAsync`. A view's own sink used to be disposed by a detach too, so a chain
   written before the view left the visual tree and built after it hit this. That case is gone with
@@ -663,9 +662,8 @@ player = await FrameFlowPlayer.Create()
     .BuildPlayerAsync();
 ```
 
-To run passes over one sink in turn, end each one's scope before the next is built. A pass whose
-run is still going holds the sink until the run ends, so await the run, or cancel it and await it,
-before building the next pass:
+To run passes over one sink in turn, end each one's scope before the next is built. The dispose is
+enough even while a run is still going, because it cancels the run and waits for it (entry 24):
 
 ```csharp
 foreach (var file in files)
@@ -985,6 +983,60 @@ and the player view cannot move a player to another sink. Taking the claim is th
 feeds the surface, and it keeps a build from claiming the surface while the swap runs. The chrome
 controls had their own ways of following a transport across trips out of the visual tree; they now
 share the views' lifecycle and its binding number.
+
+### 24. Disposing a pass cancels its run and waits for it to end
+
+**A change in behaviour, not a compile error.**
+
+`MediaPass.DisposeAsync` freed the demux pump pipeline, the decoders and the demux session at once,
+without looking at the run. A run still going read packets and decoded from what had been freed, so
+a pass disposed during its run, by an `await using` scope left early or by a dispose racing a
+cancellation, could crash the process in native code or decode from freed memory (#696).
+
+Now the dispose cancels a run still in flight and waits for it to end, and only then frees the
+pass's state and releases the claims on its sinks. A caller awaiting `RunToCompletionAsync` sees
+`OperationCanceledException`, as it would for its own token, where it used to see the run carry on
+over freed state and succeed or fail. A run asked for once the dispose has begun throws
+`ObjectDisposedException`. The dispose throws for neither the run's cancellation nor a fault the
+run ends with, and logs the fault at Warning. A dispose made while another is under way waits for
+it, where it used to return at once.
+
+**Who hits this.**
+- Code that disposes a pass during its run and then awaits or observes the run, expecting it to
+  finish as it would have. It now ends in `OperationCanceledException`.
+- Code that disposes a pass from inside its run, such as in a sink's `PresentAsync` or a node in a
+  configurator, and awaits the dispose there. The dispose waits for the run, which waits for that
+  call, so neither ends.
+- A sink whose `PresentAsync`, `OnFormatChangedAsync`, `ActivateAsync` or `DrainAsync`, or a node
+  in a configurator, that ignores the token it is given. A dispose during that call waits until it
+  returns.
+- A source whose read blocks, such as a network stream that has stalled. Nothing interrupts the
+  demuxer's read (#709), so a dispose waits until it returns. Passing FFmpeg's `rw_timeout` option
+  through `MediaSource.DemuxerOptions` bounds it.
+
+**What to write instead.**
+- To stop a pass early, dispose it, or cancel the token given to `RunToCompletionAsync`. Either ends
+  the run with `OperationCanceledException`.
+- To stop a pass from inside its run, cancel the run's token there, and dispose the pass once
+  `RunToCompletionAsync` has returned:
+
+```csharp
+using var stop = new CancellationTokenSource();
+await using var pass = await FrameFlowPass.Create(path)
+    .WithVideoSink(sink) // a sink that calls stop.Cancel() when it has seen enough
+    .BuildAsync();
+try
+{
+    await pass.RunToCompletionAsync(stop.Token);
+}
+catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+```
+
+- In a sink of your own, observe the token each call is given.
+
+**Why.** A dispose that leaves a run going frees what the run is using. Waiting for the run is what
+lets the dispose free it safely, and lets the claims go only after the last frame has reached the
+sinks, as a player's dispose already does (ADR-0085, decision 6).
 
 ### Not breaking, but worth knowing
 
