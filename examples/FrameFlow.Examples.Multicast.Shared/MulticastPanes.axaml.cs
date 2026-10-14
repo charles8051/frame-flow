@@ -1,7 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
 using FrameFlow.Avalonia;
-using FrameFlow.Examples.Common;
 using FrameFlow.Inference;
 using FrameFlow.Media;
 using FrameFlow.Yolo;
@@ -30,8 +29,12 @@ public partial class MulticastPanes : UserControl
         _detection = DetectionView.EnsureSink();
         _filtered = FilteredView.EnsureSink();
 
-        // Each pane keeps up to two of the frames it is given.
-        Sink = new DelegatingVideoSink(PresentAsync, maxHeldFrames: 6);
+        // The player paces this one sink, so the three panes show each frame together.
+        Sink = new FanOutVideoSink(
+            FanOutTarget.Of(_direct),
+            FanOutTarget.Of(_detection),
+            FanOutTarget.Transform(_filtered, frame => ColorFilters.Apply(frame, CurrentFilter))
+        );
 
         Detections = new PresentedResults<IReadOnlyList<Detection>>(_detection);
         Detections.Presented += (_, shown) =>
@@ -57,8 +60,9 @@ public partial class MulticastPanes : UserControl
     }
 
     /// <summary>
-    /// Presents each frame it is given in all three panes. Give it to a player, or end a graph at it,
-    /// and dispose it after either has stopped. It takes BGRA frames in CPU memory.
+    /// Presents each frame it is given in all three panes. Give it to a player, which then holds the
+    /// three panes' sinks, or end a graph at it, and dispose it after either has stopped. It takes
+    /// BGRA frames in CPU memory.
     /// </summary>
     public IVideoSink Sink { get; }
 
@@ -107,16 +111,5 @@ public partial class MulticastPanes : UserControl
         base.OnDetachedFromVisualTree(e);
     }
 
-    private async ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
-    {
-        // Each pane takes its own reference to the frame it shows.
-        using (frame)
-        {
-            await _direct.PresentAsync(frame.AddRef(), ct);
-            await _detection.PresentAsync(frame.AddRef(), ct);
-
-            using var filtered = ColorFilters.Apply(frame, (ColorFilter)Volatile.Read(ref _filter));
-            await _filtered.PresentAsync(filtered.AddRef(), ct);
-        }
-    }
+    private ColorFilter CurrentFilter => (ColorFilter)Volatile.Read(ref _filter);
 }
