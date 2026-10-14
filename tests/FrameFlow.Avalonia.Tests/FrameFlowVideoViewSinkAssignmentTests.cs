@@ -146,6 +146,24 @@ public sealed class FrameFlowVideoViewSinkAssignmentTests
     }
 
     [AvaloniaFact]
+    public async Task ADetach_AfterDisposeAsyncWhileAttached_IsNotAnError()
+    {
+        // Disposed in the visual tree, as an app's window-closing handler does, then taken out of
+        // it as the window closes. The lifecycle has nothing to do for that detach.
+        var view = new FrameFlowVideoView();
+        var log = new RecordingLoggerFactory();
+        var window = ShowWindow(view);
+        ((IVideoSurface)view).AttachSink(log);
+
+        await view.DisposeAsync();
+        Detach(window);
+
+        Assert.Null(view.Sink);
+        Assert.DoesNotContain(log.MessagesFrom<FrameFlowVideoView>(), m => m.Contains("leaving the visual tree", StringComparison.Ordinal));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public async Task DisposeAsync_LetsGoOfACallersSink_WithoutDisposingIt_AndReleasesThePicture()
     {
         var view = new FrameFlowVideoView();

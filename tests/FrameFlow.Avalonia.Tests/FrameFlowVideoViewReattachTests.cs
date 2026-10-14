@@ -215,6 +215,37 @@ public sealed class FrameFlowVideoViewReattachTests
         window.Close();
     }
 
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void FramesArrivingAsADetachMovesTheNumber_AreNotCountedAsDrops(bool claimed)
+    {
+        // A producer thread can deliver between the detach moving the binding number and the rest
+        // of its work. The seam plays it: two frames, at that moment. The sink is off screen by
+        // then, so the second replaces the first as an off-screen discard, not as a drop.
+        var (view, window, sink) = Show(owned: true);
+        using var player = claimed ? ((IClaimableSink)sink).TryClaim("a player") : null;
+        var first = new TrackedFrame(Pts(1));
+        var second = new TrackedFrame(Pts(2));
+        view.TransitionPublished = () =>
+        {
+            Give(sink, first);
+            Give(sink, second);
+        };
+
+        Detach(window);
+        view.TransitionPublished = null;
+
+        Assert.Equal(0, sink.DroppedFrameCount);
+        Assert.Equal(1, first.DisposeCount);
+        Assert.Equal(claimed ? 0 : 1, second.DisposeCount);
+        Assert.Equal(claimed ? 1 : 2, sink.FramesDiscardedOffScreen);
+
+        Reattach(window, view);
+        Assert.Equal(claimed ? 1 : 0, view.RenderedFrameCount); // the kept frame, if any
+        window.Close();
+    }
+
     [AvaloniaFact]
     public async Task ASinkAssignedWhileDetached_IsBoundAndPresentedOnReattach()
     {
@@ -275,6 +306,10 @@ public sealed class FrameFlowVideoViewReattachTests
     internal const int H = 16;
 
     internal static TimeSpan Pts(int n) => TimeSpan.FromMilliseconds(n * 16);
+
+    /// <summary>Gives the sink a frame from a synchronous callback. The sink completes at once.</summary>
+    private static void Give(AvaloniaVideoSink sink, IVideoFrame frame) =>
+        sink.PresentAsync(frame, CancellationToken.None).AsTask().GetAwaiter().GetResult();
 
     /// <summary>
     /// A view on screen with its own sink, made as it attached, or with a caller's sink assigned

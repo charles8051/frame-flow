@@ -173,6 +173,13 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IAsyncD
     public int RenderedFrameCount => Volatile.Read(ref _renderedFrameCount);
 
     /// <summary>
+    /// Runs on the UI thread as soon as a transition has moved the binding number, before the rest
+    /// of its work. For tests: it stands in for a producer thread that delivers a frame at that
+    /// moment.
+    /// </summary>
+    internal Action? TransitionPublished { get; set; }
+
+    /// <summary>
     /// The bitmap <see cref="Render"/> draws, or <see langword="null"/> when it draws none. For
     /// tests: the headless backend records no bitmap draws.
     /// </summary>
@@ -405,7 +412,8 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IAsyncD
     /// <summary>
     /// Moves the view to the state the lifecycle core chose and does the work it named, in the
     /// core's order (ADR-0085): unbind, stop presenting, dispose or let go of the sink, make or
-    /// take up a sink, bind, start presenting. UI thread.
+    /// take up a sink, bind, start presenting. Stopping, which on this view only takes the sink off
+    /// screen, runs first, before the number moves. UI thread.
     /// </summary>
     /// <param name="transition">What the core decided.</param>
     /// <param name="assigned">The sink a caller assigned, which the borrow step takes up.</param>
@@ -419,18 +427,28 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IAsyncD
     {
         ObjectDisposedException.ThrowIf(transition.Refused, this);
 
-        // Before any work, under the lock a copy on the producer thread compares it under: a
-        // callback raised under a binding this ends copies nothing from here on.
-        lock (_lock)
-            _lifecycle = transition.Next;
-
         var work = transition.Work;
         List<Exception>? faults = null;
 
+        // The view stops presenting the held sink, or lets it go: the sink goes off screen first,
+        // before the number moves, which is all stopping takes on this view. A frame arriving in
+        // between is then kept or discarded by the sink's off-screen rule, or copied under the
+        // binding that is ending and let go of by the unbind, and either way counted as discarded
+        // off screen (ADR-0085, decision 2). After the number had moved, the sink would still be on
+        // screen with no callback left to take from it, so a second frame would replace the first
+        // as a drop.
+        if ((work & (SurfaceWork.StopPresenting | SurfaceWork.DisposeTarget | SurfaceWork.ForgetTarget)) != 0)
+            Run(StopPresenting, ref faults);
+
+        // Before the rest of the work, under the lock a copy on the producer thread compares it
+        // under: a callback raised under a binding this ends copies nothing from here on.
+        lock (_lock)
+            _lifecycle = transition.Next;
+
+        TransitionPublished?.Invoke();
+
         if (work.HasFlag(SurfaceWork.Unbind))
             Run(UnbindSink, ref faults);
-        if (work.HasFlag(SurfaceWork.StopPresenting))
-            Run(StopPresenting, ref faults);
         if (work.HasFlag(SurfaceWork.DisposeTarget))
             Run(DisposeSink, ref faults);
         if (work.HasFlag(SurfaceWork.ForgetTarget))
@@ -499,15 +517,9 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IAsyncD
             disposeTask.AsTask().GetAwaiter().GetResult();
     }
 
-    private void ForgetSink()
-    {
-        var sink = _sink!;
-        _sink = null;
-
-        // No view presents it now, so it keeps a frame only while a claim on it stands. The Sink
-        // setter releases its own claim as it returns, which lets go of the frame.
-        sink.SetPresented(false);
-    }
+    // The sink is already off screen (Apply), so it keeps a frame only while a claim on it stands.
+    // The Sink setter releases its own claim as it returns, which lets go of the frame.
+    private void ForgetSink() => _sink = null;
 
     /// <summary>
     /// Binds the held sink's arrival callback to this view, under the binding number the
@@ -589,10 +601,12 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IAsyncD
     }
 
     /// <summary>
-    /// Stops presenting the held sink. From here it keeps a frame only for a player that holds its
-    /// claim, and lets go of the one it holds now when no player does. The view keeps its bitmaps:
-    /// they are its own copies and hold none of the player's frames, so the picture it drew last is
-    /// drawn again when it rejoins the tree (ADR-0085, decision 2).
+    /// Stops presenting the held sink: it goes off screen, and from here keeps a frame only for a
+    /// player that holds its claim, and lets go of the one it holds now when no player does.
+    /// <see cref="Apply"/> runs this before it moves the binding number, for a sink it stops
+    /// presenting, disposes or lets go of. The view keeps its bitmaps: they are its own copies and
+    /// hold none of the player's frames, so the picture it drew last is drawn again when it rejoins
+    /// the tree (ADR-0085, decision 2).
     /// </summary>
     private void StopPresenting() => _sink!.SetPresented(false);
 
