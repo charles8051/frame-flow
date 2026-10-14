@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Buffers;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
@@ -221,6 +222,13 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     /// probable deadlock. It keeps waiting afterwards.
     /// </summary>
     internal TimeSpan PoolWatchdogInterval { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Where the storage of the CPU frames this decoder builds comes from. Null, the default, is
+    /// <see cref="ArrayPool{T}.Shared"/>. A test hands out storage that already holds a known
+    /// pattern, so a pixel the conversion leaves unwritten shows up (#724).
+    /// </summary>
+    internal ArrayPool<byte>? FrameStoragePool { get; set; }
 
     /// <summary>
     /// The timeline this decoder stamps on every frame it makes (ADR-0084, decision 2).
@@ -1275,6 +1283,7 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
                 Timeline,
                 (SwsCtx: _swsCtx.DangerousGetHandle(), Source: framePtr),
                 static (planes, s) => ScaleInto(planes, s.SwsCtx, s.Source),
+                pool: FrameStoragePool,
                 sampleAspectRatio: DisplayGeometry.Resolve(_containerSampleAspectRatio, accessor.SampleAspectRatio, _codecSampleAspectRatio),
                 rotation: _rotation
             );
@@ -1300,56 +1309,39 @@ public sealed partial class VideoDecoder : IVideoDecoder, IDecodeCodec<IVideoFra
     {
         var accessor = new AvFrameAccessor(source);
 
-        fixed (byte* dstData = planes.Y)
+        // sws_scale expects arrays of plane pointers and strides.
+        // Source planes come from the AVFrame data array.
+        //
+        // All four, not three. swscale validates one pointer per plane the
+        // source format declares, and four-plane formats exist: yuva420p and
+        // the other YUVA variants, plus GBRAP. Hardcoding srcSlice[3] = null
+        // made every one of them fail the check with "bad src image pointers",
+        // so nothing decoded at all. Reading data[3] costs nothing on a
+        // three-plane format, where FFmpeg leaves it null and linesize[3] zero
+        // — the same values this used to write by hand.
+        byte** srcSlice = stackalloc byte*[4];
+        int* srcStrides = stackalloc int[4];
+        for (int plane = 0; plane < 4; plane++)
         {
-            // sws_scale expects arrays of plane pointers and strides.
-            // Source planes come from the AVFrame data array.
-            //
-            // All four, not three. swscale validates one pointer per plane the
-            // source format declares, and four-plane formats exist: yuva420p and
-            // the other YUVA variants, plus GBRAP. Hardcoding srcSlice[3] = null
-            // made every one of them fail the check with "bad src image pointers",
-            // so nothing decoded at all. Reading data[3] costs nothing on a
-            // three-plane format, where FFmpeg leaves it null and linesize[3] zero
-            // — the same values this used to write by hand.
-            byte** srcSlice = stackalloc byte*[4];
-            int* srcStrides = stackalloc int[4];
-            for (int plane = 0; plane < 4; plane++)
-            {
-                srcSlice[plane] = accessor.GetDataPointer(plane);
-                srcStrides[plane] = accessor.GetLineSize(plane);
-            }
-
-            // sws_scale expects 4 destination plane pointers/strides even for packed
-            // single-plane output formats like BGRA. Passing 1-element arrays lets the
-            // native code read past the stack buffer, which can corrupt memory and crash
-            // the runtime with an ExecutionEngineException.
-            byte** dstSlice = stackalloc byte*[4];
-            dstSlice[0] = dstData;
-            dstSlice[1] = null;
-            dstSlice[2] = null;
-            dstSlice[3] = null;
-
-            int* dstStrides = stackalloc int[4];
-            dstStrides[0] = planes.StrideY;
-            dstStrides[1] = 0;
-            dstStrides[2] = 0;
-            dstStrides[3] = 0;
-
-            int rowsWritten = FFSwScale.sws_scale(
-                swsCtx,
-                srcSlice,
-                srcStrides,
-                0,
-                accessor.Height,
-                dstSlice,
-                dstStrides
-            );
-
-            if (rowsWritten <= 0)
-                throw new ScaleFailedException(rowsWritten);
-            FrameCopyMetrics.Record(FrameCopySite.DecoderConvert);
+            srcSlice[plane] = accessor.GetDataPointer(plane);
+            srcStrides[plane] = accessor.GetLineSize(plane);
         }
+
+        // Not sws_scale straight into planes.Y: at some widths swscale leaves the end of a
+        // tightly packed row unwritten or writes past it (#724).
+        int rowsWritten = PackedConversion.Scale(
+            swsCtx,
+            srcSlice,
+            srcStrides,
+            accessor.Height,
+            planes.Y,
+            planes.Width,
+            planes.StrideY
+        );
+
+        if (rowsWritten <= 0)
+            throw new ScaleFailedException(rowsWritten);
+        FrameCopyMetrics.Record(FrameCopySite.DecoderConvert);
     }
 
     /// <summary>swscale wrote no rows. Carries its return value out of the fill callback.</summary>
