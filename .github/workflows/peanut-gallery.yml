@@ -114,10 +114,10 @@ jobs:
       # lines explaining why :main is unacceptable for a job with a read-only
       # token. This job's blast radius is strictly wider.
       #
-      # Pinned at v0.1.2, the first release with the commit-status gate. To move
+      # Pinned at v0.1.3; v0.1.2 was the first release with the commit-status gate. To move
       # it: pick a tag, resolve it with
       # `gh api repos/charles8051/peanut-gallery/tags`, and paste both here.
-      - uses: charles8051/peanut-gallery@e4ca3862a3954519409142840080f9e62c31cbfa # v0.1.2
+      - uses: charles8051/peanut-gallery@c86fed5a644b71cb68b52c5dc48ede4653955666 # v0.1.3
         with:
           config: .github/peanut-gallery.json   # seed: bug-hunter + general; orchestrator adds diff-specific reviewers
           pr-number: ${{ github.event.pull_request.number || github.event.issue.number }}
