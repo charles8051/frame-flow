@@ -6,17 +6,17 @@ using FrameFlow.Player.Core;
 namespace FrameFlow.Player.Tests;
 
 /// <summary>
-/// Pins how a pass holds its sinks and the state its run uses (ADR-0085, decision 6; #696): a pass
-/// runs once and never once its dispose has begun, and its dispose waits for a run in flight before
-/// it tears down. A run and a dispose that race take the lock in one order or the other, so each
+/// Pins the lifecycle of a pass's run and dispose (ADR-0085, decision 6; #696): a pass runs once
+/// and never once its dispose has begun, and its dispose waits for a run in flight before it tears
+/// down. A run and a dispose that race take the lock in one order or the other, so each
 /// order is driven as a value.
 /// </summary>
-public sealed class PassClaimHoldTests
+public sealed class PassLifecycleTests
 {
     [Fact]
     public void ADisposeWithNoRunStarted_TearsDownAtOnce()
     {
-        var (_, teardown) = PassClaimHold.Built.Dispose();
+        var (_, teardown) = PassLifecycle.Built.Dispose();
 
         Assert.Equal(PassTeardown.Now, teardown);
     }
@@ -24,7 +24,7 @@ public sealed class PassClaimHoldTests
     [Fact]
     public void ADisposeDuringARun_TearsDownAfterTheRun()
     {
-        var (running, start) = PassClaimHold.Built.StartRun();
+        var (running, start) = PassLifecycle.Built.StartRun();
 
         var (_, teardown) = running.Dispose();
 
@@ -35,7 +35,7 @@ public sealed class PassClaimHoldTests
     [Fact]
     public void ADisposeAfterTheRunEnded_TearsDownAtOnce()
     {
-        var (running, _) = PassClaimHold.Built.StartRun();
+        var (running, _) = PassLifecycle.Built.StartRun();
 
         var (_, teardown) = running.EndRun().Dispose();
 
@@ -45,7 +45,7 @@ public sealed class PassClaimHoldTests
     [Fact]
     public void ARunThatRacesADispose_AndLosesTheLock_IsRefused()
     {
-        var (disposed, _) = PassClaimHold.Built.Dispose();
+        var (disposed, _) = PassLifecycle.Built.Dispose();
 
         var (next, start) = disposed.StartRun();
 
@@ -56,7 +56,7 @@ public sealed class PassClaimHoldTests
     [Fact]
     public void ARunThatRacesADispose_AndWinsTheLock_IsTheRunTheDisposeWaitsFor()
     {
-        var (running, start) = PassClaimHold.Built.StartRun();
+        var (running, start) = PassLifecycle.Built.StartRun();
         var (disposed, teardown) = running.Dispose();
 
         Assert.Equal(PassRunStart.Started, start);
@@ -69,7 +69,7 @@ public sealed class PassClaimHoldTests
     [Fact]
     public void APass_RunsOnce()
     {
-        var (running, _) = PassClaimHold.Built.StartRun();
+        var (running, _) = PassLifecycle.Built.StartRun();
 
         Assert.Equal(PassRunStart.AlreadyRan, running.StartRun().Start);
         Assert.Equal(PassRunStart.AlreadyRan, running.EndRun().StartRun().Start);
@@ -78,7 +78,7 @@ public sealed class PassClaimHoldTests
     [Fact]
     public void ARunAskedForAfterADispose_IsRefusedAsDisposed_EvenWhenThePassHasRun()
     {
-        var (running, _) = PassClaimHold.Built.StartRun();
+        var (running, _) = PassLifecycle.Built.StartRun();
         var (disposed, _) = running.EndRun().Dispose();
 
         Assert.Equal(PassRunStart.Disposed, disposed.StartRun().Start);
@@ -87,7 +87,7 @@ public sealed class PassClaimHoldTests
     [Fact]
     public void ASecondDispose_LeavesTheTeardownToTheFirst()
     {
-        var (disposed, _) = PassClaimHold.Built.Dispose();
+        var (disposed, _) = PassLifecycle.Built.Dispose();
 
         var (next, teardown) = disposed.Dispose();
 
@@ -98,7 +98,7 @@ public sealed class PassClaimHoldTests
     [Fact]
     public void ASecondDispose_DuringTheRun_LeavesTheTeardownToTheFirst()
     {
-        var (running, _) = PassClaimHold.Built.StartRun();
+        var (running, _) = PassLifecycle.Built.StartRun();
         var (disposed, _) = running.Dispose();
 
         Assert.Equal(PassTeardown.Begun, disposed.Dispose().Teardown);

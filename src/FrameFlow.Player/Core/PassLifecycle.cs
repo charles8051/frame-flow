@@ -4,9 +4,9 @@
 namespace FrameFlow.Player.Core;
 
 /// <summary>
-/// How a pass holds its sinks and the state its run uses (ADR-0085, decision 6; #696): which run
-/// it lets start, and what its dispose does about a run before it frees that state and lets go of
-/// the claims. Pure: a state and an event in, a state and a verdict out.
+/// The lifecycle of a pass's run and dispose (ADR-0085, decision 6; #696): which run it lets
+/// start, and what its dispose does about a run before it frees the state the run uses and lets go
+/// of the claims on its sinks. Pure: a state and an event in, a state and a verdict out.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -24,22 +24,22 @@ namespace FrameFlow.Player.Core;
 /// <param name="Running">Whether a run is in flight.</param>
 /// <param name="Ran">Whether a run has started, in flight or ended.</param>
 /// <param name="Disposed">Whether the pass's dispose has begun.</param>
-internal readonly record struct PassClaimHold(bool Running, bool Ran, bool Disposed)
+internal readonly record struct PassLifecycle(bool Running, bool Ran, bool Disposed)
 {
     /// <summary>A pass just built: holding its claims, with no run started.</summary>
-    public static PassClaimHold Built => default;
+    public static PassLifecycle Built => default;
 
     /// <summary>A run asks to start. Refused once the dispose has begun, and once a run has started.</summary>
-    public (PassClaimHold Next, PassRunStart Start) StartRun() =>
+    public (PassLifecycle Next, PassRunStart Start) StartRun() =>
         Disposed ? (this, PassRunStart.Disposed)
         : Ran ? (this, PassRunStart.AlreadyRan)
         : (this with { Running = true, Ran = true }, PassRunStart.Started);
 
     /// <summary>The run in flight ended, however it ended.</summary>
-    public PassClaimHold EndRun() => this with { Running = false };
+    public PassLifecycle EndRun() => this with { Running = false };
 
     /// <summary>The pass's dispose begins.</summary>
-    public (PassClaimHold Next, PassTeardown Teardown) Dispose() =>
+    public (PassLifecycle Next, PassTeardown Teardown) Dispose() =>
         Disposed ? (this, PassTeardown.Begun)
         : (this with { Disposed = true }, Running ? PassTeardown.AfterTheRun : PassTeardown.Now);
 }

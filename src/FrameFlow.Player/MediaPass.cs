@@ -65,10 +65,10 @@ public sealed class MediaPass : IAsyncDisposable
     private readonly PassRange _range;
 
     // The claims on the sinks, released at the end of the dispose, after the run. Which run starts
-    // and what the dispose waits for are the hold's, read and advanced under the lock.
+    // and what the dispose waits for are the lifecycle's, read and advanced under the lock.
     private readonly IDisposable? _sinkClaims;
     private readonly object _lifecycleLock = new();
-    private PassClaimHold _hold = PassClaimHold.Built;
+    private PassLifecycle _lifecycle = PassLifecycle.Built;
 
     // The pass's own cancellation, linked into the run's token, so the dispose can stop a run.
     private readonly CancellationTokenSource _lifetime = new();
@@ -220,7 +220,7 @@ public sealed class MediaPass : IAsyncDisposable
     {
         PassRunStart start;
         lock (_lifecycleLock)
-            (_hold, start) = _hold.StartRun();
+            (_lifecycle, start) = _lifecycle.StartRun();
 
         ObjectDisposedException.ThrowIf(start == PassRunStart.Disposed, this);
         if (start == PassRunStart.AlreadyRan)
@@ -231,10 +231,12 @@ public sealed class MediaPass : IAsyncDisposable
             );
         }
 
-        Take(Step.RunStarted);
+        // From here the run ends through the finally whatever throws, a step's callback included,
+        // so a dispose waiting on it is always released.
         Exception? failure = null;
         try
         {
+            Take(Step.RunStarted);
             using var run = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
             await RunGraphToEndAsync(run.Token).ConfigureAwait(false);
         }
@@ -245,10 +247,16 @@ public sealed class MediaPass : IAsyncDisposable
         }
         finally
         {
-            Take(Step.RunEnded);
-            lock (_lifecycleLock)
-                _hold = _hold.EndRun();
-            _runEnded.TrySetResult(failure);
+            try
+            {
+                Take(Step.RunEnded);
+            }
+            finally
+            {
+                lock (_lifecycleLock)
+                    _lifecycle = _lifecycle.EndRun();
+                _runEnded.TrySetResult(failure);
+            }
         }
     }
 
@@ -522,15 +530,25 @@ public sealed class MediaPass : IAsyncDisposable
     /// and the demux session, and releases the claims on the sinks last.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// The dispose waits as long as the run takes to unwind once cancelled. A sink's present, drain
+    /// or activation, a node in a configurator, or a video sink's
+    /// <see cref="IVideoSink.OnFormatChangedAsync"/> that ignores its token holds it there, and so
+    /// does a source whose read blocks, such as a stalled network stream: nothing interrupts the
+    /// demuxer's read (#709).
+    /// </para>
+    /// <para>
     /// Throws for neither the run's cancellation nor a fault the run ends with: the run's caller
-    /// sees those, and a fault is logged here. A call made while another is under way waits for it
-    /// to finish. The sinks are the caller's, and are not disposed.
+    /// sees both. A fault is logged here only when this dispose cancelled the run that ended with
+    /// it. A call made while another is under way waits for it to finish. The sinks are the
+    /// caller's, and are not disposed.
+    /// </para>
     /// </remarks>
     public async ValueTask DisposeAsync()
     {
         PassTeardown teardown;
         lock (_lifecycleLock)
-            (_hold, teardown) = _hold.Dispose();
+            (_lifecycle, teardown) = _lifecycle.Dispose();
 
         if (teardown == PassTeardown.Begun)
         {

@@ -1007,8 +1007,12 @@ it, where it used to return at once.
 - Code that disposes a pass from inside its run, such as in a sink's `PresentAsync` or a node in a
   configurator, and awaits the dispose there. The dispose waits for the run, which waits for that
   call, so neither ends.
-- A sink whose `PresentAsync`, `ActivateAsync` or `DrainAsync` ignores the token it is given. A
-  dispose during that call waits until it returns.
+- A sink whose `PresentAsync`, `OnFormatChangedAsync`, `ActivateAsync` or `DrainAsync`, or a node
+  in a configurator, that ignores the token it is given. A dispose during that call waits until it
+  returns.
+- A source whose read blocks, such as a network stream that has stalled. Nothing interrupts the
+  demuxer's read (#709), so a dispose waits until it returns. Passing FFmpeg's `rw_timeout` option
+  through `MediaSource.DemuxerOptions` bounds it.
 
 **What to write instead.**
 - To stop a pass early, dispose it, or cancel the token given to `RunToCompletionAsync`. Either ends

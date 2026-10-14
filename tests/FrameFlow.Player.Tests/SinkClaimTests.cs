@@ -17,6 +17,9 @@ public sealed class SinkClaimTests
     private const string VideoFile = "test-video-h264-yuv420p.mp4";
     private const string AudioFile = "test-audio-aac.m4a";
 
+    // Bounds a wait that a regression would leave hanging, so it fails one test rather than the run.
+    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
+
     private static string Corpus(string name) =>
         TestEnvironment.GetCorpusFile(name) ?? throw new InvalidOperationException($"{name} is missing.");
 
@@ -198,13 +201,13 @@ public sealed class SinkClaimTests
         await using var audio = new ClaimableAudioSink { HoldActivation = true };
         var pass = await BuildPassAsync(Corpus(AudioFile), audio: audio);
         var run = pass.RunToCompletionAsync();
-        await audio.ActivationEntered.Task;
+        await audio.ActivationEntered.Task.WaitAsync(Bound);
 
-        await pass.DisposeAsync();
+        await pass.DisposeAsync().AsTask().WaitAsync(Bound);
 
         Assert.Null(Holder(audio));
         Assert.Equal($"a pass over '{AudioFile}'", audio.ClaimantWhenActivationCancelled);
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(Bound));
     }
 
     [RequiresFfmpegAndCorpusFact]

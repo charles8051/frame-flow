@@ -467,7 +467,7 @@ What differs from the decisions, slice by slice. None reverses one.
   sinks follows, so a sink of an app's own can take part in decision 8's ordering. `SinkClaimGate`
   is public for the same reason.
 - A pass disposed during its run kept its claim until the run ended, because its dispose did not
-  wait for the run, until the fix for #696 made the dispose wait.
+  wait for the run. The fix for #696 closed this.
 - The player builder claims after the FFmpeg bootstrap, and the pass builder before it.
 
 **The fan-out (slice 3, #702).**
