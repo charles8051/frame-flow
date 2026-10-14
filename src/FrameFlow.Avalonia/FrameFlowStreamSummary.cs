@@ -54,23 +54,24 @@ public sealed class FrameFlowStreamSummary : TextBlock
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        _follower.Resume(Transport);
+        _follower.Attach();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        _follower.Suspend();
+        _follower.Detach();
         base.OnDetachedFromVisualTree(e);
     }
 
     private void OnTransportChanged(IMediaTransport? transport)
     {
-        _follower.Rebind(transport);
+        _follower.Assign(transport);
         if (transport is null)
             Text = string.Empty;
     }
 
-    // On bind and on every return to the tree, which is when the media may have changed unseen.
+    // On every bind, so on every return to the tree, which is when the media may have changed
+    // unseen.
     private void FollowTransport(IMediaTransport transport, TransportFollower.Follow follow)
     {
         follow.On(transport.StateChanged, _ => Refresh(transport));

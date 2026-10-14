@@ -217,7 +217,7 @@ public sealed class FrameFlowPlayerView : UserControl
             // Wire the hover-to-reveal state subscription so the
             // chrome pins visible on Paused/Idle/Error and fades on
             // Playing-with-idle-pointer.
-            _chromeFollower.Rebind(p);
+            _chromeFollower.Assign(p);
             if (p is null)
             {
                 _chromeHideTimer?.Stop();
@@ -279,8 +279,10 @@ public sealed class FrameFlowPlayerView : UserControl
     {
         base.OnAttachedToVisualTree(e);
         // Back in the tree with the transport it left with: follow its state again. Before the
-        // timer exists, so the read starts no hide, as on the first attach.
-        _chromeFollower.Resume(Transport);
+        // timer exists, so the read starts no hide, as on the first attach. The timer and the
+        // pointer hook below are tied to the visual tree whatever the transport, so they stay on
+        // the attach itself rather than on the follower's presenting.
+        _chromeFollower.Attach();
 
         _pointerHostTopLevel = TopLevel.GetTopLevel(this);
         _pointerHostTopLevel?.AddHandler(
@@ -305,11 +307,11 @@ public sealed class FrameFlowPlayerView : UserControl
         _pointerHostTopLevel = null;
         _chromeHideTimer?.Stop();
         _chromeHideTimer = null;
-        _chromeFollower.Suspend();
+        _chromeFollower.Detach();
         base.OnDetachedFromVisualTree(e);
     }
 
-    // On bind and on every return to the tree.
+    // On every bind, so on every return to the tree.
     private void FollowTransport(IMediaTransport transport, TransportFollower.Follow follow)
     {
         follow.On(transport.StateChanged, OnTrackedStateChanged);

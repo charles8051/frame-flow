@@ -14,7 +14,10 @@ namespace FrameFlow.Avalonia.Tests;
 /// A chrome control that leaves the visual tree and comes back with the same transport follows it
 /// again (#643). The badge, the stream summary, the transport bar and the player view let go of
 /// their subscriptions on detach, and used to take them up only when <c>Transport</c> was set, so
-/// after a reattach they kept showing what they showed at the detach.
+/// after a reattach they kept showing what they showed at the detach. Every control that follows a
+/// transport now runs on one lifecycle (ADR-0085, decision 1): it follows while bound, the seek bar
+/// and the position label tick while in the tree with a transport bound, and what a binding that
+/// has ended delivers late commits nothing.
 /// </summary>
 /// <remarks>
 /// The controls marshal the transport's observables to the UI thread by posting, so
@@ -137,6 +140,28 @@ public sealed class ChromeReattachTests
             Dispatcher.UIThread.RunJobs();
 
             Assert.Equal("Ended", badge.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void StateBadge_AChangeDeliveredAfterTheDetach_ShowsNothing()
+    {
+        var transport = new FakeTransport { State = PlaybackState.Paused };
+        var badge = new FrameFlowStateBadge { Transport = transport };
+        var window = Show(badge);
+        try
+        {
+            // Raised while in the tree and posted, then delivered with the badge out of it: the
+            // binding it was raised under has ended, so it commits nothing.
+            transport.Push(PlaybackState.Playing);
+            Detach(window, badge);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal("Paused", badge.Text);
         }
         finally
         {
@@ -299,6 +324,34 @@ public sealed class ChromeReattachTests
     }
 
     [AvaloniaFact]
+    public void TransportBar_ATransportSetWhileOut_IsAskedForLoopByDefaultOnce_WhenSet()
+    {
+        // The request goes with the transport, as it is taken up, and not with following it, which
+        // waits for the return.
+        var bar = new FrameFlowTransportBar { LoopByDefault = true, Transport = new FakeTransport() };
+        var window = Show(bar);
+        try
+        {
+            Detach(window, bar);
+            var next = new FakeTransport { RepeatMode = RepeatMode.Off };
+            bar.Transport = next;
+            Assert.Equal(new[] { RepeatMode.One }, next.Requested);
+
+            // The app turns looping off before the bar is back; the bar is not to turn it on again.
+            next.ChangeRepeatMode(RepeatMode.Off);
+            Attach(window, bar);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(new[] { RepeatMode.One }, next.Requested);
+            Assert.Equal("Loop", LoopButton(bar).Content);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void TransportBar_HoldsOneSubscriptionEach_InTheTree_AndNoneOut()
     {
         var transport = new FakeTransport();
@@ -385,6 +438,177 @@ public sealed class ChromeReattachTests
         }
     }
 
+    // ── Seek bar ─────────────────────────────────────────────────────────────
+    // A Value the test writes stands in for a drag: the bar seeks it, and the fake records the
+    // seek before the write returns. The bar's own writes are suppressed and seek nothing.
+
+    [AvaloniaFact]
+    public void SeekBar_Ticks_InTheTreeWithATransportBound()
+    {
+        var bar = new FrameFlowSeekBar { Transport = new FakeTransport() };
+        Assert.False(bar.IsRefreshing); // bound, not yet in the tree
+
+        var window = Show(bar);
+        try
+        {
+            Assert.True(bar.IsRefreshing);
+
+            Detach(window, bar);
+            Assert.False(bar.IsRefreshing);
+
+            Attach(window, bar);
+            Assert.True(bar.IsRefreshing);
+
+            bar.Transport = null;
+            Assert.False(bar.IsRefreshing);
+
+            bar.Transport = new FakeTransport();
+            Assert.True(bar.IsRefreshing);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void SeekBar_SeeksWhileBound_FromTheBind_AndFromTheReturn()
+    {
+        var transport = new FakeTransport();
+        var bar = new FrameFlowSeekBar { Transport = transport };
+        bar.Value = 0.5; // bound before it first joins the tree, so followed from the bind
+        var window = Show(bar);
+        try
+        {
+            Detach(window, bar);
+            bar.Value = 0.25; // out of the tree: the binding has ended
+
+            Attach(window, bar);
+            bar.Value = 0.75;
+
+            Assert.Equal(new[] { Seconds(0.5), Seconds(0.75) }, transport.Seeks);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void SeekBar_GivenATransportWhileOut_ReportsItsRefusalsFromTheReturn()
+    {
+        // The scrub is built as the transport is bound, on the return, not as it is set: one built
+        // while the bar was out would belong to no binding, and every result it had would be stale.
+        var bar = new FrameFlowSeekBar { Transport = new FakeTransport() };
+        var window = Show(bar);
+        try
+        {
+            Detach(window, bar);
+            var next = new FakeTransport { Seek = _ => Task.FromResult(Refused) };
+            bar.Transport = next;
+
+            Attach(window, bar);
+            bar.Value = 0.5;
+
+            Assert.Equal(new[] { Seconds(0.5) }, next.Seeks);
+            Assert.Equal(1, bar.SeekRefusalsReported);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void SeekBar_ARefusalThatArrivesAfterTheDetach_IsNotReported_AndLeavesTheLatchArmed()
+    {
+        var pending = new TaskCompletionSource<Result>();
+        var transport = new FakeTransport { Seek = _ => pending.Task };
+        var bar = new FrameFlowSeekBar { Transport = transport };
+        var window = Show(bar);
+        try
+        {
+            bar.Value = 0.5; // a seek in flight as the bar leaves the tree
+            Detach(window, bar);
+            pending.SetResult(Refused);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(0, bar.SeekRefusalsReported);
+
+            Attach(window, bar);
+            transport.Seek = _ => Task.FromResult(Refused);
+            bar.Value = 0.25;
+
+            Assert.Equal(new[] { Seconds(0.5), Seconds(0.25) }, transport.Seeks);
+            Assert.Equal(1, bar.SeekRefusalsReported);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void SeekBar_ARefusalFromATransportSinceReplaced_IsNotReported_AndLeavesTheLatchArmed()
+    {
+        var pending = new TaskCompletionSource<Result>();
+        var first = new FakeTransport { Seek = _ => pending.Task };
+        var bar = new FrameFlowSeekBar { Transport = first };
+        var window = Show(bar);
+        try
+        {
+            bar.Value = 0.5; // a seek in flight as the transport is replaced
+            var second = new FakeTransport { Seek = _ => Task.FromResult(Refused) };
+            bar.Transport = second;
+            pending.SetResult(Refused);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(0, bar.SeekRefusalsReported);
+
+            bar.Value = 0.25;
+
+            Assert.Equal(new[] { Seconds(0.25) }, second.Seeks);
+            Assert.Equal(1, bar.SeekRefusalsReported);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    // ── Position label ───────────────────────────────────────────────────────
+
+    [AvaloniaFact]
+    public void PositionLabel_Ticks_InTheTreeWithATransportBound()
+    {
+        var label = new FrameFlowPositionLabel { Transport = new FakeTransport() };
+        Assert.False(label.IsRefreshing); // bound, not yet in the tree
+
+        var window = Show(label);
+        try
+        {
+            Assert.True(label.IsRefreshing);
+
+            Detach(window, label);
+            Assert.False(label.IsRefreshing);
+
+            Attach(window, label);
+            Assert.True(label.IsRefreshing);
+
+            label.Transport = null;
+            Assert.False(label.IsRefreshing);
+            Assert.Equal("--:--.--- / --:--.---", label.Text);
+
+            label.Transport = new FakeTransport();
+            Assert.True(label.IsRefreshing);
+            Assert.Equal("00:00.000 / 00:00.000", label.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     // ── Player view ──────────────────────────────────────────────────────────
 
     [AvaloniaFact]
@@ -447,6 +671,10 @@ public sealed class ChromeReattachTests
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private static readonly Result Refused = Result.Fail(ErrorCategory.InvalidOperation, "The source cannot seek.");
+
+    private static TimeSpan Seconds(double seconds) => TimeSpan.FromSeconds(seconds);
 
     private static readonly MediaInfo Clip = new(
         "mov,mp4,m4a,3gp,3g2,mj2",
@@ -542,6 +770,12 @@ public sealed class ChromeReattachTests
             RepeatModeChangedSubject.Dispose();
         }
 
+        /// <summary>The targets of the seeks asked of it, in order.</summary>
+        public List<TimeSpan> Seeks { get; } = [];
+
+        /// <summary>What a seek returns. Succeeds at once unless the test says otherwise.</summary>
+        public Func<TimeSpan, Task<Result>> Seek { get; set; } = _ => Task.FromResult(Result.Ok());
+
         public TimeSpan Position => TimeSpan.Zero;
         public TimeSpan Duration => TimeSpan.Zero;
         public bool SupportsVolumeControl => false;
@@ -559,8 +793,11 @@ public sealed class ChromeReattachTests
 
         public Task<Result> PauseAsync(CancellationToken ct = default) => Task.FromResult(Result.Ok());
 
-        public Task<Result> SeekAsync(TimeSpan position, CancellationToken ct = default) =>
-            Task.FromResult(Result.Ok());
+        public Task<Result> SeekAsync(TimeSpan position, CancellationToken ct = default)
+        {
+            Seeks.Add(position);
+            return Seek(position);
+        }
 
         public ValueTask DisposeAsync()
         {

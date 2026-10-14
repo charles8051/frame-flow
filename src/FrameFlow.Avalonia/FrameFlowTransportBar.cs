@@ -90,7 +90,7 @@ public sealed class FrameFlowTransportBar : StackPanel
 
     public FrameFlowTransportBar()
     {
-        _follower = new TransportFollower(FollowTransport);
+        _follower = new TransportFollower(FollowTransport, taken: AskForLoopByDefault);
 
         Orientation = Orientation.Horizontal;
         HorizontalAlignment = HorizontalAlignment.Center;
@@ -132,19 +132,20 @@ public sealed class FrameFlowTransportBar : StackPanel
     {
         base.OnAttachedToVisualTree(e);
         // Back in the tree with the transport it left with: follow it again from what it reports
-        // now. LoopByDefault is not asked for again, because it is a request made on bind.
-        _follower.Resume(Transport);
+        // now. LoopByDefault is not asked for again, because it is asked for when the transport is
+        // taken up, not when it is bound.
+        _follower.Attach();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        _follower.Suspend();
+        _follower.Detach();
         base.OnDetachedFromVisualTree(e);
     }
 
     private void OnTransportChanged(IMediaTransport? transport)
     {
-        _follower.Rebind(transport);
+        _follower.Assign(transport);
 
         if (transport is null)
         {
@@ -155,6 +156,13 @@ public sealed class FrameFlowTransportBar : StackPanel
         }
 
         _loopButton.IsEnabled = true;
+    }
+
+    // Once for each transport the bar is given, as it takes it up, in or out of the tree: a
+    // request made of the transport, not a way of following it, so a return to the tree does not
+    // make it again. The follow, which runs next, shows the mode in force.
+    private void AskForLoopByDefault(IMediaTransport transport)
+    {
         if (LoopToggle.OnBind(transport.RepeatMode, LoopByDefault) is { } requested)
             TransportCommand.FireAndForget(
                 this,
@@ -163,8 +171,9 @@ public sealed class FrameFlowTransportBar : StackPanel
             );
     }
 
-    // Following the transport, on bind and on every return to the tree. The follow drops a change
-    // posted before it stopped, so one from a transport this bar has since let go of does not show.
+    // Following the transport, on every bind, so on every return to the tree. The follow drops a
+    // change posted before its binding ended, so one from a transport this bar has since let go of,
+    // or from before it left the tree, does not show.
     private void FollowTransport(IMediaTransport transport, TransportFollower.Follow follow)
     {
         follow.On(transport.RepeatModeChanged, t => ShowRepeatMode(t.Current));
