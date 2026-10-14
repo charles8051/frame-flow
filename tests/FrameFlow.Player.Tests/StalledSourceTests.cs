@@ -1,6 +1,8 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Collections.Concurrent;
+using FrameFlow.Playback;
 using FrameFlow.Tests.Shared;
 
 namespace FrameFlow.Player.Tests;
@@ -115,9 +117,12 @@ public sealed class StalledSourceTests
         // The seek stops the run, whose read the run's cancellation interrupts, then seeks the
         // demuxer, which reopens the source at the target. That reopening observes the seek's own
         // token, not the stopped run's, and the server serves the rest, so the item plays to its
-        // end. A seek is accepted before it runs, so the end is what says it ran.
+        // end. A seek is accepted before it runs, so the end, with no error on the way, is what
+        // says it ran: a last item that fails still ends the queue.
         await using var server = StalledHttpSource.StallingAfterTheHeader();
         var player = await PlayerOver(server).BuildPlayerAsync().WaitAsync(Bound);
+        var errors = new ConcurrentQueue<PlaybackError>();
+        using var watching = player.ErrorOccurred.Subscribe(errors.Enqueue);
         try
         {
             var ended = player.WaitForEndAsync();
@@ -131,6 +136,7 @@ public sealed class StalledSourceTests
             Assert.False(thrown is TimeoutException, "The item did not end: the seek was still waiting on the run's read of the source.");
             Assert.Null(thrown);
             Assert.True(ended.Result.IsSuccess, ended.Result.Error?.Message);
+            Assert.Empty(errors.Select(e => e.Inner?.Message ?? e.Message));
         }
         finally
         {

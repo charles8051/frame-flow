@@ -128,7 +128,7 @@ public sealed class StalledSourceTests : IClassFixture<FfmpegBootstrapFixture>
         using var cancel = new CancellationTokenSource();
 
         // The read runs on the calling thread, so it gets a thread of its own here.
-        var read = Task.Run(() => rig.Demux.ReadPacketAsync(cancel.Token).AsTask(), CancellationToken.None);
+        var read = rig.Track(Task.Run(() => rig.Demux.ReadPacketAsync(cancel.Token).AsTask(), CancellationToken.None));
         await rig.Server.Reconnected.WaitAsync(Bound);
         await cancel.CancelAsync();
 
@@ -192,9 +192,8 @@ public sealed class StalledSourceTests : IClassFixture<FfmpegBootstrapFixture>
         await using var rig = await StalledPump.OpenAsync();
         using var cancel = new CancellationTokenSource();
 
-        var seek = Task.Run(
-            () => rig.Demux.SeekAsync(TimeSpan.FromSeconds(4), cancel.Token).AsTask(),
-            CancellationToken.None
+        var seek = rig.Track(
+            Task.Run(() => rig.Demux.SeekAsync(TimeSpan.FromSeconds(4), cancel.Token).AsTask(), CancellationToken.None)
         );
         await rig.Server.Reconnected.WaitAsync(Bound);
         await cancel.CancelAsync();
@@ -211,7 +210,8 @@ public sealed class StalledSourceTests : IClassFixture<FfmpegBootstrapFixture>
     /// </summary>
     private sealed class StalledPump : IAsyncDisposable
     {
-        private readonly List<Task> _pumps = [];
+        // The pumps, reads and seeks the test started, which the dispose waits for before it frees.
+        private readonly List<Task> _operations = [];
 
         private StalledPump(StalledHttpSource server, DemuxSession demux)
         {
@@ -245,9 +245,15 @@ public sealed class StalledSourceTests : IClassFixture<FfmpegBootstrapFixture>
         public Task Start(CancellationToken cancellationToken)
         {
             // Not the pump's token: a run cancelled before its task starts would not run at all.
-            var pump = Task.Run(() => Pipeline.RunDemuxPumpAsync(cancellationToken), CancellationToken.None);
-            _pumps.Add(pump);
-            return pump;
+            return Track(Task.Run(() => Pipeline.RunDemuxPumpAsync(cancellationToken), CancellationToken.None));
+        }
+
+        /// <summary>Holds an operation on the session, so the dispose frees nothing under it.</summary>
+        public T Track<T>(T operation)
+            where T : Task
+        {
+            _operations.Add(operation);
+            return operation;
         }
 
         /// <summary>Runs the pump until its read waits on the source, and cancels it there.</summary>
@@ -266,9 +272,9 @@ public sealed class StalledSourceTests : IClassFixture<FfmpegBootstrapFixture>
             await Server.DisposeAsync();
             try
             {
-                await Task.WhenAll(_pumps).WaitAsync(Bound);
+                await Task.WhenAll(_operations).WaitAsync(Bound);
             }
-            catch (Exception) when (_pumps.All(p => p.IsCompleted)) { }
+            catch (Exception) when (_operations.All(o => o.IsCompleted)) { }
 
             await Pipeline.DisposeAsync();
             await Demux.DisposeAsync();
