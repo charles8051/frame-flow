@@ -65,10 +65,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         );
 
     // Holds the dispatch loop until it ends (ADR-0086, decision 1). The dispose stops it first
-    // thing, which cancels the token the loop passes to the session operations it awaits, so the
-    // dispose waits for an open or a play over a stalled source only until the source's read can
-    // be interrupted (#709, #719). The loop goes on draining the channel until the dispose
-    // completes it.
+    // thing, which cancels the token the loop passes to the session operations it awaits. That
+    // interrupts an open or a play waiting on a stalled source (#709), so the dispose's wait for
+    // the loop ends (#719). The loop goes on draining the channel until the dispose completes it.
     private readonly WorkScope _loop = new();
 
     // The dispatch loop's token, from _loop: written as the loop starts, and read only on it.
@@ -1872,9 +1871,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// </para>
     /// <para>
     /// It first cancels the session operation the command loop is waiting on, an open or a play
-    /// over a stalled source among them, and only then waits for the loop (#719). Such an open or
-    /// play ends once the source's read can be interrupted (#709), and the dispose waits no longer
-    /// than that. The command that was waiting completes with a failed <see cref="Result"/> that
+    /// over a stalled source among them, and only then waits for the loop (#719). The
+    /// cancellation interrupts the source's read (#709), so the dispose does not wait for the
+    /// source. The command that was waiting completes with a failed <see cref="Result"/> that
     /// says the controller is disposing. Then it cancels a seek it started that is still going,
     /// and waits for that too, before it disposes the session. A session operation that ignores
     /// its token holds the dispose; after five seconds the controller logs once that it is
