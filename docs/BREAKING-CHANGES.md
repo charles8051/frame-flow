@@ -630,9 +630,10 @@ where it used to build a player whose every frame the sink discarded.
 
 The items of one player's queue, including one it prepares ahead, share that player's claim. A graph
 built by hand (`SinkAdapters.AsSinkNode`, a `Branch` edge inside a configurator, `RecorderPipeline`'s
-preview) takes no claim, and neither does a sink without the interface, such as the examples'
-`DelegatingVideoSink`, so the views behind one are not claimed either. Those keep ADR-0044's rule,
-which nothing enforces; #694 asks whether a graph should claim its sinks for its run.
+preview) takes no claim, and neither does a sink without the interface, such as
+`DelegatingVideoSink`, so the views behind one are not claimed either; `FanOutVideoSink` passes the
+claim on (entry 19). Those keep ADR-0044's rule, which nothing enforces; #694 asks whether a graph
+should claim its sinks for its run.
 
 **Who hits this.**
 - Code that builds the next player or pass against a sink before the one already built against it
@@ -680,6 +681,60 @@ from `DisposeAsync`.
 a view's sink for the view's whole life, so two players built against one view would otherwise feed
 it for as long as both live. A claim taken at build fails before anything is decoded, and names the
 cause.
+
+### 19. `FanOutVideoSink` and `DelegatingVideoSink` are in `FrameFlow.Media`
+
+**A compile error if you kept a copy of the examples' `DelegatingVideoSink`; new types otherwise.**
+
+`FrameFlow.Media` gains two video sinks (ADR-0085, decision 8; #611).
+
+- `FanOutVideoSink` presents each frame it is given to several sinks. Registered as a player's one
+  video sink, it sits behind the player's pacer, so its targets show each frame at the same moment,
+  which a `Branch` to each of them does not (#636). A target can come with a transform that makes
+  its frame, such as a filtered copy; the transform keeps the frame's dimensions, pixel format,
+  pixel shape and rotation, and a frame that does not is disposed and fails that target's call.
+  `MaxHeldFrames`, `AcceptedDomains` and `PreferredBackends` are derived from the targets. A claim
+  on it claims every claimable sink beneath it, through nested fan-outs, so a player built against
+  it holds the views it presents to (entry 18), and a build against a view another player holds
+  fails naming that view. Disposing it disposes none of its targets.
+- `DelegatingVideoSink` hands each frame to a delegate, for a sink that ends in your own code. You
+  declare its `MaxHeldFrames`, `AcceptedDomains` and `PreferredBackends`. It claims nothing.
+
+The examples' `DelegatingVideoSink` is gone, and the multicast examples present through a
+`FanOutVideoSink`.
+
+**Who hits this.**
+- An app with its own copy of the examples' `DelegatingVideoSink` in a namespace it imports beside
+  `FrameFlow.Media`: the name is now ambiguous (CS0104).
+- An app that presents to several sinks from inside one delegate sink, as the examples did. It
+  still works, but a player built against it claims none of those sinks.
+
+**What to write instead.** Delete the copy and use the library type. The delegate stays in the
+constructor; the rest are init properties:
+
+```csharp
+// Before: the examples' copy
+var sink = new DelegatingVideoSink(WriteAsync, maxHeldFrames: 0);
+
+// After
+var sink = new DelegatingVideoSink(WriteAsync) { MaxHeldFrames = 0 };
+```
+
+To show each frame in several views, present through a fan-out rather than from a delegate. A
+fan-out over plain sinks takes them directly, `new FanOutVideoSink(first, second)`; name each
+target with `FanOutTarget` when one of them has a transform:
+
+```csharp
+var panes = new FanOutVideoSink(
+    FanOutTarget.Of(direct),
+    FanOutTarget.Of(detection),
+    FanOutTarget.Transform(filtered, frame => Filter(frame)));
+```
+
+**Why.** The only delegate sink lived in the examples, which are not packed, so the v0.10.0 note
+that pointed at it could not be followed (#611). A fan-out in the library passes a player's claim
+on to the views it feeds, which a delegate cannot do, because it cannot see what its delegate
+calls.
 
 ### Not breaking, but worth knowing
 
@@ -1742,9 +1797,15 @@ configurator and returns its trunk open. `Branch` takes either an `EdgeConfig<T>
 that clones, or an `EdgeOptions`, for one that takes its own ref; both require the options,
 because a defaulted edge would be capacity-1 and blocking and would hold the trunk back frame
 for frame. The branch's first edge is configured by `Branch`, so passing options to the `Then`
-that follows it throws rather than silently winning or losing. `FrameFlow.Examples.Multicast` and
-`FrameFlow.Examples.Multicast.Dml` show the shape: one delegate sink registered with
-`WithVideoSink`, fanning out to three panes.
+that follows it throws rather than silently winning or losing. A branch runs ahead of the
+player's pacer, so it suits consumers that do not present, such as inference or recording.
+
+To show each frame in several views in step, register one `FanOutVideoSink` over their sinks
+with `WithVideoSink`: the pacer presents to all of them at once, as
+`examples/FrameFlow.Examples.Multicast.Shared/MulticastPanes.axaml.cs` does for three panes. To
+end the chain in code of your own, register a `DelegatingVideoSink`, and declare its
+`MaxHeldFrames` and `AcceptedDomains`: a sink that declares neither is taken to keep frames
+without bound and to read CPU pixels.
 
 **Why.** The two modes decided different things about pacing. A configurator that
 terminated itself ran behind an in-graph `PaceUntil`, which holds a decode-texture lease
