@@ -18,9 +18,13 @@ namespace FrameFlow.Media;
 /// </para>
 /// <para>
 /// <b>Stop.</b> <see cref="StopAsync"/> cancels the work, waits for every piece of it to end, and
-/// returns the faults it ended with, from the scope's start: every fault but a cancellation the
-/// work was asked for. The caller's token abandons only the caller's wait. The work stays held and
-/// cancelled, and the next stop waits for it.
+/// returns the faults it ended with that no stop has returned yet: every fault but a cancellation
+/// the work was asked for, each once. The caller's token abandons only the caller's wait. The work
+/// stays held and cancelled, and the next stop waits for it and returns its faults.
+/// </para>
+/// <para>
+/// Work must not await its own scope's <see cref="StopAsync"/>: the stop waits for the work, which
+/// would be waiting for the stop, and neither would end until that wait is abandoned.
 /// </para>
 /// <para>
 /// <b>One run.</b> A scope serves one run. An owner gives each run a fresh scope, keeps every older
@@ -131,8 +135,9 @@ internal sealed class WorkScope
     /// call waits for it.
     /// </param>
     /// <returns>
-    /// Every fault the scope's work has ended with since the scope was made, in the order it ended:
-    /// all but a cancellation the work was asked for. Each call returns all of them.
+    /// The faults the scope's work has ended with that no completed stop has returned, in the order
+    /// it ended: all but a cancellation the work was asked for. A call whose wait was abandoned
+    /// returns nothing, so the next one returns them.
     /// </returns>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before the work had ended.
@@ -153,7 +158,10 @@ internal sealed class WorkScope
         await Task.WhenAll(waits).WaitAsync(cancellationToken).ConfigureAwait(false);
 
         lock (_gate)
-            return _ledger.Faults;
+        {
+            (_ledger, var faults) = _ledger.TakeFaults();
+            return faults;
+        }
     }
 
     /// <summary>Runs one piece of work to its end, then lets it go.</summary>

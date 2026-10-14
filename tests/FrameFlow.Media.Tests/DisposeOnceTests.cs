@@ -82,13 +82,76 @@ public sealed class DisposeOnceTests
     }
 
     [Fact]
-    public async Task ATeardownThatThrowsBeforeItsFirstWait_IsTheOutcomeOfEveryCall()
+    public async Task ATeardownThatThrowsBeforeItReturnsItsTask_StillReleasesEveryLaterCall()
     {
+        // RunAsync is the form that takes a teardown which can throw synchronously.
         var once = new DisposeOnce();
         var thrown = new InvalidOperationException("thrown at once");
 
-        Assert.Same(thrown, await Assert.ThrowsAsync<InvalidOperationException>(() => once.RunAsync(() => throw thrown).AsTask()));
-        Assert.Same(thrown, await Assert.ThrowsAsync<InvalidOperationException>(() => once.RunAsync(() => ValueTask.CompletedTask).AsTask()));
+        var first = once.RunAsync(() => throw thrown).AsTask();
+        var later = once.RunAsync(() => ValueTask.CompletedTask).AsTask();
+
+        Assert.Same(thrown, await Assert.ThrowsAsync<InvalidOperationException>(() => first.WaitAsync(Bound)));
+        Assert.Same(thrown, await Assert.ThrowsAsync<InvalidOperationException>(() => later.WaitAsync(Bound)));
+    }
+
+    [Fact]
+    public async Task TheDirectForm_RunsTheTeardownOnce_AndEveryOtherCallWaitsAndEndsAsItDid()
+    {
+        var once = new DisposeOnce();
+        var entered = Signal();
+        var release = Signal();
+        var thrown = new InvalidOperationException("the teardown failed");
+        var runs = 0;
+
+        async ValueTask TearDownAsync()
+        {
+            runs++;
+            entered.SetResult();
+            await release.Task;
+            throw thrown;
+        }
+
+        ValueTask DisposeAsync() => once.TryBegin() ? once.EndAsync(TearDownAsync()) : once.WaitAsync();
+
+        var first = DisposeAsync().AsTask();
+        await entered.Task.WaitAsync(Bound);
+        var second = DisposeAsync().AsTask();
+        Assert.False(second.IsCompleted);
+
+        release.SetResult();
+        Assert.Same(thrown, await Assert.ThrowsAsync<InvalidOperationException>(() => first.WaitAsync(Bound)));
+        Assert.Same(thrown, await Assert.ThrowsAsync<InvalidOperationException>(() => second.WaitAsync(Bound)));
+        Assert.Same(thrown, await Assert.ThrowsAsync<InvalidOperationException>(() => DisposeAsync().AsTask().WaitAsync(Bound)));
+        Assert.Equal(1, runs);
+    }
+
+    [Fact]
+    public async Task TheDirectForm_AnAsyncTeardownThatThrowsAtOnce_ReachesEveryLaterCall()
+    {
+        // An async method puts even its first throw in its task, which is why the direct form needs one.
+        var once = new DisposeOnce();
+        var thrown = new InvalidOperationException("thrown at once");
+
+#pragma warning disable CS1998 // the point is an async method that throws before any wait
+        async ValueTask TearDownAsync() => throw thrown;
+#pragma warning restore CS1998
+
+        Assert.True(once.TryBegin());
+        var first = once.EndAsync(TearDownAsync()).AsTask();
+        Assert.False(once.TryBegin());
+        var later = once.WaitAsync().AsTask();
+
+        Assert.Same(thrown, await Assert.ThrowsAsync<InvalidOperationException>(() => first.WaitAsync(Bound)));
+        Assert.Same(thrown, await Assert.ThrowsAsync<InvalidOperationException>(() => later.WaitAsync(Bound)));
+    }
+
+    [Fact]
+    public async Task EndAsync_WithoutABegin_Throws()
+    {
+        var once = new DisposeOnce();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => once.EndAsync(ValueTask.CompletedTask).AsTask());
     }
 
     [Fact]
@@ -156,6 +219,35 @@ public sealed class DisposeOnceTests
     }
 
     [Fact]
+    public async Task TheWarningsTimer_IsDisposedByTheTimeTheWaitReturns()
+    {
+        var time = new CapturingTime();
+        var work = Signal();
+
+        var waiting = SlowWorkWarning.AwaitAsync(work.Task, Interval, time, () => { });
+        work.SetResult();
+        await waiting.WaitAsync(Bound);
+
+        Assert.True(time.TimerDisposed);
+    }
+
+    [Fact]
+    public async Task AWarningThatFiresAfterTheWorkEnded_SaysNothing()
+    {
+        // The timer can fire as the work ends, before the wait has disposed it.
+        var time = new CapturingTime();
+        var work = Signal();
+        var warnings = 0;
+
+        var waiting = SlowWorkWarning.AwaitAsync(work.Task, Interval, time, () => warnings++);
+        work.SetResult();
+        await waiting.WaitAsync(Bound);
+        time.Fire();
+
+        Assert.Equal(0, warnings);
+    }
+
+    [Fact]
     public async Task AWarningThatThrows_IsDropped_AndTheWaitGoesOn()
     {
         var time = new FakeTimeProvider();
@@ -173,6 +265,45 @@ public sealed class DisposeOnceTests
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
 
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Keeps the one timer a wait makes, so a test can fire it when it likes and see whether it was
+    /// disposed. Nothing fires on its own.
+    /// </summary>
+    private sealed class CapturingTime : TimeProvider
+    {
+        private TimerCallback? _callback;
+        private object? _state;
+
+        public bool TimerDisposed { get; private set; }
+
+        public void Fire() => _callback!(_state);
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period
+        )
+        {
+            _callback = callback;
+            _state = state;
+            return new Timer(this);
+        }
+
+        private sealed class Timer(CapturingTime time) : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose() => time.TimerDisposed = true;
+
+            public ValueTask DisposeAsync()
+            {
+                time.TimerDisposed = true;
+                return ValueTask.CompletedTask;
+            }
+        }
+    }
 
     private static ValueTask Count(ref int runs)
     {

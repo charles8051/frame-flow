@@ -9,10 +9,10 @@ namespace FrameFlow.Media.Tests;
 /// <summary>
 /// Pins ADR-0086 decision 1 on the scope an owner starts its work through: work is held until it
 /// ends and only its end lets it go; a stop cancels, then waits for every piece of work; a caller
-/// that abandons its wait leaves the work held for the next stop; the faults come back, but not a
-/// cancellation the work was asked for; and a stopped scope starts nothing. <see cref="WorkLedger"/>
-/// holds the rules and is tested as a value; the scope tests pin the shell around it, each waiting
-/// on the work's own signals or on <see cref="WorkScope.WorkEnded"/>.
+/// that abandons its wait leaves the work held for the next stop; the faults come back, once each,
+/// but not a cancellation the work was asked for; and a stopped scope starts nothing.
+/// <see cref="WorkLedger"/> holds the rules and is tested as a value; the scope tests pin the shell
+/// around it, each waiting on the work's own signals or on <see cref="WorkScope.WorkEnded"/>.
 /// </summary>
 public sealed class WorkScopeTests
 {
@@ -88,6 +88,20 @@ public sealed class WorkScopeTests
         Assert.Equal([new WorkFault("graph", graphFault), new WorkFault("pump", pumpFault)], ended.Faults);
     }
 
+    [Fact]
+    public void Ledger_AStopTakesEachFaultOnce()
+    {
+        var (held, pump) = WorkLedger.Empty.Start("pump");
+        var fault = new InvalidOperationException("pump");
+        var ended = held.End(pump!.Value, fault, cancellationRequested: false);
+
+        var (once, first) = ended.TakeFaults();
+        var (_, second) = once.TakeFaults();
+
+        Assert.Equal([new WorkFault("pump", fault)], first);
+        Assert.Empty(second);
+    }
+
     public static TheoryData<Exception?, bool, bool> Outcomes =>
         new()
         {
@@ -154,6 +168,32 @@ public sealed class WorkScopeTests
 
         release.SetResult();
         Assert.Empty(await stopping.WaitAsync(Bound));
+        Assert.Empty(scope.Pending);
+    }
+
+    [Fact]
+    public async Task Stop_CancelsWorkStartedWithATokenOfItsOwn()
+    {
+        // The work's token is linked to the stop as well as to the token it was started with. Were
+        // it linked to that one alone, the stop would not reach it and would wait for good.
+        var scope = new WorkScope();
+        using var run = new CancellationTokenSource();
+        var cancelled = Signal();
+        scope.TryStart(
+            "pump",
+            async ct =>
+            {
+                using var _ = ct.Register(() => cancelled.TrySetResult());
+                await UntilCancelled(ct);
+            },
+            run.Token
+        );
+
+        var faults = await scope.StopAsync().WaitAsync(Bound);
+
+        Assert.True(cancelled.Task.IsCompleted);
+        Assert.False(run.IsCancellationRequested);
+        Assert.Empty(faults);
         Assert.Empty(scope.Pending);
     }
 
@@ -233,8 +273,9 @@ public sealed class WorkScopeTests
     }
 
     [Fact]
-    public async Task EveryStop_ReturnsEveryFault()
+    public async Task EachFault_IsReturnedByTheFirstStopThatCompletes_AndNotAgain()
     {
+        // An owner that stops at a seek and again at its dispose raises the fault once (decision 3.4).
         var scope = new WorkScope();
         scope.TryStart("faulted", _ => throw new InvalidOperationException("faulted"));
 
@@ -242,7 +283,37 @@ public sealed class WorkScopeTests
         var second = await scope.StopAsync().WaitAsync(Bound);
 
         Assert.Equal("faulted", Assert.Single(first).Work);
-        Assert.Equal(first, second);
+        Assert.Empty(second);
+    }
+
+    [Fact]
+    public async Task WorkThatAwaitsItsOwnScopesStop_EndsOnlyWhenThatWaitIsAbandoned()
+    {
+        // What the scope's remarks warn against: the stop waits for the work, which waits for the
+        // stop, so neither ends until the work's own wait is abandoned.
+        var scope = new WorkScope();
+        using var abandon = new CancellationTokenSource();
+        var stopping = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+        scope.TryStart(
+            "stops its own scope",
+            async _ =>
+            {
+                var own = scope.StopAsync(abandon.Token);
+                stopping.SetResult(own);
+                await own;
+            }
+        );
+
+        var own = await stopping.Task.WaitAsync(Bound);
+
+        Assert.False(own.IsCompleted);
+        Assert.Equal(["stops its own scope"], scope.Pending);
+
+        abandon.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => own.WaitAsync(Bound));
+        // It ended with the cancellation its stop asked for, which is not a fault.
+        Assert.Empty(await scope.StopAsync().WaitAsync(Bound));
+        Assert.Empty(scope.Pending);
     }
 
     [Fact]

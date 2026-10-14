@@ -26,16 +26,22 @@ internal readonly record struct WorkFault(string Work, Exception Error);
 /// with is a fault, an <see cref="OperationCanceledException"/> nobody asked for included, as for a
 /// graph's node (#489).
 /// </para>
+/// <para>
+/// Each fault is returned once, by the first stop that completes after it (decision 3.4): an owner
+/// that stops at a seek and again at its dispose does not raise one fault twice.
+/// </para>
 /// </remarks>
 /// <param name="Stopped">Whether the scope has been stopped.</param>
 /// <param name="LastWork">The number given to the work started last, from 1; 0 before the first.</param>
 /// <param name="Held">The work held, by number, with the name each was started under.</param>
 /// <param name="Faults">The faults the work has ended with, in the order it ended.</param>
+/// <param name="Returned">How many of <paramref name="Faults"/>, from the first, a stop has returned.</param>
 internal sealed record WorkLedger(
     bool Stopped,
     long LastWork,
     ImmutableSortedDictionary<long, string> Held,
-    ImmutableList<WorkFault> Faults
+    ImmutableList<WorkFault> Faults,
+    int Returned
 )
 {
     /// <summary>A scope just made: holding nothing, not stopped.</summary>
@@ -44,7 +50,8 @@ internal sealed record WorkLedger(
             Stopped: false,
             LastWork: 0,
             ImmutableSortedDictionary<long, string>.Empty,
-            ImmutableList<WorkFault>.Empty
+            ImmutableList<WorkFault>.Empty,
+            Returned: 0
         );
 
     /// <summary>Whether no work is held.</summary>
@@ -98,6 +105,13 @@ internal sealed record WorkLedger(
     /// </summary>
     public WorkLedger Fault(string what, Exception error) =>
         this with { Faults = Faults.Add(new WorkFault(what, error)) };
+
+    /// <summary>
+    /// A stop has completed: it returns the faults no stop has returned yet, and they are not
+    /// returned again.
+    /// </summary>
+    public (WorkLedger Next, IReadOnlyList<WorkFault> Faults) TakeFaults() =>
+        (this with { Returned = Faults.Count }, [.. Faults.Skip(Returned)]);
 
     /// <summary>
     /// The fault in what a piece of work ended with: none for a completion or a cancellation it was
