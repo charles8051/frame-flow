@@ -699,6 +699,7 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
         Ensure(after.AudioActive == (m.Audio != AudioModel.Inactive), "The state knows whether the audio sink is active");
         Ensure(after.Attached == m.Attached, "The state knows whether the runtime is attached");
         Ensure(after.Played == m.Played, "The state knows whether the runtime has played");
+        Ensure(after.GatesOpen == m.Gates, "The state knows whether the gates are open");
         Ensure(after.FirstFrameSeen == m.FirstFrame, "The state knows whether the first frame was decoded");
         Ensure(after.Floor == TimeSpan.Zero || after.Status == ItemRunStatus.Idle, "A run's start is pending only while a run may start");
         Ensure(after.Phase != ItemRuntimePhase.Disposing || after.Command is null, "No command runs while the runtime disposes");
@@ -718,6 +719,11 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
         Ensure(
             !(after.Phase == ItemRuntimePhase.Open && m.Audio == AudioModel.Playing) || m.Gates,
             "The audio sink plays only while frames pass the gates"
+        );
+        Ensure(
+            !(after.Phase == ItemRuntimePhase.Open && after.Command is null && m.Live is not null && (m.Working & ItemWork.Graph) != 0 && !m.Gates)
+                || m.Clock != ClockModel.Running,
+            "At rest, a run held behind shut gates is held with its clock"
         );
 
         if (after.Phase == ItemRuntimePhase.Disposed)

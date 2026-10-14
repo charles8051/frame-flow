@@ -367,8 +367,8 @@ public sealed class ItemRuntimeProtocolTests
                 new Action.SeatClocks(At1, Shared: true),
                 new Action.SeatBaseline(At1),
                 new Action.ActivateAudio(),
-                new Action.StartClocks(At1),
                 new Action.StartRun(1, PumpAndGraph, ItemGraphPolicy.Rebuild, At1, null, HoldForSettle: false),
+                new Action.StartClocks(At1),
                 new Action.OpenGates(),
                 new Action.CompleteCommand(play, ItemCommandResult.Ok),
             ],
@@ -614,7 +614,10 @@ public sealed class ItemRuntimeProtocolTests
         Assert.Equal([new Action.RaiseEndOfStream(0)], t.Actions);
 
         t.Ok();
-        Assert.Equal([new Action.OpenGates(), new Action.CompleteCommand(play, ItemCommandResult.Ok)], t.Actions);
+        Assert.Equal(
+            [new Action.StartClocks(TimeSpan.Zero), new Action.OpenGates(), new Action.CompleteCommand(play, ItemCommandResult.Ok)],
+            t.Actions
+        );
         Assert.Equal(ItemRunStatus.Running, t.State.Status);
         Assert.Equal(ItemWork.None, t.State.Pending);
 
@@ -689,8 +692,9 @@ public sealed class ItemRuntimeProtocolTests
 
         t.Ok(); // the run started
 
+        // The run started to play on, over the sink the relaunch activated: the gates open over it.
         Assert.Equal(
-            [new Action.ReleaseSettle(), new Action.CompleteCommand(seek, ItemCommandResult.Cancelled)],
+            [new Action.OpenGates(), new Action.ReleaseSettle(), new Action.CompleteCommand(seek, ItemCommandResult.Cancelled)],
             t.Actions
         );
         Assert.Equal(ItemRunStatus.Running, t.State.Status);
@@ -956,7 +960,11 @@ public sealed class ItemRuntimeProtocolTests
 
         t.Fails(Boom);
 
-        Assert.Equal([new Action.CompleteCommand(play, ItemCommandResult.Failed(Boom))], t.Actions);
+        Assert.Equal(
+            [new Action.PauseClocks(), new Action.CompleteCommand(play, ItemCommandResult.Failed(Boom))],
+            t.Actions
+        );
+        Assert.False(t.State.GatesOpen);
     }
 
     [Fact]
@@ -1019,6 +1027,61 @@ public sealed class ItemRuntimeProtocolTests
 
         Assert.Equal([new Action.CompleteCommand(seek, ItemCommandResult.Failed(Boom))], t.Actions);
         Assert.Equal(ItemRunStatus.Running, t.State.Status);
+    }
+
+    [Fact]
+    public void ASeekCutShortOnceItsAudioHasPaused_StopsItsRun_AndThePlayAfterItRepositionsAtTheClock()
+    {
+        // Left going, the run would sit behind shut gates while the clock ran on.
+        var t = ItemRuntimeTranscript.Playing();
+        var seek = t.Seek(At3);
+        t.CallerCancels(seek);
+
+        t.Ok(); // the audio paused anyway
+
+        Assert.Equal(
+            [
+                new Action.CloseGates(),
+                new Action.CancelRun(0),
+                new Action.CompleteCommand(seek, ItemCommandResult.Cancelled),
+            ],
+            t.Actions
+        );
+        Assert.Equal(ItemRunStatus.Stopping, t.State.Status);
+
+        t.Ends(ItemWork.Pump);
+        t.Ends(ItemWork.Graph);
+        var mark = t.Mark();
+        t.Play(At1);
+        t.OkUntilIdle();
+        Assert.Contains(new Action.SeekDemux(At1), t.Since(mark));
+        Assert.Equal(ItemRunStatus.Running, t.State.Status);
+    }
+
+    [Fact]
+    public void APlayCutShortOnceItsRunHasStarted_HoldsTheRunWithTheClocks()
+    {
+        // A seek while paused held the item; the play starts the run, and its caller cancels it.
+        var t = ItemRuntimeTranscript.Playing();
+        t.Pause();
+        t.OkUntilIdle();
+        t.Seek(At3, clockPaused: true);
+        t.Ok();
+        t.Ends(ItemWork.Pump);
+        t.Ends(ItemWork.Graph);
+        t.OkUntilIdle();
+        var play = t.Play(At3, clockPaused: true);
+        Assert.IsType<Action.StartRun>(t.Last.Awaited);
+        t.CallerCancels(play);
+
+        t.Ok(); // the run started anyway
+
+        Assert.Equal(
+            [new Action.PauseClocks(), new Action.CompleteCommand(play, ItemCommandResult.Cancelled)],
+            t.Actions
+        );
+        Assert.Equal(ItemRunStatus.Running, t.State.Status);
+        Assert.False(t.State.GatesOpen);
     }
 
     [Fact]
@@ -1128,13 +1191,13 @@ public sealed class ItemRuntimeProtocolTests
         Assert.Empty(t.Actions);
         Assert.True(t.State.DisposeRequested);
 
-        t.Ok(); // the audio pause ends, and the gates follow it
+        t.Ok(); // the audio pause ends, and the gates and the stop follow it
         Assert.Equal(
             [
                 new Action.CloseGates(),
+                new Action.CancelRun(0),
                 new Action.CompleteCommand(seek, ItemCommandResult.Cancelled),
                 new Action.OpenGates(),
-                new Action.CancelRun(0),
             ],
             t.Actions
         );

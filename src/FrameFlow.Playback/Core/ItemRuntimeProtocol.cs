@@ -54,8 +54,12 @@ namespace FrameFlow.Playback.Core;
 /// leaves the stop going. A command cancelled while it waits for a stop ends at once, and the
 /// runtime is <see cref="ItemRunStatus.Stopped"/> once the work has ended. One cancelled while an
 /// action is under way goes no further, and ends when the action does, which the token passed to the
-/// action bounds; so a caller that serialises its commands never finds an action under way. The
-/// next play, or a warm-up, repositions at the position clock before it starts a run (#714).
+/// action bounds; so a caller that serialises its commands never finds an action under way. What
+/// goes with that action still follows it, so the runtime rests playing, held behind the gates with
+/// its clocks, or with its run stopped: a reposition cut after its audio pause stops its run, a
+/// relaunch cut after its run started opens the gates over it, and a play cut after its run started
+/// holds it with the clocks. The next play, or a warm-up, repositions at the position clock before
+/// it starts a run (#714).
 /// </para>
 /// <para>
 /// <b>The audio comes first.</b> A pause, and a reposition, pause the audio sink before they shut
@@ -380,6 +384,10 @@ internal static class ItemRuntimeProtocol
 
             if (!ok)
             {
+                // A resume whose audio did not resume, behind shut gates, holds its run with the
+                // clocks, which a reposition that failed before it may have left running.
+                if (command.Stage == ItemCommandStage.ResumingAudio && !State.GatesOpen)
+                    Emit(new ItemRuntimeAction.PauseClocks());
                 End(
                     command,
                     outcome == ItemActionOutcome.Cancelled ? ItemCommandResult.Cancelled : ItemCommandResult.Failed(error)
@@ -387,12 +395,12 @@ internal static class ItemRuntimeProtocol
                 return;
             }
 
-            // A command whose caller has gone, or that a dispose is waiting for, goes no further. A
-            // call to the audio sink that went through still gets the gates and the clocks that go
-            // with it, so the picture and the sound agree.
+            // A command whose caller has gone, or that a dispose is waiting for, goes no further. The
+            // action that went through still gets what goes with it at once, so the runtime rests
+            // playing, held with its clock, or with its run stopped.
             if (command.Abandoned || State.DisposeRequested)
             {
-                FollowAudio(command.Stage);
+                FollowCutShort(command);
                 End(command, ItemCommandResult.Cancelled);
                 return;
             }
@@ -449,23 +457,45 @@ internal static class ItemRuntimeProtocol
             }
         }
 
-        // What follows a pause or a resume of the audio sink at once: the gates and the clocks. An
-        // activation needs nothing, since an activated sink plays only what reaches it through the
-        // gates, and nothing does until they open.
+        // What follows a pause or a resume of the audio sink at once: the gates and the clocks, and
+        // for a reposition the stop of its run. An activation needs nothing, since an activated sink
+        // plays only what reaches it through the gates, and nothing does until they open.
         private void FollowAudio(ItemCommandStage stage)
         {
             switch (stage)
             {
                 case ItemCommandStage.PausingAudio:
-                    Emit(new ItemRuntimeAction.CloseGates());
+                    CloseGates();
                     Emit(new ItemRuntimeAction.PauseClocks());
                     break;
                 case ItemCommandStage.RepositionPausingAudio:
-                    Emit(new ItemRuntimeAction.CloseGates());
+                    CloseGates();
+                    StopRun();
                     break;
                 case ItemCommandStage.ResumingAudio:
                     Emit(new ItemRuntimeAction.ResumeClocks());
-                    Emit(new ItemRuntimeAction.OpenGates());
+                    OpenGates();
+                    break;
+            }
+        }
+
+        // What a command cut short still does after the action that went through. A reposition cut
+        // after its audio pause stops its run, as its stop would have, and the next play repositions
+        // where the clock stands (#714). A relaunch cut after its run started opens the gates over the
+        // sink it activated, with the clock running. A play cut after its run started holds the run
+        // behind the gates with the clocks paused, as a pause does, for the next play to resume.
+        private void FollowCutShort(ItemCommand command)
+        {
+            switch (command.Stage)
+            {
+                case ItemCommandStage.RepositionStartingRun:
+                    OpenGates();
+                    break;
+                case ItemCommandStage.StartingRun when command.Kind == ItemCommandKind.Play:
+                    Emit(new ItemRuntimeAction.PauseClocks());
+                    break;
+                default:
+                    FollowAudio(command.Stage);
                     break;
             }
         }
@@ -515,7 +545,7 @@ internal static class ItemRuntimeProtocol
                 case ItemCommandStage.RepositionStartingRun:
                     // The sink was activated before the run started, and an activated sink plays, so
                     // the gates open over sound whatever the resume below does.
-                    Emit(new ItemRuntimeAction.OpenGates());
+                    OpenGates();
                     if (State.HasAudio)
                         Await(ItemCommandStage.RepositionResumingAudio, new ItemRuntimeAction.ResumeAudio());
                     else
@@ -630,13 +660,11 @@ internal static class ItemRuntimeProtocol
 
         private void AfterFirstPlayActivation()
         {
-            var origin = Command.ClockPosition;
-            Emit(new ItemRuntimeAction.StartClocks(origin));
-
-            // A run the warm-up started is already behind the gates.
+            // A run the warm-up started is already behind the gates. One started here starts before
+            // the clocks, so a play that ends before its run has started leaves them still.
             if (State.Status == ItemRunStatus.Idle)
             {
-                State = State with { Floor = origin };
+                State = State with { Floor = Command.ClockPosition };
                 AwaitStartRun(ItemCommandStage.StartingRun, ItemGraphPolicy.Rebuild, holdForSettle: false);
                 return;
             }
@@ -646,7 +674,8 @@ internal static class ItemRuntimeProtocol
 
         private void FinishFirstPlay()
         {
-            Emit(new ItemRuntimeAction.OpenGates());
+            Emit(new ItemRuntimeAction.StartClocks(Command.ClockPosition));
+            OpenGates();
             State = State with { Played = true };
             Finish();
         }
@@ -894,7 +923,7 @@ internal static class ItemRuntimeProtocol
             // So an operator blocked at a gate unblocks and sees the cancellation. A detached runtime
             // keeps them shut: what waits there would reach the sinks it shares with the item playing.
             if (State.Attached)
-                Emit(new ItemRuntimeAction.OpenGates());
+                OpenGates();
 
             StopRun();
             if (State.Pending == ItemWork.None)
@@ -942,6 +971,18 @@ internal static class ItemRuntimeProtocol
         }
 
         private void Emit(ItemRuntimeAction action) => _actions.Add(action);
+
+        private void OpenGates()
+        {
+            Emit(new ItemRuntimeAction.OpenGates());
+            State = State with { GatesOpen = true };
+        }
+
+        private void CloseGates()
+        {
+            Emit(new ItemRuntimeAction.CloseGates());
+            State = State with { GatesOpen = false };
+        }
 
         private void Complete(int command, ItemCommandResult result) =>
             Emit(new ItemRuntimeAction.CompleteCommand(command, result));

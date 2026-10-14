@@ -290,6 +290,9 @@ internal sealed record ItemRuntimeState
     /// <summary>Whether a first play has completed.</summary>
     public bool Played { get; init; }
 
+    /// <summary>Whether the gates are open, so frames and audio pass to the sinks. Shut from construction.</summary>
+    public bool GatesOpen { get; init; }
+
     /// <summary>
     /// Whether the audio sink was last activated rather than deactivated. A call that failed is
     /// taken to have changed nothing.
