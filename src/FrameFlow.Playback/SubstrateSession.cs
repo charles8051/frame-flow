@@ -170,8 +170,11 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     // The graph + demux pump are constructed in InitializeAsync and
     // run until DisposeAsync or natural EOS. No per-pause cancel.
     private CancellationTokenSource? _sessionCts;
-    private Task? _pumpTask;
-    private Task? _graphTask;
+
+    // The demux pump and graph tasks of the current run, held until they have ended: a stop whose
+    // wait is cut short leaves them here for the next stop, the dispose's above all, to wait for
+    // (#707).
+    private RunTasks<Task> _runTasks = RunTasks<Task>.None;
     private Task? _recoveryTask;
 
     /// <summary>
@@ -303,11 +306,61 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// <remarks>
     /// Read it inside <see cref="SessionCallbacks.OnEndOfStream"/>. The run raising the
     /// end-of-stream cannot have been stopped yet, because stopping a run waits for the task
-    /// that raises it, so the number read there is that run's. A caller that handles the
-    /// end-of-stream later, on another thread, compares it with this property then, and drops
+    /// that raises it, so the number read there is that run's. A seek whose wait for those tasks
+    /// is cancelled does not advance it, since the run has not ended (#707). A caller that handles
+    /// the end-of-stream later, on another thread, compares it with this property then, and drops
     /// the end-of-stream if a seek or rewind has replaced the run in between.
     /// </remarks>
     public int RunNumber => Volatile.Read(ref _runNumber);
+
+    /// <summary>
+    /// What a session does around its run's tasks: their start and end, a stop's wait for them,
+    /// and what a reposition and the dispose then do to the state they use. Internal: tests read
+    /// the order the steps are taken in, and act at one to drive a race (#707).
+    /// </summary>
+    internal enum Step
+    {
+        /// <summary>A run's demux pump has started.</summary>
+        PumpStarted,
+
+        /// <summary>A run's demux pump is ending: it reads no more packets.</summary>
+        PumpEnded,
+
+        /// <summary>A run's graph has started.</summary>
+        GraphStarted,
+
+        /// <summary>A run's graph is ending: it has made its last call on a sink.</summary>
+        GraphEnded,
+
+        /// <summary>A stop, a reposition's or the dispose's, begins waiting for the run's tasks.</summary>
+        WaitingForRun,
+
+        /// <summary>A reposition is about to seek the demuxer.</summary>
+        SeekingDemux,
+
+        /// <summary>A reposition is about to reset the decoders and the pipeline for the seek.</summary>
+        ResettingForSeek,
+
+        /// <summary>The dispose is about to free the pump pipeline.</summary>
+        DisposingPipeline,
+
+        /// <summary>The dispose is about to free the video decoder.</summary>
+        DisposingVideoDecoder,
+
+        /// <summary>The dispose is about to free the audio decoder.</summary>
+        DisposingAudioDecoder,
+
+        /// <summary>The dispose is about to free the demux session.</summary>
+        DisposingDemux,
+    }
+
+    /// <summary>
+    /// Called with each <see cref="Step"/> as the session takes it, on the thread that takes it.
+    /// Internal: a seam for tests, set before the session opens.
+    /// </summary>
+    internal Action<Step>? OnStep { get; set; }
+
+    private void Take(Step step) => OnStep?.Invoke(step);
 
     public PipelineDiagnosticsSnapshot GetPipelineDiagnostics()
     {
@@ -864,14 +917,11 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // Loading state. By the time PlayAsync opens the gates, a
         // frame is already waiting at t=0 and audio can't race ahead.
         //
-        // Idempotent: re-entry while tasks are already running is a no-op
-        // beyond the first-frame await below.
-        if (
-            _pumpTask is null
-            || _pumpTask.IsCompleted
-            || _graphTask is null
-            || _graphTask.IsCompleted
-        )
+        // Idempotent: re-entry while a task is still running is a no-op
+        // beyond the first-frame await below. A run launched beside it
+        // would read the same demuxer and decode on the same decoders.
+        _runTasks = _runTasks.ForgetEnded(HasEnded);
+        if (_runTasks.IsEmpty)
         {
             StartSessionTasks();
         }
@@ -888,10 +938,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // faulted pump will never deliver.
         var firstFrame = videoDecoder!.FirstFrameDecoded;
         var watch = new List<Task>(3) { firstFrame };
-        if (_pumpTask is not null)
-            watch.Add(_pumpTask);
-        if (_graphTask is not null)
-            watch.Add(_graphTask);
+        watch.AddRange(_runTasks.Held);
 
         var winner = await Task.WhenAny(watch)
             .WaitAsync(cancellationToken)
@@ -921,9 +968,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             // so the graph is already running and the first frame is
             // sitting upstream of the video gate ready to render.
             //
-            // <b>Null-only restart guard.</b> If a caller skipped warmup
+            // <b>Nothing-held restart guard.</b> If a caller skipped warmup
             // entirely (e.g. a test that bypasses the state machine),
-            // _pumpTask is still null and we have to start the graph
+            // no task is held and we have to start the graph
             // ourselves. But if warmup did run, the tasks exist — even if
             // the demux pump has already drained the file (which happens
             // fast for small clips), the graph task is still alive,
@@ -978,7 +1025,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 wallclock.Seek(itemOrigin);
             }
 
-            if (_pumpTask is null || _graphTask is null)
+            if (_runTasks.IsEmpty)
             {
                 StartSessionTasks();
             }
@@ -1014,7 +1061,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // — long before the user pauses. The decoder still holds every demuxed
         // packet in its bounded queue and keeps producing frames against the
         // (closed) gate's backpressure, so resume only needs to reopen the gate.
-        // Rebuilding on _pumpTask.IsCompleted would instead restart the demux
+        // Rebuilding on the pump task's completion would instead restart the demux
         // pump against an already-exhausted demuxer (immediate EOF) and abandon
         // the original decoder's queued packets, ending playback seconds early —
         // the video-only pause/resume regression. Gate the rebuild on the one
@@ -1364,23 +1411,25 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         //     them with NO CTS cancel (the whole point — avoids the per-loop graph teardown
         //     and the cancel-mid-GPU-op wedge). Fall back to the cancel path only if a task
         //     is somehow still running.
-        // Both StopGraphAsync and WaitForSessionTasksAsync null _pumpTask/_graphTask.
+        // Either way the wait covers tasks an earlier reposition left held: one this
+        // reposition supersedes was cancelled while it waited for them, and they may still be
+        // unwinding. Nothing below touches the demuxer or the decoders until they have ended.
+        // If this reposition is cancelled in turn, the wait throws and leaves what has not
+        // ended held, for the next stop to wait for (#707).
         if (taskPolicy == TaskPolicy.Cancel)
         {
             await StopGraphAsync(cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            var pumpRunning = _pumpTask is { IsCompleted: false };
-            var graphRunning = _graphTask is { IsCompleted: false };
-            if (pumpRunning || graphRunning)
-                await StopGraphAsync(cancellationToken).ConfigureAwait(false);
-            else
+            if (_runTasks.ForgetEnded(HasEnded).IsEmpty)
                 await WaitForSessionTasksAsync(cancellationToken).ConfigureAwait(false);
+            else
+                await StopGraphAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        // The interrupted run is over, and nothing has relaunched. An end-of-stream it raised
-        // read the old number; any run from here on reads the new one.
+        // The interrupted run is over: its tasks have ended, and nothing has relaunched. An
+        // end-of-stream it raised read the old number; any run from here on reads the new one.
         Interlocked.Increment(ref _runNumber);
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -1402,6 +1451,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
         // Step 4: reposition the demuxer. For target 0 with the BACKWARD flag this lands at
         // the file start (a true rewind-to-start) — the same call the seek path makes.
+        Take(Step.SeekingDemux);
         await _demux.SeekAsync(target, cancellationToken).ConfigureAwait(false);
 
         // Step 5: invalidate every pre-discontinuity-stateful participant in one uniform pass
@@ -1413,6 +1463,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // list (see InitializeAsync) mechanises the ADR-0048 seek-discipline audit: the four
         // historical seek-state-leak bugs all came from a missing step in a hand-listed
         // checklist here.
+        Take(Step.ResettingForSeek);
         foreach (var resettable in _seekResettables)
         {
             resettable.ResetForSeek();
@@ -1519,6 +1570,16 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         }
     }
 
+    /// <summary>
+    /// Stops the run and waits for its tasks to end, then frees the pacer, the pump pipeline, the
+    /// decoders and the demux session.
+    /// </summary>
+    /// <remarks>
+    /// The wait covers tasks a seek left held when its own wait for them was cancelled, so nothing
+    /// is freed while a pump or a graph from before the seek still uses it (#707). It lasts as long
+    /// as the run takes to unwind once cancelled: a sink or a configurator's node that ignores its
+    /// token holds it until the call returns, and so does a demuxer read that blocks (#709).
+    /// </remarks>
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -1582,6 +1643,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
         if (_pipeline is not null)
         {
+            Take(Step.DisposingPipeline);
             try
             {
                 await _pipeline.DisposeAsync().ConfigureAwait(false);
@@ -1594,6 +1656,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         }
         if (_videoDecoder is not null)
         {
+            Take(Step.DisposingVideoDecoder);
             try
             {
                 await _videoDecoder.DisposeAsync().ConfigureAwait(false);
@@ -1606,6 +1669,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         }
         if (_audioDecoder is not null)
         {
+            Take(Step.DisposingAudioDecoder);
             try
             {
                 await _audioDecoder.DisposeAsync().ConfigureAwait(false);
@@ -1618,6 +1682,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         }
         if (_demux is not null)
         {
+            Take(Step.DisposingDemux);
             try
             {
                 await _demux.DisposeAsync().ConfigureAwait(false);
@@ -1668,9 +1733,28 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // it. SeekAsync's restart goes through here (a fresh graph after the
         // CTS-cancel of in-flight work); the RepeatMode.One loop boundary goes
         // through RewindToStartAsync, which re-runs the cached _graph instead.
+        ThrowIfRunGoing();
         _graph = BuildGraph();
         LaunchSessionTasks();
     }
+
+    /// <summary>
+    /// Refuses a launch while a task of the last run has not ended. Every caller has waited for
+    /// that run's tasks, or holds none, so this does not throw: it keeps a second pump or graph
+    /// from ever running beside the first on the same demuxer and decoders (#707).
+    /// </summary>
+    private void ThrowIfRunGoing()
+    {
+        _runTasks = _runTasks.ForgetEnded(HasEnded);
+        if (!_runTasks.IsEmpty)
+        {
+            throw new InvalidOperationException(
+                "A playback run cannot launch while the run before it is still going."
+            );
+        }
+    }
+
+    private static bool HasEnded(Task task) => task.IsCompleted;
 
     /// <summary>
     /// Builds the session graph topology (source → pace → gate → consumer chain → sink)
@@ -1986,6 +2070,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         if (_pipeline is null)
             return;
 
+        // One run at a time. The last run's tasks have ended, so the CTS they watched can go.
+        ThrowIfRunGoing();
+
         // Dispose any prior CTS (defensive).
         _sessionCts?.Dispose();
         _sessionCts = new CancellationTokenSource();
@@ -2026,31 +2113,39 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
         // Demux pump task — feeds packets into decoder queues. Runs
         // until EOF or session cancel.
-        _pumpTask = Task.Run(
+        var pumpTask = Task.Run(
             async () =>
             {
-                var reachedEof = false;
                 try
                 {
-                    await _pipeline!.RunDemuxPumpAsync(ct).ConfigureAwait(false);
-                    reachedEof = !ct.IsCancellationRequested;
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-                catch (Exception ex)
-                {
-                    ReportWorkerFault(ex);
-                    return;
-                }
-
-                if (reachedEof)
-                {
+                    Take(Step.PumpStarted);
+                    var reachedEof = false;
                     try
                     {
-                        await _pipeline!
-                            .FinalizeDecodersAsync(CancellationToken.None)
-                            .ConfigureAwait(false);
+                        await _pipeline!.RunDemuxPumpAsync(ct).ConfigureAwait(false);
+                        reachedEof = !ct.IsCancellationRequested;
                     }
-                    catch { }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+                    catch (Exception ex)
+                    {
+                        ReportWorkerFault(ex);
+                        return;
+                    }
+
+                    if (reachedEof)
+                    {
+                        try
+                        {
+                            await _pipeline!
+                                .FinalizeDecodersAsync(CancellationToken.None)
+                                .ConfigureAwait(false);
+                        }
+                        catch { }
+                    }
+                }
+                finally
+                {
+                    Take(Step.PumpEnded);
                 }
             },
             CancellationToken.None
@@ -2059,11 +2154,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         if (LatenessRecovery is { Enabled: true } recovery)
             _recoveryTask = Task.Run(() => RunRecoveryWalkAsync(recovery, ct), CancellationToken.None);
 
-        _graphTask = Task.Run(
+        var graphTask = Task.Run(
             async () =>
             {
                 try
                 {
+                    Take(Step.GraphStarted);
                     await graph.RunAsync(ct).ConfigureAwait(false);
 
                     // ADR-0057 Stage 2: the graph forwards frames to the
@@ -2100,9 +2196,15 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 {
                     ReportWorkerFault(ex);
                 }
+                finally
+                {
+                    Take(Step.GraphEnded);
+                }
             },
             CancellationToken.None
         );
+
+        _runTasks = RunTasks<Task>.Launched(pumpTask, graphTask);
     }
 
     /// <summary>
@@ -2153,6 +2255,11 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         _callbacks.OnWorkerFaulted(ex);
     }
 
+    /// <summary>
+    /// Cancels the run, unless it is cancelled already, and waits for its tasks to end. See
+    /// <see cref="WaitForSessionTasksAsync"/> for a wait that <paramref name="cancellationToken"/>
+    /// cuts short.
+    /// </summary>
     private async ValueTask StopGraphAsync(CancellationToken cancellationToken)
     {
         var cts = _sessionCts;
@@ -2187,26 +2294,46 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         await StopGraphAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Waits for the run's pump and graph tasks to end, and forgets them once they have.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A wait that <paramref name="cancellationToken"/> cuts short forgets only the tasks that have
+    /// ended, and throws <see cref="OperationCanceledException"/>. The rest stay held, so the next
+    /// stop waits for them: a seek that supersedes this one before it seeks the demuxer or resets
+    /// the decoders, and the dispose before it frees them (#707). Scrubbing cancels seeks in this
+    /// wait routinely, since a scrub sends the next seek as soon as the last is accepted.
+    /// </para>
+    /// <para>
+    /// It throws rather than returning, so a caller cannot go on as though the run had ended. A
+    /// reposition would otherwise advance <see cref="RunNumber"/> past a run that can still raise
+    /// its end-of-stream, and touch the demuxer beside its pump. A task that faulted has ended,
+    /// and its fault has been reported through the callbacks.
+    /// </para>
+    /// </remarks>
     private async ValueTask WaitForSessionTasksAsync(CancellationToken cancellationToken)
     {
-        var tasks = new[] { _pumpTask, _graphTask }
-            .Where(t => t is not null)
-            .Select(t => t!)
-            .ToArray();
-
-        if (tasks.Length == 0)
+        if (_runTasks.IsEmpty)
             return;
 
+        Take(Step.WaitingForRun);
         try
         {
-            await Task.WhenAll(tasks).WaitAsync(cancellationToken).ConfigureAwait(false);
+            await Task.WhenAll(_runTasks.Held).WaitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) { }
-        catch { }
-        finally
+        catch
         {
-            _pumpTask = null;
-            _graphTask = null;
+            // Cut short by the token, or a task faulted. Which tasks have ended decides.
+        }
+
+        _runTasks = _runTasks.ForgetEnded(HasEnded);
+        if (!_runTasks.IsEmpty)
+        {
+            throw new OperationCanceledException(
+                "The wait for the playback run's tasks was cancelled before they ended.",
+                cancellationToken
+            );
         }
     }
 

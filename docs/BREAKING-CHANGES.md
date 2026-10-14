@@ -986,6 +986,39 @@ feeds the surface, and it keeps a build from claiming the surface while the swap
 controls had their own ways of following a transport across trips out of the visual tree; they now
 share the views' lifecycle and its binding number.
 
+### 24. A seek that supersedes another waits for the run the first one stopped
+
+**A change in behaviour, not a compile error.**
+
+A seek stops the run in progress, and waits for its demux pump and its graph to end before it seeks
+the demuxer and resets the decoders. A seek cancelled during that wait forgot the run's tasks while
+they were still ending. Scrubbing does this all the time, because the seek bar sends the next seek as
+soon as the last is accepted, and each seek cancels the one before it. The seek that followed found
+nothing to wait for: it sought the demuxer, reset the decoders and launched a run of its own while
+the old run still read from and decoded on them. A player disposed at that point freed the decoders
+and the demux session under the old run (#707).
+
+Now a seek cancelled during that wait leaves the run for the next stop to wait for. A seek that
+supersedes it waits for the old run to end before it touches the demuxer, and so does the dispose of
+a player or a controller before it frees anything. One pump and one graph run at a time. On a local
+file the old run ends within milliseconds of being cancelled, so a scrub lands as quickly as before.
+
+**Who hits this.**
+- An audio sink of your own whose `PresentAsync` or `DrainAsync` ignores the token it is given, or a
+  node in a video or audio configurator that does. A seek that supersedes another while such a call
+  is in progress now waits until the call returns, where it used to go ahead beside it, and a
+  dispose waits too. A scrub stalls for that long.
+- A source whose read blocks, such as a stalled network stream. Nothing interrupts the demuxer's
+  read (#709), so the next seek, or the dispose, waits until it returns. Passing FFmpeg's
+  `rw_timeout` option through `MediaSource.DemuxerOptions` bounds it.
+
+**What to write instead.** In a sink or a configurator node of your own, observe the token each call
+is given, and return promptly once it is cancelled.
+
+**Why.** The run a cancelled seek left behind was still using the demuxer and the decoders. Going on
+beside it raced native state that neither the demux session nor the audio decoder guards, and the
+dispose freed that state while the run still used it.
+
 ### Not breaking, but worth knowing
 
 - **A new timeline is not a stall to the PRESENT GAP check.** `AvaloniaVideoSink` warned PRESENT
