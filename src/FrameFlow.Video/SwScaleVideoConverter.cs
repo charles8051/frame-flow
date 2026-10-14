@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Decoding.Internal;
 using FrameFlow.Media;
 using FrameFlow.Media.Core;
 using FrameFlow.Media.Diagnostics;
@@ -96,65 +97,48 @@ internal sealed unsafe class SwScaleVideoConverter : IVideoConverter
         int srcHeight
     )
     {
-        fixed (byte* dstData = planes.Y)
+        // Pin the source planes. For packed input (Bgra32, Rgba32)
+        // PlaneU/PlaneV are empty and we just pin PlaneY. For YUV
+        // we pin all three. Pinning empty ReadOnlyMemory yields a
+        // null pointer, which is what swscale expects for "unused
+        // plane."
+        using var pinY = source.PlaneY.Pin();
+        using var pinU = source.PlaneU.Pin();
+        using var pinV = source.PlaneV.Pin();
+
+        byte** srcSlice = stackalloc byte*[4];
+        srcSlice[0] = (byte*)pinY.Pointer;
+        srcSlice[1] = (byte*)pinU.Pointer;
+        srcSlice[2] = (byte*)pinV.Pointer;
+        srcSlice[3] = null;
+
+        int* srcStrides = stackalloc int[4];
+        srcStrides[0] = source.StrideY;
+        srcStrides[1] = source.StrideU;
+        srcStrides[2] = source.StrideV;
+        srcStrides[3] = 0;
+
+        // Through PackedConversion, as the decoder does: at some widths swscale leaves the end
+        // of a tightly packed row unwritten or writes past it (#724).
+        int rowsWritten = PackedConversion.Scale(
+            sws,
+            srcSlice,
+            srcStrides,
+            srcHeight,
+            planes.Y,
+            planes.Width,
+            planes.StrideY
+        );
+
+        if (rowsWritten <= 0)
         {
-            // Pin the source planes. For packed input (Bgra32, Rgba32)
-            // PlaneU/PlaneV are empty and we just pin PlaneY. For YUV
-            // we pin all three. Pinning empty ReadOnlyMemory yields a
-            // null pointer, which is what swscale expects for "unused
-            // plane."
-            using var pinY = source.PlaneY.Pin();
-            using var pinU = source.PlaneU.Pin();
-            using var pinV = source.PlaneV.Pin();
-
-            byte** srcSlice = stackalloc byte*[4];
-            srcSlice[0] = (byte*)pinY.Pointer;
-            srcSlice[1] = (byte*)pinU.Pointer;
-            srcSlice[2] = (byte*)pinV.Pointer;
-            srcSlice[3] = null;
-
-            int* srcStrides = stackalloc int[4];
-            srcStrides[0] = source.StrideY;
-            srcStrides[1] = source.StrideU;
-            srcStrides[2] = source.StrideV;
-            srcStrides[3] = 0;
-
-            // swscale wants 4 destination plane pointers / strides
-            // even for packed single-plane outputs. Passing 1-element
-            // arrays would let the native code read past the stack
-            // buffer (cf. the same comment in VideoDecoder).
-            byte** dstSlice = stackalloc byte*[4];
-            dstSlice[0] = dstData;
-            dstSlice[1] = null;
-            dstSlice[2] = null;
-            dstSlice[3] = null;
-
-            int* dstStrides = stackalloc int[4];
-            dstStrides[0] = planes.StrideY;
-            dstStrides[1] = 0;
-            dstStrides[2] = 0;
-            dstStrides[3] = 0;
-
-            int rowsWritten = FFSwScale.sws_scale(
-                sws,
-                srcSlice,
-                srcStrides,
-                0,
-                srcHeight,
-                dstSlice,
-                dstStrides
+            throw new InvalidOperationException(
+                $"sws_scale returned {rowsWritten} rows for a {source.Width}x{srcHeight} → "
+                    + $"{planes.Width}x{planes.Height} conversion."
             );
-
-            if (rowsWritten <= 0)
-            {
-                throw new InvalidOperationException(
-                    $"sws_scale returned {rowsWritten} rows for a {source.Width}x{srcHeight} → "
-                        + $"{planes.Width}x{planes.Height} conversion."
-                );
-            }
-
-            FrameCopyMetrics.Record(FrameCopySite.OperatorConvert);
         }
+
+        FrameCopyMetrics.Record(FrameCopySite.OperatorConvert);
     }
 
     public void Dispose()

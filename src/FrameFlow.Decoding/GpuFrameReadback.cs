@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using FrameFlow.Decoding.Internal;
 using FrameFlow.Graph;
 using FrameFlow.Media;
 using FrameFlow.Media.Diagnostics;
@@ -120,51 +121,37 @@ internal static unsafe class GpuFrameReadback
     {
         var accessor = new AvFrameAccessor(source);
 
-        fixed (byte* dstData = planes.Y)
+        // All four planes, matching VideoDecoder.BuildManagedFrameFromCpu. No
+        // four-plane format reaches here today: this converts a frame
+        // transferred off the GPU, and the transfer formats are nv12 and p010.
+        // Kept identical anyway so the two call sites cannot drift, and because
+        // it is a no-op for the formats that do arrive.
+        byte** srcSlice = stackalloc byte*[4];
+        int* srcStrides = stackalloc int[4];
+        for (int plane = 0; plane < 4; plane++)
         {
-            // All four planes, matching VideoDecoder.BuildManagedFrameFromCpu. No
-            // four-plane format reaches here today: this converts a frame
-            // transferred off the GPU, and the transfer formats are nv12 and p010.
-            // Kept identical anyway so the two call sites cannot drift, and because
-            // it is a no-op for the formats that do arrive.
-            byte** srcSlice = stackalloc byte*[4];
-            int* srcStrides = stackalloc int[4];
-            for (int plane = 0; plane < 4; plane++)
-            {
-                srcSlice[plane] = accessor.GetDataPointer(plane);
-                srcStrides[plane] = accessor.GetLineSize(plane);
-            }
-
-            byte** dstSlice = stackalloc byte*[4];
-            dstSlice[0] = dstData;
-            dstSlice[1] = null;
-            dstSlice[2] = null;
-            dstSlice[3] = null;
-
-            int* dstStrides = stackalloc int[4];
-            dstStrides[0] = planes.StrideY;
-            dstStrides[1] = 0;
-            dstStrides[2] = 0;
-            dstStrides[3] = 0;
-
-            int rows = FFSwScale.sws_scale(
-                swsCtx,
-                srcSlice,
-                srcStrides,
-                0,
-                planes.Height,
-                dstSlice,
-                dstStrides
-            );
-
-            if (rows <= 0)
-            {
-                throw new InvalidOperationException(
-                    $"sws_scale returned {rows} rows for {planes.Width}x{planes.Height} GPU readback."
-                );
-            }
-
-            FrameCopyMetrics.Record(FrameCopySite.ReadbackConvert);
+            srcSlice[plane] = accessor.GetDataPointer(plane);
+            srcStrides[plane] = accessor.GetLineSize(plane);
         }
+
+        // Through PackedConversion, as the decoder does (#724).
+        int rows = PackedConversion.Scale(
+            swsCtx,
+            srcSlice,
+            srcStrides,
+            planes.Height,
+            planes.Y,
+            planes.Width,
+            planes.StrideY
+        );
+
+        if (rows <= 0)
+        {
+            throw new InvalidOperationException(
+                $"sws_scale returned {rows} rows for {planes.Width}x{planes.Height} GPU readback."
+            );
+        }
+
+        FrameCopyMetrics.Record(FrameCopySite.ReadbackConvert);
     }
 }

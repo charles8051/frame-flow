@@ -136,6 +136,20 @@ internal sealed class RequiresFfmpegFactAttribute : FactAttribute
 }
 
 /// <summary>
+/// XUnit theory that is skipped when FFmpeg shared libraries are not available.
+/// </summary>
+internal sealed class RequiresFfmpegTheoryAttribute : TheoryAttribute
+{
+    public RequiresFfmpegTheoryAttribute()
+    {
+        if (!TestEnvironment.HasFfmpegSharedLibraries)
+            Skip =
+                "FFmpeg shared libraries not available. "
+                + "Run scripts/fetch-ffmpeg.cs or install FFmpeg with shared libraries.";
+    }
+}
+
+/// <summary>
 /// XUnit fact that is skipped when FFmpeg shared libraries or corpus files are unavailable.
 /// </summary>
 internal sealed class RequiresFfmpegAndCorpusFactAttribute : FactAttribute
