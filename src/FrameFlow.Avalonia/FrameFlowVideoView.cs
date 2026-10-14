@@ -67,6 +67,10 @@ namespace FrameFlow.Avalonia;
 /// rejoin then presents a frame the sink kept, if any, and goes on with the same sink. Only
 /// <see cref="DisposeAsync"/> is final, and only it disposes the view's own sink.
 /// </para>
+/// <para>
+/// Hiding the view with <c>IsVisible = false</c> is not leaving the tree: a hidden view stays
+/// attached and goes on copying every frame. Removing it from the visual tree is what stops it.
+/// </para>
 /// </remarks>
 public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IInBoxVideoSurface, IAsyncDisposable
 {
@@ -83,8 +87,9 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IInBoxV
 
     // What the sink this view owns logs through. The sink is built with this handle rather than
     // with a logger made from the factory at that moment, so a factory assigned after the sink
-    // exists still reaches it (#630). The view makes its sink when it joins the visual tree, and a
-    // caller usually wires the logger later, from OnLoaded or a click handler.
+    // exists still reaches it (#630). The view makes its sink when EnsureSink asks for it or when
+    // it joins the visual tree without one, and a caller usually wires the logger later, from
+    // OnLoaded or a click handler.
     private readonly SwitchableLogger<AvaloniaVideoSink> _sinkLogger = new();
     private readonly object _lock = new();
 

@@ -69,6 +69,16 @@ first `PlayAsync` then starts whatever `AddAsync` has put in the queue by then.
 The sinks are attached once and stay warm across every item, so nothing is
 rebuilt at a boundary.
 
+A video view keeps the sink it made for its whole life, so the player goes on
+across a tab switch or a docking move. Avalonia never disposes a control, so when
+the window closes, dispose a `FrameFlowVideoView` or `FrameFlowPlayerView` you put
+in it, after the player built against it:
+
+```csharp
+await player.DisposeAsync(); // the player holds the view's sink until this completes
+await view.DisposeAsync();   // disposes the sink the view made
+```
+
 `FrameFlowPass.Create(path)` is the other entry point. It runs one source through
 once at decode speed, waiting on no presentation time, which is what an inference
 or analysis run wants and not what a viewer wants. It has no transport and no
@@ -193,9 +203,9 @@ if (!seeked.IsSuccess && seeked.Error.Category == ErrorCategory.InvalidOperation
     DisableTheSeekBar();
 ```
 
-Construction is the exception to that: a null sink, a bad argument or a source
-that cannot be opened or decoded throws. A command issued once the player's disposal has begun
-throws too, with `ObjectDisposedException`. A failure that arises mid-playback surfaces on
+Construction is the exception to that: a null sink, a bad argument, a sink another player or pass
+still holds, or a source that cannot be opened or decoded throws. A command issued once the
+player's disposal has begun throws too, with `ObjectDisposedException`. A failure that arises mid-playback surfaces on
 `IMediaTransport.ErrorOccurred`, and so does any failure that puts the player into `Error`. A
 `PlayAsync` whose item cannot be loaded reports on both: its `Result` and `ErrorOccurred` carry
 the same `PlaybackError` instance.

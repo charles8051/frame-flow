@@ -181,8 +181,10 @@ internal static class Program
                 }
                 finally
                 {
-                    if (sink is IAsyncDisposable disposable)
-                        await disposable.DisposeAsync();
+                    // The surface made the sink and owns it (ADR-0044), so disposing the surface
+                    // disposes the sink. RunAsync has disposed the controller that held it by now.
+                    if (window.Surface is IAsyncDisposable surface)
+                        await surface.DisposeAsync();
                     window.Close();
                 }
             };

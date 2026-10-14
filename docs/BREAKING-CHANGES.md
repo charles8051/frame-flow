@@ -314,6 +314,10 @@ if a test exercises the refusal. Nothing else needs to change.
 
 **A change in behaviour, not a compile error.**
 
+**Superseded in part by entries 19 and 20 (ADR-0085).** The view no longer disposes its own sink on
+a detach, so the first bullet below no longer holds, and the sink of your own under "What to write
+instead" is not needed to keep a player across a trip out of the tree. The rest stands.
+
 The zero-copy view treated its first detach from the visual tree as a dispose (#650). A view that
 rejoined the tree, as in a `TabControl` that unloads its inactive tabs, a docking layout, or a
 `FrameFlowPlayerView` whose `VideoSurface` was swapped away and back, set no surface up and showed a
@@ -643,11 +647,10 @@ should claim its sinks for its run.
   `await using var pass = ...` declarations in one method, which are disposed only when the method
   returns. Also code that disposes a pass without awaiting its run, or cancelling it and awaiting
   it, before building the next pass.
-- Code that builds against an in-box sink that has been disposed. Until the views keep their own
-  sink for their whole life (ADR-0085, decision 2), the likely way to get one is a view's own sink:
-  a chain written with `WithAvaloniaVideoView` or `WithVideoSurface` before the view left the visual
-  tree, which disposed that sink, and built after it. Write the chain after the view is back, or
-  give the view a sink of your own, as entry 12 shows.
+- Code that builds against an in-box sink that has been disposed, such as a view's own sink after
+  the view's `DisposeAsync`. A view's own sink used to be disposed by a detach too, so a chain
+  written before the view left the visual tree and built after it hit this. That case is gone with
+  entries 19 and 20: a view keeps its sink until it is disposed.
 
 **What to write instead.** Await the disposal of the player or pass already built against the sink,
 then build the next one:

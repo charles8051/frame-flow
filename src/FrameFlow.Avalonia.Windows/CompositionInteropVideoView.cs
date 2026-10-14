@@ -57,6 +57,11 @@ namespace FrameFlow.Avalonia.Windows;
 /// Only <see cref="DisposeAsync"/> is final, and only it disposes the view's own sink.
 /// </para>
 /// <para>
+/// Hiding the view with <c>IsVisible = false</c> is not leaving the tree: a hidden view stays
+/// attached and goes on converting and presenting every frame. Removing it from the visual tree is
+/// what stops it.
+/// </para>
+/// <para>
 /// <b>Teardown ordering (investigation 2026-06-12).</b> The producer's shared keyed-mutex
 /// ring is co-owned with the compositor, which acquires it on its render thread with an
 /// effectively infinite timeout. Destroying the producer ring while the compositor still
