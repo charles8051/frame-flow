@@ -638,3 +638,9 @@ FrameFlow.Media.FramePresentedInfo.Timeline.init -> void
 FrameFlow.Media.PcmAudioBuffer.Timeline.get -> FrameFlow.Graph.TimelineId
 static FrameFlow.Media.CpuVideoFrame.Create<TState>(FrameFlow.Media.PixelFormat format, int width, int height, System.TimeSpan presentationTime, System.TimeSpan duration, FrameFlow.Graph.TimelineId timeline, TState state, FrameFlow.Media.CpuVideoFrameFill<TState>! fill, System.Buffers.ArrayPool<byte>? pool = null, FrameFlow.Media.SampleAspectRatio sampleAspectRatio = default(FrameFlow.Media.SampleAspectRatio), FrameFlow.Media.VideoRotation rotation = FrameFlow.Media.VideoRotation.None) -> FrameFlow.Media.CpuVideoFrame!
 static FrameFlow.Media.PcmAudioBuffer.Create<TState>(int capacity, int sampleRate, int channels, System.TimeSpan presentationTime, FrameFlow.Graph.TimelineId timeline, TState state, FrameFlow.Media.PcmAudioFill<TState>! fill, System.Buffers.ArrayPool<short>? pool = null) -> FrameFlow.Media.PcmAudioBuffer!
+FrameFlow.Media.FrameSlotInstall
+FrameFlow.Media.FrameSlotInstall.Installed = 0 -> FrameFlow.Media.FrameSlotInstall
+FrameFlow.Media.FrameSlotInstall.Refused = 2 -> FrameFlow.Media.FrameSlotInstall
+FrameFlow.Media.FrameSlotInstall.Superseded = 1 -> FrameFlow.Media.FrameSlotInstall
+FrameFlow.Media.LatestWinsFrameSlot.Close() -> bool
+FrameFlow.Media.LatestWinsFrameSlot.Install(FrameFlow.Media.IVideoFrame! frame) -> FrameFlow.Media.FrameSlotInstall

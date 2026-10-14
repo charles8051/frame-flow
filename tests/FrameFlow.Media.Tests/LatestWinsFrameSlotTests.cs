@@ -8,6 +8,11 @@ namespace FrameFlow.Media.Tests;
 /// <see cref="IVideoFrame"/> that records its <see cref="IDisposable.Dispose"/> calls so
 /// the dispose-the-superseded-exactly-once invariant can be asserted directly.
 /// </summary>
+/// <remarks>
+/// Install, take and close each run under the slot's gate, so a race between a sink's present
+/// and its dispose is one of two orders: the install before the close, or after it. The
+/// open-or-closed tests drive each order directly.
+/// </remarks>
 public sealed class LatestWinsFrameSlotTests
 {
     [Fact]
@@ -198,6 +203,91 @@ public sealed class LatestWinsFrameSlotTests
         // The slot disposed exactly the dropped ones; the consumer/drain disposed the rest.
         Assert.Equal(total, slot.Dropped + takenAndDisposed);
         Assert.False(slot.HasPending);
+    }
+
+    // ─── Open or closed (ADR-0085, decision 4) ──────────────────────
+
+    [Fact]
+    public void Install_SaysWhetherItSupersededAFrame()
+    {
+        var slot = new LatestWinsFrameSlot();
+        var first = new RecordingFrame();
+        var second = new RecordingFrame();
+
+        Assert.Equal(FrameSlotInstall.Installed, slot.Install(first));
+        Assert.Equal(FrameSlotInstall.Superseded, slot.Install(second));
+
+        Assert.Equal(1, first.DisposeCount);
+        Assert.Equal(1, slot.Dropped);
+        Assert.Same(second, slot.Take());
+    }
+
+    [Fact]
+    public void Close_DisposesThePendingFrame_AndLeavesNothingToTake()
+    {
+        // A present that installed before the dispose: the close takes the frame in the same step
+        // that closes the slot, and disposes it.
+        var slot = new LatestWinsFrameSlot();
+        var pending = new RecordingFrame();
+        slot.Install(pending);
+
+        Assert.True(slot.Close());
+
+        Assert.Equal(1, pending.DisposeCount);
+        Assert.False(slot.HasPending);
+        Assert.Null(slot.Take());
+        Assert.Equal(0, slot.Dropped); // lost to the close, not to a newer frame
+    }
+
+    [Fact]
+    public void AFrameInstalledAfterTheClose_IsDisposed_NotKept()
+    {
+        // A present that found its sink live, then lost the race to the dispose: the install lands
+        // after the close. The slot must not keep the frame, because nothing will take it.
+        var slot = new LatestWinsFrameSlot();
+        slot.Close();
+        var late = new RecordingFrame();
+
+        Assert.Equal(FrameSlotInstall.Refused, slot.Install(late));
+
+        Assert.Equal(1, late.DisposeCount);
+        Assert.False(slot.HasPending);
+        Assert.Null(slot.Take());
+        Assert.Equal(0, slot.Dropped);
+    }
+
+    [Fact]
+    public void TrySet_IntoAClosedSlot_DisposesTheFrame_AndReportsNoSupersede()
+    {
+        var slot = new LatestWinsFrameSlot();
+        slot.Close();
+        var late = new RecordingFrame();
+
+        Assert.False(slot.TrySet(late));
+
+        Assert.Equal(1, late.DisposeCount);
+        Assert.False(slot.HasPending);
+        Assert.Equal(0, slot.Dropped);
+    }
+
+    [Fact]
+    public void ASecondClose_DoesNothing_AndTheSlotStaysClosed()
+    {
+        var slot = new LatestWinsFrameSlot();
+
+        Assert.True(slot.Close());
+        Assert.False(slot.Close());
+
+        var late = new RecordingFrame();
+        Assert.Equal(FrameSlotInstall.Refused, slot.Install(late));
+        Assert.Equal(1, late.DisposeCount);
+    }
+
+    [Fact]
+    public void Install_Null_Throws()
+    {
+        var slot = new LatestWinsFrameSlot();
+        Assert.Throws<ArgumentNullException>(() => slot.Install(null!));
     }
 
     // ─── Fakes ──────────────────────────────────────────────────────
