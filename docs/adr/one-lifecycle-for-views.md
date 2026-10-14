@@ -8,7 +8,8 @@ Motivating issues: #663 (`FrameFlowVideoView` never binds a caller's sink again 
 reattach), #664 (`CompositionInteropVideoSink` keeps a frame presented after its disposal) and #286
 (nothing stops two players driving one sink). It would also replace the separate mechanisms that
 #630, #643, #650 and #665 added, each fixing one control, and it settles what swapping
-`FrameFlowPlayerView.VideoSurface` does to a player built against the old surface.
+`FrameFlowPlayerView.VideoSurface` does to a player built against the old surface. Decision 8 also
+closes #611 (the only fan-out sink lives in the examples).
 
 Line numbers are on `main` at c4cb0b5.
 
@@ -91,6 +92,15 @@ ADR-0044 says one sink serves one player at a time, and nothing enforces it (#28
 makes it easy to give one view's sink to two builders. Today a detach bounds the damage, because it
 disposes the sink. Once the sink lives as long as the view (decision 2), two players built against
 one view can feed it for as long as both live, interleaving two sources on one picture.
+
+### One player, several views
+
+One player can feed several views. The multicast examples register one sink with the player, and
+that sink presents each frame to three views' sinks (`MulticastPanes.axaml.cs:29-34`, `:110-121`).
+The player paces the one sink, so the three views stay in step. That sink is `DelegatingVideoSink`,
+which lives in the examples and is not packed (#611). A claim the builder takes on the sink it is
+given would not reach the views' sinks behind it. One of them could be handed to a second player
+while the first still feeds it through the fan-out.
 
 ### A surface swap strands the player
 
@@ -182,6 +192,9 @@ serve several players in sequence, as ADR-0044 and ADR-0062 require: each releas
 is disposed. A sink without the interface keeps the documented rule. This closes #286 for the
 in-box sinks.
 
+The builder claims only the sink it is given. A sink that feeds other sinks passes the claim on to
+them (decision 8).
+
 ### 7. A surface is swapped out only when it is provably idle
 
 `FrameFlowPlayerView.VideoSurface` swaps out a surface only when no player can be feeding it: the
@@ -198,13 +211,41 @@ An idle outgoing surface that the player view constructed itself (the default su
 on the swap. One the caller supplied stays the caller's, detached and holding no frames. The player
 view never moves a player from one sink to another: a player's sink is fixed when it is built.
 
+### 8. A fan-out sink passes the claim to the sinks it feeds
+
+`FrameFlow.Media` gains `FanOutVideoSink`. It takes the sinks it feeds when it is constructed and
+presents each frame to each of them.
+
+- **Delivery.** By default each target gets its own reference to the frame, in the order given. An
+  app that does work for one target, such as the multicast examples' colour filter, passes a
+  delivery delegate instead, which receives the frame and the targets. The targets are fixed at
+  construction, so fan-outs cannot form a cycle.
+- **Holding and domains.** `MaxHeldFrames` is the sum of the targets' values, or null when any
+  target's is null. `AcceptedDomains` is the intersection of the targets' domains. Construction
+  fails when that intersection is empty or a target appears twice. The app no longer declares
+  either value by hand.
+- **Claim.** It implements the claim interface. Claiming it claims every target, all or none: when
+  one target is already claimed, it releases the claims it took and fails naming that target.
+  Releasing it releases them all. A fan-out that no player is using holds no claims, so it does not
+  block a surface swap (decision 7).
+- **Ownership.** It does not own its targets (ADR-0044). Disposing it disposes none of them.
+- **Views.** A target view that is detached drops what it is given (decision 2), and the other
+  targets go on.
+
+`DelegatingVideoSink` moves from the examples to `FrameFlow.Media`, taking the delegate,
+`MaxHeldFrames` and `AcceptedDomains`, for a sink that feeds no other sink. Its delegate can present
+to any sink and the sink cannot see which, so it claims nothing. An app whose delegate presents to
+another sink uses `FanOutVideoSink` with a delivery delegate instead. Together they close #611.
+
 ### Staging
 
 1. **Sinks.** Decision 4 on both in-box sinks, with tests that a frame given after dispose is
    disposed and that a second dispose does nothing. Closes #664. Then decision 6: the claim
    interface on both sinks, taken and released by the player and pass builders, with a test that a
    second build against a claimed sink fails and a build after the first player's disposal succeeds.
-   Closes #286. It needs nothing else first.
+   Closes #286. Then decision 8: `FanOutVideoSink` and `DelegatingVideoSink` in `FrameFlow.Media`,
+   with tests that a fan-out claims all its targets or none, releases them together, and refuses an
+   empty domain intersection or a repeated target. Closes #611. It needs nothing else first.
 2. **The core.** `SurfaceLifecycle` in `FrameFlow.Avalonia.Core` with the exhaustive test, and the
    interop view moved onto it with today's behaviour, except that an owned sink survives a detach.
 3. **The CPU view.** `FrameFlowVideoView` onto the core: decisions 2, 3 and 5, `IAsyncDisposable`,
@@ -215,8 +256,9 @@ view never moves a player from one sink to another: a player's sink is fixed whe
    for a claimed sink (refused), a sink without the claim interface (refused until the outgoing
    surface's `Sink` is cleared), an idle default surface (disposed) and an idle caller's surface
    (left to the caller).
-5. **Docs.** `IVideoSurface`'s remarks, the BREAKING-CHANGES entry, and the examples that construct
-   their own sink only to survive a detach.
+5. **Docs.** `IVideoSurface`'s remarks, the BREAKING-CHANGES entry, the examples that construct
+   their own sink only to survive a detach, the multicast examples moved onto `FanOutVideoSink`, and
+   the v0.10.0 BREAKING-CHANGES note (`BREAKING-CHANGES.md:1638`) pointed at the in-box sinks.
 
 ## Consequences
 
@@ -231,6 +273,8 @@ view never moves a player from one sink to another: a player's sink is fixed whe
 - No frame is pinned by a view that is not on screen.
 - Two players can no longer feed one in-box sink at once, and a surface swap can no longer strand a
   player: both fail at the call that would cause them, with a message saying what to do.
+- One player feeds several views through an in-box sink. The views are paced together, and each
+  view's sink is claimed.
 
 ### Negative
 
@@ -245,6 +289,8 @@ view never moves a player from one sink to another: a player's sink is fixed whe
   is never disposed keeps its sink object.
 - The interop view's lifecycle moves out of `FrameFlow.Avalonia.Windows`, which replaces the core
   #662 added.
+- A fan-out presents to its targets in turn on the presenting thread, so work done for one target,
+  such as a filter, delays all of them. A paced branch stays with #636.
 
 ### Neutral
 
@@ -295,6 +341,13 @@ A sink could detect two producers from the frames it receives, for example by th
 (ADR-0084). Frames from two players interleave as alternating new timelines, which a sink cannot
 tell from fast seeks. A claim taken at build fails before anything is decoded and names the cause.
 
+### Let the builder take several sinks
+
+#636 suggests `WithVideoSink` could accumulate sinks, and the builder could then claim each one.
+That changes how a player paces, which is #636's question, and the builder still cannot see sinks
+behind a delegate. A fan-out sink works with today's one paced sink, and a builder that took
+several sinks could wrap them in one.
+
 ## Open questions
 
 1. **Garbage collection.** Should an undisposed view's owned sink be released by a finaliser, or is
@@ -313,3 +366,7 @@ tell from fast seeks. A claim taken at build fails before anything is decoded an
   player feeding a sink without it. Decision 7 now swaps out a surface only when it is provably
   idle (no sink, or a claimable sink with no claim) and otherwise refuses; for a sink without the
   interface the app clears the outgoing surface's `Sink` to say no player feeds it.
+- **2026-10-13, fan-out.** One player per sink does not break the multicast examples, which use one
+  player. But the claim covered only the sink handed to the builder, so a view's sink behind the
+  examples' fan-out could be handed to a second player. Decision 8 adds an in-box fan-out sink that
+  passes the claim on, and brings `DelegatingVideoSink` into the library (#611).
