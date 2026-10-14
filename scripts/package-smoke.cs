@@ -47,6 +47,14 @@ if (Directory.Exists(packages))
     Directory.Delete(packages, recursive: true);
 Directory.CreateDirectory(globalPackages);
 
+// The packages folder outlives the run, so ONNX Runtime and OpenVINO are not downloaded
+// every time. The FrameFlow packages in it must not. MinVer gives two branches at the
+// same height the same version, and a restore that finds a version already in the
+// folder uses it without looking at the feed, so a persistent machine, such as a
+// self-hosted runner, would test an earlier run's package. NuGet lowercases the ids.
+foreach (var cached in Directory.GetDirectories(globalPackages, "frameflow.*"))
+    Directory.Delete(cached, recursive: true);
+
 // The apps' packages and the FrameFlow packages they depend on.
 string[] projects = ["FrameFlow.Graph", "FrameFlow.Media", "FrameFlow.Inference.Abstractions", "FrameFlow.Inference.Ort", "FrameFlow.Inference.Cpu"];
 bool windowsX64 = OperatingSystem.IsWindows() && RuntimeInformation.ProcessArchitecture == Architecture.X64;

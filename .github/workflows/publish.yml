@@ -114,25 +114,27 @@ jobs:
           echo "Release body, ${#body} chars:"
           echo "$body"
 
-  # Validate before publishing — a release should not ship if tests
-  # fail. Windows-only matrix: FrameFlow is Windows-first by policy and
-  # several test fixtures rely on
-  # native deps the Linux/macOS runners don't have (FFmpeg via the
-  # bootstrap script, bundled OpenAL Soft, the local corpus). Re-add
-  # ubuntu-latest / macos-latest once those ports actually land and the
-  # corpus/native fetch is wired into the test job.
+  # Validate before publishing — a release should not ship if tests fail.
+  #
+  # Two legs. Windows, on the same runner build.yml uses for every pull request.
+  # linux-arm64, on GitHub's hosted Arm runner: there is no self-hosted Arm
+  # machine, and this is the only place linux-arm64 is tested. build.yml ran it
+  # on every pull request until 2026-10 and now runs Windows and Linux x64 only.
+  # Linux x64 is not repeated here; every pull request has already run it.
   test:
+    name: test (${{ matrix.os }})
     strategy:
       matrix:
-        # Naming label only — the runner comes from WINDOWS_RUNNER below. When
-        # the Linux/macOS ports land, switch this to a matrix.include with a
-        # per-leg runs-on.
-        os: [windows]
+        include:
+          # Defaults to the maintainer's self-hosted Windows runner. Set the repo
+          # variable WINDOWS_RUNNER to a hosted label as JSON to run on GitHub's
+          # runners instead, e.g. ["windows-latest"].
+          - os: windows
+            runner: ${{ vars.WINDOWS_RUNNER || '["self-hosted","windows","x64"]' }}
+          - os: linux-arm64
+            runner: '["ubuntu-24.04-arm"]'
       fail-fast: false
-    # Defaults to the maintainer's self-hosted Windows runner. Set the repo
-    # variable WINDOWS_RUNNER to a hosted label as JSON to run on GitHub's
-    # runners instead, e.g. ["windows-latest"].
-    runs-on: ${{ fromJSON(vars.WINDOWS_RUNNER || '["self-hosted","windows","x64"]') }}
+    runs-on: ${{ fromJSON(matrix.runner) }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -141,10 +143,19 @@ jobs:
       # Hosted-only: the self-hosted Windows box has .NET 8/10 baked on the host
       # (no global.json pin, so 10.0.x is satisfied by the baked SDK).
       - uses: actions/setup-dotnet@v5
-        if: ${{ !contains(fromJSON(vars.WINDOWS_RUNNER || '["self-hosted","windows","x64"]'), 'self-hosted') }}
+        if: ${{ !contains(fromJSON(matrix.runner), 'self-hosted') }}
         with:
           dotnet-version: '10.0.x'
 
+      # Hosted Linux only, for the reason build.yml gives: a full-solution Release
+      # build tips the hosted Ubuntu image over to "No space left on device".
+      - name: Free disk space (hosted Linux only)
+        if: ${{ runner.os == 'Linux' && !contains(fromJSON(matrix.runner), 'self-hosted') }}
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift || true
+          df -h /
 
       - name: Restore
         run: dotnet restore FrameFlow.slnx
@@ -169,6 +180,11 @@ jobs:
         # v0.1.0 first cut hung at 15+ min on the Test step with no
         # visibility into which test was stuck.
         run: dotnet test FrameFlow.slnx --configuration Release --no-build --blame-hang-timeout 5m --blame-crash --logger "trx;LogFileName=test-${{ matrix.os }}.trx"
+
+      # The packages carry each platform's natives, so a consumer on linux-arm64 gets
+      # files no other leg checks. See build.yml and scripts/package-smoke.cs.
+      - name: Package smoke test
+        run: dotnet run scripts/package-smoke.cs -- --no-build
 
       - name: Upload test results
         if: always()
