@@ -1,6 +1,8 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using FrameFlow.Media;
 using FrameFlow.Decoding;
 using FrameFlow.Playback;
@@ -48,7 +50,8 @@ namespace FrameFlow.Player;
 /// <b>Dispose.</b> <see cref="DisposeAsync"/> cancels a run still in flight and waits for it to
 /// end. Only then does it free the pump pipeline, the decoders and the demux session the run reads
 /// from, and it releases the claims last, so nothing the run sends reaches a sink after the release
-/// (#696). A run cannot start once the dispose has begun.
+/// (#696). A run cannot start once the dispose has begun. The first dispose tears down, and every
+/// other waits for it and ends as it did (ADR-0086, decision 3).
 /// </para>
 /// </remarks>
 public sealed class MediaPass : IAsyncDisposable
@@ -65,21 +68,27 @@ public sealed class MediaPass : IAsyncDisposable
     private readonly PassRange _range;
 
     // The claims on the sinks, released at the end of the dispose, after the run. Which run starts
-    // and what the dispose waits for are the lifecycle's, read and advanced under the lock.
+    // and whether the dispose finds one in flight are the lifecycle's, read and advanced under the
+    // lock.
     private readonly IDisposable? _sinkClaims;
     private readonly object _lifecycleLock = new();
     private PassLifecycle _lifecycle = PassLifecycle.Built;
 
-    // The pass's own cancellation, linked into the run's token, so the dispose can stop a run.
-    private readonly CancellationTokenSource _lifetime = new();
+    // Holds the pass's one run until it ends (ADR-0086, decision 1). The dispose stops it, which
+    // cancels the run and waits for it to end before anything the run uses is freed.
+    private readonly WorkScope _work = new();
 
-    // Completed once a run that started has ended, with what it threw or null. The dispose waits on
-    // it before it frees anything the run uses.
+    // The scope that holds the run's demux pump and graph while they run, so a dispose that has
+    // waited too long can say which of them has not ended. Null outside that stretch of the run.
+    private WorkScope? _pumpAndGraph;
+
+    // Completed once the run has ended, with what it threw or null. The run's caller waits on it,
+    // and the dispose reads it once the scope has let the run go.
     private readonly TaskCompletionSource<Exception?> _runEnded =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    // Completed once the first dispose has finished, for a later one to wait on.
-    private readonly TaskCompletionSource _tornDown = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    // Runs the teardown once and has every other dispose wait for it (ADR-0086, decision 3).
+    private readonly DisposeOnce _dispose = new();
 
     /// <summary>
     /// The clock a pass is given and never reads.
@@ -146,7 +155,7 @@ public sealed class MediaPass : IAsyncDisposable
     /// </summary>
     internal enum Step
     {
-        /// <summary>A run has been let start, and has not yet linked the pass's token.</summary>
+        /// <summary>A run has been let start, on the scope that holds it, and has not yet built its graph.</summary>
         RunStarted,
 
         /// <summary>The run has ended: its pump and graph have finished, and it has made its last call on a sink.</summary>
@@ -177,6 +186,15 @@ public sealed class MediaPass : IAsyncDisposable
     private void Take(Step step) => OnStep?.Invoke(step);
 
     /// <summary>
+    /// Measures how long a dispose has waited for the run before it says what the run is still in.
+    /// Internal: a seam for tests, set before the dispose.
+    /// </summary>
+    internal TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
+    /// <summary>How long a dispose waits for the run before it says what the run is still in.</summary>
+    internal static TimeSpan DisposeWarningInterval => SlowWorkWarning.DefaultInterval;
+
+    /// <summary>
     /// Runs the graph to natural end-of-stream (both decoders EOF) or
     /// until <paramref name="ct"/> cancels. Single-shot per session —
     /// throws on second call.
@@ -192,10 +210,11 @@ public sealed class MediaPass : IAsyncDisposable
     /// sources reach EOS.
     /// </para>
     /// <para>
-    /// If either side faults the other is cancelled via the linked
-    /// CTS; the exception propagates after both have unwound. A node's
-    /// fault arrives as a <see cref="GraphFaultException"/> naming the
-    /// node, with what it threw as the inner exception.
+    /// The first side to fault cancels the other, and its fault is thrown once both have ended. A
+    /// pump waiting for room in a decoder queue that a faulted graph no longer drains gives up
+    /// there, rather than holding the run open (#713). A node's fault arrives as a
+    /// <see cref="GraphFaultException"/> naming the node, with what it threw as the inner
+    /// exception.
     /// </para>
     /// <para>
     /// <b>The audio sink.</b> The pass activates it before the run and deactivates it before this
@@ -220,7 +239,18 @@ public sealed class MediaPass : IAsyncDisposable
     {
         PassRunStart start;
         lock (_lifecycleLock)
+        {
             (_lifecycle, start) = _lifecycle.StartRun();
+
+            // Under the lock, so a dispose that begins once this has let the run start finds the
+            // run held, and waits for it. Only a dispose stops the scope, and it takes this lock
+            // first, so the scope cannot refuse the run here.
+            if (start == PassRunStart.Started)
+            {
+                var held = _work.TryStart("run", RunAsync, ct);
+                Debug.Assert(held, "The scope was stopped before the dispose began.");
+            }
+        }
 
         ObjectDisposedException.ThrowIf(start == PassRunStart.Disposed, this);
         if (start == PassRunStart.AlreadyRan)
@@ -231,32 +261,41 @@ public sealed class MediaPass : IAsyncDisposable
             );
         }
 
-        // From here the run ends through the finally whatever throws, a step's callback included,
-        // so a dispose waiting on it is always released.
+        if (await _runEnded.Task.ConfigureAwait(false) is { } failure)
+            ExceptionDispatchInfo.Throw(failure);
+    }
+
+    /// <summary>
+    /// The pass's run, as the scope holds it: <paramref name="ct"/> is cancelled by the caller's
+    /// token or by the dispose. It reports how it ended through <see cref="_runEnded"/>, whatever
+    /// throws, a step's callback included, so it ends without a fault of its own.
+    /// </summary>
+    private async Task RunAsync(CancellationToken ct)
+    {
         Exception? failure = null;
         try
         {
             Take(Step.RunStarted);
-            using var run = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
-            await RunGraphToEndAsync(run.Token).ConfigureAwait(false);
+            await RunGraphToEndAsync(ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             failure = ex;
-            throw;
+        }
+
+        try
+        {
+            Take(Step.RunEnded);
+        }
+        catch (Exception ex)
+        {
+            failure ??= ex;
         }
         finally
         {
-            try
-            {
-                Take(Step.RunEnded);
-            }
-            finally
-            {
-                lock (_lifecycleLock)
-                    _lifecycle = _lifecycle.EndRun();
-                _runEnded.TrySetResult(failure);
-            }
+            lock (_lifecycleLock)
+                _lifecycle = _lifecycle.EndRun();
+            _runEnded.TrySetResult(failure);
         }
     }
 
@@ -326,7 +365,7 @@ public sealed class MediaPass : IAsyncDisposable
         // device still running.
         try
         {
-            await RunGraphAsync(graph, ct).ConfigureAwait(false);
+            await RunPumpAndGraphAsync(graph, ct).ConfigureAwait(false);
 
             // The graph completes once the last buffer has been handed to the sink, which is not
             // when it has been heard: a sink in front of a device still has a queue to play out.
@@ -356,67 +395,115 @@ public sealed class MediaPass : IAsyncDisposable
     }
 
     /// <summary>
-    /// Runs the demux pump and <paramref name="graph"/> together until both finish, cancelling
-    /// the other side when one faults.
+    /// Runs the demux pump and <paramref name="graph"/> together until both have ended. The first
+    /// to fault cancels the other, as <see cref="Graph.Graph.RunAsync"/> does for its nodes, and
+    /// its fault is thrown once both have ended.
     /// </summary>
-    private async Task RunGraphAsync(Graph.Graph graph, CancellationToken ct)
+    /// <remarks>
+    /// Waiting for both to end before cancelling either hung a run whose graph faulted while the
+    /// pump waited for room in a decoder queue: the faulted graph no longer drains it, so the pump
+    /// never ended, and nor did the run (#713).
+    /// </remarks>
+    private async Task RunPumpAndGraphAsync(Graph.Graph graph, CancellationToken ct)
     {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var work = new WorkScope();
+        var watch = new FirstEnd(2);
+        Volatile.Write(ref _pumpAndGraph, work);
+        try
+        {
+            work.TryStart("demux pump", watch.Watch(PumpAsync), ct);
+            work.TryStart("graph", watch.Watch(graph.RunAsync), ct);
 
-        // Pump task: read packets → decoder queues. Finalize decoders
-        // on exit (EOF, cancel, fault) so the DecodeAsync enumerators
-        // terminate; otherwise the source nodes block forever.
-        var pumpTask = Task.Run(
-            async () =>
+            // Until one of them throws, or both have completed. The stop then cancels whatever
+            // still runs and waits for it, and returns each fault in the order it came. A
+            // cancellation the stop or ct asked for is not one.
+            await watch.Ended.ConfigureAwait(false);
+            var faults = await work.StopAsync(CancellationToken.None).ConfigureAwait(false);
+
+            if (faults.Count > 0)
+            {
+                foreach (var later in faults.Skip(1))
+                    _logger.LogDebug(later.Error, "The pass's {Work} also faulted as the run ended.", later.Work);
+                ExceptionDispatchInfo.Throw(faults[0].Error);
+            }
+
+            // Both ended without a fault, and one of them did not complete: ct cancelled it.
+            if (!watch.AllCompleted)
+                throw new OperationCanceledException(ct);
+        }
+        finally
+        {
+            Volatile.Write(ref _pumpAndGraph, null);
+        }
+    }
+
+    /// <summary>
+    /// The demux pump: reads packets into the decoders' queues, then finalizes the decoders on
+    /// every way out (end of stream, cancellation, fault) so their enumerators end and the graph's
+    /// sources reach end of stream.
+    /// </summary>
+    private async Task PumpAsync(CancellationToken ct)
+    {
+        try
+        {
+            await _pipeline.RunDemuxPumpAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            // The flush marker waits for room in a decoder queue. Once the run is cancelled, or
+            // the graph has faulted, nothing drains the queue, so a full one never frees up. The
+            // token is cancelled in both cases, by the run or by the graph's fault, and the flush
+            // gives up. The queue is completed either way.
+            try
+            {
+                await _pipeline.FinalizeDecodersAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // The pump's own end, or the graph's fault, is the one to report.
+                _logger.LogDebug(ex, "Finalizing the decoders after the pass's demux pump threw.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Watches the work of one run: <see cref="Ended"/> completes once a piece of it has thrown,
+    /// or once all of it has completed, so the run can stop the rest at the first fault rather
+    /// than after everything has ended (#713).
+    /// </summary>
+    private sealed class FirstEnd(int count)
+    {
+        private readonly TaskCompletionSource _ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly int _count = count;
+        private int _running = count;
+        private int _completed;
+
+        /// <summary>Completes once a piece has thrown, or all have ended. Never faults.</summary>
+        public Task Ended => _ended.Task;
+
+        /// <summary>Whether every piece completed without throwing.</summary>
+        public bool AllCompleted => Volatile.Read(ref _completed) == _count;
+
+        /// <summary><paramref name="work"/>, reporting its end here and ending as it ends.</summary>
+        public Func<CancellationToken, Task> Watch(Func<CancellationToken, Task> work) =>
+            async ct =>
             {
                 try
                 {
-                    await _pipeline.RunDemuxPumpAsync(cts.Token).ConfigureAwait(false);
+                    await work(ct).ConfigureAwait(false);
+                    Interlocked.Increment(ref _completed);
+                }
+                catch
+                {
+                    _ended.TrySetResult();
+                    throw;
                 }
                 finally
                 {
-                    // The flush marker waits for space in the decoder queue. Once
-                    // the run is cancelled or faulted the graph stops draining, so
-                    // a full queue never frees up: pass the linked token so the
-                    // flush gives up. The queue is completed either way.
-                    try
-                    {
-                        await _pipeline.FinalizeDecodersAsync(cts.Token).ConfigureAwait(false);
-                    }
-                    catch
-                    { /* swallow — graph will unwind on its own */
-                    }
+                    if (Interlocked.Decrement(ref _running) == 0)
+                        _ended.TrySetResult();
                 }
-            },
-            cts.Token
-        );
-
-        var graphTask = graph.RunAsync(cts.Token);
-
-        try
-        {
-            await Task.WhenAll(pumpTask, graphTask).ConfigureAwait(false);
-        }
-        catch
-        {
-            // Either side faulted — cancel the other and let it unwind
-            // before re-raising the original exception.
-            try
-            {
-                cts.Cancel();
-            }
-            catch
-            { /* CTS already disposed by linked-source dispose */
-            }
-            try
-            {
-                await Task.WhenAll(pumpTask, graphTask).ConfigureAwait(false);
-            }
-            catch
-            { /* secondary failures during unwind are not interesting */
-            }
-            throw;
-        }
+            };
     }
 
     /// <summary>
@@ -531,118 +618,144 @@ public sealed class MediaPass : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The dispose waits as long as the run takes to unwind once cancelled. A sink's present, drain
-    /// or activation, a node in a configurator, or a video sink's
-    /// <see cref="IVideoSink.OnFormatChangedAsync"/> that ignores its token holds it there. A
-    /// demuxer read that waits on a stalled source, such as a network stream, does not: the
-    /// cancellation interrupts it (#709).
+    /// The dispose waits as long as the run takes to unwind once cancelled, with no bound
+    /// (ADR-0086, decision 3). A sink's present, drain or activation, a node in a configurator, or
+    /// a video sink's <see cref="IVideoSink.OnFormatChangedAsync"/> that ignores its token holds it
+    /// there. A demuxer read that waits on a stalled source, such as a network stream, does not:
+    /// the cancellation interrupts it (#709). Once it has waited
+    /// <see cref="DisposeWarningInterval"/>, it logs once, at Warning, which of the run's work has
+    /// not ended. A caller that cannot wait that long bounds its own wait; the pass keeps what the
+    /// run uses until the run ends.
     /// </para>
     /// <para>
     /// Throws for neither the run's cancellation nor a fault the run ends with: the run's caller
     /// sees both. A fault is logged here only when this dispose cancelled the run that ended with
-    /// it. A call made while another is under way waits for it to finish. The sinks are the
-    /// caller's, and are not disposed.
+    /// it. What freeing the pipeline, the decoders or the demux session throws is thrown once the
+    /// claims are released: one exception, or an <see cref="AggregateException"/> of several. The
+    /// first call tears down; a call made while it runs, or after, waits for it and ends as it did.
+    /// The sinks are the caller's, and are not disposed.
     /// </para>
     /// </remarks>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync() =>
+        _dispose.TryBegin() ? _dispose.EndAsync(TearDownAsync()) : _dispose.WaitAsync();
+
+    /// <summary>The teardown the first <see cref="DisposeAsync"/> runs.</summary>
+    private async ValueTask TearDownAsync()
     {
         PassTeardown teardown;
         lock (_lifecycleLock)
             (_lifecycle, teardown) = _lifecycle.Dispose();
 
-        if (teardown == PassTeardown.Begun)
-        {
-            await _tornDown.Task.ConfigureAwait(false);
-            return;
-        }
-
+        List<Exception> failures = [];
         try
         {
-            if (teardown == PassTeardown.AfterTheRun)
-                await EndRunInFlightAsync().ConfigureAwait(false);
-
-            await FreeAsync().ConfigureAwait(false);
-
-            // Last, once the run has ended, so nothing it sent reaches a sink after a pass built
-            // next has claimed it, and that pass cannot claim the sinks while this one still holds
-            // a decoder.
-            Take(Step.ReleasingClaims);
-            _sinkClaims?.Dispose();
-            _lifetime.Dispose();
+            await EndRunAsync(inFlight: teardown == PassTeardown.AfterTheRun, failures).ConfigureAwait(false);
+            await FreeAsync(failures).ConfigureAwait(false);
         }
         finally
         {
-            _tornDown.TrySetResult();
+            // Last, once the run has ended, so nothing it sent reaches a sink after a pass built
+            // next has claimed it, and that pass cannot claim the sinks while this one still holds
+            // a decoder. Released whatever freeing threw.
+            try
+            {
+                Take(Step.ReleasingClaims);
+            }
+            finally
+            {
+                _sinkClaims?.Dispose();
+            }
+        }
+
+        switch (failures)
+        {
+            case []:
+                break;
+            case [var one]:
+                ExceptionDispatchInfo.Throw(one);
+                break;
+            default:
+                throw new AggregateException(failures);
         }
     }
 
-    /// <summary>Cancels the run in flight and waits for it to end, logging a fault it ends with.</summary>
-    private async Task EndRunInFlightAsync()
+    /// <summary>
+    /// Cancels the run, if one has started, and waits for it to end, however long it takes. Logs
+    /// a fault the run ends with when it was in flight as the dispose began. Adds to
+    /// <paramref name="failures"/> what the scope's stop returns.
+    /// </summary>
+    private async Task EndRunAsync(bool inFlight, List<Exception> failures)
     {
-        _logger.LogDebug("A pass disposed during its run cancels the run and waits for it to end.");
+        if (inFlight)
+            _logger.LogDebug("A pass disposed during its run cancels the run and waits for it to end.");
 
-        // Asynchronously, so the callbacks the cancellation runs, the run's own unwinding among
-        // them, run on the thread pool rather than on the caller's thread.
-        try
-        {
-            await _lifetime.CancelAsync().ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Cancelling the run of a pass being disposed threw.");
-        }
+        // The stop cancels the run and waits for it. The run reports how it ended to its caller,
+        // so it leaves no fault of its own for the stop to return, but what the stop does return,
+        // such as a cancellation callback that threw, is the dispose's to throw (decision 3.4).
+        // The cancellation's callbacks, the run's own unwinding among them, run on the thread pool
+        // rather than on the caller's thread.
+        var stopping = _work.StopAsync();
+        await SlowWorkWarning
+            .AwaitAsync(stopping, DisposeWarningInterval, TimeProvider, WarnRunNotEnded)
+            .ConfigureAwait(false);
+        foreach (var fault in await stopping.ConfigureAwait(false))
+            failures.Add(fault.Error);
 
-        if (await _runEnded.Task.ConfigureAwait(false) is { } failure and not OperationCanceledException)
+        // The scope has let the run go, so it has reported how it ended.
+        if (inFlight && await _runEnded.Task.ConfigureAwait(false) is { } failure and not OperationCanceledException)
             _logger.LogWarning(failure, "The run of a pass being disposed ended with a fault.");
+    }
+
+    /// <summary>Says which of the run's work a dispose is still waiting for (ADR-0086, decision 3.3).</summary>
+    private void WarnRunNotEnded()
+    {
+        var pending = Volatile.Read(ref _pumpAndGraph)?.Pending is { Count: > 0 } inner ? inner : _work.Pending;
+        _logger.LogWarning(
+            "A pass's dispose has waited {Seconds:F0}s for its run to end, which is still running: {Work}. "
+                + "A sink, a configurator's node or the source's read is not observing cancellation; the dispose waits for it.",
+            DisposeWarningInterval.TotalSeconds,
+            string.Join(", ", pending)
+        );
     }
 
     /// <summary>
     /// Frees what a run reads from, in reverse construction order: the pipeline, which frees any
-    /// packet it holds, then the decoders, then the demux session. Each is best-effort, and runs
-    /// whatever the one before it threw.
+    /// packet it holds, then the decoders, then the demux session. Each runs whatever the one
+    /// before it threw, and what they threw is added to <paramref name="failures"/>.
     /// </summary>
-    private async ValueTask FreeAsync()
+    private async ValueTask FreeAsync(List<Exception> failures)
     {
-        Take(Step.DisposingPipeline);
-        try
-        {
-            await _pipeline.DisposeAsync().ConfigureAwait(false);
-        }
-        catch
-        { /* best-effort */
-        }
-
+        await FreeAsync(Step.DisposingPipeline, _pipeline, failures).ConfigureAwait(false);
         if (_videoDecoder is not null)
-        {
-            Take(Step.DisposingVideoDecoder);
-            try
-            {
-                await _videoDecoder.DisposeAsync().ConfigureAwait(false);
-            }
-            catch
-            { /* best-effort */
-            }
-        }
-
+            await FreeAsync(Step.DisposingVideoDecoder, _videoDecoder, failures).ConfigureAwait(false);
         if (_audioDecoder is not null)
-        {
-            Take(Step.DisposingAudioDecoder);
-            try
-            {
-                await _audioDecoder.DisposeAsync().ConfigureAwait(false);
-            }
-            catch
-            { /* best-effort */
-            }
-        }
+            await FreeAsync(Step.DisposingAudioDecoder, _audioDecoder, failures).ConfigureAwait(false);
+        await FreeAsync(Step.DisposingDemux, _demux, failures).ConfigureAwait(false);
+    }
 
-        Take(Step.DisposingDemux);
+    /// <summary>
+    /// Takes <paramref name="step"/>, then frees <paramref name="resource"/>, adding what either
+    /// throws to <paramref name="failures"/>. A step's callback that throws does not keep the
+    /// resource from being freed.
+    /// </summary>
+    private async ValueTask FreeAsync(Step step, IAsyncDisposable resource, List<Exception> failures)
+    {
         try
         {
-            await _demux.DisposeAsync().ConfigureAwait(false);
+            Take(step);
         }
-        catch
-        { /* best-effort */
+        catch (Exception ex)
+        {
+            failures.Add(ex);
+        }
+
+        try
+        {
+            await resource.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            failures.Add(ex);
         }
     }
 }

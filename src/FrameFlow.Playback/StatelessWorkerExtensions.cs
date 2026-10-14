@@ -29,9 +29,11 @@ internal static class StatelessWorkerExtensions
     /// <param name="onError">
     /// Optional callback invoked when the worker faults with a non-cancellation exception.
     /// </param>
-    /// <param name="shutdownTimeout">
-    /// Maximum time to wait for cooperative shutdown before abandoning the task.
+    /// <param name="warningInterval">
+    /// How long exiting the state waits for the worker before it logs once that the worker has
+    /// not ended. It goes on waiting (ADR-0086, decision 3).
     /// </param>
+    /// <param name="timeProvider">Measures <paramref name="warningInterval"/>.</param>
     /// <param name="logger">Optional logger for structured lifecycle diagnostics.</param>
     /// <returns>The state configuration for chaining.</returns>
     public static StateMachine<TState, TTrigger>.StateConfiguration BindWorker<
@@ -42,12 +44,13 @@ internal static class StatelessWorkerExtensions
         this StateMachine<TState, TTrigger>.StateConfiguration config,
         Func<TWorker> factory,
         Func<TWorker, Exception, Task>? onError = null,
-        TimeSpan? shutdownTimeout = null,
+        TimeSpan? warningInterval = null,
+        TimeProvider? timeProvider = null,
         ILogger? logger = null
     )
         where TWorker : IStateBoundWorker
     {
-        var binding = new WorkerBinding<TWorker>(factory, onError, shutdownTimeout, logger);
+        var binding = new WorkerBinding<TWorker>(factory, onError, warningInterval, timeProvider, logger);
         return config
             .OnEntryAsync(() => binding.StartAsync())
             .OnExitAsync(() => binding.StopAsync());

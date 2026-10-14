@@ -1,6 +1,5 @@
 using FrameFlow.Media;
 using FrameFlow.Playback;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Player.Tests;
 
@@ -19,8 +18,7 @@ public sealed class PlayerLoopEventTests
         IMediaTransport player = new PlaylistMediaPlayerCore(
             controller,
             new PlaylistCoordinator([new MediaSource { DisplayName = "a" }], RepeatMode.All),
-            audioSink: null,
-            NullLogger.Instance
+            audioSink: null
         );
 
         Assert.Same(controller.LoopRestarted, player.LoopRestarted);

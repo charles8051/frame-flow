@@ -117,8 +117,7 @@ internal static class PlayerFactory
                     );
             }
 
-            var logger = loggerFactory.CreateLogger<PlaylistMediaPlayerCore>();
-            return new PlaylistMediaPlayerCore(controller, coordinator, audioSink, logger);
+            return new PlaylistMediaPlayerCore(controller, coordinator, audioSink);
         }
         catch
         {

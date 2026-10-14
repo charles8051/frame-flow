@@ -1,6 +1,5 @@
 using FrameFlow.Media;
 using FrameFlow.Playback;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Player.Tests;
 
@@ -44,7 +43,6 @@ public sealed class OnePlayerTypeTests
         new PlaylistMediaPlayerCore(
             new PlaylistPlayerQueueTests.StubController(),
             new PlaylistCoordinator([source], RepeatMode.Off),
-            audioSink: null,
-            NullLogger.Instance
+            audioSink: null
         );
 }

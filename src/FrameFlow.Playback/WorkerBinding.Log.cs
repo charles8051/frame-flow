@@ -34,7 +34,7 @@ internal sealed partial class WorkerBinding<TWorker>
     [LoggerMessage(Level = LogLevel.Debug, Message = "Disposal complete: {WorkerType}")]
     private static partial void LogDisposalCompleteCore(ILogger logger, string workerType);
 
-    // ── Error and timeout (Error / Warning) ────────────────────────────
+    // ── Error and a slow stop (Error / Warning) ────────────────────────
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Worker faulted: {WorkerType}")]
     private static partial void LogWorkerErrorCore(
@@ -45,12 +45,12 @@ internal sealed partial class WorkerBinding<TWorker>
 
     [LoggerMessage(
         Level = LogLevel.Warning,
-        Message = "Shutdown timeout ({Timeout}) exceeded for worker: {WorkerType}"
+        Message = "Worker {WorkerType} has not ended {Seconds:F0}s after it was asked to stop. It is not observing cancellation; the stop waits for it."
     )]
-    private static partial void LogShutdownTimeoutCore(
+    private static partial void LogWorkerNotEndedCore(
         ILogger logger,
-        TimeSpan timeout,
-        string workerType
+        string workerType,
+        double seconds
     );
 
     // ── Null-safe wrappers ─────────────────────────────────────────────
@@ -87,9 +87,9 @@ internal sealed partial class WorkerBinding<TWorker>
             LogWorkerErrorCore(logger, exception, WorkerTypeName);
     }
 
-    private static void LogShutdownTimeout(ILogger? logger, TimeSpan timeout)
+    private static void LogWorkerNotEnded(ILogger? logger, TimeSpan waited)
     {
         if (logger is not null)
-            LogShutdownTimeoutCore(logger, timeout, WorkerTypeName);
+            LogWorkerNotEndedCore(logger, WorkerTypeName, waited.TotalSeconds);
     }
 }

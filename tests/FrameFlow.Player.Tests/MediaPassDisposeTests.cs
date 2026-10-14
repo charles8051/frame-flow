@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using FrameFlow.Decoding;
 using FrameFlow.Media;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using Step = FrameFlow.Player.MediaPass.Step;
 
 namespace FrameFlow.Player.Tests;
@@ -13,7 +14,9 @@ namespace FrameFlow.Player.Tests;
 /// Pins what a pass's dispose does to its run (#696): it cancels a run in flight and waits for it
 /// to end before it frees the pump pipeline, the decoders and the demux session, and releases the
 /// claims on the sinks after that. A run cannot start once the dispose has begun, and the caller
-/// awaiting a run the dispose cancelled sees the cancellation.
+/// awaiting a run the dispose cancelled sees the cancellation. A second dispose waits for the first
+/// and ends as it did; a dispose held by work that ignores its token says once what it waits for;
+/// and what freeing throws is thrown once the claims are released (ADR-0086, decision 3).
 /// </summary>
 /// <remarks>
 /// The order is read from the steps the pass reports through <see cref="MediaPass.OnStep"/>, and a
@@ -315,6 +318,97 @@ public sealed class MediaPassDisposeTests
         Assert.Null(sink.Claimant);
     }
 
+    [RequiresFfmpegAndCorpusFact]
+    public async Task ADisposeHeldByASinkThatIgnoresItsToken_SaysOnceWhatTheRunIsStillIn_AndFreesNothing()
+    {
+        // The sink holds its frame whatever its token says, so the run cannot end before the test
+        // releases it, and neither can the dispose. The warning's interval runs on a fake clock,
+        // whose timers fire inside Advance.
+        var logs = new RecordingLoggerFactory();
+        var time = new FakeTimeProvider();
+        await using var sink = new HoldingVideoSink { IgnoreToken = true };
+        var pass = await BuildVideoPassAsync(sink, logs);
+        pass.TimeProvider = time;
+        var steps = StepLog.On(pass);
+        var interval = MediaPass.DisposeWarningInterval;
+
+        var run = pass.RunToCompletionAsync();
+        await sink.Entered.WaitAsync(Bound);
+        var disposing = pass.DisposeAsync().AsTask();
+
+        time.Advance(interval - TimeSpan.FromTicks(1));
+        Assert.Empty(logs.WarningsFrom<MediaPass>());
+        time.Advance(TimeSpan.FromTicks(1));
+        var warning = Assert.Single(logs.WarningsFrom<MediaPass>());
+        Assert.Contains("still running:", warning.Message, StringComparison.Ordinal);
+        Assert.Contains("graph", warning.Message, StringComparison.Ordinal);
+        time.Advance(TimeSpan.FromMinutes(10));
+        Assert.Single(logs.WarningsFrom<MediaPass>());
+
+        // However long it has waited, nothing the run uses has been freed.
+        Assert.False(disposing.IsCompleted);
+        Assert.Equal([Step.RunStarted], steps.Taken);
+        Assert.Equal(Holder, sink.Claimant);
+
+        sink.Release();
+        await disposing.WaitAsync(Bound);
+        Assert.Equal(VideoRunThenTeardown, steps.Taken);
+        Assert.Null(sink.Claimant);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(Bound));
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task WhatFreeingThrows_IsThrownOnceTheClaimsAreReleased_AndEveryResourceIsStillFreed()
+    {
+        // A step's callback that throws stands in for a free that throws: what either throws is
+        // collected, and the frees after it still run.
+        await using var sink = new HoldingVideoSink();
+        var pass = await BuildVideoPassAsync(sink);
+        var steps = StepLog.On(pass);
+        var pipeline = new InvalidOperationException("freeing the pipeline failed");
+        var demux = new InvalidOperationException("freeing the demux session failed");
+        steps.At(Step.DisposingPipeline, () => throw pipeline);
+        steps.At(Step.DisposingDemux, () => throw demux);
+
+        var thrown = await Assert.ThrowsAsync<AggregateException>(() => pass.DisposeAsync().AsTask().WaitAsync(Bound));
+
+        Assert.Equal([pipeline, demux], thrown.InnerExceptions);
+        Assert.Equal(VideoTeardown, steps.Taken);
+        Assert.Null(sink.Claimant);
+
+        // A later dispose tears nothing down again, and ends as the first did.
+        var again = await Assert.ThrowsAsync<AggregateException>(() => pass.DisposeAsync().AsTask().WaitAsync(Bound));
+        Assert.Same(thrown, again);
+        Assert.Equal(VideoTeardown, steps.Taken);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task ACancellationCallbackThatThrows_IsThrownByTheDispose_OnceTheClaimsAreReleased()
+    {
+        // The sink registers a callback on its token that throws. The dispose's cancellation runs
+        // it, the scope's stop returns what it threw, and the dispose throws that once it has
+        // freed everything, where it used to log it and return.
+        await using var sink = new HoldingVideoSink { CallbackThrowsOnCancel = true };
+        var pass = await BuildVideoPassAsync(sink);
+        var steps = StepLog.On(pass);
+
+        var run = pass.RunToCompletionAsync();
+        await sink.Entered.WaitAsync(Bound);
+
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => pass.DisposeAsync().AsTask().WaitAsync(Bound));
+
+        Assert.Contains(
+            HoldingVideoSink.CallbackFailure,
+            Flatten(thrown).Select(e => e.Message)
+        );
+        Assert.Equal(VideoRunThenTeardown, steps.Taken);
+        Assert.Null(sink.Claimant);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(Bound));
+    }
+
+    private static IEnumerable<Exception> Flatten(Exception error) =>
+        error is AggregateException aggregate ? aggregate.Flatten().InnerExceptions : [error];
+
     private static string Corpus(string name) =>
         TestEnvironment.GetCorpusFile(name) ?? throw new InvalidOperationException($"{name} is missing.");
 
@@ -361,8 +455,19 @@ public sealed class MediaPassDisposeTests
         private readonly SinkClaimGate _claims = new(typeof(HoldingVideoSink));
         private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _never = new();
+        private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public bool Hold { get; init; } = true;
+
+        /// <summary>When set, a held call ignores its token and holds until <see cref="Release"/>.</summary>
+        public bool IgnoreToken { get; init; }
+
+        /// <summary>When set, the first call registers a callback on its token that throws <see cref="CallbackFailure"/>.</summary>
+        public bool CallbackThrowsOnCancel { get; init; }
+
+        public const string CallbackFailure = "The sink's cancellation callback failed.";
+
+        public void Release() => _released.TrySetResult();
 
         /// <summary>When set, a held call throws <see cref="InvalidOperationException"/> as its token cancels.</summary>
         public bool FailOnCancel { get; init; }
@@ -378,9 +483,16 @@ public sealed class MediaPassDisposeTests
         public async ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {
             frame.Dispose();
+            if (CallbackThrowsOnCancel && !_entered.Task.IsCompleted)
+                ct.Register(static () => throw new InvalidOperationException(CallbackFailure));
             _entered.TrySetResult();
             if (!Hold)
                 return;
+            if (IgnoreToken)
+            {
+                await _released.Task.ConfigureAwait(false);
+                return;
+            }
             try
             {
                 await _never.Task.WaitAsync(ct).ConfigureAwait(false);
@@ -441,7 +553,7 @@ public sealed class MediaPassDisposeTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    /// <summary>Records what is logged at Information and above: its category, level and exception.</summary>
+    /// <summary>Records what is logged at Information and above: its category, level, exception and message.</summary>
     private sealed class RecordingLoggerFactory : ILoggerFactory
     {
         private readonly ConcurrentQueue<Entry> _entries = new();
@@ -455,7 +567,7 @@ public sealed class MediaPassDisposeTests
 
         public void Dispose() { }
 
-        public sealed record Entry(string Category, LogLevel Level, Exception? Exception);
+        public sealed record Entry(string Category, LogLevel Level, Exception? Exception, string Message);
 
         private sealed class Logger(string category, ConcurrentQueue<Entry> entries) : ILogger
         {
@@ -473,7 +585,7 @@ public sealed class MediaPassDisposeTests
             )
             {
                 if (IsEnabled(logLevel))
-                    entries.Enqueue(new Entry(category, logLevel, exception));
+                    entries.Enqueue(new Entry(category, logLevel, exception, formatter(state, exception)));
             }
         }
     }

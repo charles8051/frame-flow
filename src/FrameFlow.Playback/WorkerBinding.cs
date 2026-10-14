@@ -1,45 +1,59 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Runtime.ExceptionServices;
+using FrameFlow.Media;
 using Microsoft.Extensions.Logging;
 
 namespace FrameFlow.Playback;
 
 /// <summary>
 /// Manages the lifecycle of an <see cref="IStateBoundWorker"/> bound to a
-/// state machine state. Guarantees: no double-start, no double-stop,
-/// shutdown timeout, disposal ordering, and error callback invocation.
+/// state machine state. Guarantees: no double-start, a stop that waits for the
+/// worker to end, a concurrent stop that waits for the first, disposal ordering,
+/// and error callback invocation.
 /// </summary>
 /// <typeparam name="TWorker">
 /// The concrete worker type implementing <see cref="IStateBoundWorker"/>.
 /// </typeparam>
 /// <remarks>
 /// <para>
-/// Uses a three-state Interlocked CAS machine: 0 = idle, 1 = running,
-/// 2 = stopping. This is lock-free and re-entrant safe — after
-/// <see cref="StopAsync"/> completes, state resets to 0 allowing a
-/// fresh <see cref="StartAsync"/> cycle.
+/// Each start creates a worker and runs it on a fresh <see cref="WorkScope"/>, which holds its
+/// loop until the loop ends. A start while a worker is running or stopping is refused. A stop
+/// cancels the worker, calls <see cref="IStateBoundWorker.StopAsync"/>, waits for the loop to end
+/// however long that takes, and only then disposes the worker (ADR-0086, decision 3). After
+/// <c>warningInterval</c> it logs once which worker has not ended. A stop made while another is
+/// under way waits for it and ends as it did. Once a stop completes, a fresh
+/// <see cref="StartAsync"/> cycle may begin.
 /// </para>
 /// <para>
-/// See ADR-0026 §2 for the canonical design and rationale.
+/// See ADR-0026 §2 for the binding's design, and ADR-0086 decision 3, which replaces its bounded
+/// wait and the abandon after it, and its compare-and-swap that returned a second stop at once.
 /// </para>
 /// </remarks>
 internal sealed partial class WorkerBinding<TWorker>
     where TWorker : IStateBoundWorker
 {
-    private const int StateIdle = 0;
-    private const int StateRunning = 1;
-    private const int StateStopping = 2;
-
     private readonly Func<TWorker> _factory;
     private readonly Func<TWorker, Exception, Task>? _onError;
-    private readonly TimeSpan _shutdownTimeout;
+    private readonly TimeSpan _warningInterval;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger? _logger;
 
-    private CancellationTokenSource? _cts;
-    private Task? _runningTask;
-    private TWorker? _worker;
-    private int _state;
+    // The cycle running or stopping, if any. Read and written under _gate. A cycle stays here until
+    // its stop has ended, so a start meanwhile is refused and a second stop joins the first.
+    private readonly object _gate = new();
+    private Cycle? _cycle;
+
+    /// <summary>Whether a worker is running or stopping: from a start until its stop has ended.</summary>
+    internal bool IsRunning
+    {
+        get
+        {
+            lock (_gate)
+                return _cycle is not null;
+        }
+    }
 
     /// <summary>
     /// Initializes a new <see cref="WorkerBinding{TWorker}"/>.
@@ -51,125 +65,166 @@ internal sealed partial class WorkerBinding<TWorker>
     /// Optional callback invoked when the worker faults with a non-cancellation
     /// exception. Receives the worker instance and the exception.
     /// </param>
-    /// <param name="shutdownTimeout">
-    /// Maximum time to wait for cooperative shutdown before abandoning the task.
-    /// Defaults to 5 seconds.
+    /// <param name="warningInterval">
+    /// How long a stop waits for the worker before it logs once that the worker has not ended.
+    /// The stop goes on waiting. Defaults to <see cref="SlowWorkWarning.DefaultInterval"/>.
     /// </param>
+    /// <param name="timeProvider">Measures <paramref name="warningInterval"/>. Defaults to the system's.</param>
     /// <param name="logger">
     /// Optional logger for structured lifecycle diagnostics.
     /// </param>
     public WorkerBinding(
         Func<TWorker> factory,
         Func<TWorker, Exception, Task>? onError = null,
-        TimeSpan? shutdownTimeout = null,
+        TimeSpan? warningInterval = null,
+        TimeProvider? timeProvider = null,
         ILogger? logger = null
     )
     {
         _factory = factory ?? throw new ArgumentNullException(nameof(factory));
         _onError = onError;
-        _shutdownTimeout = shutdownTimeout ?? TimeSpan.FromSeconds(5);
+        _warningInterval = warningInterval ?? SlowWorkWarning.DefaultInterval;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger;
     }
 
     /// <summary>
-    /// Creates a worker via the factory, starts it, and launches the
-    /// background runner. Returns synchronously — the worker's long-running
-    /// loop executes on a fire-and-forget task.
+    /// Creates a worker via the factory and starts its loop on a fresh scope, which holds the loop
+    /// until it ends.
     /// </summary>
-    /// <returns><see cref="Task.CompletedTask"/> on success, or immediately
-    /// if the binding is already running (double-start guard).</returns>
+    /// <returns>
+    /// A task that completes once the worker's <see cref="IStateBoundWorker.StartAsync"/> has been
+    /// called on the scope and has returned its loop, so what the worker sets up before its first
+    /// wait, such as the ticker's timer, is in place when the caller goes on, as it was when the
+    /// binding called it on the caller's thread. A completed task when the binding is already
+    /// running or stopping (double-start guard).
+    /// </returns>
     public Task StartAsync()
     {
-        if (Interlocked.CompareExchange(ref _state, StateRunning, StateIdle) != StateIdle)
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
         {
-            LogDoubleStartGuarded(_logger);
-            return Task.CompletedTask;
+            if (_cycle is not null)
+            {
+                LogDoubleStartGuarded(_logger);
+                return Task.CompletedTask;
+            }
+
+            var worker = _factory();
+            var scope = new WorkScope();
+            scope.TryStart(
+                WorkerTypeName,
+                ct =>
+                {
+                    var loop = RunWorkerAsync(worker, ct);
+                    started.TrySetResult();
+                    return loop;
+                }
+            );
+            _cycle = new Cycle(worker, scope);
         }
-
-        _cts = new CancellationTokenSource();
-        _worker = _factory();
-
-        // Fire-and-forget — NOT awaited. The worker's loop runs independently.
-        _runningTask = RunWorkerAsync(_worker, _cts.Token);
 
         LogWorkerStarted(_logger);
-        return Task.CompletedTask;
+        return started.Task;
     }
 
     /// <summary>
-    /// Cooperatively stops the worker: cancels the token, calls
-    /// <see cref="IStateBoundWorker.StopAsync"/>, awaits the running task
-    /// with timeout, disposes the worker and CTS, and resets state to idle.
+    /// Stops the worker: cancels its token, calls <see cref="IStateBoundWorker.StopAsync"/>, waits
+    /// for its loop to end with no bound, disposes the worker, and lets a new cycle start.
     /// </summary>
-    public async Task StopAsync()
+    /// <remarks>
+    /// A call made while a stop is under way waits for that stop and ends as it did. A call with
+    /// nothing running returns at once. What the stop's steps throw, and what <c>onError</c> threw,
+    /// is thrown once the worker is disposed and the binding is idle.
+    /// </remarks>
+    public Task StopAsync()
     {
-        if (Interlocked.CompareExchange(ref _state, StateStopping, StateRunning) != StateRunning)
-            return; // not running — nothing to stop
+        Cycle? cycle;
+        lock (_gate)
+            cycle = _cycle;
 
-        var cts = _cts;
-        var task = _runningTask;
-        var worker = _worker;
+        return cycle is null ? Task.CompletedTask : cycle.Stop.RunAsync(() => StopCycleAsync(cycle)).AsTask();
+    }
 
-        if (cts is null || worker is null)
-        {
-            Interlocked.Exchange(ref _state, StateIdle);
-            return;
-        }
-
-        // Signal cancellation to the worker's StartAsync token.
-        await cts.CancelAsync();
-
-        // Cooperative stop with shutdown timeout.
-        using var shutdownCts = new CancellationTokenSource(_shutdownTimeout);
+    /// <summary>The stop the first <see cref="StopAsync"/> of a cycle runs.</summary>
+    private async ValueTask StopCycleAsync(Cycle cycle)
+    {
+        List<Exception> failures = [];
         try
         {
-            await worker.StopAsync(shutdownCts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            // Shutdown timed out — worker is uncooperative.
-            LogShutdownTimeout(_logger, _shutdownTimeout);
-        }
+            await SlowWorkWarning
+                .AwaitAsync(
+                    EndLoopAsync(cycle, failures),
+                    _warningInterval,
+                    _timeProvider,
+                    () => LogWorkerNotEnded(_logger, _warningInterval)
+                )
+                .ConfigureAwait(false);
 
-        // Await the running task (should be completed or near-complete).
-        if (task is not null)
-        {
+            // Disposed only once its loop has ended.
             try
             {
-                await task.WaitAsync(_shutdownTimeout);
+                await cycle.Worker.DisposeAsync().ConfigureAwait(false);
             }
-            catch (TimeoutException)
+            catch (Exception ex)
             {
-                LogShutdownTimeout(_logger, _shutdownTimeout);
+                failures.Add(ex);
             }
-            catch (OperationCanceledException)
+        }
+        finally
+        {
+            lock (_gate)
             {
-                // Expected during cancellation tear-down.
+                if (ReferenceEquals(_cycle, cycle))
+                    _cycle = null;
             }
         }
 
-        // Dispose worker first, then CTS — per ADR-0026 disposal ordering.
-        await worker.DisposeAsync();
-        cts.Dispose();
-
-        _cts = null;
-        _runningTask = null;
-        _worker = default;
-
-        Interlocked.Exchange(ref _state, StateIdle);
         LogWorkerStopped(_logger);
+        switch (failures)
+        {
+            case []:
+                break;
+            case [var one]:
+                ExceptionDispatchInfo.Throw(one);
+                break;
+            default:
+                throw new AggregateException(failures);
+        }
     }
 
     /// <summary>
-    /// Wraps <see cref="IStateBoundWorker.StartAsync"/> in error handling.
-    /// Cancellation exceptions are swallowed; all others invoke the
-    /// <c>onError</c> callback.
+    /// Cancels the worker's loop, asks the worker to stop, and waits for the loop to end. Adds to
+    /// <paramref name="failures"/> what the worker's stop threw, and what <c>onError</c> threw.
+    /// </summary>
+    private static async Task EndLoopAsync(Cycle cycle, List<Exception> failures)
+    {
+        // The scope's stop cancels the loop at once; it is awaited once the worker has been asked.
+        var ended = cycle.Scope.StopAsync(CancellationToken.None);
+
+        try
+        {
+            await cycle.Worker.StopAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            failures.Add(ex);
+        }
+
+        foreach (var fault in await ended.ConfigureAwait(false))
+            failures.Add(fault.Error);
+    }
+
+    /// <summary>
+    /// Runs the worker's loop. Its cancellation ends it quietly. Any other fault is logged and goes
+    /// to the <c>onError</c> callback, and what that callback throws is the loop's end, which the
+    /// stop throws.
     /// </summary>
     private async Task RunWorkerAsync(TWorker worker, CancellationToken ct)
     {
         try
         {
-            await worker.StartAsync(ct);
+            await worker.StartAsync(ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -181,8 +236,17 @@ internal sealed partial class WorkerBinding<TWorker>
 
             if (_onError is not null)
             {
-                await _onError(worker, ex);
+                await _onError(worker, ex).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// A started worker, the scope that holds its loop, and its stop, which runs once and which
+    /// every other stop of the cycle waits for.
+    /// </summary>
+    private sealed record Cycle(TWorker Worker, WorkScope Scope)
+    {
+        public DisposeOnce Stop { get; } = new();
     }
 }

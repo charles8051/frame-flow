@@ -16,11 +16,9 @@ internal sealed class ControllerRig : IAsyncDisposable
 {
     /// <param name="initialRepeatMode">The mode the controller and the queue start in.</param>
     /// <param name="sinkClaims">The claims the controller holds and releases as its dispose ends.</param>
-    /// <param name="playerLogger">What the player logs to; null discards it.</param>
     public ControllerRig(
         RepeatMode initialRepeatMode = RepeatMode.Off,
-        IDisposable? sinkClaims = null,
-        Microsoft.Extensions.Logging.ILogger? playerLogger = null
+        IDisposable? sinkClaims = null
     )
     {
         Factory = new SessionFactory(Session);
@@ -37,8 +35,7 @@ internal sealed class ControllerRig : IAsyncDisposable
         Player = new PlaylistMediaPlayerCore(
             Controller,
             new PlaylistCoordinator([], initialRepeatMode),
-            audioSink: null,
-            playerLogger ?? NullLogger.Instance
+            audioSink: null
         );
     }
 
