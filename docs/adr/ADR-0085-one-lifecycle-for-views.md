@@ -438,11 +438,11 @@ Each slice carries its own BREAKING-CHANGES entry.
 #704 fixed what slice 3 found in the pacer (#701): when a sink's present threw, the pacer disposed
 the frame the sink already owned. A sink now owns the frame from the call, even when the call
 throws, which decision 8 already said of a fan-out's targets. BREAKING-CHANGES entry 22 records it.
-A sink that throws no longer stops the pacer for the rest of the item without a word (#703). Each
-failure costs its frame, and the failures are reported on `ErrorOccurred` at most once every five
-seconds. They are counted for the sink across items, and the one that makes more than eight in a
-row faults the item playing, as a fault in its decoding does. BREAKING-CHANGES entry 24 records
-it.
+#711 handled what #704 found next (#703): a sink that threw stopped the pacer for the rest of the
+item without a word. Each failure now costs its frame, and the failures are reported on
+`ErrorOccurred` at most once every five seconds. They are counted for the sink across items, and
+the one that makes more than eight in a row faults the item playing, as a fault in its decoding
+does. BREAKING-CHANGES entry 24 records it.
 
 What differs from the decisions, slice by slice. None reverses one.
 
