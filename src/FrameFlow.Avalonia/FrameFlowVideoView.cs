@@ -68,7 +68,7 @@ namespace FrameFlow.Avalonia;
 /// <see cref="DisposeAsync"/> is final, and only it disposes the view's own sink.
 /// </para>
 /// </remarks>
-public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IAsyncDisposable
+public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IInBoxVideoSurface, IAsyncDisposable
 {
     private static readonly Meter ViewMeter = new("FrameFlow.Avalonia.VideoView", "1.0.0");
     private static readonly Counter<long> FramesRenderedCounter = ViewMeter.CreateCounter<long>(
@@ -352,6 +352,9 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IAsyncD
         LoggerFactory = loggerFactory;
         return EnsureSink();
     }
+
+    // The player view claims it before it swaps this view out (ADR-0085, decision 7).
+    IClaimableSink? IInBoxVideoSurface.Sink => _sink;
 
     /// <inheritdoc />
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)

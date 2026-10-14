@@ -908,6 +908,81 @@ public async ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
 so a caller that disposes the frame after the throw cannot be right for every sink. ADR-0085 states
 the same rule for the targets of a fan-out (decision 8).
 
+### 23. `FrameFlowPlayerView` swaps a surface out under its own claim
+
+**A change in behaviour, not a compile error.** `FrameFlowPlayerView` also gains `IAsyncDisposable`.
+
+Assigning `FrameFlowPlayerView.VideoSurface` took the old surface out of the visual tree and put the
+new one in, whatever fed the old one. A player built against the old surface went on feeding it while
+the new surface showed nothing, and nothing said so. A player's sink is fixed when it is built, so the
+player view now refuses a swap that would strand a player, as far as claims show (ADR-0085, decision
+7; #691).
+
+- Swapping out a `FrameFlowVideoView` or a `CompositionInteropVideoView` first claims the surface's
+  sink for the player view, as a player would. While a player or pass holds it, the assignment throws
+  `InvalidOperationException` naming the holder, and nothing changes. Otherwise no build can claim the
+  sink during the swap, and the surface leaves the visual tree keeping its sink (entries 19 and 20). A
+  surface you supplied that has no sink yet has nothing to claim.
+- The default surface, the `FrameFlowVideoView` the player view constructs, stays alive when it is
+  swapped out, and stays claimed by the player view until it is swapped back in or the player view is
+  disposed. A build against it in the meantime fails at its claim, naming the player view, instead of
+  playing to a surface that is not shown. A default surface with no sink yet is given one to claim.
+- A surface you supplied goes back to you with the player view's claim released, and is yours to
+  dispose, as before. A surface of your own type exposes no sink to the player view and is swapped out
+  without a check, as before.
+- `FrameFlowPlayerView.DisposeAsync` disposes the default surface, hosted or swapped out, then
+  releases the player view's claim on it, and touches nothing you supplied. The default surface
+  disposes its sink even while a player still feeds it, so dispose the player first. Dispose is
+  final, as it is on the views: afterwards assigning `VideoSurface` another surface throws
+  `ObjectDisposedException`.
+
+The chrome controls that follow a transport now run on the views' lifecycle (decision 1). What they
+show does not change. The seek bar's and the position label's refresh ticks run only while a transport
+is bound, which changes nothing either shows. `FrameFlowSeekBar` changes in three ways, all at the end
+of a binding, which leaving the visual tree or replacing `Transport` brings:
+
+- A bar that has left the visual tree no longer seeks when its `Value` is written, and seeks again
+  from its return. One given a transport before it first joins the tree still seeks, as before.
+- A scrub target still queued behind a seek in flight when the binding ends is dropped. It used to be
+  sent after the bar had left the tree, or to the transport just replaced.
+- The refusal of a seek sent before the binding ended is no longer reported. The bar arms its refusal
+  report again on every bind, so after every return to the tree as well as when `Transport` is set; it
+  used to arm it again only when `Transport` was set or a seek succeeded.
+
+**Who hits this.** Code that swaps `VideoSurface` while a player built against the outgoing surface is
+alive, which used to strand that player without a word. Code that keeps a reference to the default
+surface, swaps it out and builds a player against it. Code that assigns `VideoSurface` after disposing
+the player view. Code that writes a `FrameFlowSeekBar`'s `Value` while the bar is out of the visual
+tree, to seek, or counts the warnings a bar logs for refused seeks.
+
+**What to write instead.** Dispose the player, swap, and build the next player against the surface
+now hosted:
+
+```csharp
+await player.DisposeAsync(); // the sink stays claimed until this completes
+playerView.VideoSurface = new CompositionInteropVideoView();
+player = await FrameFlowPlayer.Create()
+    .WithMedia(path)
+    .WithVideoSink(playerView.AttachSink(loggerFactory))
+    .BuildPlayerAsync();
+```
+
+Avalonia never disposes a control. To release the default surface and its sink, dispose the player
+view after the player built against it:
+
+```csharp
+await player.DisposeAsync();
+await playerView.DisposeAsync();
+```
+
+To seek, call `SeekAsync` on the transport rather than writing a seek bar's `Value`.
+
+**Why.** A swap that took the surface out from under a player left it feeding a picture nobody saw,
+and the player view cannot move a player to another sink. Taking the claim is the check that no player
+feeds the surface, and it keeps a build from claiming the surface while the swap runs. The chrome
+controls had their own ways of following a transport across trips out of the visual tree; they now
+share the views' lifecycle and its binding number.
+
 ### Not breaking, but worth knowing
 
 - **A new timeline is not a stall to the PRESENT GAP check.** `AvaloniaVideoSink` warned PRESENT

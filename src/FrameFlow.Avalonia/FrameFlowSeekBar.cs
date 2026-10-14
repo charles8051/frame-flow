@@ -58,6 +58,18 @@ namespace FrameFlow.Avalonia;
 /// <see cref="Slider"/> already handles click-on-track as a Value
 /// jump; we just need the user-vs-programmatic discrimination above.
 /// </para>
+/// <para>
+/// <b>In and out of the visual tree</b> (ADR-0085, decision 1). The tick
+/// runs while the bar is in the visual tree with a transport bound. The bar
+/// seeks its transport while it is bound to it: from when the transport is
+/// set, or from the bar's return to the tree when it is set while the bar is
+/// out. Leaving the tree, or replacing the transport, ends the binding: the
+/// tick stops, a scrub target still queued is dropped rather than sent, and
+/// the result of a seek already sent is not reported. The return starts the
+/// tick and the seeking again with the same transport, and arms the refusal
+/// report again. A <see cref="RangeBase.Value"/> written while the bar is out
+/// of the tree after leaving it seeks nothing.
+/// </para>
 /// </remarks>
 public sealed class FrameFlowSeekBar : Slider
 {
@@ -90,14 +102,18 @@ public sealed class FrameFlowSeekBar : Slider
         set => SetValue(TransportProperty, value);
     }
 
-    private DispatcherTimer? _refreshTimer;
     private bool _suppressUserSeek;
     private bool _userIsInteracting;
     private TimeSpan _lastKnownDuration = TimeSpan.Zero;
 
-    // Coalescing scrub-seek dispatcher, rebuilt per bound transport and null
-    // when no transport is bound. See ScrubSeekDispatcher for the one-in-flight,
-    // latest-target-wins policy that keeps a drag from flooding the engine.
+    // Follows the bound transport while the bar is bound to it, and runs the refresh tick while
+    // the bar is in the visual tree with a transport bound (ADR-0085, decision 1).
+    private readonly TransportFollower _follower;
+
+    // Coalescing scrub-seek dispatcher, built when a transport is bound and
+    // dropped when the binding ends, so null while no transport is bound. See
+    // ScrubSeekDispatcher for the one-in-flight, latest-target-wins policy that
+    // keeps a drag from flooding the engine.
     private ScrubSeekDispatcher? _scrub;
 
     // Latches on the first refused seek and clears on the next successful one,
@@ -106,13 +122,16 @@ public sealed class FrameFlowSeekBar : Slider
     // on the Avalonia context.
     private bool _seekRefusalReported;
 
-    // Bumped on every Transport rebind. A scrub callback captures the value
-    // it was created under so a pump still draining against the previous
-    // transport cannot touch the latch above.
-    private int _transportGeneration;
+    /// <summary>How many refused seeks the bar has reported. For tests.</summary>
+    internal int SeekRefusalsReported { get; private set; }
+
+    /// <summary>Whether the refresh tick is running. For tests.</summary>
+    internal bool IsRefreshing => _follower.IsRefreshing;
 
     public FrameFlowSeekBar()
     {
+        _follower = new TransportFollower(FollowTransport, refresh: (RefreshInterval, RefreshFromTransport));
+
         Minimum = 0;
         Maximum = 1;
         Value = 0;
@@ -139,18 +158,12 @@ public sealed class FrameFlowSeekBar : Slider
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        _refreshTimer = new DispatcherTimer(
-            RefreshInterval,
-            DispatcherPriority.Background,
-            (_, _) => RefreshFromTransport()
-        );
-        _refreshTimer.Start();
+        _follower.Attach();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        _refreshTimer?.Stop();
-        _refreshTimer = null;
+        _follower.Detach();
         base.OnDetachedFromVisualTree(e);
     }
 
@@ -182,52 +195,15 @@ public sealed class FrameFlowSeekBar : Slider
         // Programmatic update (refresh tick / duration coercion) — ignore.
         if (_suppressUserSeek)
             return;
-        // No bound transport → no dispatcher → no seek target.
+        // No bound transport, or out of the tree after leaving it → no dispatcher → no seek target.
         _scrub?.Request(TimeSpan.FromSeconds(newValue));
     }
 
     private void OnTransportChanged(IMediaTransport? transport)
     {
-        // Rebind the coalescing dispatcher to the new transport (or drop it). Any
-        // pump still draining against the previous transport finishes harmlessly
-        // — its seeks target the old, now-disposing transport and are swallowed.
-        //
-        // This call site reports its Result through a latch rather than on
-        // every seek. A scrub emits seeks continuously, so reporting each
-        // refusal would turn one gesture into a burst of identical warnings;
-        // reporting none leaves a source that has a duration but refuses
-        // seeking indistinguishable from one that works. The latch gives the
-        // first refusal and then stays quiet until a seek succeeds, which
-        // re-arms it for the next thing that goes wrong.
-        //
-        // The latch belongs to one binding, not to the control. The old pump
-        // is still draining per the note above, and now that its callback
-        // reports, a late result from it could log against a transport that is no
-        // longer attached, eat the new transport's first refusal, or clear a latch
-        // it does not own. Each callback captures the generation it was built
-        // for and does nothing once that is stale.
-        var generation = ++_transportGeneration;
-        _seekRefusalReported = false;
-        _scrub =
-            transport is null
-                ? null
-                : new ScrubSeekDispatcher(async t =>
-                {
-                    var result = await transport.SeekAsync(t).ConfigureAwait(true);
-                    if (generation != _transportGeneration)
-                        return;
-
-                    if (result.IsSuccess)
-                    {
-                        _seekRefusalReported = false;
-                        return;
-                    }
-
-                    if (_seekRefusalReported)
-                        return;
-                    _seekRefusalReported = true;
-                    TransportCommand.Report(this, nameof(IMediaTransport.SeekAsync), result);
-                });
+        // Ends the old binding, which drops its scrub dispatcher, and binds the new transport,
+        // which builds one, or binds nothing.
+        _follower.Assign(transport);
 
         if (transport is null)
         {
@@ -248,6 +224,56 @@ public sealed class FrameFlowSeekBar : Slider
         IsEnabled = true;
         _lastKnownDuration = TimeSpan.Zero; // force Maximum re-sync on next sample
         RefreshFromTransport();
+    }
+
+    // On every bind: when a transport is assigned while the bar is bound or before it first joins
+    // the tree, and on every return to the tree. Built here and not when the transport is assigned:
+    // one built while the bar is out of the tree would belong to no binding, and its results would
+    // be stale from the return on.
+    //
+    // A dispatcher sends a target only while the follow it was built for is current. Its pump can
+    // outlive the binding with a target queued behind a seek in flight, and the transport may be
+    // the same one the next binding seeks: sent after a detach, that target would move a transport
+    // the bar no longer follows, and sent after the return it could land after a newer target from
+    // the next binding's dispatcher, which would break one-in-flight, latest-wins across the trip.
+    // So a target queued under a binding that has ended is dropped, and only a seek already sent
+    // can still complete.
+    //
+    // A scrub reports its Result through a latch rather than on every seek. A scrub emits seeks
+    // continuously, so reporting each refusal would turn one gesture into a burst of identical
+    // warnings; reporting none leaves a source that has a duration but refuses seeking
+    // indistinguishable from one that works. The latch gives the first refusal and then stays quiet
+    // until a seek succeeds, which re-arms it for the next thing that goes wrong.
+    //
+    // The latch belongs to one binding, not to the control, and each bind arms it again. A late
+    // result from an earlier binding's seek could log against a transport that is no longer bound,
+    // eat this binding's first refusal, or clear a latch it does not own, so each result is
+    // committed only while the follow it was built for is current (ADR-0085, decision 5).
+    private void FollowTransport(IMediaTransport transport, TransportFollower.Follow follow)
+    {
+        _seekRefusalReported = false;
+        _scrub = new ScrubSeekDispatcher(async t =>
+        {
+            if (!follow.IsCurrent)
+                return;
+
+            var result = await transport.SeekAsync(t).ConfigureAwait(true);
+            if (!follow.IsCurrent)
+                return;
+
+            if (result.IsSuccess)
+            {
+                _seekRefusalReported = false;
+                return;
+            }
+
+            if (_seekRefusalReported)
+                return;
+            _seekRefusalReported = true;
+            SeekRefusalsReported++;
+            TransportCommand.Report(this, nameof(IMediaTransport.SeekAsync), result);
+        });
+        follow.OnEnd(() => _scrub = null);
     }
 
     /// <summary>

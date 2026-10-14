@@ -26,6 +26,11 @@ namespace FrameFlow.Avalonia;
 /// off the stream would keep showing the pre-seek time until playback
 /// resumed; polling shows the new one.
 /// </para>
+/// <para>
+/// The tick runs while the label is in the visual tree with a transport bound
+/// (ADR-0085, decision 1), and the label reads the transport when the transport
+/// is set and when the label joins the tree.
+/// </para>
 /// </remarks>
 public sealed class FrameFlowPositionLabel : TextBlock
 {
@@ -40,10 +45,17 @@ public sealed class FrameFlowPositionLabel : TextBlock
         set => SetValue(TransportProperty, value);
     }
 
-    private DispatcherTimer? _refreshTimer;
+    // Runs the refresh tick while the label is in the visual tree with a transport bound
+    // (ADR-0085, decision 1). The label polls, so it has nothing to follow.
+    private readonly TransportFollower _follower;
+
+    /// <summary>Whether the refresh tick is running. For tests.</summary>
+    internal bool IsRefreshing => _follower.IsRefreshing;
 
     public FrameFlowPositionLabel()
     {
+        _follower = new TransportFollower(refresh: (TimeSpan.FromMilliseconds(250), Refresh));
+
         FontFamily = new FontFamily("Cascadia Mono,Consolas,Menlo,monospace");
         FontSize = 11;
         VerticalAlignment = global::Avalonia.Layout.VerticalAlignment.Center;
@@ -54,19 +66,13 @@ public sealed class FrameFlowPositionLabel : TextBlock
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        _refreshTimer = new DispatcherTimer(
-            TimeSpan.FromMilliseconds(250),
-            DispatcherPriority.Background,
-            (_, _) => Refresh()
-        );
-        _refreshTimer.Start();
+        _follower.Attach();
         Refresh();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        _refreshTimer?.Stop();
-        _refreshTimer = null;
+        _follower.Detach();
         base.OnDetachedFromVisualTree(e);
     }
 
@@ -74,7 +80,10 @@ public sealed class FrameFlowPositionLabel : TextBlock
     {
         base.OnPropertyChanged(change);
         if (change.Property == TransportProperty)
+        {
+            _follower.Assign(change.GetNewValue<IMediaTransport?>());
             Refresh();
+        }
     }
 
     private void Refresh()
