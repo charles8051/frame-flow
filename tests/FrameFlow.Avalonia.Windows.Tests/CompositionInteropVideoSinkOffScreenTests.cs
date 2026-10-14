@@ -144,6 +144,7 @@ public sealed class CompositionInteropVideoSinkOffScreenTests
 
         Assert.Equal(0, shown.References);
         Assert.False(sink.HasPendingFrame);
+        Assert.Equal(0, sink.FramesDiscardedOffScreen); // presented, not lost
     }
 
     /// <summary>A frame that counts its references, so a test sees the sink release it.</summary>

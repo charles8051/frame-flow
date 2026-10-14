@@ -511,6 +511,20 @@ public sealed class LatestWinsFrameSlotTests
     }
 
     [Fact]
+    public void TheHandedBackFrame_IsDisposed_NotCountedAsADiscard_WhenAnEmptySlotKeepsNothing()
+    {
+        // The view presented it: releasing it is not a frame lost off screen.
+        var slot = new LatestWinsFrameSlot();
+        var shown = new RecordingFrame();
+
+        slot.SetOffScreen(shown);
+
+        Assert.Equal(1, shown.DisposeCount);
+        Assert.False(slot.HasPending);
+        Assert.Equal(0, slot.DiscardedOffScreen);
+    }
+
+    [Fact]
     public void TheHandedBackFrame_IsDisposed_ByAClosedSlot()
     {
         var slot = new LatestWinsFrameSlot();
