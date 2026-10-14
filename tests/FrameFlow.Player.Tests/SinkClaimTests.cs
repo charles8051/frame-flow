@@ -190,12 +190,11 @@ public sealed class SinkClaimTests
     }
 
     [RequiresFfmpegAndCorpusFact]
-    public async Task APassDisposedDuringItsRun_KeepsItsClaimUntilTheRunEnds()
+    public async Task APassDisposedDuringItsRun_CancelsIt_AndReleasesItsClaimOnceItHasEnded()
     {
-        // The pass's dispose does not wait for a run in flight, and what that run still sends would
-        // reach a sink the next pass had claimed. The run is held inside the audio sink's
-        // activation, which comes before the graph starts, so the dispose frees nothing the run
-        // is using; the activation then fails, which ends the run without starting the graph.
+        // The dispose cancels the run, held here inside the audio sink's activation, and waits for
+        // it to end before it releases the claim, so the run still finds the sink claimed when the
+        // cancellation reaches it (#696). MediaPassDisposeTests drives the same inside the graph.
         await using var audio = new ClaimableAudioSink { HoldActivation = true };
         var pass = await BuildPassAsync(Corpus(AudioFile), audio: audio);
         var run = pass.RunToCompletionAsync();
@@ -203,10 +202,9 @@ public sealed class SinkClaimTests
 
         await pass.DisposeAsync();
 
-        Assert.Equal($"a pass over '{AudioFile}'", Holder(audio));
-        audio.ActivationGate.SetException(new InvalidOperationException("the device went away"));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => run);
         Assert.Null(Holder(audio));
+        Assert.Equal($"a pass over '{AudioFile}'", audio.ClaimantWhenActivationCancelled);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
     }
 
     [RequiresFfmpegAndCorpusFact]
@@ -231,21 +229,22 @@ public sealed class SinkClaimTests
     private sealed class ClaimableAudioSink : IAudioSink, IClaimableSink
     {
         private readonly SinkClaimGate _claims = new(typeof(ClaimableAudioSink));
+        private readonly TaskCompletionSource _never = new();
         private int _activations;
 
         public int Activations => Volatile.Read(ref _activations);
 
         /// <summary>
         /// When set, <see cref="ActivateAsync"/> completes <see cref="ActivationEntered"/> and then
-        /// waits for <see cref="ActivationGate"/>.
+        /// waits until its token is cancelled.
         /// </summary>
         public bool HoldActivation { get; init; }
 
         public TaskCompletionSource ActivationEntered { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public TaskCompletionSource ActivationGate { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        /// <summary>Who held the sink when a held activation was cancelled.</summary>
+        public string? ClaimantWhenActivationCancelled { get; private set; }
 
         public IDisposable? TryClaim(string claimant) => _claims.TryClaim(claimant);
 
@@ -259,13 +258,21 @@ public sealed class SinkClaimTests
             return ValueTask.CompletedTask;
         }
 
-        public ValueTask ActivateAsync(CancellationToken cancellationToken = default)
+        public async ValueTask ActivateAsync(CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _activations);
             if (!HoldActivation)
-                return ValueTask.CompletedTask;
+                return;
             ActivationEntered.TrySetResult();
-            return new ValueTask(ActivationGate.Task);
+            try
+            {
+                await _never.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                ClaimantWhenActivationCancelled = Claimant;
+                throw;
+            }
         }
 
         public ValueTask PauseAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;

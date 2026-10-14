@@ -6,62 +6,102 @@ using FrameFlow.Player.Core;
 namespace FrameFlow.Player.Tests;
 
 /// <summary>
-/// Pins when a pass lets go of the claims on its sinks (ADR-0085, decision 6): once it is disposed
-/// and no run is in flight, whichever comes last, and once only. A dispose that races a run is one
-/// of these orders, so each is driven as a value.
+/// Pins how a pass holds its sinks and the state its run uses (ADR-0085, decision 6; #696): a pass
+/// runs once and never once its dispose has begun, and its dispose waits for a run in flight before
+/// it tears down. A run and a dispose that race take the lock in one order or the other, so each
+/// order is driven as a value.
 /// </summary>
 public sealed class PassClaimHoldTests
 {
     [Fact]
-    public void ADisposeWithNoRunStarted_Releases()
+    public void ADisposeWithNoRunStarted_TearsDownAtOnce()
     {
-        var (_, release) = PassClaimHold.Built.Dispose();
+        var (_, teardown) = PassClaimHold.Built.Dispose();
 
-        Assert.True(release);
+        Assert.Equal(PassTeardown.Now, teardown);
     }
 
     [Fact]
-    public void ARunThatEnds_ReleasesNothing_AndTheDisposeAfterItReleases()
+    public void ADisposeDuringARun_TearsDownAfterTheRun()
     {
-        var (running, started) = PassClaimHold.Built.StartRun();
-        var (ended, releasedAtEnd) = running.EndRun();
-        var (_, releasedAtDispose) = ended.Dispose();
+        var (running, start) = PassClaimHold.Built.StartRun();
 
-        Assert.True(started);
-        Assert.False(releasedAtEnd);
-        Assert.True(releasedAtDispose);
+        var (_, teardown) = running.Dispose();
+
+        Assert.Equal(PassRunStart.Started, start);
+        Assert.Equal(PassTeardown.AfterTheRun, teardown);
     }
 
     [Fact]
-    public void ADisposeDuringARun_LeavesTheReleaseToTheRunsEnd()
+    public void ADisposeAfterTheRunEnded_TearsDownAtOnce()
     {
-        // The pass's dispose does not wait for a run in flight, and what that run still sends would
-        // otherwise reach a sink the next pass may have claimed.
         var (running, _) = PassClaimHold.Built.StartRun();
-        var (disposed, releasedAtDispose) = running.Dispose();
-        var (_, releasedAtEnd) = disposed.EndRun();
 
-        Assert.False(releasedAtDispose);
-        Assert.True(releasedAtEnd);
+        var (_, teardown) = running.EndRun().Dispose();
+
+        Assert.Equal(PassTeardown.Now, teardown);
     }
 
     [Fact]
-    public void ARun_CannotStartOnceThePassIsDisposed()
+    public void ARunThatRacesADispose_AndLosesTheLock_IsRefused()
     {
         var (disposed, _) = PassClaimHold.Built.Dispose();
 
-        var (next, started) = disposed.StartRun();
+        var (next, start) = disposed.StartRun();
 
-        Assert.False(started);
+        Assert.Equal(PassRunStart.Disposed, start);
         Assert.Equal(disposed, next);
     }
 
     [Fact]
-    public void TheClaimsAreReleasedOnce()
+    public void ARunThatRacesADispose_AndWinsTheLock_IsTheRunTheDisposeWaitsFor()
+    {
+        var (running, start) = PassClaimHold.Built.StartRun();
+        var (disposed, teardown) = running.Dispose();
+
+        Assert.Equal(PassRunStart.Started, start);
+        Assert.Equal(PassTeardown.AfterTheRun, teardown);
+
+        // The run ends after the dispose began, and a run asked for after that is refused.
+        Assert.Equal(PassRunStart.Disposed, disposed.EndRun().StartRun().Start);
+    }
+
+    [Fact]
+    public void APass_RunsOnce()
+    {
+        var (running, _) = PassClaimHold.Built.StartRun();
+
+        Assert.Equal(PassRunStart.AlreadyRan, running.StartRun().Start);
+        Assert.Equal(PassRunStart.AlreadyRan, running.EndRun().StartRun().Start);
+    }
+
+    [Fact]
+    public void ARunAskedForAfterADispose_IsRefusedAsDisposed_EvenWhenThePassHasRun()
+    {
+        var (running, _) = PassClaimHold.Built.StartRun();
+        var (disposed, _) = running.EndRun().Dispose();
+
+        Assert.Equal(PassRunStart.Disposed, disposed.StartRun().Start);
+    }
+
+    [Fact]
+    public void ASecondDispose_LeavesTheTeardownToTheFirst()
     {
         var (disposed, _) = PassClaimHold.Built.Dispose();
 
-        Assert.False(disposed.Dispose().Release);
-        Assert.False(disposed.EndRun().Release);
+        var (next, teardown) = disposed.Dispose();
+
+        Assert.Equal(PassTeardown.Begun, teardown);
+        Assert.Equal(disposed, next);
+    }
+
+    [Fact]
+    public void ASecondDispose_DuringTheRun_LeavesTheTeardownToTheFirst()
+    {
+        var (running, _) = PassClaimHold.Built.StartRun();
+        var (disposed, _) = running.Dispose();
+
+        Assert.Equal(PassTeardown.Begun, disposed.Dispose().Teardown);
+        Assert.Equal(PassTeardown.Begun, disposed.EndRun().Dispose().Teardown);
     }
 }
