@@ -76,6 +76,8 @@ namespace FrameFlow.Avalonia.Windows;
 /// tree meanwhile builds new ones, and the teardown never disposes or presents those.
 /// </para>
 /// </remarks>
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Reliability", "CA2213", Justification = "DisposeAsync runs its transition through DisposeOnce, which the analyzer cannot follow. The transition's teardown disposes them.")]
 public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBoxVideoSurface, IAsyncDisposable
 {
     [System.Diagnostics.CodeAnalysis.SuppressMessage(
@@ -158,6 +160,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     // commits on another thread compares the number it started under with this one under the same
     // gate (decision 5). The UI thread reads it without the gate.
     private SurfaceLifecycle _lifecycle = SurfaceLifecycle.AwaitingInitialize;
+
+    // Runs the dispose's transition once and has every other dispose wait for its teardown
+    // (ADR-0086, decision 3).
+    private readonly DisposeOnce _dispose = new();
 
     /// <summary>
     /// What a reader that takes no lock sees of the view (ADR-0085, decision 5): whether it
@@ -1892,9 +1898,11 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     /// <returns>
     /// A task that completes once the producers are disposed, or handed to the background reaper
     /// when the compositor does not drain in time. It faults with what any step threw, such as a
-    /// frame that failed to release, after every step has run.
+    /// frame that failed to release, after every step has run. A call made while the first one's
+    /// teardown runs, or after, tears nothing down again: it waits for that teardown and ends as it
+    /// did (ADR-0086, decision 3).
     /// </returns>
-    public ValueTask DisposeAsync() => new(Combined(Apply(_lifecycle.Dispose())));
+    public ValueTask DisposeAsync() => _dispose.RunAsync(() => new(Combined(Apply(_lifecycle.Dispose()))));
 
     /// <summary>
     /// Observes the teardown a visual-tree detach (or window close), or clearing
