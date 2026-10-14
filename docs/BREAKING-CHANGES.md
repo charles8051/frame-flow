@@ -1167,6 +1167,11 @@ Warning, naming the sink.
   `PresentAsync`, while another dispose of it is under way. The first waits for that call to return,
   and the call now waits for the first, so neither ends. A call made there with no other dispose
   under way already waited for itself.
+- An implementer of `IAudioSink` or `IVideoSink`. Their disposal contract said a second
+  `DisposeAsync` is a no-op that never throws. It now says only the first call tears down, a later
+  one touches nothing, and a later one may wait for the first and end as it did, so it throws only
+  when the first threw. A sink whose second call returns at once still meets it; code that disposes
+  a sink twice and relied on the second never throwing should expect the first's exception.
 
 **What to write instead.**
 - Dispose from one place, or let every caller await the dispose. A caller that cannot wait long
