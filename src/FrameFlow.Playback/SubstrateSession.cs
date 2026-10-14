@@ -151,6 +151,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     private readonly TaskCompletionSource _tornDown = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly List<Exception> _teardownFailures = [];
 
+    // What the cancellation's callbacks of a run's stop threw, which the dispose throws.
+    private readonly List<Exception> _stopFailures = [];
+
     /// <summary>
     /// Lateness-recovery policy. Off unless a caller opts in — the ADR gates
     /// shipping this on the selection rule being measured, so the default has to
@@ -196,7 +199,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
     /// <summary>
     /// Opens the runtime detached: prepared ahead while another item plays, it leaves the shared
-    /// position clock, audio sink and audio clock alone until <see cref="Attach"/>.
+    /// position clock, audio sink and audio clock alone until <see cref="AttachAsync"/>.
     /// </summary>
     internal bool Detached
     {
@@ -328,6 +331,30 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// </summary>
     internal Action<CancellationToken>? OnFlushingDecoders { get; set; }
 
+    /// <summary>
+    /// Called with the name of a piece of a run's work once its run's scope has let it go, which
+    /// is after the session has been told how it ended. Internal: a seam for tests, set before the
+    /// session opens.
+    /// </summary>
+    internal Action<string>? OnWorkLetGo { get; set; }
+
+    /// <summary>
+    /// Awaited before each piece of a run's work is started, with the piece. Internal: a seam for
+    /// tests, which hold a run's start between two pieces to drive a race.
+    /// </summary>
+    internal Func<ItemWork, Task>? OnStartingWork { get; set; }
+
+    // The session performing a step's immediate action on this thread, if any.
+    [ThreadStatic]
+    private static SubstrateSession? t_performing;
+
+    /// <summary>
+    /// Whether the calling thread is inside this session's performance of a step's immediate
+    /// action: true in a callback the session raises in step order. Internal: tests read it in
+    /// the end-of-stream callback.
+    /// </summary>
+    internal bool IsPerformingStep => t_performing == this;
+
     public PipelineDiagnosticsSnapshot GetPipelineDiagnostics()
     {
         var videoSink = _videoSink?.GetDiagnostics() ?? VideoSinkDiagnosticsSnapshot.Empty;
@@ -426,12 +453,16 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// <inheritdoc/>
     /// <remarks>
     /// Seats the shared position clock and the master clock's baseline on where the runtime was
-    /// positioned, as a positioning while attached would have. It takes effect in order with the
-    /// runtime's commands: a command called after it finds the runtime attached. The caller has
-    /// stopped the position clock and disposed the item that was playing, so nothing else is using
-    /// them.
+    /// positioned, as a positioning while attached would have, and completes once it has: a
+    /// command called after it finds the runtime attached, and the position clock reads where the
+    /// runtime was positioned. The caller has stopped the position clock and disposed the item that
+    /// was playing, so nothing else is using them. A runtime that is disposed has nothing to attach.
     /// </remarks>
-    public void Attach() => Post(new Input.Attach());
+    public ValueTask AttachAsync()
+    {
+        var attaching = new Attaching();
+        return _inputs.Writer.TryWrite(attaching) ? new ValueTask(attaching.Done.Task) : ValueTask.CompletedTask;
+    }
 
     private ValueTask Issue(Call call)
     {
@@ -462,8 +493,13 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                 }
                 catch (Exception ex)
                 {
-                    // A defect in the shell. The input is lost, and the runtime goes on.
+                    // A defect in the shell. The input is lost, and the runtime goes on. A command
+                    // the core never stepped fails its caller, rather than leaving it waiting.
                     _logger.LogError(ex, "The item runtime could not take {Input}.", arrival);
+                    if (arrival is Called { Call: { Stepped: false } lost })
+                        Fail(lost, ex);
+                    if (arrival is Attaching attaching)
+                        attaching.Done.TrySetException(ex);
                 }
             }
         }
@@ -481,7 +517,22 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         {
             _calls[call.Id] = call;
             call.Action = CancellationTokenSource.CreateLinkedTokenSource(call.Caller);
-            input = InputOf(call, state);
+
+            // What a command reads as it arrives, the position clock among them, can throw. The
+            // command then fails, as a call that threw used to, and the core never sees it.
+            try
+            {
+                input = InputOf(call, state);
+            }
+            catch (Exception ex)
+            {
+                Fail(call, ex);
+                return;
+            }
+        }
+        else if (arrival is Attaching)
+        {
+            input = new Input.Attach();
         }
         else
         {
@@ -494,10 +545,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         var (next, step) = ItemRuntimeProtocol.Step(state, input);
         _state = next;
         Volatile.Write(ref _runNumber, next.Run);
+        if (arrival is Called { Call: var stepped })
+            stepped.Stepped = true;
 
         // A dispose waits for the action under way, and cuts it short.
         if (next.DisposeRequested && !state.DisposeRequested && next.Command is { } busy && _calls.TryGetValue(busy.Id, out var under))
-            under.Action?.Cancel();
+            CancelAction(under);
         if (next.Phase is ItemRuntimePhase.Disposing or ItemRuntimePhase.Disposed)
             _disposeBegun.TrySetResult();
 
@@ -523,6 +576,32 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
         if (step.Awaited is { } awaited)
             StartAwaited(awaited, next);
+
+        if (arrival is Attaching attached)
+            attached.Done.TrySetResult();
+    }
+
+    // Cuts short a command's action for the dispose. Its token's callbacks run here, on the
+    // reader, and only queue inputs or let the action end; one that throws is logged, and the
+    // others have all run.
+    private void CancelAction(Call call)
+    {
+        try
+        {
+            call.Action?.Cancel();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Cutting short the item runtime's {Command} for its dispose threw.", call);
+        }
+    }
+
+    // Fails a command the core never stepped, and forgets it.
+    private void Fail(Call call, Exception error)
+    {
+        _calls.Remove(call.Id);
+        call.Action?.Dispose();
+        call.Done.TrySetException(error);
     }
 
     private Input InputOf(Call call, ItemRuntimeState state) =>
@@ -583,18 +662,39 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                     _teardownFailures.Add(ex);
                 }
                 return;
+            case RuntimeAction.StopClock:
+                try
+                {
+                    _clock.Stop();
+                }
+                catch (Exception ex)
+                {
+                    _teardownFailures.Add(ex);
+                }
+                return;
         }
 
+        t_performing = this;
         try
         {
             Perform(action);
         }
+        catch (Exception ex) when (action is RuntimeAction.ReportFault or RuntimeAction.RaiseEndOfStream)
+        {
+            // A callback of the item's owner threw. What it was told stands, and it is not told again.
+            _logger.LogError(ex, "The item runtime's {Action} callback threw.", action);
+        }
         catch (Exception ex)
         {
-            // The core takes these to succeed. One that throws leaves the item where it cannot be
-            // trusted to play on, so it is reported as a fault of the item, which ends it.
+            // The core takes these to succeed. One that throws, a clock's call among them, leaves
+            // the item where it cannot be trusted to play on, so it is reported as a fault of the
+            // item, which ends it; the command it belongs to goes on.
             _logger.LogError(ex, "The item runtime's {Action} threw.", action);
             TryReportWorkerFault(ex);
+        }
+        finally
+        {
+            t_performing = null;
         }
     }
 
@@ -666,9 +766,6 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             case RuntimeAction.ResumeClocks:
                 _clock.Resume();
                 _ownedClock?.Resume();
-                break;
-            case RuntimeAction.StopClock:
-                _clock.Stop();
                 break;
             case RuntimeAction.AttachClocks:
                 _clock.Seek(_detachedOrigin);
@@ -981,13 +1078,21 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         var timeline = _media!.BeginRun(start.Graph, start.Floor, start.End, start.HoldForSettle);
         _logger.LogDebug(RunLaunchedMessage, start.Run, timeline);
 
-        var scope = new RunScope(start.Run, new WorkScope());
+        var scope = new RunScope(start.Run, new WorkScope { WorkEnded = name => OnWorkLetGo?.Invoke(name) });
         lock (_runsGate)
             _runs.Add(start.Run, scope);
-        foreach (var work in (ReadOnlySpan<ItemWork>)[ItemWork.Pump, ItemWork.Graph, ItemWork.Recovery, ItemWork.EmptyEnd])
+        foreach (var work in (ItemWork[])[ItemWork.Pump, ItemWork.Graph, ItemWork.Recovery, ItemWork.EmptyEnd])
         {
-            if ((start.Work & work) != 0)
-                scope.Scope.TryStart(NameOf(work), t => RunWorkAsync(start.Run, work, t));
+            if ((start.Work & work) == 0)
+                continue;
+            if (OnStartingWork is { } starting)
+                await starting(work).ConfigureAwait(false);
+
+            // A piece that faulted already, before the start's outcome, has stopped the run, and
+            // the scope starts nothing more. What it kept from starting has ended as cancelled,
+            // so the core waits for nothing that never ran.
+            if (!scope.Scope.TryStart(NameOf(work), t => RunWorkAsync(start.Run, work, t)))
+                Post(new Input.WorkEnded(start.Run, work, ItemWorkEnding.Cancelled));
         }
     }
 
@@ -1062,11 +1167,16 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         }
         finally
         {
-            if (ended is { } e)
-                Take(e);
+            try
+            {
+                if (ended is { } e)
+                    Take(e);
+            }
+            finally
+            {
+                Post(new Input.WorkEnded(run, work, ending, error));
+            }
         }
-
-        Post(new Input.WorkEnded(run, work, ending, error));
     }
 
     // The end of stream of an item with nothing to play, raised off the thread that started the
@@ -1112,12 +1222,17 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             string.Join(", ", scope.Scope.Pending)
         );
 
-    // Waits for a run's stop to complete, and logs a fault its cancellation's callbacks threw: the
-    // core has reported every fault the work itself ended with.
+    // Waits for a run's stop to complete. What its cancellation's callbacks threw is kept for the
+    // dispose to throw, at a seek as at the dispose: the core has reported every fault the work
+    // itself ended with, and a callback's is the stop's own.
     private async Task ForgetAsync(RunScope run)
     {
         foreach (var fault in await (run.Stopping ?? run.Scope.StopAsync()).ConfigureAwait(false))
+        {
             _logger.LogWarning(fault.Error, "Stopping run {Run}'s {Work} threw.", run.Run, fault.Work);
+            lock (_runsGate)
+                _stopFailures.Add(fault.Error);
+        }
     }
 
     /// <summary>
@@ -1251,10 +1366,11 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// its own wait; nothing is freed until the work ends.
     /// </para>
     /// <para>
-    /// It throws what freeing threw, and what deactivating the audio sink threw: one exception, or
-    /// an <see cref="AggregateException"/> of several. A fault a run's work ended with was reported
-    /// when it ended, and is not thrown again. Do not await it from a callback the session raises,
-    /// which the teardown would be waiting behind.
+    /// It throws what freeing threw, what deactivating the audio sink and stopping the position
+    /// clock threw, and what a cancellation's callback threw as any run stopped, at a seek or here:
+    /// one exception, or an <see cref="AggregateException"/> of several. A fault a run's work ended
+    /// with was reported when it ended, and is not thrown again. Do not await it from a callback the
+    /// session raises, which the teardown would be waiting behind.
     /// </para>
     /// </remarks>
     public ValueTask DisposeAsync() => _dispose.RunAsync(TearDownAsync);
@@ -1273,7 +1389,6 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
         // The core freed nothing before every run's work had ended; this waits for the scopes to
         // let it go, and for the last action's task to end.
-        var failures = new List<Exception>(_teardownFailures);
         RunScope[] runs;
         lock (_runsGate)
         {
@@ -1281,10 +1396,11 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             _runs.Clear();
         }
         foreach (var run in runs)
-        {
-            foreach (var fault in await (run.Stopping ?? run.Scope.StopAsync()).ConfigureAwait(false))
-                failures.Add(fault.Error);
-        }
+            await ForgetAsync(run).ConfigureAwait(false);
+
+        var failures = new List<Exception>(_teardownFailures);
+        lock (_runsGate)
+            failures.AddRange(_stopFailures);
         foreach (var fault in await _actions.StopAsync().ConfigureAwait(false))
             failures.Add(fault.Error);
 
@@ -1311,6 +1427,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
     private sealed record Called(Call Call) : Arrival;
 
+    /// <summary>An attach, and its caller waiting for it to have been stepped.</summary>
+    private sealed record Attaching : Arrival
+    {
+        public TaskCompletionSource Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
     /// <summary>A command and its caller, waiting for the core to complete it.</summary>
     private sealed class Call(ItemCommandKind kind, CancellationToken caller)
     {
@@ -1327,6 +1449,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         public CancellationTokenSource? Action { get; set; }
 
         public CancellationTokenRegistration Registration { get; set; }
+
+        /// <summary>Whether the core has stepped it, so the core will complete it.</summary>
+        public bool Stepped { get; set; }
 
         public IMediaSource? Source { get; init; }
 

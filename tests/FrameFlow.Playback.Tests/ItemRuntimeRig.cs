@@ -32,9 +32,14 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
 
     private readonly TaskCompletionSource<Exception> _workerFault = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<PlaybackError> _recoverableError = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly List<string> _letGo = [];
+    private readonly List<(string Work, int Count, TaskCompletionSource Done)> _awaitedLetGo = [];
+    private readonly ConcurrentQueue<bool> _endsOfStreamInStep = new();
+    private readonly bool _latenessRecovery;
 
     private ItemRuntimeRig(MediaShape shape, bool detached, bool latenessRecovery, TimeProvider? time)
     {
+        _latenessRecovery = latenessRecovery;
         Log = new RigLog();
         Media = new FakeItemMedia(shape, Log);
         Opener = new FakeMediaOpener(Media, Log);
@@ -49,6 +54,8 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
                 {
                     _workerFaults.Enqueue(fault);
                     _workerFault.TrySetResult(fault);
+                    if (WorkerFaultedThrows)
+                        throw new InvalidOperationException("The owner's fault callback threw.");
                 },
                 OnBufferReady: static () => { },
                 OnBufferUnderrun: static () => { },
@@ -71,6 +78,7 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
             LatenessRecovery = latenessRecovery ? new LatenessRecoveryOptions { Enabled = true } : null,
         };
         Session.OnStep = OnStep;
+        Session.OnWorkLetGo = OnWorkLetGo;
     }
 
     public RigLog Log { get; }
@@ -81,7 +89,13 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
 
     public RecordingAudioSink Audio { get; }
 
-    public PlaybackClock Clock { get; } = new();
+    public RigClock Clock { get; } = new();
+
+    /// <summary>Whether the owner's OnWorkerFaulted callback throws once it has recorded the fault.</summary>
+    public bool WorkerFaultedThrows { get; set; }
+
+    /// <summary>Whether the test expects the session's dispose to throw, so the rig's own dispose does not fail on it.</summary>
+    public bool DisposeThrows { get; set; }
 
     /// <summary>What the session logged at Warning and above.</summary>
     public WarningLog Warnings { get; } = new();
@@ -96,6 +110,9 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
 
     /// <summary>The run number the session read out, inside each end-of-stream callback.</summary>
     public IReadOnlyCollection<int> EndsOfStream => _endsOfStream;
+
+    /// <summary>For each end of stream, whether the session raised it while it performed a step.</summary>
+    public IReadOnlyCollection<bool> EndsOfStreamInStep => _endsOfStreamInStep;
 
     public IReadOnlyCollection<Exception> WorkerFaults => _workerFaults;
 
@@ -118,13 +135,58 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
         return this;
     }
 
-    /// <summary>Opens, warms up and plays the session: its first run is going.</summary>
+    /// <summary>
+    /// Opens, warms up and plays the session: its first run is going, and each piece of its work
+    /// has started.
+    /// </summary>
     public async Task<ItemRuntimeRig> PlayingAsync()
     {
         await OpenAsync();
         await Session.WarmUpAsync().AsTask().WaitAsync(Bound);
         await Session.PlayAsync().AsTask().WaitAsync(Bound);
+
+        // The warm-up waits for the graph's first frame; the pump and the walk start on the pool
+        // and may not have yet.
+        await Media.Started(ItemWork.Pump).WaitAsync(Bound);
+        if (_latenessRecovery)
+            await Media.Started(ItemWork.Recovery).WaitAsync(Bound);
         return this;
+    }
+
+    /// <summary>
+    /// Completes once the session's run scopes have let <paramref name="count"/> pieces of the
+    /// work named <paramref name="work"/> go: the session has been told how each ended.
+    /// </summary>
+    public Task LetGo(string work, int count = 1)
+    {
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+        {
+            if (_letGo.Count(w => w == work) >= count)
+                done.TrySetResult();
+            else
+                _awaitedLetGo.Add((work, count, done));
+        }
+        return done.Task;
+    }
+
+    private void OnWorkLetGo(string work)
+    {
+        List<TaskCompletionSource> done = [];
+        lock (_gate)
+        {
+            _letGo.Add(work);
+            var seen = _letGo.Count(w => w == work);
+            _awaitedLetGo.RemoveAll(a =>
+            {
+                if (a.Work != work || seen < a.Count)
+                    return false;
+                done.Add(a.Done);
+                return true;
+            });
+        }
+        foreach (var d in done)
+            d.TrySetResult();
     }
 
     /// <summary>Completes the next time the session takes <paramref name="step"/>.</summary>
@@ -166,9 +228,22 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => seek.WaitAsync(Bound));
     }
 
+    /// <summary>A step at which the test hook throws, once it has recorded the step.</summary>
+    public Step? ThrowAtStep { get; set; }
+
     private void OnStep(Step step)
     {
         _steps.Enqueue(step);
+        if (ThrowAtStep == step)
+        {
+            SignalStep(step);
+            throw new InvalidOperationException($"The test hook threw at {step}.");
+        }
+        SignalStep(step);
+    }
+
+    private void SignalStep(Step step)
+    {
         List<TaskCompletionSource> taken = [];
         lock (_gate)
         {
@@ -186,6 +261,7 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
 
     private void OnEndOfStream()
     {
+        _endsOfStreamInStep.Enqueue(Session.IsPerformingStep);
         _endsOfStream.Enqueue(Session.RunNumber);
         List<TaskCompletionSource> raised = [];
         lock (_gate)
@@ -207,11 +283,15 @@ internal sealed class ItemRuntimeRig : IAsyncDisposable
         // Whatever a test left held is let go, so the session's dispose does not wait on it.
         Media.ReleaseAll();
         Opener.Release();
+        Clock.FailPosition = false;
+        Clock.FailPause = false;
+        Clock.FailStop = false;
+        ThrowAtStep = null;
         try
         {
             await Session.DisposeAsync().AsTask().WaitAsync(Bound);
         }
-        catch (Exception) when (Media.FailFree != ItemResources.None)
+        catch (Exception) when (Media.FailFree != ItemResources.None || DisposeThrows)
         {
             // A test that fails a free has asserted on it already.
         }
@@ -443,6 +523,69 @@ internal sealed class FakeItemMedia : IItemMedia
     /// <summary>Whether the next run's graph cannot be built.</summary>
     public Exception? FailBeginRun { get; set; }
 
+    /// <summary>The kinds of work that fault as soon as they start, and what they fault with.</summary>
+    public ItemWork FaultOnStart { get; set; }
+
+    /// <summary>
+    /// The kinds of work that register a callback on their run's token which throws when the run
+    /// is cancelled, as a faulty cancellation callback in a sink would.
+    /// </summary>
+    public ItemWork ThrowOnCancel { get; set; }
+
+    public Exception CancelFault { get; set; } = new InvalidOperationException("A cancellation callback threw.");
+
+    public Exception StartFault { get; set; } = new InvalidOperationException("The work faulted as it started.");
+
+    private TaskCompletionSource? _closeGatesHold;
+    private readonly TaskCompletionSource _closeGatesEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource? _settleHold;
+    private readonly TaskCompletionSource _settleEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Holds the next close of the gates, on the thread the session closes them on, until
+    /// <see cref="ReleaseCloseGates"/>: the session performs nothing else meanwhile.
+    /// </summary>
+    public void HoldCloseGates()
+    {
+        lock (_gate)
+            _closeGatesHold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    /// <summary>Completes once a held close of the gates has begun.</summary>
+    public Task CloseGatesEntered => _closeGatesEntered.Task;
+
+    public void ReleaseCloseGates()
+    {
+        TaskCompletionSource? hold;
+        lock (_gate)
+        {
+            hold = _closeGatesHold;
+            _closeGatesHold = null;
+        }
+        hold?.TrySetResult();
+    }
+
+    /// <summary>Holds the next settle until <see cref="ReleaseSettle"/>, or until its token is cancelled.</summary>
+    public void HoldSettle()
+    {
+        lock (_gate)
+            _settleHold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    /// <summary>Completes once a held settle has begun.</summary>
+    public Task SettleEntered => _settleEntered.Task;
+
+    public void ReleaseHeldSettle()
+    {
+        TaskCompletionSource? hold;
+        lock (_gate)
+        {
+            hold = _settleHold;
+            _settleHold = null;
+        }
+        hold?.TrySetResult();
+    }
+
     public bool Opened { get; set; }
 
     public ItemResources Resources
@@ -534,7 +677,7 @@ internal sealed class FakeItemMedia : IItemMedia
         hold?.TrySetResult();
     }
 
-    /// <summary>Lets every piece of work end, and releases a held seek.</summary>
+    /// <summary>Lets every piece of work end, and releases a held seek, gate close or settle.</summary>
     public void ReleaseAll()
     {
         FakeWork[] works;
@@ -543,6 +686,8 @@ internal sealed class FakeItemMedia : IItemMedia
         foreach (var work in works)
             work.Release();
         ReleaseSeek();
+        ReleaseCloseGates();
+        ReleaseHeldSettle();
     }
 
     public void OpenPacer(IClockSource master)
@@ -559,7 +704,17 @@ internal sealed class FakeItemMedia : IItemMedia
 
     public void OpenGates() => _log.Add("OpenGates");
 
-    public void CloseGates() => _log.Add("CloseGates");
+    public void CloseGates()
+    {
+        _log.Add("CloseGates");
+        Task? hold;
+        lock (_gate)
+            hold = _closeGatesHold?.Task;
+        if (hold is null)
+            return;
+        _closeGatesEntered.TrySetResult();
+        hold.Wait(ItemRuntimeRig.Bound);
+    }
 
     public void FlushPacer() => Native("FlushPacer");
 
@@ -614,6 +769,13 @@ internal sealed class FakeItemMedia : IItemMedia
         _log.Add($"{kind} started");
         foreach (var s in started)
             s.TrySetResult(work);
+        if ((FaultOnStart & kind) != 0)
+            work.Fault(StartFault);
+        if ((ThrowOnCancel & kind) != 0)
+        {
+            var fault = CancelFault;
+            token.Register(() => throw fault);
+        }
         return work.RunAsync(Exit);
     }
 
@@ -646,11 +808,19 @@ internal sealed class FakeItemMedia : IItemMedia
         }
     }
 
-    public Task<TimeSpan?> WaitForSeekTargetAsync(long run, TimeSpan cap, CancellationToken cancellationToken)
+    public async Task<TimeSpan?> WaitForSeekTargetAsync(long run, TimeSpan cap, CancellationToken cancellationToken)
     {
         _log.Add($"Settle({run})");
+        Task? hold;
         lock (_gate)
-            return Task.FromResult<TimeSpan?>(run == _runs && _floor > TimeSpan.Zero ? _floor : null);
+            hold = _settleHold?.Task;
+        if (hold is not null)
+        {
+            _settleEntered.TrySetResult();
+            await hold.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        lock (_gate)
+            return run == _runs && _floor > TimeSpan.Zero ? _floor : null;
     }
 
     public void ReleaseSettle(long run) => _log.Add($"ReleaseSettle({run})");
@@ -755,6 +925,48 @@ internal sealed class RecordingAudioSink(RigLog log) : IAudioSink
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+/// <summary>The position clock, whose position read can be made to throw, as an app's clock may.</summary>
+internal sealed class RigClock : IPlaybackClock
+{
+    private readonly PlaybackClock _inner = new();
+
+    /// <summary>Whether reading the position throws.</summary>
+    public bool FailPosition { get; set; }
+
+    /// <summary>Whether pausing throws.</summary>
+    public bool FailPause { get; set; }
+
+    /// <summary>Whether stopping throws.</summary>
+    public bool FailStop { get; set; }
+
+    public TimeSpan Position =>
+        FailPosition ? throw new InvalidOperationException("The clock's position cannot be read.") : _inner.Position;
+
+    public bool IsRunning => _inner.IsRunning;
+
+    public bool IsPaused => _inner.IsPaused;
+
+    public void Start(TimeSpan startPosition) => _inner.Start(startPosition);
+
+    public void Pause()
+    {
+        if (FailPause)
+            throw new InvalidOperationException("The clock cannot be paused.");
+        _inner.Pause();
+    }
+
+    public void Resume() => _inner.Resume();
+
+    public void Seek(TimeSpan position) => _inner.Seek(position);
+
+    public void Stop()
+    {
+        if (FailStop)
+            throw new InvalidOperationException("The clock cannot be stopped.");
+        _inner.Stop();
+    }
 }
 
 /// <summary>A source the fake opener never reads.</summary>

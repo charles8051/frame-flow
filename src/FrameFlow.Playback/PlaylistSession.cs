@@ -931,7 +931,9 @@ internal sealed class PlaylistSession : IPlaybackSession
             Retire(prepared);
             return new(PlaylistOutcome.Failed, Error: fault);
         }
-        prepared.Runtime.Attach();
+        // The shared clocks are seated where it was positioned before the promotion reports its
+        // outcome, so whatever reads the position from here reads the new item's.
+        await prepared.Runtime.AttachAsync().ConfigureAwait(false);
         _runtime = prepared.Runtime;
         prepared.Cancellation.Dispose();
         LogPromoted(_logger, prepared.Item.ToString());

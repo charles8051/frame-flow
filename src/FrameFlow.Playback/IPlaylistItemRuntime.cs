@@ -49,10 +49,11 @@ internal interface IPlaylistItemRuntime : IPlaybackSession
     /// <summary>
     /// Attaches a runtime that was created detached, when it becomes the current item: from here
     /// on it acts on the position clock and the audio sink it shares with the playlist. A no-op on
-    /// a runtime that was never detached. It takes effect in order with the runtime's commands, so
-    /// a command called after it finds the runtime attached.
+    /// a runtime that was never detached. It completes once the runtime is attached, with the
+    /// shared clocks seated where it was positioned, so a command called after it finds the
+    /// runtime attached.
     /// </summary>
-    void Attach();
+    ValueTask AttachAsync();
 }
 
 /// <summary>Creates the runtime for each item a <see cref="PlaylistSession"/> opens.</summary>
@@ -66,7 +67,7 @@ internal interface IPlaylistItemRuntimeFactory
 
     /// <summary>
     /// Creates an item runtime that is prepared ahead while another item plays: detached from the
-    /// shared clock and audio sink until <see cref="IPlaylistItemRuntime.Attach"/>.
+    /// shared clock and audio sink until <see cref="IPlaylistItemRuntime.AttachAsync"/>.
     /// </summary>
     IPlaylistItemRuntime CreatePreparedItem(IPlaybackClock clock, SessionCallbacks callbacks);
 }

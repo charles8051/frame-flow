@@ -121,20 +121,60 @@ public sealed class SubstrateSessionRigTests
     // ── End of stream and a seek ────────────────────────────────────────────
 
     [Fact]
-    public async Task AnEndOfStreamJustBeforeASeek_CarriesTheRunThatEnded()
+    public async Task AnEndOfStreamQueuedWithASeek_IsRaisedInStepOrder_CarryingTheRunThatEnded()
     {
-        await using var rig = ItemRuntimeRig.Create();
-        await rig.PlayingAsync();
-        rig.Media.Latest(ItemWork.Pump).Complete();
-        rig.Media.Latest(ItemWork.Graph).Complete();
+        // The run's end and the seek arrive in one window: the session is held closing the gates
+        // for a pause while the pump and the graph end and the seek is sent. The end of stream is
+        // raised in step order, before the seek is stepped, so the callback reads the number of the
+        // run that ended, not the one the seek starts.
+        await using var rig = await ItemRuntimeRig.Create().PlayingAsync();
+        var pump = rig.Media.Latest(ItemWork.Pump);
+        var graph = rig.Media.Latest(ItemWork.Graph);
+        rig.Media.HoldCloseGates();
+        var pause = rig.Session.PauseAsync().AsTask();
+        await rig.Media.CloseGatesEntered.WaitAsync(Bound);
+
+        pump.Complete();
+        graph.Complete();
+        await rig.LetGo("the demux pump").WaitAsync(Bound);
+        await rig.LetGo("the graph").WaitAsync(Bound); // both ends are queued
+        var seek = rig.Session.SeekAsync(TimeSpan.FromSeconds(1)).AsTask();
+        rig.Media.ReleaseCloseGates();
+        await pause.WaitAsync(Bound);
+        await seek.WaitAsync(Bound);
         await rig.EndOfStream().WaitAsync(Bound);
 
-        await rig.Session.SeekAsync(TimeSpan.FromSeconds(1)).AsTask().WaitAsync(Bound);
+        Assert.Equal([0], rig.EndsOfStream);
+        Assert.Equal([true], rig.EndsOfStreamInStep);
+        Assert.Equal(1, rig.Session.RunNumber);
+
+        // The next run's end of stream carries its own number.
+        await rig.Session.PlayAsync().AsTask().WaitAsync(Bound);
         (await rig.Media.Started(ItemWork.Pump, 2).WaitAsync(Bound)).Complete();
         (await rig.Media.Started(ItemWork.Graph, 2).WaitAsync(Bound)).Complete();
         await rig.EndOfStream(2).WaitAsync(Bound);
-
         Assert.Equal([0, 1], rig.EndsOfStream);
+        Assert.Empty(rig.Log.Violations);
+    }
+
+    [Fact]
+    public async Task AnEndOfStreamDuringASettle_IsRaisedWhileTheSeekStillSettles()
+    {
+        // A piece of work ends while an awaited action of a command is under way: the new run plays
+        // to its end before the seek's settle on its destination frame returns.
+        await using var rig = await ItemRuntimeRig.Create().PlayingAsync();
+        rig.Media.HoldSettle();
+        var seek = rig.Session.SeekAsync(TimeSpan.FromSeconds(1)).AsTask();
+        await rig.Media.SettleEntered.WaitAsync(Bound);
+
+        (await rig.Media.Started(ItemWork.Pump, 2).WaitAsync(Bound)).Complete();
+        (await rig.Media.Started(ItemWork.Graph, 2).WaitAsync(Bound)).Complete();
+        await rig.EndOfStream().WaitAsync(Bound);
+        rig.Media.ReleaseHeldSettle();
+        await seek.WaitAsync(Bound);
+
+        Assert.Equal([1], rig.EndsOfStream);
+        Assert.Equal(["Settle(2)", "ReleaseSettle(2)"], rig.Log.Of("Settle(", "ReleaseSettle("));
         Assert.Empty(rig.Log.Violations);
     }
 
@@ -249,7 +289,7 @@ public sealed class SubstrateSessionRigTests
         Assert.Equal(TimeSpan.Zero, rig.Clock.Position);
         Assert.Contains("BeginRun(Rebuild, floor 2, end none, hold False)", rig.Log.Calls);
 
-        rig.Session.Attach();
+        await rig.Session.AttachAsync().AsTask().WaitAsync(Bound);
         await rig.Session.PlayAsync().AsTask().WaitAsync(Bound);
 
         Assert.True(rig.Clock.IsRunning);
@@ -551,6 +591,132 @@ public sealed class SubstrateSessionRigTests
         Assert.Empty(rig.Log.Of("Pump started", "Graph started"));
     }
 
+    [Fact]
+    public async Task AFaultBeforeTheRunsStartHasEnded_EndsTheWorkItKeptFromStarting()
+    {
+        // The pump faults as it starts, and the fault stops the run before the graph is started.
+        // The graph the stopped scope will not start has ended, so nothing waits for it.
+        await using var rig = ItemRuntimeRig.Create();
+        rig.Media.FaultOnStart = ItemWork.Pump;
+        rig.Session.OnStartingWork = async work =>
+        {
+            if (work == ItemWork.Graph)
+                await rig.WorkerFault.WaitAsync(Bound);
+        };
+        await rig.OpenAsync();
+
+        await rig.Session.WarmUpAsync().AsTask().WaitAsync(Bound);
+        await rig.Session.SeekAsync(TimeSpan.FromSeconds(1)).AsTask().WaitAsync(Bound);
+        await rig.Session.DisposeAsync().AsTask().WaitAsync(Bound);
+
+        Assert.Equal([rig.Media.StartFault], rig.WorkerFaults);
+        Assert.Equal(0, rig.Log.Count("Graph started"));
+        Assert.Empty(rig.Log.Violations);
+    }
+
+    [Fact]
+    public async Task ARunThatCannotStart_FailsItsCommand_StartingNothing_AndTheNextPlayStartsOne()
+    {
+        await using var rig = await ItemRuntimeRig.Create().PlayingAsync();
+        var failure = new InvalidOperationException("The graph cannot be built.");
+        rig.Media.FailBeginRun = failure;
+
+        Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(
+            () => rig.Session.SeekAsync(TimeSpan.FromSeconds(1)).AsTask().WaitAsync(Bound)));
+        Assert.Equal(1, rig.Media.Runs);
+
+        await rig.Session.PlayAsync().AsTask().WaitAsync(Bound);
+        await rig.Media.Started(ItemWork.Graph, 2).WaitAsync(Bound);
+        Assert.Equal(2, rig.Media.Runs);
+        Assert.Empty(rig.WorkerFaults);
+        Assert.Empty(rig.Log.Violations);
+    }
+
+    [Fact]
+    public async Task AnOpenThatFails_LeavesNothingOpen_AndTheRuntimeCanOpenAgain()
+    {
+        await using var rig = ItemRuntimeRig.Create();
+        var failure = new InvalidOperationException("The source cannot be opened.");
+        rig.Opener.Fail = failure;
+
+        Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(
+            () => rig.Session.InitializeAsync(new FakeSource()).AsTask().WaitAsync(Bound)));
+        Assert.Empty(rig.Log.Of("OpenPacer", "Free("));
+        Assert.Null(rig.Session.MediaInfo);
+
+        rig.Opener.Fail = null;
+        await rig.OpenAsync();
+        Assert.Equal(2, rig.Log.Calls.Count(c => c == "Open"));
+    }
+
+    [Fact]
+    public async Task ACommandWhoseClockCannotBeRead_Fails_RatherThanWaitingForGood()
+    {
+        await using var rig = await ItemRuntimeRig.Create().PlayingAsync();
+        rig.Clock.FailPosition = true;
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => rig.Session.PlayAsync().AsTask().WaitAsync(Bound));
+
+        Assert.Contains("position cannot be read", thrown.Message);
+        rig.Clock.FailPosition = false;
+        await rig.Session.PauseAsync().AsTask().WaitAsync(Bound);
+    }
+
+    [Fact]
+    public async Task AClockCallThatThrows_FailsTheItem_AndItsCommandGoesOn()
+    {
+        await using var rig = await ItemRuntimeRig.Create().PlayingAsync();
+        rig.Clock.FailPause = true;
+
+        await rig.Session.PauseAsync().AsTask().WaitAsync(Bound);
+
+        var fault = await rig.WorkerFault.WaitAsync(Bound);
+        Assert.Contains("cannot be paused", fault.Message);
+    }
+
+    [Fact]
+    public async Task AFaultCallbackThatThrows_IsCalledOnce()
+    {
+        await using var rig = await ItemRuntimeRig.Create().PlayingAsync();
+        rig.WorkerFaultedThrows = true;
+
+        rig.Media.Latest(ItemWork.Graph).Fault(new InvalidOperationException("boom"));
+        await rig.WorkerFault.WaitAsync(Bound);
+        // The dispose is stepped after the fault, and completes once everything before it has been.
+        await rig.Session.DisposeAsync().AsTask().WaitAsync(Bound);
+
+        Assert.Single(rig.WorkerFaults);
+    }
+
+    [Fact]
+    public async Task AnAttach_CompletesOnlyOnceTheSharedClocksAreSeated()
+    {
+        // A runtime prepared ahead becomes the current item while the playlist is paused, and no
+        // play follows. Whatever reads the position once the attach completes reads where the
+        // runtime was positioned. The session is held closing its gates for a reposition when the
+        // attach is sent, so the attach waits behind it.
+        await using var rig = ItemRuntimeRig.Create(detached: true);
+        await rig.OpenAsync(start: TimeSpan.FromSeconds(2));
+        await rig.Session.WarmUpAsync().AsTask().WaitAsync(Bound);
+        rig.Media.HoldCloseGates();
+        var seek = rig.Session.SeekAsync(TimeSpan.FromSeconds(3)).AsTask();
+        await rig.Media.CloseGatesEntered.WaitAsync(Bound);
+
+        var attach = rig.Session.AttachAsync().AsTask();
+        var attachedBeforeItWasStepped = attach.IsCompleted;
+        rig.Media.ReleaseCloseGates();
+        await attach.WaitAsync(Bound);
+        var seated = rig.Clock.Position;
+        await seek.WaitAsync(Bound);
+
+        Assert.False(attachedBeforeItWasStepped, "The attach completed before the session had stepped it.");
+        Assert.NotEqual(TimeSpan.Zero, seated);
+        Assert.Equal(TimeSpan.FromSeconds(3), rig.Clock.Position);
+        Assert.False(rig.Clock.IsRunning);
+        Assert.Empty(rig.Log.Of("Audio."));
+    }
+
     // ── Dispose ─────────────────────────────────────────────────────────────
 
     [Fact]
@@ -565,6 +731,76 @@ public sealed class SubstrateSessionRigTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => open.WaitAsync(Bound));
         Assert.Empty(rig.Log.Of("OpenPacer", "Free("));
+        Assert.Empty(rig.Log.Violations);
+    }
+
+    [Fact]
+    public async Task AWorkEndsAndIsReported_EvenWhenAHookAtItsEndThrows()
+    {
+        // The seek waits for the pump's end, which is reported however the hook ends. What the
+        // hook threw leaves the pump's task, and the dispose throws it with the stop's faults.
+        await using var rig = await ItemRuntimeRig.Create().PlayingAsync();
+        rig.ThrowAtStep = Step.PumpEnded;
+        rig.DisposeThrows = true;
+
+        await rig.Session.SeekAsync(TimeSpan.FromSeconds(1)).AsTask().WaitAsync(Bound);
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => rig.Session.DisposeAsync().AsTask().WaitAsync(Bound));
+
+        Assert.Equal(1, rig.Session.RunNumber);
+        Assert.Contains(Flatten(thrown), e => e.Message == "The test hook threw at PumpEnded.");
+        Assert.Empty(rig.Log.Violations);
+    }
+
+    [Fact]
+    public async Task AClockThatCannotBeStoppedAtTheDispose_IsThrown_AndTheFreesGoOn()
+    {
+        await using var rig = await ItemRuntimeRig.Create().PlayingAsync();
+        rig.DisposeThrows = true;
+        rig.Clock.FailStop = true;
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => rig.Session.DisposeAsync().AsTask().WaitAsync(Bound));
+
+        Assert.Contains("cannot be stopped", thrown.Message);
+        Assert.Equal(Teardown, rig.Log.Of("Free("));
+        Assert.Empty(rig.WorkerFaults);
+    }
+
+    [Fact]
+    public async Task ACancellationCallbackThatThrowsAsASeekStopsTheRun_IsThrownByTheDispose()
+    {
+        // At a seek as at the dispose, what a stop's cancellation callbacks threw is the stop's own
+        // fault: no command fails for it, and the dispose throws it.
+        await using var rig = ItemRuntimeRig.Create();
+        rig.Media.ThrowOnCancel = ItemWork.Pump;
+        await rig.PlayingAsync();
+        rig.Media.ThrowOnCancel = ItemWork.None;
+        rig.DisposeThrows = true;
+
+        await rig.Session.SeekAsync(TimeSpan.FromSeconds(1)).AsTask().WaitAsync(Bound);
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => rig.Session.DisposeAsync().AsTask().WaitAsync(Bound));
+
+        Assert.Contains(rig.Media.CancelFault, Flatten(thrown));
+        Assert.Empty(rig.WorkerFaults);
+    }
+
+    private static IEnumerable<Exception> Flatten(Exception error) =>
+        error is AggregateException aggregate
+            ? aggregate.InnerExceptions.SelectMany(Flatten)
+            : [error, .. error.InnerException is { } inner ? Flatten(inner) : []];
+
+    [Fact]
+    public async Task ADeactivationThatFailsAtTheDispose_IsThrown_AndTheFreesGoOn()
+    {
+        await using var rig = await ItemRuntimeRig.Create().PlayingAsync();
+        rig.DisposeThrows = true;
+        rig.Audio.Fail = "Deactivate";
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => rig.Session.DisposeAsync().AsTask().WaitAsync(Bound));
+
+        Assert.Contains("Deactivate failed", thrown.Message);
+        Assert.Equal(Teardown, rig.Log.Of("Free("));
         Assert.Empty(rig.Log.Violations);
     }
 
@@ -607,6 +843,7 @@ public sealed class SubstrateSessionRigTests
         var waiting = rig.Next(Step.WaitingForRun);
         var seek = rig.Session.SeekAsync(TimeSpan.FromSeconds(1)).AsTask();
         await waiting.WaitAsync(Bound);
+        await rig.LetGo("the demux pump").WaitAsync(Bound); // the pump observed the stop and has ended
         time.Advance(SubstrateSession.StopWarningInterval - TimeSpan.FromMilliseconds(1));
         Assert.Empty(rig.Warnings.Lines);
         time.Advance(TimeSpan.FromMilliseconds(1));

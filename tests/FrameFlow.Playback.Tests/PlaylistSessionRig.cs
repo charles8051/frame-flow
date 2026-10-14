@@ -463,7 +463,11 @@ internal sealed class PlaylistSessionRig : IAsyncDisposable
                 _ => $"{op}({start}..{end})",
             };
 
-        public void Attach() => rig.Record($"{Name}.Attach");
+        public ValueTask AttachAsync()
+        {
+            rig.Record($"{Name}.Attach");
+            return ValueTask.CompletedTask;
+        }
 
         public async ValueTask DisposeAsync()
         {
