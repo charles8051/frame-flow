@@ -91,6 +91,11 @@ public interface IAudioSink : IAsyncDisposable
     /// after presentation. The substrate invokes this exactly once per
     /// buffer from a <c>SinkNode&lt;PcmAudioBuffer&gt;</c> body.
     /// </summary>
+    /// <remarks>
+    /// The sink owns the buffer from the call, even when the call throws or is cancelled. A caller
+    /// never disposes a buffer it has handed over, so a sink that fails disposes the buffer before
+    /// it throws.
+    /// </remarks>
     /// <param name="buffer">The buffer to present. Ownership transfers to the sink.</param>
     /// <param name="ct">Cancellation token observed during async work.</param>
     ValueTask PresentAsync(IAudioBuffer buffer, CancellationToken ct);
