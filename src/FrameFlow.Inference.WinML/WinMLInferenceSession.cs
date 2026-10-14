@@ -220,6 +220,7 @@ public sealed class WinMLInferenceSession : OrtInferenceSessionBase
         try
         {
             options.GraphOptimizationLevel = sessionOptions.OptimizationLevel;
+            AddConfigEntries(options, sessionOptions);
             options.SetEpSelectionPolicy(ortPolicy);
             return options;
         }
@@ -251,6 +252,7 @@ public sealed class WinMLInferenceSession : OrtInferenceSessionBase
         try
         {
             options.GraphOptimizationLevel = sessionOptions.OptimizationLevel;
+            AddConfigEntries(options, sessionOptions);
             options.AppendExecutionProvider(
                 OrtEnv.Instance(), [devices[0]], new Dictionary<string, string>(sessionOptions.ProviderOptions));
             return options;
@@ -260,5 +262,12 @@ public sealed class WinMLInferenceSession : OrtInferenceSessionBase
             options.Dispose();
             throw;
         }
+    }
+
+    /// <summary>The caller's session entries, added before the provider is.</summary>
+    private static void AddConfigEntries(SessionOptions options, WinMLInferenceSessionOptions sessionOptions)
+    {
+        foreach (var (key, value) in sessionOptions.SessionConfigEntries)
+            options.AddSessionConfigEntry(key, value);
     }
 }

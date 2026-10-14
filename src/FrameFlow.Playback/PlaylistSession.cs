@@ -100,12 +100,10 @@ internal sealed class PlaylistSession : IPlaybackSession
     // Inputs posted and not yet handled.
     private int _inFlight;
     private int _nextCommand;
-    private int _disposing;
 
-    // Completed when the first DisposeAsync has finished, for any later call to wait on.
-    private readonly TaskCompletionSource _disposed = new(
-        TaskCreationOptions.RunContinuationsAsynchronously
-    );
+    // Runs the teardown once and has every other dispose wait for it and end as it did (ADR-0086,
+    // decision 3). HasBegun is the disposing flag, written with a full fence as the first begins.
+    private readonly DisposeOnce _dispose = new();
 
     /// <param name="coordinator">The queue this session plays, shared with the player.</param>
     /// <param name="clock">The controller's position clock, rebased at each item.</param>
@@ -219,68 +217,60 @@ internal sealed class PlaylistSession : IPlaybackSession
 
     /// <summary>
     /// Detaches from the coordinator, cancels the item operation in flight, and completes once the
-    /// item is disposed and the reader has handled every input.
+    /// item is disposed and the reader has handled every input. A call made while another is under
+    /// way, or after it, waits for it and ends as it did (ADR-0086, decision 3).
     /// </summary>
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync() =>
+        _dispose.TryBegin() ? _dispose.EndAsync(TearDownAsync()) : _dispose.WaitAsync();
+
+    /// <summary>The teardown the first <see cref="DisposeAsync"/> runs.</summary>
+    private async ValueTask TearDownAsync()
     {
-        if (Interlocked.Exchange(ref _disposing, 1) != 0)
-        {
-            await _disposed.Task.ConfigureAwait(false);
-            return;
-        }
+        // A skip or jump requested from here on waits on the coordinator for the next session.
+        if (Volatile.Read(ref _sessionToken) is { } token)
+            _coordinator.DetachSession(token);
+
+        // The token is cancelled before this returns. Its callbacks run on the thread pool, so
+        // neither the reader's continuation nor a callback that throws runs on this thread.
+        var cancelling = _disposal.CancelAsync();
+        Post(new PlaylistSessionInput.Dispose());
+        _inputs.Writer.TryComplete();
 
         try
         {
-            // A skip or jump requested from here on waits on the coordinator for the next session.
-            if (Volatile.Read(ref _sessionToken) is { } token)
-                _coordinator.DetachSession(token);
-
-            // The token is cancelled before this returns. Its callbacks run on the thread pool, so
-            // neither the reader's continuation nor a callback that throws runs on this thread.
-            var cancelling = _disposal.CancelAsync();
-            Post(new PlaylistSessionInput.Dispose());
-            _inputs.Writer.TryComplete();
-
-            try
-            {
-                await cancelling.ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                LogDisposalCancelFailed(_logger, ex);
-            }
-
-            await _reader.ConfigureAwait(false);
-            _queueChanges?.Dispose();
-
-            // The reader discards a prepared runtime when it handles Dispose. The disposals it
-            // started are awaited here, after it has exited, so nothing else touches the list.
-            DiscardPrepared();
-            try
-            {
-                await Task.WhenAll(_discarding).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                LogItemDisposeFailed(_logger, ex);
-            }
-
-            // The reader disposes the runtime it holds when it handles Dispose. One is left only if
-            // the reader stopped before that. The reader has exited, so nothing else reads the field.
-            Volatile.Write(ref _published, null);
-            if (_runtime is not null)
-            {
-                await _runtime.DisposeAsync().ConfigureAwait(false);
-                _runtime = null;
-            }
-            _disposal.Dispose();
-            // The sinks, the clock, and the coordinator are owned by the caller — not disposed here
-            // (ADR-0044).
+            await cancelling.ConfigureAwait(false);
         }
-        finally
+        catch (Exception ex)
         {
-            _disposed.TrySetResult();
+            LogDisposalCancelFailed(_logger, ex);
         }
+
+        await _reader.ConfigureAwait(false);
+        _queueChanges?.Dispose();
+
+        // The reader discards a prepared runtime when it handles Dispose. The disposals it
+        // started are awaited here, after it has exited, so nothing else touches the list.
+        DiscardPrepared();
+        try
+        {
+            await Task.WhenAll(_discarding).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LogItemDisposeFailed(_logger, ex);
+        }
+
+        // The reader disposes the runtime it holds when it handles Dispose. One is left only if
+        // the reader stopped before that. The reader has exited, so nothing else reads the field.
+        Volatile.Write(ref _published, null);
+        if (_runtime is not null)
+        {
+            await _runtime.DisposeAsync().ConfigureAwait(false);
+            _runtime = null;
+        }
+        _disposal.Dispose();
+        // The sinks, the clock, and the coordinator are owned by the caller — not disposed here
+        // (ADR-0044).
     }
 
     /// <summary>
@@ -361,7 +351,7 @@ internal sealed class PlaylistSession : IPlaybackSession
     // Reads what the input needs now, and delivers it through the scheduler.
     private void Deliver(PlaylistSessionInput input)
     {
-        if (Volatile.Read(ref _disposing) != 0)
+        if (_dispose.HasBegun)
             return;
         _scheduler.Schedule(() =>
         {
@@ -512,7 +502,7 @@ internal sealed class PlaylistSession : IPlaybackSession
 
     private PlaylistSessionStep Step(PlaylistSessionInput input)
     {
-        var context = new PlaylistStepContext(Disposing: Volatile.Read(ref _disposing) != 0);
+        var context = new PlaylistStepContext(Disposing: _dispose.HasBegun);
         var state = _state;
         var (next, step) = _coordinator.Update(queue =>
         {
@@ -559,7 +549,7 @@ internal sealed class PlaylistSession : IPlaybackSession
         switch (action)
         {
             case PlaylistSessionAction.AttachToCoordinator:
-                if (Volatile.Read(ref _disposing) != 0)
+                if (_dispose.HasBegun)
                     break;
                 var attached = _coordinator.AttachSession(OnSkipRequested, OnJumpRequested, PrepareAsync);
                 _queueChanges ??= _coordinator.PlaylistChanged.Subscribe(new QueueChangedObserver(this));
@@ -567,7 +557,7 @@ internal sealed class PlaylistSession : IPlaybackSession
                 // sees the other: disposal may have started between the check and the attach, and
                 // found nothing to detach.
                 Interlocked.Exchange(ref _sessionToken, attached);
-                if (Volatile.Read(ref _disposing) != 0)
+                if (_dispose.HasBegun)
                     _coordinator.DetachSession(attached);
                 break;
 
@@ -993,11 +983,14 @@ internal sealed class PlaylistSession : IPlaybackSession
     {
         try
         {
-            await prepared.DisposeRuntimeAsync().ConfigureAwait(false);
+            await prepared
+                .DisposeRuntimeAsync(ex => LogItemDisposeFailed(_logger, ex))
+                .ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            LogItemDisposeFailed(_logger, ex);
+            // Logged by the call that disposed the runtime: every caller sees the failure, and it
+            // is logged once.
         }
     }
 
@@ -1071,8 +1064,7 @@ internal sealed class PlaylistSession : IPlaybackSession
         // The fault its run raised while it was detached, which makes it unusable.
         private Exception? _fault;
 
-        private int _disposing;
-        private readonly TaskCompletionSource _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly DisposeOnce _dispose = new();
 
         // Completes when its preparation has finished, and a failed runtime has been released.
         public Task<PlaylistSessionInput.Outcome> Ready => _ready.Task;
@@ -1108,23 +1100,23 @@ internal sealed class PlaylistSession : IPlaybackSession
             }
         }
 
-        // Disposes the runtime once, however many ask. A later caller waits for the first.
-        public async Task DisposeRuntimeAsync()
-        {
-            if (Interlocked.Exchange(ref _disposing, 1) != 0)
-            {
-                await _disposed.Task.ConfigureAwait(false);
-                return;
-            }
-            try
-            {
-                await Runtime.DisposeAsync().ConfigureAwait(false);
-            }
-            finally
-            {
-                _disposed.TrySetResult();
-            }
-        }
+        // Disposes the runtime once, however many ask: a later caller waits for the first and
+        // ends as it did. The call that disposes hands a failure to report, so it is reported once.
+        public Task DisposeRuntimeAsync(Action<Exception> report) =>
+            _dispose
+                .RunAsync(async () =>
+                {
+                    try
+                    {
+                        await Runtime.DisposeAsync().ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        report(ex);
+                        throw;
+                    }
+                })
+                .AsTask();
 
         // Completes command when the preparation settles, or now if it has.
         public void Await(int command, PlaylistSession session)

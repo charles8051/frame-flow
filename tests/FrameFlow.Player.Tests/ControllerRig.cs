@@ -14,7 +14,14 @@ namespace FrameFlow.Player.Tests;
 /// </remarks>
 internal sealed class ControllerRig : IAsyncDisposable
 {
-    public ControllerRig(RepeatMode initialRepeatMode = RepeatMode.Off)
+    /// <param name="initialRepeatMode">The mode the controller and the queue start in.</param>
+    /// <param name="sinkClaims">The claims the controller holds and releases as its dispose ends.</param>
+    /// <param name="playerLogger">What the player logs to; null discards it.</param>
+    public ControllerRig(
+        RepeatMode initialRepeatMode = RepeatMode.Off,
+        IDisposable? sinkClaims = null,
+        Microsoft.Extensions.Logging.ILogger? playerLogger = null
+    )
     {
         Factory = new SessionFactory(Session);
         Controller = new PlaybackControllerCore(
@@ -24,13 +31,14 @@ internal sealed class ControllerRig : IAsyncDisposable
             Microsoft.Extensions.Options.Options.Create(
                 new FrameFlowPlaybackOptions { InitialRepeatMode = initialRepeatMode }
             ),
-            new FrozenTime()
+            new FrozenTime(),
+            sinkClaims
         );
         Player = new PlaylistMediaPlayerCore(
             Controller,
             new PlaylistCoordinator([], initialRepeatMode),
             audioSink: null,
-            NullLogger.Instance
+            playerLogger ?? NullLogger.Instance
         );
     }
 
@@ -62,7 +70,24 @@ internal sealed class ControllerRig : IAsyncDisposable
     /// <summary>A session that opens whatever it is given, unless told to fail.</summary>
     internal sealed class FakeSession : IPlaybackSession
     {
+        private readonly TaskCompletionSource _disposeEntered = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        private int _disposals;
+
         public Exception? InitializeThrows { get; set; }
+
+        /// <summary>Holds the dispose until this completes, when set.</summary>
+        public Task? DisposeHeldUntil { get; set; }
+
+        /// <summary>What the dispose throws as it ends, when set.</summary>
+        public Exception? DisposeThrows { get; set; }
+
+        /// <summary>Completes once the dispose has been called.</summary>
+        public Task DisposeEntered => _disposeEntered.Task;
+
+        /// <summary>How many times the dispose has been called.</summary>
+        public int Disposals => Volatile.Read(ref _disposals);
 
         public MediaInfo? MediaInfo { get; } =
             new(ContainerName: "fake", Duration: TimeSpan.FromSeconds(10), VideoStreams: [], AudioStreams: []);
@@ -81,7 +106,21 @@ internal sealed class ControllerRig : IAsyncDisposable
         public ValueTask SeekAsync(TimeSpan position, CancellationToken cancellationToken = default) =>
             ValueTask.CompletedTask;
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref _disposals);
+            _disposeEntered.TrySetResult();
+            return DisposeHeldUntil is { } held ? new ValueTask(EndAfterAsync(held)) : End();
+        }
+
+        private ValueTask End() =>
+            DisposeThrows is { } ex ? ValueTask.FromException(ex) : ValueTask.CompletedTask;
+
+        private async Task EndAfterAsync(Task held)
+        {
+            await held;
+            await End();
+        }
     }
 
     internal sealed class FakeSource : IMediaSource

@@ -5,8 +5,8 @@ using Microsoft.ML.OnnxRuntime;
 namespace FrameFlow.Inference.WinML.Tests;
 
 /// <summary>
-/// What a <see cref="WinMLInferenceSessionOptions"/> sets on a Windows ML session (#481): the graph
-/// optimization level, and a named provider's own options.
+/// What a <see cref="WinMLInferenceSessionOptions"/> sets on a Windows ML session: the graph
+/// optimization level and a named provider's own options (#481), and session config entries (#716).
 /// </summary>
 public sealed class WinMLOptionsTests
 {
@@ -134,6 +134,112 @@ public sealed class WinMLOptionsTests
             if (Directory.Exists(cache))
                 Directory.Delete(cache, recursive: true);
         }
+    }
+
+    [Fact]
+    public void ByDefault_ThereAreNoSessionConfigEntries() =>
+        Assert.Empty(new WinMLInferenceSessionOptions().SessionConfigEntries);
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public void ASessionConfigEntryWithNoKey_IsRefused(string key) =>
+        Assert.Throws<ArgumentException>(
+            () => new WinMLInferenceSessionOptions { SessionConfigEntries = new Dictionary<string, string> { [key] = "1" } });
+
+    [Fact]
+    public void ASessionConfigEntryWithNoValue_IsRefused() =>
+        Assert.Throws<ArgumentException>(
+            () => new WinMLInferenceSessionOptions { SessionConfigEntries = new Dictionary<string, string> { ["a"] = null! } });
+
+    [Fact]
+    public void TheSessionConfigEntries_AreTheOptionsOwnCopy()
+    {
+        var entries = new Dictionary<string, string> { ["a"] = "1" };
+        var options = new WinMLInferenceSessionOptions { SessionConfigEntries = entries };
+
+        entries["a"] = "2";
+        entries["b"] = "3";
+
+        Assert.Equal(new Dictionary<string, string> { ["a"] = "1" }, options.SessionConfigEntries);
+    }
+
+    /// <summary>
+    /// ONNX Runtime accepts any key, so an entry is shown to arrive by one with an effect:
+    /// <c>session.load_model_format = ORT</c> reads the ONNX bytes as the other format, and the
+    /// load fails. A device policy takes entries as well as a named provider does.
+    /// </summary>
+    [WindowsFact]
+    public void AnEntry_ReachesTheSession_WhicheverWayItIsOpened()
+    {
+        var options = new WinMLInferenceSessionOptions
+        {
+            SessionConfigEntries = new Dictionary<string, string> { ["session.load_model_format"] = "ORT" },
+        };
+
+        Assert.Throws<OnnxRuntimeException>(
+            () => new WinMLInferenceSession(OnnxModel.Negate(Shape), options, WinMLDevicePolicy.PreferCpu));
+        Assert.Throws<OnnxRuntimeException>(
+            () => WinMLInferenceSession.OnProvider(OnnxModel.Negate(Shape), options, "CPUExecutionProvider"));
+    }
+
+    /// <summary>
+    /// The plugin TensorRT-RTX provider refuses EP-context settings as provider options; as session
+    /// entries, they have it write its compiled engine to a model a later session opens instead.
+    /// </summary>
+    [RequiresTensorRtRtxFact]
+    public async Task TensorRtRtx_WritesAnEpContextModel_ThatALaterSessionRuns()
+    {
+        var provider = await TensorRtRtx();
+        string dir = Path.Combine(Path.GetTempPath(), $"frameflow-ep-context-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        string context = Path.Combine(dir, "negate_ctx.onnx");
+        var options = new WinMLInferenceSessionOptions
+        {
+            SessionConfigEntries = new Dictionary<string, string>
+            {
+                ["ep.context_enable"] = "1",
+                ["ep.context_file_path"] = context,
+                ["ep.context_embed_mode"] = "1",
+            },
+        };
+        try
+        {
+            using (var session = WinMLInferenceSession.OnProvider(OnnxModel.Negate(Shape), options, provider.Name, provider.AdapterLuid))
+                AssertNegates(session);
+
+            Assert.True(File.Exists(context), $"No EP-context model at {context}.");
+
+            using (var session = WinMLInferenceSession.OnProvider(context, provider.Name, provider.AdapterLuid))
+                AssertNegates(session);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// TensorRT-RTX has no string tensors, so it takes no node of a float-to-string cast. By
+    /// default ONNX Runtime runs the graph on the CPU and the session opens; with
+    /// <c>session.disable_cpu_ep_fallback</c> the load fails instead.
+    /// </summary>
+    [RequiresTensorRtRtxFact]
+    public async Task TensorRtRtx_FallsBackToTheCpuUnlessAnEntryForbidsIt()
+    {
+        var provider = await TensorRtRtx();
+        var model = OnnxModel.Cast(OnnxModel.Float, OnnxModel.String, 1, 4);
+
+        using (WinMLInferenceSession.OnProvider(model, provider.Name, provider.AdapterLuid))
+        {
+        }
+
+        var strict = new WinMLInferenceSessionOptions
+        {
+            SessionConfigEntries = new Dictionary<string, string> { ["session.disable_cpu_ep_fallback"] = "1" },
+        };
+        Assert.Throws<OnnxRuntimeException>(
+            () => WinMLInferenceSession.OnProvider(model, strict, provider.Name, provider.AdapterLuid));
     }
 
     private static async Task<WinMLProvider> TensorRtRtx()

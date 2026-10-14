@@ -1011,7 +1011,7 @@ it, where it used to return at once.
   in a configurator, that ignores the token it is given. A dispose during that call waits until it
   returns.
 - A source whose read blocks, such as a network stream that has stalled. The dispose's
-  cancellation now interrupts the demuxer's read (entry 27, #709), so the dispose returns.
+  cancellation now interrupts the demuxer's read (entry 28, #709), so the dispose returns.
 
 **What to write instead.**
 - To stop a pass early, dispose it, or cancel the token given to `RunToCompletionAsync`. Either ends
@@ -1124,7 +1124,7 @@ the picture stayed frozen until the next seek, and a first play launched a run b
   is in progress now waits until the call returns, where it used to go ahead beside it, and a
   dispose waits too. A scrub stalls for that long.
 - A source whose read blocks, such as a stalled network stream. The run's cancellation now
-  interrupts the demuxer's read (entry 27, #709), so the next seek, or the dispose, goes on.
+  interrupts the demuxer's read (entry 28, #709), so the next seek, or the dispose, goes on.
 - Code that pauses while a seek is in progress and then plays. The play resumes where the clock
   stood when the seek was cancelled, not at the seek's target, which the cancelled seek never took.
 
@@ -1136,7 +1136,65 @@ seek to it again once the pause has completed.
 beside it raced native state that neither the demux session nor the audio decoder guards, and the
 dispose freed that state while the run still used it.
 
-### 27. A cancellation reaches a demuxer call that waits on a stalled source
+### 27. A second dispose waits for the first and ends as it did
+
+**A change in behaviour, not a compile error.**
+
+A `DisposeAsync` on a player or a controller made while another was under way returned at once,
+before the first had disposed the session and released the claims on the sinks. A caller that
+awaited it and then built the next player against the same sink found the sink still claimed, and
+the player disposed its queue's coordinator while the first dispose was still tearing the session
+down (#708). Two `OpenAlAudioSink.DisposeAsync` calls that overlapped could throw
+`ObjectDisposedException`, and a second `CompositionInteropVideoView.DisposeAsync` returned a
+completed task while the first one's teardown was still running.
+
+Now the first `DisposeAsync` on a player, a controller, `OpenAlAudioSink` or
+`CompositionInteropVideoView` tears down, and every other call, made while it runs or after, waits
+for it and ends as it did: it returns once the first has finished, and throws what the first threw.
+Nothing is torn down twice. A player's video pacer does the same, and when its dispose has waited
+five seconds for a call into the video sink or the clock that has not returned, it logs once, at
+Warning, naming the sink.
+
+**Who hits this.**
+- Code that disposes the same object from two places, such as a window's close handler and a host's
+  shutdown. The second dispose now takes as long as the first.
+- Code that disposes again after a dispose that threw, such as an `await using` around a controller
+  already disposed by hand. The second dispose throws the same exception, where it used to return. A
+  player's dispose does not throw: it logs a failure of its controller and goes on.
+- Code that disposes a player from inside a call the player makes, such as a video sink's
+  `PresentAsync`, while another dispose of it is under way. The first waits for that call to return,
+  and the call now waits for the first, so neither ends. A call made there with no other dispose
+  under way already waited for itself.
+- An implementer of `IAudioSink` or `IVideoSink`. Their disposal contract said a second
+  `DisposeAsync` is a no-op that never throws. It now says only the first call tears down, a later
+  one touches nothing, and a later one may wait for the first and end as it did, so it throws only
+  when the first threw. A sink whose second call returns at once still meets it; code that disposes
+  a sink twice and relied on the second never throwing should expect the first's exception.
+
+**What to write instead.**
+- Dispose from one place, or let every caller await the dispose. A caller that cannot wait long
+  bounds its own wait, and the dispose goes on without it:
+
+```csharp
+try
+{
+    await player.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+}
+catch (TimeoutException)
+{
+    // The player still holds its sinks; it lets them go once its work has ended.
+}
+```
+
+- Dispose once, or expect a second dispose to throw what the first did.
+- To stop a player from inside a sink's call, signal from there and dispose from outside it.
+
+**Why.** A second dispose that returned at once told its caller the object was gone while it was
+not: the claims were still held, so a build failed although its caller had awaited a dispose, as
+the claim error says to, and the coordinator was disposed under the first dispose. Every owner of
+work now disposes one way (ADR-0086, decision 3).
+
+### 28. A cancellation reaches a demuxer call that waits on a stalled source
 
 **A change in behaviour, not a compile error.**
 

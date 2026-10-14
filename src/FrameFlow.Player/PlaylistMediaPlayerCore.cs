@@ -313,7 +313,7 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
     // Error is nullable, and the generic caller had to suppress that with a `!`.
     private PlaybackError? RefusalWhileUnusable(string what)
     {
-        if (Volatile.Read(ref _disposed) != 0)
+        if (_dispose.HasBegun)
             return new PlaybackError(
                 ErrorCategory.InvalidOperation,
                 $"Cannot {what}: the player is disposed."
@@ -328,11 +328,20 @@ internal sealed class PlaylistMediaPlayerCore : IMediaPlayer
 
     // ── Lifetime ────────────────────────────────────────────────────────────
 
-    private int _disposed;
+    // Runs the teardown once and has every other dispose wait for it (ADR-0086, decision 3).
+    private readonly DisposeOnce _dispose = new();
 
-    public async ValueTask DisposeAsync()
+    /// <summary>
+    /// Disposes the controller, which releases the claims on the sinks once its session is gone,
+    /// and then the coordinator. The first call tears down. A call made while it runs, or after,
+    /// waits for it, so it returns only once the claims are released and the coordinator is
+    /// disposed, and the coordinator is disposed once, after the controller (#708).
+    /// </summary>
+    public ValueTask DisposeAsync() => _dispose.RunAsync(TearDownAsync);
+
+    /// <summary>The teardown the first <see cref="DisposeAsync"/> runs.</summary>
+    private async ValueTask TearDownAsync()
     {
-        Interlocked.Exchange(ref _disposed, 1);
         try
         {
             await _controller.DisposeAsync().ConfigureAwait(false);
