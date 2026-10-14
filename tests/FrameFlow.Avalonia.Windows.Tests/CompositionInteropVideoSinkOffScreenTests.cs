@@ -118,6 +118,34 @@ public sealed class CompositionInteropVideoSinkOffScreenTests
         Assert.Equal(0, sink.FramesSuperseded);
     }
 
+    [Fact]
+    public void StoppingPresentation_KeepsTheFrameTheViewPresentedLast_ForAClaimant()
+    {
+        var sink = new CompositionInteropVideoSink();
+        var lease = ((IClaimableSink)sink).TryClaim("a paused player")!;
+        var shown = new CountedFrame();
+
+        sink.StopPresenting(shown);
+
+        Assert.Equal(1, shown.References);
+        Assert.Same(shown, sink.TakePendingFrame());
+        Assert.Equal(0, sink.FramesAccepted); // accepted once already, when it first arrived
+        shown.Dispose();
+        lease.Dispose();
+    }
+
+    [Fact]
+    public void StoppingPresentation_WithNoClaim_DisposesTheFrameTheViewPresentedLast()
+    {
+        var sink = new CompositionInteropVideoSink();
+        var shown = new CountedFrame();
+
+        sink.StopPresenting(shown);
+
+        Assert.Equal(0, shown.References);
+        Assert.False(sink.HasPendingFrame);
+    }
+
     /// <summary>A frame that counts its references, so a test sees the sink release it.</summary>
     private sealed class CountedFrame : IVideoFrame
     {

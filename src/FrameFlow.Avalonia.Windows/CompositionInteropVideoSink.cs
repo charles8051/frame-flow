@@ -37,8 +37,9 @@ namespace FrameFlow.Avalonia.Windows;
 /// <b>While no view presents it</b> (ADR-0085, decisions 2 and 3): before the view's first attach,
 /// after a detach, and once a view has let it go, the sink keeps only its newest frame while a
 /// player holds its claim, and disposes the one that frame replaces. With no claim it keeps nothing
-/// and disposes each frame it is given, and releasing the claim disposes the frame it kept. Nothing
-/// is presented and <see cref="FramePresented"/> is not raised. Those frames are counted in
+/// and disposes each frame it is given, and releasing the claim disposes the frame it kept. The frame
+/// the view presented last before it stopped counts as that newest frame unless a newer one has come.
+/// Nothing is presented and <see cref="FramePresented"/> is not raised. Those frames are counted in
 /// <see cref="FramesDiscardedOffScreen"/>, not as drops. A sink no view has taken up presents as it
 /// always has.
 /// </para>
@@ -110,6 +111,17 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     /// presented, so one no view has taken up works as it always has.
     /// </summary>
     internal void SetPresented(bool presented) => _slot.SetOnScreen(presented);
+
+    /// <summary>
+    /// The view stopped presenting this sink and keeps it: as <c>SetPresented(false)</c>, and the
+    /// sink takes back the frame the view presented last. It keeps that frame as its newest while a
+    /// player holds its claim and no newer frame is waiting, so the view presents it again when it
+    /// comes back, and disposes it otherwise (ADR-0085, decision 2).
+    /// </summary>
+    /// <param name="lastPresented">
+    /// The frame the view presented last, or <see langword="null"/>. Ownership transfers to the sink.
+    /// </param>
+    internal void StopPresenting(IVideoFrame? lastPresented) => _slot.SetOffScreen(lastPresented);
 
     /// <summary>
     /// Diagnostics source for <see cref="GetDiagnostics"/>. Set by the owning
@@ -186,8 +198,11 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
 
     /// <inheritdoc/>
     /// <remarks>
-    /// The frame slot, the frame the view is presenting on the UI thread, and for D3D12VA the frames
-    /// of the converter's outstanding draws, which it holds until the GPU has read them.
+    /// The frame slot, the frame the view is presenting on the UI thread, and two more: the frame the
+    /// view presented last, which it holds until it has presented the next one, so that a paused
+    /// picture can be presented again after a trip out of the visual tree, and, for D3D12VA, the
+    /// frames of the converter's outstanding draws, which it holds until the GPU has read them and
+    /// of which the frame presented last is one.
     /// </remarks>
     public int? MaxHeldFrames => 2 + D3D12YuvSharedConverter.InFlight;
 

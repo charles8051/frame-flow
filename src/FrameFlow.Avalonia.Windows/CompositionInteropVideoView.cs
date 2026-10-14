@@ -50,9 +50,11 @@ namespace FrameFlow.Avalonia.Windows;
 /// Leaving the tree stops presenting: the compositor side goes and the stall watchdog stops, and
 /// the sink stays, so a player built with it keeps working. While the view does not present, before
 /// its first attach as after a detach, the sink keeps only its newest frame, and only while a player
-/// holds its claim (see <see cref="CompositionInteropVideoSink"/>). Rejoining the tree sets the
-/// surface up again, presents that frame first and goes on with the same sink. Only
-/// <see cref="DisposeAsync"/> is final, and only it disposes the view's own sink.
+/// holds its claim (see <see cref="CompositionInteropVideoSink"/>). The view holds the frame it
+/// presented last and hands it back to the sink when it stops presenting, so that frame is the
+/// newest unless the player sends another. Rejoining the tree sets the surface up again, presents
+/// that frame first, so a paused or ended picture is back at once, and goes on with the same sink.
+/// Only <see cref="DisposeAsync"/> is final, and only it disposes the view's own sink.
 /// </para>
 /// <para>
 /// <b>Teardown ordering (investigation 2026-06-12).</b> The producer's shared keyed-mutex
@@ -174,6 +176,12 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     private bool _presentPosted;
     private int _presentsPosted;
 
+    // The frame the view presented last, held until the next present has reached the compositor,
+    // so that the view can hand it back to its sink when it stops presenting and present it again
+    // when it comes back: a paused, ended or single-frame item sends no other (ADR-0085, decision
+    // 2). UI thread only. Never outlives the view's hold on the sink it came from.
+    private IVideoFrame? _lastPresented;
+
     // Completes once the D3D12 converter the last teardown took has been disposed, or at once when
     // it took none. UI thread only. A new attachment presents nothing until then (ADR-0085,
     // decision 2): that converter holds decoder frames for its draws until it is disposed.
@@ -231,7 +239,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// <para>
     /// The assignment first claims the outgoing sink, as a player does, so that no player can be
     /// built against it while it is replaced, and releases the claim once it is disposed or let go.
-    /// A caller's sink the view lets go of keeps a frame only for a player that holds its claim.
+    /// The frame the view presented from the outgoing sink is released with it. A caller's sink the
+    /// view lets go of keeps a frame only for a player that holds its claim.
     /// </para>
     /// </remarks>
     /// <exception cref="InvalidOperationException">
@@ -529,10 +538,15 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             }
 
             // From here the sink keeps a frame only for a player that holds its claim, and lets go
-            // of the one it holds now when no player does.
-            Run(() => _sink!.SetPresented(false), ref faults);
+            // of the one it holds now when no player does. A sink the view keeps takes back the
+            // frame presented last, so the picture comes back with the view. One the view lets go
+            // of in this same transition takes nothing: that frame goes with the view's hold.
+            var keepsSink = (work & (SurfaceWork.DisposeTarget | SurfaceWork.ForgetTarget)) == 0;
+            Run(() => _sink!.StopPresenting(keepsSink ? TakeLastPresented() : null), ref faults);
         }
 
+        if (work.HasFlag(SurfaceWork.DisposeTarget) || work.HasFlag(SurfaceWork.ForgetTarget))
+            Run(ReleaseLastPresented, ref faults);
         if (work.HasFlag(SurfaceWork.DisposeTarget))
             Run(DisposeSink, ref faults);
         if (work.HasFlag(SurfaceWork.ForgetTarget))
@@ -626,9 +640,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
 
         SetupComposition();
 
-        // A frame the sink kept while the view did not present is the newest the player sent,
-        // and no later arrival is sure to come for it: the player may have paused or ended since.
-        // The interop's readiness sweeps again.
+        // A frame the sink kept while the view did not present, the one presented last or a newer
+        // one, is the one meant to be on screen, and no later arrival is sure to come for it: the
+        // player may be paused or ended. The interop's readiness sweeps again.
         SchedulePresentIfPending();
     }
 
@@ -645,6 +659,29 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         WireDiagnostics(sink);
         sink.SetPresented(_lifecycle.Presents);
     }
+
+    /// <summary>
+    /// Holds <paramref name="frame"/>, which the view has just presented, as the frame it presented
+    /// last, and releases the one it held before (ADR-0085, decision 2). UI thread. The present calls
+    /// it once the frame's hand-off has reached the compositor; tests call it in place of a present,
+    /// which the headless backend cannot make.
+    /// </summary>
+    internal void KeepPresented(IVideoFrame frame)
+    {
+        var previous = _lastPresented;
+        _lastPresented = frame;
+        if (previous is not null && !ReferenceEquals(previous, frame))
+            previous.Dispose();
+    }
+
+    private IVideoFrame? TakeLastPresented()
+    {
+        var frame = _lastPresented;
+        _lastPresented = null;
+        return frame;
+    }
+
+    private void ReleaseLastPresented() => TakeLastPresented()?.Dispose();
 
     private void DisposeSink()
     {
@@ -1189,8 +1226,12 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     }
 
     // ── Per-frame present (UI thread, from the render tick) ────────
+    // Takes ownership of the frame. One whose hand-off reached the compositor is kept as the frame
+    // presented last, and releases the one kept before; one that was dropped, failed or could not be
+    // presented is disposed, and the frame kept before stays.
     private void Present(IVideoFrame frame)
     {
+        var presented = false;
         try
         {
             if (_interop is null || _surface is null)
@@ -1271,7 +1312,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                         break;
                 }
                 EnsureConverterOutput(frame, texture, device);
-                PresentRing(
+                presented = PresentRing(
                     PresentSource.D3D11,
                     frame.Width,
                     frame.Height,
@@ -1286,7 +1327,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             else if (frame is GpuVideoFrame d3d12 && d3d12.TryGetD3D12Texture(out var d3d12Texture, out _, out _, out _))
             {
                 ReportUnsupportedFrames();
-                PresentD3D12(d3d12, d3d12Texture);
+                presented = PresentD3D12(d3d12, d3d12Texture);
             }
             else if (frame.Format == FrameFlow.Media.PixelFormat.Bgra32 && frame.AsCpu() is { } cpu)
             {
@@ -1295,7 +1336,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                     DropCpuUploader();
                 ReportUnsupportedFrames();
                 _cpuUploader ??= new D3D11BgraUploader(frame.Width, frame.Height, _logger);
-                PresentRing(
+                presented = PresentRing(
                     PresentSource.Cpu,
                     frame.Width,
                     frame.Height,
@@ -1331,7 +1372,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         }
         finally
         {
-            frame.Dispose();
+            if (presented)
+                KeepPresented(frame);
+            else
+                frame.Dispose();
         }
     }
 
@@ -1436,7 +1480,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// decoders on one adapter share a device unless it came from <c>ID3D12DeviceFactory</c>, so a
     /// change is rare enough that an in-place rebind is not worth its code.
     /// </summary>
-    private void PresentD3D12(GpuVideoFrame frame, nint texture)
+    private bool PresentD3D12(GpuVideoFrame frame, nint texture)
     {
         if (_gpuConverter is not null)
             DropGpuConverter(GpuConverterDropReason.BackendChange);
@@ -1463,7 +1507,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         }
 
         var converter = _d3d12Converter ??= new D3D12YuvSharedConverter(texture, frame.Width, frame.Height, _logger);
-        PresentRing(
+        return PresentRing(
             PresentSource.D3D12,
             frame.Width,
             frame.Height,
@@ -1524,7 +1568,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// vs CPU source — both produce the same shared keyed-mutex BGRA textures, so the
     /// present + sequencing logic is identical. <paramref name="fill"/> returns
     /// <see langword="false"/> on GPU device-loss, in which case this present is skipped and
-    /// the source is rebuilt on the next frame (step 6).
+    /// the source is rebuilt on the next frame (step 6). Returns whether the frame's hand-off was
+    /// posted to the compositor: <see langword="false"/> when it was dropped or skipped.
     /// </summary>
     /// <remarks>
     /// The per-frame DECISION — which free slot, source-flip re-import, size-change layout update,
@@ -1533,7 +1578,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// keyed-mutex hand-off, the <see cref="Stopwatch.GetTimestamp"/> Blt stamp, import, and the
     /// present-task bookkeeping.
     /// </remarks>
-    private void PresentRing(
+    private bool PresentRing(
         PresentSource source,
         int width,
         int height,
@@ -1580,7 +1625,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         if (plan.Drop)
         {
             Interlocked.Increment(ref _framesDropped);
-            return;
+            return false;
         }
         var idx = plan.SlotIndex;
 
@@ -1592,7 +1637,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         // Device-loss observed mid-fill: skip this present. The source has flagged itself
         // IsDeviceLost; the next Present() drops + rebuilds it (and its imported ring).
         if (!fill(idx))
-            return;
+            return false;
 
         _imported[idx] ??= _interop!.ImportImage(
             new PlatformHandle(
@@ -1651,6 +1696,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         Volatile.Write(ref _lastPresentedPtsTicks, pts.Ticks);
         Volatile.Write(ref _lastPresentedAtUtcTicks, DateTime.UtcNow.Ticks);
         LogProgress(source);
+        return true;
     }
 
     /// <summary>
@@ -1737,8 +1783,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// <summary>
     /// Tears the view down for good: the compositor side, if the view is presenting, and its sink.
     /// The view's own sink is disposed, even while a player still feeds it, which then has every
-    /// frame disposed on arrival; a caller's sink is let go, not disposed. The view presents
-    /// nothing afterwards, and <see cref="Sink"/> reads <see langword="null"/>.
+    /// frame disposed on arrival; a caller's sink is let go, not disposed. The frame the view
+    /// presented last is released with it. The view presents nothing afterwards, and
+    /// <see cref="Sink"/> reads <see langword="null"/>.
     /// <see cref="EnsureSink"/>, <see cref="Initialize"/>, <see cref="IVideoSurface.AttachSink"/>
     /// and assigning a sink then throw <see cref="ObjectDisposedException"/>. Call on the UI
     /// thread.

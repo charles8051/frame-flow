@@ -43,8 +43,10 @@ namespace FrameFlow.Media;
 /// screen, the slot keeps only its newest frame while it is told to keep one, which an in-box sink
 /// does while a player holds its claim, and otherwise disposes each frame it is given. A frame
 /// replaced or disposed off screen is counted as discarded off screen, not as a drop, so a view out
-/// of sight does not read as an unhealthy one. The mode and the frame change together under the
-/// slot's gate, so no frame is kept in a slot that keeps nothing.
+/// of sight does not read as an unhealthy one. A view that stops presenting hands the slot the frame
+/// it presented last, which the slot keeps on the same terms when it holds nothing newer. The mode
+/// and the frame change together under the slot's gate, so no frame is kept in a slot that keeps
+/// nothing.
 /// </para>
 /// <para>
 /// <b>Threading.</b> The slot swap is performed under an internal monitor so install,
@@ -260,30 +262,58 @@ public sealed class LatestWinsFrameSlot
     /// (ADR-0085, decision 2). Going off screen with nothing to keep disposes the pending frame.
     /// </summary>
     /// <param name="onScreen">Whether a view presents what the slot holds.</param>
-    internal void SetOnScreen(bool onScreen) => Set(onScreen, keep: null);
+    internal void SetOnScreen(bool onScreen) => Set(onScreen, keep: null, shown: null);
+
+    /// <summary>
+    /// Takes the slot off screen, as <see cref="SetOnScreen"/> does, and hands it the frame the view
+    /// presented last. The slot keeps that frame as its newest when it keeps a frame off screen and
+    /// holds none, and otherwise disposes it: a frame installed since is newer and wins. Done in one
+    /// step under the slot's gate, so a frame arriving at the same moment lands either before the
+    /// hand-back, and wins, or after it, and replaces the handed-back frame (ADR-0085, decision 2).
+    /// </summary>
+    /// <remarks>
+    /// A view presents a frame and then holds it, so a paused, ended or single-frame picture is
+    /// still there to present when the view comes back. Disposing the handed-back frame is not
+    /// counted as a discard: the view presented it. Once it is the slot's frame, it follows the
+    /// off-screen rules like any other.
+    /// </remarks>
+    /// <param name="shown">
+    /// The frame the view presented last, or <see langword="null"/>. Ownership transfers to the slot,
+    /// kept or not.
+    /// </param>
+    internal void SetOffScreen(IVideoFrame? shown) => Set(onScreen: false, keep: null, shown);
 
     /// <summary>
     /// Says whether the slot keeps its newest frame while it is off screen. An in-box sink keeps one
-    /// while a player holds its claim: the newest frame a player sent while no view presented the
-    /// slot is the one meant to be on screen when a view comes back, and a player that has paused
-    /// or ended since sends no other. Letting go of it while off screen disposes it, so a view out
-    /// of sight pins nothing for a player that is gone. On screen it changes nothing until the slot
-    /// goes off screen.
+    /// while a player holds its claim: the newest frame, the one a view handed back or one the player
+    /// sent since, is the one meant to be on screen when a view comes back, and a paused or ended
+    /// player sends no other. Letting go of it while off screen disposes it, so a view out of sight
+    /// pins nothing for a player that is gone. On screen it changes nothing until the slot goes off
+    /// screen.
     /// </summary>
     /// <param name="keep">Whether to keep the newest frame off screen.</param>
-    internal void SetKeepOffScreen(bool keep) => Set(onScreen: null, keep);
+    internal void SetKeepOffScreen(bool keep) => Set(onScreen: null, keep, shown: null);
 
     // Either input may change on its own thread: the view's on the UI thread, the claim's on
     // whichever thread takes or releases it. Both are read with the frame under the gate.
-    private void Set(bool? onScreen, bool? keep)
+    private void Set(bool? onScreen, bool? keep, IVideoFrame? shown)
     {
         IVideoFrame? discarded = null;
+        IVideoFrame? released = null;
         lock (_gate)
         {
             if (onScreen is { } on)
                 _offScreen = !on;
             if (keep is { } k)
                 _keepsOffScreen = k;
+
+            if (shown is not null)
+            {
+                if (!_closed && _keepsOffScreen && _pending is null)
+                    _pending = shown;
+                else
+                    released = shown;
+            }
 
             if (_offScreen && !_keepsOffScreen)
             {
@@ -292,11 +322,20 @@ public sealed class LatestWinsFrameSlot
             }
         }
 
-        if (discarded is null)
-            return;
-
-        Interlocked.Increment(ref _discardedOffScreen);
-        discarded.Dispose();
+        // Outside the gate, as every dispose here is: it may return the frame to its pool. A throw
+        // from one does not keep the other.
+        try
+        {
+            released?.Dispose();
+        }
+        finally
+        {
+            if (discarded is not null)
+            {
+                Interlocked.Increment(ref _discardedOffScreen);
+                discarded.Dispose();
+            }
+        }
     }
 }
 
