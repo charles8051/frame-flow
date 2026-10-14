@@ -195,7 +195,8 @@ public partial class MainWindow : Window
         await _opening;
         await DisposePlayerAsync();
 
-        // The audio sink is ours, so it goes after the player. The view disposes its own sink.
+        // The audio sink is ours, so it goes after the player. The player view's video surface
+        // keeps its own sink for as long as it lives.
         await DisposeLoggedAsync(_audioSink);
         _loggerFactory.Dispose();
         _closed = true;

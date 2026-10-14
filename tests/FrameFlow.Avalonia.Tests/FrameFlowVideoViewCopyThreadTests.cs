@@ -154,10 +154,12 @@ public sealed class FrameFlowVideoViewCopyThreadTests
         Dispatcher.UIThread.RunJobs(); // the queued swap runs after the replacement
 
         // The stranded frame is the first sink's loss. It must not be published as the
-        // replacement's, and it must not vanish from the accounting.
+        // replacement's, and it must not vanish from the accounting. No view presents the
+        // first sink now, so it is discarded off screen, not dropped (ADR-0085, decision 2).
         Assert.Equal(1, first.RenderedFrameCount); // frame 1, drawn with its allocation
-        Assert.Equal(1, first.DroppedFrameCount); // the stranded one
-        Assert.Equal(2, first.GetDiagnostics().FramesPresented + first.GetDiagnostics().FramesDropped);
+        Assert.Equal(1, first.FramesDiscardedOffScreen); // the stranded one
+        Assert.Equal(0, first.DroppedFrameCount);
+        Assert.Equal(2, first.GetDiagnostics().FramesPresented + first.FramesDiscardedOffScreen);
 
         Assert.Equal(0, second.RenderedFrameCount);
         Assert.Equal(0, second.DroppedFrameCount);
@@ -206,7 +208,7 @@ public sealed class FrameFlowVideoViewCopyThreadTests
     }
 
     [AvaloniaFact]
-    public void DetachingWithAFrameInTheBackBuffer_CountsItDropped()
+    public void DetachingWithAFrameInTheBackBuffer_CountsItDiscardedOffScreen()
     {
         var (view, sink) = NewAttachedView();
 
@@ -219,11 +221,13 @@ public sealed class FrameFlowVideoViewCopyThreadTests
 
         // Two frames in, both accounted: the first drew alongside its allocation, the second
         // was stranded in the back buffer. Before the binding carried the detach, the queued
-        // swap ran anyway and the stranded frame was counted by nobody.
+        // swap ran anyway and the stranded frame was counted by nobody. It is not a drop: the
+        // view stopped presenting before it drew (ADR-0085, decision 2).
         Assert.Equal(1, view.RenderedFrameCount);
         var snapshot = sink.GetDiagnostics();
         Assert.Equal(1, snapshot.FramesPresented);
-        Assert.Equal(1, snapshot.FramesDropped);
+        Assert.Equal(0, snapshot.FramesDropped);
+        Assert.Equal(1, sink.FramesDiscardedOffScreen);
     }
 
     [AvaloniaFact]

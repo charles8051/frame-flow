@@ -11,8 +11,8 @@ namespace FrameFlow.Avalonia.Tests;
 /// sink, a detach and a reattach. <see cref="EverySequence_KeepsTheLifecycleInvariants"/> then walks
 /// every sequence of the seven events, of any length, from both initial states, playing the shell:
 /// it does each transition's work, in order, on numbered targets, and checks the properties the
-/// shell relies on after every step. It grew out of <c>InteropViewLifecycleTests</c>, which walks
-/// the four events of the interop view's own core.
+/// shell relies on after every step. It grew out of the tests of <c>InteropViewLifecycle</c>, the
+/// interop view's own core before this one, which walked its four events.
 /// </remarks>
 public sealed class SurfaceLifecycleTests
 {

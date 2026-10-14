@@ -8,6 +8,7 @@ using Avalonia.Controls;
 using Avalonia.Platform;
 using Avalonia.Rendering.Composition;
 using Avalonia.Threading;
+using FrameFlow.Avalonia.Core;
 using FrameFlow.Avalonia.Windows.Core;
 using FrameFlow.Avalonia.Windows.Diagnostics;
 using FrameFlow.Decoding;
@@ -43,13 +44,17 @@ namespace FrameFlow.Avalonia.Windows;
 /// 2026-06-12).
 /// </para>
 /// <para>
-/// <b>Lifecycle (#650).</b> The view presents while it is in the visual tree, once
-/// <see cref="Initialize"/> or <see cref="EnsureSink"/> has run. Leaving the tree tears the
-/// compositor side down and disposes the view's own sink, and leaves the view reusable, as
-/// <c>FrameFlowVideoView</c> is: rejoining the tree sets the surface up again and restarts the
-/// stall watchdog, and the next <see cref="EnsureSink"/> makes a new sink. A sink assigned
-/// through <see cref="Sink"/> stays assigned across the detach. Only <see cref="DisposeAsync"/>
-/// is final.
+/// <b>Lifecycle (ADR-0085).</b> The view keeps one sink for its whole life: its own, which the
+/// first <see cref="EnsureSink"/> or <see cref="Initialize"/> makes, or one assigned through
+/// <see cref="Sink"/>. It presents that sink while it is in the visual tree and initialized.
+/// Leaving the tree stops presenting: the compositor side goes and the stall watchdog stops, and
+/// the sink stays, so a player built with it keeps working. While the view does not present, before
+/// its first attach as after a detach, the sink keeps only its newest frame, and only while a player
+/// holds its claim (see <see cref="CompositionInteropVideoSink"/>). The view holds the frame it
+/// presented last and hands it back to the sink when it stops presenting, so that frame is the
+/// newest unless the player sends another. Rejoining the tree sets the surface up again, presents
+/// that frame first, so a paused or ended picture is back at once, and goes on with the same sink.
+/// Only <see cref="DisposeAsync"/> is final, and only it disposes the view's own sink.
 /// </para>
 /// <para>
 /// <b>Teardown ordering (investigation 2026-06-12).</b> The producer's shared keyed-mutex
@@ -68,6 +73,8 @@ namespace FrameFlow.Avalonia.Windows;
 /// </remarks>
 public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsyncDisposable
 {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Reliability", "CA2213", Justification = "The caller's factory: the view logs through it and does not own it.")]
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
 
     // Handed out rather than replaced, so Initialize can move the logging after the stall
@@ -77,8 +84,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     private readonly SwitchableLogger<CompositionInteropVideoView> _logger = new();
     private readonly SwitchableLogger<CompositionInteropVideoSink> _sinkLogger = new();
 
+    // The sink the view holds: its own or a caller's, as the lifecycle's target says. UI thread only.
     private CompositionInteropVideoSink? _sink;
-    private bool _sinkOwned;
 
     private Compositor? _compositor;
     private ICompositionGpuInterop? _interop;
@@ -141,36 +148,50 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     private bool _warnedUnpresentable;
     private bool _warnedPresentFailure;
 
-    // Where the view is in its life; the pure core decides every move (#650). UI thread only.
-    private InteropViewLifecycle _lifecycle = InteropViewLifecycle.Initial;
-
-    // _lifecycle.HoldsFrames, published for the producer thread: set from a detach until the
-    // view presents again, and for good after DisposeAsync.
-    private volatile bool _tornDown;
+    // Where the view is in its life, its binding number with it; the pure core decides every
+    // move (ADR-0085). Only the UI thread moves it, and only under _presentGate, so work that
+    // commits on another thread compares the number it started under with this one under the same
+    // gate (decision 5). The UI thread reads it without the gate.
+    private SurfaceLifecycle _lifecycle = SurfaceLifecycle.AwaitingInitialize;
 
     /// <summary>
-    /// One sink's attachment to this view. Producer callbacks carry the binding they were
-    /// raised under, so a callback that outlives a detach or a sink swap does nothing rather
-    /// than driving a view that has moved on.
+    /// What a reader that takes no lock sees of the view (ADR-0085, decision 5): whether it
+    /// presents, its binding number and its sink. Published whole, with <see cref="Volatile"/>,
+    /// after each transition's work. The stall watchdog's timer reads it.
     /// </summary>
-    private sealed class SinkBinding(CompositionInteropVideoSink sink)
-    {
-        public readonly CompositionInteropVideoSink Sink = sink;
+    private sealed record Snapshot(bool Presents, long Binding, CompositionInteropVideoSink? Sink);
 
-        /// <summary>Set under <c>_presentGate</c> when the attachment ends.</summary>
-        public bool Detached;
-    }
+    private Snapshot _snapshot = new(Presents: false, Binding: 0, Sink: null);
 
-    // Guards the binding and the queued-present claim. Taken briefly by the producer thread
-    // (to claim a post) and by the UI thread (to release it); never held across a present.
+    // Guards the binding number and the queued-present claim. Taken briefly by the producer
+    // thread (to claim a post), by a present's commit (to check its binding), and by the UI
+    // thread (to move the number and to release the claim); never held across a present or
+    // a handler.
     private readonly object _presentGate = new();
-    private SinkBinding? _binding;
 
     // True while a present is queued on the dispatcher. At most one: a frame arriving while
     // one is pending needs no second post, because the queued present takes whatever the
     // slot holds when it runs — which is the newer frame. Without this, a producer running
     // ahead of a busy UI thread queues one delegate per frame.
     private bool _presentPosted;
+    private int _presentsPosted;
+
+    // The frame the view presented last, held until the next one has been drawn into the ring, so
+    // that the view can hand it back to its sink when it stops presenting and present it again when
+    // it comes back: a paused, ended or single-frame item sends no other (ADR-0085, decision 2). UI
+    // thread only. Released with the view's hold on the sink it came from, or when the player that
+    // sent it lets go of that sink.
+    private IVideoFrame? _lastPresented;
+
+    // Counts the frames the view has taken over as presented last. A release posted when a player's
+    // claim ends compares it, so it lets go only of the frame held then. Written on the UI thread,
+    // read on the thread that released the claim.
+    private long _presentedGeneration;
+
+    // Completes once the D3D12 converter the last teardown took has been disposed, or at once when
+    // it took none. UI thread only. A new attachment presents nothing until then (ADR-0085,
+    // decision 2): that converter holds decoder frames for its draws until it is disposed.
+    private Task _d3d12Retired = Task.CompletedTask;
 
     // Present cadence/cost instrumentation (#128). UI thread only — PresentPending is the
     // sole caller — so it needs no synchronization. Reports about every 2 s at 60 Hz, and is
@@ -186,6 +207,22 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// <summary>Whether the stall watchdog is running. For tests.</summary>
     internal bool IsWatchingForStalls => _stallWatchdog is not null;
 
+    /// <summary>How many presents the view has posted to the dispatcher. For tests.</summary>
+    internal int PresentsPosted => Volatile.Read(ref _presentsPosted);
+
+    /// <summary>The binding number the last transition published. For tests.</summary>
+    internal long Binding => Volatile.Read(ref _snapshot).Binding;
+
+    /// <summary>
+    /// What the next attachment waits on before it presents: the disposal of the D3D12 converter the
+    /// last teardown took. UI thread. The teardown sets it; tests set it to stand in for one still
+    /// being torn down.
+    /// </summary>
+    internal Task D3D12Retired
+    {
+        get => _d3d12Retired;
+        set => _d3d12Retired = value;
+    }
 
     // Bounded wait for in-flight presents to drain at teardown. On the happy path the
     // compositor finishes each UpdateWithKeyedMutexAsync in well under a frame, so this is
@@ -204,14 +241,29 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     }
 
     /// <summary>
-    /// The sink this view pulls frames from. Assigning a sink marks it caller-owned
-    /// (the view won't dispose it); <see cref="EnsureSink"/> creates a view-owned sink.
+    /// The sink this view presents: its own, which <see cref="EnsureSink"/> creates and the view
+    /// disposes, or one a caller assigned, which the caller owns and the view never disposes.
     /// </summary>
     /// <remarks>
-    /// A caller-owned sink stays assigned when the view leaves the visual tree, and the view
-    /// presents its frames again when it rejoins. <see cref="DisposeAsync"/> clears it. The
-    /// view-owned sink is disposed on either, and this then reads <see langword="null"/>.
+    /// <para>
+    /// The view keeps its sink across a detach and presents it again when it rejoins the visual
+    /// tree, whoever owns it (ADR-0085, decision 2). Assigning another sink disposes the view's own
+    /// or lets go of a caller's, as <see cref="DisposeAsync"/> does. After <see cref="DisposeAsync"/>
+    /// this reads <see langword="null"/>. Assigning <see langword="null"/> while the view is in the tree takes
+    /// its compositor side down and stops the stall watchdog, as a detach does, until a sink is
+    /// assigned or made again.
+    /// </para>
+    /// <para>
+    /// The assignment first claims the outgoing sink, as a player does, so that no player can be
+    /// built against it while it is replaced, and releases the claim once it is disposed or let go.
+    /// The frame the view presented from the outgoing sink is released with it. A caller's sink the
+    /// view lets go of keeps a frame only for a player that holds its claim.
+    /// </para>
     /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// A player or pass holds the outgoing sink, and would be left feeding a sink no view presents.
+    /// The message names the holder, and nothing has changed. Dispose that player first.
+    /// </exception>
     /// <exception cref="ObjectDisposedException">
     /// A sink is assigned after <see cref="DisposeAsync"/>: nothing would present it or end its
     /// binding.
@@ -223,7 +275,13 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         {
             if (ReferenceEquals(_sink, value))
                 return;
-            ObjectDisposedException.ThrowIf(value is not null && IsDisposed, this);
+
+            var transition = _lifecycle.Assign(value is not null);
+            ObjectDisposedException.ThrowIf(transition.Refused, this);
+
+            // Before anything changes, and released once the outgoing sink is disposed or let go
+            // (ADR-0085, decisions 2 and 7).
+            using var claim = ClaimOutgoingSink();
 
             // End the outgoing sink's diagnostics attachment. It must not keep reading the
             // view's live counters, which go on moving for its replacement — a caller still
@@ -240,9 +298,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             // the UI thread while this setter is UI-thread affine, so the two do overlap.
             // The render tick never takes this gate.
             //
-            // Only on replacement. Teardown leaves the attachment live so a host polling
-            // PlaybackDiagnosticsSnapshot after the view detaches still reads the session's
-            // final counts instead of zeros, until a successor sink is wired.
+            // Only on replacement. A detach or DisposeAsync leaves the attachment live, so a host
+            // polling PlaybackDiagnosticsSnapshot after the view detaches still reads the
+            // session's counts instead of zeros, until a successor sink is wired.
             lock (_diagnosticsGate)
             {
                 if (_attachment is not null)
@@ -253,16 +311,43 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             if (_sink is not null)
                 _sink.DiagnosticsSource = null;
 
-            DisposeOwnedSink();
-            _sink = value;
-            if (_sink is not null)
-                BindSink(_sink);
-            // The view does the presenting, so it supplies diagnostics for whichever
-            // sink it drives — including a caller-assigned one.
-            if (_sink is not null)
-                WireDiagnostics(_sink);
-            _sinkOwned = false;
+            Complete(Apply(transition, value));
         }
+    }
+
+    // How the view's own claim names it, in the error a build gets while the view replaces its sink.
+    private const string ReplacingClaimant = "a CompositionInteropVideoView replacing its sink";
+
+    /// <summary>
+    /// Claims the sink the <see cref="Sink"/> setter replaces, as a player would: while the view
+    /// holds the claim no build can take the sink, and when a player already holds it, the
+    /// assignment stops here. Returns the lease, or <see langword="null"/> when there is no
+    /// outgoing sink or its owner has disposed it.
+    /// </summary>
+    private IDisposable? ClaimOutgoingSink()
+    {
+        if (_sink is not IClaimableSink outgoing)
+            return null;
+
+        IDisposable? lease;
+        try
+        {
+            lease = outgoing.TryClaim(ReplacingClaimant);
+        }
+        catch (ObjectDisposedException)
+        {
+            // A caller's sink that its owner disposed while the view held it presents nothing,
+            // whoever still feeds it, so there is nothing for a claim to protect.
+            return null;
+        }
+
+        return lease
+            ?? throw new InvalidOperationException(
+                $"The video sink {nameof(CompositionInteropVideoSink)} is held by "
+                    + $"{outgoing.Claimant ?? "a player or pass"}. Replacing it would leave that player "
+                    + "feeding a sink no view presents: await DisposeAsync on the player or pass built "
+                    + "against it before assigning Sink."
+            );
     }
 
     /// <summary>
@@ -354,9 +439,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     public event EventHandler<PresenterRecoveryInfo>? PresenterRecovered;
 
     /// <summary>
-    /// Wires the logger, materializes the owned sink, and, once the control is attached, brings
-    /// up the compositor surface + GPU interop and starts the stall watchdog. Call on the UI
-    /// thread, before playback starts.
+    /// Wires the logger, makes the view's own sink unless it holds one, and, once the control is
+    /// attached, brings up the compositor surface + GPU interop and starts the stall watchdog. Call
+    /// on the UI thread, before playback starts.
     /// </summary>
     /// <remarks>
     /// <see cref="EnsureSink"/> runs this without a logger when it has not run yet, and
@@ -369,33 +454,35 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// <exception cref="ObjectDisposedException"><see cref="DisposeAsync"/> has run.</exception>
     public void Initialize(ILoggerFactory loggerFactory)
     {
-        ObjectDisposedException.ThrowIf(IsDisposed, this);
+        var ensure = _lifecycle.EnsureOwned();
+        ObjectDisposedException.ThrowIf(ensure.Refused, this);
 
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
         _logger.Use(_loggerFactory);
         _sinkLogger.Use(_loggerFactory);
-
-        CreateOwnedSinkIfNone();
         _tickMeter.Reset();
+
+        Complete(Apply(ensure));
 
         // The composition surface needs the control attached: the core starts it now if we
         // already are, otherwise the attach does. (When hosted in a FrameFlowPlayerView,
         // AttachSink may run before or after we enter the tree.)
-        Apply(_lifecycle.Initialize());
+        Complete(Apply(_lifecycle.Initialize()));
     }
 
     /// <inheritdoc />
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        Apply(_lifecycle.Attach());
+        Complete(Apply(_lifecycle.Attach()));
     }
 
     /// <summary>
-    /// Ensures a view-owned sink exists and
-    /// returns it as the <see cref="IVideoSink"/> to hand to the player. The view disposes
-    /// the owned sink on detach / <see cref="DisposeAsync"/>; after a detach, the next call
-    /// makes a new one.
+    /// Returns the sink this view presents, as the <see cref="IVideoSink"/> to hand to the player:
+    /// the view's own, which the first call makes, or one assigned through <see cref="Sink"/>. It
+    /// is the same sink for the view's whole life, across trips out of the visual tree, unless
+    /// <see cref="Sink"/> is assigned (ADR-0085, decision 2). The view disposes its own sink in
+    /// <see cref="DisposeAsync"/>, and only there.
     /// </summary>
     /// <remarks>
     /// Readies the view to present that sink's frames: if <see cref="Initialize"/> has not run,
@@ -408,9 +495,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// </exception>
     public CompositionInteropVideoSink EnsureSink()
     {
-        ObjectDisposedException.ThrowIf(IsDisposed, this);
-
-        var sink = CreateOwnedSinkIfNone();
+        var ensure = _lifecycle.EnsureOwned();
+        ObjectDisposedException.ThrowIf(ensure.Refused, this);
+        Complete(Apply(ensure));
 
         // The compositor surface and the GPU interop wait for Initialize, and the presenter
         // holds every frame until they exist. A caller copying the FrameFlowVideoView pattern,
@@ -419,67 +506,126 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         if (!_lifecycle.Initialized)
             Initialize(_loggerFactory);
 
-        return sink;
-    }
-
-    // DisposeAsync is final: no event moves the view out of Disposed, so a sink made or bound
-    // afterwards would have nothing to release it (#650).
-    private bool IsDisposed => _lifecycle.Phase == InteropViewPhase.Disposed;
-
-    private CompositionInteropVideoSink CreateOwnedSinkIfNone()
-    {
-        if (_sink is null)
-        {
-            _sink = new CompositionInteropVideoSink(_sinkLogger);
-            WireDiagnostics(_sink);
-            BindSink(_sink);
-            _sinkOwned = true;
-        }
-
-        return _sink;
+        return _sink!;
     }
 
     /// <summary>
     /// Moves the view to the state the lifecycle core chose and does the work it named, in the
-    /// core's order (#650). UI thread. Returns the teardown's remaining work, which completes
-    /// once this attachment's producers are disposed or handed to the reaper; a teardown that
-    /// fails, or a sink whose dispose throws, comes back as a faulted task rather than a throw.
+    /// core's order (ADR-0085): unbind, stop presenting, dispose or let go of the sink, make or
+    /// take up a sink, bind, start presenting. UI thread.
     /// </summary>
-    private Task Apply(InteropViewTransition transition)
+    /// <param name="transition">What the core decided.</param>
+    /// <param name="assigned">The sink a caller assigned, which the borrow step takes up.</param>
+    /// <returns>
+    /// The teardown's remaining work, which completes once this attachment's producers are
+    /// disposed or handed to the reaper, and what the other steps threw. Every step runs even when
+    /// one before it threw: the core has moved on and will not ask for that work again, so a frame
+    /// that fails to release must not leave the surface up, the sink undisposed or the next sink
+    /// unbound.
+    /// </returns>
+    /// <exception cref="ObjectDisposedException">The core refused the event: the view is disposed.</exception>
+    private (Task Teardown, Exception? Fault) Apply(
+        SurfaceTransition transition,
+        CompositionInteropVideoSink? assigned = null
+    )
     {
-        _lifecycle = transition.Next;
-        _tornDown = transition.Next.HoldsFrames; // step 1 of a teardown: post nothing further.
+        ObjectDisposedException.ThrowIf(transition.Refused, this);
+
+        // Before any work, under the gate the producer thread and a present's commit compare it
+        // under: a callback raised under a binding this ends posts nothing from here on.
+        lock (_presentGate)
+            _lifecycle = transition.Next;
 
         var work = transition.Work;
-
-        // The lifecycle has already moved on and will not ask for this stop again, so a sink whose
-        // dispose throws (it disposes the frame it holds) must not skip it: that would leave the
-        // surface, the stall watchdog and the producers up with nothing left to take them down.
-        Exception? sinkFault = null;
-        if (work.HasFlag(InteropViewWork.ReleaseSink))
-        {
-            try { ReleaseSink(forgetCallerSink: work.HasFlag(InteropViewWork.ForgetCallerSink)); }
-            catch (Exception ex) { sinkFault = ex; }
-        }
-
         var teardown = Task.CompletedTask;
-        if (work.HasFlag(InteropViewWork.StopPresenting))
+        List<Exception>? faults = null;
+
+        if (work.HasFlag(SurfaceWork.Unbind))
+            Run(UnbindSink, ref faults);
+
+        if (work.HasFlag(SurfaceWork.StopPresenting))
         {
-            try { teardown = StopPresenting(); }
-            catch (Exception ex) { teardown = Task.FromException(ex); }
+            // Before the watchdog goes: a tick already sampling reads that the view has stopped.
+            Volatile.Write(ref _snapshot, new Snapshot(Presents: false, transition.Next.Binding, _sink));
+
+            try
+            {
+                teardown = StopPresenting();
+            }
+            catch (Exception ex)
+            {
+                teardown = Task.FromException(ex);
+            }
+
+            // From here the sink keeps a frame only for a player that holds its claim, and lets go
+            // of the one it holds now when no player does. A sink the view keeps takes back the
+            // frame presented last, so the picture comes back with the view. One the view lets go
+            // of in this same transition takes nothing: that frame goes with the view's hold.
+            var keepsSink = (work & (SurfaceWork.DisposeTarget | SurfaceWork.ForgetTarget)) == 0;
+            Run(() => _sink!.StopPresenting(keepsSink ? TakeLastPresented() : null), ref faults);
         }
 
-        if (work.HasFlag(InteropViewWork.StartPresenting))
-            StartPresenting();
+        if (work.HasFlag(SurfaceWork.DisposeTarget) || work.HasFlag(SurfaceWork.ForgetTarget))
+            Run(ReleaseLastPresented, ref faults);
+        if (work.HasFlag(SurfaceWork.DisposeTarget))
+            Run(DisposeSink, ref faults);
+        if (work.HasFlag(SurfaceWork.ForgetTarget))
+            Run(ForgetSink, ref faults);
+        if (work.HasFlag(SurfaceWork.Create))
+            Run(() => TakeUp(new CompositionInteropVideoSink(_sinkLogger)), ref faults);
+        if (work.HasFlag(SurfaceWork.Borrow))
+            Run(() => TakeUp(assigned!), ref faults);
+        if (work.HasFlag(SurfaceWork.Bind))
+            Run(BindSink, ref faults);
+        if (work.HasFlag(SurfaceWork.StartPresenting))
+            Run(StartPresenting, ref faults);
 
-        return sinkFault is null ? teardown : FaultAfterAsync(teardown, sinkFault);
+        Volatile.Write(ref _snapshot, new Snapshot(transition.Next.Presents, transition.Next.Binding, _sink));
+
+        var fault = faults switch
+        {
+            null => null,
+            [var one] => one,
+            _ => new AggregateException(faults),
+        };
+        return (teardown, fault);
+    }
+
+    private static void Run(Action step, ref List<Exception>? faults)
+    {
+        try
+        {
+            step();
+        }
+        catch (Exception ex)
+        {
+            (faults ??= []).Add(ex);
+        }
     }
 
     /// <summary>
-    /// Completes once <paramref name="teardown"/> does, then faults with the sink's
-    /// <paramref name="sinkFault"/>, or with both faults when the teardown failed as well.
+    /// Finishes a transition a caller asked for: a teardown it started runs on and is observed,
+    /// and what a step threw is thrown here, once every step has run.
     /// </summary>
-    private static async Task FaultAfterAsync(Task teardown, Exception sinkFault)
+    private void Complete((Task Teardown, Exception? Fault) applied)
+    {
+        ObserveTeardown(applied.Teardown);
+        if (applied.Fault is { } fault)
+            ExceptionDispatchInfo.Throw(fault);
+    }
+
+    /// <summary>
+    /// The teardown, faulted once it completes with what the other steps threw. A detach and
+    /// <see cref="DisposeAsync"/> report every failure through it.
+    /// </summary>
+    private static Task Combined((Task Teardown, Exception? Fault) applied) =>
+        applied.Fault is null ? applied.Teardown : FaultAfterAsync(applied.Teardown, applied.Fault);
+
+    /// <summary>
+    /// Completes once <paramref name="teardown"/> does, then faults with <paramref name="fault"/>,
+    /// or with both faults when the teardown failed as well.
+    /// </summary>
+    private static async Task FaultAfterAsync(Task teardown, Exception fault)
     {
         try
         {
@@ -487,25 +633,24 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         }
         catch (Exception teardownFault)
         {
-            throw new AggregateException(sinkFault, teardownFault);
+            throw new AggregateException(fault, teardownFault);
         }
 
-        ExceptionDispatchInfo.Throw(sinkFault);
+        ExceptionDispatchInfo.Throw(fault);
     }
 
     /// <summary>
-    /// Brings one attachment up: binds a sink the caller assigned, which a detach left unbound,
-    /// sets the compositor surface and the GPU interop up, and starts the stall watchdog.
+    /// Brings one attachment up: the sink keeps what it is given for the view again, the
+    /// compositor surface and the GPU interop are set up, the stall watchdog starts, and a frame
+    /// the sink kept is put up first.
     /// </summary>
     private void StartPresenting()
     {
         _tickMeter.Reset();
+        _sink!.SetPresented(true);
 
-        if (_sink is { } sink && !IsSinkBound)
-            BindSink(sink);
-
-        // Stopped by the next detach or DisposeAsync, so its timer cannot outlive the
-        // attachment and keep a view out of the tree alive.
+        // Stopped by the next StopPresenting, so its timer cannot outlive the attachment and
+        // keep a view out of the tree alive.
         if (_stallWatchdog is null)
         {
             _stallWatchdog = new PresenterStallWatchdog(SampleStall, _logger);
@@ -514,20 +659,99 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         }
 
         SetupComposition();
+
+        // A frame the sink kept while the view did not present, the one presented last or a newer
+        // one, is the one meant to be on screen, and no later arrival is sure to come for it: the
+        // player may be paused or ended. The interop's readiness sweeps again.
+        SchedulePresentIfPending();
+    }
+
+    // ── The sink steps (ADR-0085, decision 2). UI thread, in Apply's order. ──
+    // The sink the view holds is presented exactly while the view presents: StartPresenting and
+    // StopPresenting set it, and a sink taken up or let go of in between is set to match.
+
+    private void TakeUp(CompositionInteropVideoSink sink)
+    {
+        _sink = sink;
+
+        // The view does the presenting, so it supplies diagnostics for whichever sink it drives,
+        // a caller-assigned one included.
+        WireDiagnostics(sink);
+        sink.SetPresented(_lifecycle.Presents);
     }
 
     /// <summary>
-    /// Ends the sink's attachment and disposes the sink if the view owns it. A caller's sink is
-    /// kept for the next attachment unless <paramref name="forgetCallerSink"/>.
+    /// Holds <paramref name="frame"/>, which the view has just presented, as the frame it presented
+    /// last, and releases the one it held before (ADR-0085, decision 2). UI thread. The present calls
+    /// it once the frame has been drawn into the ring; tests call it in place of a present, which the
+    /// headless backend cannot make.
     /// </summary>
-    private void ReleaseSink(bool forgetCallerSink)
+    /// <remarks>
+    /// Each present hands the view a reference of its own, and <see cref="IVideoFrame.AddRef"/>
+    /// returns the same instance, so the frame held before is released even when it is the same
+    /// object: a producer that sends one frame twice has sent two references.
+    /// </remarks>
+    internal void KeepPresented(IVideoFrame frame)
     {
-        // Stop the producer scheduling presents into a view that is tearing down. A callback
-        // already inside OnFrameArrived sees Detached under the same gate.
-        UnbindSink();
+        var previous = _lastPresented;
+        _lastPresented = frame;
+        Volatile.Write(ref _presentedGeneration, _presentedGeneration + 1);
+        previous?.Dispose();
+    }
 
-        if (_sinkOwned || forgetCallerSink)
-            DisposeOwnedSink();
+    /// <summary>
+    /// The claim on the sink the view is bound to was released: the player that held it is gone,
+    /// and the frame the view presented last pins one of its decoder surfaces. Releases that frame,
+    /// on the UI thread; the picture stays up as the compositor's copy (ADR-0085, decision 2). Runs
+    /// on the thread that released the claim, so it posts, and lets go only of the frame held now:
+    /// one a new player presents in the meantime is not touched.
+    /// </summary>
+    private void OnClaimReleased()
+    {
+        var generation = Volatile.Read(ref _presentedGeneration);
+        try
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_presentedGeneration == generation)
+                    ReleaseLastPresented();
+            });
+        }
+        catch
+        {
+            // A dispatcher shutting down: the view's dispose releases the frame instead.
+        }
+    }
+
+    private IVideoFrame? TakeLastPresented()
+    {
+        var frame = _lastPresented;
+        _lastPresented = null;
+        return frame;
+    }
+
+    private void ReleaseLastPresented() => TakeLastPresented()?.Dispose();
+
+    private void DisposeSink()
+    {
+        var sink = _sink!;
+        _sink = null;
+
+        var t = sink.DisposeAsync();
+        if (t.IsCompleted)
+            t.GetAwaiter().GetResult();
+        else
+            t.AsTask().GetAwaiter().GetResult();
+    }
+
+    private void ForgetSink()
+    {
+        var sink = _sink!;
+        _sink = null;
+
+        // No view presents it now, so it keeps a frame only while a claim on it stands. The Sink
+        // setter releases its own claim as it returns, which lets go of the frame.
+        sink.SetPresented(false);
     }
 
     // Bind the diagnostics callback to THIS sink instance rather than to the mutable _sink
@@ -567,10 +791,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             sink.FramesSuperseded
         );
 
-        // A new sink replaces the one whose attachment is still live. Besides the Sink setter,
-        // which ends it itself, that is the view's own sink after a detach disposed the last one
-        // (#650): the player built with that one may still poll it, and must not read this
-        // sink's presents as its own once the view presents again.
+        // A new sink replaces the one whose attachment is still live. The Sink setter ends that
+        // attachment itself before it replaces a sink, and the view's own sink lives as long as
+        // the view (ADR-0085, decision 2), so this is a guard: a sink still polled by a player
+        // must not read its successor's presents as its own.
         lock (_diagnosticsGate)
         {
             if (_attachment is not null)
@@ -643,63 +867,45 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// <inheritdoc />
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        ObserveTeardown(Apply(_lifecycle.Detach()));
+        ObserveTeardown(Combined(Apply(_lifecycle.Detach())));
         base.OnDetachedFromVisualTree(e);
     }
 
-    private bool IsSinkBound
-    {
-        get
-        {
-            lock (_presentGate)
-                return _binding is not null;
-        }
-    }
-
     /// <summary>
-    /// Binds <paramref name="sink"/>'s arrival callback to this view, ending any previous
-    /// attachment first.
+    /// Binds the held sink's arrival callback to this view, under the binding number the
+    /// transition has just set: a callback the sink raises later carries it, and posts nothing
+    /// once the number has moved (ADR-0085, decision 5).
     /// </summary>
-    private void BindSink(CompositionInteropVideoSink sink)
+    private void BindSink()
     {
-        UnbindSink();
+        var sink = _sink!;
+        var binding = _lifecycle.Binding;
 
-        var binding = new SinkBinding(sink);
+        // A view that presents as it binds, on a reattach, presents the sink from this point: a
+        // frame arriving before StartPresenting is not one to drop.
+        if (_lifecycle.Presents)
+            sink.SetPresented(true);
 
-        // Callback first, then publish. The callback carries its own binding token and does
-        // not read _binding, so installing it early is safe — and it closes the window where
-        // a frame installs against a null hook and schedules nothing. Only UnbindSink reads
-        // _binding, and it cannot run concurrently: both are called from the UI thread.
-        sink.FrameArrived = () => OnFrameArrived(binding);
+        sink.ClaimReleased = OnClaimReleased;
+        sink.FrameArrived = () => OnFrameArrived(sink, binding);
 
-        lock (_presentGate)
-            _binding = binding;
-
-        // A frame may already be waiting — fed before the sink was assigned, or installed in
-        // the instant before the hook went on. No later arrival is guaranteed to come and
-        // collect it: on a paused or ended stream that frame is the one meant to be on
-        // screen. Sweep once now; the coalescing claim makes a redundant sweep a no-op.
+        // A frame may already be waiting: fed before the sink was bound, or installed in the
+        // instant before the hook went on. No later arrival is guaranteed to come and collect it:
+        // on a paused or ended stream that frame is the one meant to be on screen. Sweep once now;
+        // the coalescing claim makes a redundant sweep a no-op, and a view not presenting yet
+        // leaves the frame in the sink.
         if (sink.HasPendingFrame)
-            OnFrameArrived(binding);
+            OnFrameArrived(sink, binding);
     }
 
     /// <summary>
-    /// Ends the current attachment. A callback already running sees <c>Detached</c> under the
-    /// same gate and does nothing; one that has not started never posts.
+    /// Takes the arrival callback off the held sink. A callback already running has seen, or will
+    /// see, the binding number move under <see cref="_presentGate"/>, and posts nothing.
     /// </summary>
     private void UnbindSink()
     {
-        SinkBinding? binding;
-        lock (_presentGate)
-        {
-            binding = _binding;
-            if (binding is null)
-                return;
-            binding.Detached = true;
-            _binding = null;
-        }
-
-        binding.Sink.FrameArrived = null;
+        _sink!.FrameArrived = null;
+        _sink.ClaimReleased = null;
     }
 
     /// <summary>
@@ -708,23 +914,23 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// all this does is wake the UI thread.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// This replaces a <c>DispatcherTimer</c>. Avalonia's dispatcher timer is a message-queue
     /// timer quantized to the ~15.625 ms platform tick, so a 16 ms request was delivered at
     /// ~26 ms and capped the presenter near 38 fps against a 60 fps source however cheap the
     /// present was — measured at 0.3 ms (issue #128). A post carries no such quantum: it runs
     /// when the dispatcher next drains.
+    /// </para>
+    /// <para>
+    /// <paramref name="binding"/> is the number the callback was bound under. A callback that
+    /// outlives its binding, or one raised before the view first presents, posts nothing, and the
+    /// frame stays with the sink, which keeps or drops it (ADR-0085, decisions 2, 3 and 5).
+    /// </para>
     /// </remarks>
-    private void OnFrameArrived(SinkBinding binding)
+    private void OnFrameArrived(CompositionInteropVideoSink sink, long binding)
     {
-        if (_tornDown)
+        if (!TryClaimPost(binding))
             return;
-
-        lock (_presentGate)
-        {
-            if (binding.Detached || _presentPosted)
-                return;
-            _presentPosted = true;
-        }
 
         if (TryPostPresent())
             return;
@@ -737,34 +943,37 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         lock (_presentGate)
             _presentPosted = false;
 
-        if (_sink?.HasPendingFrame == true)
+        if (sink.HasPendingFrame && TryClaimPost(binding) && !TryPostPresent())
         {
             lock (_presentGate)
-            {
-                if (_presentPosted)
-                    return;
-                _presentPosted = true;
-            }
-
-            if (!TryPostPresent())
-                lock (_presentGate)
-                    _presentPosted = false;
+                _presentPosted = false;
         }
     }
 
     /// <summary>
-    /// Posts a present if the bound sink is holding a frame. Safe to call spuriously — the
-    /// coalescing claim collapses a redundant call, and a present that finds nothing simply
+    /// Claims the one queued present for work started under <paramref name="binding"/>: the
+    /// number has not moved, the view presents, and no present is queued already.
+    /// </summary>
+    private bool TryClaimPost(long binding)
+    {
+        lock (_presentGate)
+        {
+            if (binding != _lifecycle.Binding || !_lifecycle.Presents || _presentPosted)
+                return false;
+            _presentPosted = true;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Posts a present if the held sink is holding a frame. UI thread. Safe to call spuriously:
+    /// the coalescing claim collapses a redundant call, and a present that finds nothing simply
     /// returns.
     /// </summary>
     private void SchedulePresentIfPending()
     {
-        SinkBinding? binding;
-        lock (_presentGate)
-            binding = _binding;
-
-        if (binding is not null && binding.Sink.HasPendingFrame)
-            OnFrameArrived(binding);
+        if (_sink is { HasPendingFrame: true } sink)
+            OnFrameArrived(sink, _lifecycle.Binding);
     }
 
     private bool TryPostPresent()
@@ -772,18 +981,26 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         try
         {
             Dispatcher.UIThread.Post(PresentPending, DispatcherPriority.Render);
-            return true;
         }
         catch
         {
             return false;
         }
+
+        Interlocked.Increment(ref _presentsPosted);
+        return true;
     }
 
     /// <summary>
     /// Takes the latest frame and presents it. UI thread only — every compositor and D3D11
     /// call below is thread-affine.
     /// </summary>
+    /// <remarks>
+    /// A post presents for whichever binding is current when it runs. The transitions run on this
+    /// thread too, so nothing moves between the check below and the present, and a post claimed
+    /// under an earlier binding is the one a later binding's arrivals coalesced into: dropping it
+    /// would leave their frame waiting for an arrival that may never come.
+    /// </remarks>
     private void PresentPending()
     {
         // Released before the work, not after, so a frame arriving mid-present can claim the
@@ -791,11 +1008,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         lock (_presentGate)
             _presentPosted = false;
 
-        // Leave the frame pending rather than taking it: Present would drop it, and the
-        // Sink setter can bind before the composition is set up, or while the view is out of
-        // the visual tree, so early frames would be consumed and discarded. Held instead, the
-        // newest one is shown as soon as setup completes — which sweeps the slot itself.
-        if (_tornDown || _interop is null || _surface is null)
+        // Leave the frame pending rather than taking it: Present would drop it. Before the view
+        // presents, and until the compositor side of this attachment is ready, the sink keeps the
+        // newest frame, or none, by its own rule; the attach and the interop's readiness sweep it.
+        if (!_lifecycle.Presents || _interop is null || _surface is null)
             return;
 
         var entered = Stopwatch.GetTimestamp();
@@ -848,16 +1064,22 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         );
     }
 
-    // Liveness snapshot for the stall watchdog — read off the UI thread, so only volatile counters.
+    // Liveness snapshot for the stall watchdog — read off the UI thread, so only volatile counters
+    // and the published snapshot, whose sink is the one the view presents.
     private PresenterSample SampleStall() => new(
         Stopwatch.GetTimestamp(),
         Volatile.Read(ref _framesPresented),
         Volatile.Read(ref _framesCommitted),
-        _sink?.FramesAccepted ?? 0,
+        Volatile.Read(ref _snapshot).Sink?.FramesAccepted ?? 0,
         Volatile.Read(ref _lastBltStartedTicks));
 
-    private void OnStallDetected(PresenterStallInfo info)
+    internal void OnStallDetected(PresenterStallInfo info)
     {
+        // A sample the watchdog took as the view stopped presenting is not a stall of anything
+        // on screen. Its timer runs off the UI thread, so it reads the published snapshot.
+        if (!Volatile.Read(ref _snapshot).Presents)
+            return;
+
         // The stalls counter lives on this presenter's own FrameFlow.Presenter meter, so it is
         // recorded here rather than inside the watchdog, which is presenter-agnostic and in
         // FrameFlow.Media. Still the rising edge: the watchdog raises Stalled once per stall.
@@ -949,8 +1171,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     }
 
     // ── Composition / interop setup ────────────────────────────────
-    // Runs once per attachment, from StartPresenting: once the logger is wired (Initialize) AND
-    // we're attached (the compositor exists), whichever happens second.
+    // Runs once per attachment, from StartPresenting: once the view is initialized, attached (the
+    // compositor exists) and holds a sink, whichever happens last.
     private void SetupComposition()
     {
         var selfVisual = ElementComposition.GetElementVisual(this);
@@ -967,17 +1189,33 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         ElementComposition.SetElementChildVisual(this, _surfaceVisual);
         UpdateSurfaceLayout();
 
-        _ = InitInteropAsync(_compositor, _surface);
+        _ = InitInteropAsync(_compositor, _surface, _d3d12Retired);
     }
 
-    private async Task InitInteropAsync(Compositor compositor, CompositionDrawingSurface surface)
+    private async Task InitInteropAsync(Compositor compositor, CompositionDrawingSurface surface, Task d3d12Retired)
     {
         try
         {
             var interop = await compositor.TryGetCompositionGpuInterop();
 
+            // A reattach builds no new D3D12 converter until the one the last teardown took has
+            // been disposed, which releases the decoder frames it held for its draws (ADR-0085,
+            // decision 2). Until then this attachment presents nothing, and the frames wait in the
+            // sink. Completed at once unless that converter is still being torn down; never faults.
+            // Logged, so a stall seen meanwhile has its cause in the log.
+            if (!d3d12Retired.IsCompleted)
+            {
+                _logger.LogInformation(
+                    "Presenter waits for the previous attachment's D3D12 converter to be disposed before it presents (ADR-0085)."
+                );
+                await d3d12Retired;
+                _logger.LogInformation("Presenter resumes: the previous D3D12 converter has been disposed.");
+            }
+
             // The surface is this attachment's. A detach while the interop was on its way tore it
-            // down, and a reattach has set up its own and asked for its own interop.
+            // down, and a reattach has set up its own and asked for its own interop. The binding
+            // number cannot say this: a sink assigned while the view presents moves the number and
+            // keeps the surface, whose interop is still wanted.
             if (!ReferenceEquals(_surface, surface))
                 return;
 
@@ -1056,12 +1294,18 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     }
 
     // ── Per-frame present (UI thread, from the render tick) ────────
+    // Takes ownership of the frame. One drawn into the ring is kept as the frame presented last, and
+    // releases the one kept before, even if its import or hand-off then fails: on D3D12VA the
+    // converter's draw holds it from there, so the frame kept stays one of the draws and the sink's
+    // MaxHeldFrames holds. One that was dropped before the draw, or could not be presented, is
+    // disposed, and the frame kept before stays.
     private void Present(IVideoFrame frame)
     {
+        var filled = false;
         try
         {
-            if (_tornDown || _interop is null || _surface is null)
-                return; // teardown started, or interop not ready yet — drop.
+            if (_interop is null || _surface is null)
+                return; // interop not ready yet — drop. PresentPending checked both; a guard.
 
             if (frame.SampleAspectRatio != _videoShape || frame.Rotation != _videoRotation)
             {
@@ -1139,6 +1383,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                 }
                 EnsureConverterOutput(frame, texture, device);
                 PresentRing(
+                    ref filled,
                     PresentSource.D3D11,
                     frame.Width,
                     frame.Height,
@@ -1153,7 +1398,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             else if (frame is GpuVideoFrame d3d12 && d3d12.TryGetD3D12Texture(out var d3d12Texture, out _, out _, out _))
             {
                 ReportUnsupportedFrames();
-                PresentD3D12(d3d12, d3d12Texture);
+                PresentD3D12(d3d12, d3d12Texture, ref filled);
             }
             else if (frame.Format == FrameFlow.Media.PixelFormat.Bgra32 && frame.AsCpu() is { } cpu)
             {
@@ -1163,6 +1408,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                 ReportUnsupportedFrames();
                 _cpuUploader ??= new D3D11BgraUploader(frame.Width, frame.Height, _logger);
                 PresentRing(
+                    ref filled,
                     PresentSource.Cpu,
                     frame.Width,
                     frame.Height,
@@ -1198,7 +1444,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         }
         finally
         {
-            frame.Dispose();
+            if (filled)
+                KeepPresented(frame);
+            else
+                frame.Dispose();
         }
     }
 
@@ -1303,7 +1552,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// decoders on one adapter share a device unless it came from <c>ID3D12DeviceFactory</c>, so a
     /// change is rare enough that an in-place rebind is not worth its code.
     /// </summary>
-    private void PresentD3D12(GpuVideoFrame frame, nint texture)
+    private void PresentD3D12(GpuVideoFrame frame, nint texture, ref bool filled)
     {
         if (_gpuConverter is not null)
             DropGpuConverter(GpuConverterDropReason.BackendChange);
@@ -1331,6 +1580,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
 
         var converter = _d3d12Converter ??= new D3D12YuvSharedConverter(texture, frame.Width, frame.Height, _logger);
         PresentRing(
+            ref filled,
             PresentSource.D3D12,
             frame.Width,
             frame.Height,
@@ -1391,7 +1641,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// vs CPU source — both produce the same shared keyed-mutex BGRA textures, so the
     /// present + sequencing logic is identical. <paramref name="fill"/> returns
     /// <see langword="false"/> on GPU device-loss, in which case this present is skipped and
-    /// the source is rebuilt on the next frame (step 6).
+    /// the source is rebuilt on the next frame (step 6). Sets <paramref name="filled"/> once the
+    /// frame has been drawn into the ring, before the import and the hand-off, which may still fail;
+    /// it stays <see langword="false"/> when the frame is dropped or the fill skipped.
     /// </summary>
     /// <remarks>
     /// The per-frame DECISION — which free slot, source-flip re-import, size-change layout update,
@@ -1401,6 +1653,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// present-task bookkeeping.
     /// </remarks>
     private void PresentRing(
+        ref bool filled,
         PresentSource source,
         int width,
         int height,
@@ -1412,9 +1665,6 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         TimelineId timeline
     )
     {
-        if (_tornDown)
-            return;
-
         // Decide the per-frame outcome purely (PresentPlanner): build the current ring/source/size
         // state from the scattered fields, fold in the incoming frame's descriptor, and read back
         // which free slot to fill (or to drop), whether the source flipped (re-import the ring),
@@ -1463,6 +1713,7 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         // IsDeviceLost; the next Present() drops + rebuilds it (and its imported ring).
         if (!fill(idx))
             return;
+        filled = true;
 
         _imported[idx] ??= _interop!.ImportImage(
             new PlatformHandle(
@@ -1493,28 +1744,22 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         // bumps the committed counter — a faulted/cancelled present did not reach the screen.
         // Fire-and-forget off the UI thread; the drain/availability logic keys off the
         // original task (presentTask) so this continuation does not perturb sequencing.
-        // The sink this frame belongs to, captured now rather than read when the hand-off
-        // completes: the Sink setter can swap in a replacement while a present is still in
-        // flight, and the successor must not be told it presented a frame it never saw. Same
-        // rule the diagnostics attachment follows, where a replaced sink keeps reporting its
-        // own window.
+        // The sink this frame belongs to, and the binding it is presented under, captured now
+        // rather than read when the hand-off completes: the Sink setter can swap in a
+        // replacement while a present is still in flight, and the successor must not be told it
+        // presented a frame it never saw. Same rule the diagnostics attachment follows, where a
+        // replaced sink keeps reporting its own window.
         var presentingSink = _sink;
+        var binding = _lifecycle.Binding;
 
         presentTask.ContinueWith(
             static (_, state) =>
             {
-                var (self, sink, framePts, frameTimeline) =
-                    ((CompositionInteropVideoView, CompositionInteropVideoSink?, TimeSpan, TimelineId))state!;
-                Interlocked.Increment(ref self._framesCommitted);
-                Volatile.Write(ref self._lastCommittedAtUtcTicks, DateTime.UtcNow.Ticks);
-
-                // FramePresented rides the commit, not the enqueue, so it means the same
-                // thing the committed counter does: this frame reached the screen. A
-                // faulted or cancelled hand-off never runs this continuation, so a consumer
-                // is never told about a frame that device loss ate.
-                sink?.RaiseFramePresented(framePts, frameTimeline);
+                var (self, sink, binding, framePts, frameTimeline) =
+                    ((CompositionInteropVideoView, CompositionInteropVideoSink?, long, TimeSpan, TimelineId))state!;
+                self.OnPresentCommitted(sink, binding, framePts, frameTimeline);
             },
-            (this, presentingSink, pts, timeline),
+            (this, presentingSink, binding, pts, timeline),
             CancellationToken.None,
             TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default
@@ -1527,6 +1772,32 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         Volatile.Write(ref _lastPresentedPtsTicks, pts.Ticks);
         Volatile.Write(ref _lastPresentedAtUtcTicks, DateTime.UtcNow.Ticks);
         LogProgress(source);
+    }
+
+    /// <summary>
+    /// The compositor took a frame's hand-off. Counts the commit, and tells
+    /// <paramref name="sink"/> its frame was presented, unless the binding it was presented
+    /// under has ended (ADR-0085, decision 5). Runs on whichever thread completed the hand-off.
+    /// </summary>
+    /// <remarks>
+    /// The commit is counted whatever the binding: the compositor did drain the hand-off, and the
+    /// counters span the view's life. <c>FramePresented</c> rides the commit, not the enqueue, so
+    /// it means the same thing the committed counter does: this frame reached the screen. A
+    /// faulted or cancelled hand-off never gets here, so a consumer is never told about a frame
+    /// that device loss ate, and a view that has stopped presenting tells nobody. The number is
+    /// compared under <see cref="_presentGate"/>, and the handlers run outside it.
+    /// </remarks>
+    internal void OnPresentCommitted(CompositionInteropVideoSink? sink, long binding, TimeSpan pts, TimelineId timeline)
+    {
+        Interlocked.Increment(ref _framesCommitted);
+        Volatile.Write(ref _lastCommittedAtUtcTicks, DateTime.UtcNow.Ticks);
+
+        bool current;
+        lock (_presentGate)
+            current = binding == _lifecycle.Binding && _lifecycle.Presents;
+
+        if (current)
+            sink?.RaiseFramePresented(pts, timeline);
     }
 
     private void LogProgress(PresentSource source)
@@ -1585,20 +1856,26 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     }
 
     /// <summary>
-    /// Tears the view down for good: the compositor side, if a detach has not already, and the
-    /// view's own sink. The view presents nothing afterwards, and <see cref="Sink"/> reads
-    /// <see langword="null"/>. <see cref="EnsureSink"/>, <see cref="Initialize"/>,
-    /// <see cref="IVideoSurface.AttachSink"/> and assigning a sink then throw
-    /// <see cref="ObjectDisposedException"/>. Call on the UI thread.
+    /// Tears the view down for good: the compositor side, if the view is presenting, and its sink.
+    /// The view's own sink is disposed, even while a player still feeds it, which then has every
+    /// frame disposed on arrival; a caller's sink is let go, not disposed. A frame the view still
+    /// holds, the one it presented last while presenting, is released; one it handed back to a
+    /// caller's sink at a detach stays with that sink while a player holds it. The view presents
+    /// nothing afterwards, and <see cref="Sink"/> reads <see langword="null"/>.
+    /// <see cref="EnsureSink"/>, <see cref="Initialize"/>, <see cref="IVideoSurface.AttachSink"/>
+    /// and assigning a sink then throw <see cref="ObjectDisposedException"/>. Call on the UI
+    /// thread.
     /// </summary>
     /// <returns>
     /// A task that completes once the producers are disposed, or handed to the background reaper
-    /// when the compositor does not drain in time.
+    /// when the compositor does not drain in time. It faults with what any step threw, such as a
+    /// frame that failed to release, after every step has run.
     /// </returns>
-    public ValueTask DisposeAsync() => new(Apply(_lifecycle.Dispose()));
+    public ValueTask DisposeAsync() => new(Combined(Apply(_lifecycle.Dispose())));
 
     /// <summary>
-    /// Observes the teardown a visual-tree detach (or window close) started and did not wait for:
+    /// Observes the teardown a visual-tree detach (or window close), or clearing
+    /// <see cref="Sink"/>, started and did not wait for:
     /// the UI thread is never blocked on the compositor. The teardown is self-contained (it owns
     /// snapshots of every resource it frees), so fire-and-forget is safe here;
     /// <see cref="DisposeAsync"/> returns the same work when a caller wants completion. A fault
@@ -1621,7 +1898,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// <summary>
     /// Ordered teardown of one attachment's compositor side that never leaves the producer
     /// waiting on the compositor (investigation 2026-06-12, §6). Sequence: (1) stop producing,
-    /// which <see cref="Apply"/> has done; (2) detach from the compositor and dispose the
+    /// which the binding number has done: it moved before this ran, so nothing posts or commits
+    /// a present for this attachment from here (ADR-0085, decision 5); (2) detach from the
+    /// compositor and dispose the
     /// imported images through its render thread; (3) drain in-flight presents with a bounded
     /// wait; (4) on success dispose the producer off the UI thread, on timeout defer producer
     /// disposal to a background reaper (never block, never leak).
@@ -1698,23 +1977,32 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         _outputSettle = default;
         SuperResolutionLease.Process.Release(this);
 
+        // The next attachment waits for this to present (InitInteropAsync): a D3D12 converter
+        // holds decoder frames for its draws until it is disposed (ADR-0085, decision 2).
+        var producersDisposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (d3d12Converter is not null)
+            _d3d12Retired = producersDisposed.Task;
+
         // Step 3: drain in-flight presents (a present holding key 1 must finish and release
         // to 0). Both the imported disposal and the drain need the compositor render thread
         // to make progress, so wait on them together under one bounded timeout.
         var presentDrain = DrainPresentsAsync(presentSnapshot);
         var gating = Task.WhenAll(importedDisposal, presentDrain);
-        return FinishTeardownAsync(gating, teardownStart, _logger, converter, d3d12Converter, uploader);
+        return FinishTeardownAsync(
+            gating, teardownStart, _logger, producersDisposed, converter, d3d12Converter, uploader);
     }
 
     /// <summary>
     /// Steps 3 and 4 of <see cref="StopPresenting"/>: waits for the compositor to drain, then
     /// disposes the producers it was handed, or hands them to the reaper. Static, so it can reach
-    /// nothing of the view's but what one teardown took from it.
+    /// nothing of the view's but what one teardown took from it. Completes
+    /// <paramref name="producersDisposed"/> once they are disposed, by either path.
     /// </summary>
     private static async Task FinishTeardownAsync(
         Task gating,
         long teardownStart,
         ILogger logger,
+        TaskCompletionSource producersDisposed,
         D3D11Nv12SharedConverter? converter,
         D3D12YuvSharedConverter? d3d12Converter,
         D3D11BgraUploader? uploader
@@ -1728,9 +2016,17 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             // We're on a thread-pool continuation (ConfigureAwait(false)), never the UI
             // thread — so even the borrowed-device Release at the converter's tail can't
             // hang the UI.
-            converter?.Dispose();
-            d3d12Converter?.Dispose();
-            uploader?.Dispose();
+            try
+            {
+                converter?.Dispose();
+                d3d12Converter?.Dispose();
+                uploader?.Dispose();
+            }
+            finally
+            {
+                producersDisposed.TrySetResult();
+            }
+
             var elapsedMs = PresenterTeardownMetrics.RecordCompleted(teardownStart);
             logger.LogInformation(
                 "Presenter teardown completed cleanly in {ElapsedMs:F0}ms: compositor drained in-flight "
@@ -1750,7 +2046,15 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                 (int)PresentDrainTimeout.TotalMilliseconds
             );
             PresenterTeardownMetrics.RecordDeferred();
-            PresenterTeardownReaper.Enqueue(gating, logger, converter, d3d12Converter, uploader);
+            _ = PresenterTeardownReaper
+                .Enqueue(gating, logger, converter, d3d12Converter, uploader)
+                .ContinueWith(
+                    static (_, state) => ((TaskCompletionSource)state!).TrySetResult(),
+                    producersDisposed,
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default
+                );
         }
     }
 
@@ -1991,27 +2295,5 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         _cpuUploader = null;
         if (upl is not null)
             Task.Run(upl.Dispose);
-    }
-
-    private void DisposeOwnedSink()
-    {
-        if (!_sinkOwned)
-        {
-            _sink = null;
-            return;
-        }
-
-        var sink = _sink;
-        _sink = null;
-        _sinkOwned = false;
-
-        if (sink is not null)
-        {
-            var t = sink.DisposeAsync();
-            if (t.IsCompleted)
-                t.GetAwaiter().GetResult();
-            else
-                t.AsTask().GetAwaiter().GetResult();
-        }
     }
 }

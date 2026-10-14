@@ -39,12 +39,16 @@ internal static class PresenterTeardownReaper
     /// present hand-offs and imported-image disposals) completes. Returns immediately; disposal
     /// happens on a thread-pool thread, never the caller's (UI) thread.
     /// </summary>
-    public static void Enqueue(Task gating, ILogger logger, params IDisposable?[] producers)
+    /// <returns>
+    /// A task that completes once the producers have been disposed, which may be never if the
+    /// compositor never recovers. It never faults: disposal is exception-isolated.
+    /// </returns>
+    public static Task Enqueue(Task gating, ILogger logger, params IDisposable?[] producers)
     {
         if (producers.All(p => p is null))
-            return;
+            return Task.CompletedTask;
 
-        _ = ReapAsync(gating, logger, producers);
+        return ReapAsync(gating, logger, producers);
     }
 
     private static async Task ReapAsync(Task gating, ILogger logger, IDisposable?[] producers)

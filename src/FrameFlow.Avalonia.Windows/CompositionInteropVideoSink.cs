@@ -33,17 +33,33 @@ namespace FrameFlow.Avalonia.Windows;
 /// It is an <see cref="IClaimableSink"/>: a second player or pass built against it while the
 /// first holds it fails (ADR-0085, decision 6).
 /// </para>
+/// <para>
+/// <b>While no view presents it</b> (ADR-0085, decisions 2 and 3): before the view's first attach,
+/// after a detach, and once a view has let it go, the sink keeps only its newest frame while a
+/// player holds its claim, and disposes the one that frame replaces. With no claim it keeps nothing
+/// and disposes each frame it is given, and releasing the claim disposes the frame it kept. The frame
+/// the view presented last before it stopped counts as that newest frame unless a newer one has come.
+/// Nothing is presented and <see cref="FramePresented"/> is not raised. Those frames are counted in
+/// <see cref="FramesDiscardedOffScreen"/>, not as drops. A sink no view has taken up presents as it
+/// always has.
+/// </para>
 /// </remarks>
 public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSource, IClaimableSink
 {
     private readonly ILogger _logger;
     private readonly LatestWinsFrameSlot _slot = new();
-    private readonly SinkClaimGate _claims = new(typeof(CompositionInteropVideoSink));
+    private readonly SinkClaimGate _claims;
 
     /// <summary>Creates a sink.</summary>
     public CompositionInteropVideoSink(ILogger<CompositionInteropVideoSink>? logger = null)
     {
         _logger = logger ?? NullLogger<CompositionInteropVideoSink>.Instance;
+
+        // A frame kept while no view presents the sink is kept for the player that holds the
+        // claim, and so is the frame a view bound to it presented last. The gate runs the release
+        // before it takes another claim, so it lets go of that player's frames and nothing the next
+        // one sends (ADR-0085, decision 2).
+        _claims = new SinkClaimGate(typeof(CompositionInteropVideoSink), released: OnClaimReleased);
     }
 
     /// <summary>
@@ -55,7 +71,8 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     /// <remarks>
     /// The slot counts each frame as it installs it, under the gate the view's present takes the
     /// frame through, so this never trails the view's present count. A frame given after
-    /// <see cref="DisposeAsync"/> is not counted.
+    /// <see cref="DisposeAsync"/> is not counted, and neither is one given while no view presents
+    /// the sink and no player holds its claim, which the sink disposes on arrival.
     /// </remarks>
     public long FramesAccepted => _slot.Installed;
 
@@ -72,6 +89,37 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     /// "total frames the sink discarded", as its xmldoc states.
     /// </remarks>
     public long FramesSuperseded => _slot.Dropped;
+
+    /// <summary>
+    /// Total frames this sink discarded while no view presented it (ADR-0085, decision 2): replaced
+    /// by a newer frame while a player held its claim, disposed on arrival while none did, or let go
+    /// when the claim was released or the view stopped presenting it.
+    /// </summary>
+    /// <remarks>
+    /// Not a drop. <see cref="FramesSuperseded"/> and the diagnostics snapshot's
+    /// <c>FramesDropped</c> leave these out, so a view in a background tab, fed at 60 fps, does not
+    /// read as a presenter that cannot keep up.
+    /// </remarks>
+    public long FramesDiscardedOffScreen => _slot.DiscardedOffScreen;
+
+    /// <summary>
+    /// Whether a view presents this sink. <see cref="CompositionInteropVideoView"/> sets it as it
+    /// starts and stops presenting the sink, and as it takes the sink up or lets it go; see the
+    /// type's remarks for what the sink keeps while it is <see langword="false"/>. A sink starts
+    /// presented, so one no view has taken up works as it always has.
+    /// </summary>
+    internal void SetPresented(bool presented) => _slot.SetOnScreen(presented);
+
+    /// <summary>
+    /// The view stopped presenting this sink and keeps it: as <c>SetPresented(false)</c>, and the
+    /// sink takes back the frame the view presented last. It keeps that frame as its newest while a
+    /// player holds its claim and no newer frame is waiting, so the view presents it again when it
+    /// comes back, and disposes it otherwise (ADR-0085, decision 2).
+    /// </summary>
+    /// <param name="lastPresented">
+    /// The frame the view presented last, or <see langword="null"/>. Ownership transfers to the sink.
+    /// </param>
+    internal void StopPresenting(IVideoFrame? lastPresented) => _slot.SetOffScreen(lastPresented);
 
     /// <summary>
     /// Diagnostics source for <see cref="GetDiagnostics"/>. Set by the owning
@@ -148,8 +196,12 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
 
     /// <inheritdoc/>
     /// <remarks>
-    /// The frame slot, the frame the view is presenting on the UI thread, and for D3D12VA the frames
-    /// of the converter's outstanding draws, which it holds until the GPU has read them.
+    /// The frame slot, the frame the view is presenting on the UI thread, and two more: the frame the
+    /// view presented last, which it holds until it has drawn the next one into its ring, so that a
+    /// paused picture can be presented again after a trip out of the visual tree, and, for D3D12VA,
+    /// the frames of the converter's outstanding draws, which it holds until the GPU has read them
+    /// and of which the frame presented last is one. The view keeps a frame once it has been drawn,
+    /// even if its import or hand-off then fails, so that frame stays one of the draws.
     /// </remarks>
     public int? MaxHeldFrames => 2 + D3D12YuvSharedConverter.InFlight;
 
@@ -164,7 +216,8 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     /// <inheritdoc/>
     /// <remarks>
     /// After <see cref="DisposeAsync"/> the sink disposes the frame, does not count it in
-    /// <see cref="FramesAccepted"/> and keeps nothing (ADR-0085, decision 4).
+    /// <see cref="FramesAccepted"/> and keeps nothing (ADR-0085, decision 4). While no view
+    /// presents it, it keeps or disposes the frame as the type's remarks say.
     /// </remarks>
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
     {
@@ -176,7 +229,9 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
         // already posted can take the frame on the UI thread: the stall watchdog must never
         // see a present ahead of the intake that fed it, or it arms for a frame already on
         // screen. Once DisposeAsync has closed the slot, it disposes the frame instead, and
-        // the frame is neither counted nor presented (#664).
+        // the frame is neither counted nor presented (#664). So does a slot no view presents
+        // while no player holds the claim (ADR-0085, decision 2). A slot no view presents that
+        // does keep the frame installs it as usual; the view leaves it there until it presents.
         if (_slot.Install(frame) == FrameSlotInstall.Refused)
             return ValueTask.CompletedTask;
 
@@ -214,8 +269,38 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     /// </summary>
     internal bool HasPendingFrame => _slot.HasPending;
 
+    // Runs once per released claim, before the gate takes another, on the releasing thread.
+    private void OnClaimReleased()
+    {
+        try
+        {
+            _slot.SetKeepOffScreen(false);
+        }
+        finally
+        {
+            ClaimReleased?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// Raised, on the thread that released it, when a claim on this sink is released.
+    /// <see cref="CompositionInteropVideoView"/> sets this while it is bound to the sink, to let go
+    /// of the frame it presented last once the player that sent it is gone. The handler must not
+    /// block or throw: it runs inside the release.
+    /// </summary>
+    internal Action? ClaimReleased { get; set; }
+
     /// <inheritdoc />
-    IDisposable? IClaimableSink.TryClaim(string claimant) => _claims.TryClaim(claimant);
+    IDisposable? IClaimableSink.TryClaim(string claimant)
+    {
+        // Kept from here until the lease is released, which runs the gate's hook. The two cannot
+        // cross: the hook for the claim before this one has run before this claim could be taken,
+        // and this lease is not out yet.
+        var lease = _claims.TryClaim(claimant);
+        if (lease is not null)
+            _slot.SetKeepOffScreen(true);
+        return lease;
+    }
 
     /// <inheritdoc />
     string? IClaimableSink.Claimant => _claims.Claimant;

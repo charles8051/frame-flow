@@ -100,8 +100,10 @@ public partial class MainWindow : Window
             if (pane.Player is not null)
                 await DisposeLoggedAsync(pane.Player);
 
-            // The audio sink is ours, so it goes after its player. The view disposes its own sink.
+            // The audio sink is ours, so it goes after its player. So does the view, which keeps
+            // its own video sink until it is disposed.
             await DisposeLoggedAsync(pane.Audio);
+            await DisposeLoggedAsync(pane.Video);
         }
 
         _loggerFactory.Dispose();

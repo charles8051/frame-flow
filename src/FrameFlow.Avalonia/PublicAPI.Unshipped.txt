@@ -5,6 +5,7 @@ FrameFlow.Avalonia.AvaloniaVideoSink.AvaloniaVideoSink(Microsoft.Extensions.Logg
 FrameFlow.Avalonia.AvaloniaVideoSink.DisposeAsync() -> System.Threading.Tasks.ValueTask
 FrameFlow.Avalonia.AvaloniaVideoSink.DroppedFrameCount.get -> int
 FrameFlow.Avalonia.AvaloniaVideoSink.FramePresented -> System.EventHandler<FrameFlow.Media.FramePresentedInfo>?
+FrameFlow.Avalonia.AvaloniaVideoSink.FramesDiscardedOffScreen.get -> long
 FrameFlow.Avalonia.AvaloniaVideoSink.GetDiagnostics() -> FrameFlow.Media.Diagnostics.VideoSinkDiagnosticsSnapshot!
 FrameFlow.Avalonia.AvaloniaVideoSink.MaxHeldFrames.get -> int?
 FrameFlow.Avalonia.AvaloniaVideoSink.OnFormatChangedAsync(FrameFlow.Media.VideoFormatInfo! format, System.Threading.CancellationToken ct) -> System.Threading.Tasks.ValueTask
@@ -63,6 +64,7 @@ FrameFlow.Avalonia.FrameFlowTransportBar.Transport.get -> FrameFlow.Player.IMedi
 FrameFlow.Avalonia.FrameFlowTransportBar.Transport.set -> void
 FrameFlow.Avalonia.FrameFlowVideoView
 FrameFlow.Avalonia.FrameFlowVideoView.Clear() -> void
+FrameFlow.Avalonia.FrameFlowVideoView.DisposeAsync() -> System.Threading.Tasks.ValueTask
 FrameFlow.Avalonia.FrameFlowVideoView.EnsureSink() -> FrameFlow.Avalonia.AvaloniaVideoSink!
 FrameFlow.Avalonia.FrameFlowVideoView.FrameFlowVideoView() -> void
 FrameFlow.Avalonia.FrameFlowVideoView.FrameFlowVideoView(Microsoft.Extensions.Logging.ILogger<FrameFlow.Avalonia.FrameFlowVideoView!>? logger) -> void
