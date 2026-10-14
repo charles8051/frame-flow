@@ -233,9 +233,11 @@ public sealed class SubstrateSessionSeekWaitTests
         rig.Audio.Release();
         var walkHold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         rig.Steps.At(Step.RecoveryStarted, () => walkHold.Task.Wait(Bound));
+        var walkStarted = rig.Steps.Next(Step.RecoveryStarted);
         await rig.Session.WarmUpAsync().AsTask().WaitAsync(Bound);
         await rig.Session.PlayAsync().AsTask().WaitAsync(Bound);
         await rig.EndOfStream.WaitAsync(Bound);
+        await walkStarted.WaitAsync(Bound); // the walk's task is scheduled apart from the run's end
         Assert.Equal(1, rig.Steps.RecoveriesGoing);
 
         rig.Steps.At(Step.WaitingForRun, () => walkHold.TrySetResult());
