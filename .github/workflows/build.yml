@@ -3,13 +3,26 @@ name: Build and Test
 # Two entry points with different matrices, because they answer different
 # questions.
 #
-# A pull request gets ubuntu-latest, ubuntu-24.04-arm + windows-latest, always. Until 2026-09-11
+# A pull request gets Windows and Linux x64, always. Until 2026-09-11
 # this workflow was dispatch-only and nothing built a PR at all — the only
 # check on one was the Peanut Gallery reviewer, whose pass means "the panel
 # ran", not "it compiles". #110 merged on that alone.
 #
-# A dispatch still picks any subset of the three, and macOS is reachable only
-# that way. The reason is now purely price: it is the 10x-billed runner.
+# Both legs run on the maintainer's self-hosted runners, the same ones
+# publish.yml uses: WINDOWS_RUNNER and LINUX_RUNNER, with the same defaults.
+# A pull request from a fork gets GitHub's hosted windows-latest and
+# ubuntu-latest instead. Its tree would otherwise build and run on the
+# maintainer's machines, and peanut-gallery.yml keeps forks off them for the
+# same reason. This is hygiene, not a boundary: a fork's pull_request runs the
+# fork's copy of this file. The boundary is the repository setting that holds
+# every outside contributor's run for approval.
+#
+# linux-arm64 is not built here. GitHub's hosted Arm runner is the only Arm
+# machine available, and publish.yml tests on it before every release.
+#
+# A dispatch still picks any subset of Windows, Linux and macOS, and macOS is
+# reachable only that way. The reason is now purely price: it is the
+# 10x-billed runner.
 #
 # It used to be more than price. Until 2026-09 the macOS leg took its FFmpeg
 # from a Homebrew keg rather than a pinned build, so a green macOS run answered
@@ -42,19 +55,15 @@ on:
   workflow_dispatch:
     inputs:
       windows:
-        description: 'Run on windows-latest'
+        description: 'Run on Windows (WINDOWS_RUNNER, self-hosted by default)'
         type: boolean
         default: true
       linux:
-        description: 'Run on ubuntu-latest'
+        description: 'Run on Linux x64 (LINUX_RUNNER, self-hosted by default)'
         type: boolean
         default: true
       macos:
         description: 'Run on macos-latest'
-        type: boolean
-        default: true
-      linux-arm64:
-        description: 'Run on ubuntu-24.04-arm'
         type: boolean
         default: true
 
@@ -86,9 +95,17 @@ env:
   DOTNET_NOLOGO: true
 
 jobs:
-  # Build the OS matrix. On a pull request it is fixed; on a dispatch it comes
-  # from the inputs, and fails fast if no OS was selected — the job log shows
-  # the error so the user knows why.
+  # Build the matrix: one leg per OS, each naming its runner. On a pull request
+  # the legs are fixed; on a dispatch they come from the inputs, and the job
+  # fails fast if no OS was selected — the job log shows the error so the user
+  # knows why.
+  #
+  # A leg is self-hosted when its runner labels say so. A self-hosted Linux leg
+  # runs in the .NET SDK container, because that host has only Docker; the steps
+  # below read `hosted` and `container` to decide what each machine needs.
+  #
+  # This job stays on ubuntu-latest. It runs for seconds, and on a self-hosted
+  # runner it would queue behind the builds it is there to start.
   setup:
     runs-on: ubuntu-latest
     outputs:
@@ -96,30 +113,63 @@ jobs:
     steps:
       - id: os
         shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          WINDOWS_RUNNER: ${{ vars.WINDOWS_RUNNER || '["self-hosted","windows","x64"]' }}
+          LINUX_RUNNER: ${{ vars.LINUX_RUNNER || '["self-hosted","linux","x64","docker"]' }}
+          WANT_WINDOWS: ${{ inputs.windows }}
+          WANT_LINUX: ${{ inputs.linux }}
+          WANT_MACOS: ${{ inputs.macos }}
         run: |
-          # Not a dispatch: the inputs do not exist, and reading them would make
-          # every OS false and trip the "no OS selected" error below.
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
-            echo 'matrix={"os":["ubuntu-latest","ubuntu-24.04-arm","windows-latest"]}' >> "$GITHUB_OUTPUT"
-            exit 0
+          set -euo pipefail
+
+          leg() {
+            jq -cn --arg os "$1" --argjson runner "$2" '
+              ($runner | index("self-hosted") != null) as $self
+              | { os: $os,
+                  runner: $runner,
+                  hosted: ($self | not),
+                  container: (if $self and $os == "linux"
+                              then "mcr.microsoft.com/dotnet/sdk:10.0" else "" end) }'
+          }
+
+          LEGS=()
+          if [ "$EVENT" != "workflow_dispatch" ]; then
+            # Not a dispatch: the inputs do not exist, and reading them would make
+            # every OS false and trip the "no OS selected" error below.
+            if [ "$FORK" = "true" ]; then
+              LEGS+=("$(leg windows '["windows-latest"]')" "$(leg linux '["ubuntu-latest"]')")
+            else
+              LEGS+=("$(leg windows "$WINDOWS_RUNNER")" "$(leg linux "$LINUX_RUNNER")")
+            fi
+          else
+            [ "$WANT_WINDOWS" = "true" ] && LEGS+=("$(leg windows "$WINDOWS_RUNNER")")
+            [ "$WANT_LINUX" = "true" ] && LEGS+=("$(leg linux "$LINUX_RUNNER")")
+            [ "$WANT_MACOS" = "true" ] && LEGS+=("$(leg macos '["macos-latest"]')")
           fi
-          OSES=()
-          [ "${{ inputs.windows }}" = "true" ] && OSES+=('"windows-latest"')
-          [ "${{ inputs.linux }}" = "true" ] && OSES+=('"ubuntu-latest"')
-          [ "${{ inputs.macos }}" = "true" ] && OSES+=('"macos-latest"')
-          [ "${{ inputs.linux-arm64 }}" = "true" ] && OSES+=('"ubuntu-24.04-arm"')
-          if [ ${#OSES[@]} -eq 0 ]; then
-            echo "::error::No OS selected — tick at least one of windows / linux / macos / linux-arm64."
+
+          if [ ${#LEGS[@]} -eq 0 ]; then
+            echo "::error::No OS selected — tick at least one of windows / linux / macos."
             exit 1
           fi
-          ( IFS=,; echo "matrix={\"os\":[${OSES[*]}]}" >> "$GITHUB_OUTPUT" )
+          matrix="$(printf '%s\n' "${LEGS[@]}" | jq -cs '{include: .}')"
+          echo "$matrix"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   test:
     needs: setup
+    name: test (${{ matrix.os }})
     strategy:
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
       fail-fast: false
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
+    # Backstop for a self-hosted runner, which a wedged job would otherwise hold
+    # for GitHub's six-hour cap. A clean run takes well under half of this.
+    timeout-minutes: 60
+    # The self-hosted Linux host has only Docker, so that leg brings its SDK in a
+    # container, as publish.yml's publish job does. Empty string = no container.
+    container: ${{ matrix.container }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -130,7 +180,23 @@ jobs:
           # code shares a workspace with a usable token.
           persist-credentials: false
 
+      # Container only, for the reason publish.yml gives: the job runs as root over
+      # runner-owned files, git calls the checkout "dubious ownership", and MinVer's
+      # own git call falls back to 0.0.0-alpha.0.
+      - name: Trust workspace for git (container)
+        if: matrix.container != ''
+        run: git config --system --add safe.directory '*'
+
+      # Container only: the SDK image has no xz, which the linux-x64 FFmpeg
+      # .tar.xz needs.
+      - name: Install packages (container)
+        if: matrix.container != ''
+        run: apt-get update && apt-get install -y --no-install-recommends xz-utils
+
+      # Hosted only. The self-hosted Windows box has .NET 8/10 installed on the
+      # host, and the SDK container ships .NET 10.
       - uses: actions/setup-dotnet@v5
+        if: matrix.hosted
         with:
           dotnet-version: '10.0.x'
 
@@ -145,11 +211,12 @@ jobs:
       # and `gh run view --log` has nothing for the leg. The cause appears only
       # in the check-run annotation.
       #
-      # Linux-only: these are the hosted Ubuntu image's preinstalled toolchains,
-      # none of which a .NET build uses. `|| true` so a missing dir is never
-      # fatal.
-      - name: Free disk space (Linux only)
-        if: runner.os == 'Linux'
+      # Hosted Linux only: these are the hosted Ubuntu image's preinstalled
+      # toolchains, none of which a .NET build uses. `|| true` so a missing dir is
+      # never fatal. The self-hosted leg builds on a large docker disk and, in a
+      # container, cannot sudo the host anyway.
+      - name: Free disk space (hosted Linux only)
+        if: matrix.hosted && runner.os == 'Linux'
         run: |
           df -h /
           sudo rm -rf /usr/local/lib/android /opt/ghc /usr/local/.ghcup             /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift || true
@@ -188,9 +255,12 @@ jobs:
         # (the runner shouldn't scribble into ~/.nuget/local-feed).
         run: dotnet build FrameFlow.slnx --configuration Release --no-restore -p:FrameFlowLocalFeedDisable=true
 
+      # The default shell, as in publish.yml: bash on Linux and macOS, Windows
+      # PowerShell on the self-hosted Windows box, which is not known to have bash.
+      # --blame-hang-timeout fails a test that hangs, rather than letting it hold a
+      # shared self-hosted runner until the job's timeout.
       - name: Test
-        shell: bash
-        run: dotnet test FrameFlow.slnx --configuration Release --no-build --logger "trx;LogFileName=test-${{ matrix.os }}.trx"
+        run: dotnet test FrameFlow.slnx --configuration Release --no-build --blame-hang-timeout 5m --blame-crash --logger "trx;LogFileName=test-${{ matrix.os }}.trx"
 
       # The tests reach the inference packages through project references, which
       # copy files a package consumer never gets. This packs them and runs an app
@@ -211,16 +281,17 @@ jobs:
       - name: Avalonia 12 binary check
         run: dotnet run scripts/avalonia-binary-check.cs -c Release -p:FrameFlowLocalFeedDisable=true
 
-      # This builds the Avalonia projects and their tests against 12 and runs the tests, so a
+      # These build the Avalonia projects and their tests against 12 and run the tests, so a
       # source break on 12 fails here, and the tests run on 12's controls and Fluent theme.
-      # Last in the job, because it rebuilds those projects with other packages.
-      - name: Avalonia 12
-        shell: bash
-        run: |
-          for project in tests/FrameFlow.Avalonia.Tests tests/FrameFlow.Avalonia.Windows.Tests; do
-            dotnet build "$project" --configuration Release -p:FrameFlowLocalFeedDisable=true "-p:FrameFlowAvaloniaVersion=12.*"
-            dotnet test "$project" --configuration Release --no-build "-p:FrameFlowAvaloniaVersion=12.*"
-          done
+      # Last in the job, because they rebuild those projects with other packages.
+      #
+      # One command per step, so no step depends on its shell stopping at a failed command:
+      # Windows PowerShell does not, and reports only the last command's exit code.
+      - name: Avalonia 12 (FrameFlow.Avalonia.Tests)
+        run: dotnet test tests/FrameFlow.Avalonia.Tests --configuration Release -p:FrameFlowLocalFeedDisable=true "-p:FrameFlowAvaloniaVersion=12.*"
+
+      - name: Avalonia 12 (FrameFlow.Avalonia.Windows.Tests)
+        run: dotnet test tests/FrameFlow.Avalonia.Windows.Tests --configuration Release -p:FrameFlowLocalFeedDisable=true "-p:FrameFlowAvaloniaVersion=12.*"
 
       - name: Upload test results
         if: always()
