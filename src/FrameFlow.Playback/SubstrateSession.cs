@@ -369,6 +369,18 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
     private void Take(Step step) => OnStep?.Invoke(step);
 
+    /// <summary>
+    /// Called with the token the end-of-stream flush of the decoders is given, before the flush,
+    /// on the pump's thread. Internal: a seam for tests, set before the session opens.
+    /// </summary>
+    internal Action<CancellationToken>? OnFlushingDecoders { get; set; }
+
+    private Task FinalizeDecodersAsync(CancellationToken cancellationToken)
+    {
+        OnFlushingDecoders?.Invoke(cancellationToken);
+        return _pipeline!.FinalizeDecodersAsync(cancellationToken);
+    }
+
     public PipelineDiagnosticsSnapshot GetPipelineDiagnostics()
     {
         var videoSink = _videoSink?.GetDiagnostics() ?? VideoSinkDiagnosticsSnapshot.Empty;
@@ -974,6 +986,10 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         if (_pipeline is null)
             return;
 
+        // A seek cancelled before it committed, by a pause sent during it for instance, left the
+        // run stopped, and neither branch below would start another (#714).
+        await FinishCutShortRepositionAsync(cancellationToken).ConfigureAwait(false);
+
         if (!_renderersActivated)
         {
             // First play: activate sinks, start clock, open the gates so
@@ -1093,6 +1109,33 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         if (_hasAudio)
             await _audioSink!.ResumeAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Repositions at the clock's position when a reposition was cancelled before it committed,
+    /// so the play that follows launches a run instead of opening the gates on a stopped one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A reposition stops the run first, and clears <see cref="_sessionCts"/> only once it has
+    /// committed (<see cref="RepositionAsync"/> step 6). One cancelled before that, such as a seek
+    /// whose wait for the run a pause cut short, leaves the token cancelled and set. The run is
+    /// stopped or still unwinding, and the demuxer, the decoders and the pacer are where it left
+    /// them, or partway through the seek. The resume branch of <see cref="PlayAsync"/> restarts
+    /// only a run a committed reposition cleared, and its first-play branch only when no task is
+    /// held, so neither starts one (#714).
+    /// </para>
+    /// <para>
+    /// A run launched over that state would decode on codec contexts a cancellation interrupted,
+    /// which the class remarks warn against. Repositioning where the clock stands, which the
+    /// cancelled seek never moved, does what a seek taken while paused does: it waits for the old
+    /// run's tasks, flushes the pacer, seeks the demuxer, resets the decoders and seats the clocks,
+    /// and the play then launches from there. The cancelled seek's target is not taken.
+    /// </para>
+    /// </remarks>
+    private ValueTask FinishCutShortRepositionAsync(CancellationToken cancellationToken) =>
+        _sessionCts is { IsCancellationRequested: true }
+            ? RepositionAsync(_clock.Position, GraphPolicy.Rebuild, TaskPolicy.Cancel, cancellationToken)
+            : ValueTask.CompletedTask;
 
     /// <summary>
     /// Upper bound on waiting for a post-seek run's destination frame before giving up and
@@ -1531,8 +1574,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // not the delivery hold.
         _pendingSeekSettles = !wasPaused && _ownedClockSource is not null;
 
-        _sessionCts?.Dispose();
-        _sessionCts = null;
+        RetireSessionToken();
 
         // The cheap rewind keeps the post-CTS-null cancellation check the seek path omits:
         // at the loop boundary it is the documented "a concurrent user seek can cancel the
@@ -1769,6 +1811,28 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     }
 
     private static bool HasEnded(Task task) => task.IsCompleted;
+
+    /// <summary>
+    /// Cancels the session token, unless it is cancelled already, then disposes its source.
+    /// </summary>
+    /// <remarks>
+    /// The lateness-recovery walk runs on the token and is not held with the run's tasks. A rewind
+    /// on the <see cref="TaskPolicy.AwaitClean"/> path waits for a run that ended by itself without
+    /// cancelling it, so a source disposed uncancelled there left the last run's walk going beside
+    /// the next one's, for good.
+    /// </remarks>
+    private void RetireSessionToken()
+    {
+        if (_sessionCts is not { } cts)
+            return;
+        _sessionCts = null;
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException) { }
+        cts.Dispose();
+    }
 
     /// <summary>
     /// Builds the session graph topology (source → pace → gate → consumer chain → sink)
@@ -2084,11 +2148,10 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         if (_pipeline is null)
             return;
 
-        // One run at a time. The last run's tasks have ended, so the CTS they watched can go.
+        // One run at a time: the last run's pump and graph have ended.
         ThrowIfRunGoing();
 
-        // Dispose any prior CTS (defensive).
-        _sessionCts?.Dispose();
+        RetireSessionToken();
         _sessionCts = new CancellationTokenSource();
         var ct = _sessionCts.Token;
 
@@ -2154,7 +2217,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                         // run's token so the flush gives up. The queues are completed either way.
                         try
                         {
-                            await _pipeline!.FinalizeDecodersAsync(ct).ConfigureAwait(false);
+                            await FinalizeDecodersAsync(ct).ConfigureAwait(false);
                         }
                         catch { }
                     }

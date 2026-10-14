@@ -13,7 +13,9 @@ internal interface IPlaylistItemRuntime : IPlaybackSession
 {
     /// <summary>
     /// The number of the item's current run. It advances each time a seek or a rewind stops the
-    /// run in progress, before the next run launches. See <see cref="SubstrateSession.RunNumber"/>.
+    /// run in progress, once that run's tasks have ended and before the next run launches. A seek
+    /// cancelled while it waits for them does not advance it. See
+    /// <see cref="SubstrateSession.RunNumber"/>.
     /// </summary>
     int RunNumber { get; }
 

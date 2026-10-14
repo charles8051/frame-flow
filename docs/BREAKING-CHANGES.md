@@ -1114,6 +1114,11 @@ supersedes it waits for the old run to end before it touches the demuxer, and so
 a player or a controller before it frees anything. One pump and one graph run at a time. On a local
 file the old run ends within milliseconds of being cancelled, so a scrub lands as quickly as before.
 
+A play after a seek that was cancelled before it repositioned, as a pause sent during a seek cancels
+it, now repositions where the clock stands and plays from there. A resume used to start nothing, so
+the picture stayed frozen until the next seek, and a first play launched a run beside the stopped one
+(#714).
+
 **Who hits this.**
 - An audio sink of your own whose `PresentAsync` or `DrainAsync` ignores the token it is given, or a
   node in a video or audio configurator that does. A seek that supersedes another while such a call
@@ -1122,9 +1127,12 @@ file the old run ends within milliseconds of being cancelled, so a scrub lands a
 - A source whose read blocks, such as a stalled network stream. Nothing interrupts the demuxer's
   read (#709), so the next seek, or the dispose, waits until it returns. Passing FFmpeg's
   `rw_timeout` option through `MediaSource.DemuxerOptions` bounds it.
+- Code that pauses while a seek is in progress and then plays. The play resumes where the clock
+  stood when the seek was cancelled, not at the seek's target, which the cancelled seek never took.
 
 **What to write instead.** In a sink or a configurator node of your own, observe the token each call
-is given, and return promptly once it is cancelled.
+is given, and return promptly once it is cancelled. To land on a target after pausing during a seek,
+seek to it again once the pause has completed.
 
 **Why.** The run a cancelled seek left behind was still using the demuxer and the decoders. Going on
 beside it raced native state that neither the demux session nor the audio decoder guards, and the

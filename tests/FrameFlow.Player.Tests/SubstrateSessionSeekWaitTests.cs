@@ -25,8 +25,11 @@ namespace FrameFlow.Player.Tests;
 /// failure.
 /// </para>
 /// <para>
-/// A warm-up made again while the graph waits at the closed gates launches no second run beside it
-/// either.
+/// A play after such a seek, the first play or a resume, repositions where the clock stands and
+/// launches a run from there, rather than opening the gates on the stopped one (#714). A rewind
+/// stops a run still going and waits for it, a warm-up made again while the graph waits at the
+/// closed gates launches no second run beside it, and the end-of-stream flush gives up with the
+/// run.
 /// </para>
 /// <para>
 /// Where the run should have ended and has not, at a demuxer seek, a reset or a free, the test
@@ -132,7 +135,8 @@ public sealed class SubstrateSessionSeekWaitTests
     {
         // The pump reads a short file to its end during the warm-up, and the graph waits at the
         // closed gates for the play. A run launched now would decode beside that graph on the
-        // same decoders.
+        // same decoders. The file's 72 packets fit the video decoder's queue of 512 with room for
+        // the flush marker, which is what lets the pump end while nothing drains the queue.
         await using var rig = await Rig.OpenAsync(VideoFile);
         var pumpEnded = rig.Steps.Next(Step.PumpEnded);
         await rig.Session.WarmUpAsync().AsTask().WaitAsync(Bound);
@@ -145,6 +149,93 @@ public sealed class SubstrateSessionSeekWaitTests
         Assert.Equal(1, taken.Count(s => s == Step.GraphStarted));
         Assert.Equal(1, rig.Steps.MostGraphsAtOnce);
         Assert.Empty(rig.Faults);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task AFirstPlayAfterASeekCancelledWhileWaiting_RepositionsAtTheClock_AndLaunchesARun()
+    {
+        // Before the first play nothing reaches a sink, so the warmed run is held at its end
+        // instead: its graph task cannot complete until the play's stop waits for it.
+        await using var rig = await Rig.OpenAsync(AvFile);
+        rig.Audio.Release();
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Steps.At(Step.GraphEnded, () => hold.Task.Wait(Bound));
+        await rig.Session.WarmUpAsync().AsTask().WaitAsync(Bound);
+        await rig.SeekCutShortAsync(TimeSpan.FromSeconds(1));
+
+        rig.Steps.At(Step.WaitingForRun, () => hold.TrySetResult());
+        var relaunched = rig.Steps.Next(Step.PumpStarted);
+        await rig.Session.PlayAsync().AsTask().WaitAsync(Bound);
+
+        Assert.Equal(Reposition, rig.Steps.Taken.Where(Reposition.Contains));
+        Assert.Empty(rig.RunStillGoingAt);
+        await relaunched.WaitAsync(Bound);
+        await rig.Video.FirstTimeline.WaitAsync(Bound); // the picture moves
+        Assert.Equal(2, rig.Steps.Taken.Count(s => s == Step.PumpStarted));
+        Assert.Equal(1, rig.Steps.MostPumpsAtOnce);
+        Assert.Equal(1, rig.Session.RunNumber);
+        Assert.Empty(rig.Faults);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task AResumeAfterASeekCancelledWhileWaiting_RepositionsWhereItPaused_AndPlaysOn()
+    {
+        // The controller cancels a seek in progress when a pause arrives, then pauses (#714).
+        await using var rig = await Rig.PlayingAsync();
+        var firstTimeline = await rig.Video.FirstTimeline.WaitAsync(Bound);
+        await rig.SeekCutShortAsync(TimeSpan.FromSeconds(1));
+        await rig.Session.PauseAsync().AsTask().WaitAsync(Bound);
+        var pausedAt = rig.Clock.Position;
+
+        rig.Steps.At(Step.WaitingForRun, rig.Audio.Release);
+        await rig.Session.PlayAsync().AsTask().WaitAsync(Bound);
+        var landed = await rig.Video.FirstFrameAfter(firstTimeline).WaitAsync(Bound);
+
+        Assert.Equal(Reposition, rig.Steps.Taken.Where(Reposition.Contains));
+        Assert.Empty(rig.RunStillGoingAt);
+        Assert.True(landed >= pausedAt, $"The resume showed {landed}, before where it paused, {pausedAt}.");
+        Assert.True(rig.Clock.IsRunning);
+        Assert.Equal(2, rig.Steps.Taken.Count(s => s == Step.PumpStarted));
+        Assert.Equal(1, rig.Steps.MostPumpsAtOnce);
+        Assert.Equal(1, rig.Session.RunNumber);
+        Assert.Empty(rig.Faults);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task ARewindWhileTheRunIsGoing_StopsIt_AndWaitsForIt_BeforeItTouchesTheDemuxer()
+    {
+        // A rewind expects a run that has ended by itself, and waits for it without cancelling.
+        // This one is still going, so the rewind has to stop it: one left going would never end,
+        // since the rewind has closed the gates in front of it.
+        await using var rig = await Rig.PlayingAsync();
+        rig.Steps.At(Step.WaitingForRun, rig.Audio.Release);
+
+        await rig.Session.RewindToStartAsync().AsTask().WaitAsync(Bound);
+
+        Assert.Empty(rig.RunStillGoingAt);
+        Assert.Equal(Reposition, rig.Steps.Taken.Where(Reposition.Contains));
+        Assert.Equal(2, rig.Steps.Taken.Count(s => s == Step.PumpStarted));
+        Assert.Equal(1, rig.Steps.MostPumpsAtOnce);
+        Assert.Equal(1, rig.Session.RunNumber);
+        Assert.Empty(rig.Faults);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task TheEndOfStreamFlush_GivesUpWithTheRun()
+    {
+        // The flush marker waits for space in a decoder's queue, which nothing drains once the
+        // run is cancelled, so the flush has to watch the run's token.
+        await using var rig = await Rig.OpenAsync(VideoFile);
+        var flushed = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Session.OnFlushingDecoders = token => flushed.TrySetResult(token);
+        await rig.Session.WarmUpAsync().AsTask().WaitAsync(Bound);
+        var token = await flushed.Task.WaitAsync(Bound); // the short file's pump reaches its end
+        Assert.True(token.CanBeCanceled, "The flush cannot be cancelled.");
+        Assert.False(token.IsCancellationRequested);
+
+        await rig.Session.SeekAsync(TimeSpan.FromSeconds(1)).AsTask().WaitAsync(Bound);
+
+        Assert.True(token.IsCancellationRequested, "Stopping the run did not cancel the flush.");
     }
 
     private static string Corpus(string name) =>
@@ -161,7 +252,7 @@ public sealed class SubstrateSessionSeekWaitTests
             Session = new SubstrateSession(
                 Video,
                 Audio,
-                new PlaybackClock(),
+                Clock,
                 new SessionCallbacks(
                     OnEndOfStream: static () => { },
                     OnWorkerFaulted: _faults.Enqueue,
@@ -177,6 +268,8 @@ public sealed class SubstrateSessionSeekWaitTests
             Steps = StepLog.On(Session);
             CheckRunEndedAt([.. Reposition, .. Teardown]);
         }
+
+        public PlaybackClock Clock { get; } = new();
 
         public RecordingVideoSink Video { get; } = new();
 
