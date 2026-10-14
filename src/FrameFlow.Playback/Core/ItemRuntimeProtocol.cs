@@ -58,11 +58,11 @@ namespace FrameFlow.Playback.Core;
 /// next play, or a warm-up, repositions at the position clock before it starts a run (#714).
 /// </para>
 /// <para>
-/// <b>The audio comes first.</b> A pause pauses the audio sink before it shuts the gates and stops
-/// the clocks, a resume resumes it before it runs the clocks and opens the gates, and a first play or
-/// a relaunch activates it, which leaves it playing, before its run starts. So a call to the sink
-/// that fails leaves the picture where the sound is. A pause cut short once its audio has paused
-/// still shuts the gates.
+/// <b>The audio comes first.</b> A pause, and a reposition, pause the audio sink before they shut
+/// the gates; a resume resumes it before it runs the clocks and opens the gates. So a call to the
+/// sink that fails leaves the picture where the sound is, and one that goes through is followed by
+/// the gates and the clocks that go with it, even when its command goes no further. An activation
+/// needs nothing to follow it: the sink plays only what reaches it through the gates.
 /// </para>
 /// <para>
 /// <b>A runtime prepared ahead</b> acts on nothing it shares with the item that is playing until it
@@ -267,8 +267,7 @@ internal static class ItemRuntimeProtocol
 
         private void FinishPause()
         {
-            Emit(new ItemRuntimeAction.CloseGates());
-            Emit(new ItemRuntimeAction.PauseClocks());
+            FollowAudio(ItemCommandStage.PausingAudio);
             Finish();
         }
 
@@ -388,16 +387,12 @@ internal static class ItemRuntimeProtocol
                 return;
             }
 
-            // A command whose caller has gone, or that a dispose is waiting for, goes no further. An
-            // audio pause that went through is finished by the gates and the clocks, though, or the
-            // video would go on without its sound.
+            // A command whose caller has gone, or that a dispose is waiting for, goes no further. A
+            // call to the audio sink that went through still gets the gates and the clocks that go
+            // with it, so the picture and the sound agree.
             if (command.Abandoned || State.DisposeRequested)
             {
-                if (command.Stage == ItemCommandStage.PausingAudio)
-                {
-                    Emit(new ItemRuntimeAction.CloseGates());
-                    Emit(new ItemRuntimeAction.PauseClocks());
-                }
+                FollowAudio(command.Stage);
                 End(command, ItemCommandResult.Cancelled);
                 return;
             }
@@ -454,6 +449,27 @@ internal static class ItemRuntimeProtocol
             }
         }
 
+        // What follows a pause or a resume of the audio sink at once: the gates and the clocks. An
+        // activation needs nothing, since an activated sink plays only what reaches it through the
+        // gates, and nothing does until they open.
+        private void FollowAudio(ItemCommandStage stage)
+        {
+            switch (stage)
+            {
+                case ItemCommandStage.PausingAudio:
+                    Emit(new ItemRuntimeAction.CloseGates());
+                    Emit(new ItemRuntimeAction.PauseClocks());
+                    break;
+                case ItemCommandStage.RepositionPausingAudio:
+                    Emit(new ItemRuntimeAction.CloseGates());
+                    break;
+                case ItemCommandStage.ResumingAudio:
+                    Emit(new ItemRuntimeAction.ResumeClocks());
+                    Emit(new ItemRuntimeAction.OpenGates());
+                    break;
+            }
+        }
+
         private void Continue()
         {
             switch (Command.Stage)
@@ -479,7 +495,7 @@ internal static class ItemRuntimeProtocol
                     FinishResume();
                     break;
                 case ItemCommandStage.RepositionPausingAudio:
-                    RepositionStop();
+                    RepositionCloseAndStop();
                     break;
                 case ItemCommandStage.RepositionDeactivatingAudio:
                     RepositionSeek();
@@ -655,8 +671,7 @@ internal static class ItemRuntimeProtocol
 
         private void FinishResume()
         {
-            Emit(new ItemRuntimeAction.ResumeClocks());
-            Emit(new ItemRuntimeAction.OpenGates());
+            FollowAudio(ItemCommandStage.ResumingAudio);
             Finish();
         }
 
@@ -666,12 +681,18 @@ internal static class ItemRuntimeProtocol
         {
             State = State with { Command = Command with { Reposition = reposition } };
 
-            // No frame reaches a sink, and no audio from before the break is heard.
-            Emit(new ItemRuntimeAction.CloseGates());
+            // No audio from before the break is heard, and then no frame reaches a sink. The audio
+            // first, so a pause that fails leaves the item playing as it was.
             if (State.HasAudio && State.Played)
                 Await(ItemCommandStage.RepositionPausingAudio, new ItemRuntimeAction.PauseAudio());
             else
-                RepositionStop();
+                RepositionCloseAndStop();
+        }
+
+        private void RepositionCloseAndStop()
+        {
+            FollowAudio(ItemCommandStage.RepositionPausingAudio);
+            RepositionStop();
         }
 
         private void RepositionStop()

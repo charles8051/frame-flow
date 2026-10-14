@@ -137,7 +137,14 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
     private enum AudioModel
     {
         Inactive,
+
+        /// <summary>Activated: it plays what reaches it through the gates, and nothing has yet.</summary>
+        Primed,
+
+        /// <summary>Playing what it holds.</summary>
         Playing,
+
+        /// <summary>Paused, holding what it was given.</summary>
         Paused,
     }
 
@@ -440,7 +447,11 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                         "Opens the gates only over a live run, or to unblock a teardown"
                     );
                     Ensure(m.Attached, "A detached runtime opens no gate: what waits there would reach the sinks it shares");
-                    m = m with { Gates = true };
+                    m = m with
+                    {
+                        Gates = true,
+                        Audio = m.Audio == AudioModel.Primed && m.Live is not null ? AudioModel.Playing : m.Audio,
+                    };
                     break;
                 case Action.FlushPacer:
                     Ensure(m.Working == ItemWork.None, "Flushes the pacer only once no work is pending");
@@ -704,6 +715,10 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                 || (m.Clock == ClockModel.Running && (!shape.HasAudio || m.Audio == AudioModel.Playing)),
             "Frames pass the gates of a run that is still delivering only while the clock runs and the audio plays"
         );
+        Ensure(
+            !(after.Phase == ItemRuntimePhase.Open && m.Audio == AudioModel.Playing) || m.Gates,
+            "The audio sink plays only while frames pass the gates"
+        );
 
         if (after.Phase == ItemRuntimePhase.Disposed)
         {
@@ -741,9 +756,9 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
     private static Model Succeeded(Model m, Action awaited) =>
         awaited switch
         {
-            Action.ActivateAudio => m with { Audio = AudioModel.Playing },
+            Action.ActivateAudio => m with { Audio = m.Gates && m.Live is not null ? AudioModel.Playing : AudioModel.Primed },
             Action.PauseAudio => m with { Audio = m.Audio == AudioModel.Inactive ? AudioModel.Inactive : AudioModel.Paused },
-            Action.ResumeAudio => m with { Audio = m.Audio == AudioModel.Inactive ? AudioModel.Inactive : AudioModel.Playing },
+            Action.ResumeAudio => m with { Audio = m.Audio == AudioModel.Paused ? AudioModel.Playing : m.Audio },
             Action.DeactivateAudio => m with { Audio = AudioModel.Inactive },
             _ => m,
         };

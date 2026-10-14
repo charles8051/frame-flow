@@ -30,11 +30,11 @@ public sealed class ItemRuntimeProtocolTests
         var t = ItemRuntimeTranscript.Playing();
 
         var seek = t.Seek(At3);
-        Assert.Equal([new Action.CloseGates()], t.Actions);
+        Assert.Empty(t.Actions); // the audio first
         Assert.Equal(new Action.PauseAudio(), t.Last.Awaited);
 
         t.Ok();
-        Assert.Equal([new Action.CancelRun(0)], t.Actions);
+        Assert.Equal([new Action.CloseGates(), new Action.CancelRun(0)], t.Actions);
         Assert.Null(t.Last.Awaited); // waits for the run's work
         Assert.Equal(ItemRunStatus.Stopping, t.State.Status);
         Assert.Equal(0, t.State.Run);
@@ -123,12 +123,9 @@ public sealed class ItemRuntimeProtocolTests
         t.Ok(); // the audio sink paused; the run is stopping
 
         var second = t.Seek(At6);
-        Assert.Equal(
-            [new Action.CompleteCommand(first, ItemCommandResult.Cancelled), new Action.CloseGates()],
-            t.Actions
-        );
+        Assert.Equal([new Action.CompleteCommand(first, ItemCommandResult.Cancelled)], t.Actions);
         t.Ok();
-        Assert.Empty(t.Actions); // the run is stopping already: nothing more to cancel
+        Assert.Equal([new Action.CloseGates()], t.Actions); // the run is stopping already: nothing more to cancel
         Assert.Null(t.Last.Awaited);
 
         t.Ends(ItemWork.Pump);
@@ -228,7 +225,7 @@ public sealed class ItemRuntimeProtocolTests
 
         var rewind = t.Rewind();
         t.Ok(); // the audio sink paused
-        Assert.Equal([new Action.CancelRun(0), new Action.FlushPacer()], t.Actions); // its token retires
+        Assert.Equal([new Action.CloseGates(), new Action.CancelRun(0), new Action.FlushPacer()], t.Actions); // its token retires
         Assert.Equal(new Action.DeactivateAudio(), t.Last.Awaited);
         Assert.Equal(1, t.State.Run);
 
@@ -261,7 +258,7 @@ public sealed class ItemRuntimeProtocolTests
 
         t.Rewind();
         t.Ok();
-        Assert.Equal([new Action.CancelRun(0)], t.Actions);
+        Assert.Equal([new Action.CloseGates(), new Action.CancelRun(0)], t.Actions);
         Assert.Null(t.Last.Awaited);
         Assert.Equal(ItemRunStatus.Stopping, t.State.Status);
 
@@ -401,8 +398,8 @@ public sealed class ItemRuntimeProtocolTests
 
         Assert.Equal(
             [
-                new Action.CloseGates(),
                 new Action.PauseAudio(),
+                new Action.CloseGates(),
                 new Action.FlushPacer(),
                 new Action.DeactivateAudio(),
                 new Action.SeekDemux(At1),
@@ -990,6 +987,41 @@ public sealed class ItemRuntimeProtocolTests
     }
 
     [Fact]
+    public void AResumeCutShortOnceItsAudioHasResumed_StillRunsTheClocksAndOpensTheGates()
+    {
+        // The sink plays what it held at the pause, so the picture has to go with it.
+        var t = ItemRuntimeTranscript.Playing();
+        t.Pause();
+        t.OkUntilIdle();
+        var play = t.Play(clockPaused: true);
+        t.CallerCancels(play);
+
+        t.Ok(); // the audio resumed anyway
+
+        Assert.Equal(
+            [
+                new Action.ResumeClocks(),
+                new Action.OpenGates(),
+                new Action.CompleteCommand(play, ItemCommandResult.Cancelled),
+            ],
+            t.Actions
+        );
+    }
+
+    [Fact]
+    public void ASeekWhoseAudioPauseFails_LeavesTheItemPlayingAsItWas()
+    {
+        var t = ItemRuntimeTranscript.Playing();
+        var seek = t.Seek(At3);
+        Assert.Empty(t.Actions);
+
+        t.Fails(Boom);
+
+        Assert.Equal([new Action.CompleteCommand(seek, ItemCommandResult.Failed(Boom))], t.Actions);
+        Assert.Equal(ItemRunStatus.Running, t.State.Status);
+    }
+
+    [Fact]
     public void APauseCutShortOnceItsAudioHasPaused_StillShutsTheGatesAndStopsTheClocks()
     {
         var t = ItemRuntimeTranscript.Playing();
@@ -1096,9 +1128,10 @@ public sealed class ItemRuntimeProtocolTests
         Assert.Empty(t.Actions);
         Assert.True(t.State.DisposeRequested);
 
-        t.Ok(); // the audio pause ends
+        t.Ok(); // the audio pause ends, and the gates follow it
         Assert.Equal(
             [
+                new Action.CloseGates(),
                 new Action.CompleteCommand(seek, ItemCommandResult.Cancelled),
                 new Action.OpenGates(),
                 new Action.CancelRun(0),
