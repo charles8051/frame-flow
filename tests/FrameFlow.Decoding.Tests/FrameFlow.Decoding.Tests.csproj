@@ -28,5 +28,6 @@
   <ItemGroup>
     <Compile Include="..\Shared\RefCountConformance.cs" Link="Shared\RefCountConformance.cs" />
     <Compile Include="..\Shared\DerivedItemConformance.cs" Link="Shared\DerivedItemConformance.cs" />
+    <Compile Include="..\Shared\StalledHttpSource.cs" Link="Shared\StalledHttpSource.cs" />
   </ItemGroup>
 </Project>

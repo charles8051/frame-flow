@@ -36,24 +36,45 @@ internal sealed class FormatContextHandle : SafeHandle
     /// The <c>AVFormatContext*</c> value returned by <c>avformat_open_input</c>.
     /// Must not be <see cref="nint.Zero"/>.
     /// </param>
-    internal FormatContextHandle(nint handle)
+    /// <param name="interrupt">
+    /// The interrupt state the context's callback reads, installed before the open, or
+    /// <see langword="null"/> for none. Ownership transfers to this handle, which frees it once
+    /// the context is closed.
+    /// </param>
+    internal FormatContextHandle(nint handle, FormatContextInterrupt? interrupt = null)
         : base(invalidHandleValue: nint.Zero, ownsHandle: true)
     {
         SetHandle(handle);
+        Interrupt = interrupt;
     }
 
     /// <inheritdoc/>
     public override bool IsInvalid => handle == nint.Zero;
 
     /// <summary>
+    /// The interrupt state the context's callback reads, or <see langword="null"/> when the
+    /// context was opened without one.
+    /// </summary>
+    internal FormatContextInterrupt? Interrupt { get; }
+
+    /// <summary>
     /// Releases the native format context by calling <c>avformat_close_input</c>.
     /// Called deterministically via <see cref="SafeHandle.Dispose()"/> and as a
     /// finalizer fallback.
     /// </summary>
+    /// <remarks>
+    /// The interrupt is closed first, so neither the close nor a call still blocked in FFmpeg
+    /// waits on a stalled source, and freed only after the close, since FFmpeg can call the
+    /// callback until the context is gone (#709).
+    /// </remarks>
     protected override bool ReleaseHandle()
     {
+        Interrupt?.Close();
+
         // avformat_close_input expects a pointer-to-pointer and sets the pointer to null.
         FFAvFormat.avformat_close_input(ref handle);
+
+        Interrupt?.Dispose();
         return true;
     }
 }

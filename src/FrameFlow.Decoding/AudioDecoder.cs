@@ -46,6 +46,12 @@ namespace FrameFlow.Decoding;
 /// All native resource access is single-threaded; do not call methods concurrently.
 /// </para>
 /// <para>
+/// Disposal (ADR-0086, decision 3.5): no lock fences the native calls, so the owner ends every
+/// use before it disposes the decoder: a <see cref="DecodeAsync"/> enumeration from its first
+/// step until it completes or is disposed, a <see cref="Flush"/>, a
+/// <see cref="ResetPacketQueue"/>. A Debug build checks that.
+/// </para>
+/// <para>
 /// Cancellation (ADR-0013): <see cref="DecodeAsync"/> observes the supplied token at every
 /// iteration. <see cref="OperationCanceledException"/> from token cancellation is not
 /// re-thrown; it terminates the sequence cleanly.
@@ -134,6 +140,9 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
     private bool _inFlushMode;
 
     private bool _disposed;
+
+    // Debug-only: the decodes, flushes and resets in flight, which the dispose checks is zero.
+    private UseCounter _uses;
 
     // -----------------------------------------------------------------------
     // Construction
@@ -273,19 +282,29 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        // ADR-0055: the send/receive sequencing now lives in the shared, FFmpeg-free
-        // DecodeProtocol Mealy core, cranked by DecodeDriver. This decoder only supplies
-        // the effects (queue read, send, receive, resample) through IDecodeCodec. Clearing
-        // the flush latch makes the enumeration replayable across pause/resume sessions.
-        _inFlushMode = false;
-
-        await foreach (
-            var block in DecodeDriver
-                .RunAsync<PcmAudioBuffer>(this, cancellationToken)
-                .ConfigureAwait(false)
-        )
+        // The enumeration is one use of the codec, the frame, the resampler and the packet it
+        // holds for a send-retry, from its first step until it ends or is disposed.
+        _uses.Enter();
+        try
         {
-            yield return block;
+            // ADR-0055: the send/receive sequencing now lives in the shared, FFmpeg-free
+            // DecodeProtocol Mealy core, cranked by DecodeDriver. This decoder only supplies
+            // the effects (queue read, send, receive, resample) through IDecodeCodec. Clearing
+            // the flush latch makes the enumeration replayable across pause/resume sessions.
+            _inFlushMode = false;
+
+            await foreach (
+                var block in DecodeDriver
+                    .RunAsync<PcmAudioBuffer>(this, cancellationToken)
+                    .ConfigureAwait(false)
+            )
+            {
+                yield return block;
+            }
+        }
+        finally
+        {
+            _uses.Exit();
         }
     }
 
@@ -448,6 +467,19 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
     /// </summary>
     public void ResetPacketQueue()
     {
+        _uses.Enter();
+        try
+        {
+            ResetPacketQueueCore();
+        }
+        finally
+        {
+            _uses.Exit();
+        }
+    }
+
+    private void ResetPacketQueueCore()
+    {
         int drained = 0;
         while (_packetQueue.Reader.TryRead(out var item))
         {
@@ -498,6 +530,19 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
     public void Flush()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        _uses.Enter();
+        try
+        {
+            FlushCore();
+        }
+        finally
+        {
+            _uses.Exit();
+        }
+    }
+
+    private void FlushCore()
+    {
         nint codecPtr = _codecCtx.DangerousGetHandle();
         FFAvCodec.avcodec_flush_buffers(codecPtr);
 
@@ -753,10 +798,15 @@ public sealed partial class AudioDecoder : IAudioDecoder, IDecodeCodec<PcmAudioB
     // -----------------------------------------------------------------------
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// The owner ends every use first (ADR-0086, decision 3.5). In a Debug build one still in
+    /// flight makes this throw <see cref="InvalidOperationException"/> and free nothing.
+    /// </remarks>
     public ValueTask DisposeAsync()
     {
         if (_disposed)
             return ValueTask.CompletedTask;
+        _uses.ThrowIfInUse(this);
         _disposed = true;
 
         LogAudioDecoderDisposing(_logger);
