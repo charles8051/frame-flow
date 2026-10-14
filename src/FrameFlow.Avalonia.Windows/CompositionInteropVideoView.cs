@@ -214,6 +214,13 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     internal long Binding => Volatile.Read(ref _snapshot).Binding;
 
     /// <summary>
+    /// Runs on the UI thread as soon as a transition has moved the binding number, before the rest
+    /// of its work. For tests: it stands in for a producer thread that delivers a frame at that
+    /// moment.
+    /// </summary>
+    internal Action? TransitionPublished { get; set; }
+
+    /// <summary>
     /// What the next attachment waits on before it presents: the disposal of the D3D12 converter the
     /// last teardown took. UI thread. The teardown sets it; tests set it to stand in for one still
     /// being torn down.
@@ -512,7 +519,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     /// <summary>
     /// Moves the view to the state the lifecycle core chose and does the work it named, in the
     /// core's order (ADR-0085): unbind, stop presenting, dispose or let go of the sink, make or
-    /// take up a sink, bind, start presenting. UI thread.
+    /// take up a sink, bind, start presenting. A sink the view stops presenting, disposes or lets
+    /// go of goes off screen first, before the number moves. UI thread.
     /// </summary>
     /// <param name="transition">What the core decided.</param>
     /// <param name="assigned">The sink a caller assigned, which the borrow step takes up.</param>
@@ -531,14 +539,26 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     {
         ObjectDisposedException.ThrowIf(transition.Refused, this);
 
-        // Before any work, under the gate the producer thread and a present's commit compare it
-        // under: a callback raised under a binding this ends posts nothing from here on.
-        lock (_presentGate)
-            _lifecycle = transition.Next;
-
         var work = transition.Work;
         var teardown = Task.CompletedTask;
         List<Exception>? faults = null;
+
+        // The view stops presenting the held sink, or lets it go: the sink goes off screen first,
+        // before the number moves. A frame arriving in between is then kept or discarded by the
+        // sink's off-screen rule and counted as discarded off screen (ADR-0085, decision 2), and a
+        // present it posts finds the view not presenting and leaves it there. After the number had
+        // moved, the sink would still be on screen with nothing left to take from it, so a second
+        // frame would replace the first as a drop (#700). The sink's StopPresenting below still
+        // hands back the frame presented last, which a frame that arrived in between wins over.
+        if ((work & (SurfaceWork.StopPresenting | SurfaceWork.DisposeTarget | SurfaceWork.ForgetTarget)) != 0)
+            Run(() => _sink!.SetPresented(false), ref faults);
+
+        // Before the rest of the work, under the gate the producer thread and a present's commit
+        // compare it under: a callback raised under a binding this ends posts nothing from here on.
+        lock (_presentGate)
+            _lifecycle = transition.Next;
+
+        TransitionPublished?.Invoke();
 
         if (work.HasFlag(SurfaceWork.Unbind))
             Run(UnbindSink, ref faults);
@@ -557,10 +577,10 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
                 teardown = Task.FromException(ex);
             }
 
-            // From here the sink keeps a frame only for a player that holds its claim, and lets go
-            // of the one it holds now when no player does. A sink the view keeps takes back the
-            // frame presented last, so the picture comes back with the view. One the view lets go
-            // of in this same transition takes nothing: that frame goes with the view's hold.
+            // The sink is off screen already, and keeps a frame only for a player that holds its
+            // claim. A sink the view keeps takes back the frame presented last, so the picture
+            // comes back with the view. One the view lets go of in this same transition takes
+            // nothing: that frame goes with the view's hold.
             var keepsSink = (work & (SurfaceWork.DisposeTarget | SurfaceWork.ForgetTarget)) == 0;
             Run(() => _sink!.StopPresenting(keepsSink ? TakeLastPresented() : null), ref faults);
         }
@@ -667,8 +687,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
     }
 
     // ── The sink steps (ADR-0085, decision 2). UI thread, in Apply's order. ──
-    // The sink the view holds is presented exactly while the view presents: StartPresenting and
-    // StopPresenting set it, and a sink taken up or let go of in between is set to match.
+    // The sink the view holds is presented exactly while the view presents: StartPresenting sets
+    // it, Apply takes it off screen before a transition stops presenting it, disposes it or lets it
+    // go, and a sink taken up in between is set to match.
 
     private void TakeUp(CompositionInteropVideoSink sink)
     {
@@ -744,15 +765,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
             t.AsTask().GetAwaiter().GetResult();
     }
 
-    private void ForgetSink()
-    {
-        var sink = _sink!;
-        _sink = null;
-
-        // No view presents it now, so it keeps a frame only while a claim on it stands. The Sink
-        // setter releases its own claim as it returns, which lets go of the frame.
-        sink.SetPresented(false);
-    }
+    // The sink is already off screen (Apply), so it keeps a frame only while a claim on it stands.
+    // The Sink setter releases its own claim as it returns, which lets go of the frame.
+    private void ForgetSink() => _sink = null;
 
     // Bind the diagnostics callback to THIS sink instance rather than to the mutable _sink
     // field, so a sink the caller replaced but still holds keeps reporting its own intake

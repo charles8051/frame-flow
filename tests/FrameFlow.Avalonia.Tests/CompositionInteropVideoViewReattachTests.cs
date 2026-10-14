@@ -247,6 +247,66 @@ public sealed class CompositionInteropVideoViewReattachTests
         window.Close();
     }
 
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void FramesArrivingAsADetachMovesTheNumber_AreNotCountedAsDrops(bool claimed)
+    {
+        // A producer thread can deliver between the detach moving the binding number and the rest
+        // of its work, the compositor teardown included. The seam plays it: two frames, at that
+        // moment. The sink is off screen by then, so the second replaces the first as an off-screen
+        // discard, not as a drop (#700).
+        var view = new CompositionInteropVideoView();
+        var window = Show(view);
+        var sink = (CompositionInteropVideoSink)((IVideoSurface)view).AttachSink(new RecordingLoggerFactory());
+        using var player = claimed ? ((IClaimableSink)sink).TryClaim("a player") : null;
+        var first = new TrackedFrame();
+        var second = new TrackedFrame();
+        view.TransitionPublished = () =>
+        {
+            Give(sink, first);
+            Give(sink, second);
+        };
+
+        Detach(window);
+        view.TransitionPublished = null;
+
+        Assert.Equal(0, sink.FramesSuperseded);
+        Assert.True(first.Disposed);
+        Assert.Equal(!claimed, second.Disposed);
+        Assert.Equal(claimed ? 1 : 2, sink.FramesDiscardedOffScreen);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void FramesArrivingAsTheViewLetsGoOfACallersSink_AreNotCountedAsDrops()
+    {
+        // The same moment in a replacement: the view goes on presenting, now the new sink, and the
+        // outgoing one is off screen before the number moves. The view's own claim keeps the second
+        // frame until the replacement releases it.
+        var view = new CompositionInteropVideoView();
+        var callers = new CompositionInteropVideoSink();
+        view.Sink = callers;
+        view.Initialize(new RecordingLoggerFactory());
+        var window = Show(view);
+        var first = new TrackedFrame();
+        var second = new TrackedFrame();
+        view.TransitionPublished = () =>
+        {
+            Give(callers, first);
+            Give(callers, second);
+        };
+
+        view.Sink = new CompositionInteropVideoSink();
+        view.TransitionPublished = null;
+
+        Assert.Equal(0, callers.FramesSuperseded);
+        Assert.True(first.Disposed);
+        Assert.True(second.Disposed);
+        Assert.Equal(2, callers.FramesDiscardedOffScreen);
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void AStallSampledOnceTheViewHasStopped_IsNotRaised()
     {
@@ -424,6 +484,10 @@ public sealed class CompositionInteropVideoViewReattachTests
     }
 
     private static TimeSpan Ms(int ms) => TimeSpan.FromMilliseconds(ms);
+
+    /// <summary>Gives the sink a frame from a synchronous callback. The sink completes at once.</summary>
+    private static void Give(CompositionInteropVideoSink sink, IVideoFrame frame) =>
+        sink.PresentAsync(frame, CancellationToken.None).AsTask().GetAwaiter().GetResult();
 
     private static Window Show(Control view)
     {
