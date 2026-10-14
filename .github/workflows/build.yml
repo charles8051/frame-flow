@@ -20,6 +20,12 @@ name: Build and Test
 # linux-arm64 is not built here. GitHub's hosted Arm runner is the only Arm
 # machine available, and publish.yml tests on it before every release.
 #
+# Those legs build Release. A pull request, and a dispatch that ticks linux,
+# also gets a Debug leg, because some checks exist only in a Debug build and
+# Release compiles them away with their tests (#726); see the "Test (Debug)"
+# step. It always runs on GitHub's hosted ubuntu-latest, so it takes no
+# self-hosted Linux runner from the Release leg and the reviewer.
+#
 # A dispatch still picks any subset of Windows, Linux and macOS, and macOS is
 # reachable only that way. The reason is now purely price: it is the
 # 10x-billed runner.
@@ -59,7 +65,7 @@ on:
         type: boolean
         default: true
       linux:
-        description: 'Run on Linux x64 (LINUX_RUNNER, self-hosted by default)'
+        description: 'Run on Linux x64 (LINUX_RUNNER, self-hosted by default), and the Debug leg on ubuntu-latest'
         type: boolean
         default: true
       macos:
@@ -102,7 +108,8 @@ jobs:
   #
   # A leg is self-hosted when its runner labels say so. A self-hosted Linux leg
   # runs in the .NET SDK container, because that host has only Docker; the steps
-  # below read `hosted` and `container` to decide what each machine needs.
+  # below read `hosted` and `container` to decide what each machine needs, and
+  # `configuration` to tell the Debug leg from the Release legs.
   #
   # This job stays on ubuntu-latest. It runs for seconds, and on a self-hosted
   # runner it would queue behind the builds it is there to start.
@@ -124,11 +131,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          # leg <os> <runner labels> [configuration, Release unless given]
           leg() {
-            jq -cn --arg os "$1" --argjson runner "$2" '
+            jq -cn --arg os "$1" --argjson runner "$2" --arg configuration "${3:-Release}" '
               ($runner | index("self-hosted") != null) as $self
               | { os: $os,
                   runner: $runner,
+                  configuration: $configuration,
                   hosted: ($self | not),
                   container: (if $self and $os == "linux"
                               then "mcr.microsoft.com/dotnet/sdk:10.0" else "" end) }'
@@ -143,9 +152,10 @@ jobs:
             else
               LEGS+=("$(leg windows "$WINDOWS_RUNNER")" "$(leg linux "$LINUX_RUNNER")")
             fi
+            LEGS+=("$(leg linux '["ubuntu-latest"]' Debug)")
           else
             [ "$WANT_WINDOWS" = "true" ] && LEGS+=("$(leg windows "$WINDOWS_RUNNER")")
-            [ "$WANT_LINUX" = "true" ] && LEGS+=("$(leg linux "$LINUX_RUNNER")")
+            [ "$WANT_LINUX" = "true" ] && LEGS+=("$(leg linux "$LINUX_RUNNER")" "$(leg linux '["ubuntu-latest"]' Debug)")
             [ "$WANT_MACOS" = "true" ] && LEGS+=("$(leg macos '["macos-latest"]')")
           fi
 
@@ -159,7 +169,8 @@ jobs:
 
   test:
     needs: setup
-    name: test (${{ matrix.os }})
+    # The Release legs keep the names they had before the Debug leg existed.
+    name: test (${{ matrix.os }}${{ matrix.configuration == 'Debug' && ', Debug' || '' }})
     strategy:
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
       fail-fast: false
@@ -263,17 +274,65 @@ jobs:
       - name: Fetch FFmpeg binaries (host platform)
         run: dotnet run scripts/fetch-ffmpeg.cs
 
+      # The Release legs have no corpus, so every test that opens a media file
+      # skips there. The Debug leg needs one: the use counters' own tests open a
+      # file. --allow-unavailable because the pinned FFmpeg is an LGPL build with
+      # no libx264, which two fixtures need; the tests that use them skip.
+      - name: Generate test corpus
+        if: matrix.configuration == 'Debug'
+        run: dotnet run scripts/generate-test-corpus.cs -- --allow-unavailable
+
+      # The Debug leg builds the whole solution too, so code that compiles only
+      # under DEBUG is compiled somewhere in CI.
       - name: Build
         # FrameFlowLocalFeedDisable suppresses the on-build local-feed write
         # (the runner shouldn't scribble into ~/.nuget/local-feed).
-        run: dotnet build FrameFlow.slnx --configuration Release --no-restore -p:FrameFlowLocalFeedDisable=true
+        run: dotnet build FrameFlow.slnx --configuration ${{ matrix.configuration }} --no-restore -p:FrameFlowLocalFeedDisable=true
 
       # The default shell, as in publish.yml: bash on Linux and macOS, PowerShell 7 on
       # Windows, hosted and self-hosted.
       # --blame-hang-timeout fails a test that hangs, rather than letting it hold a
       # shared self-hosted runner until the job's timeout.
       - name: Test
+        if: matrix.configuration == 'Release'
         run: dotnet test FrameFlow.slnx --configuration Release --no-build --blame-hang-timeout 5m --blame-crash --logger "trx;LogFileName=test-${{ matrix.os }}.trx"
+
+      # The Debug leg's reason to exist (#726). DemuxSession, AudioDecoder and
+      # DecodingPipeline take no lock around their native calls; their owner
+      # ends every use before it disposes them, and in a Debug build a use
+      # counter makes a dispose with a use still in flight throw instead of free
+      # (ADR-0086, decision 3.5; src/FrameFlow.Decoding/Internal/UseCounter.cs).
+      # Release compiles the counter away, and its tests with it, so on the legs
+      # above a regression that frees one of them under a pump, a decode or a
+      # seek passes. Decoding tests the resources themselves, Playback holds the
+      # session that owns them, and Player runs that session over real media.
+      # Media holds the other Debug-only tests: CpuVideoFrame and PcmAudioBuffer
+      # fill storage they have returned to their pool, so a view kept past the
+      # release reads the fill.
+      #
+      # The counters' own tests need FFmpeg and the corpus, and skip without
+      # either, which would leave this leg green having checked nothing. The
+      # last lines fail the leg unless they passed.
+      #
+      # Every project runs even when an earlier one fails, so one failure does
+      # not hide the others' results or that check. The blame flags are the
+      # Release Test step's.
+      - name: Test (Debug)
+        if: matrix.configuration == 'Debug'
+        shell: bash
+        run: |
+          failed=0
+          for project in Decoding Playback Player Media; do
+            dotnet test "tests/FrameFlow.$project.Tests" --configuration Debug --no-build \
+              --blame-hang-timeout 5m --blame-crash \
+              --results-directory TestResults --logger "trx;LogFileName=test-debug-$project.trx" || failed=1
+          done
+          passed=$(grep -cE 'testName="FrameFlow\.Decoding\.Tests\.PassiveResourceUseTests\.[^"]*"[^>]*outcome="Passed"' TestResults/test-debug-Decoding.trx) || true
+          if [ "${passed:-0}" -lt 3 ]; then
+            echo "::error::PassiveResourceUseTests passed ${passed:-0} of its 3 tests: the use counters went unchecked."
+            failed=1
+          fi
+          exit "$failed"
 
       # The tests reach the inference packages through project references, which
       # copy files a package consumer never gets. This packs them and runs an app
@@ -281,8 +340,10 @@ jobs:
       # Windows the package's own DirectML.dll beside onnxruntime.dll in an app
       # built without a runtime identifier (#433), and OpenVINO's plugins and TBB
       # beside Intel's onnxruntime.dll, running on OpenVINO's CPU device (#523).
-      # See scripts/package-smoke.cs.
+      # See scripts/package-smoke.cs. This and the Avalonia 12 steps are about
+      # what ships, which is Release, so the Debug leg skips them.
       - name: Package smoke test
+        if: matrix.configuration == 'Release'
         run: dotnet run scripts/package-smoke.cs -- --no-build
 
       # The Avalonia packages compile against Avalonia 11, and an app on 12 runs that DLL on
@@ -292,6 +353,7 @@ jobs:
       # here, naming the member. Before the next step, which rebuilds those projects against
       # 12. See scripts/avalonia-binary-check.cs.
       - name: Avalonia 12 binary check
+        if: matrix.configuration == 'Release'
         run: dotnet run scripts/avalonia-binary-check.cs -c Release -p:FrameFlowLocalFeedDisable=true
 
       # These build the Avalonia projects and their tests against 12 and run the tests, so a
@@ -301,15 +363,17 @@ jobs:
       # One command per step, so no step depends on its shell stopping at a failed command:
       # PowerShell does not, and the step reports only the last command's exit code.
       - name: Avalonia 12 (FrameFlow.Avalonia.Tests)
+        if: matrix.configuration == 'Release'
         run: dotnet test tests/FrameFlow.Avalonia.Tests --configuration Release -p:FrameFlowLocalFeedDisable=true "-p:FrameFlowAvaloniaVersion=12.*"
 
       - name: Avalonia 12 (FrameFlow.Avalonia.Windows.Tests)
+        if: matrix.configuration == 'Release'
         run: dotnet test tests/FrameFlow.Avalonia.Windows.Tests --configuration Release -p:FrameFlowLocalFeedDisable=true "-p:FrameFlowAvaloniaVersion=12.*"
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results-${{ matrix.os }}
+          name: test-results-${{ matrix.os }}${{ matrix.configuration == 'Debug' && '-debug' || '' }}
           path: "**/test-*.trx"
           retention-days: 14
