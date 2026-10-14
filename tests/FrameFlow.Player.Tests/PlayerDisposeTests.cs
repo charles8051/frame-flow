@@ -1,13 +1,13 @@
 using FrameFlow.Playback;
-using Microsoft.Extensions.Logging;
 
 namespace FrameFlow.Player.Tests;
 
 /// <summary>
 /// Pins #708 on the player: a second <see cref="IAsyncDisposable.DisposeAsync"/> made while the
 /// first is under way returns only once the first has released the claims on the sinks and
-/// disposed the coordinator, and nothing is torn down twice (ADR-0086, decision 3). The first is
-/// held inside the session's dispose, over the real controller's dispatch loop.
+/// disposed the coordinator, and nothing is torn down twice (ADR-0086, decision 3). Every dispose
+/// throws what the controller's dispose threw (decision 3.4). The first is held inside the
+/// session's dispose, over the real controller's dispatch loop.
 /// </summary>
 public sealed class PlayerDisposeTests
 {
@@ -45,24 +45,34 @@ public sealed class PlayerDisposeTests
     }
 
     [Fact]
-    public async Task TheTeardownRunsOnce_ForDisposesThatOverlap_WhenTheControllersDisposeThrows()
+    public async Task EveryDispose_ThrowsWhatTheControllersDisposeThrew_OnceTheClaimsAreReleasedAndTheCoordinatorIsDisposed()
     {
-        // The player logs a controller dispose that throws, and goes on to the coordinator. A second
-        // dispose that ran the teardown again would log the same failure a second time.
-        var logger = new WarningCounter();
-        var rig = new ControllerRig(playerLogger: logger);
+        // The player used to log a controller dispose that threw and return (ADR-0086, decision
+        // 3.4). It now throws it, after the coordinator, and a dispose that overlaps the first
+        // throws the same instance without tearing anything down again.
+        var claims = new CountingClaims();
+        var rig = new ControllerRig(sinkClaims: claims);
+        var transitions = new CompletionWatch<PlaylistTransition>();
+        using var subscription = rig.Player.SourceTransitioned.Subscribe(transitions);
         Assert.True((await rig.Controller.LoadAsync(new ControllerRig.FakeSource())).IsSuccess);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var failure = new InvalidOperationException("the session's dispose failed");
         rig.Session.DisposeHeldUntil = release.Task;
-        rig.Session.DisposeThrows = new InvalidOperationException("the session's dispose failed");
+        rig.Session.DisposeThrows = failure;
 
         var first = rig.Player.DisposeAsync().AsTask();
         await rig.Session.DisposeEntered.WaitAsync(Bound);
         var second = rig.Player.DisposeAsync().AsTask();
         release.SetResult();
-        await Task.WhenAll(first, second).WaitAsync(Bound);
 
-        Assert.Equal(1, logger.Warnings);
+        Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(() => first.WaitAsync(Bound)));
+        Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(() => second.WaitAsync(Bound)));
+        Assert.Equal(1, claims.Released);
+        Assert.True(transitions.Completed);
+        Assert.Equal(1, rig.Session.Disposals);
+
+        // A later dispose ends as the first did, and tears nothing down again.
+        Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Player.DisposeAsync().AsTask()));
         Assert.Equal(1, rig.Session.Disposals);
     }
 
@@ -77,31 +87,6 @@ public sealed class PlayerDisposeTests
         public int Released => Volatile.Read(ref _released);
 
         public void Dispose() => Interlocked.Increment(ref _released);
-    }
-
-    /// <summary>Counts what is logged at Warning.</summary>
-    private sealed class WarningCounter : ILogger
-    {
-        private int _warnings;
-
-        public int Warnings => Volatile.Read(ref _warnings);
-
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(
-            LogLevel logLevel,
-            EventId eventId,
-            TState state,
-            Exception? exception,
-            Func<TState, Exception?, string> formatter
-        )
-        {
-            if (logLevel == LogLevel.Warning)
-                Interlocked.Increment(ref _warnings);
-        }
     }
 
     /// <summary>Records whether a stream has completed, which the coordinator's do when it is disposed.</summary>

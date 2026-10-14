@@ -2,7 +2,6 @@ using FrameFlow.Media;
 using FrameFlow.Playback;
 using FrameFlow.Playback.Diagnostics;
 using FrameFlow.Player;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FrameFlow.Player.Tests;
 
@@ -125,8 +124,7 @@ public sealed class VolumeControlDiscoveryTests
         new(
             new StubController(),
             new PlaylistCoordinator([new MediaSource { DisplayName = "a" }], RepeatMode.Off),
-            audioSink,
-            NullLogger.Instance
+            audioSink
         );
 
     // ── Doubles ──────────────────────────────────────────────────────────────
