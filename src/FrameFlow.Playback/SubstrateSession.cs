@@ -2162,10 +2162,25 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// after a driver reset for instance, and the next item then creates a new one rather than
     /// failing on it too.
     /// </summary>
+    /// <remarks>
+    /// The fault is reported even when dropping the device throws. Whatever called this has
+    /// stopped, a halted pacer included, and only the report ends the item; a drop that threw
+    /// before it would leave the item playing a picture that no longer moves.
+    /// </remarks>
     private void ReportWorkerFault(Exception ex)
     {
-        if (_videoDecoder?.BoundBackend is { } backend)
-            DeviceCache?.Drop(backend);
+        try
+        {
+            if (_videoDecoder?.BoundBackend is { } backend)
+                DeviceCache?.Drop(backend);
+        }
+        catch (Exception dropFailure)
+        {
+            _logger.LogWarning(
+                dropFailure,
+                "Dropping the shared decode device after a fault threw; the fault is reported regardless."
+            );
+        }
         _callbacks.OnWorkerFaulted(ex);
     }
 
