@@ -35,12 +35,18 @@ namespace FrameFlow.Audio.OpenAL;
 /// based on processed buffer sample counts plus the current source's
 /// sample offset. This drives the <c>AudioMasterSyncStrategy</c>.
 /// </para>
+/// <para>
+/// It is an <see cref="IClaimableSink"/>: a second player or pass built against it while the
+/// first holds it fails, so two sessions never activate one device or master one clock at once
+/// (ADR-0085, decision 6).
+/// </para>
 /// </remarks>
 public sealed partial class OpenAlAudioSink
     : IAudioSink,
         IVolumeControl,
         IClockSource,
-        ISeekableClock
+        ISeekableClock,
+        IClaimableSink
 {
     /// <summary>
     /// Upper bound on a single sleep slice inside the pull-based
@@ -92,6 +98,7 @@ public sealed partial class OpenAlAudioSink
     private static readonly TimeSpan DrainStallLimit = TimeSpan.FromSeconds(2);
 
     private readonly ILogger<OpenAlAudioSink> _logger;
+    private readonly SinkClaimGate _claims = new(typeof(OpenAlAudioSink));
 
     // The shared AL API (sourced from the process-wide context lease) and this
     // sink's own source within that single context. Before ADR-0058 each sink
@@ -1351,14 +1358,26 @@ public sealed partial class OpenAlAudioSink
         return position;
     }
 
+    /// <inheritdoc />
+    IDisposable? IClaimableSink.TryClaim(string claimant) => _claims.TryClaim(claimant);
+
+    /// <inheritdoc />
+    string? IClaimableSink.Claimant => _claims.Claimant;
+
+    /// <inheritdoc />
+    long IClaimableSink.ClaimOrder => _claims.Order;
+
     /// <inheritdoc/>
     /// <remarks>
-    /// Idempotent per the ADR-0044 sink-disposal contract.
+    /// Idempotent per the ADR-0044 sink-disposal contract. Claiming the sink afterwards throws
+    /// <see cref="ObjectDisposedException"/>.
     /// </remarks>
     public ValueTask DisposeAsync()
     {
         if (_disposed)
             return ValueTask.CompletedTask;
+
+        _claims.Close();
 
         // Release any in-flight pacing waits (the pull-based WaitUntilAsync loop
         // links its sleeps to this token), then tear down the OpenAL resources.

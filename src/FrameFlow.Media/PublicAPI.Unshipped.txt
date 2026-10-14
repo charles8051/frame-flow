@@ -645,3 +645,13 @@ FrameFlow.Media.FrameSlotInstall.Superseded = 1 -> FrameFlow.Media.FrameSlotInst
 FrameFlow.Media.LatestWinsFrameSlot.Close() -> bool
 FrameFlow.Media.LatestWinsFrameSlot.Install(FrameFlow.Media.IVideoFrame! frame) -> FrameFlow.Media.FrameSlotInstall
 FrameFlow.Media.LatestWinsFrameSlot.Installed.get -> long
+FrameFlow.Media.IClaimableSink
+FrameFlow.Media.IClaimableSink.ClaimOrder.get -> long
+FrameFlow.Media.IClaimableSink.Claimant.get -> string?
+FrameFlow.Media.IClaimableSink.TryClaim(string! claimant) -> System.IDisposable?
+FrameFlow.Media.SinkClaimGate
+FrameFlow.Media.SinkClaimGate.Claimant.get -> string?
+FrameFlow.Media.SinkClaimGate.Close() -> bool
+FrameFlow.Media.SinkClaimGate.Order.get -> long
+FrameFlow.Media.SinkClaimGate.SinkClaimGate(System.Type! owner) -> void
+FrameFlow.Media.SinkClaimGate.TryClaim(string! claimant) -> System.IDisposable?

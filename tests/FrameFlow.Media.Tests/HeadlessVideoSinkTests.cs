@@ -196,6 +196,24 @@ public sealed class HeadlessVideoSinkTests
         Assert.Equal(1, sink.AbandonedCount);
     }
 
+    // ── Claims (ADR-0085, decision 6) ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task OneClaimantAtATime_AndNoClaimOnceDisposed()
+    {
+        IClaimableSink sink = NewSink();
+
+        var lease = sink.TryClaim("a player");
+        Assert.NotNull(lease);
+        Assert.Null(sink.TryClaim("another player"));
+        Assert.Equal("a player", sink.Claimant);
+
+        lease!.Dispose();
+        await ((IAsyncDisposable)sink).DisposeAsync();
+
+        Assert.Throws<ObjectDisposedException>(() => sink.TryClaim("another player"));
+    }
+
     // ── Doubles ───────────────────────────────────────────────────────────────────────────
 
     private sealed class StubFrame(TimeSpan pts) : IVideoFrame
