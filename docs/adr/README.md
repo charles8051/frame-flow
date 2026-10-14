@@ -489,7 +489,7 @@ ADR-0084 was numbered and accepted on 2026-10-13, and implemented under #677.
   matched against what is shown. Keeps `ISeekResettable` for the session's own components.
   Addresses #621, #624 and #641, and replaces the rules #619 and #620 added; not #669 or #671.
 
-ADR-0085 was numbered and accepted on 2026-10-13; its implementation is tracked in #691.
+ADR-0085 was numbered and accepted on 2026-10-13, and implemented under #691.
 
 - [One lifecycle for views: the sink follows the view, presenting follows the
   attachment](ADR-0085-one-lifecycle-for-views.md) — three mechanisms, each added by one fix,

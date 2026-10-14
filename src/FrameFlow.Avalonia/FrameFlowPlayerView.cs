@@ -42,8 +42,10 @@ namespace FrameFlow.Avalonia;
 /// via <c>FrameFlowPlayer.Create().WithMedia(path).BuildPlayerAsync()</c>. When the user
 /// clicks Open (chrome's button) or drops a file (this view's
 /// drag-drop), <see cref="FileOpenRequested"/> fires with the chosen
-/// path; the consumer disposes any prior <see cref="Transport"/>,
-/// builds a new one, and assigns it.
+/// path; the consumer disposes any prior <see cref="Transport"/> and
+/// awaits that, builds a new one, and assigns it. The prior player holds
+/// the surface's sink until its disposal completes, so a build started
+/// before then fails at its claim (ADR-0085, decision 6).
 /// </para>
 /// <para>
 /// <b>Display-only path.</b> If you only need video rendering with

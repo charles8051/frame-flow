@@ -40,6 +40,14 @@ lands without migration shims.
 > #275 retired it. The reasoning here was right; the rule was written down in a place nobody read
 > and in terms that had stopped matching the code.
 
+> **Amended 2026-10-14.** [ADR-0085](ADR-0085-one-lifecycle-for-views.md) enforces "one player at a
+> time" for a sink that implements `IClaimableSink`: a player, a controller or a pass claims each
+> such sink at build and releases it once its dispose has completed, and a second build against a
+> held sink fails naming the holder (decision 6). A graph built by hand takes no claim, and a sink
+> without the interface keeps the rule unenforced. The same record applies the ownership rule to
+> what the views and the player view construct: a view keeps the sink it made, and the player view
+> the surface it made, until each is disposed (decisions 2 and 7).
+
 **Date:** 2026-05-13
 **Supersedes:** Implicit ownership conventions established by
 ADR-0005 (native resource ownership) for the sink case; no other

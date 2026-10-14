@@ -2,9 +2,12 @@
 
 ## Status
 
-**Accepted (2026-10-13)**, implementation tracked in #691. Not implemented yet. Proposed on
-2026-10-13 in #689 and revised by review in #690; [Revision history](#revision-history) lists what
-changed.
+**Accepted (2026-10-13) and implemented (2026-10-14)** under #691: staging slice 1 in #693, slice 2
+in #695, slice 3 in #702, slice 4 in #692 (the core) and #697 (the interop view), slice 5 in #699,
+slice 6 in #705 and slice 7 in #706. #704 fixed a defect in the pacer that slice 3 found.
+[Implementation](#implementation) lists what shipped, what differs from the decisions, and what is
+left. Proposed on 2026-10-13 in #689 and revised by review in #690;
+[Revision history](#revision-history) lists what changed.
 
 Motivating issues: #663 (`FrameFlowVideoView` never binds a caller's sink again after a detach and
 reattach), #664 (`CompositionInteropVideoSink` keeps a frame presented after its disposal), #286
@@ -419,6 +422,111 @@ Each slice carries its own BREAKING-CHANGES entry.
    quick start. The docs also say that a view hidden with `IsVisible = false` stays attached and
    keeps copying, and that removing it from the tree is what stops it.
 
+## Implementation
+
+| Slice | Change | BREAKING-CHANGES | Shipped in |
+| ----- | ------ | ---------------- | ---------- |
+| 1 | Decision 4: `LatestWinsFrameSlot` gains a closed state (`Close`, `Install`, `Installed`, `FrameSlotInstall`), which the three slot-based in-box sinks close on dispose; `HeadlessVideoSink` already disposed a late frame (#664) | 17 | #693 |
+| 2 | Decision 6: `IClaimableSink` and `SinkClaimGate` in `FrameFlow.Media`, on the five in-box sinks with state; `PlaybackController.Create`, `CreatePlaylist` and the pass builder claim (#286) | 18 | #695 |
+| 3 | Decision 8: `FanOutVideoSink`, `FanOutTarget` and `DelegatingVideoSink` in `FrameFlow.Media`; the multicast examples on the fan-out; the examples' copy deleted (#611) | 21 | #702 |
+| 4 | Decision 1: `SurfaceLifecycle`, tested by a walk over every reachable state | none | #692 |
+| 4 | `CompositionInteropVideoView` on the core, with decisions 2, 3 and 5 and the `Sink` setter's claim; the sink's off-screen mode; `InteropViewLifecycle` removed | 19 | #697 |
+| 5 | `FrameFlowVideoView` on the core, with decisions 2, 3 and 5, the `Sink` setter's claim and `IAsyncDisposable` (#663) | 20 | #699 |
+| 6 | The chrome on the core through `TransportFollower`; decision 7 on `FrameFlowPlayerView.VideoSurface`, and `IAsyncDisposable` on the player view; the interop view takes its sink off screen before the binding number moves (#700) | 23 | #705 |
+| 7 | The remarks the code slices left; BREAKING-CHANGES entries 12 and 18; the README; an amendment to ADR-0044; the test bench disposes its surface rather than the surface's sink; this section | | #706 |
+
+#704 fixed what slice 3 found in the pacer (#701): when a sink's present threw, the pacer disposed
+the frame the sink already owned. A sink now owns the frame from the call, even when the call
+throws, which decision 8 already said of a fan-out's targets. BREAKING-CHANGES entry 22 records it.
+
+What differs from the decisions, slice by slice. None reverses one.
+
+**The core (slice 4, #692).** Every control on the core relies on these.
+
+- The binding number moves exactly when a binding starts or ends, not on every attach, detach and
+  `Assign`. A first attach that finds the control already bound leaves it alone, so a follow bound
+  before that attach stays current. A dispose that unbinds moves it.
+- A target assigned or created before the first attach is bound at once, and nothing presents until
+  the attach, so decision 3 holds. One assigned while detached is bound when the control rejoins.
+  A chrome control given a transport before its first attach follows it from then, as it did.
+- Presenting needs a target. Assigning none while presenting stops presenting: clearing the interop
+  view's `Sink` while it is attached takes its compositor side down, where the last frame used to
+  stay up. The CPU view keeps its picture.
+- A control that never presented runs no teardown. `Initialize` after dispose is refused. The
+  teardown runs unbind, stop presenting, then dispose, and each step runs even when one before it
+  threw.
+- The core knows nothing of claims. The shells and the sinks hold the claim checks.
+
+**Claims (slice 2, #695).**
+
+- `IClaimableSink` has a third member, `ClaimOrder`, the one process-wide order a claim on several
+  sinks follows, so a sink of an app's own can take part in decision 8's ordering. `SinkClaimGate`
+  is public for the same reason.
+- A pass disposed during its run keeps its claim until the run ends, because its dispose does not
+  wait for the run.
+- The player builder claims after the FFmpeg bootstrap, and the pass builder before it.
+
+**The fan-out (slice 3, #702).**
+
+- Decision 8's example does not compile: C# allows no user-defined conversion from an interface. A
+  fan-out over plain sinks takes them directly, and one that mixes them with transforms names each
+  target with `FanOutTarget.Of` or `FanOutTarget.Transform`.
+- The format check also covers pixel shape and rotation, and a transform's output is checked
+  against the memory its sink takes.
+- When every target was cancelled, the first `OperationCanceledException` is thrown as it is, so the
+  pacer still reads a cancellation.
+- `PreferredBackends` is the first list among the targets without a transform, kept to the backends
+  whose frames the fan-out takes.
+- The fan-out lists an entry of its own among its claim targets, so a build over a disposed fan-out
+  throws `ObjectDisposedException`.
+
+**The views (slices 4 and 5, #697 and #699).**
+
+- The off-screen mode lives in `LatestWinsFrameSlot`, under the slot's own gate, so a change of mode
+  cannot race an arriving frame. Keeping follows the claim, through the sink's `TryClaim` and the
+  claim gate's release hook. Both sinks count what they let go of off screen in a new
+  `FramesDiscardedOffScreen`.
+- The interop view holds the frame it presented last until it presents the next, and hands it back
+  to its sink when it stops presenting, which is how a paused picture comes back. The CPU view needs
+  no hand-back: its bitmaps hold none of the player's frames, and they survive the detach.
+- After D3D12VA frames, a reattach holds every present of the new attachment, not only the new
+  converter's build, until the previous converter has been disposed.
+- The CPU view copies a frame its sink kept on the UI thread, once per attach or rebind, an
+  exception to ADR-0016 like its blit after a size change. A copy that a transition strands counts
+  as discarded off screen on the sink that made it.
+- Both views take a held sink off screen before the binding number moves, so a frame that arrives in
+  between is not counted as a drop. The interop view has done so since #705 (#700).
+- Assigning `Sink` over a caller's sink that its owner has already disposed goes ahead without a
+  claim.
+- The interop view's `FramesCommitted` still counts a hand-off that completes after its binding
+  ended. Only `FramePresented` is gated.
+- The CPU view's `DisposeAsync` also releases its bitmaps.
+
+**The chrome and the player view (slice 6, #705).**
+
+- A default surface with no sink yet is given one before the player view claims it, so that a build
+  against it fails at its claim, as decision 7 says.
+- `FrameFlowPlayerView.DisposeAsync` disposes the default surface before it releases its claim, and
+  is final: a later swap throws.
+- The internal interface both views implement carries the sink only. The player view disposes only
+  the `FrameFlowVideoView` it made.
+- The seek bar changes at the end of a binding, where decision 1 intended no change: out of the tree
+  it no longer seeks on a `Value` write, a scrub target still queued is dropped, and a refusal from
+  an ended binding is not reported. The seek bar's and position label's ticks run only with a
+  transport bound. BREAKING-CHANGES entry 23 lists them.
+
+What is left:
+
+- Open question 1, whether a graph built by hand claims its sinks for its run, is #694. Until it is
+  settled, a view fed only by such a graph keeps no frame while detached.
+- #696: a pass disposed during its run frees the pipeline, decoders and demux the run still uses.
+  That predates this record. Slice 2 keeps the claim until the run ends, and the native teardown
+  order is still open.
+- #698: the interop view can keep a gone player's last frame, when that frame was pending as the
+  claim ended and was presented after it, until the next present, a detach or its dispose.
+- #703: a video sink that throws once stops the pacer's delivery loop for the rest of the item, and
+  nothing reports it. That predates this record too; it was found while fixing #701.
+
 ## Consequences
 
 ### Positive
@@ -611,3 +719,6 @@ reference right. A transform per target keeps both derivable and fixes ownership
     pixel format, and the fan-out checks it.
 - **2026-10-13, automated review turn 2.** The cost of keeping a paused frame for the player's life
   is stated under Negative. A transform output that fails the format check is disposed.
+- **2026-10-14, on implementation.** Status names the pull requests, and
+  [Implementation](#implementation) lists what shipped, what differs and what is left. The
+  decisions are unchanged.
