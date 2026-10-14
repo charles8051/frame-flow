@@ -4,7 +4,9 @@ using Avalonia.Rendering.Composition;
 using Avalonia.Threading;
 using FrameFlow.Avalonia.Windows;
 using FrameFlow.Graph;
+using FrameFlow.Media;
 using FrameFlow.Player;
+using TrackedFrame = FrameFlow.Avalonia.Tests.CompositionInteropVideoViewReattachTests.TrackedFrame;
 
 namespace FrameFlow.Avalonia.Tests;
 
@@ -72,11 +74,12 @@ public sealed class CompositionInteropVideoViewSetupTests
     [AvaloniaFact]
     public async Task InitializeAfterEnsureSink_MovesTheViewsAndTheSinksLoggingToTheNewFactory()
     {
-        // EnsureSink now readies the view without a logger, so the sink exists before the factory
-        // arrives, and so would the stall watchdog once the view is attached. The factory still
+        // EnsureSink readies the view without a logger, so the sink exists before the factory
+        // arrives, and so does the stall watchdog once the view is attached. The factory still
         // has to reach the sink and the view itself, as on the CPU view (#630).
         var view = new CompositionInteropVideoView();
         var sink = view.EnsureSink();
+        var window = Show(view);
         var log = new RecordingLoggerFactory();
 
         view.Initialize(log);
@@ -86,6 +89,50 @@ public sealed class CompositionInteropVideoViewSetupTests
 
         Assert.Contains(log.MessagesFrom<CompositionInteropVideoSink>(), m => m.Contains("FramePresented handler threw", StringComparison.Ordinal));
         Assert.Contains(log.MessagesFrom<CompositionInteropVideoView>(), m => m.Contains("Presenter teardown completed cleanly", StringComparison.Ordinal));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task BeforeTheFirstAttach_AClaimedSinkKeepsItsNewestFrame_AndTheAttachPresentsIt()
+    {
+        // ADR-0085, decision 3: bound and not presenting. The frame waits in the sink, and nothing
+        // is posted for it until the view is on screen.
+        var view = new CompositionInteropVideoView();
+        var sink = view.EnsureSink();
+        using var player = ((IClaimableSink)sink).TryClaim("a player");
+        var first = new TrackedFrame();
+        var second = new TrackedFrame();
+
+        await sink.PresentAsync(first, CancellationToken.None);
+        await sink.PresentAsync(second, CancellationToken.None);
+
+        Assert.True(first.Disposed);
+        Assert.False(second.Disposed);
+        Assert.Equal(0, view.PresentsPosted);
+        Assert.Equal(0, sink.FramesSuperseded);
+
+        var window = Show(view);
+
+        Assert.True(view.PresentsPosted > 0);
+        Assert.False(second.Disposed);
+        Assert.True(sink.HasPendingFrame); // waiting for the interop, which the headless backend lacks
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task BeforeTheFirstAttach_AnUnclaimedSinkKeepsNothing()
+    {
+        var view = new CompositionInteropVideoView();
+        var sink = view.EnsureSink();
+        var frame = new TrackedFrame();
+
+        await sink.PresentAsync(frame, CancellationToken.None);
+
+        Assert.True(frame.Disposed);
+        Assert.False(sink.HasPendingFrame);
+        Assert.Equal(1, sink.FramesDiscardedOffScreen);
+        Assert.Equal(0, view.PresentsPosted);
+        await view.DisposeAsync();
     }
 
     [AvaloniaFact]

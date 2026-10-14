@@ -330,6 +330,236 @@ public sealed class LatestWinsFrameSlotTests
         Assert.Equal(2, installedWhenTaken);
     }
 
+    // ─── On or off screen (ADR-0085, decisions 2 and 3) ─────────────
+    // The mode and the frame change together under the gate, so an install racing a change of mode
+    // is one of two orders, and each test below is one of them.
+
+    [Fact]
+    public void OffScreen_AndKeeping_KeepsOnlyTheNewestFrame_AndCountsTheOneItReplacesOffScreen()
+    {
+        var slot = OffScreen(keep: true);
+        var first = new RecordingFrame();
+        var second = new RecordingFrame();
+
+        Assert.Equal(FrameSlotInstall.Installed, slot.Install(first));
+        Assert.Equal(FrameSlotInstall.Installed, slot.Install(second)); // not a drop
+
+        Assert.Equal(1, first.DisposeCount);
+        Assert.Equal(0, second.DisposeCount);
+        Assert.Equal(0, slot.Dropped);
+        Assert.Equal(1, slot.DiscardedOffScreen);
+        Assert.Equal(2, slot.Installed);
+        Assert.Same(second, slot.Take());
+    }
+
+    [Fact]
+    public void OffScreen_AndKeepingNothing_DisposesEachFrameOnArrival()
+    {
+        var slot = OffScreen(keep: false);
+        var frame = new RecordingFrame();
+
+        Assert.Equal(FrameSlotInstall.Refused, slot.Install(frame));
+
+        Assert.Equal(1, frame.DisposeCount);
+        Assert.False(slot.HasPending);
+        Assert.Equal(0, slot.Installed);
+        Assert.Equal(0, slot.Dropped);
+        Assert.Equal(1, slot.DiscardedOffScreen);
+    }
+
+    [Fact]
+    public void GoingOffScreen_WithNothingToKeep_DisposesThePendingFrame()
+    {
+        var slot = new LatestWinsFrameSlot();
+        var pending = new RecordingFrame();
+        slot.Install(pending);
+
+        slot.SetOnScreen(false);
+
+        Assert.Equal(1, pending.DisposeCount);
+        Assert.False(slot.HasPending);
+        Assert.Equal(0, slot.Dropped);
+        Assert.Equal(1, slot.DiscardedOffScreen);
+    }
+
+    [Fact]
+    public void GoingOffScreen_WhileKeeping_KeepsThePendingFrame()
+    {
+        var slot = new LatestWinsFrameSlot();
+        slot.SetKeepOffScreen(true);
+        var pending = new RecordingFrame();
+        slot.Install(pending);
+
+        slot.SetOnScreen(false);
+
+        Assert.Equal(0, pending.DisposeCount);
+        Assert.Same(pending, slot.Take());
+        Assert.Equal(0, slot.DiscardedOffScreen);
+    }
+
+    [Fact]
+    public void NoLongerKeeping_OffScreen_DisposesTheKeptFrame()
+    {
+        // The claim on a sink no view presents is released: a player that is gone pins nothing.
+        var slot = OffScreen(keep: true);
+        var kept = new RecordingFrame();
+        slot.Install(kept);
+
+        slot.SetKeepOffScreen(false);
+
+        Assert.Equal(1, kept.DisposeCount);
+        Assert.False(slot.HasPending);
+        Assert.Equal(1, slot.DiscardedOffScreen);
+    }
+
+    [Fact]
+    public void NoLongerKeeping_OnScreen_LeavesThePendingFrame()
+    {
+        var slot = new LatestWinsFrameSlot();
+        slot.SetKeepOffScreen(true);
+        var pending = new RecordingFrame();
+        slot.Install(pending);
+
+        slot.SetKeepOffScreen(false);
+
+        Assert.Equal(0, pending.DisposeCount);
+        Assert.Same(pending, slot.Take());
+        Assert.Equal(0, slot.DiscardedOffScreen);
+    }
+
+    [Fact]
+    public void BackOnScreen_TheKeptFrameIsTaken_AndASupersedeIsADropAgain()
+    {
+        var slot = OffScreen(keep: true);
+        var kept = new RecordingFrame();
+        slot.Install(kept);
+
+        slot.SetOnScreen(true);
+
+        Assert.Same(kept, slot.Take());
+        slot.Install(new RecordingFrame());
+        Assert.Equal(FrameSlotInstall.Superseded, slot.Install(new RecordingFrame()));
+        Assert.Equal(1, slot.Dropped);
+        Assert.Equal(0, slot.DiscardedOffScreen);
+    }
+
+    // A view that stops presenting hands back the frame it presented last.
+
+    [Fact]
+    public void TheHandedBackFrame_IsKept_WhenTheSlotKeepsAFrameAndHoldsNone()
+    {
+        var slot = new LatestWinsFrameSlot();
+        slot.SetKeepOffScreen(true);
+        var shown = new RecordingFrame();
+
+        slot.SetOffScreen(shown);
+
+        Assert.Equal(0, shown.DisposeCount);
+        Assert.Same(shown, slot.Take());
+        Assert.Equal(0, slot.Installed); // installed once already, when it arrived
+        Assert.Equal(0, slot.DiscardedOffScreen);
+    }
+
+    [Fact]
+    public void ANewerFramePending_WinsOverTheHandedBackOne()
+    {
+        // The install landed before the hand-back.
+        var slot = new LatestWinsFrameSlot();
+        slot.SetKeepOffScreen(true);
+        var newer = new RecordingFrame();
+        slot.Install(newer);
+        var shown = new RecordingFrame();
+
+        slot.SetOffScreen(shown);
+
+        Assert.Equal(1, shown.DisposeCount);
+        Assert.Equal(0, newer.DisposeCount);
+        Assert.Same(newer, slot.Take());
+    }
+
+    [Fact]
+    public void AFrameArrivingAfterTheHandBack_ReplacesIt()
+    {
+        // The install landed after the hand-back.
+        var slot = new LatestWinsFrameSlot();
+        slot.SetKeepOffScreen(true);
+        var shown = new RecordingFrame();
+        slot.SetOffScreen(shown);
+        var newer = new RecordingFrame();
+
+        slot.Install(newer);
+
+        Assert.Equal(1, shown.DisposeCount);
+        Assert.Same(newer, slot.Take());
+        Assert.Equal(1, slot.DiscardedOffScreen);
+    }
+
+    [Fact]
+    public void TheHandedBackFrame_IsDisposed_WhenTheSlotKeepsNothing()
+    {
+        var slot = new LatestWinsFrameSlot();
+        var pending = new RecordingFrame();
+        slot.Install(pending);
+        var shown = new RecordingFrame();
+
+        slot.SetOffScreen(shown);
+
+        Assert.Equal(1, shown.DisposeCount);
+        Assert.Equal(1, pending.DisposeCount);
+        Assert.False(slot.HasPending);
+        Assert.Equal(1, slot.DiscardedOffScreen); // the pending frame; the shown one was presented
+    }
+
+    [Fact]
+    public void TheHandedBackFrame_IsDisposed_NotCountedAsADiscard_WhenAnEmptySlotKeepsNothing()
+    {
+        // The view presented it: releasing it is not a frame lost off screen.
+        var slot = new LatestWinsFrameSlot();
+        var shown = new RecordingFrame();
+
+        slot.SetOffScreen(shown);
+
+        Assert.Equal(1, shown.DisposeCount);
+        Assert.False(slot.HasPending);
+        Assert.Equal(0, slot.DiscardedOffScreen);
+    }
+
+    [Fact]
+    public void TheHandedBackFrame_IsDisposed_ByAClosedSlot()
+    {
+        var slot = new LatestWinsFrameSlot();
+        slot.SetKeepOffScreen(true);
+        slot.Close();
+        var shown = new RecordingFrame();
+
+        slot.SetOffScreen(shown);
+
+        Assert.Equal(1, shown.DisposeCount);
+        Assert.False(slot.HasPending);
+    }
+
+    [Fact]
+    public void AHandedBackFrameThatThrowsOnDispose_StillLetsThePendingFrameGo()
+    {
+        var slot = new LatestWinsFrameSlot();
+        var pending = new RecordingFrame();
+        slot.Install(pending);
+        var shown = new RecordingFrame { OnDispose = () => throw new InvalidOperationException("release failed") };
+
+        Assert.Throws<InvalidOperationException>(() => slot.SetOffScreen(shown));
+
+        Assert.Equal(1, pending.DisposeCount);
+        Assert.False(slot.HasPending);
+    }
+
+    private static LatestWinsFrameSlot OffScreen(bool keep)
+    {
+        var slot = new LatestWinsFrameSlot();
+        slot.SetKeepOffScreen(keep);
+        slot.SetOnScreen(false);
+        return slot;
+    }
+
     // ─── Fakes ──────────────────────────────────────────────────────
 
     /// <summary>
