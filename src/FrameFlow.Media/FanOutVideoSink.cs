@@ -12,7 +12,7 @@ namespace FrameFlow.Media;
 /// <summary>
 /// A video sink that presents each frame it is given to several sinks, in step (ADR-0085,
 /// decision 8). Register it with a player as its one video sink, and the player's pacer presents
-/// each frame to every target at the same moment.
+/// each frame to every target when that frame is due.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,8 +23,8 @@ namespace FrameFlow.Media;
 /// sink, not a second way to fork a graph (ADR-0054, ADR-0078).
 /// </para>
 /// <para>
-/// <b>Targets.</b> Given at construction, at least one, and fixed from then on. None is null,
-/// and none is given twice, including through a nested fan-out, so fan-outs cannot form a cycle.
+/// <b>Targets.</b> Given at construction, at least one, and fixed from then on, so fan-outs cannot
+/// form a cycle. None is null, and no sink is a target twice, including through a nested fan-out.
 /// A target can come with a transform that makes its frame from each one the fan-out is given
 /// (<see cref="FanOutTarget.Transform"/>), such as a filtered copy.
 /// </para>

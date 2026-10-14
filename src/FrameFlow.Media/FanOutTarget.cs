@@ -11,13 +11,13 @@ namespace FrameFlow.Media;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <see cref="Of"/> presents each frame as it arrives. <see cref="Transform"/> presents a frame
-/// derived from it, such as a filtered copy, at the same moment as the other targets' frames.
+/// A target made with <see cref="Of"/> is given each frame as the fan-out is. One made with
+/// <see cref="Transform"/> is given a frame derived from it, such as a filtered copy, in the same
+/// present as the other targets.
 /// </para>
 /// <para>
-/// A fan-out over plain sinks only takes them directly:
-/// <c>new FanOutVideoSink(first, second)</c>. Name each target with this type when any of them
-/// has a transform.
+/// A fan-out over plain sinks takes them directly: <c>new FanOutVideoSink(first, second)</c>.
+/// Name each target with this type when any of them has a transform.
 /// </para>
 /// </remarks>
 public sealed class FanOutTarget
