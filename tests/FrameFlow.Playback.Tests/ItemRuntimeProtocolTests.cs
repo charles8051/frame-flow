@@ -58,7 +58,7 @@ public sealed class ItemRuntimeProtocolTests
         Assert.Equal(new Action.StartRun(1, PumpAndGraph, ItemGraphPolicy.Rebuild, At3, null, HoldForSettle: true), t.Ok().Awaited);
 
         t.Ok();
-        Assert.Equal([new Action.OpenGates()], t.Actions);
+        Assert.Equal([new Action.OpenGates()], t.Actions); // over a sink the activation left playing
         Assert.Equal(new Action.ResumeAudio(), t.Last.Awaited);
 
         Assert.Equal(new Action.Settle(), t.Ok().Awaited);
@@ -104,9 +104,9 @@ public sealed class ItemRuntimeProtocolTests
         Assert.Equal(
             [
                 new Action.StartRun(1, PumpAndGraph, ItemGraphPolicy.Rebuild, At3, null, HoldForSettle: false),
+                new Action.ResumeAudio(),
                 new Action.ResumeClocks(),
                 new Action.OpenGates(),
-                new Action.ResumeAudio(),
                 new Action.CompleteCommand(play, ItemCommandResult.Ok),
             ],
             t.Since(mark)
@@ -411,9 +411,9 @@ public sealed class ItemRuntimeProtocolTests
                 new Action.ActivateAudio(),
                 new Action.PauseAudio(),
                 new Action.StartRun(1, PumpAndGraph, ItemGraphPolicy.Rebuild, At1, null, HoldForSettle: false),
+                new Action.ResumeAudio(),
                 new Action.ResumeClocks(),
                 new Action.OpenGates(),
-                new Action.ResumeAudio(),
                 new Action.CompleteCommand(play, ItemCommandResult.Ok),
             ],
             t.Since(mark)
@@ -447,9 +447,9 @@ public sealed class ItemRuntimeProtocolTests
                 new Action.OpenGates(),
                 new Action.ResumeAudio(),
                 new Action.Settle(),
+                new Action.ResumeAudio(),
                 new Action.ResumeClocks(),
                 new Action.OpenGates(),
-                new Action.ResumeAudio(),
                 new Action.CompleteCommand(play, ItemCommandResult.Ok),
             ],
             actions.SkipWhile(a => a is not Action.StartRun).Skip(1)
@@ -918,6 +918,94 @@ public sealed class ItemRuntimeProtocolTests
 
         Assert.DoesNotContain(t.Actions, a => a is Action.OpenGates or Action.DeactivateAudio or Action.StopClock);
         Assert.IsType<Action.CompleteDispose>(t.Actions[^1]);
+    }
+
+    [Fact]
+    public void APreparedRuntime_RefusesAPlayAndAPause_UntilItIsAttached()
+    {
+        // Either would act on the position clock and the audio sink of the item that is playing.
+        var t = new ItemRuntimeTranscript(ItemRuntimeState.Initial(attached: false));
+        t.Initialize();
+        t.Opened();
+        t.WarmUp();
+        t.Ok();
+        t.FirstFrame();
+        var prepared = t.State;
+
+        var pause = t.Pause();
+        Assert.Equal([new Action.CompleteCommand(pause, ItemCommandResult.Refused(ItemRefusal.Detached))], t.Actions);
+        var play = t.Play();
+        Assert.Equal([new Action.CompleteCommand(play, ItemCommandResult.Refused(ItemRefusal.Detached))], t.Actions);
+        Assert.Equal(prepared, t.State);
+
+        t.Attach();
+        t.Play();
+        t.OkUntilIdle();
+        Assert.True(t.State.Played);
+    }
+
+    // ── The audio comes first ───────────────────────────────────────────────
+
+    [Fact]
+    public void AResumeWhoseAudioFails_LeavesTheClocksStillAndTheGatesShut()
+    {
+        var t = ItemRuntimeTranscript.Playing();
+        t.Pause();
+        t.OkUntilIdle();
+
+        var play = t.Play(clockPaused: true);
+        Assert.Empty(t.Actions);
+        Assert.Equal(new Action.ResumeAudio(), t.Last.Awaited);
+
+        t.Fails(Boom);
+
+        Assert.Equal([new Action.CompleteCommand(play, ItemCommandResult.Failed(Boom))], t.Actions);
+    }
+
+    [Fact]
+    public void ARelaunchWhoseAudioResumeFails_HasItsSinkPlayingFromTheActivation()
+    {
+        // The relaunch activates the sink before its run starts, and an activated sink plays, so the
+        // gates it opens before the resume open over sound.
+        var t = ItemRuntimeTranscript.Playing();
+        var seek = t.Seek(At3);
+        t.Ok();
+        t.Ends(ItemWork.Pump);
+        t.Ends(ItemWork.Graph);
+        while (t.Last.Awaited is not Action.ResumeAudio)
+            t.Ok();
+        var relaunch = t.All.SkipWhile(a => a is not Action.SeekDemux).ToList();
+        Assert.True(
+            relaunch.FindIndex(a => a is Action.ActivateAudio) < relaunch.FindIndex(a => a is Action.OpenGates),
+            "The gates opened before the sink was activated."
+        );
+
+        t.Fails(Boom);
+
+        Assert.Equal(
+            [new Action.ReleaseSettle(), new Action.CompleteCommand(seek, ItemCommandResult.Failed(Boom))],
+            t.Actions
+        );
+        Assert.True(t.State.AudioActive);
+    }
+
+    [Fact]
+    public void APauseCutShortOnceItsAudioHasPaused_StillShutsTheGatesAndStopsTheClocks()
+    {
+        var t = ItemRuntimeTranscript.Playing();
+        var pause = t.Pause();
+        t.CallerCancels(pause);
+
+        t.Ok(); // the audio paused anyway
+
+        Assert.Equal(
+            [
+                new Action.CloseGates(),
+                new Action.PauseClocks(),
+                new Action.CompleteCommand(pause, ItemCommandResult.Cancelled),
+            ],
+            t.Actions
+        );
     }
 
     // ── Commands the runtime refuses, and inputs it ignores ─────────────────

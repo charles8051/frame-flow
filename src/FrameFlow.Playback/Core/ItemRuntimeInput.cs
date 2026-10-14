@@ -140,6 +140,12 @@ internal enum ItemRefusal
     /// <summary>The runtime has opened already.</summary>
     AlreadyOpen,
 
+    /// <summary>
+    /// A play or a pause of a runtime prepared ahead, before it is attached: either would act on the
+    /// position clock and the audio sink it shares with the item that is playing.
+    /// </summary>
+    Detached,
+
     /// <summary>The start is at or past the source's known duration.</summary>
     PastTheEnd,
 }

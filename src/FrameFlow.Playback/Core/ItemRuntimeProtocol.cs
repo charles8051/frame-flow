@@ -58,6 +58,18 @@ namespace FrameFlow.Playback.Core;
 /// next play, or a warm-up, repositions at the position clock before it starts a run (#714).
 /// </para>
 /// <para>
+/// <b>The audio comes first.</b> A pause pauses the audio sink before it shuts the gates and stops
+/// the clocks, a resume resumes it before it runs the clocks and opens the gates, and a first play or
+/// a relaunch activates it, which leaves it playing, before its run starts. So a call to the sink
+/// that fails leaves the picture where the sound is. A pause cut short once its audio has paused
+/// still shuts the gates.
+/// </para>
+/// <para>
+/// <b>A runtime prepared ahead</b> acts on nothing it shares with the item that is playing until it
+/// is attached: it refuses a play and a pause, opens no gate, and seats only its own clock. It is
+/// opened, positioned, warmed up and disposed.
+/// </para>
+/// <para>
 /// <b>Disposal.</b> The dispose opens the gates of an attached runtime, cancels the run and waits
 /// for its work. Then it frees the pacer, deactivates the audio sink of an attached runtime or of
 /// one that activated it, stops the position clock of an attached runtime, and frees the rest in
@@ -149,6 +161,14 @@ internal static class ItemRuntimeProtocol
             if (State.Phase is ItemRuntimePhase.Disposing or ItemRuntimePhase.Disposed || State.DisposeRequested)
             {
                 Complete(input.Command, ItemCommandResult.Refused(ItemRefusal.Disposed));
+                return;
+            }
+
+            // A play or a pause acts on the position clock and the audio sink, which a runtime
+            // prepared ahead shares with the item that is playing until it is attached.
+            if (input is ItemRuntimeInput.Play or ItemRuntimeInput.Pause && !State.Attached)
+            {
+                Complete(input.Command, ItemCommandResult.Refused(ItemRefusal.Detached));
                 return;
             }
 
@@ -368,9 +388,16 @@ internal static class ItemRuntimeProtocol
                 return;
             }
 
-            // A command whose caller has gone, or that a dispose is waiting for, goes no further.
+            // A command whose caller has gone, or that a dispose is waiting for, goes no further. An
+            // audio pause that went through is finished by the gates and the clocks, though, or the
+            // video would go on without its sound.
             if (command.Abandoned || State.DisposeRequested)
             {
+                if (command.Stage == ItemCommandStage.PausingAudio)
+                {
+                    Emit(new ItemRuntimeAction.CloseGates());
+                    Emit(new ItemRuntimeAction.PauseClocks());
+                }
                 End(command, ItemCommandResult.Cancelled);
                 return;
             }
@@ -449,7 +476,7 @@ internal static class ItemRuntimeProtocol
                         FinishFirstPlay();
                     break;
                 case ItemCommandStage.ResumingAudio:
-                    Finish();
+                    FinishResume();
                     break;
                 case ItemCommandStage.RepositionPausingAudio:
                     RepositionStop();
@@ -470,6 +497,8 @@ internal static class ItemRuntimeProtocol
                     RepositionDone();
                     break;
                 case ItemCommandStage.RepositionStartingRun:
+                    // The sink was activated before the run started, and an activated sink plays, so
+                    // the gates open over sound whatever the resume below does.
                     Emit(new ItemRuntimeAction.OpenGates());
                     if (State.HasAudio)
                         Await(ItemCommandStage.RepositionResumingAudio, new ItemRuntimeAction.ResumeAudio());
@@ -606,13 +635,13 @@ internal static class ItemRuntimeProtocol
             Finish();
         }
 
+        // The audio sink first, as a pause pauses it first: a resume whose audio fails leaves the
+        // clocks still and the gates shut, rather than the picture moving in silence.
         private void ResumeOverRun()
         {
-            Emit(new ItemRuntimeAction.ResumeClocks());
-            Emit(new ItemRuntimeAction.OpenGates());
             if (!State.HasAudio)
             {
-                Finish();
+                FinishResume();
                 return;
             }
 
@@ -622,6 +651,13 @@ internal static class ItemRuntimeProtocol
                 ItemCommandStage.ResumingAudio,
                 State.AudioActive ? new ItemRuntimeAction.ResumeAudio() : new ItemRuntimeAction.ActivateAudio()
             );
+        }
+
+        private void FinishResume()
+        {
+            Emit(new ItemRuntimeAction.ResumeClocks());
+            Emit(new ItemRuntimeAction.OpenGates());
+            Finish();
         }
 
         // ── Reposition ──────────────────────────────────────────────────────

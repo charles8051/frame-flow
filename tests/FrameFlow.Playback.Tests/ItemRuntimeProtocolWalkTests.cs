@@ -22,8 +22,8 @@ namespace FrameFlow.Playback.Tests;
 /// completion may arrive while an action is under way, as it may in a shell that does not queue
 /// them. A run's work runs from the moment the shell is asked to start it, so a piece can end before
 /// the start's outcome. The position clock is the model's: a command reads whether it is paused,
-/// and with no command in progress the controller may freeze it, as it does at the end of the
-/// stream.
+/// and once a run has played to its end the controller may freeze it between commands, as it does
+/// at the end of the stream.
 /// </para>
 /// <para>
 /// The model keeps its own account of what the checks read: whether the runtime is attached,
@@ -51,6 +51,9 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
     private static readonly TimeSpan PastTheEnd = TimeSpan.FromSeconds(12);
 
     private static readonly Exception Boom = new InvalidOperationException("boom");
+
+    private const string Shared =
+        "A detached runtime touches neither the position clock nor the audio sink it shares with the item that is playing";
     private static readonly Exception Cancellation = new OperationCanceledException();
 
     private const ItemResources Media = ItemResources.Demux | ItemResources.Pipeline;
@@ -283,7 +286,8 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
         yield return new Feed(new Input.Attach());
         yield return new Feed(new Input.Dispose());
 
-        if (model.Outstanding is null && model.Clock == ClockModel.Running)
+        // At the end of the stream, between commands.
+        if (model.Outstanding is null && model.Clock == ClockModel.Running && model.EndRaised)
             yield return new FreezeClock();
 
         switch (model.Awaiting)
@@ -435,6 +439,7 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                         m.Live is not null || after.Phase is ItemRuntimePhase.Disposing or ItemRuntimePhase.Disposed,
                         "Opens the gates only over a live run, or to unblock a teardown"
                     );
+                    Ensure(m.Attached, "A detached runtime opens no gate: what waits there would reach the sinks it shares");
                     m = m with { Gates = true };
                     break;
                 case Action.FlushPacer:
@@ -454,14 +459,18 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                     Ensure(seat.Shared == m.Attached, "Seats the shared clocks exactly when attached");
                     break;
                 case Action.SeatBaseline:
+                    Ensure(m.Attached, Shared);
                     break;
                 case Action.StartClocks:
+                    Ensure(m.Attached, Shared);
                     m = m with { Clock = ClockModel.Running };
                     break;
                 case Action.PauseClocks:
+                    Ensure(m.Attached, Shared);
                     m = m with { Clock = m.Clock == ClockModel.Running ? ClockModel.Paused : m.Clock };
                     break;
                 case Action.ResumeClocks:
+                    Ensure(m.Attached, Shared);
                     m = m with { Clock = m.Clock == ClockModel.Paused ? ClockModel.Running : m.Clock };
                     break;
                 case Action.StopClock:
@@ -572,6 +581,7 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
                     m = m with { SettleOwed = false };
                     break;
                 case Action.ActivateAudio or Action.PauseAudio or Action.ResumeAudio or Action.DeactivateAudio:
+                    Ensure(m.Attached, Shared);
                     break;
                 default:
                     Ensure(false, $"{awaited} is not an awaited action");
@@ -585,6 +595,20 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
         var held = owed.Values.SingleOrDefault();
         Ensure(held?.Id == after.Command?.Id, "Owes an answer exactly to the command it is carrying out");
         m = m with { Outstanding = held };
+
+        if (
+            newCommand is Input.Play or Input.Pause
+            && !model.Attached
+            && !(before.Phase is ItemRuntimePhase.Disposing or ItemRuntimePhase.Disposed || before.DisposeRequested)
+        )
+        {
+            Ensure(
+                step.Actions.SequenceEqual([new Action.CompleteCommand(newCommand.Command, ItemCommandResult.Refused(ItemRefusal.Detached))])
+                    && step.Awaited is null
+                    && after == before,
+                "A detached runtime refuses a play and a pause, and changes nothing"
+            );
+        }
 
         if (newCommand is not null && (before.Phase is ItemRuntimePhase.Disposing or ItemRuntimePhase.Disposed || before.DisposeRequested))
         {
@@ -675,6 +699,11 @@ public sealed class ItemRuntimeProtocolWalkTests(ITestOutputHelper output)
         );
         Ensure((after.Phase == ItemRuntimePhase.Opening) == (m.Awaiting is Action.Open), "Opening exactly while the open is under way");
         Ensure(!m.Played || after.Phase != ItemRuntimePhase.Open || m.Clock != ClockModel.Stopped, "A runtime that has played has started its clock");
+        Ensure(
+            !(after.Phase == ItemRuntimePhase.Open && m.Gates && m.Live is not null && (m.Working & ItemWork.Graph) != 0)
+                || (m.Clock == ClockModel.Running && (!shape.HasAudio || m.Audio == AudioModel.Playing)),
+            "Frames pass the gates of a run that is still delivering only while the clock runs and the audio plays"
+        );
 
         if (after.Phase == ItemRuntimePhase.Disposed)
         {
