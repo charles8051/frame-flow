@@ -438,6 +438,11 @@ Each slice carries its own BREAKING-CHANGES entry.
 #704 fixed what slice 3 found in the pacer (#701): when a sink's present threw, the pacer disposed
 the frame the sink already owned. A sink now owns the frame from the call, even when the call
 throws, which decision 8 already said of a fan-out's targets. BREAKING-CHANGES entry 22 records it.
+#711 handled what #704 found next (#703): a sink that threw stopped the pacer for the rest of the
+item without a word. Each failure now costs its frame, and the failures are reported on
+`ErrorOccurred` at most once every five seconds. They are counted for the sink across items, and
+the one that makes more than eight in a row faults the item playing, as a fault in its decoding
+does. BREAKING-CHANGES entry 25 records it.
 
 The fix for #696 makes a pass's dispose cancel a run still in flight and wait for it to end before it
 frees the pipeline, the decoders and the demux session the run reads from. The pass then releases
@@ -525,8 +530,6 @@ What is left:
   settled, a view fed only by such a graph keeps no frame while detached.
 - #698: the interop view can keep a gone player's last frame, when that frame was pending as the
   claim ended and was presented after it, until the next present, a detach or its dispose.
-- #703: a video sink that throws once stops the pacer's delivery loop for the rest of the item, and
-  nothing reports it. That predates this record too; it was found while fixing #701.
 
 ## Consequences
 
