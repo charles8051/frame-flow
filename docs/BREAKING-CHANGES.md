@@ -1418,9 +1418,11 @@ you can see:
 - **A command cut short leaves the item at rest.** A seek cancelled once its audio has paused stops
   its run, and the next play repositions where the clock stands (as entry 26 describes for a seek
   cancelled during its wait). A play cancelled once its run has started holds the item paused with
-  its clock. A first play cancelled while the audio sink activates ends with nothing started: no
-  run, no clock, the picture shut. `OpenAlAudioSink`'s activation does not observe its token, so
-  such a play used to go on and play.
+  its clock. A first play cancelled while the audio sink activates ends with no run started, the
+  clock stopped and the picture shut, and the sink left activated with nothing reaching it.
+  `OpenAlAudioSink`'s activation does not observe its token, so such a play used to go on and play.
+  A dispose made while a command's call into a sink or the source is still under way cancels that
+  call's token, and waits for the call to return before it tears anything down.
 - **A first play starts its run before its clock.** A first play whose run cannot start, because a
   configurator throws when the graph is built, leaves the position clock stopped, where it used to
   leave it running over nothing.
@@ -1437,6 +1439,11 @@ you can see:
   item is disposed (#713). A pump that faults cancels the graph the same way. The item fails as
   before, and the fault is reported once, on the item's fault path. A fault in the decoders'
   end-of-stream flush, which was swallowed, is reported as the pump's.
+- **A clock call that throws fails the item, not the command.** A position clock passed to
+  `IPlayerBuilder.WithClock`, or an audio sink that masters the clock as an `ISeekableClock`, whose
+  `Seek`, `Start`, `Pause`, `Resume` or `SeekBaseline` threw used to fail the play, pause or seek that
+  called it. The command now carries on, and often succeeds, while the item is reported faulted
+  and fails, as a fault in its pump or graph fails it.
 - **A command whose token is cancelled when it reaches the item does nothing.** A seek whose token
   was already cancelled used to shut the picture and pause the audio before it gave up.
 - **A stop that waits five seconds** for a run's work that has not ended, at a seek or at the
@@ -1450,6 +1457,8 @@ you can see:
 - Code that pauses or disposes a player while a play or a seek is in progress, and then reads the
   position clock or what is on screen.
 - A video or audio configurator that throws when the graph is built.
+- A clock of your own given to `WithClock`, or an audio sink that is an `ISeekableClock`, whose
+  calls can throw: watch for the item failing, not the command.
 - Log filters that match the warnings a player writes.
 
 **What to write instead.** Nothing, in most code. Retry a resume that failed, as for any command
