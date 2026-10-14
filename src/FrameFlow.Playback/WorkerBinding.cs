@@ -204,8 +204,9 @@ internal sealed partial class WorkerBinding<TWorker>
     }
 
     /// <summary>
-    /// Runs the worker's loop. Its cancellation ends it quietly; any other fault goes to the
-    /// <c>onError</c> callback, and is the loop's own end when there is none.
+    /// Runs the worker's loop. Its cancellation ends it quietly. Any other fault is logged and goes
+    /// to the <c>onError</c> callback, and what that callback throws is the loop's end, which the
+    /// stop throws.
     /// </summary>
     private async Task RunWorkerAsync(TWorker worker, CancellationToken ct)
     {
