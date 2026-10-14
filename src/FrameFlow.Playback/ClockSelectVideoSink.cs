@@ -89,8 +89,6 @@ namespace FrameFlow.Playback;
 /// every <see cref="IVideoSink"/> already has from the graph.
 /// </para>
 /// </remarks>
-[System.Diagnostics.CodeAnalysis.SuppressMessage(
-    "Reliability", "CA2213", Justification = "DisposeAsync runs TearDownAsync through DisposeOnce, which the analyzer cannot follow. TearDownAsync disposes them.")]
 internal sealed partial class ClockSelectVideoSink : IVideoSink
 {
     /// <summary>
@@ -1649,7 +1647,8 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     /// pacer logs once, at Warning, that it is still waiting and on which sink.
     /// </para>
     /// </remarks>
-    public ValueTask DisposeAsync() => _dispose.RunAsync(TearDownAsync);
+    public ValueTask DisposeAsync() =>
+        _dispose.TryBegin() ? _dispose.EndAsync(TearDownAsync()) : _dispose.WaitAsync();
 
     /// <summary>The teardown the first <see cref="DisposeAsync"/> runs.</summary>
     private async ValueTask TearDownAsync()

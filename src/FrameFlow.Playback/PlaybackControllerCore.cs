@@ -37,8 +37,6 @@ namespace FrameFlow.Playback;
 /// observers do not see redundant <c>Loading → Loading</c> transitions.
 /// </para>
 /// </remarks>
-[System.Diagnostics.CodeAnalysis.SuppressMessage(
-    "Reliability", "CA2213", Justification = "DisposeAsync runs TearDownAsync through DisposeOnce, which the analyzer cannot follow. TearDownAsync disposes them.")]
 internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsyncDisposable
 {
     // ── Primary playback state ─────────────────────────────────────────
@@ -1813,7 +1811,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// did, so every caller returns only once the claims are released (ADR-0086, decision 3; #708).
     /// </para>
     /// </remarks>
-    public ValueTask DisposeAsync() => _dispose.RunAsync(TearDownAsync);
+    public ValueTask DisposeAsync() =>
+        _dispose.TryBegin() ? _dispose.EndAsync(TearDownAsync()) : _dispose.WaitAsync();
 
     /// <summary>The teardown the first <see cref="DisposeAsync"/> runs.</summary>
     private async ValueTask TearDownAsync()

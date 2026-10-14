@@ -76,8 +76,6 @@ namespace FrameFlow.Avalonia.Windows;
 /// tree meanwhile builds new ones, and the teardown never disposes or presents those.
 /// </para>
 /// </remarks>
-[System.Diagnostics.CodeAnalysis.SuppressMessage(
-    "Reliability", "CA2213", Justification = "DisposeAsync runs its transition through DisposeOnce, which the analyzer cannot follow. The transition's teardown disposes them.")]
 public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBoxVideoSurface, IAsyncDisposable
 {
     [System.Diagnostics.CodeAnalysis.SuppressMessage(
@@ -99,7 +97,11 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     private CompositionDrawingSurface? _surface;
     private CompositionSurfaceVisual? _surfaceVisual;
 
-    private D3D11Nv12SharedConverter? _gpuConverter; // GPU zero-copy source, D3D11VA frames
+    // GPU zero-copy source, D3D11VA frames. StopPresenting hands it to FinishTeardownAsync, which
+    // disposes it, one call deeper from DisposeAsync than the analyzer follows.
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Reliability", "CA2213", Justification = "Disposed by FinishTeardownAsync, which StopPresenting hands it to.")]
+    private D3D11Nv12SharedConverter? _gpuConverter;
     private D3D12YuvSharedConverter? _d3d12Converter; // GPU zero-copy source, D3D12VA frames
     private D3D11BgraUploader? _cpuUploader; // CPU upload fallback source
     private bool? _activeIsGpu; // which source the imported[] ring is currently bound to
@@ -1902,7 +1904,16 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
     /// teardown runs, or after, tears nothing down again: it waits for that teardown and ends as it
     /// did (ADR-0086, decision 3).
     /// </returns>
-    public ValueTask DisposeAsync() => _dispose.RunAsync(() => new(Combined(Apply(_lifecycle.Dispose()))));
+    public ValueTask DisposeAsync() =>
+        _dispose.TryBegin() ? _dispose.EndAsync(TearDownAsync()) : _dispose.WaitAsync();
+
+    /// <summary>
+    /// The teardown the first <see cref="DisposeAsync"/> runs: the dispose's transition, on the UI
+    /// thread up to the compositor's drain. Asynchronous, so what a step throws ends the task
+    /// rather than the call, and the calls that wait for it see it.
+    /// </summary>
+    private async ValueTask TearDownAsync() =>
+        await Combined(Apply(_lifecycle.Dispose())).ConfigureAwait(false);
 
     /// <summary>
     /// Observes the teardown a visual-tree detach (or window close), or clearing
