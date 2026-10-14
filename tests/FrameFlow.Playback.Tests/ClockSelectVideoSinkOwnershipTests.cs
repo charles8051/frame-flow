@@ -49,6 +49,27 @@ public sealed partial class ClockSelectVideoSinkTests
     }
 
     [Fact]
+    public async Task AFanOutWhoseTargetThrows_IsNotReleasedAgain()
+    {
+        // The fan-out gives each target a reference of its own and releases the one it was given
+        // before it throws what a target threw (ADR-0085, decision 8). By then every reference
+        // has been released, so a release from the pacer as well would be one past the last.
+        var failing = new FailingSink
+        {
+            ReleaseThenThrowOnPresent = new InvalidOperationException("present"),
+        };
+        var fanOut = new FanOutVideoSink(failing, new NullVideoSink());
+        var pacer = new ClockSelectVideoSink(fanOut, new FakeClock(), capacity: 4);
+        var frame = new CountedFrame(TimeSpan.Zero);
+
+        await pacer.PresentAsync(frame, default);
+        await failing.Called;
+        await pacer.DisposeAsync();
+
+        Assert.Equal(0, frame.References);
+    }
+
+    [Fact]
     public async Task AnAnnouncementThatThrows_ReleasesTheFrameOnce()
     {
         // The frame left the ring and never reached the sink: the announcer releases it, and the
