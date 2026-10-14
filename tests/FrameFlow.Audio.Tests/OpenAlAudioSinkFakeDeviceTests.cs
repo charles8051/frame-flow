@@ -324,6 +324,39 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
         Assert.Equal(0, device.LeasesOutstanding);
     }
 
+    /// <summary>
+    /// A dispose made while another gives the device back joins it: it waits for the first and
+    /// ends as it did (ADR-0086, decision 3). It used to return at once, before the device was
+    /// released. The first is held inside that release, under the sink's lock, by a lease that
+    /// does not let go until the test says.
+    /// </summary>
+    [Fact]
+    public async Task ADisposeMadeWhileAnotherGivesTheDeviceBack_JoinsIt()
+    {
+        var device = new FakeOpenAlDevice();
+        using var hold = new LeaseHold();
+        var sink = new OpenAlAudioSink(
+            logger: null,
+            new FakeTimeProvider(),
+            onRevoked => hold.Wrap(device.Lease(onRevoked))
+        );
+        await sink.ActivateAsync(CancellationToken.None);
+
+        var first = Task.Run(() => sink.DisposeAsync().AsTask());
+        await hold.Entered.WaitAsync(TimeSpan.FromSeconds(30));
+        var second = sink.DisposeAsync().AsTask();
+
+        // The lease cannot be let go before it is released, so the first cannot end before then.
+        Assert.False(second.IsCompleted);
+
+        hold.Release();
+        await first.WaitAsync(TimeSpan.FromSeconds(30));
+        await second.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(0, device.LeasesOutstanding);
+        Assert.Equal(0, device.LiveSources);
+        Assert.Single(device.CallNames, name => name == "DeleteSource");
+    }
+
     // ── The clock, headless ─────────────────────────────────────────────────
 
     /// <summary>
@@ -587,6 +620,49 @@ public sealed class OpenAlAudioSinkFakeDeviceTests
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Holds the dispose of the lease it wraps, on the disposing thread, until
+    /// <see cref="Release"/>: the sink lets its lease go last as it gives the device back, under
+    /// its lock.
+    /// </summary>
+    private sealed class LeaseHold : IDisposable
+    {
+        private readonly TaskCompletionSource _released = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        private readonly TaskCompletionSource _entered = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        /// <summary>Completes once a wrapped lease's dispose has begun.</summary>
+        public Task Entered => _entered.Task;
+
+        public IOpenAlContextLease? Wrap(IOpenAlContextLease? lease) =>
+            lease is null ? null : new HeldLease(lease, this);
+
+        public void Release() => _released.TrySetResult();
+
+        // Releases a lease still held, so a failing test does not leave its thread blocked.
+        public void Dispose() => Release();
+
+        private sealed class HeldLease(IOpenAlContextLease inner, LeaseHold hold) : IOpenAlContextLease
+        {
+            public IOpenAlApi Al => inner.Al;
+
+            public string DeviceName => inner.DeviceName;
+
+            public bool IsConnected => inner.IsConnected;
+
+            public void Dispose()
+            {
+                hold._entered.TrySetResult();
+                // The bound only turns a release that never comes into a failure.
+                hold._released.Task.Wait(TimeSpan.FromSeconds(30));
+                inner.Dispose();
+            }
+        }
+    }
 
     private static OpenAlAudioSink NewSink(FakeOpenAlDevice device) =>
         FakeOpenAlSink.Create(device, timeProvider: TimeProvider.System);

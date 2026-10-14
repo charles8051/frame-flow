@@ -14,7 +14,8 @@ namespace FrameFlow.Playback.Tests;
 /// and <see cref="PlaybackController.CreatePlaylist"/> claim every claimable sink they are given,
 /// video and audio, before they build anything; a second build against a held sink fails naming the
 /// sink and its holder; and the controller releases its claims only once its dispose has disposed
-/// the session. No FFmpeg: nothing is loaded except through a fake session.
+/// the session, and a second dispose returns only after that (ADR-0086, decision 3). No FFmpeg:
+/// nothing is loaded except through a fake session.
 /// </summary>
 public sealed class ControllerSinkClaimTests
 {
@@ -146,6 +147,54 @@ public sealed class ControllerSinkClaimTests
         Assert.Equal(["session disposed", "claims released"], log);
     }
 
+    [Fact]
+    public async Task ASecondDispose_WaitsForTheFirst_AndReturnsOnlyOnceTheClaimsAreReleased()
+    {
+        // #708: a second dispose returned at once while the first was still disposing the session,
+        // so a build its caller made next found the sinks still claimed. The first is held inside
+        // the session's dispose; the second is made there.
+        var log = new List<string>();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new LoggingSession(log) { DisposeHeldUntil = release.Task };
+        var claims = new LoggingClaims(log);
+        var controller = NewController(session, claims);
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+
+        var first = controller.DisposeAsync().AsTask();
+        await session.DisposeEntered.WaitAsync(Bound);
+        var second = controller.DisposeAsync().AsTask();
+        var seenAsTheSecondEnded = second.ContinueWith(
+            _ => log.ToArray(),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default
+        );
+
+        // The session's dispose cannot end before it is released, so neither can the first.
+        Assert.False(second.IsCompleted);
+
+        release.SetResult();
+        await Task.WhenAll(first, second).WaitAsync(Bound);
+
+        Assert.Equal(["session disposed", "claims released"], await seenAsTheSecondEnded);
+        Assert.Equal(["session disposed", "claims released"], log);
+    }
+
+    [Fact]
+    public async Task ASecondDispose_ThrowsWhatTheFirstThrew()
+    {
+        var log = new List<string>();
+        var session = new LoggingSession(log) { DisposeThrows = new InvalidOperationException("teardown") };
+        var controller = NewController(session, new LoggingClaims(log));
+        Assert.True((await controller.LoadAsync(new FakeSource())).IsSuccess);
+
+        var first = await Assert.ThrowsAsync<InvalidOperationException>(async () => await controller.DisposeAsync());
+        var second = await Assert.ThrowsAsync<InvalidOperationException>(async () => await controller.DisposeAsync());
+
+        Assert.Same(first, second);
+        Assert.Equal(["session disposed", "claims released"], log);
+    }
+
     // ─── A fan-out sink (decision 8) ────────────────────────────────
 
     [Fact]
@@ -216,6 +265,9 @@ public sealed class ControllerSinkClaimTests
         );
     }
 
+    // Only turns a dispose that never ends into a failure.
+    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
+
     private static PlaybackControllerCore NewController(LoggingSession session, LoggingClaims claims) =>
         new(
             NullLogger<PlaybackControllerCore>.Instance,
@@ -272,7 +324,17 @@ public sealed class ControllerSinkClaimTests
     /// <summary>A session that loads anything and logs its dispose.</summary>
     private sealed class LoggingSession(List<string> log) : IPlaybackSession
     {
+        private readonly TaskCompletionSource _disposeEntered = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
         public Exception? DisposeThrows { get; init; }
+
+        /// <summary>Holds the dispose until this completes, when set.</summary>
+        public Task? DisposeHeldUntil { get; init; }
+
+        /// <summary>Completes once the dispose has been called.</summary>
+        public Task DisposeEntered => _disposeEntered.Task;
 
         public MediaInfo? MediaInfo { get; } = new("fake", TimeSpan.FromSeconds(1), [], []);
 
@@ -293,9 +355,10 @@ public sealed class ControllerSinkClaimTests
         public ValueTask DisposeAsync()
         {
             log.Add("session disposed");
+            _disposeEntered.TrySetResult();
             if (DisposeThrows is { } ex)
                 throw ex;
-            return ValueTask.CompletedTask;
+            return DisposeHeldUntil is { } held ? new ValueTask(held) : ValueTask.CompletedTask;
         }
     }
 

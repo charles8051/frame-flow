@@ -487,6 +487,34 @@ public sealed class CompositionInteropVideoViewReattachTests
     }
 
     [AvaloniaFact]
+    public async Task ADisposeMadeWhileTheFirstTearsDown_OrAfter_EndsAsTheFirstDid()
+    {
+        // ADR-0086 decision 3: a second dispose waits for the first one's teardown and sees its
+        // outcome, here a frame that failed to release. The seam makes the second call at the moment
+        // the first has moved the binding number, with the rest of its teardown still to run.
+        var view = new CompositionInteropVideoView();
+        var window = Show(view);
+        var sink = (CompositionInteropVideoSink)((IVideoSurface)view).AttachSink(new RecordingLoggerFactory());
+        await sink.PresentAsync(new TrackedFrame(throwOnDispose: true), CancellationToken.None);
+        Task? during = null;
+        bool? endedAtOnce = null;
+        view.TransitionPublished = () =>
+        {
+            view.TransitionPublished = null;
+            during = view.DisposeAsync().AsTask();
+            endedAtOnce = during.IsCompleted;
+        };
+
+        var first = view.DisposeAsync().AsTask();
+
+        Assert.False(endedAtOnce);
+        var fault = await Assert.ThrowsAsync<InvalidOperationException>(() => first);
+        Assert.Same(fault, await Assert.ThrowsAsync<InvalidOperationException>(() => during!));
+        Assert.Same(fault, await Assert.ThrowsAsync<InvalidOperationException>(() => view.DisposeAsync().AsTask()));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public async Task AfterDisposeAsync_TheViewRefusesASink_AndKeepsNone()
     {
         // DisposeAsync is final: no later detach or dispose would present a sink made or bound
