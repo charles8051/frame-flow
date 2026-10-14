@@ -297,17 +297,6 @@ land.
   into an `InFlight` sink that hands encoded frames to the application's own worker for a live
   source. The abandonable node it named is not pursued. The record and
   [the GenAI exploration](../explorations/generative-inference.md) are kept as the evidence.
-- [One lifecycle for views: the sink follows the view, presenting follows the attachment](one-lifecycle-for-views.md):
-  three mechanisms, each added by one fix, answer what attach, detach, reattach and dispose do to a
-  view's sink or a chrome control's transport, and six separate checks drop callbacks from an
-  attachment that has ended. #663 is #650's defect in the neighbouring view. Both views also dispose
-  their own sink on every detach while a player still feeds it, so a tab switch freezes the picture.
-  Proposes one pure `SurfaceLifecycle` for every surface and chrome control, generalised from
-  #662's `InteropViewLifecycle`; an owned sink that lives as long as the view, while presenting
-  follows the attachment; no frames held before the first attach or while detached; disposed sinks
-  that dispose what they are given (#664); one attachment number published to other threads; a
-  claim the player and pass builders take on an in-box sink, so two players cannot feed one (#286);
-  and a surface swapped out only when no player can still be feeding it.
 
 ## Recently numbered
 
@@ -499,3 +488,16 @@ ADR-0084 was numbered and accepted on 2026-10-13, and implemented under #677.
   comes from presentation, through one follower for in-order streams and one for derived items
   matched against what is shown. Keeps `ISeekResettable` for the session's own components.
   Addresses #621, #624 and #641, and replaces the rules #619 and #620 added; not #669 or #671.
+
+ADR-0085 was numbered and accepted on 2026-10-13; its implementation is tracked in #691.
+
+- [One lifecycle for views: the sink follows the view, presenting follows the
+  attachment](ADR-0085-one-lifecycle-for-views.md) — three mechanisms, each added by one fix,
+  answer what attach, detach, reattach and dispose do to a view's sink or a chrome control's
+  transport, and both views dispose their own sink on every detach while a player still feeds it.
+  One pure `SurfaceLifecycle` for every surface and chrome control; an owned sink that lives as
+  long as the view, keeping its newest frame while detached; one binding number compared where work
+  commits; disposed sinks that dispose what they are given (#664); a public `IClaimableSink` taken
+  where a sink is attached, so two players cannot drive one sink (#286); a surface swapped out
+  under the player view's own claim; and an in-box `FanOutVideoSink` that passes the claim to the
+  views it feeds (#611).

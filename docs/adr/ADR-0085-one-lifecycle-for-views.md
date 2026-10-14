@@ -1,8 +1,10 @@
-# One lifecycle for views: the sink follows the view, presenting follows the attachment
+# ADR-0085: One lifecycle for views: the sink follows the view, presenting follows the attachment
 
 ## Status
 
-Draft, pending number assignment at merge. **Proposed** (2026-10-13). Not implemented.
+**Accepted (2026-10-13)**, implementation tracked in #691. Not implemented yet. Proposed on
+2026-10-13 in #689 and revised by review in #690; [Revision history](#revision-history) lists what
+changed.
 
 Motivating issues: #663 (`FrameFlowVideoView` never binds a caller's sink again after a detach and
 reattach), #664 (`CompositionInteropVideoSink` keeps a frame presented after its disposal), #286
