@@ -190,10 +190,12 @@ shell.
 An owned sink lives as long as the view, not as long as an attachment.
 
 - **Detach** stops presenting: the binding ends, the compositor and GPU state go (ADR-0064's
-  rebuild on detach stands), and the sink stays. While detached, the sink keeps only its newest
-  frame, in the latest-wins slot it already has and within the `MaxHeldFrames` it already declares.
-  A newer frame replaces it, and the replaced frame is disposed. Nothing is presented, and
-  `FramePresented` is not raised.
+  rebuild on detach stands), and the sink stays. While detached, a claimed sink (decision 6) keeps
+  only its newest frame, in the latest-wins slot it already has and within the `MaxHeldFrames` it
+  already declares. A newer frame replaces it, and the replaced frame is disposed. An unclaimed sink,
+  fed by a graph built by hand, keeps nothing: it disposes each frame it is given, because no
+  release would say when to let a kept frame go. Nothing is presented, and `FramePresented` is not
+  raised.
 - **Reattach** presents the kept frame, then goes on with the same sink, owned or borrowed. A player
   built before the trip keeps working, and a paused picture, a still or an ended item is on screen
   again at once. This is the fix for #663. A reattach builds no new D3D12 converter until the
@@ -204,12 +206,14 @@ An owned sink lives as long as the view, not as long as an attachment.
   gone.
 - **`EnsureSink` and `AttachSink`** return the same sink for the view's whole life, unless the app
   assigns `Sink`. That is what `IVideoSurface.AttachSink` already documents.
-- **Assigning `Sink`** over a claimed sink throws `InvalidOperationException` naming the holder,
-  because the player would be left feeding a sink no view presents. Over an unclaimed sink it
-  disposes an owned one or forgets a borrowed one, as today.
+- **Assigning `Sink`** first claims the outgoing sink, as decision 7's swap does, so no build can
+  claim it during the replacement. If a player holds it, the assignment throws
+  `InvalidOperationException` naming the holder, because the player would be left feeding a sink no
+  view presents. Otherwise it disposes an owned sink or forgets a borrowed one, as today, and
+  releases that claim.
 - **Dispose** disposes an owned sink and forgets a borrowed one. After it, the view refuses new
   sinks with `ObjectDisposedException`, as the interop view does today (#665).
-- **Counting.** A frame replaced in the slot while the view is not attached is counted as discarded
+- **Counting.** A frame replaced or disposed while the view is not attached is counted as discarded
   off screen, separately from the drop counts (the interop view's `FramesDropped`). A drop count
   stays a health signal: a background tab at 60 fps would otherwise add 3,600 drops a minute.
 - **No finaliser.** A live player holds the sink and the sink's callback holds the view, so a
@@ -221,7 +225,8 @@ keeps one sink object, and at most its newest frame until the claim on its sink 
 
 ### 3. Before the first attach, both views keep the newest frame and present nothing
 
-A sink bound before the view first joins the tree keeps its newest frame, as on a detached view.
+A sink bound before the view first joins the tree keeps its newest frame when it is claimed, and
+keeps nothing when it is not, as on a detached view.
 Neither view copies, presents or raises `FramePresented` until it is attached, and the first attach
 presents the kept frame. The CPU view's current pre-attach copying stops; the interop view already
 works this way. Nothing waits on a view's first present: player warm-up waits on the decoder's first
@@ -335,7 +340,10 @@ Sink = new FanOutVideoSink(
   nested fan-outs. They are fixed at construction, so fan-outs cannot form a cycle.
 - **Transforms.** A target may come with a transform, which borrows the incoming frame and returns a
   new frame for that target. The target owns the frame it is given. A target with a transform
-  declares the domains its transform accepts, CPU by default.
+  declares the domains its transform accepts, CPU by default. A transform keeps the frame's
+  dimensions and pixel format, so the format forwarded to its target stays true. The fan-out checks
+  each transform's output against the incoming frame and fails that target's call when they differ.
+  A change of format belongs in the graph, as a node before the sink.
 - **Delivery and ownership.** For each target in order, the fan-out takes a reference just before
   the call (`AddRef` returns the same instance, `IVideoFrame.cs:77`), and the target owns that
   reference even when it throws. The fan-out disposes its own reference in a `finally`. It calls
@@ -347,11 +355,13 @@ Sink = new FanOutVideoSink(
   transform, accepts. An empty intersection fails construction, and an intersection narrower than a
   target's own domains is logged once. `PreferredBackends` is the first non-empty list among the
   targets. `GetDiagnostics` reports the fan-out's own counts; each target keeps its own.
-- **Claim.** It implements `IClaimableSink`. Claiming it claims every target that implements the
-  interface, in a fixed order given by a per-sink sequence number, all or none. When one target is
-  held, it releases those it took and fails naming that target and its holder. With a fixed order
-  and a non-blocking try, two builds racing for overlapping fan-outs cannot both fail. A target
-  without the interface is fed but not claimed. A fan-out that no player is using holds no claims,
+- **Claim.** It implements `IClaimableSink`. Claiming it claims every claimable sink beneath it,
+  flattened through nested fan-outs, in one global order given by a per-sink sequence number, all or
+  none. The flattened set is fixed at construction, because the targets are. When one sink is held,
+  the fan-out releases those it took and fails naming that sink and its holder. With one global
+  order and a non-blocking try, two builds racing for overlapping fan-outs cannot both fail: for
+  both to fail, each would have to hold a sink that comes before the one it failed on in the other's
+  order. A target without the interface is fed but not claimed. A fan-out that no player is using holds no claims,
   so it does not block a surface swap (decision 7).
 - **Ownership.** It does not own its targets (ADR-0044). Disposing it disposes none of them; after
   its own disposal it disposes what it is given (decision 4).
@@ -382,8 +392,9 @@ Each slice carries its own BREAKING-CHANGES entry.
    `using FrameFlow.Media` (`MulticastPanes.axaml.cs:4`, `:6`). It moves the multicast examples onto
    `FanOutVideoSink` and rewrites the v0.10.0 note that cites them (`BREAKING-CHANGES.md:1638`).
    Tests: claims are all or none and released together; of two builds racing for overlapping
-   fan-outs, one wins; construction refuses an empty intersection and a repeated target; a target
-   that throws leaks no reference; formats reach every target. The fix for #611.
+   fan-outs, nested ones included, one wins; construction refuses an empty intersection and a
+   repeated target; a target that throws leaks no reference; formats reach every target; a
+   transform that changes the format fails its target's call. The fix for #611.
 4. **The core and the interop view.** `SurfaceLifecycle` with the exhaustive test, and the interop
    view moved onto it with decisions 2, 3 and 5 and the `Sink` setter's refusal over a claimed sink.
 5. **The CPU view.** `FrameFlowVideoView` onto the core with decisions 2, 3 and 5, the `Sink`
@@ -436,7 +447,9 @@ Each slice carries its own BREAKING-CHANGES entry.
   - swapping out an in-box surface that a player holds throws, and a swapped-out default surface
     stays claimed until it is swapped back in.
 - The claim sees only what passes it on. A graph built by hand, an app's decorator that does not
-  forward the claim, and a sink without the interface are invisible to decisions 6 and 7.
+  forward the claim, and a sink without the interface are invisible to decisions 6 and 7. A view
+  fed only by a graph built by hand keeps no frame while detached, so a paused picture there is
+  blank after a reattach until the next frame.
 - An app that relied on detach to release the owned sink now has to dispose the view. Avalonia never
   disposes controls, so only the docs tell it. A view that is never disposed keeps its sink object.
 - The interop view's lifecycle moves out of `FrameFlow.Avalonia.Windows`, which replaces the core
@@ -475,6 +488,7 @@ The first draft dropped every frame while a view was detached or not yet attache
 was pinned. That loses the only frame of a still, a paused seek or an ended item, which the views
 keep today for that reason (#287). The sink's `MaxHeldFrames` already budgets for one kept frame.
 Releasing that frame with the claim covers the case where pinning matters: a player that is gone.
+An unclaimed sink has no such release, so it still drops.
 
 ### Let the player own the view's sink
 
@@ -538,8 +552,8 @@ reference right. A transform per target keeps both derivable and fixes ownership
 
 1. **Graphs built by hand.** `SinkAdapters.AsSinkNode` could claim its sink when the graph starts
    and release it when the graph completes. That would bring the camera examples and
-   `RecorderPipeline`'s preview under decisions 6 and 7. Is a graph's run a clear enough lifetime
-   for a claim?
+   `RecorderPipeline`'s preview under decisions 6 and 7, and let their views keep a frame while
+   detached. Is a graph's run a clear enough lifetime for a claim?
 
 ## Revision history
 
@@ -579,3 +593,12 @@ reference right. A transform per target keeps both derivable and fixes ownership
     entry, and the example `DelegatingVideoSink` goes in the slice that adds the library one.
   - The merge of the first draft (#689) closed three issues it only proposed to fix (#286, #663,
     #664), through closing keywords in its description and commit message. They were reopened.
+- **2026-10-13, automated review turn 1.**
+  - A kept frame was released only with a claim, and graphs built by hand take none, so such a frame
+    had no release. Only a claimed sink keeps a frame while detached now.
+  - The `Sink` setter's refusal was a check followed by a replacement. It now claims the outgoing
+    sink for the replacement, as the swap does.
+  - Ordering each fan-out's own targets did not order claims through nested fan-outs, so two racing
+    builds could both fail. A fan-out now claims its flattened set in one global order.
+  - A transform could change the format its target had been told. Transforms now keep dimensions and
+    pixel format, and the fan-out checks it.
