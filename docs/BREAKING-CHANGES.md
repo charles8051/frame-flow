@@ -1011,7 +1011,7 @@ it, where it used to return at once.
   in a configurator, that ignores the token it is given. A dispose during that call waits until it
   returns.
 - A source whose read blocks, such as a network stream that has stalled. The dispose's
-  cancellation now interrupts the demuxer's read (entry 28, #709), so the dispose returns.
+  cancellation now interrupts the demuxer's read (entry 29, #709), so the dispose returns.
 
 **What to write instead.**
 - To stop a pass early, dispose it, or cancel the token given to `RunToCompletionAsync`. Either ends
@@ -1124,7 +1124,7 @@ the picture stayed frozen until the next seek, and a first play launched a run b
   is in progress now waits until the call returns, where it used to go ahead beside it, and a
   dispose waits too. A scrub stalls for that long.
 - A source whose read blocks, such as a stalled network stream. The run's cancellation now
-  interrupts the demuxer's read (entry 28, #709), so the next seek, or the dispose, goes on.
+  interrupts the demuxer's read (entry 29, #709), so the next seek, or the dispose, goes on.
 - Code that pauses while a seek is in progress and then plays. The play resumes where the clock
   stood when the seek was cancelled, not at the seek's target, which the cancelled seek never took.
 
@@ -1194,7 +1194,55 @@ not: the claims were still held, so a build failed although its caller had await
 the claim error says to, and the coordinator was disposed under the first dispose. Every owner of
 work now disposes one way (ADR-0086, decision 3).
 
-### 28. A cancellation reaches a demuxer call that waits on a stalled source
+### 28. The zero-copy view holds a converter it replaces until the compositor lets go of it
+
+**A change in behaviour, not a compile error.**
+
+When `CompositionInteropVideoView` replaced its converter while presenting, because a frame of
+another size, format or decode device arrived or `DriverSuperResolution` changed, or dropped its CPU
+uploader after device loss, it disposed the old one on the thread pool at once. It did not wait for
+the presents still in flight on the old ring, and nothing saw an exception from that dispose. A D3D12
+converter dropped that way did not hold back the view's next attachment, as one its teardown took
+does. The view's dispose did not wait for a stall check already running, so `PresenterStalled` or
+`PresenterRecovered` could be raised after it. And a disposed `OpenAlAudioSink` threw
+`ObjectDisposedException` from a wait on its clock, and from a present the dispose overtook (#723).
+
+Now a replaced converter or uploader is disposed off the UI thread once the compositor has disposed
+the imported images and finished the presents of every ring it may have filled, including one a
+switch between hardware and software frames set aside earlier. A failure to dispose it is logged at
+Warning, and so, once, is a wait that goes on past five seconds, naming the converter and whether it
+waits for the compositor or for its own dispose to return. The converter is held, not freed, until
+the compositor lets go. A replaced D3D12 converter holds back the view's next attachment until it is
+disposed. `DisposeAsync` waits for the rings within the bounded wait it already makes for the
+compositor, and for the replaced converters' disposal within the same bound, then completes once a
+stall check already running, with any handler it raised, has returned. `PresenterStallWatchdog`
+gained `DisposeAsync`, which waits for a check the same way, says once after five seconds which
+handler or sampler it is still waiting for, and makes a second dispose wait for the first. A wait on
+the clock of a disposed `OpenAlAudioSink` ends with `OperationCanceledException`, as one in flight at
+the dispose does, and a present the dispose overtakes returns.
+
+**Who hits this.**
+- A `PresenterStalled` or `PresenterRecovered` handler that waits for the view's `DisposeAsync`, or
+  for anything that awaits it. The dispose waits for the handler, so neither ends.
+- Code that disposes the view just after it replaced a converter, at a resize, an item of another
+  size or a toggle of `DriverSuperResolution`. The dispose waits for that converter too, within its
+  bound. A replaced converter whose dispose does not return no longer holds the view's own producers
+  or reads as a compositor that did not drain: it is named on its own after five seconds.
+- A view taken out of the visual tree and put back just after it replaced a D3D12 converter. It
+  presents nothing until that converter is disposed, as after a teardown.
+- Code that waits on a disposed `OpenAlAudioSink`'s clock and catches `ObjectDisposedException`.
+
+**What to write instead.**
+- In a stall handler, signal and return, and dispose the view from the UI thread.
+- To stop a `PresenterStallWatchdog` of your own and know no check runs after, await its
+  `DisposeAsync`. `Dispose` still returns at once.
+- Catch `OperationCanceledException` from a wait on an `OpenAlAudioSink` that may be disposed.
+
+**Why.** Freeing a converter under a present in flight is what the teardown's order exists to
+prevent (ADR-0064), and the live path skipped it. Every owner of work now holds that work until it
+ends and reports how it ended (ADR-0086, decisions 1, 3 and 5).
+
+### 29. A cancellation reaches a demuxer call that waits on a stalled source
 
 **A change in behaviour, not a compile error.**
 

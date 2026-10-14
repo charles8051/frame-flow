@@ -173,6 +173,7 @@ FrameFlow.Media.Diagnostics.PresenterStallOutcome.Stalled.get -> bool
 FrameFlow.Media.Diagnostics.PresenterStallOutcome.Stalled.init -> void
 FrameFlow.Media.Diagnostics.PresenterStallWatchdog
 FrameFlow.Media.Diagnostics.PresenterStallWatchdog.Dispose() -> void
+FrameFlow.Media.Diagnostics.PresenterStallWatchdog.DisposeAsync() -> System.Threading.Tasks.ValueTask
 FrameFlow.Media.Diagnostics.PresenterStallWatchdog.PresenterStallWatchdog(System.Func<FrameFlow.Media.Diagnostics.PresenterSample>! sample, Microsoft.Extensions.Logging.ILogger! logger, System.TimeSpan? timeout = null, System.TimeSpan? interval = null, int recoverySamples = 4) -> void
 FrameFlow.Media.Diagnostics.PresenterStallWatchdog.Recovered -> System.Action<FrameFlow.Media.Diagnostics.PresenterRecoveryInfo>?
 FrameFlow.Media.Diagnostics.PresenterStallWatchdog.Stalled -> System.Action<FrameFlow.Media.Diagnostics.PresenterStallInfo>?
