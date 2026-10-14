@@ -18,9 +18,12 @@ namespace FrameFlow.Avalonia;
 /// <para>
 /// <see cref="PresentAsync"/> installs a frame from the presenting (graph) thread and
 /// then raises <see cref="FrameArrived"/> on that same thread. The view's handler drains
-/// the slot with <see cref="RenderPendingFrame"/> and copies the pixels into its back
-/// buffer right there, so the ~8 MB memcpy a 1080p frame costs never lands on the
-/// Avalonia UI thread (ADR-0016 Decision 1). The UI thread only swaps buffers and draws.
+/// the slot with <see cref="TakePendingFrame"/> and copies the pixels into its back
+/// buffer right there, so the ~8 MB memcpy a 1080p frame costs does not land on the
+/// Avalonia UI thread frame by frame (ADR-0016 Decision 1). The UI thread swaps buffers and
+/// draws, and copies pixels in two places only: once per size change, into the bitmaps the
+/// new size needs, and once per attach or rebind, for a frame the sink kept while the view did
+/// not present it (ADR-0085).
 /// </para>
 /// <para>
 /// <see cref="RenderPendingFrame"/> stays safe to call from any thread — a host driving
@@ -362,8 +365,10 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     }
 
     /// <summary>
-    /// Consumes the most recently presented frame and returns it for rendering.
-    /// Called by <see cref="FrameFlowVideoView"/> during its render pass.
+    /// Consumes the most recently presented frame and returns it for rendering, counting it as
+    /// presented. For a host that drives this sink without <see cref="FrameFlowVideoView"/>, on
+    /// its own render tick; the view takes frames without counting them, and counts each at its
+    /// swap.
     /// </summary>
     /// <returns>
     /// The pending frame if one is available; otherwise <see langword="null"/>.

@@ -121,11 +121,13 @@ public sealed class FrameFlowVideoViewReattachTests
         window.Close();
     }
 
-    [AvaloniaFact]
-    public async Task ReleasingTheClaim_WhileDetached_DisposesTheKeptFrame()
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ReleasingTheClaim_WhileDetached_DisposesTheKeptFrame(bool owned)
     {
         // A view off screen pins no frame for a player that is gone.
-        var (view, window, sink) = Show(owned: true);
+        var (view, window, sink) = Show(owned);
         var player = ((IClaimableSink)sink).TryClaim("a player")!;
         Detach(window);
         var kept = new TrackedFrame(Pts(1));
@@ -163,8 +165,11 @@ public sealed class FrameFlowVideoViewReattachTests
     }
 
     [AvaloniaFact]
-    public async Task ALateCallback_UnderABindingADetachEnded_CopiesNothing()
+    public async Task ALateCallback_AfterADetach_CopiesNothing()
     {
+        // Not a witness for the binding number: a view out of the tree does not present, and the
+        // copy refuses on that alone. ALateCallback_FromASinkTheViewReplaced_CopiesNothing is the
+        // one where only the number tells the callback apart.
         var (view, window, sink) = Show(owned: true);
         using var player = ((IClaimableSink)sink).TryClaim("a player");
 
@@ -207,6 +212,60 @@ public sealed class FrameFlowVideoViewReattachTests
         Assert.True(first.HasPendingFrame);
         Assert.Equal(0, view.RenderedFrameCount);
         Assert.Equal(0, first.RenderedFrameCount);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task ASinkAssignedWhileDetached_IsBoundAndPresentedOnReattach()
+    {
+        // Out of the tree the view takes the sink up and binds nothing; the reattach binds it and
+        // presents the frame it kept for its player.
+        var (view, window, _) = Show(owned: true);
+        Detach(window);
+        var assigned = new AvaloniaVideoSink();
+        using var player = ((IClaimableSink)assigned).TryClaim("a player built for 'still.png'");
+
+        view.Sink = assigned;
+        var kept = new TrackedFrame(Pts(1));
+        await assigned.PresentAsync(kept, CancellationToken.None);
+
+        Assert.Same(assigned, view.Sink);
+        Assert.Null(assigned.FrameArrived);
+        Assert.Equal(0, kept.DisposeCount);
+
+        Reattach(window, view);
+
+        Assert.NotNull(assigned.FrameArrived);
+        Assert.Equal(1, assigned.RenderedFrameCount);
+        await assigned.PresentAsync(new TrackedFrame(Pts(2)), CancellationToken.None);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(2, assigned.RenderedFrameCount);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task ClearingTheSink_WhileAttached_StopsPresenting_AndKeepsThePicture()
+    {
+        // Presenting needs a sink. The picture is the view's own bitmaps, so it stays.
+        var view = new FrameFlowVideoView();
+        var callers = new AvaloniaVideoSink();
+        view.Sink = callers;
+        var window = ShowWindow(view);
+        await callers.PresentAsync(new TrackedFrame(Pts(1)), CancellationToken.None);
+        Dispatcher.UIThread.RunJobs();
+        var picture = view.Picture;
+        Assert.NotNull(picture);
+
+        view.Sink = null;
+
+        Assert.Null(view.Sink);
+        Assert.Null(callers.FrameArrived);
+        Assert.Same(picture, view.Picture);
+        var late = new TrackedFrame(Pts(2));
+        await callers.PresentAsync(late, CancellationToken.None);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(1, late.DisposeCount); // no view presents it, and no player holds it
+        Assert.Equal(1, view.RenderedFrameCount);
         window.Close();
     }
 

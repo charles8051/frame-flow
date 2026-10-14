@@ -20,11 +20,12 @@ namespace FrameFlow.Avalonia.Tests;
 /// </remarks>
 public sealed class FrameFlowVideoViewFirstAttachTests
 {
-    [AvaloniaFact]
-    public async Task BeforeTheFirstAttach_NothingIsCopiedOrRaised_AndTheAttachPresentsTheKeptFrame()
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task BeforeTheFirstAttach_NothingIsCopiedOrRaised_AndTheAttachPresentsTheKeptFrame(bool owned)
     {
-        var view = new FrameFlowVideoView();
-        var sink = view.EnsureSink();
+        var (view, sink) = Bound(owned);
         using var player = ((IClaimableSink)sink).TryClaim("a player");
         var presented = new List<TimeSpan>();
         sink.FramePresented += (_, e) => presented.Add(e.PresentationTime);
@@ -50,12 +51,13 @@ public sealed class FrameFlowVideoViewFirstAttachTests
         window.Close();
     }
 
-    [AvaloniaFact]
-    public async Task BeforeTheFirstAttach_AnUnclaimedSinkKeepsNothing()
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task BeforeTheFirstAttach_AnUnclaimedSinkKeepsNothing(bool owned)
     {
         // A graph built by hand takes no claim, so nothing would say when to let a kept frame go.
-        var view = new FrameFlowVideoView();
-        var sink = view.EnsureSink();
+        var (view, sink) = Bound(owned);
         var frame = new TrackedFrame(Pts(1));
 
         await sink.PresentAsync(frame, CancellationToken.None);
@@ -69,12 +71,13 @@ public sealed class FrameFlowVideoViewFirstAttachTests
         window.Close();
     }
 
-    [AvaloniaFact]
-    public async Task AnItemWithOneFrame_GivenBeforeTheFirstAttach_ShowsOnceTheViewIsAttached()
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnItemWithOneFrame_GivenBeforeTheFirstAttach_ShowsOnceTheViewIsAttached(bool owned)
     {
         // #287's shape: one frame, at a size no bitmap has been allocated for, and nothing after it.
-        var view = new FrameFlowVideoView();
-        var sink = view.EnsureSink();
+        var (view, sink) = Bound(owned);
         using var player = ((IClaimableSink)sink).TryClaim("a player built for 'still.png'");
         await sink.PresentAsync(new TrackedFrame(Pts(1), width: 64, height: 48), CancellationToken.None);
 
@@ -85,5 +88,20 @@ public sealed class FrameFlowVideoViewFirstAttachTests
         Assert.Equal(0, sink.DroppedFrameCount);
         Assert.Equal(new global::Avalonia.PixelSize(64, 48), view.Picture?.PixelSize);
         window.Close();
+    }
+
+    /// <summary>
+    /// A view not yet in the visual tree, bound to its own sink, as <c>WithAvaloniaVideoView</c>
+    /// leaves it, or to a caller's sink assigned through <c>Sink</c>.
+    /// </summary>
+    private static (FrameFlowVideoView View, AvaloniaVideoSink Sink) Bound(bool owned)
+    {
+        var view = new FrameFlowVideoView();
+        if (owned)
+            return (view, view.EnsureSink());
+
+        var sink = new AvaloniaVideoSink();
+        view.Sink = sink;
+        return (view, sink);
     }
 }

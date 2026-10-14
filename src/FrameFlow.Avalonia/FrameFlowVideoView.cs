@@ -39,10 +39,13 @@ namespace FrameFlow.Avalonia;
 /// UI thread      swap (_front, _back) → InvalidateVisual → Render → DrawImage(_front)
 /// </code>
 /// <para>
-/// The UI thread never touches pixel data. At 1080p60 the copy is ~8.3 MB per frame; doing
-/// it in <see cref="Render"/> spent most of the ~16 ms present budget on memcpy and made the
-/// view miss ticks under load, which shed frames all the way back to the decoder. The
-/// producer thread can afford it, and is where ADR-0016 put it.
+/// The UI thread copies no pixels frame by frame. At 1080p60 the copy is ~8.3 MB per frame;
+/// doing it in <see cref="Render"/> spent most of the ~16 ms present budget on memcpy and made
+/// the view miss ticks under load, which shed frames all the way back to the decoder. The
+/// producer thread can afford it, and is where ADR-0016 put it. The UI thread copies pixels in
+/// two places only, neither per frame: once per size change, the blit of the frame that asked
+/// for new bitmaps into them; and once per attach or rebind, the copy of a frame the sink kept
+/// while the view did not present it (ADR-0085), which may stage pixels for that blit.
 /// </para>
 /// <para>
 /// Redraws are driven by frame arrival rather than a free-running timer, so a paused or
@@ -818,10 +821,13 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IAsyncD
     /// Under <see cref="_lock"/>, on the UI thread, immediately after the allocation.
     /// </summary>
     /// <remarks>
-    /// This is the one pixel copy the UI thread does, and it happens once per size change
-    /// rather than per frame — no more than the cost the mismatch branch already accepted
-    /// when it discarded the frame. Every other copy stays on the producer thread, which is
-    /// what ADR-0016 moved it there for.
+    /// This is one of the two pixel copies the UI thread does, and it happens once per size
+    /// change rather than per frame — no more than the cost the mismatch branch already
+    /// accepted when it discarded the frame. The other is the copy of a frame the sink kept
+    /// while the view did not present it, once per attach or rebind (<c>BindSink</c> and
+    /// <c>StartPresenting</c>); when that frame needs new bitmaps it is staged and blitted here
+    /// too, so a first attach can make both. Every other copy stays on the producer thread,
+    /// which is what ADR-0016 moved it there for.
     /// </remarks>
     private bool BlitStagedFrameLocked()
     {
@@ -871,7 +877,9 @@ public sealed partial class FrameFlowVideoView : Control, IVideoSurface, IAsyncD
 
     /// <summary>
     /// Publishes the back buffer and asks for a redraw. UI thread only; the swap is the
-    /// ADR-0016 hand-off point, and the only pixel-buffer work the UI thread does.
+    /// ADR-0016 hand-off point, and the only pixel-buffer work the UI thread does per frame. It
+    /// copies pixels only once per size change (the blit) and once per attach or rebind (a frame
+    /// the sink kept).
     /// </summary>
     /// <remarks>
     /// Takes no binding: it publishes whatever the back buffer holds when it runs and credits
