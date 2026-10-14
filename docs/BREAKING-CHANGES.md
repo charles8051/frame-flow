@@ -1424,6 +1424,14 @@ you can see:
 - **A first play starts its run before its clock.** A first play whose run cannot start, because a
   configurator throws when the graph is built, leaves the position clock stopped, where it used to
   leave it running over nothing.
+- **A warm-up after a seek cut short repositions first.** The decoding an item does before its first
+  play, as the player loads it, repositions where the clock stands when a seek was cancelled before
+  it, as a play does (entry 26). It used to decode on from where the cancelled seek left the
+  decoders.
+- **An item refuses what it cannot carry out.** Once its dispose has begun, an item refuses any
+  command with `ObjectDisposedException`, where it used to carry a seek or a play out beside its
+  teardown, and an item prepared ahead refuses a play or a pause until it is the current item. The
+  player sends neither, so neither shows through it.
 - **A run whose graph faults cancels the rest of the run** at once: the demux pump, which may be
   waiting for room in a decoder queue the faulted graph no longer drains, ends then, not when the
   item is disposed (#713). A pump that faults cancels the graph the same way. The item fails as
