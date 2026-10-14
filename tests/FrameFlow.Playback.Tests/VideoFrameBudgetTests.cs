@@ -17,7 +17,7 @@ public sealed class VideoFrameBudgetTests
     {
         // Pump 1; edge 1; gate 1; edge 1; sink node: the call 1 and the pacer, which is its
         // ring 3, the frame going out 1 and the D3D11 sink's 2.
-        var budget = SubstrateSession.VideoFrameBudget(configurator: null, new Sink(kept: 2));
+        var budget = SubstrateMedia.VideoFrameBudget(configurator: null, new Sink(kept: 2));
 
         Assert.Equal(11, budget.Frames);
     }
@@ -25,7 +25,7 @@ public sealed class VideoFrameBudgetTests
     [Fact]
     public void ThePlayersOwnPath_OverASinkThatDoesNotSay_IsUnbounded()
     {
-        var budget = SubstrateSession.VideoFrameBudget(configurator: null, new Sink(kept: null));
+        var budget = SubstrateMedia.VideoFrameBudget(configurator: null, new Sink(kept: null));
 
         Assert.Null(budget.Frames);
         Assert.Equal("video-sink", budget.UnboundedHolder);
@@ -38,7 +38,7 @@ public sealed class VideoFrameBudgetTests
     [Fact]
     public void LiveCaptioningInGpuMode()
     {
-        var budget = SubstrateSession.VideoFrameBudget(LiveCaptioningGpu(declared: true), new Sink(kept: 2));
+        var budget = SubstrateMedia.VideoFrameBudget(LiveCaptioningGpu(declared: true), new Sink(kept: 2));
 
         // Pump 1, edge 1, gate 1.
         // Trunk: edge 1 into the join's primary, which holds 1.
@@ -51,7 +51,7 @@ public sealed class VideoFrameBudgetTests
     [Fact]
     public void LiveCaptioningInGpuMode_WithAnUndeclaredNode_NamesIt()
     {
-        var budget = SubstrateSession.VideoFrameBudget(LiveCaptioningGpu(declared: false), new Sink(kept: 2));
+        var budget = SubstrateMedia.VideoFrameBudget(LiveCaptioningGpu(declared: false), new Sink(kept: 2));
 
         Assert.Null(budget.Frames);
         Assert.Equal("gpu-frames-only", budget.UnboundedHolder);

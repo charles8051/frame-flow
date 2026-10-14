@@ -170,7 +170,7 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
             var decoder = controller.GetDiagnostics().Pipeline.Stream.VideoDecoder;
             Assert.True(decoder.HardwareBackend is not null, "the player decoded in software");
             Assert.Equal(
-                SubstrateSession.VideoFrameBudget(configurator: null, videoSink).Frames,
+                SubstrateMedia.VideoFrameBudget(configurator: null, videoSink).Frames,
                 decoder.HardwareFrameBudget
             );
         }
@@ -271,7 +271,7 @@ public sealed class HardwareDecodeIntegrationTests : IClassFixture<FfmpegBootstr
 
             var decoder = controller.GetDiagnostics().Pipeline.Stream.VideoDecoder;
             Assert.Equal(
-                SubstrateSession.VideoFrameBudget(configurator: null, videoSink).Frames,
+                SubstrateMedia.VideoFrameBudget(configurator: null, videoSink).Frames,
                 decoder.HardwareFrameBudget
             );
             Assert.Equal(0, decoder.DecodeErrors);

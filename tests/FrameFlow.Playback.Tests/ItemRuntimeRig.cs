@@ -1,0 +1,695 @@
+// Copyright 2026 Charles Lee
+// SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
+
+using System.Collections.Concurrent;
+using FrameFlow.Decoding.Diagnostics;
+using FrameFlow.Playback.Core;
+using Step = FrameFlow.Playback.SubstrateSession.Step;
+
+namespace FrameFlow.Playback.Tests;
+
+/// <summary>
+/// A <see cref="SubstrateSession"/> over <see cref="FakeItemMedia"/> (ADR-0086, decision 6): the
+/// session's own sequencing, its scope and its clocks, with media that records each native call
+/// and holds each run's work until the test lets it end.
+/// </summary>
+/// <remarks>
+/// Every wait a test makes is on a signal the session or the fake raises: a piece of work starting
+/// or ending, a step the session takes, a callback. <see cref="Bound"/> only limits a failure.
+/// </remarks>
+internal sealed class ItemRuntimeRig : IAsyncDisposable
+{
+    public static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
+
+    private readonly ConcurrentQueue<int> _endsOfStream = new();
+    private readonly ConcurrentQueue<Exception> _workerFaults = new();
+    private readonly ConcurrentQueue<PlaybackError> _recoverableErrors = new();
+    private readonly ConcurrentQueue<Step> _steps = new();
+    private readonly Lock _gate = new();
+    private readonly List<(Step Step, TaskCompletionSource Taken)> _awaitedSteps = [];
+    private readonly List<(int Count, TaskCompletionSource Raised)> _awaitedEnds = [];
+
+    private ItemRuntimeRig(MediaShape shape, bool detached, bool latenessRecovery)
+    {
+        Log = new RigLog();
+        Media = new FakeItemMedia(shape, Log);
+        Opener = new FakeMediaOpener(Media, Log);
+        Audio = new RecordingAudioSink(Log);
+        Session = new SubstrateSession(
+            videoSink: null,
+            audioSink: shape.Audio ? Audio : null,
+            Clock,
+            new SessionCallbacks(
+                OnEndOfStream: OnEndOfStream,
+                OnWorkerFaulted: _workerFaults.Enqueue,
+                OnBufferReady: static () => { },
+                OnBufferUnderrun: static () => { },
+                OnRecoverableError: _recoverableErrors.Enqueue,
+                OnCurrentItemChanged: static _ => { },
+                OnLoopRestarted: static (_, _) => { },
+                OnItemFailed: static (_, _, _) => { }
+            ),
+            HardwareDecodeMode.Disabled
+        )
+        {
+            MediaOpener = Opener,
+            Detached = detached,
+            LatenessRecovery = latenessRecovery ? new LatenessRecoveryOptions { Enabled = true } : null,
+        };
+        Session.OnStep = OnStep;
+    }
+
+    public RigLog Log { get; }
+
+    public FakeItemMedia Media { get; }
+
+    public FakeMediaOpener Opener { get; }
+
+    public RecordingAudioSink Audio { get; }
+
+    public PlaybackClock Clock { get; } = new();
+
+    public SubstrateSession Session { get; }
+
+    /// <summary>The run number the session read out, inside each end-of-stream callback.</summary>
+    public IReadOnlyCollection<int> EndsOfStream => _endsOfStream;
+
+    public IReadOnlyCollection<Exception> WorkerFaults => _workerFaults;
+
+    public IReadOnlyCollection<PlaybackError> RecoverableErrors => _recoverableErrors;
+
+    /// <summary>The steps the session has taken, in order.</summary>
+    public Step[] Steps => [.. _steps];
+
+    public static ItemRuntimeRig Create(MediaShape? shape = null, bool detached = false, bool latenessRecovery = false) =>
+        new(shape ?? MediaShape.AudioAndVideo, detached, latenessRecovery);
+
+    /// <summary>Opens the session, positioned at <paramref name="start"/>: no run starts.</summary>
+    public async Task<ItemRuntimeRig> OpenAsync(TimeSpan start = default, TimeSpan? end = null)
+    {
+        await Session.InitializeAsync(new FakeSource(), start, end, default).AsTask().WaitAsync(Bound);
+        return this;
+    }
+
+    /// <summary>Opens, warms up and plays the session: its first run is going.</summary>
+    public async Task<ItemRuntimeRig> PlayingAsync()
+    {
+        await OpenAsync();
+        await Session.WarmUpAsync().AsTask().WaitAsync(Bound);
+        await Session.PlayAsync().AsTask().WaitAsync(Bound);
+        return this;
+    }
+
+    /// <summary>Completes the next time the session takes <paramref name="step"/>.</summary>
+    public Task Next(Step step)
+    {
+        var taken = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+            _awaitedSteps.Add((step, taken));
+        return taken.Task;
+    }
+
+    /// <summary>Completes once the session has raised <paramref name="count"/> ends of stream.</summary>
+    public Task EndOfStream(int count = 1)
+    {
+        var raised = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+        {
+            if (_endsOfStream.Count >= count)
+                raised.TrySetResult();
+            else
+                _awaitedEnds.Add((count, raised));
+        }
+        return raised.Task;
+    }
+
+    /// <summary>
+    /// Seeks to <paramref name="target"/>, and cancels the seek once it waits for the run to end.
+    /// </summary>
+    public async Task SeekCutShortAsync(TimeSpan target)
+    {
+        using var cancel = new CancellationTokenSource();
+        var waiting = Next(Step.WaitingForRun);
+        var seek = Session.SeekAsync(target, cancel.Token).AsTask();
+
+        var first = await Task.WhenAny(waiting, seek).WaitAsync(Bound);
+        Assert.True(first == waiting, $"The seek to {target} did not wait for the run.");
+
+        await cancel.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => seek.WaitAsync(Bound));
+    }
+
+    private void OnStep(Step step)
+    {
+        _steps.Enqueue(step);
+        List<TaskCompletionSource> taken = [];
+        lock (_gate)
+        {
+            _awaitedSteps.RemoveAll(w =>
+            {
+                if (w.Step != step)
+                    return false;
+                taken.Add(w.Taken);
+                return true;
+            });
+        }
+        foreach (var t in taken)
+            t.TrySetResult();
+    }
+
+    private void OnEndOfStream()
+    {
+        _endsOfStream.Enqueue(Session.RunNumber);
+        List<TaskCompletionSource> raised = [];
+        lock (_gate)
+        {
+            _awaitedEnds.RemoveAll(w =>
+            {
+                if (_endsOfStream.Count < w.Count)
+                    return false;
+                raised.Add(w.Raised);
+                return true;
+            });
+        }
+        foreach (var r in raised)
+            r.TrySetResult();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        // Whatever a test left held is let go, so the session's dispose does not wait on it.
+        Media.ReleaseAll();
+        Opener.Release();
+        try
+        {
+            await Session.DisposeAsync().AsTask().WaitAsync(Bound);
+        }
+        catch (Exception) when (Media.FailFree != ItemResources.None)
+        {
+            // A test that fails a free has asserted on it already.
+        }
+    }
+}
+
+/// <summary>What the fake media holds: which streams have a decoder, and whether there is a pacer.</summary>
+internal sealed record MediaShape(bool Video, bool Audio, bool Pacer)
+{
+    public static readonly MediaShape AudioAndVideo = new(Video: true, Audio: true, Pacer: true);
+    public static readonly MediaShape VideoOnly = new(Video: true, Audio: false, Pacer: true);
+    public static readonly MediaShape AudioOnly = new(Video: false, Audio: true, Pacer: false);
+    public static readonly MediaShape Nothing = new(Video: false, Audio: false, Pacer: false);
+}
+
+/// <summary>The calls the rig's fakes record, in order, each with what work was in flight.</summary>
+internal sealed class RigLog
+{
+    private readonly Lock _gate = new();
+    private readonly List<string> _calls = [];
+    private readonly List<string> _violations = [];
+
+    public string[] Calls
+    {
+        get
+        {
+            lock (_gate)
+                return [.. _calls];
+        }
+    }
+
+    /// <summary>The calls made while work that uses what they touch was in flight, which none should be.</summary>
+    public string[] Violations
+    {
+        get
+        {
+            lock (_gate)
+                return [.. _violations];
+        }
+    }
+
+    public void Add(string call)
+    {
+        lock (_gate)
+            _calls.Add(call);
+    }
+
+    public void Violation(string what)
+    {
+        lock (_gate)
+            _violations.Add(what);
+    }
+
+    /// <summary>The calls that start with one of <paramref name="prefixes"/>, in order.</summary>
+    public string[] Of(params string[] prefixes) =>
+        [.. Calls.Where(c => prefixes.Any(p => c.StartsWith(p, StringComparison.Ordinal)))];
+
+    public int Count(string prefix) => Calls.Count(c => c.StartsWith(prefix, StringComparison.Ordinal));
+
+    public int IndexOf(string prefix, int from = 0)
+    {
+        var calls = Calls;
+        for (var i = from; i < calls.Length; i++)
+        {
+            if (calls[i].StartsWith(prefix, StringComparison.Ordinal))
+                return i;
+        }
+        return -1;
+    }
+
+    public int LastIndexOf(string prefix) =>
+        Array.FindLastIndex(Calls, c => c.StartsWith(prefix, StringComparison.Ordinal));
+}
+
+/// <summary>
+/// One piece of a run's work the fake media runs: a pump, a graph or a recovery walk. It runs until
+/// the test completes it or faults it, or until the run is cancelled; one that ignores
+/// cancellation, as a sink of a caller's own may, runs until the test releases it.
+/// </summary>
+internal sealed class FakeWork
+{
+    private readonly TaskCompletionSource<Exception?> _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public FakeWork(ItemWork kind, int run, CancellationToken token, bool ignoresCancellation)
+    {
+        Kind = kind;
+        Run = run;
+        Token = token;
+        IgnoresCancellation = ignoresCancellation;
+    }
+
+    public ItemWork Kind { get; }
+
+    /// <summary>Which of the media's runs it belongs to, counted from one.</summary>
+    public int Run { get; }
+
+    public CancellationToken Token { get; }
+
+    public bool IgnoresCancellation { get; }
+
+    /// <summary>Completes once the work has ended, however it ended.</summary>
+    public Task Ended => _ended.Task;
+
+    /// <summary>Ends the work as having run to its end.</summary>
+    public void Complete() => _release.TrySetResult(null);
+
+    /// <summary>Ends the work with <paramref name="error"/>.</summary>
+    public void Fault(Exception error) => _release.TrySetResult(error);
+
+    /// <summary>Lets work that ignores its cancellation end: as cancelled if it was, as completed if not.</summary>
+    public void Release() => _release.TrySetResult(null);
+
+    /// <summary>
+    /// Ends the work as having run to its end, even if its run was cancelled meanwhile: it had
+    /// finished before it looked.
+    /// </summary>
+    public void Finish()
+    {
+        _finished = true;
+        _release.TrySetResult(null);
+    }
+
+    private volatile bool _finished;
+
+    internal async Task RunAsync(Action<FakeWork> exit)
+    {
+        try
+        {
+            var fault = IgnoresCancellation
+                ? await _release.Task.ConfigureAwait(false)
+                : await _release.Task.WaitAsync(Token).ConfigureAwait(false);
+            if (fault is not null)
+                throw fault;
+            if (!_finished)
+                Token.ThrowIfCancellationRequested();
+        }
+        finally
+        {
+            exit(this);
+            _ended.TrySetResult();
+        }
+    }
+}
+
+/// <summary>
+/// Media that records each call the session makes, as the native call it stands for, and runs each
+/// piece of a run's work as a <see cref="FakeWork"/> the test controls. A seek, a reset, a run's
+/// start, a flush of the pacer or a free made while any work is in flight is a violation.
+/// </summary>
+internal sealed class FakeItemMedia : IItemMedia
+{
+    private readonly RigLog _log;
+    private readonly MediaShape _shape;
+    private readonly Lock _gate = new();
+    private readonly Dictionary<ItemWork, int> _inFlight = [];
+    private readonly Dictionary<ItemWork, int> _mostAtOnce = [];
+    private readonly List<FakeWork> _works = [];
+    private readonly List<(ItemWork Kind, int Index, TaskCompletionSource<FakeWork> Started)> _awaited = [];
+    private readonly TaskCompletionSource _firstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private ItemResources _resources;
+    private int _runs;
+    private TimeSpan _floor;
+    private TaskCompletionSource? _seekHold;
+
+    public FakeItemMedia(MediaShape shape, RigLog log)
+    {
+        _shape = shape;
+        _log = log;
+        _resources =
+            ItemResources.Demux
+            | ItemResources.Pipeline
+            | (shape.Video ? ItemResources.VideoDecoder : ItemResources.None)
+            | (shape.Audio ? ItemResources.AudioDecoder : ItemResources.None);
+    }
+
+    /// <summary>The kinds of work that ignore their cancellation until the test releases them.</summary>
+    public ItemWork IgnoresCancellation { get; set; }
+
+    /// <summary>Whether the first graph to start decodes the first frame at once. On by default.</summary>
+    public bool FirstFrameOnGraphStart { get; set; } = true;
+
+    /// <summary>Whether <see cref="OpenPacer"/> throws, as a pacer that cannot be built does.</summary>
+    public Exception? FailPacer { get; set; }
+
+    /// <summary>The resource whose free throws.</summary>
+    public ItemResources FailFree { get; set; }
+
+    /// <summary>Whether the next run's graph cannot be built.</summary>
+    public Exception? FailBeginRun { get; set; }
+
+    public bool Opened { get; set; }
+
+    public ItemResources Resources
+    {
+        get
+        {
+            lock (_gate)
+                return _resources;
+        }
+    }
+
+    public MediaInfo? MediaInfo => null;
+
+    public TimeSpan Duration { get; init; } = TimeSpan.FromSeconds(10);
+
+    public Task? FirstFrameDecoded => _shape.Video ? _firstFrame.Task : null;
+
+    public HardwareDecodeBackendKind? BoundBackend => null;
+
+    /// <summary>How many runs the session has started over this media.</summary>
+    public int Runs
+    {
+        get
+        {
+            lock (_gate)
+                return _runs;
+        }
+    }
+
+    public void DecodeFirstFrame() => _firstFrame.TrySetResult();
+
+    /// <summary>The most pieces of <paramref name="kind"/> that were in flight at once.</summary>
+    public int MostAtOnce(ItemWork kind)
+    {
+        lock (_gate)
+            return _mostAtOnce.GetValueOrDefault(kind);
+    }
+
+    /// <summary>Whether any work is in flight.</summary>
+    public bool Quiet
+    {
+        get
+        {
+            lock (_gate)
+                return _inFlight.Values.All(n => n == 0);
+        }
+    }
+
+    /// <summary>Completes with the <paramref name="index"/>-th piece of <paramref name="kind"/> to start, counted from one.</summary>
+    public Task<FakeWork> Started(ItemWork kind, int index = 1)
+    {
+        var started = new TaskCompletionSource<FakeWork>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+        {
+            var existing = _works.Where(w => w.Kind == kind).Skip(index - 1).FirstOrDefault();
+            if (existing is not null)
+                started.TrySetResult(existing);
+            else
+                _awaited.Add((kind, index, started));
+        }
+        return started.Task;
+    }
+
+    /// <summary>The latest piece of <paramref name="kind"/> to start.</summary>
+    public FakeWork Latest(ItemWork kind)
+    {
+        lock (_gate)
+            return _works.Last(w => w.Kind == kind);
+    }
+
+    /// <summary>Holds the next demuxer seek until <see cref="ReleaseSeek"/>, or until its token is cancelled.</summary>
+    public Task HoldSeeks()
+    {
+        lock (_gate)
+            _seekHold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        return Task.CompletedTask;
+    }
+
+    public void ReleaseSeek()
+    {
+        TaskCompletionSource? hold;
+        lock (_gate)
+        {
+            hold = _seekHold;
+            _seekHold = null;
+        }
+        hold?.TrySetResult();
+    }
+
+    /// <summary>Lets every piece of work end, and releases a held seek.</summary>
+    public void ReleaseAll()
+    {
+        FakeWork[] works;
+        lock (_gate)
+            works = [.. _works];
+        foreach (var work in works)
+            work.Release();
+        ReleaseSeek();
+    }
+
+    public void OpenPacer(IClockSource master)
+    {
+        _log.Add("OpenPacer");
+        if (FailPacer is { } failure)
+            throw failure;
+        if (_shape.Pacer)
+        {
+            lock (_gate)
+                _resources |= ItemResources.Pacer;
+        }
+    }
+
+    public void OpenGates() => _log.Add("OpenGates");
+
+    public void CloseGates() => _log.Add("CloseGates");
+
+    public void FlushPacer() => Native("FlushPacer");
+
+    public TimelineId BeginRun(ItemGraphPolicy graph, TimeSpan floor, TimeSpan? end, bool holdForSettle)
+    {
+        Native($"BeginRun({graph}, floor {floor.TotalSeconds:0.###}, end {end?.TotalSeconds.ToString("0.###") ?? "none"}, hold {holdForSettle})");
+        if (FailBeginRun is { } failure)
+        {
+            FailBeginRun = null;
+            throw failure;
+        }
+        lock (_gate)
+        {
+            _runs++;
+            _floor = floor;
+        }
+        return TimelineId.Next();
+    }
+
+    public Task RunPumpAsync(CancellationToken cancellationToken) => Run(ItemWork.Pump, cancellationToken);
+
+    public Task RunGraphAsync(CancellationToken cancellationToken)
+    {
+        var running = Run(ItemWork.Graph, cancellationToken);
+        if (FirstFrameOnGraphStart)
+            _firstFrame.TrySetResult();
+        return running;
+    }
+
+    public Task RunRecoveryWalkAsync(CancellationToken cancellationToken) => Run(ItemWork.Recovery, cancellationToken);
+
+    private Task Run(ItemWork kind, CancellationToken token)
+    {
+        FakeWork work;
+        List<TaskCompletionSource<FakeWork>> started = [];
+        lock (_gate)
+        {
+            work = new FakeWork(kind, _runs, token, (IgnoresCancellation & kind) != 0);
+            _works.Add(work);
+            var now = _inFlight.GetValueOrDefault(kind) + 1;
+            _inFlight[kind] = now;
+            _mostAtOnce[kind] = Math.Max(_mostAtOnce.GetValueOrDefault(kind), now);
+            var index = _works.Count(w => w.Kind == kind);
+            _awaited.RemoveAll(a =>
+            {
+                if (a.Kind != kind || a.Index != index)
+                    return false;
+                started.Add(a.Started);
+                return true;
+            });
+        }
+        _log.Add($"{kind} started");
+        foreach (var s in started)
+            s.TrySetResult(work);
+        return work.RunAsync(Exit);
+    }
+
+    private void Exit(FakeWork work)
+    {
+        lock (_gate)
+            _inFlight[work.Kind]--;
+        _log.Add($"{work.Kind} ended");
+    }
+
+    public async ValueTask SeekAsync(TimeSpan target, CancellationToken cancellationToken)
+    {
+        Native($"Seek({target.TotalSeconds:0.###})");
+        Task? hold;
+        lock (_gate)
+            hold = _seekHold?.Task;
+        if (hold is not null)
+            await hold.WaitAsync(cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    public void ResetForSeek() => Native("ResetForSeek");
+
+    public long PacerRun
+    {
+        get
+        {
+            lock (_gate)
+                return _runs;
+        }
+    }
+
+    public Task<TimeSpan?> WaitForSeekTargetAsync(long run, TimeSpan cap, CancellationToken cancellationToken)
+    {
+        _log.Add($"Settle({run})");
+        lock (_gate)
+            return Task.FromResult<TimeSpan?>(run == _runs && _floor > TimeSpan.Zero ? _floor : null);
+    }
+
+    public void ReleaseSettle(long run) => _log.Add($"ReleaseSettle({run})");
+
+    public ValueTask FreeAsync(ItemResources resource)
+    {
+        Native($"Free({resource})");
+        lock (_gate)
+        {
+            if ((_resources & resource) == 0)
+                _log.Violation($"Free({resource}) of a resource not held");
+            _resources &= ~resource;
+        }
+        if ((FailFree & resource) != 0)
+            throw new InvalidOperationException($"Freeing the {resource} failed.");
+        return ValueTask.CompletedTask;
+    }
+
+    public DecodedMediaStreamDiagnosticsSnapshot StreamDiagnostics => DecodedMediaStreamDiagnosticsSnapshot.Empty;
+
+    public int VideoFramesDroppedLate => 0;
+
+    public TimeSpan? VideoPresentationLag => null;
+
+    // A call that touches what the run's work uses: recorded, and a violation if any work is in flight.
+    private void Native(string call)
+    {
+        string? inFlight;
+        lock (_gate)
+        {
+            var running = _inFlight.Where(p => p.Value > 0).Select(p => p.Key.ToString()).ToArray();
+            inFlight = running.Length == 0 ? null : string.Join(", ", running);
+        }
+        _log.Add(call);
+        if (inFlight is not null)
+            _log.Violation($"{call} while {inFlight} ran");
+    }
+}
+
+/// <summary>Opens <see cref="FakeItemMedia"/>, at once or when the test releases it.</summary>
+internal sealed class FakeMediaOpener(FakeItemMedia media, RigLog log) : IItemMediaOpener
+{
+    private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Whether the open waits for <see cref="Release"/>, or for its token to be cancelled.</summary>
+    public bool Hold { get; set; }
+
+    /// <summary>What the open throws, having freed what it opened.</summary>
+    public Exception? Fail { get; set; }
+
+    /// <summary>Completes once the open has begun.</summary>
+    public Task Entered => _entered.Task;
+
+    public void Release() => _released.TrySetResult();
+
+    public async ValueTask<IItemMedia> OpenAsync(IMediaSource source, CancellationToken cancellationToken)
+    {
+        log.Add("Open");
+        _entered.TrySetResult();
+        if (Hold)
+            await _released.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (Fail is { } failure)
+            throw failure;
+        media.Opened = true;
+        return media;
+    }
+}
+
+/// <summary>An audio sink that records each call into the rig's log.</summary>
+internal sealed class RecordingAudioSink(RigLog log) : IAudioSink
+{
+    /// <summary>The call that throws: "Activate", "Pause", "Resume" or "Deactivate".</summary>
+    public string? Fail { get; set; }
+
+    public ValueTask PresentAsync(IAudioBuffer buffer, CancellationToken ct)
+    {
+        buffer.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask ActivateAsync(CancellationToken cancellationToken = default) => Call("Activate", cancellationToken);
+
+    public ValueTask PauseAsync(CancellationToken cancellationToken = default) => Call("Pause", cancellationToken);
+
+    public ValueTask ResumeAsync(CancellationToken cancellationToken = default) => Call("Resume", cancellationToken);
+
+    public ValueTask DeactivateAsync(CancellationToken cancellationToken = default) => Call("Deactivate", cancellationToken);
+
+    private ValueTask Call(string what, CancellationToken cancellationToken)
+    {
+        log.Add($"Audio.{what}");
+        if (Fail == what)
+            return ValueTask.FromException(new InvalidOperationException($"The audio sink's {what} failed."));
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+/// <summary>A source the fake opener never reads.</summary>
+internal sealed class FakeSource : IMediaSource
+{
+    public string DisplayName => "fake";
+
+    public Uri? Uri => null;
+
+    public string? FilePath => null;
+
+    public bool IsSeekable => true;
+}
