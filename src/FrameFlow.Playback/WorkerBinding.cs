@@ -45,6 +45,16 @@ internal sealed partial class WorkerBinding<TWorker>
     private readonly object _gate = new();
     private Cycle? _cycle;
 
+    /// <summary>Whether a worker is running or stopping: from a start until its stop has ended.</summary>
+    internal bool IsRunning
+    {
+        get
+        {
+            lock (_gate)
+                return _cycle is not null;
+        }
+    }
+
     /// <summary>
     /// Initializes a new <see cref="WorkerBinding{TWorker}"/>.
     /// </summary>

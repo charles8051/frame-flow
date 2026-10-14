@@ -292,4 +292,12 @@ internal sealed partial class PlaybackControllerCore
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "PlaybackController disposed")]
     private partial void LogDisposed();
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "PlaybackController's dispose has waited {Seconds:F0}s for its command loop, which is still in a call to the session that is not observing cancellation. The dispose waits for it."
+    )]
+    private partial void LogDisposeWaitingForLoop(double seconds);
+
+    private void LogDisposeWaitingForLoop() => LogDisposeWaitingForLoop(FrameFlow.Media.SlowWorkWarning.DefaultInterval.TotalSeconds);
 }

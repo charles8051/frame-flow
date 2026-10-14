@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using FrameFlow.Graph;
 using FrameFlow.Media;
+using FrameFlow.Media.Core;
 using FrameFlow.Playback.Commands;
 using FrameFlow.Playback.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -62,7 +64,14 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             }
         );
 
-    private readonly Task _dispatchLoop;
+    // Holds the dispatch loop until it ends (ADR-0086, decision 1). The dispose stops it first
+    // thing, which cancels the token the loop passes to the session operations it awaits, an open
+    // or a play over a stalled source among them, so the dispose's wait for the loop ends (#719).
+    // The loop goes on draining the channel until the dispose completes it.
+    private readonly WorkScope _loop = new();
+
+    // The dispatch loop's token, from _loop: written as the loop starts, and read only on it.
+    private CancellationToken _loopToken;
 
     /// <summary>The factory this controller creates its sessions with.</summary>
     internal IPlaybackSessionFactory SessionFactory => _sessionFactory;
@@ -163,6 +172,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     internal IPlaybackClock Clock => _clock;
     private readonly WorkerBinding<PositionTickerWorker> _tickerBinding;
 
+    /// <summary>Whether a position ticker is running or stopping. For tests.</summary>
+    internal bool TickerRunning => _tickerBinding.IsRunning;
+
     // ── Internal bookkeeping ───────────────────────────────────────────
     private readonly ILogger<PlaybackControllerCore> _logger;
     private PlaybackError? _pendingLoadFailure;
@@ -240,7 +252,14 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         ConfigureRepeatMachine();
 
         // Start the single-threaded dispatch loop.
-        _dispatchLoop = Task.Run(DispatchLoopAsync);
+        _loop.TryStart(
+            "dispatch loop",
+            ct =>
+            {
+                _loopToken = ct;
+                return DispatchLoopAsync();
+            }
+        );
 
         // Loop-stall watchdog. The position ticker is alive precisely when this
         // failure manifests (state stays Playing and the clock keeps advancing),
@@ -1048,11 +1067,17 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             case PlaybackActionKind.InitializeSession:
                 try
                 {
-                    await _session!.InitializeAsync(source!).ConfigureAwait(false);
+                    await _session!.InitializeAsync(source!, _loopToken).ConfigureAwait(false);
                     // Capture the loaded media snapshot for direct controller reads
                     // (ADR-0028 §6). Cleared in DisposeSessionAsync.
                     _loadedMediaInfo = _session.MediaInfo;
                     _loadedDuration = _session.MediaInfo?.Duration ?? TimeSpan.Zero;
+                }
+                catch (OperationCanceledException) when (_loopToken.IsCancellationRequested)
+                {
+                    // The dispose cancelled the open (#719). That is not a load failure, and the
+                    // session goes with the dispose.
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -1080,7 +1105,12 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                     {
                         try
                         {
-                            await session.WarmUpAsync().ConfigureAwait(false);
+                            await session.WarmUpAsync(_loopToken).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (_loopToken.IsCancellationRequested)
+                        {
+                            // The dispose cancelled the warm-up (#719), as for the open.
+                            throw;
                         }
                         catch (Exception ex)
                         {
@@ -1105,7 +1135,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 {
                     var session = _session;
                     if (session is not null)
-                        await session.PauseAsync().ConfigureAwait(false);
+                        await session.PauseAsync(_loopToken).ConfigureAwait(false);
                 }
                 break;
 
@@ -1274,11 +1304,20 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
         LogFirstPlayFromIdle(start.DisplayName);
 
-        var loadResult = await LoadSourceAsync(start).ConfigureAwait(false);
+        // The reservation was for this load. Give it back rather than leave the queue marked for
+        // a load that will not come, also when a dispose cancels the open (#719).
+        Result loadResult;
+        try
+        {
+            loadResult = await LoadSourceAsync(start).ConfigureAwait(false);
+        }
+        catch
+        {
+            _sessionFactory.ReleaseStart();
+            throw;
+        }
         if (!loadResult.IsSuccess)
         {
-            // The reservation was for this load. Give it back rather than leave the queue marked
-            // for a load that will not come.
             _sessionFactory.ReleaseStart();
             command.Completion.TrySetResult(loadResult);
             return true;
@@ -1477,6 +1516,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
     // ── Dispatch Loop ──────────────────────────────────────────────────
 
+    /// <summary>
+    /// Runs every command in turn until the channel is completed. <see cref="_loopToken"/> is
+    /// cancelled as the dispose begins. The loop passes it to the session operations it awaits,
+    /// and reads on without it, so every command posted completes.
+    /// </summary>
     private async Task DispatchLoopAsync()
     {
         await foreach (var cmd in _commandChannel.Reader.ReadAllAsync())
@@ -1704,6 +1748,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
                 cmd.Completion.TrySetResult(Result.Ok());
             }
+            catch (OperationCanceledException) when (_loopToken.IsCancellationRequested)
+            {
+                // The dispose cancelled the session operation the command was waiting on (#719).
+                cmd.Completion.TrySetResult(Result.Fail(ErrorCategory.System, DisposeFailureMessage));
+            }
             catch (OperationCanceledException)
             {
                 cmd.Completion.TrySetCanceled();
@@ -1794,7 +1843,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         if (session is null)
             return;
 
-        await session.PlayAsync().ConfigureAwait(false);
+        await session.PlayAsync(_loopToken).ConfigureAwait(false);
     }
 
     // ── IAsyncDisposable ───────────────────────────────────────────────
@@ -1811,6 +1860,14 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// The first call tears down. A call made while it runs, or after, waits for it and ends as it
     /// did, so every caller returns only once the claims are released (ADR-0086, decision 3; #708).
     /// </para>
+    /// <para>
+    /// It first cancels the session operation the command loop is waiting on, an open or a play
+    /// over a stalled source among them, and only then waits for the loop, so it does not wait for
+    /// the source (#719). The command that was waiting completes with a failed
+    /// <see cref="Result"/> that says the controller is disposing. A session operation that ignores
+    /// its token holds the dispose; after five seconds the controller logs once that it is
+    /// waiting.
+    /// </para>
     /// </remarks>
     public ValueTask DisposeAsync() =>
         _dispose.TryBegin() ? _dispose.EndAsync(TearDownAsync()) : _dispose.WaitAsync();
@@ -1818,6 +1875,9 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// <summary>The teardown the first <see cref="DisposeAsync"/> runs.</summary>
     private async ValueTask TearDownAsync()
     {
+        // Cancels the session operation the loop is waiting on. The loop is waited for below, once
+        // the channel is completed (#719).
+        var loopStopped = _loop.StopAsync(CancellationToken.None);
         try
         {
             try
@@ -1827,10 +1887,27 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 _loopStallSubscription = null;
 
                 PrepareActiveSeekForDisposal();
-                await _tickerBinding.StopAsync();
+                IReadOnlyList<WorkFault> loopFaults;
+                try
+                {
+                    await _tickerBinding.StopAsync();
+                }
+                finally
+                {
+                    // Whatever the ticker's stop threw, the loop is let end, and waited for,
+                    // before the session goes.
+                    _commandChannel.Writer.TryComplete();
+                    await SlowWorkWarning
+                        .AwaitAsync(loopStopped, SlowWorkWarning.DefaultInterval, _timeProvider, LogDisposeWaitingForLoop)
+                        .ConfigureAwait(false);
+                    loopFaults = await loopStopped.ConfigureAwait(false);
+                }
+                if (loopFaults is [var loopFault, ..])
+                    ExceptionDispatchInfo.Throw(loopFault.Error);
 
-                _commandChannel.Writer.TryComplete();
-                await _dispatchLoop;
+                // The loop may have started the ticker again as it finished the command it was
+                // running, after the stop above. It has ended, so nothing starts it after this.
+                await _tickerBinding.StopAsync();
 
                 PrepareActiveSeekForDisposal();
                 await NormalizeSeekStateAfterDisposalAsync();
