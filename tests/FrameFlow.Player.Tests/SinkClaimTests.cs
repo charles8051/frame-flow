@@ -190,6 +190,26 @@ public sealed class SinkClaimTests
     }
 
     [RequiresFfmpegAndCorpusFact]
+    public async Task APassDisposedDuringItsRun_KeepsItsClaimUntilTheRunEnds()
+    {
+        // The pass's dispose does not wait for a run in flight, and what that run still sends would
+        // reach a sink the next pass had claimed. The run is held inside the audio sink's
+        // activation, which comes before the graph starts, so the dispose frees nothing the run
+        // is using; the activation then fails, which ends the run without starting the graph.
+        await using var audio = new ClaimableAudioSink { HoldActivation = true };
+        var pass = await BuildPassAsync(Corpus(AudioFile), audio: audio);
+        var run = pass.RunToCompletionAsync();
+        await audio.ActivationEntered.Task;
+
+        await pass.DisposeAsync();
+
+        Assert.Equal($"a pass over '{AudioFile}'", Holder(audio));
+        audio.ActivationGate.SetException(new InvalidOperationException("the device went away"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => run);
+        Assert.Null(Holder(audio));
+    }
+
+    [RequiresFfmpegAndCorpusFact]
     public async Task ACancelledPassBuild_ReleasesItsClaims()
     {
         await using var video = new HeadlessVideoSink();
@@ -215,11 +235,23 @@ public sealed class SinkClaimTests
 
         public int Activations => Volatile.Read(ref _activations);
 
+        /// <summary>
+        /// When set, <see cref="ActivateAsync"/> completes <see cref="ActivationEntered"/> and then
+        /// waits for <see cref="ActivationGate"/>.
+        /// </summary>
+        public bool HoldActivation { get; init; }
+
+        public TaskCompletionSource ActivationEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ActivationGate { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public IDisposable? TryClaim(string claimant) => _claims.TryClaim(claimant);
 
         public string? Claimant => _claims.Claimant;
 
-        public long ClaimOrder => _claims.Order;
+        public long ClaimOrder => _claims.ClaimOrder;
 
         public ValueTask PresentAsync(IAudioBuffer buffer, CancellationToken ct)
         {
@@ -230,7 +262,10 @@ public sealed class SinkClaimTests
         public ValueTask ActivateAsync(CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _activations);
-            return ValueTask.CompletedTask;
+            if (!HoldActivation)
+                return ValueTask.CompletedTask;
+            ActivationEntered.TrySetResult();
+            return new ValueTask(ActivationGate.Task);
         }
 
         public ValueTask PauseAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;

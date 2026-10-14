@@ -182,7 +182,7 @@ public sealed class ControllerSinkClaimTests
 
         public string? Claimant => _claims.Claimant;
 
-        public long ClaimOrder => _claims.Order;
+        public long ClaimOrder => _claims.ClaimOrder;
 
         public ValueTask PresentAsync(IAudioBuffer buffer, CancellationToken ct)
         {

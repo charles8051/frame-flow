@@ -1799,7 +1799,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// Releases the claims on the controller's sinks last, once the session and with it the graph
     /// and the pacer's delivery loop have been awaited, so nothing the controller sent can reach
     /// a sink after another player has claimed it (ADR-0085, decision 6). A dispose that throws
-    /// releases them too.
+    /// releases them too, and still only after the session has been disposed.
     /// </remarks>
     public async ValueTask DisposeAsync()
     {
@@ -1809,19 +1809,26 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
         try
         {
-            // Stop folding position ticks before the ticker stops emitting them.
-            _loopStallSubscription?.Dispose();
-            _loopStallSubscription = null;
+            try
+            {
+                // Stop folding position ticks before the ticker stops emitting them.
+                _loopStallSubscription?.Dispose();
+                _loopStallSubscription = null;
 
-            PrepareActiveSeekForDisposal();
-            await _tickerBinding.StopAsync();
+                PrepareActiveSeekForDisposal();
+                await _tickerBinding.StopAsync();
 
-            _commandChannel.Writer.TryComplete();
-            await _dispatchLoop;
+                _commandChannel.Writer.TryComplete();
+                await _dispatchLoop;
 
-            PrepareActiveSeekForDisposal();
-            await NormalizeSeekStateAfterDisposalAsync();
-            await DisposeSessionAsync();
+                PrepareActiveSeekForDisposal();
+                await NormalizeSeekStateAfterDisposalAsync();
+            }
+            finally
+            {
+                // Whatever the steps before it did, the session goes before the claims do.
+                await DisposeSessionAsync();
+            }
 
             _playbackStateSubject.Dispose();
             _seekStateSubject.Dispose();

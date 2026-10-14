@@ -346,7 +346,7 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     string? IClaimableSink.Claimant => _claims.Claimant;
 
     /// <inheritdoc />
-    long IClaimableSink.ClaimOrder => _claims.Order;
+    long IClaimableSink.ClaimOrder => _claims.ClaimOrder;
 
     /// <inheritdoc />
     /// <remarks>

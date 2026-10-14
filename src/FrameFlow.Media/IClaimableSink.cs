@@ -63,11 +63,23 @@ public interface IClaimableSink
     /// process. Two sinks report the same value only when one forwards its claim to the other.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A claim on several sinks tries each without waiting, in this order, and releases the ones
     /// it took when one is held. Two claimants racing for overlapping sets then cannot both fail:
     /// each would hold the sink the other failed on, taken before the one it failed on itself, so
-    /// each of those two sinks would come before the other. <see cref="SinkClaimGate.Order"/>
+    /// each of those two sinks would come before the other. <see cref="SinkClaimGate.ClaimOrder"/>
     /// supplies it.
+    /// </para>
+    /// <para>
+    /// <b>A sink that presents to several.</b> The order is over the sinks that hold state, not
+    /// over the sinks that forward to them. An in-box sink that presents to several targets, such as
+    /// a fan-out, is replaced by its targets, flattened through nested ones, before a build's sinks
+    /// are put in order; otherwise a build of a fan-out over two views and an audio sink, and
+    /// another over an overlapping pair and the same audio sink, could take the shared sinks in
+    /// opposite orders and both fail. Such a sink reports an order of its own, which a build never
+    /// uses. A sink of your own that presents to several claimable sinks is not flattened: forward
+    /// a claim to exactly one sink, or present to several through the in-box fan-out.
+    /// </para>
     /// </remarks>
     long ClaimOrder { get; }
 }

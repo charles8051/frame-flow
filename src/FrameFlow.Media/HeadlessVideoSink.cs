@@ -170,7 +170,7 @@ public sealed class HeadlessVideoSink : IVideoSink, IClaimableSink
     string? IClaimableSink.Claimant => _claims.Claimant;
 
     /// <inheritdoc />
-    long IClaimableSink.ClaimOrder => _claims.Order;
+    long IClaimableSink.ClaimOrder => _claims.ClaimOrder;
 
     /// <inheritdoc />
     /// <remarks>Claiming the sink afterwards throws <see cref="ObjectDisposedException"/>.</remarks>

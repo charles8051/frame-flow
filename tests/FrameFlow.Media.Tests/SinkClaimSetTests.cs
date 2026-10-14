@@ -87,6 +87,56 @@ public sealed class SinkClaimSetTests
         Assert.Null(first.Claimant);
     }
 
+    // ─── Sinks that present to several (decision 8) ─────────────────
+
+    [Fact]
+    public void AForwardingSink_StandsForItsTargets_SoTheOrderStaysGlobal()
+    {
+        // Two builds, each a fan-out over two views plus one audio sink, with the fan-outs made on
+        // either side of the audio sink. Ordered by the fan-outs' own orders, the first would take
+        // the shared view before the audio sink and the second after it, and racing, both could
+        // fail. Flattened, both take the shared view first.
+        var v1 = new ClaimableSink("v1");
+        var v2 = new ClaimableSink("v2");
+        var v3 = new ClaimableSink("v3");
+        var first = new ForwardingSink(v1, v2);
+        var audio = new ClaimableSink("audio");
+        var second = new ForwardingSink(v2, v3);
+
+        Assert.Equal([v1, v2, audio], SinkClaimSet.InClaimOrder([first, audio]));
+        Assert.Equal([v2, v3, audio], SinkClaimSet.InClaimOrder([audio, second]));
+    }
+
+    [Fact]
+    public void NestedForwardingSinks_AreFlattened_AndASharedTargetIsClaimedOnce()
+    {
+        var log = new List<string>();
+        var v1 = new ClaimableSink("v1", log);
+        var v2 = new ClaimableSink("v2", log);
+        var v3 = new ClaimableSink("v3", log);
+        var outer = new ForwardingSink(new ForwardingSink(v1, v2), new ForwardingSink(v2, v3));
+
+        using var claims = SinkClaimSet.TryClaim([outer], "a player", out _);
+
+        Assert.NotNull(claims);
+        Assert.Equal(["v1", "v2", "v3"], log);
+    }
+
+    [Fact]
+    public void AHeldTarget_FailsTheClaim_NamingTheTarget_AndReleasesTheOthers()
+    {
+        var v1 = new ClaimableSink("v1");
+        var v2 = new ClaimableSink("v2");
+        var fanOut = new ForwardingSink(v1, v2);
+        using var other = v2.TryClaim("another player");
+
+        var claims = SinkClaimSet.TryClaim([fanOut], "a player", out var held);
+
+        Assert.Null(claims);
+        Assert.Same(v2, held);
+        Assert.Null(v1.Claimant);
+    }
+
     [Fact]
     public void NoSinks_IsAnEmptyClaim()
     {
@@ -94,6 +144,23 @@ public sealed class SinkClaimSetTests
 
         Assert.NotNull(claims);
         Assert.Null(held);
+    }
+
+    /// <summary>
+    /// A sink that presents to several, as the fan-out does: its claim is a claim on its targets,
+    /// and its own claim order comes from a gate made after them.
+    /// </summary>
+    private sealed class ForwardingSink(params IClaimableSink[] targets) : IClaimForwardingSink
+    {
+        private readonly SinkClaimGate _gate = new(typeof(ForwardingSink));
+
+        public IReadOnlyList<IClaimableSink> ClaimTargets => targets;
+
+        public IDisposable? TryClaim(string claimant) => SinkClaimSet.TryClaim(targets, claimant, out _);
+
+        public string? Claimant => null;
+
+        public long ClaimOrder => _gate.ClaimOrder;
     }
 
     /// <summary>A claimable sink that records each claim it grants, in order, to a shared log.</summary>
@@ -111,7 +178,7 @@ public sealed class SinkClaimSetTests
 
         public string? Claimant => _gate.Claimant;
 
-        public long ClaimOrder => _gate.Order;
+        public long ClaimOrder => _gate.ClaimOrder;
 
         public ValueTask DisposeAsync()
         {

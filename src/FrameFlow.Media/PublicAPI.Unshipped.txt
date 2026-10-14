@@ -650,8 +650,8 @@ FrameFlow.Media.IClaimableSink.ClaimOrder.get -> long
 FrameFlow.Media.IClaimableSink.Claimant.get -> string?
 FrameFlow.Media.IClaimableSink.TryClaim(string! claimant) -> System.IDisposable?
 FrameFlow.Media.SinkClaimGate
+FrameFlow.Media.SinkClaimGate.ClaimOrder.get -> long
 FrameFlow.Media.SinkClaimGate.Claimant.get -> string?
 FrameFlow.Media.SinkClaimGate.Close() -> bool
-FrameFlow.Media.SinkClaimGate.Order.get -> long
 FrameFlow.Media.SinkClaimGate.SinkClaimGate(System.Type! owner) -> void
 FrameFlow.Media.SinkClaimGate.TryClaim(string! claimant) -> System.IDisposable?

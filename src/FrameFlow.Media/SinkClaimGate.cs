@@ -28,9 +28,9 @@ namespace FrameFlow.Media;
 /// </remarks>
 public sealed class SinkClaimGate
 {
-    // The last order given out. Orders come from one sequence so that they are unique in the
+    // The last claim order given out. They come from one sequence so that they are unique in the
     // process, which is what lets every claim on several sinks take them in one order.
-    private static long s_lastOrder;
+    private static long s_lastClaimOrder;
 
     private readonly object _lock = new();
     private readonly Type _owner;
@@ -55,20 +55,26 @@ public sealed class SinkClaimGate
     /// nothing the next claimant sends can reach the sink before it returns. A view's sink lets go
     /// of the frame it kept for a player that is gone here (ADR-0085, decision 2). The claim is
     /// released even if it throws, and the exception reaches the lease's caller.
+    /// <para>
+    /// That thread can be any thread, the UI thread included: a player's <c>DisposeAsync</c>
+    /// releases its claims on whatever thread it resumed on, and an app may await it on the UI
+    /// thread. So the hook does its work inline and never blocks on another thread, which could be
+    /// waiting for the UI thread.
+    /// </para>
     /// </param>
     internal SinkClaimGate(Type owner, Action? released)
     {
         ArgumentNullException.ThrowIfNull(owner);
         _owner = owner;
         _released = released;
-        Order = Interlocked.Increment(ref s_lastOrder);
+        ClaimOrder = Interlocked.Increment(ref s_lastClaimOrder);
     }
 
     /// <summary>
     /// The sink's place in the claim order, unique in the process: gates made later have larger
     /// values. A sink reports it as <see cref="IClaimableSink.ClaimOrder"/>.
     /// </summary>
-    public long Order { get; }
+    public long ClaimOrder { get; }
 
     /// <summary>
     /// Who holds the sink, as their claim described them, or <see langword="null"/> when nobody
@@ -116,7 +122,8 @@ public sealed class SinkClaimGate
     /// </summary>
     /// <returns>
     /// <see langword="true"/> if this call closed the gate; <see langword="false"/> if it was
-    /// already closed, in which case the call did nothing.
+    /// already closed, in which case the call did nothing. As with
+    /// <see cref="LatestWinsFrameSlot.Close"/>, a sink can use it to do its dispose-once work once.
     /// </returns>
     public bool Close()
     {

@@ -175,12 +175,12 @@ public sealed class SinkClaimGateTests
     }
 
     [Fact]
-    public void Order_IsUnique_AndLargerForAGateMadeLater()
+    public void ClaimOrder_IsUnique_AndLargerForAGateMadeLater()
     {
         var first = NewGate();
         var second = NewGate();
 
-        Assert.True(second.Order > first.Order);
+        Assert.True(second.ClaimOrder > first.ClaimOrder);
     }
 
     // ─── The release hook (ADR-0085, decision 2, for the views) ─────

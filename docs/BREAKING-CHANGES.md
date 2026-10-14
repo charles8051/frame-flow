@@ -623,9 +623,10 @@ picture, and two sessions on one `OpenAlAudioSink` raced its activation and both
 The claim is released once the holder's `DisposeAsync` has completed, which is after the last frame
 it sends has reached the sink. A player that is paused, has ended or is in `Error` still holds it,
 and so does a pass whose run has ended: a pass holds its claim until it is disposed, not until its
-run ends. A build that fails or is cancelled releases its claims before it throws. A build against an
-in-box sink that has been disposed throws `ObjectDisposedException`, where it used to build a player
-whose every frame the sink discarded.
+run ends. A pass disposed while its run is still going keeps the claim until that run ends, because
+its dispose does not wait for the run. A build that fails or is cancelled releases its claims before
+it throws. A build against an in-box sink that has been disposed throws `ObjectDisposedException`,
+where it used to build a player whose every frame the sink discarded.
 
 The items of one player's queue, including one it prepares ahead, share that player's claim. A graph
 built by hand (`SinkAdapters.AsSinkNode`, a `Branch` edge inside a configurator, `RecorderPipeline`'s
@@ -639,8 +640,13 @@ which nothing enforces; #694 asks whether a graph should claim its sinks for its
   awaiting, or builds the new one first and disposes the old one after.
 - Code that runs several passes over one sink while each stays in scope, for example a series of
   `await using var pass = ...` declarations in one method, which are disposed only when the method
-  returns.
-- Code that builds against an in-box sink it has already disposed.
+  returns. Also code that disposes a pass without awaiting its run, or cancelling it and awaiting
+  it, before building the next pass.
+- Code that builds against an in-box sink that has been disposed. Until the views keep their own
+  sink for their whole life (ADR-0085, decision 2), the likely way to get one is a view's own sink:
+  a chain written with `WithAvaloniaVideoView` or `WithVideoSurface` before the view left the visual
+  tree, which disposed that sink, and built after it. Write the chain after the view is back, or
+  give the view a sink of your own, as entry 12 shows.
 
 **What to write instead.** Await the disposal of the player or pass already built against the sink,
 then build the next one:
@@ -653,7 +659,9 @@ player = await FrameFlowPlayer.Create()
     .BuildPlayerAsync();
 ```
 
-To run passes over one sink in turn, end each one's scope before the next is built:
+To run passes over one sink in turn, end each one's scope before the next is built. A pass whose
+run is still going holds the sink until the run ends, so await the run, or cancel it and await it,
+before building the next pass:
 
 ```csharp
 foreach (var file in files)
