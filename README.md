@@ -128,8 +128,11 @@ DirectML runs a model with dynamic input dimensions much slower than the same mo
 fixed. `new DmlInferenceSession(path, new DmlInferenceSessionOptions { FreeDimensions = ... })` fixes
 them by name when the model loads, such as `batch = 1` and `height = 518`. Its `OptimizationLevel`
 defaults to ONNX Runtime's basic level; a higher level holds less GPU memory, which matters when
-sessions share a GPU. `WinMLInferenceSessionOptions` sets the level for Windows ML, and a named
-provider's own options.
+sessions share a GPU. `WinMLInferenceSessionOptions` sets the level for Windows ML, a named
+provider's own options, and ONNX Runtime session config entries. With `ep.context_enable` and
+`ep.context_file_path`, TensorRT-RTX writes its compiled engine to a model that later sessions open
+instead of building again; `session.disable_cpu_ep_fallback` fails a load that would quietly run
+on the CPU.
 
 On an Intel GPU below Windows ML's Windows 11 24H2 floor, `OpenVinoInferenceSession` runs Intel's
 OpenVINO build of ONNX Runtime, about twice as fast as DirectML on a Gen9 GPU. It is Windows x64
