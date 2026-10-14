@@ -14,11 +14,12 @@ public static class FrameFlowAvaloniaBuilderExtensions
 {
     /// <summary>
     /// Wires the supplied <see cref="FrameFlowVideoView"/> to the fluent
-    /// <see cref="IPlayerBuilder"/>. The view's owned sink is materialized
-    /// eagerly via <see cref="FrameFlowVideoView.EnsureSink"/> so playback
-    /// can begin presenting frames the moment
-    /// <see cref="IPlayerBuilder.BuildPlayerAsync"/> resolves — even if the view
-    /// has not yet attached to the visual tree.
+    /// <see cref="IPlayerBuilder"/>. The view's sink is materialized eagerly via
+    /// <see cref="FrameFlowVideoView.EnsureSink"/>, so the player can be built before the view
+    /// has attached to the visual tree. The view presents nothing until it is attached: until
+    /// then its sink keeps the newest frame for the player, and the first attach presents it
+    /// (ADR-0085, decision 3). The sink is the view's for its whole life, across trips out of
+    /// the visual tree.
     /// </summary>
     /// <remarks>
     /// The view's own sink logs through its <see cref="FrameFlowVideoView.LoggerFactory"/>, which can
@@ -50,7 +51,7 @@ public static class FrameFlowAvaloniaBuilderExtensions
     /// Wires the supplied <see cref="FrameFlowVideoView"/> to a narrowed
     /// <see cref="IPassBuilder"/> chain — the overload for chains
     /// headed for <see cref="IPassBuilder.BuildAsync"/>. The
-    /// view's owned sink is materialized eagerly via
+    /// view's sink is materialized eagerly via
     /// <see cref="FrameFlowVideoView.EnsureSink"/>.
     /// </summary>
     /// <param name="builder">The player builder being configured.</param>
