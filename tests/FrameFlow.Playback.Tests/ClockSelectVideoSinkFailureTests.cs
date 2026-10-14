@@ -334,6 +334,36 @@ public sealed partial class ClockSelectVideoSinkTests
         Assert.Equal(MaxSinkFailures - 1, logger.Count(LogLevel.Debug, "threw"));
     }
 
+    [Fact]
+    public async Task AFaultCallbackThatThrows_IsLoggedAsAnError_NotAsACallbackDeliveryCarriedOnFrom()
+    {
+        // The session's callback only posts the fault and does not throw. One that did would leave
+        // the fault unreported and delivery stopped, which is an error, not a warning that the
+        // loop carried on.
+        var sink = new ScriptedSink { FailPresent = _ => true };
+        var logger = new LevelCountingLogger();
+        var called = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pacer = new ClockSelectVideoSink(
+            sink,
+            new FakeClock(),
+            logger,
+            capacity: 4,
+            timeProvider: new FakeTimeProvider(),
+            onFaulted: _ =>
+            {
+                called.TrySetResult();
+                throw new InvalidOperationException("the fault callback failed");
+            }
+        );
+
+        await PresentEachAsync(pacer, sink, from: 1, to: MaxSinkFailures + 1);
+        await called.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await pacer.DisposeAsync();
+
+        Assert.Equal(1, logger.Count(LogLevel.Error, "fault callback threw"));
+        Assert.Equal(0, logger.Count(LogLevel.Warning, "callback threw; delivery continues"));
+    }
+
     private static ClockSelectVideoSink NewPacer(
         IVideoSink sink,
         SinkFailureRecorder failures,

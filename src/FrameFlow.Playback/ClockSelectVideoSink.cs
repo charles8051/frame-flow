@@ -235,6 +235,23 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         }
     }
 
+    // Reports that delivery has stopped. The session's callback only posts the fault, so it does
+    // not throw; if one does, the fault may not have reached anyone, and that is logged as the
+    // error it is rather than as a callback the loop carried on from.
+    private void RaiseFault(Exception fault)
+    {
+        if (_onFaulted is null)
+            return;
+        try
+        {
+            _onFaulted(fault);
+        }
+        catch (Exception ex)
+        {
+            LogFaultNotReported(_logger, fault.Message, ex);
+        }
+    }
+
     // Awaits one of the delivery loop's waits, counting it as a park only if the wait is still
     // pending when the park is published. A wait that completes synchronously — a target
     // already due, an arrival already signalled — is the loop carrying straight on rather than
@@ -1532,7 +1549,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
             // waits, the logger. The loop cannot go on, and ending it here would stop the video
             // with nothing said, so it reports a fault, which the session logs and treats like a
             // fault in any of its workers, and waits for its teardown as after an escalation.
-            Raise(_onFaulted, ex, "faulted");
+            RaiseFault(ex);
             await HaltAsync(ct).ConfigureAwait(false);
         }
         finally
@@ -1578,13 +1595,11 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         {
             // The exception goes with the fault, which the session logs as the item's.
             LogSinkFaulted(_logger, sinkType, verdict.InARow);
-            Raise<Exception>(
-                _onFaulted,
+            RaiseFault(
                 new InvalidOperationException(
                     $"The video sink {sinkType} threw on {verdict.InARow} calls in a row.",
                     ex
-                ),
-                "faulted"
+                )
             );
             return true;
         }
@@ -1660,6 +1675,12 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "ClockSelect's {What} callback threw; delivery continues.")]
     private static partial void LogCallbackFailed(ILogger logger, string what, Exception ex);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "ClockSelect's fault callback threw, so its fault may not have been reported: {Fault}. Delivery has stopped until the pacer is disposed."
+    )]
+    private static partial void LogFaultNotReported(ILogger logger, string fault, Exception ex);
 
     [LoggerMessage(
         Level = LogLevel.Warning,
