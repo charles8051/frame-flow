@@ -95,11 +95,13 @@ public interface IVideoSink : IAsyncDisposable
     /// leaves it with whatever it handed it to, before it throws (#701).
     /// </para>
     /// <para>
-    /// Under a player, a call that throws costs that frame: the player reports the exception on its
-    /// <c>ErrorOccurred</c> and presents the next frame. A sink that throws on more than eight
-    /// calls in a row, counting <see cref="OnFormatChangedAsync"/>, faults the item, as a fault in
-    /// its decoding does (#703). A pass stops at the first call that throws, and its run throws
-    /// the failure.
+    /// Under a player, a call that throws costs that frame, and the player presents the next one.
+    /// It reports the failures on its <c>ErrorOccurred</c>, at most one every five seconds, each
+    /// saying how many came since the one before. It counts them for the sink, across the items it
+    /// plays, with <see cref="OnFormatChangedAsync"/>'s, and the failure that makes more than eight
+    /// in a row faults the item playing, as a fault in its decoding does. Until the sink takes a
+    /// frame, each later failure faults the item it comes in (#703). A pass stops at the first
+    /// call that throws, and its run throws the failure.
     /// </para>
     /// </remarks>
     /// <param name="frame">The frame to present. Ownership transfers to the sink.</param>

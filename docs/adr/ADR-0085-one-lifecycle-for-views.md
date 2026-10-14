@@ -439,9 +439,10 @@ Each slice carries its own BREAKING-CHANGES entry.
 the frame the sink already owned. A sink now owns the frame from the call, even when the call
 throws, which decision 8 already said of a fan-out's targets. BREAKING-CHANGES entry 22 records it.
 A sink that throws no longer stops the pacer for the rest of the item without a word (#703). Each
-failure costs its frame and is reported on `ErrorOccurred`, and a sink that throws on more than
-eight calls in a row faults the item, as a fault in its decoding does. BREAKING-CHANGES entry 24
-records it.
+failure costs its frame, and the failures are reported on `ErrorOccurred` at most once every five
+seconds. They are counted for the sink across items, and the one that makes more than eight in a
+row faults the item playing, as a fault in its decoding does. BREAKING-CHANGES entry 24 records
+it.
 
 What differs from the decisions, slice by slice. None reverses one.
 

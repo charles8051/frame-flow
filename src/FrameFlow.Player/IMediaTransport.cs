@@ -202,12 +202,20 @@ public interface IMediaTransport : IAsyncDisposable
     /// disposal has begun, which throws <see cref="ObjectDisposedException"/>.
     /// </para>
     /// <para>
-    /// An error does not always stop playback. A single-source player raises it
-    /// as it enters <see cref="PlaybackState.Error"/>. An
-    /// <see cref="IMediaPlayer"/> also raises it for an item that fails,
-    /// and keeps playing; see that interface. A video sink that throws on a frame
-    /// is raised here too, the frame is dropped, and the next one is presented. A
-    /// sink that throws on more than eight calls in a row fails the item (#703).
+    /// An error does not always stop playback. An item that faults while it plays, or a
+    /// later item that cannot be started, is raised here and skipped, and the player
+    /// carries on, so a queue of one item that faults while it plays ends in
+    /// <see cref="PlaybackState.Ended"/>, not <see cref="PlaybackState.Error"/>, with
+    /// <see cref="IMediaPlayer.ItemFailed"/> naming the item. An error that stops playback
+    /// is raised as the player enters <see cref="PlaybackState.Error"/>: the first item
+    /// failing before the first <see cref="PlayAsync"/>, or more than eight items failing
+    /// in a row. See <see cref="IMediaPlayer"/>.
+    /// </para>
+    /// <para>
+    /// A video sink that throws on a frame is raised here too, at most once every five
+    /// seconds, the frame is dropped, and the next one is presented. The failures are
+    /// counted for the sink, across items, and the one that makes more than eight in a
+    /// row fails the item playing, as a fault in its decoding does (#703).
     /// </para>
     /// <para>
     /// <b>Paired with <see cref="IMediaPlayer.ItemFailed"/>.</b> An item failure reaches both,

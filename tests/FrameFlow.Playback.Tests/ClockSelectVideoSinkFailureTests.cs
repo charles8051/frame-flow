@@ -5,15 +5,21 @@ using Microsoft.Extensions.Time.Testing;
 namespace FrameFlow.Playback.Tests;
 
 /// <summary>
-/// A sink that throws costs the frame it was given and is reported, and the pacer presents the
-/// next frame; one that keeps throwing is reported as faulted, and delivery stops (#703). Each
-/// test waits on what the pacer raises or what the sink is called with, and stops the pacer
-/// before asserting what did not happen: <see cref="ClockSelectVideoSink.DisposeAsync"/> awaits
-/// the delivery loop, so everything the loop was going to do has happened by then.
+/// A sink that throws costs the frame it was given, and the pacer presents the next frame; at most
+/// one failure in each interval is reported; one that keeps throwing, counted across the pacers
+/// over the sink, is reported as faulted, and delivery stops; and so does anything else that
+/// would end the delivery loop (#703). Each test waits on what the pacer raises, what the sink is
+/// called with, or the pacer's park, and stops the pacer before asserting what did not happen:
+/// <see cref="ClockSelectVideoSink.DisposeAsync"/> awaits the delivery loop, so everything the
+/// loop was going to do has happened by then.
 /// </summary>
+/// <remarks>
+/// The report interval runs on a <see cref="FakeTimeProvider"/> nobody advances unless the test
+/// says so, so every failure in a test falls inside the first one's interval.
+/// </remarks>
 public sealed partial class ClockSelectVideoSinkTests
 {
-    private const int MaxSinkFailures = PacerSinkFailures.MaxConsecutiveFailures;
+    private const int MaxSinkFailures = SinkFailureRun.MaxConsecutiveFailures;
 
     [Fact]
     public async Task ASinkThatThrowsOnce_IsReported_AndTheNextFrameIsPresented()
@@ -41,9 +47,11 @@ public sealed partial class ClockSelectVideoSinkTests
     }
 
     [Fact]
-    public async Task ASinkThatThrowsOnEveryCall_IsReportedAsFaulted_AfterTheLimit_AndIsCalledNoMore()
+    public async Task ASinkThatThrowsOnEveryCall_IsReportedAsFaulted_AfterTheLimit_AndDeliveryStopsThere()
     {
-        var sink = new ScriptedSink { FailPresent = _ => true };
+        // The call that escalates is held inside the sink while the next frame waits in the ring,
+        // so a pacer that went on delivering would call the sink again before it next parked.
+        var sink = new ScriptedSink { FailPresent = _ => true, HoldPresent = MaxSinkFailures + 1 };
         var failures = new SinkFailureRecorder();
         var pacer = NewPacer(sink, failures);
         var frames = new List<CountedFrame>();
@@ -55,21 +63,27 @@ public sealed partial class ClockSelectVideoSinkTests
             await pacer.PresentAsync(frame, default);
             await sink.WaitForCallsAsync(call);
         }
-        var fault = await failures.FaultReported.WaitAsync(TimeSpan.FromSeconds(30));
+        await sink.Held;
+        var waiting = new CountedFrame(TimeSpan.Zero);
+        await pacer.PresentAsync(waiting, default);
+        // Inside the sink's call, so not parked: the next park comes after that call returns.
+        long parked = pacer.ParkGeneration;
 
-        // Delivery has stopped: a frame given now stays in the ring, and the teardown releases it.
-        var afterTheFault = new CountedFrame(TimeSpan.Zero);
-        await pacer.PresentAsync(afterTheFault, default);
-        await pacer.DisposeAsync();
+        sink.ReleaseHeld();
+        var fault = await failures.FaultReported.WaitAsync(TimeSpan.FromSeconds(30));
+        await pacer.WaitForParkAfterAsync(parked);
 
         Assert.Equal(MaxSinkFailures + 1, sink.Calls);
-        Assert.Equal(MaxSinkFailures, failures.Reports);
+        await pacer.DisposeAsync();
+        Assert.Equal(MaxSinkFailures + 1, sink.Calls);
+        Assert.Equal(1, failures.Reports);
         Assert.Equal(1, failures.Faults);
         var wrapped = Assert.IsType<InvalidOperationException>(fault);
         Assert.Same(sink.Thrown[^1], wrapped.InnerException);
         Assert.Contains(nameof(ScriptedSink), wrapped.Message, StringComparison.Ordinal);
         Assert.All(frames, f => Assert.Equal(0, f.References));
-        Assert.Equal(0, afterTheFault.References);
+        // Left in the ring when delivery stopped, and released by the teardown.
+        Assert.Equal(0, waiting.References);
     }
 
     [Fact]
@@ -90,7 +104,75 @@ public sealed partial class ClockSelectVideoSinkTests
         await pacer.DisposeAsync();
 
         Assert.Null(failures.Fault);
-        Assert.Equal(2 * MaxSinkFailures, failures.Reports);
+        Assert.Equal(1, failures.Reports);
+    }
+
+    [Fact]
+    public async Task ASinkThatKeepsFailing_IsReportedOncePerInterval_CountingTheFailuresBetween()
+    {
+        // Every other frame fails, so the sink never escalates: each failure reported would be an
+        // error for half its frames.
+        var time = new FakeTimeProvider();
+        var sink = new ScriptedSink { FailPresent = call => call % 2 == 1 };
+        var failures = new SinkFailureRecorder();
+        var pacer = NewPacer(sink, failures, time: time);
+
+        for (int call = 1; call <= 6; call++)
+        {
+            await pacer.PresentAsync(new CountedFrame(TimeSpan.Zero), default);
+            await sink.WaitForCallsAsync(call);
+        }
+        time.Advance(SinkFailureRun.ReportInterval);
+        await pacer.PresentAsync(new CountedFrame(TimeSpan.Zero), default);
+        var second = await failures.WaitForReportAsync(2);
+        await pacer.DisposeAsync();
+
+        Assert.Equal(2, failures.Reports);
+        Assert.Same(sink.Thrown[^1], second.Inner);
+        Assert.Contains("and on 2 more since the last report", second.Message, StringComparison.Ordinal);
+        Assert.Null(failures.Fault);
+    }
+
+    [Fact]
+    public async Task TheRunOfFailures_GoesOnFromOnePacerToTheNextOverTheSameSink()
+    {
+        // A player gives each item a pacer of its own, over one sink. An item shorter than the
+        // limit still counts toward it, and once the sink has faulted, the next item faults at its
+        // first failure, until the sink takes a frame.
+        const int first = 5;
+        var sink = new ScriptedSink { FailPresent = call => call != MaxSinkFailures + 3 };
+        var run = new VideoSinkFailures();
+        var time = new FakeTimeProvider();
+
+        var a = new SinkFailureRecorder();
+        await using (var pacer = NewPacer(sink, a, time: time, sinkFailures: run))
+            await PresentEachAsync(pacer, sink, from: 1, to: first);
+
+        var b = new SinkFailureRecorder();
+        await using (var pacer = NewPacer(sink, b, time: time, sinkFailures: run))
+        {
+            await PresentEachAsync(pacer, sink, from: first + 1, to: MaxSinkFailures + 1);
+            await b.FaultReported.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        var c = new SinkFailureRecorder();
+        await using (var pacer = NewPacer(sink, c, time: time, sinkFailures: run))
+        {
+            await PresentEachAsync(pacer, sink, from: MaxSinkFailures + 2, to: MaxSinkFailures + 2);
+            await c.FaultReported.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        var d = new SinkFailureRecorder();
+        await using (var pacer = NewPacer(sink, d, time: time, sinkFailures: run))
+            await PresentEachAsync(pacer, sink, from: MaxSinkFailures + 3, to: MaxSinkFailures + 4);
+
+        Assert.Null(a.Fault);
+        Assert.Equal(1, a.Reports);
+        // The sink's report interval runs across the pacers too.
+        Assert.Equal(0, b.Reports);
+        Assert.Equal(0, d.Reports);
+        Assert.Null(d.Fault);
+        Assert.Equal(1, sink.Taken);
     }
 
     [Fact]
@@ -142,12 +224,38 @@ public sealed partial class ClockSelectVideoSinkTests
     }
 
     [Fact]
+    public async Task AClockThatThrows_IsReportedAsAFault_AndTheRingIsReleasedAtTeardown()
+    {
+        // Not a call to the sink: the loop reads the clock to choose the frame due. It used to end
+        // there with nothing said, and the picture stopped.
+        var clockFailure = new InvalidOperationException("the clock failed");
+        var clock = new FakeClock { OnLatestRead = () => throw clockFailure };
+        var sink = new ScriptedSink();
+        var failures = new SinkFailureRecorder();
+        var pacer = NewPacer(sink, failures, clock: clock);
+        var due = new CountedFrame(TimeSpan.Zero);
+
+        await pacer.PresentAsync(due, default);
+        var fault = await failures.FaultReported.WaitAsync(TimeSpan.FromSeconds(30));
+        var waiting = new CountedFrame(TimeSpan.Zero);
+        await pacer.PresentAsync(waiting, default);
+        await pacer.DisposeAsync();
+
+        Assert.Same(clockFailure, fault);
+        Assert.Equal(1, failures.Faults);
+        Assert.Equal(0, failures.Reports);
+        Assert.Equal(0, sink.Calls);
+        Assert.Equal(0, due.References);
+        Assert.Equal(0, waiting.References);
+    }
+
+    [Fact]
     public async Task AfterTheLastFrameFails_TheEndOfContentHoldStillEndsTheRun()
     {
         var clock = new FakeClock();
         var sink = new ScriptedSink { FailPresent = call => call == 2 };
         var failures = new SinkFailureRecorder();
-        await using var pacer = NewPacer(sink, failures, clock: clock, time: new FakeTimeProvider());
+        await using var pacer = NewPacer(sink, failures, clock: clock);
 
         pacer.BeginRun();
         await pacer.PresentAsync(new CountedFrame(TimeSpan.Zero), default);
@@ -183,7 +291,7 @@ public sealed partial class ClockSelectVideoSinkTests
             onStarved: edges.Starved,
             onFed: edges.Fed,
             onSinkFailed: failures.OnFailed,
-            onSinkFaulted: failures.OnFaulted
+            onFaulted: failures.OnFaulted
         );
 
         await pacer.PresentAsync(new CountedFrame(TimeSpan.Zero), default);
@@ -205,7 +313,6 @@ public sealed partial class ClockSelectVideoSinkTests
     [Fact]
     public async Task ASinkThatThrowsOnEveryCall_LogsOneWarningForItsFailures_AndOneForTheFault()
     {
-        // The fake clock never moves, so every failure falls inside the first one's interval.
         var sink = new ScriptedSink { FailPresent = _ => true };
         var failures = new SinkFailureRecorder();
         var logger = new LevelCountingLogger();
@@ -216,14 +323,10 @@ public sealed partial class ClockSelectVideoSinkTests
             capacity: 4,
             timeProvider: new FakeTimeProvider(),
             onSinkFailed: failures.OnFailed,
-            onSinkFaulted: failures.OnFaulted
+            onFaulted: failures.OnFaulted
         );
 
-        for (int call = 1; call <= MaxSinkFailures + 1; call++)
-        {
-            await pacer.PresentAsync(new CountedFrame(TimeSpan.Zero), default);
-            await sink.WaitForCallsAsync(call);
-        }
+        await PresentEachAsync(pacer, sink, from: 1, to: MaxSinkFailures + 1);
         await failures.FaultReported.WaitAsync(TimeSpan.FromSeconds(30));
         await pacer.DisposeAsync();
 
@@ -236,17 +339,40 @@ public sealed partial class ClockSelectVideoSinkTests
         SinkFailureRecorder failures,
         VideoFormatAnnouncer? announcer = null,
         FakeClock? clock = null,
-        TimeProvider? time = null
+        TimeProvider? time = null,
+        VideoSinkFailures? sinkFailures = null
     ) =>
         new(
             sink,
             clock ?? new FakeClock(),
             capacity: 4,
-            timeProvider: time,
+            timeProvider: time ?? new FakeTimeProvider(),
             formatAnnouncer: announcer,
+            sinkFailures: sinkFailures,
             onSinkFailed: failures.OnFailed,
-            onSinkFaulted: failures.OnFaulted
+            onFaulted: failures.OnFaulted
         );
+
+    /// <summary>
+    /// Presents one frame for each of the sink's calls <paramref name="from"/> to
+    /// <paramref name="to"/>, waiting for each call before the next frame, and returns once the
+    /// pacer has parked after the last one, so it has dealt with that call's outcome.
+    /// </summary>
+    /// <remarks>
+    /// The park is what makes a dispose straight after safe: a failure the loop has not yet
+    /// counted when the pacer stops is a failure on the way out, and is not counted at all.
+    /// </remarks>
+    private static async Task PresentEachAsync(ClockSelectVideoSink pacer, ScriptedSink sink, int from, int to)
+    {
+        for (int call = from; call <= to; call++)
+        {
+            long parked = pacer.ParkGeneration;
+            await pacer.PresentAsync(new CountedFrame(TimeSpan.Zero), default);
+            await sink.WaitForCallsAsync(call);
+            if (call == to)
+                await pacer.WaitForParkAfterAsync(parked).WaitAsync(TimeSpan.FromSeconds(30));
+        }
+    }
 
     /// <summary>
     /// A sink whose calls fail as the test says, counted from 1. It owns every frame it is given,
@@ -257,6 +383,8 @@ public sealed partial class ClockSelectVideoSinkTests
         private readonly object _lock = new();
         private readonly List<Exception> _thrown = [];
         private readonly List<(bool Taken, int Count, TaskCompletionSource Signal)> _waiters = [];
+        private readonly TaskCompletionSource _held = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _calls;
         private int _taken;
         private int _announcements;
@@ -270,6 +398,17 @@ public sealed partial class ClockSelectVideoSinkTests
         /// <summary>What a failing call throws.</summary>
         public Func<Exception> Failure { get; init; } = () => new InvalidOperationException("the sink failed");
 
+        /// <summary>
+        /// The present, by number, that does not return until <see cref="ReleaseHeld"/>, or 0 for
+        /// none.
+        /// </summary>
+        public int HoldPresent { get; init; }
+
+        /// <summary>Completes once the held present has been called.</summary>
+        public Task Held => _held.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        public void ReleaseHeld() => _release.TrySetResult();
+
         /// <summary>Presents the sink was called with, whether they threw or not.</summary>
         public int Calls
         {
@@ -277,6 +416,16 @@ public sealed partial class ClockSelectVideoSinkTests
             {
                 lock (_lock)
                     return _calls;
+            }
+        }
+
+        /// <summary>Presents the sink took without throwing.</summary>
+        public int Taken
+        {
+            get
+            {
+                lock (_lock)
+                    return _taken;
             }
         }
 
@@ -307,10 +456,12 @@ public sealed partial class ClockSelectVideoSinkTests
         {
             frame.Dispose();
             Exception? failure = null;
+            bool hold;
             List<TaskCompletionSource> ready;
             lock (_lock)
             {
                 _calls++;
+                hold = _calls == HoldPresent;
                 if (FailPresent(_calls))
                 {
                     failure = Failure();
@@ -324,6 +475,12 @@ public sealed partial class ClockSelectVideoSinkTests
             }
             foreach (var signal in ready)
                 signal.TrySetResult();
+
+            if (hold)
+            {
+                _held.TrySetResult();
+                return new ValueTask(ReturnOnReleaseAsync(failure));
+            }
             return failure is null ? ValueTask.CompletedTask : ValueTask.FromException(failure);
         }
 
@@ -341,6 +498,13 @@ public sealed partial class ClockSelectVideoSinkTests
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        private async Task ReturnOnReleaseAsync(Exception? failure)
+        {
+            await _release.Task.ConfigureAwait(false);
+            if (failure is not null)
+                throw failure;
+        }
 
         // Caller holds _lock.
         private List<TaskCompletionSource> Ready()
@@ -370,7 +534,7 @@ public sealed partial class ClockSelectVideoSinkTests
         }
     }
 
-    /// <summary>Records what the pacer reports about its sink.</summary>
+    /// <summary>Records what the pacer reports about its sink, and its fault.</summary>
     private sealed class SinkFailureRecorder
     {
         private readonly object _lock = new();
@@ -379,6 +543,7 @@ public sealed partial class ClockSelectVideoSinkTests
         private readonly TaskCompletionSource<Exception> _faulted = new(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
+        private int _faults;
 
         public int Reports
         {
@@ -394,10 +559,8 @@ public sealed partial class ClockSelectVideoSinkTests
 
         public Exception? Fault => _faulted.Task.IsCompleted ? _faulted.Task.Result : null;
 
-        /// <summary>How many times the pacer reported its sink as faulted.</summary>
+        /// <summary>How many times the pacer reported a fault.</summary>
         public int Faults => Volatile.Read(ref _faults);
-
-        private int _faults;
 
         public void OnFailed(PlaybackError error)
         {

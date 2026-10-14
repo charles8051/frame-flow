@@ -997,24 +997,32 @@ not move on (#703).
 
 Each call that throws now costs the frame it was for, and the player goes on with the next frame:
 
-- The player raises the failure on `ErrorOccurred` and stays in its state. The `PlaybackError` has
-  `ErrorCategory.System`, names the sink's type, and carries what the sink threw as `Inner`. An
+- The player raises failures on `ErrorOccurred` and stays in its state: the first, then at most one
+  every five seconds, each saying how many failures came since the one before. The `PlaybackError`
+  has `ErrorCategory.System`, names the sink's type, and carries what the sink threw as `Inner`. An
   `OperationCanceledException` the sink throws while the player is not stopping counts the same way.
+  Each failure raised is logged at Warning, and the others at Debug.
 - A frame whose `OnFormatChangedAsync` threw is not presented, and the next frame announces its format
   again first, so no frame of a format the sink refused reaches `PresentAsync`.
-- A sink that throws on more than eight calls in a row fails the item, as a fault in its decoding
-  does. The player raises `ItemFailed` with `FaultedDuringPlayback`, and `ErrorOccurred`, with an
-  error that wraps what the sink threw last, and moves on. Under `RepeatMode.Off` a last item that
-  fails ends the queue in `Ended`. A sink that fails every item puts the player in `Error` once more
-  than eight items have failed in a row. A frame the sink takes starts its count of calls again.
-- The first failure is logged at Warning, then at most one more every five seconds, with how many
-  went to Debug in between. The failure that fails the item has a Warning of its own.
+- The failures are counted for the sink, across the items the player plays through it, and a frame
+  the sink takes starts the count again. The failure that makes more than eight in a row fails the
+  item playing, as a fault in its decoding does: the player raises `ItemFailed` with
+  `FaultedDuringPlayback`, and `ErrorOccurred`, with an error that wraps what the sink threw, and
+  moves on. Until the sink takes a frame, each later item fails at its first failure. An item with
+  fewer frames than that, a still for instance, counts toward the run like any other.
+- Under `RepeatMode.Off` a last item that fails ends the queue in `Ended`, not `Error`. The player
+  enters `Error` when more than eight items fail in a row, as it does for any fault. An item that had
+  played for five seconds, or half its length if that is shorter, before it failed does not count
+  toward those eight, and starts their count again; that can be the item whose failure made the run
+  reach the limit, but not the items after it, which fail at their first failure.
+- Anything else that stopped the player's delivery of frames, a clock that throws for instance, now
+  fails the item the same way, where it used to freeze it.
 
 A pass does not change. It stops at the first call that throws, and `RunToCompletionAsync` throws a
 `GraphFaultException` naming the `video-sink` node, with what the sink threw as its inner exception.
 
 **Who hits this.** An app with a video sink of its own that can throw, which used to see its video
-freeze without a word. It now sees `ErrorOccurred` for each failure, and the item ends if the sink
+freeze without a word. It now sees `ErrorOccurred` when the sink fails, and the item ends if the sink
 keeps failing. Code that treats every `ErrorOccurred` as the end of playback now stops on one dropped
 frame.
 

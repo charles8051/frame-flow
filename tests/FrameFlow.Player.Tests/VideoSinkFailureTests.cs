@@ -10,8 +10,9 @@ namespace FrameFlow.Player.Tests;
 /// <summary>
 /// A video sink that throws, behind a real player and pass (#703). Under a player, one failure
 /// costs a frame and is raised on <see cref="IMediaTransport.ErrorOccurred"/> while the player
-/// plays on; a sink that keeps failing fails the item, as a fault in its decoding does. A pass
-/// stops at the first failure and its run throws it.
+/// plays on; a sink that keeps failing, counted across the items it presents, fails the item
+/// playing, as a fault in its decoding does. A pass stops at the first failure and its run throws
+/// it.
 /// </summary>
 /// <remarks>
 /// Each test waits for the player to end, or the run to throw, before it asserts what did not
@@ -22,12 +23,16 @@ public sealed class VideoSinkFailureTests
 {
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(60);
 
-    // Half a second at 30 fps: fifteen frames, more than a sink that always throws is called.
+    // Half a second at 30 fps: fifteen frames.
     private const string ShortClip = "test-subsecond.mp4";
 
-    // Three seconds at 24 fps. A sink that always throws faults it well inside half its length,
-    // so the fault does not count as progress and the failures count toward the playlist's limit.
+    // Three seconds at 24 fps: seventy-two frames, far more than a sink that always throws is
+    // called before it faults, and long enough that the fault comes well inside half its length,
+    // so it does not count as progress and counts toward the playlist's limit.
     private const string LongerClip = "test-video-h264-yuv420p.mp4";
+
+    // A quarter of a second of LongerClip: six frames, fewer than the run of failures that faults.
+    private static readonly TimeSpan ShortItem = TimeSpan.FromMilliseconds(250);
 
     private static string Corpus(string name) =>
         TestEnvironment.GetCorpusFile(name) ?? throw new InvalidOperationException($"{name} is missing.");
@@ -36,7 +41,7 @@ public sealed class VideoSinkFailureTests
     public async Task ASinkThatThrowsOnce_LeavesThePlayerPlaying_AndRaisesOneError()
     {
         var sink = new ThrowingVideoSink(call => call == 2);
-        await using var player = await BuildAsync(ShortClip, sink);
+        await using var player = await BuildAsync(Corpus(ShortClip), sink);
         var errors = new List<(PlaybackError Error, PlaybackState State)>();
         var states = new List<PlaybackState>();
         using var onError = player.ErrorOccurred.Subscribe(e =>
@@ -71,7 +76,7 @@ public sealed class VideoSinkFailureTests
     public async Task ASinkThatAlwaysThrows_FailsTheItem_AndAQueueOfOneEnds()
     {
         var sink = new ThrowingVideoSink(_ => true);
-        await using var player = await BuildAsync(ShortClip, sink);
+        await using var player = await BuildAsync(Corpus(LongerClip), sink);
         var errors = new List<PlaybackError>();
         var failed = new List<PlaylistItemFailed>();
         using var onError = player.ErrorOccurred.Subscribe(e =>
@@ -103,17 +108,51 @@ public sealed class VideoSinkFailureTests
         Assert.Equal(PlaylistItemFailure.FaultedDuringPlayback, failure.Failure);
         var fault = Assert.IsType<InvalidOperationException>(failure.Error.Inner);
         Assert.Same(sink.Thrown[^1], fault.InnerException);
-        // Each failure the pacer tolerated, then the item's.
-        Assert.Equal(PacerSinkFailures.MaxConsecutiveFailures + 1, raised.Length);
-        Assert.Same(failure.Error, raised[^1]);
-        Assert.Equal(PacerSinkFailures.MaxConsecutiveFailures + 1, sink.Calls);
+        // The first failure is reported, the rest fall inside its interval, and then the item's.
+        Assert.Equal(2, raised.Length);
+        Assert.Same(sink.Thrown[0], raised[0].Inner);
+        Assert.Same(failure.Error, raised[1]);
+        Assert.Equal(SinkFailureRun.MaxConsecutiveFailures + 1, sink.Calls);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
+    public async Task ASinkThatAlwaysThrows_FailsItemsShorterThanTheLimit_ByCountingAcrossThem()
+    {
+        // Each item has fewer frames than the run of failures that faults. Counted per item, no
+        // item would ever fault, and a broken sink would play the queue through to its end.
+        var sink = new ThrowingVideoSink(_ => true);
+        var path = Corpus(LongerClip);
+        await using var player = await BuildAsync(new MediaClip(MediaSource.FromFile(path), end: ShortItem), sink);
+        var second = await player.EnqueueAsync(new MediaClip(MediaSource.FromFile(path), end: ShortItem));
+        var third = await player.EnqueueAsync(new MediaClip(MediaSource.FromFile(path), end: ShortItem));
+        var failed = new List<PlaylistItemFailed>();
+        using var onItemFailed = player.ItemFailed.Subscribe(f =>
+        {
+            lock (failed)
+                failed.Add(f);
+        });
+
+        var ended = player.WaitForEndAsync();
+        Assert.True((await player.PlayAsync()).IsSuccess);
+        var result = await ended.WaitAsync(Bound);
+
+        Assert.True(result.IsSuccess, result.Error?.Message);
+        PlaylistItemFailed[] failures;
+        lock (failed)
+            failures = [.. failed];
+        // The run reaches the limit in the second item, or in the third when frames were dropped
+        // late, and once the sink has faulted, the item after it faults at its first frame.
+        Assert.NotEmpty(failures);
+        Assert.All(failures, f => Assert.Equal(PlaylistItemFailure.FaultedDuringPlayback, f.Failure));
+        Assert.Contains(failures, f => f.Item == third);
+        Assert.All(failures, f => Assert.True(f.Item == second || f.Item == third));
     }
 
     [RequiresFfmpegAndCorpusFact]
     public async Task ASinkThatAlwaysThrows_PutsARepeatingPlayerInError_OnceTheItemKeepsFailing()
     {
         var sink = new ThrowingVideoSink(_ => true);
-        await using var player = await BuildAsync(LongerClip, sink, RepeatMode.One);
+        await using var player = await BuildAsync(Corpus(LongerClip), sink, RepeatMode.One);
         var failed = 0;
         using var onItemFailed = player.ItemFailed.Subscribe(_ => Interlocked.Increment(ref failed));
 
@@ -121,10 +160,15 @@ public sealed class VideoSinkFailureTests
         Assert.True((await player.PlayAsync()).IsSuccess);
         var result = await ended.WaitAsync(Bound);
 
-        // The item plays again after each fault, and fails again, until the playlist gives up.
+        // The item plays again after each fault, and faults again at its first frame, until the
+        // playlist gives up.
         Assert.False(result.IsSuccess);
         Assert.Equal(PlaybackState.Error, player.State);
         Assert.Equal(PlaylistFailureGuard.MaxConsecutiveFailures + 1, Volatile.Read(ref failed));
+        Assert.Equal(
+            SinkFailureRun.MaxConsecutiveFailures + PlaylistFailureGuard.MaxConsecutiveFailures + 1,
+            sink.Calls
+        );
         Assert.Same(sink.Thrown[^1], Innermost(result.Error!.Inner));
     }
 
@@ -148,18 +192,18 @@ public sealed class VideoSinkFailureTests
         Assert.Equal(1, sink.Calls);
     }
 
-    private static Task<IMediaPlayer> BuildAsync(
-        string clip,
-        IVideoSink sink,
-        RepeatMode repeat = RepeatMode.Off
-    ) =>
+    private static Task<IMediaPlayer> BuildAsync(string path, IVideoSink sink, RepeatMode repeat = RepeatMode.Off) =>
+        Builder(sink, repeat).WithMedia(path).BuildPlayerAsync();
+
+    private static Task<IMediaPlayer> BuildAsync(MediaClip clip, IVideoSink sink) =>
+        Builder(sink, RepeatMode.Off).WithMedia(clip).BuildPlayerAsync();
+
+    private static IPlayerBuilder Builder(IVideoSink sink, RepeatMode repeat) =>
         FrameFlowPlayer
             .Create()
-            .WithMedia(Corpus(clip))
             .WithVideoSink(sink)
             .WithRepeatMode(repeat)
-            .WithHardwareDecode(HardwareDecodeMode.Disabled)
-            .BuildPlayerAsync();
+            .WithHardwareDecode(HardwareDecodeMode.Disabled);
 
     private static Exception? Innermost(Exception? error)
     {
