@@ -52,7 +52,15 @@ public sealed class LatestWinsFrameSlot
     private readonly object _gate = new();
     private IVideoFrame? _pending;
     private bool _closed;
+    private long _installed;
     private long _dropped;
+
+    /// <summary>
+    /// Total frames the slot has installed, whether or not they superseded one. Counted under the
+    /// slot's gate as each frame is installed, so it has moved before <see cref="Take"/> can return
+    /// that frame. A frame a closed slot refuses is not counted. Safe to read from any thread.
+    /// </summary>
+    public long Installed => Interlocked.Read(ref _installed);
 
     /// <summary>
     /// Total frames dropped because a newer frame superseded an unconsumed one
@@ -102,6 +110,7 @@ public sealed class LatestWinsFrameSlot
             {
                 superseded = _pending;
                 _pending = frame;
+                Interlocked.Increment(ref _installed);
             }
         }
 

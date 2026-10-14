@@ -644,3 +644,4 @@ FrameFlow.Media.FrameSlotInstall.Refused = 2 -> FrameFlow.Media.FrameSlotInstall
 FrameFlow.Media.FrameSlotInstall.Superseded = 1 -> FrameFlow.Media.FrameSlotInstall
 FrameFlow.Media.LatestWinsFrameSlot.Close() -> bool
 FrameFlow.Media.LatestWinsFrameSlot.Install(FrameFlow.Media.IVideoFrame! frame) -> FrameFlow.Media.FrameSlotInstall
+FrameFlow.Media.LatestWinsFrameSlot.Installed.get -> long

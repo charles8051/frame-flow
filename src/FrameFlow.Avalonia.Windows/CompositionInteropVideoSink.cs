@@ -34,7 +34,6 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
 {
     private readonly ILogger _logger;
     private readonly LatestWinsFrameSlot _slot = new();
-    private long _framesAccepted;
 
     /// <summary>Creates a sink.</summary>
     public CompositionInteropVideoSink(ILogger<CompositionInteropVideoSink>? logger = null)
@@ -49,11 +48,11 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     /// (clip advance / pause), where it goes flat too.
     /// </summary>
     /// <remarks>
-    /// Counted before the frame is installed, so it never trails the view's present count. A frame
-    /// given after <see cref="DisposeAsync"/> is counted and uncounted again within its
-    /// <see cref="PresentAsync"/> call.
+    /// The slot counts each frame as it installs it, under the gate the view's present takes the
+    /// frame through, so this never trails the view's present count. A frame given after
+    /// <see cref="DisposeAsync"/> is not counted.
     /// </remarks>
-    public long FramesAccepted => Volatile.Read(ref _framesAccepted);
+    public long FramesAccepted => _slot.Installed;
 
     /// <summary>
     /// Total frames this sink discarded at its own latest-wins intake, because a newer frame
@@ -164,23 +163,17 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     /// </remarks>
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
     {
-        // Counted before the install, not after: a present already posted can take the frame on
-        // the UI thread the moment it is installed, and the stall watchdog must never see that
-        // present ahead of the intake that fed it, or it arms for a frame already on screen.
-        Interlocked.Increment(ref _framesAccepted);
-
         // Latest-wins: keep only the newest frame; the slot disposes any prior unconsumed
         // one. The view routes by memory domain (GPU → zero-copy, CPU → upload fallback).
         // The supersede is accounted by the slot itself (FramesSuperseded) and folded into
         // the view's DiagnosticsSource; the sink has no per-drop log or meter of its own.
-        // Once DisposeAsync has closed the slot, it disposes the frame instead, and the frame
-        // is neither counted nor presented (#664). The watchdog reads the count going back as
-        // a reset.
+        // The slot also counts the install (FramesAccepted) under its gate, before a present
+        // already posted can take the frame on the UI thread: the stall watchdog must never
+        // see a present ahead of the intake that fed it, or it arms for a frame already on
+        // screen. Once DisposeAsync has closed the slot, it disposes the frame instead, and
+        // the frame is neither counted nor presented (#664).
         if (_slot.Install(frame) == FrameSlotInstall.Refused)
-        {
-            Interlocked.Decrement(ref _framesAccepted);
             return ValueTask.CompletedTask;
-        }
 
         // Delivery-cadence telemetry (perf survey §A1 A/B): one record per frame
         // this real sink accepts. Uniform across pacing variants — both PaceUntil

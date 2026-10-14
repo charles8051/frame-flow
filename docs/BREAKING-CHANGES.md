@@ -590,10 +590,11 @@ dispose had emptied the slot. The dispose now closes the slot in the same step, 
 a closed slot is disposed. A second `AvaloniaVideoSink.DisposeAsync` does nothing; it used to log
 its disposal line again.
 
-`LatestWinsFrameSlot` gained `Close` and `Install`. `Install` returns a `FrameSlotInstall` that says
-whether the frame was installed, superseded a pending one, or was refused by a closed slot. `TrySet`
-into a closed slot disposes the frame and returns `false`. A slot that is never closed works as
-before.
+`LatestWinsFrameSlot` gained `Close`, `Install` and `Installed`. `Install` returns a
+`FrameSlotInstall` that says whether the frame was installed, superseded a pending one, or was
+refused by a closed slot. `Installed` counts the frames installed, and `CompositionInteropVideoSink`
+reports it as `FramesAccepted`. `TrySet` into a closed slot disposes the frame and returns `false`.
+A slot that is never closed works as before.
 
 **Who hits this.** Code that read `FramesAccepted` from a disposed `CompositionInteropVideoSink` to
 see whether a player still fed it: it now stays where the dispose left it. Also a log check that

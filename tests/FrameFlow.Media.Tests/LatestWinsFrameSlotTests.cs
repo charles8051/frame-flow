@@ -290,6 +290,46 @@ public sealed class LatestWinsFrameSlotTests
         Assert.Throws<ArgumentNullException>(() => slot.Install(null!));
     }
 
+    [Fact]
+    public void Installed_CountsEveryInstall_ButNotARefusedFrame()
+    {
+        var slot = new LatestWinsFrameSlot();
+
+        slot.Install(new RecordingFrame());
+        slot.Install(new RecordingFrame()); // supersedes: still an install
+        slot.Take();
+        slot.Close();
+        slot.Install(new RecordingFrame()); // refused
+
+        Assert.Equal(2, slot.Installed);
+    }
+
+    [Fact]
+    public void Installed_HasMovedBeforeTheFrameCanBeTaken()
+    {
+        // A consumer that takes a frame the moment it is installed must find it counted, so a
+        // count of installs read against a count of takes never runs behind. The superseded
+        // frame's dispose runs after the new frame is installed and before Install returns.
+        var slot = new LatestWinsFrameSlot();
+        var second = new RecordingFrame();
+        IVideoFrame? taken = null;
+        long installedWhenTaken = -1;
+        var first = new RecordingFrame
+        {
+            OnDispose = () =>
+            {
+                taken = slot.Take();
+                installedWhenTaken = slot.Installed;
+            },
+        };
+
+        slot.Install(first);
+        slot.Install(second);
+
+        Assert.Same(second, taken);
+        Assert.Equal(2, installedWhenTaken);
+    }
+
     // ─── Fakes ──────────────────────────────────────────────────────
 
     /// <summary>
@@ -301,6 +341,9 @@ public sealed class LatestWinsFrameSlotTests
     private sealed class RecordingFrame : IVideoFrame
     {
         private int _disposeCount;
+
+        /// <summary>Runs on each <see cref="Dispose"/>, after the count.</summary>
+        public Action? OnDispose { get; init; }
 
         /// <summary>Number of times <see cref="Dispose"/> has been called on this frame.</summary>
         public int DisposeCount => Volatile.Read(ref _disposeCount);
@@ -314,7 +357,11 @@ public sealed class LatestWinsFrameSlotTests
 
         public IVideoFrame AddRef() => this;
 
-        public void Dispose() => Interlocked.Increment(ref _disposeCount);
+        public void Dispose()
+        {
+            Interlocked.Increment(ref _disposeCount);
+            OnDispose?.Invoke();
+        }
 
         public CpuFrameData? AsCpu() => null;
 
