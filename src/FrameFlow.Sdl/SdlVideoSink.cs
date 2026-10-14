@@ -16,7 +16,7 @@ namespace FrameFlow.Sdl;
 /// <remarks>
 /// <para>
 /// Uses a split-thread pattern:
-/// <see cref="PresentAsync"/> stores a frame via <see cref="Interlocked.Exchange{T}(ref T, T)"/>
+/// <see cref="PresentAsync"/> installs a frame in a latest-wins <see cref="LatestWinsFrameSlot"/>
 /// from any thread, and <see cref="RenderPendingFrame"/> consumes it on the SDL thread.
 /// </para>
 /// <para>
@@ -132,17 +132,17 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     public static SdlVideoSink CreateHeadless(ILogger<SdlVideoSink>? logger = null) => new(logger);
 
     /// <inheritdoc />
+    /// <remarks>
+    /// After <see cref="DisposeAsync"/> or <see cref="DestroyResources"/> the sink disposes the
+    /// frame and neither counts nor keeps it (ADR-0085, decision 4).
+    /// </remarks>
     public ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
     {
-        if (_destroyRequested)
-        {
-            frame.Dispose();
-            return ValueTask.CompletedTask;
-        }
-
-        // Latest-wins: the slot disposes any superseded frame and counts the drop. The
-        // returned flag drives this sink's drop telemetry (meter + log) outside the slot.
-        if (_slot.TrySet(frame))
+        // Latest-wins: the slot disposes any superseded frame and counts the drop, and once
+        // DisposeAsync or DestroyResources has closed it, disposes this frame instead of
+        // installing it. The result drives this sink's drop telemetry (meter + log) outside
+        // the slot.
+        if (_slot.Install(frame) == FrameSlotInstall.Superseded)
         {
             _telemetry.RecordSupersededDrop();
             LogFrameDropped(_logger, RenderedFrameCount);
@@ -181,7 +181,7 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
 
         if (_destroyRequested)
         {
-            _slot.Take()?.Dispose();
+            _slot.Close();
             DestroyResourcesCore();
             return;
         }
@@ -267,17 +267,26 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
         AssertSdlThread();
         _destroyRequested = true;
 
-        _slot.Take()?.Dispose();
+        // Takes the pending frame and closes the slot in one step, so a present racing this
+        // call cannot leave a frame in it.
+        _slot.Close();
 
         DestroyResourcesCore();
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Releases the pending frame and refuses later ones; the SDL resources go on the SDL
+    /// thread, at the next <see cref="RenderPendingFrame"/> or <see cref="DestroyResources"/>.
+    /// A second call does nothing.
+    /// </remarks>
     public ValueTask DisposeAsync()
     {
         _destroyRequested = true;
 
-        _slot.Take()?.Dispose();
+        // Takes the pending frame and closes the slot in one step, so a present racing this
+        // call cannot leave a frame in it.
+        _slot.Close();
 
         return ValueTask.CompletedTask;
     }

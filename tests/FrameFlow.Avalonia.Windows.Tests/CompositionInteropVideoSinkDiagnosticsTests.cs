@@ -144,6 +144,35 @@ public sealed class CompositionInteropVideoSinkDiagnosticsTests
         Assert.True(sink.FramesSuperseded > 0, "the feed outran the tick, so some frames must be counted lost");
     }
 
+    /// <summary>
+    /// The stall watchdog reads intake against presents, so a frame must be counted in
+    /// <c>FramesAccepted</c> no later than a present can take it. A present already posted can take
+    /// it the moment the slot installs it. Here the superseded frame's dispose stands in for that
+    /// present: the slot runs it after installing the new frame and before the install returns.
+    /// </summary>
+    [Fact]
+    public async Task FramesAccepted_CountsAFrameBeforeAPresentCanTakeIt()
+    {
+        var sink = new CompositionInteropVideoSink();
+        IVideoFrame? taken = null;
+        long acceptedWhenTaken = -1;
+        var first = new StubFrame
+        {
+            OnDispose = () =>
+            {
+                taken = sink.TakePendingFrame();
+                acceptedWhenTaken = sink.FramesAccepted;
+            },
+        };
+        var second = new StubFrame();
+
+        await sink.PresentAsync(first, CancellationToken.None);
+        await sink.PresentAsync(second, CancellationToken.None);
+
+        Assert.Same(second, taken);
+        Assert.Equal(2, acceptedWhenTaken);
+    }
+
     // ─── Fakes ──────────────────────────────────────────────────────
 
     /// <summary>
@@ -153,6 +182,9 @@ public sealed class CompositionInteropVideoSinkDiagnosticsTests
     private sealed class StubFrame : IVideoFrame
     {
         private int _disposeCount;
+
+        /// <summary>Runs on each <see cref="Dispose"/>, after the count.</summary>
+        public Action? OnDispose { get; init; }
 
         public int DisposeCount => Volatile.Read(ref _disposeCount);
 
@@ -165,7 +197,11 @@ public sealed class CompositionInteropVideoSinkDiagnosticsTests
 
         public IVideoFrame AddRef() => this;
 
-        public void Dispose() => Interlocked.Increment(ref _disposeCount);
+        public void Dispose()
+        {
+            Interlocked.Increment(ref _disposeCount);
+            OnDispose?.Invoke();
+        }
 
         public CpuFrameData? AsCpu() => null;
 

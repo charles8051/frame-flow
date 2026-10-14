@@ -165,7 +165,7 @@ public sealed class VideoSinkTelemetry
     /// <summary>
     /// Records that the slot superseded an unconsumed frame — bumps the drop meter only,
     /// because <see cref="LatestWinsFrameSlot.Dropped"/> already counts it. Call when
-    /// <see cref="LatestWinsFrameSlot.TrySet"/> returns <see langword="true"/>.
+    /// <see cref="LatestWinsFrameSlot.Install"/> returns <see cref="FrameSlotInstall.Superseded"/>.
     /// </summary>
     public void RecordSupersededDrop() => _meters.FramesDropped.Add(1);
 
