@@ -297,15 +297,6 @@ land.
   into an `InFlight` sink that hands encoded frames to the application's own worker for a live
   source. The abandonable node it named is not pursued. The record and
   [the GenAI exploration](../explorations/generative-inference.md) are kept as the evidence.
-- [Work in flight is held until it ends: one owner, one disposal](work-in-flight-held-until-it-ends.md)
-  — the pure cores decide what happens, but the layer that owns work in flight has no core, and
-  five defects in a row (#696, #701, #703, #707, #708) freed, reset or forgot something while work
-  that used it still ran. Proposes a scope that holds each task until it completes; a pure core for
-  the item runtime whose state includes its pending work, so a free, a demuxer seek or a decoder
-  reset is emitted only when nothing is pending, and superseding seeks coalesce; one disposal
-  contract (joined, cancel then await then free, no bound, faults returned); an interrupt callback
-  so cancellation reaches `av_read_frame` (#709); and every loop reporting its end. Supersedes
-  ADR-0013's bounded disposal timeout and amends ADR-0026 and ADR-0044.
 
 ## Recently numbered
 
@@ -510,3 +501,15 @@ ADR-0085 was numbered and accepted on 2026-10-13, and implemented under #691.
   where a sink is attached, so two players cannot drive one sink (#286); a surface swapped out
   under the player view's own claim; and an in-box `FanOutVideoSink` that passes the claim to the
   views it feeds (#611).
+
+ADR-0086 was numbered and accepted on 2026-10-14; its implementation is tracked in #718.
+
+- [Work in flight is held until it ends: one owner, one disposal](ADR-0086-work-in-flight-held-until-it-ends.md)
+  — the pure cores decide what happens, but the layer that owns work in flight has no core, and
+  seven defects (#696, #701, #703, #707, #708, #713, #714) freed, reset or forgot something while
+  work that used it still ran, or left a stopped run behind. A scope per run that holds each task
+  until it completes; a pure core for the item runtime whose state includes its pending work, so a
+  free, a demuxer seek or a decoder reset is emitted only when nothing is pending, and superseding
+  seeks coalesce; one disposal contract (joined, cancel then await then free, nothing freed early,
+  faults returned); an interrupt callback for native reads (#709); and every loop reporting its end.
+  Supersedes ADR-0013's bounded disposal timeout and amends ADR-0026 and ADR-0044.

@@ -1,16 +1,21 @@
-# Work in flight is held until it ends: one owner, one disposal
+# ADR-0086: Work in flight is held until it ends: one owner, one disposal
 
 ## Status
 
-Draft, pending number assignment at merge. **Proposed** (2026-10-14). Not implemented.
+**Accepted (2026-10-14)**, implementation tracked in #718. Not implemented yet. Proposed on
+2026-10-14 in #712 and revised by review there; [Revision history](#revision-history) lists what
+changed.
 
 Motivating issues: #707 (a cancelled seek forgets the session's pump and graph tasks while they
 still run), #708 (a second player dispose returns before the first has finished), #696 (a pass
 disposed during its run frees what the run is still using), #703 (a sink that throws once stops the
 pacer, and nothing reports it) and #709 (a demuxer read over a stalled source cannot be
 interrupted). #701 (the pacer released a frame the sink owned) is the same family and is fixed
-(#704). Local fixes for #696 (#710), #703 and #707 are in flight and land first; this record
-replaces the mechanisms they patch.
+(#704). Two more of the same shape were found while the local fixes were made: #713 (a pass whose
+graph faults can hang, because its run cancels the demux pump only after both sides have ended) and
+#714 (a seek cancelled before it repositions leaves the run stopped, and a later play starts
+nothing). The local fixes land first: #696 in #710 and #703 in #711, both merged, and #707 in #715.
+This record replaces the mechanisms they patch.
 
 Line numbers are on `main` at 7af3212.
 
@@ -323,7 +328,7 @@ The exhaustive walk covers the core. The integration suite stays for real FFmpeg
 
 Each slice carries its own BREAKING-CHANGES entry where an app can see a change.
 
-1. **The primitives.** `WorkScope` and `DisposeOnce` with their tests. `PlaybackControllerCore` and
+1. **The primitives.** `WorkScope` and `DisposeOnce`, internal in `FrameFlow.Media`, with their tests. `PlaybackControllerCore` and
    `PlaylistMediaPlayerCore` move onto `DisposeOnce`, which is the fix for #708. The pacer, the OpenAL sink
    (whose overlapping disposes throw `ObjectDisposedException` today) and the interop view's second
    dispose move onto it.
@@ -443,15 +448,19 @@ Cancelled or Failed upward, as today.
 
 ## Open questions
 
-1. **Where the scope lives.** `WorkScope` and `DisposeOnce` are used by FrameFlow.Graph,
-   FrameFlow.Playback, FrameFlow.Player and the Avalonia views. FrameFlow.Graph is the lowest
-   assembly they share. Is a shared internal helper there, visible through InternalsVisibleTo, right,
-   or should they be public for sinks written by applications?
-2. **Release-build fences.** Is a Debug use counter on the passive resources enough, or should a
-   Release build also refuse a dispose while a use is counted?
-3. **The views.** The interop view's 250 ms bounded drain before it defers to the reaper is a bounded
-   wait on the UI thread. Should it follow decision 3, or is the reaper's deferral the right answer
-   on a UI thread that must not block?
+None remain. The draft's three were settled on acceptance:
+
+1. **Where the scope lives.** `WorkScope` and `DisposeOnce` are internal types in `FrameFlow.Media`.
+   It already shares its internals with FrameFlow.Playback, FrameFlow.Decoding,
+   FrameFlow.Audio.OpenAL, FrameFlow.Avalonia and FrameFlow.Avalonia.Windows; FrameFlow.Player is
+   added. FrameFlow.Graph shares its internals only with its tests, and nothing in it needs the
+   types. They become public only if a sink written by an application needs them.
+2. **Release-build fences.** A Debug use counter on the passive resources is enough. Decision 2 is
+   what keeps a use and a dispose apart; the counter catches a regression in tests. A violation seen
+   in a Release build reopens this.
+3. **The views.** The interop view's 250 ms drain on the UI thread is decision 3.3 as written: it
+   bounds the caller's wait, and the reaper frees only once the work that gates it has completed.
+   It stays.
 
 ## Revision history
 
@@ -461,3 +470,7 @@ Cancelled or Failed upward, as today.
   the owner logs which work has not ended. Decision 1 now says a scope serves one run and how older
   scopes are kept. A new alternative, "Join the tasks and stop there", says why the runtime needs a
   core and not only joined tasks.
+- **2026-10-14, accepted.** Numbered ADR-0086. #713 and #714, found while the local fixes were
+  made, join the motivating issues. The three open questions are settled: the scope and the disposal
+  helper are internal in `FrameFlow.Media`, Debug use counters suffice, and the interop view's
+  bounded drain conforms to decision 3.3.
