@@ -37,7 +37,7 @@ namespace FrameFlow.Decoding;
 /// <para>
 /// Cancellation (ADR-0013): <see cref="CancellationToken"/> parameters cancel only the
 /// current operation, not the session. The session remains open after cancellation, and
-/// readable unless a read was given up partway, as the next paragraph says.
+/// readable unless a read or a seek was given up partway, as the next paragraph says.
 /// </para>
 /// <para>
 /// A cancellation reaches a call blocked in FFmpeg as well (#709). The format context carries an
@@ -52,7 +52,9 @@ namespace FrameFlow.Decoding;
 /// framing. So a read that the interrupt cut short, or that returned once its token was cancelled,
 /// returns no packet, and the session reads nothing more until a seek has put it somewhere known:
 /// <see cref="ReadPacketAsync"/> and a demux pump throw <see cref="InvalidOperationException"/>
-/// until then. After a cancelled read, seek before reading on.
+/// until then. A seek that does not complete, cancelled or failed, may have moved the demuxer
+/// partway, and leaves the session the same way. After a cancelled read or seek, seek before
+/// reading on.
 /// </para>
 /// <para>
 /// Disposal (ADR-0086, decision 3.5): no lock fences the native calls, so the owner ends every
@@ -74,9 +76,10 @@ public sealed class DemuxSession : IDemuxSession
 
     private bool _disposed;
 
-    // Set when a read was given up partway (#709): the demuxer's position is not reliable, and
-    // reads are refused until a seek clears it. Written and read only by uses, which do not overlap.
-    private bool _readGivenUp;
+    // Set when a read was given up partway, or while a seek is under way and when one does not
+    // complete (#709): the demuxer's position is not reliable, and reads are refused until a seek
+    // completes. Written and read only by uses, which do not overlap.
+    private bool _positionLost;
 
     // ADR-0034: diagnostics counters. Single-writer (demux pump per ADR-0009)
     // + multi-reader (snapshot call from any thread). Interlocked is sufficient
@@ -154,8 +157,8 @@ public sealed class DemuxSession : IDemuxSession
     /// first.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// A read before this one was given up partway and no seek has followed it, or FFmpeg gave up
-    /// this read although nothing cancelled it, or the read failed.
+    /// A read or a seek before this one was given up partway and no seek has completed since, or
+    /// FFmpeg gave up this read although nothing cancelled it, or the read failed.
     /// </exception>
     public ValueTask<DemuxPacket?> ReadPacketAsync(CancellationToken cancellationToken = default)
     {
@@ -200,11 +203,13 @@ public sealed class DemuxSession : IDemuxSession
     /// <exception cref="ObjectDisposedException">Thrown when the session has been disposed.</exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when the container fails to seek, or when FFmpeg gave up on the seek although
-    /// <paramref name="cancellationToken"/> was not cancelled.
+    /// <paramref name="cancellationToken"/> was not cancelled. Reads then wait for a seek that
+    /// completes.
     /// </exception>
     /// <exception cref="OperationCanceledException">
-    /// <paramref name="cancellationToken"/> was cancelled. The seek may have moved the container
-    /// partway, and the next seek moves it again.
+    /// <paramref name="cancellationToken"/> was cancelled, before the seek, while it ran, or by the
+    /// time it returned. The seek may have moved the container partway, so reads wait for a seek
+    /// that completes.
     /// </exception>
     public ValueTask SeekAsync(TimeSpan position, CancellationToken cancellationToken = default)
     {
@@ -212,14 +217,18 @@ public sealed class DemuxSession : IDemuxSession
         cancellationToken.ThrowIfCancellationRequested();
 
         // The seek observes its own token, whatever a run before it was cancelled with (#709).
+        // Until it completes, it may have moved the demuxer partway, and reads wait for one that
+        // does: a seek cancelled while FFmpeg ran it, or by the time it returned, has not.
         using var use = BeginUse(cancellationToken);
+        _positionLost = true;
         if (KeyframeStream() is { } stream)
             SeekToKeyframe(position, stream, cancellationToken);
         else
             SeekContainer(position, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        // The demuxer is somewhere known again, whatever a read before the seek gave up.
-        _readGivenUp = false;
+        // The demuxer is somewhere known again, whatever a read or a seek before this one gave up.
+        _positionLost = false;
 
         _logger.LogDebug("Seek completed to position {Position}", position);
         Interlocked.Increment(ref _seeksPerformed);
@@ -424,7 +433,7 @@ public sealed class DemuxSession : IDemuxSession
         if (result >= 0)
             FFAvCodec.av_packet_unref(packet);
         if (interrupted || result >= 0)
-            _readGivenUp = true;
+            _positionLost = true;
 
         cancellationToken.ThrowIfCancellationRequested();
         throw new InvalidOperationException(
@@ -560,19 +569,19 @@ public sealed class DemuxSession : IDemuxSession
     }
 
     /// <summary>
-    /// Begins a use that reads packets: <see cref="BeginUse"/>, refused while a read given up
-    /// partway has not been followed by a seek.
+    /// Begins a use that reads packets: <see cref="BeginUse"/>, refused while a read or a seek
+    /// given up partway has not been followed by a seek that completes.
     /// </summary>
     /// <exception cref="ObjectDisposedException">The session has been disposed.</exception>
-    /// <exception cref="InvalidOperationException">A read was given up and no seek has followed.</exception>
+    /// <exception cref="InvalidOperationException">The demuxer's position is not reliable.</exception>
     internal Use BeginRead(CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_readGivenUp)
+        if (_positionLost)
         {
             throw new InvalidOperationException(
-                "A read of this demux session was given up partway when it was cancelled (#709), so "
-                    + "the demuxer's position is not reliable. Seek before reading on."
+                "A read or a seek of this demux session was given up partway (#709), so the "
+                    + "demuxer's position is not reliable. Seek before reading on."
             );
         }
 

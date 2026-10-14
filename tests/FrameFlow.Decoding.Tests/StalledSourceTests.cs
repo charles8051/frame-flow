@@ -184,7 +184,8 @@ public sealed class StalledSourceTests : IClassFixture<FfmpegBootstrapFixture>
 
     /// <summary>
     /// A seek far into the source reopens it there, and the server does not answer. The seek gives
-    /// up when its token is cancelled.
+    /// up when its token is cancelled, and having moved the demuxer partway, leaves the session
+    /// reading nothing until a seek completes.
     /// </summary>
     [RequiresFfmpegFact]
     public async Task ASeekWhoseReopeningStalls_GivesUpWhenItsTokenIsCancelled()
@@ -202,6 +203,9 @@ public sealed class StalledSourceTests : IClassFixture<FfmpegBootstrapFixture>
 
         Assert.False(thrown is TimeoutException, "The seek was still waiting on the source after its token was cancelled.");
         Assert.IsAssignableFrom<OperationCanceledException>(thrown);
+        var read = await Record.ExceptionAsync(() => rig.Demux.ReadPacketAsync().AsTask());
+        Assert.IsType<InvalidOperationException>(read);
+        Assert.Contains("Seek before reading on", read!.Message);
     }
 
     /// <summary>

@@ -1277,9 +1277,10 @@ given up ends as cancelled, not as having reached the end of the source.
   token is cancelled while FFmpeg waits on the source throws `OperationCanceledException`, and so
   does one that returns, fails or reaches the end of the source once the token is cancelled. A read
   cut short partway through a packet returns no part of it. A read given up this way leaves the
-  demuxer's position unreliable (`mov`, for one, has already moved past the packet), so the session
-  then refuses reads with `InvalidOperationException` until a seek: after a cancelled read, seek
-  before reading on. A seek's keyframe search that FFmpeg gives up without a cancellation is an
+  demuxer's position unreliable (`mov`, for one, has already moved past the packet), and so does a
+  seek that does not complete, so the session then refuses reads with `InvalidOperationException`
+  until a seek completes: after a cancelled read or seek, seek before reading on. A seek whose token
+  is cancelled by the time it returns throws `OperationCanceledException`. A seek's keyframe search that FFmpeg gives up without a cancellation is an
   `InvalidOperationException`; it no longer falls back to the container's own seek.
 - A player whose first item opens during `BuildPlayerAsync`, from a source that stalls before it
   answers. The open does not see the build's token, and the cleanup of a cancelled build waits for
