@@ -88,6 +88,11 @@ public interface IVideoSink : IAsyncDisposable
     /// invokes this method exactly once per frame from a
     /// <c>SinkNode&lt;IVideoFrame&gt;</c> body.
     /// </summary>
+    /// <remarks>
+    /// The sink owns the frame from the call, even when the call throws or is cancelled. A caller
+    /// never disposes a frame it has handed over, so a sink that fails disposes the frame, or
+    /// leaves it with whatever it handed it to, before it throws (#701).
+    /// </remarks>
     /// <param name="frame">The frame to present. Ownership transfers to the sink.</param>
     /// <param name="ct">Cancellation token observed during async work (rare).</param>
     ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct);

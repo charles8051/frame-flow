@@ -84,10 +84,20 @@ internal sealed class VideoFormatAnnouncer
     /// so the sink cannot be handed a frame whose shape is not the last shape it was told.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The new format becomes the baseline only after the sink's own call returns. A callback
     /// that throws or is cancelled leaves the previous baseline in place, so the next frame of
     /// that format announces again rather than being presented to a sink that was never
     /// successfully told — which is what recording the baseline first would have done.
+    /// </para>
+    /// <para>
+    /// <b>Ownership (#701).</b> This takes ownership of <paramref name="frame"/> on entry, and the
+    /// caller does not dispose it afterwards, whatever the outcome. A failure before the hand-off,
+    /// a cancelled wait for the sink or a throwing <see cref="IVideoSink.OnFormatChangedAsync"/>,
+    /// disposes it here. From the call to <see cref="IVideoSink.PresentAsync"/> the sink owns it,
+    /// even when that call throws: a sink may have disposed it, kept it or handed it on before it
+    /// threw, and only the sink knows which, so nothing here disposes it after the hand-off.
+    /// </para>
     /// </remarks>
     internal async ValueTask PresentAsync(
         IVideoSink sink,
@@ -95,21 +105,31 @@ internal sealed class VideoFormatAnnouncer
         CancellationToken cancellationToken
     )
     {
-        await _serial.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var handedOver = false;
         try
         {
-            var next = FormatOf(frame);
-            if (ShouldAnnounce(Volatile.Read(ref _announced), next))
+            await _serial.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
-                await sink.OnFormatChangedAsync(next, cancellationToken).ConfigureAwait(false);
-                Volatile.Write(ref _announced, next);
-            }
+                var next = FormatOf(frame);
+                if (ShouldAnnounce(Volatile.Read(ref _announced), next))
+                {
+                    await sink.OnFormatChangedAsync(next, cancellationToken).ConfigureAwait(false);
+                    Volatile.Write(ref _announced, next);
+                }
 
-            await sink.PresentAsync(frame, cancellationToken).ConfigureAwait(false);
+                handedOver = true;
+                await sink.PresentAsync(frame, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _serial.Release();
+            }
         }
         finally
         {
-            _serial.Release();
+            if (!handedOver)
+                frame.Dispose();
         }
     }
 }
