@@ -708,7 +708,14 @@ built before the trip keeps working (ADR-0085, decision 2; #691).
 - While the view presents, it holds the frame it presented last until it has presented the next
   one, where it used to release each frame once presented. On a paused player that is one decoder
   frame held for as long as the view shows it. `MaxHeldFrames` already counted that frame and does
-  not change. `DisposeAsync`, and assigning or clearing `Sink`, release it.
+  not change. `DisposeAsync`, assigning or clearing `Sink`, and the release of the claim on the
+  view's sink once its player is disposed release it; the picture stays up.
+- A caller's sink the view lets go of, by `Sink` or `DisposeAsync`, stays as no view presents it.
+  With no claim it disposes every frame it is given and `FramesAccepted` stops counting, until a
+  view takes it up again.
+- `FramePresented` is no longer raised for a hand-off that completes after a detach or after
+  `Sink` is assigned. The view's `FramesCommitted` still counts it.
+- `PresenterStalled` is no longer raised while the view is not presenting.
 - Assigning `Sink` first claims the outgoing sink. While a player or pass holds it, the assignment
   throws `InvalidOperationException` naming the holder, and nothing changes. Otherwise the outgoing
   sink is disposed, if the view made it, or let go of, as before.
