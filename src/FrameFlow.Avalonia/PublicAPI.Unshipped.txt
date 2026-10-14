@@ -32,6 +32,7 @@ FrameFlow.Avalonia.FrameFlowPlayerChrome.SeekBar.get -> FrameFlow.Avalonia.Frame
 FrameFlow.Avalonia.FrameFlowPlayerView
 FrameFlow.Avalonia.FrameFlowPlayerView.AttachSink(Microsoft.Extensions.Logging.ILoggerFactory! loggerFactory) -> FrameFlow.Media.IVideoSink!
 FrameFlow.Avalonia.FrameFlowPlayerView.Chrome.get -> FrameFlow.Avalonia.FrameFlowPlayerChrome!
+FrameFlow.Avalonia.FrameFlowPlayerView.DisposeAsync() -> System.Threading.Tasks.ValueTask
 FrameFlow.Avalonia.FrameFlowPlayerView.FileOpenRequested -> System.EventHandler<FrameFlow.Avalonia.FileOpenRequestedEventArgs!>?
 FrameFlow.Avalonia.FrameFlowPlayerView.FrameFlowPlayerView() -> void
 FrameFlow.Avalonia.FrameFlowPlayerView.LoopByDefault.get -> bool

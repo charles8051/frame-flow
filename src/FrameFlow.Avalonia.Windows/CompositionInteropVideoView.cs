@@ -71,7 +71,7 @@ namespace FrameFlow.Avalonia.Windows;
 /// tree meanwhile builds new ones, and the teardown never disposes or presents those.
 /// </para>
 /// </remarks>
-public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsyncDisposable
+public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBoxVideoSurface, IAsyncDisposable
 {
     [System.Diagnostics.CodeAnalysis.SuppressMessage(
         "Reliability", "CA2213", Justification = "The caller's factory: the view logs through it and does not own it.")]
@@ -878,6 +878,9 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IAsync
         Initialize(loggerFactory);
         return EnsureSink();
     }
+
+    // FrameFlowPlayerView claims it before it swaps this view out (ADR-0085, decision 7).
+    IClaimableSink? IInBoxVideoSurface.Sink => _sink;
 
     /// <inheritdoc />
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
