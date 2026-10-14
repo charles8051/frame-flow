@@ -121,8 +121,8 @@ internal sealed partial class WorkerBinding<TWorker>
     /// </summary>
     /// <remarks>
     /// A call made while a stop is under way waits for that stop and ends as it did. A call with
-    /// nothing running returns at once. What the stop's steps throw, and a fault of the loop that
-    /// <c>onError</c> did not take, is thrown once the worker is disposed and the binding is idle.
+    /// nothing running returns at once. What the stop's steps throw, and what <c>onError</c> threw,
+    /// is thrown once the worker is disposed and the binding is idle.
     /// </remarks>
     public Task StopAsync()
     {
@@ -182,8 +182,7 @@ internal sealed partial class WorkerBinding<TWorker>
 
     /// <summary>
     /// Cancels the worker's loop, asks the worker to stop, and waits for the loop to end. Adds to
-    /// <paramref name="failures"/> what the worker's stop threw, and what the loop ended with that
-    /// <c>onError</c> did not take.
+    /// <paramref name="failures"/> what the worker's stop threw, and what <c>onError</c> threw.
     /// </summary>
     private static async Task EndLoopAsync(Cycle cycle, List<Exception> failures)
     {

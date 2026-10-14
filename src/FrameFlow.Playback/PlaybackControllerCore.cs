@@ -65,9 +65,10 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         );
 
     // Holds the dispatch loop until it ends (ADR-0086, decision 1). The dispose stops it first
-    // thing, which cancels the token the loop passes to the session operations it awaits, an open
-    // or a play over a stalled source among them, so the dispose's wait for the loop ends (#719).
-    // The loop goes on draining the channel until the dispose completes it.
+    // thing, which cancels the token the loop passes to the session operations it awaits, so the
+    // dispose waits for an open or a play over a stalled source only until the source's read can
+    // be interrupted (#709, #719). The loop goes on draining the channel until the dispose
+    // completes it.
     private readonly WorkScope _loop = new();
 
     // The dispatch loop's token, from _loop: written as the loop starts, and read only on it.
@@ -155,7 +156,11 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     private CurrentItemUpdate? _pendingCurrentItem;
 
     // ── Active seek orchestration ──────────────────────────────────────
-    private Task? _activeSeekTask;
+
+    // Holds each seek runner until it ends, also once a later seek has cancelled it (ADR-0086,
+    // decision 1). The dispose stops it once the dispatch loop, which starts every runner, has
+    // ended, and waits for the runners before the session goes.
+    private readonly WorkScope _seekRunners = new();
     private CancellationTokenSource? _activeSeekCancellation;
     private long _activeSeekOperationId;
     private long _nextSeekOperationId;
@@ -680,9 +685,15 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
         _activeSeekOperationId = operationId;
         _activeSeekCancellation = seekCancellation;
-        _activeSeekTask = Task.Run(() =>
-            RunSeekAsync(session, position, operationId, seekCancellation)
+
+        // The runner's token is cancelled by a later seek, through seekCancellation, or by the
+        // dispose's stop of the runners.
+        var held = _seekRunners.TryStart(
+            "seek",
+            ct => RunSeekAsync(session, position, operationId, seekCancellation, ct),
+            seekCancellation.Token
         );
+        Debug.Assert(held, "The seek runners are stopped only once the dispatch loop, which starts them, has ended.");
 
         CancelSeek(previousSeekCancellation);
         LogSeekAccepted(operationId, position.TotalSeconds);
@@ -692,15 +703,16 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         IPlaybackSession session,
         TimeSpan position,
         long operationId,
-        CancellationTokenSource seekCancellation
+        CancellationTokenSource seekCancellation,
+        CancellationToken ct
     )
     {
         try
         {
-            await session.SeekAsync(position, seekCancellation.Token).ConfigureAwait(false);
+            await session.SeekAsync(position, ct).ConfigureAwait(false);
             await PostSeekOutcomeAsync(new SeekOutcomeCommand(operationId)).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (seekCancellation.IsCancellationRequested)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             await PostSeekOutcomeAsync(new SeekOutcomeCommand(operationId) { WasCanceled = true })
                 .ConfigureAwait(false);
@@ -800,7 +812,6 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         var activeSeekCancellation = _activeSeekCancellation;
 
         _activeSeekOperationId = 0;
-        _activeSeekTask = null;
         _activeSeekCancellation = null;
 
         if (activeOperationId > 0)
@@ -1413,7 +1424,6 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         var activeSeekCancellation = _activeSeekCancellation;
 
         _activeSeekOperationId = 0;
-        _activeSeekTask = null;
         _activeSeekCancellation = null;
         activeSeekCancellation?.Dispose();
 
@@ -1862,11 +1872,13 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// </para>
     /// <para>
     /// It first cancels the session operation the command loop is waiting on, an open or a play
-    /// over a stalled source among them, and only then waits for the loop, so it does not wait for
-    /// the source (#719). The command that was waiting completes with a failed
-    /// <see cref="Result"/> that says the controller is disposing. A session operation that ignores
+    /// over a stalled source among them, and only then waits for the loop (#719). Such an open or
+    /// play ends once the source's read can be interrupted (#709), and the dispose waits no longer
+    /// than that. The command that was waiting completes with a failed <see cref="Result"/> that
+    /// says the controller is disposing. Then it cancels a seek it started that is still going,
+    /// and waits for that too, before it disposes the session. A session operation that ignores
     /// its token holds the dispose; after five seconds the controller logs once that it is
-    /// waiting.
+    /// waiting. What the loop and the seeks ended with is thrown once everything is torn down.
     /// </para>
     /// </remarks>
     public ValueTask DisposeAsync() =>
@@ -1878,36 +1890,42 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         // Cancels the session operation the loop is waiting on. The loop is waited for below, once
         // the channel is completed (#719).
         var loopStopped = _loop.StopAsync(CancellationToken.None);
+        List<Exception> failures = [];
         try
         {
             try
             {
-                // Stop folding position ticks before the ticker stops emitting them.
-                _loopStallSubscription?.Dispose();
-                _loopStallSubscription = null;
-
-                PrepareActiveSeekForDisposal();
-                IReadOnlyList<WorkFault> loopFaults;
                 try
                 {
+                    try
+                    {
+                        // Stop folding position ticks before the ticker stops emitting them.
+                        _loopStallSubscription?.Dispose();
+                        _loopStallSubscription = null;
+
+                        PrepareActiveSeekForDisposal();
+                        await _tickerBinding.StopAsync();
+                    }
+                    finally
+                    {
+                        // Whatever the steps above threw, the loop is let end, and waited for,
+                        // before the session goes.
+                        _commandChannel.Writer.TryComplete();
+                        await AwaitStopAsync(loopStopped, LogDisposeWaitingForLoop, failures).ConfigureAwait(false);
+                    }
+
+                    // The loop may have started the ticker again as it finished the command it was
+                    // running, after the stop above. It has ended, so nothing starts it after this.
                     await _tickerBinding.StopAsync();
                 }
                 finally
                 {
-                    // Whatever the ticker's stop threw, the loop is let end, and waited for,
-                    // before the session goes.
-                    _commandChannel.Writer.TryComplete();
-                    await SlowWorkWarning
-                        .AwaitAsync(loopStopped, SlowWorkWarning.DefaultInterval, _timeProvider, LogDisposeWaitingForLoop)
-                        .ConfigureAwait(false);
-                    loopFaults = await loopStopped.ConfigureAwait(false);
+                    // The loop has ended, so it starts no more seek runners. Those it started are
+                    // cancelled, and waited for before the session goes.
+                    var seeksStopped = _seekRunners.StopAsync(CancellationToken.None);
+                    OnAwaitingSeekRunners?.Invoke();
+                    await AwaitStopAsync(seeksStopped, LogDisposeWaitingForSeek, failures).ConfigureAwait(false);
                 }
-                if (loopFaults is [var loopFault, ..])
-                    ExceptionDispatchInfo.Throw(loopFault.Error);
-
-                // The loop may have started the ticker again as it finished the command it was
-                // running, after the stop above. It has ended, so nothing starts it after this.
-                await _tickerBinding.StopAsync();
 
                 PrepareActiveSeekForDisposal();
                 await NormalizeSeekStateAfterDisposalAsync();
@@ -1939,5 +1957,42 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
         {
             _sinkClaims?.Dispose();
         }
+
+        // What the loop and the seek runners ended with, once everything is torn down
+        // (ADR-0086, decision 3.4).
+        switch (failures)
+        {
+            case []:
+                break;
+            case [var one]:
+                ExceptionDispatchInfo.Throw(one);
+                break;
+            default:
+                throw new AggregateException(failures);
+        }
     }
+
+    /// <summary>
+    /// Waits for <paramref name="stopping"/>, a scope's stop, and adds the faults it returns to
+    /// <paramref name="failures"/>. Says once, through <paramref name="warn"/>, when the wait has
+    /// gone on past <see cref="SlowWorkWarning.DefaultInterval"/>. Never throws.
+    /// </summary>
+    private async Task AwaitStopAsync(
+        Task<IReadOnlyList<WorkFault>> stopping,
+        Action warn,
+        List<Exception> failures
+    )
+    {
+        await SlowWorkWarning
+            .AwaitAsync(stopping, SlowWorkWarning.DefaultInterval, _timeProvider, warn)
+            .ConfigureAwait(false);
+        foreach (var fault in await stopping.ConfigureAwait(false))
+            failures.Add(fault.Error);
+    }
+
+    /// <summary>
+    /// Raised by the dispose, on its thread, as it begins to wait for the seek runners, once the
+    /// dispatch loop has ended and before the session is disposed. Internal: a seam for tests.
+    /// </summary>
+    internal Action? OnAwaitingSeekRunners { get; set; }
 }

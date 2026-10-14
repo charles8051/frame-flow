@@ -300,4 +300,12 @@ internal sealed partial class PlaybackControllerCore
     private partial void LogDisposeWaitingForLoop(double seconds);
 
     private void LogDisposeWaitingForLoop() => LogDisposeWaitingForLoop(FrameFlow.Media.SlowWorkWarning.DefaultInterval.TotalSeconds);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "PlaybackController's dispose has waited {Seconds:F0}s for a seek it started, which is still in a call to the session that is not observing cancellation. The dispose waits for it."
+    )]
+    private partial void LogDisposeWaitingForSeek(double seconds);
+
+    private void LogDisposeWaitingForSeek() => LogDisposeWaitingForSeek(FrameFlow.Media.SlowWorkWarning.DefaultInterval.TotalSeconds);
 }

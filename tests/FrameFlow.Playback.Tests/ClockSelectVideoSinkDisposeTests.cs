@@ -8,9 +8,10 @@ namespace FrameFlow.Playback.Tests;
 
 /// <summary>
 /// The pacer's dispose (ADR-0086, decision 3): a second dispose waits for the first, which waits
-/// for the delivery loop; a dispose held by a sink that ignores its token says so once, naming
-/// the sink; and what the loop's teardown throws is thrown by the dispose rather than dropped. The loop is held inside the sink's present, which does not observe its token, so
-/// neither dispose can end before the test releases it, and the warning's interval runs on a
+/// for the delivery loop; a dispose held by a sink that ignores its token says so once, naming the
+/// sink; and what the loop's teardown throws is thrown by the dispose rather than dropped. The
+/// loop is held inside the sink's present, which does not observe its token, so neither dispose
+/// can end before the test releases it, and the warning's interval runs on a
 /// <see cref="FakeTimeProvider"/>, whose timers fire inside <see cref="FakeTimeProvider.Advance"/>.
 /// </summary>
 public sealed partial class ClockSelectVideoSinkTests

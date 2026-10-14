@@ -1211,9 +1211,15 @@ A controller's dispose made while its command loop was opening or playing an ite
 open or play before it cancelled anything. Over a source that stalls, it waited for the source, and
 a `BuildPlayerAsync` whose token was cancelled during its first load did not return either, because
 its cleanup disposes the controller (#719). The dispose now cancels that open or play before it
-waits for it. The `LoadAsync`, `PlayAsync` or `PauseAsync` that was waiting on it returns a failed
-`Result` that says the controller is disposing, as a command still queued when the dispose began
-already did, and nothing is raised on `ErrorOccurred` for it.
+waits for it, and so stops waiting for the source once the source's read can be interrupted (#709).
+The `LoadAsync`, `PlayAsync` or `PauseAsync` that was waiting on it returns a failed `Result` that
+says the controller is disposing, as a command still queued when the dispose began already did, and
+nothing is raised on `ErrorOccurred` for it. A seek the controller started that is still going is
+cancelled too, and the dispose waits for it before it disposes the item.
+
+A pass's run now starts on the thread pool. Its audio sink's `ActivateAsync`, and the functions
+given to `ConfigureVideo` and `ConfigureAudio`, are called there, where they used to be called on
+the thread that called `RunToCompletionAsync`, before the run's first wait.
 
 What a teardown throws now reaches its caller (ADR-0086, decision 3.4):
 
@@ -1227,8 +1233,8 @@ What a teardown throws now reaches its caller (ADR-0086, decision 3.4):
 
 Every other dispose made while the first runs, or after, throws the same exception. A pass's
 dispose that has waited five seconds for its run logs once, at Warning, which of the run's work is
-still running, and a controller's that has waited five seconds for its command loop says so too.
-Both go on waiting.
+still running, and a controller's that has waited five seconds for its command loop, or for a
+seek, says so too. Both go on waiting.
 
 **Who hits this.**
 - Code that awaits `RunToCompletionAsync` on a pass whose sink or node can throw. It used to hang
@@ -1239,6 +1245,10 @@ Both go on waiting.
   when the dispose throws.
 - Code that disposes a player or a controller while a load, play or pause it issued is still under
   way, and expects that command to succeed. It now returns a failed `Result`.
+- Code that runs a pass inside `await using`. When the run throws and the dispose then throws too,
+  the dispose's exception is the one that leaves the block, and the run's fault is lost.
+- An audio sink whose `ActivateAsync`, or a configurator, has to run on the thread that started the
+  pass's run, such as a UI thread.
 
 **What to write instead.**
 - Where cleanup has to go on whatever the dispose does, catch around the dispose:
@@ -1254,7 +1264,30 @@ catch (Exception ex)
 }
 ```
 
+- To keep a run's fault when the dispose throws as well, dispose in a `finally` of your own:
+
+```csharp
+var pass = await FrameFlowPass.Create(path).WithVideoSink(sink).BuildAsync();
+try
+{
+    await pass.RunToCompletionAsync();
+}
+finally
+{
+    try
+    {
+        await pass.DisposeAsync();
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Disposing the pass failed.");
+    }
+}
+```
+
 - Check `Result.IsSuccess` on a command that can race a dispose, as for any command.
+- In a sink or a configurator that needs a particular thread, move to that thread there, as a
+  player's already has to: a player's sinks are called on the thread pool.
 
 **Why.** A dispose that waits for work it has not cancelled waits for whatever that work is waiting
 on, and a run that cancels its other side only once both have ended waits for a side that cannot

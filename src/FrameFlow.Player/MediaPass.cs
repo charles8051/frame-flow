@@ -646,11 +646,11 @@ public sealed class MediaPass : IAsyncDisposable
         lock (_lifecycleLock)
             (_lifecycle, teardown) = _lifecycle.Dispose();
 
-        List<Exception>? failures = null;
+        List<Exception> failures = [];
         try
         {
-            await EndRunAsync(inFlight: teardown == PassTeardown.AfterTheRun).ConfigureAwait(false);
-            failures = await FreeAsync().ConfigureAwait(false);
+            await EndRunAsync(inFlight: teardown == PassTeardown.AfterTheRun, failures).ConfigureAwait(false);
+            await FreeAsync(failures).ConfigureAwait(false);
         }
         finally
         {
@@ -669,7 +669,7 @@ public sealed class MediaPass : IAsyncDisposable
 
         switch (failures)
         {
-            case null:
+            case []:
                 break;
             case [var one]:
                 ExceptionDispatchInfo.Throw(one);
@@ -681,19 +681,25 @@ public sealed class MediaPass : IAsyncDisposable
 
     /// <summary>
     /// Cancels the run, if one has started, and waits for it to end, however long it takes. Logs
-    /// a fault the run ends with when it was in flight as the dispose began.
+    /// a fault the run ends with when it was in flight as the dispose began. Adds to
+    /// <paramref name="failures"/> what the scope's stop returns.
     /// </summary>
-    private async Task EndRunAsync(bool inFlight)
+    private async Task EndRunAsync(bool inFlight, List<Exception> failures)
     {
         if (inFlight)
             _logger.LogDebug("A pass disposed during its run cancels the run and waits for it to end.");
 
         // The stop cancels the run and waits for it. The run reports how it ended to its caller,
-        // so it leaves no fault for the stop to return. The cancellation's callbacks, the run's
-        // own unwinding among them, run on the thread pool rather than on the caller's thread.
+        // so it leaves no fault of its own for the stop to return, but what the stop does return,
+        // such as a cancellation callback that threw, is the dispose's to throw (decision 3.4).
+        // The cancellation's callbacks, the run's own unwinding among them, run on the thread pool
+        // rather than on the caller's thread.
+        var stopping = _work.StopAsync();
         await SlowWorkWarning
-            .AwaitAsync(_work.StopAsync(), DisposeWarningInterval, TimeProvider, WarnRunNotEnded)
+            .AwaitAsync(stopping, DisposeWarningInterval, TimeProvider, WarnRunNotEnded)
             .ConfigureAwait(false);
+        foreach (var fault in await stopping.ConfigureAwait(false))
+            failures.Add(fault.Error);
 
         // The scope has let the run go, so it has reported how it ended.
         if (inFlight && await _runEnded.Task.ConfigureAwait(false) is { } failure and not OperationCanceledException)
@@ -715,18 +721,16 @@ public sealed class MediaPass : IAsyncDisposable
     /// <summary>
     /// Frees what a run reads from, in reverse construction order: the pipeline, which frees any
     /// packet it holds, then the decoders, then the demux session. Each runs whatever the one
-    /// before it threw, and what they threw is returned, or null when nothing did.
+    /// before it threw, and what they threw is added to <paramref name="failures"/>.
     /// </summary>
-    private async ValueTask<List<Exception>?> FreeAsync()
+    private async ValueTask FreeAsync(List<Exception> failures)
     {
-        List<Exception> failures = [];
         await FreeAsync(Step.DisposingPipeline, _pipeline, failures).ConfigureAwait(false);
         if (_videoDecoder is not null)
             await FreeAsync(Step.DisposingVideoDecoder, _videoDecoder, failures).ConfigureAwait(false);
         if (_audioDecoder is not null)
             await FreeAsync(Step.DisposingAudioDecoder, _audioDecoder, failures).ConfigureAwait(false);
         await FreeAsync(Step.DisposingDemux, _demux, failures).ConfigureAwait(false);
-        return failures.Count > 0 ? failures : null;
     }
 
     /// <summary>

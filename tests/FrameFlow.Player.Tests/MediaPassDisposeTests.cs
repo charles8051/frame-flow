@@ -382,6 +382,33 @@ public sealed class MediaPassDisposeTests
         Assert.Equal(VideoTeardown, steps.Taken);
     }
 
+    [RequiresFfmpegAndCorpusFact]
+    public async Task ACancellationCallbackThatThrows_IsThrownByTheDispose_OnceTheClaimsAreReleased()
+    {
+        // The sink registers a callback on its token that throws. The dispose's cancellation runs
+        // it, the scope's stop returns what it threw, and the dispose throws that once it has
+        // freed everything, where it used to log it and return.
+        await using var sink = new HoldingVideoSink { CallbackThrowsOnCancel = true };
+        var pass = await BuildVideoPassAsync(sink);
+        var steps = StepLog.On(pass);
+
+        var run = pass.RunToCompletionAsync();
+        await sink.Entered.WaitAsync(Bound);
+
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => pass.DisposeAsync().AsTask().WaitAsync(Bound));
+
+        Assert.Contains(
+            HoldingVideoSink.CallbackFailure,
+            Flatten(thrown).Select(e => e.Message)
+        );
+        Assert.Equal(VideoRunThenTeardown, steps.Taken);
+        Assert.Null(sink.Claimant);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(Bound));
+    }
+
+    private static IEnumerable<Exception> Flatten(Exception error) =>
+        error is AggregateException aggregate ? aggregate.Flatten().InnerExceptions : [error];
+
     private static string Corpus(string name) =>
         TestEnvironment.GetCorpusFile(name) ?? throw new InvalidOperationException($"{name} is missing.");
 
@@ -435,6 +462,11 @@ public sealed class MediaPassDisposeTests
         /// <summary>When set, a held call ignores its token and holds until <see cref="Release"/>.</summary>
         public bool IgnoreToken { get; init; }
 
+        /// <summary>When set, the first call registers a callback on its token that throws <see cref="CallbackFailure"/>.</summary>
+        public bool CallbackThrowsOnCancel { get; init; }
+
+        public const string CallbackFailure = "The sink's cancellation callback failed.";
+
         public void Release() => _released.TrySetResult();
 
         /// <summary>When set, a held call throws <see cref="InvalidOperationException"/> as its token cancels.</summary>
@@ -451,6 +483,8 @@ public sealed class MediaPassDisposeTests
         public async ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
         {
             frame.Dispose();
+            if (CallbackThrowsOnCancel && !_entered.Task.IsCompleted)
+                ct.Register(static () => throw new InvalidOperationException(CallbackFailure));
             _entered.TrySetResult();
             if (!Hold)
                 return;
