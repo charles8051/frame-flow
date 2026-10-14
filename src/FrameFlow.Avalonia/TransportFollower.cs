@@ -38,8 +38,9 @@ namespace FrameFlow.Avalonia;
 /// Notifications are posted to the UI thread, so one raised before a follow ends can be delivered
 /// after it, from a transport the control has let go of or over values read on the control's
 /// return. A <see cref="Follow"/> delivers only while the binding number it was bound under is
-/// current, and every bind and unbind moves the number (ADR-0085, decision 5). UI thread only: the
-/// transitions and the delivery both run there, which is what makes that comparison sound.
+/// current, and every bind and unbind moves the number (ADR-0085, decision 5), and only until it
+/// is ended, which a delegate that throws partway does at once. UI thread only: the transitions
+/// and the delivery both run there, which is what makes that comparison sound.
 /// </para>
 /// </remarks>
 internal sealed class TransportFollower
@@ -239,11 +240,13 @@ internal sealed class TransportFollower
         }
 
         /// <summary>
-        /// Whether the binding this follow belongs to is still the control's: no unbind or bind
-        /// has moved the number since. Work that commits on the UI thread for this follow, such
-        /// as a notification or a seek's result, compares it there. UI thread.
+        /// Whether this follow is still the control's: no unbind or bind has moved the binding
+        /// number since it was bound, and it has not been ended. A follow whose delegate threw
+        /// partway is ended at once while its binding stands, so the number alone would not say
+        /// so. Work that commits on the UI thread for this follow, such as a notification or a
+        /// seek, checks it there. UI thread.
         /// </summary>
-        public bool IsCurrent => _owner._lifecycle.Binding == _binding;
+        public bool IsCurrent => _owner._lifecycle.Binding == _binding && ReferenceEquals(_owner._live, this);
 
         /// <summary>
         /// Delivers <paramref name="source"/> to <paramref name="onNext"/> on the UI thread while

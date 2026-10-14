@@ -214,11 +214,18 @@ public sealed class FrameFlowPlayerView : UserControl, IAsyncDisposable
     /// graph that does not pass the claim on: the swap does not see it, and it goes on feeding a
     /// surface that is not shown.
     /// </para>
+    /// <para>
+    /// <see cref="DisposeAsync"/> is final: afterwards the player view swaps nothing, and assigning
+    /// another surface throws.
+    /// </para>
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// A player or pass holds the outgoing surface's sink, and would go on feeding a surface that is
     /// not shown. The message names the holder, and nothing has changed. Dispose that player first,
     /// or build the player against the new surface.
+    /// </exception>
+    /// <exception cref="ObjectDisposedException">
+    /// Another surface is assigned after <see cref="DisposeAsync"/>.
     /// </exception>
     public IVideoSurface VideoSurface
     {
@@ -227,6 +234,8 @@ public sealed class FrameFlowPlayerView : UserControl, IAsyncDisposable
         {
             if (value is null || ReferenceEquals(_surface, value))
                 return;
+
+            ObjectDisposedException.ThrowIf(_disposed, this);
 
             var outgoing = _surface;
 
@@ -264,13 +273,13 @@ public sealed class FrameFlowPlayerView : UserControl, IAsyncDisposable
     private const string SwappingClaimant = "a FrameFlowPlayerView swapping its surface out";
 
     private const string DefaultSurfaceClaimant =
-        "a FrameFlowPlayerView that swapped out its default surface (swap it back in, or dispose that "
-        + "FrameFlowPlayerView, to release it)";
+        "a FrameFlowPlayerView that swapped out its default surface (swap it back in to build against it)";
 
     /// <summary>
     /// Claims the sink of the surface the <see cref="VideoSurface"/> setter swaps out, as a player
     /// would. Returns the lease, or <see langword="null"/> when there is nothing to claim: a surface
-    /// of the app's own type, a surface with no sink, or a sink its owner has disposed.
+    /// of the app's own type, a surface with no sink, a disposed one included, or a sink its owner
+    /// has disposed.
     /// </summary>
     /// <exception cref="InvalidOperationException">A player or pass holds the sink.</exception>
     private IDisposable? ClaimForSwap(IVideoSurface outgoing)
@@ -282,8 +291,18 @@ public sealed class FrameFlowPlayerView : UserControl, IAsyncDisposable
         // it is out, so it gets its sink now if it has none: a build written against it later finds
         // that sink claimed. A surface the caller supplied with no sink yet has nothing to claim.
         var isDefault = ReferenceEquals(outgoing, _defaultSurface);
-        if (isDefault && !_disposed)
-            _defaultSurface.EnsureSink();
+        if (isDefault)
+        {
+            try
+            {
+                _defaultSurface.EnsureSink();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The app disposed it through VideoSurface. It has no sink and presents nothing, and
+                // a build against it fails on the disposal, so there is nothing to claim.
+            }
+        }
 
         if (inBox.Sink is not { } sink)
             return null;
@@ -318,15 +337,18 @@ public sealed class FrameFlowPlayerView : UserControl, IAsyncDisposable
     /// <summary>
     /// Disposes the default surface, the <see cref="FrameFlowVideoView"/> the player view
     /// constructed, wherever it is: hosted, or swapped out under the player view's claim, which is
-    /// released first. A surface the caller supplied is the caller's to dispose and is not touched.
-    /// A second call does nothing. Call on the UI thread, after disposing the player built against
-    /// the default surface: the surface disposes its sink even while a player still feeds it.
+    /// released once the surface and its sink are disposed, so no build can take the sink in
+    /// between. A surface the caller supplied is the caller's to dispose and is not touched. A
+    /// second call does nothing. Call on the UI thread, after disposing the player built against the
+    /// default surface: the surface disposes its sink even while a player still feeds it.
     /// </summary>
     /// <remarks>
     /// Avalonia never disposes a control. A player view that is never disposed keeps its default
     /// surface and that surface's sink for as long as it is referenced (ADR-0085, decision 2).
-    /// Afterwards the default surface presents nothing, and <see cref="AttachSink"/> throws
-    /// <see cref="ObjectDisposedException"/> while it is hosted.
+    /// Dispose is final: afterwards the default surface presents nothing,
+    /// <see cref="AttachSink"/> throws <see cref="ObjectDisposedException"/> while it is hosted,
+    /// and assigning <see cref="VideoSurface"/> another surface throws
+    /// <see cref="ObjectDisposedException"/>.
     /// </remarks>
     /// <returns>The default surface's dispose: complete, or faulted with what it threw.</returns>
     public ValueTask DisposeAsync()
@@ -335,8 +357,17 @@ public sealed class FrameFlowPlayerView : UserControl, IAsyncDisposable
             return ValueTask.CompletedTask;
 
         _disposed = true;
-        ReleaseDefaultSurfaceClaim();
-        return _defaultSurface.DisposeAsync();
+        try
+        {
+            return _defaultSurface.DisposeAsync();
+        }
+        finally
+        {
+            // After the dispose: a claim released first would leave a window in which a build on
+            // another thread could take a sink about to be disposed. The sink's gate closes with
+            // the claim still held, and the claim is released afterwards.
+            ReleaseDefaultSurfaceClaim();
+        }
     }
 
     /// <summary>
@@ -347,7 +378,8 @@ public sealed class FrameFlowPlayerView : UserControl, IAsyncDisposable
     /// <remarks>
     /// Can be called before or after this control joins the visual tree; either way the logger
     /// reaches the sink (see <see cref="IVideoSurface.AttachSink"/>). A player built with it holds
-    /// the sink, so the hosted surface cannot be swapped out until that player is disposed (see
+    /// the sink, so an in-box hosted surface, <see cref="FrameFlowVideoView"/> or
+    /// <c>CompositionInteropVideoView</c>, cannot be swapped out until that player is disposed (see
     /// <see cref="VideoSurface"/>).
     /// </remarks>
     public IVideoSink AttachSink(ILoggerFactory loggerFactory) => _surface.AttachSink(loggerFactory);

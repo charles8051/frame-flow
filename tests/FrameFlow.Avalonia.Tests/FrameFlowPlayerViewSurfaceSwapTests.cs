@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.Themes.Fluent;
@@ -95,7 +96,7 @@ public sealed class FrameFlowPlayerViewSurfaceSwapTests
             var error = Assert.Throws<InvalidOperationException>(() =>
                 PlaybackController.Create(videoSink: ((IVideoSurface)surface).AttachSink(NullLoggerFactory.Instance))
             );
-            Assert.Contains("FrameFlowPlayerView that swapped out its default surface", error.Message, StringComparison.Ordinal);
+            Assert.Contains(DefaultHolder, error.Message, StringComparison.Ordinal);
 
             view.VideoSurface = surface;
 
@@ -103,6 +104,57 @@ public sealed class FrameFlowPlayerViewSurfaceSwapTests
             Assert.Null(((IClaimableSink)sink).Claimant);
             await using var player = PlaybackController.Create(videoSink: view.AttachSink(NullLoggerFactory.Instance));
             Assert.Same(sink, surface.Sink);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void TheDefaultSurface_SwappedOutAgain_IsClaimedAgain()
+    {
+        var view = new FrameFlowPlayerView();
+        var window = Show(view);
+        try
+        {
+            var surface = (FrameFlowVideoView)view.VideoSurface;
+            var sink = (IClaimableSink)surface.Sink!;
+            view.VideoSurface = new FrameFlowVideoView();
+            view.VideoSurface = surface;
+            Assert.Null(sink.Claimant);
+
+            view.VideoSurface = new FrameFlowVideoView();
+
+            Assert.Contains(DefaultHolder, sink.Claimant, StringComparison.Ordinal);
+            Assert.Throws<InvalidOperationException>(() =>
+                PlaybackController.Create(videoSink: ((IVideoSurface)surface).AttachSink(NullLoggerFactory.Instance))
+            );
+
+            view.VideoSurface = surface;
+            Assert.Null(sink.Claimant);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task ADefaultSurfaceTheAppDisposed_IsSwappedOut_WithNothingToClaim()
+    {
+        var view = new FrameFlowPlayerView();
+        var window = Show(view);
+        try
+        {
+            var surface = (FrameFlowVideoView)view.VideoSurface;
+            await surface.DisposeAsync();
+            var next = new FrameFlowVideoView();
+
+            view.VideoSurface = next;
+
+            Assert.Same(next, view.VideoSurface);
+            Assert.False(InTree(surface));
         }
         finally
         {
@@ -181,6 +233,38 @@ public sealed class FrameFlowPlayerViewSurfaceSwapTests
     }
 
     [AvaloniaFact]
+    public void ASwapWhoseIncomingSurfaceThrowsOnAttach_StillSettlesTheClaim()
+    {
+        // The swap's claim is settled whatever the surfaces' own attach does: the default surface,
+        // out of the tree, stays claimed; a caller's surface goes back unclaimed.
+        var view = new FrameFlowPlayerView();
+        var window = Show(view);
+        try
+        {
+            var surface = (FrameFlowVideoView)view.VideoSurface;
+            var defaultSink = (IClaimableSink)surface.Sink!;
+
+            var error = Assert.Throws<InvalidOperationException>(() => view.VideoSurface = new ThrowingSurface());
+            Assert.Equal(ThrowsOnAttach.Fault, error.Message);
+            Assert.Contains(DefaultHolder, defaultSink.Claimant, StringComparison.Ordinal);
+
+            view.VideoSurface = surface;
+            Assert.Null(defaultSink.Claimant);
+
+            var callers = new FrameFlowVideoView();
+            view.VideoSurface = callers;
+            var callersSink = (IClaimableSink)callers.Sink!;
+
+            Assert.Throws<InvalidOperationException>(() => view.VideoSurface = new ThrowingSurface());
+            Assert.Null(callersSink.Claimant);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void ACallersSurfaceWithNoSink_IsSwappedOut_AndNothingIsMadeForIt()
     {
         // Out of the tree, so a surface swapped in makes no sink of its own.
@@ -250,6 +334,55 @@ public sealed class FrameFlowPlayerViewSurfaceSwapTests
     }
 
     [AvaloniaFact]
+    public async Task WhileTheSwappedOutDefaultSurfaceIsDisposed_ThePlayerViewStillHoldsItsSink()
+    {
+        // Released first, the claim would leave a moment in which a build on another thread could
+        // take a sink about to be disposed. The surface's dispose runs the seam as it moves on.
+        var view = new FrameFlowPlayerView();
+        var window = Show(view);
+        try
+        {
+            var surface = (FrameFlowVideoView)view.VideoSurface;
+            var sink = (IClaimableSink)surface.Sink!;
+            view.VideoSurface = new FrameFlowVideoView();
+            string? holder = null;
+            surface.TransitionPublished = () => holder = sink.Claimant;
+
+            await view.DisposeAsync();
+
+            Assert.Contains(DefaultHolder, holder, StringComparison.Ordinal);
+            Assert.Null(sink.Claimant);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task AfterDisposeAsync_AssigningAnotherSurface_Throws_AndChangesNothing()
+    {
+        var view = new FrameFlowPlayerView();
+        var window = Show(view);
+        try
+        {
+            var surface = view.VideoSurface;
+            await view.DisposeAsync();
+            var next = new FrameFlowVideoView();
+
+            Assert.Throws<ObjectDisposedException>(() => view.VideoSurface = next);
+
+            Assert.Same(surface, view.VideoSurface);
+            Assert.False(InTree(next));
+            view.VideoSurface = surface; // the surface it hosts: nothing to do
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public async Task DisposeAsync_DisposesTheHostedDefaultSurface()
     {
         var view = new FrameFlowPlayerView();
@@ -271,6 +404,9 @@ public sealed class FrameFlowPlayerViewSurfaceSwapTests
         }
     }
 
+    // How the player view's claim on its swapped-out default surface names it.
+    private const string DefaultHolder = "FrameFlowPlayerView that swapped out its default surface";
+
     private static IClaimableSink? SinkOf(IVideoSurface surface) => ((IInBoxVideoSurface)surface).Sink;
 
     private static bool InTree(Control control) => TopLevel.GetTopLevel(control) is not null;
@@ -286,6 +422,25 @@ public sealed class FrameFlowPlayerViewSurfaceSwapTests
         Dispatcher.UIThread.RunJobs();
         Assert.Same(window, TopLevel.GetTopLevel(control));
         return window;
+    }
+
+    /// <summary>A surface of the app's own type whose control throws as it joins the tree.</summary>
+    private sealed class ThrowingSurface : IVideoSurface
+    {
+        public Control Control { get; } = new ThrowsOnAttach();
+
+        public IVideoSink AttachSink(ILoggerFactory loggerFactory) => throw new NotSupportedException();
+    }
+
+    private sealed class ThrowsOnAttach : Border
+    {
+        public const string Fault = "The surface failed to join the tree.";
+
+        protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+        {
+            base.OnAttachedToVisualTree(e);
+            throw new InvalidOperationException(Fault);
+        }
     }
 
     /// <summary>A surface of the app's own type: it exposes no sink to the player view.</summary>

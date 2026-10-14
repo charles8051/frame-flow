@@ -830,20 +830,30 @@ player view now refuses a swap that would strand a player, as far as claims show
 - A surface you supplied goes back to you with the player view's claim released, and is yours to
   dispose, as before. A surface of your own type exposes no sink to the player view and is swapped out
   without a check, as before.
-- `FrameFlowPlayerView.DisposeAsync` releases the player view's claim on the default surface and
-  disposes that surface, hosted or swapped out, and nothing you supplied. The default surface disposes
-  its sink even while a player still feeds it, so dispose the player first.
+- `FrameFlowPlayerView.DisposeAsync` disposes the default surface, hosted or swapped out, then
+  releases the player view's claim on it, and touches nothing you supplied. The default surface
+  disposes its sink even while a player still feeds it, so dispose the player first. Dispose is
+  final, as it is on the views: afterwards assigning `VideoSurface` another surface throws
+  `ObjectDisposedException`.
 
 The chrome controls that follow a transport now run on the views' lifecycle (decision 1). What they
 show does not change. The seek bar's and the position label's refresh ticks run only while a transport
-is bound, which changes nothing either shows. One thing does change: a `FrameFlowSeekBar` that has
-left the visual tree no longer seeks when its `Value` is written, and seeks again from its return. One
-given a transport before it first joins the tree still seeks, as before.
+is bound, which changes nothing either shows. `FrameFlowSeekBar` changes in three ways, all at the end
+of a binding, which leaving the visual tree or replacing `Transport` brings:
+
+- A bar that has left the visual tree no longer seeks when its `Value` is written, and seeks again
+  from its return. One given a transport before it first joins the tree still seeks, as before.
+- A scrub target still queued behind a seek in flight when the binding ends is dropped. It used to be
+  sent after the bar had left the tree, or to the transport just replaced.
+- The refusal of a seek sent before the binding ended is no longer reported. The bar arms its refusal
+  report again on every bind, so after every return to the tree as well as when `Transport` is set; it
+  used to arm it again only when `Transport` was set or a seek succeeded.
 
 **Who hits this.** Code that swaps `VideoSurface` while a player built against the outgoing surface is
 alive, which used to strand that player without a word. Code that keeps a reference to the default
-surface, swaps it out and builds a player against it. Code that writes a `FrameFlowSeekBar`'s `Value`
-while the bar is out of the visual tree, to seek.
+surface, swaps it out and builds a player against it. Code that assigns `VideoSurface` after disposing
+the player view. Code that writes a `FrameFlowSeekBar`'s `Value` while the bar is out of the visual
+tree, to seek, or counts the warnings a bar logs for refused seeks.
 
 **What to write instead.** Dispose the player, swap, and build the next player against the surface
 now hosted:

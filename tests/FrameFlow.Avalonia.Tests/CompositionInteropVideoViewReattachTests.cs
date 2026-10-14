@@ -308,6 +308,31 @@ public sealed class CompositionInteropVideoViewReattachTests
     }
 
     [AvaloniaFact]
+    public async Task FramesArrivingAsADisposeMovesTheNumber_AreNotCountedAsDrops()
+    {
+        // The same moment in a transition that disposes the sink: the view's own, with no player
+        // holding it, so each frame is discarded off screen as it arrives.
+        var view = new CompositionInteropVideoView();
+        var window = Show(view);
+        var sink = (CompositionInteropVideoSink)((IVideoSurface)view).AttachSink(new RecordingLoggerFactory());
+        var first = new TrackedFrame();
+        var second = new TrackedFrame();
+        view.TransitionPublished = () =>
+        {
+            Give(sink, first);
+            Give(sink, second);
+        };
+
+        await view.DisposeAsync();
+
+        Assert.Equal(0, sink.FramesSuperseded);
+        Assert.True(first.Disposed);
+        Assert.True(second.Disposed);
+        Assert.Equal(2, sink.FramesDiscardedOffScreen);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void AStallSampledOnceTheViewHasStopped_IsNotRaised()
     {
         // The watchdog's timer can be mid-sample as the view stops presenting.

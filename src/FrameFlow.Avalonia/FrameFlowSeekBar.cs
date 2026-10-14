@@ -63,9 +63,12 @@ namespace FrameFlow.Avalonia;
 /// runs while the bar is in the visual tree with a transport bound. The bar
 /// seeks its transport while it is bound to it: from when the transport is
 /// set, or from the bar's return to the tree when it is set while the bar is
-/// out. Leaving the tree stops both, and the return starts them again with
-/// the same transport. A <see cref="RangeBase.Value"/> written while the bar
-/// is out of the tree after leaving it seeks nothing.
+/// out. Leaving the tree, or replacing the transport, ends the binding: the
+/// tick stops, a scrub target still queued is dropped rather than sent, and
+/// the result of a seek already sent is not reported. The return starts the
+/// tick and the seeking again with the same transport, and arms the refusal
+/// report again. A <see cref="RangeBase.Value"/> written while the bar is out
+/// of the tree after leaving it seeks nothing.
 /// </para>
 /// </remarks>
 public sealed class FrameFlowSeekBar : Slider
@@ -226,8 +229,15 @@ public sealed class FrameFlowSeekBar : Slider
     // On every bind: when a transport is assigned while the bar is bound or before it first joins
     // the tree, and on every return to the tree. Built here and not when the transport is assigned:
     // one built while the bar is out of the tree would belong to no binding, and its results would
-    // be stale from the return on. Any pump still draining against an earlier binding finishes
-    // harmlessly: its seeks target that binding's transport and are swallowed.
+    // be stale from the return on.
+    //
+    // A dispatcher sends a target only while the follow it was built for is current. Its pump can
+    // outlive the binding with a target queued behind a seek in flight, and the transport may be
+    // the same one the next binding seeks: sent after a detach, that target would move a transport
+    // the bar no longer follows, and sent after the return it could land after a newer target from
+    // the next binding's dispatcher, which would break one-in-flight, latest-wins across the trip.
+    // So a target queued under a binding that has ended is dropped, and only a seek already sent
+    // can still complete.
     //
     // A scrub reports its Result through a latch rather than on every seek. A scrub emits seeks
     // continuously, so reporting each refusal would turn one gesture into a burst of identical
@@ -235,15 +245,18 @@ public sealed class FrameFlowSeekBar : Slider
     // indistinguishable from one that works. The latch gives the first refusal and then stays quiet
     // until a seek succeeds, which re-arms it for the next thing that goes wrong.
     //
-    // The latch belongs to one binding, not to the control. A late result from an earlier
-    // binding's pump could log against a transport that is no longer bound, eat this binding's
-    // first refusal, or clear a latch it does not own, so each result is committed only while the
-    // follow it was built for is current: the binding number has not moved (ADR-0085, decision 5).
+    // The latch belongs to one binding, not to the control, and each bind arms it again. A late
+    // result from an earlier binding's seek could log against a transport that is no longer bound,
+    // eat this binding's first refusal, or clear a latch it does not own, so each result is
+    // committed only while the follow it was built for is current (ADR-0085, decision 5).
     private void FollowTransport(IMediaTransport transport, TransportFollower.Follow follow)
     {
         _seekRefusalReported = false;
         _scrub = new ScrubSeekDispatcher(async t =>
         {
+            if (!follow.IsCurrent)
+                return;
+
             var result = await transport.SeekAsync(t).ConfigureAwait(true);
             if (!follow.IsCurrent)
                 return;

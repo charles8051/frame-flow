@@ -418,6 +418,23 @@ public sealed class ChromeReattachTests
     }
 
     [AvaloniaFact]
+    public void TransportBar_AChangePostedByABindRefusedPartWay_DoesNotShow()
+    {
+        // The repeat mode changes between the bar's two subscriptions, so the first one posts it,
+        // and then the second is refused. That change belongs to a follow that never started, and
+        // the binding number alone has not moved.
+        var transport = new FakeTransport { RepeatMode = RepeatMode.Off };
+        transport.StateChangedSubject.Dispose();
+        transport.OnStateChangedRead = () => transport.ChangeRepeatMode(RepeatMode.All);
+        var bar = new FrameFlowTransportBar();
+
+        Assert.Throws<ObjectDisposedException>(() => bar.Transport = transport);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Loop", LoopButton(bar).Content);
+    }
+
+    [AvaloniaFact]
     public void TransportBar_AReattachRefusedPartWay_LeavesNoSubscriptionBehind()
     {
         var transport = new FakeTransport();
@@ -541,6 +558,39 @@ public sealed class ChromeReattachTests
 
             Assert.Equal(new[] { Seconds(0.5), Seconds(0.25) }, transport.Seeks);
             Assert.Equal(1, bar.SeekRefusalsReported);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void SeekBar_ATargetQueuedBeforeTheDetach_IsNeverSent()
+    {
+        // One seek in flight and a target queued behind it as the bar leaves the tree. The queued
+        // target belongs to the binding that ended: sent then, it would move a transport the bar no
+        // longer follows, and sent after the return it could land after a newer target.
+        var pending = new TaskCompletionSource<Result>();
+        var transport = new FakeTransport { Seek = _ => pending.Task };
+        var bar = new FrameFlowSeekBar { Transport = transport };
+        var window = Show(bar);
+        try
+        {
+            bar.Value = 0.5; // in flight
+            bar.Value = 0.25; // queued behind it
+            Detach(window, bar);
+            pending.SetResult(Result.Ok());
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(new[] { Seconds(0.5) }, transport.Seeks);
+
+            Attach(window, bar);
+            transport.Seek = _ => Task.FromResult(Result.Ok());
+            bar.Value = 0.75;
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(new[] { Seconds(0.5), Seconds(0.75) }, transport.Seeks);
         }
         finally
         {
@@ -739,7 +789,17 @@ public sealed class ChromeReattachTests
 
         public List<RepeatMode> Requested { get; } = [];
 
-        public IObservable<PlaybackState> StateChanged => StateChangedSubject;
+        /// <summary>Runs as a control reads <see cref="StateChanged"/>, before it subscribes.</summary>
+        public Action? OnStateChangedRead { get; set; }
+
+        public IObservable<PlaybackState> StateChanged
+        {
+            get
+            {
+                OnStateChangedRead?.Invoke();
+                return StateChangedSubject;
+            }
+        }
         public IObservable<StateTransition<RepeatMode>> RepeatModeChanged => RepeatModeChangedSubject;
 
         public void Push(PlaybackState state)
