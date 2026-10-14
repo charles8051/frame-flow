@@ -38,9 +38,12 @@ public interface IPassBuilder
     /// </remarks>
     /// <remarks>
     /// One sink serves any number of passes in sequence, so a sink that is expensive to build —
-    /// one holding a loaded inference model — is built once and handed to each of them. Passes
-    /// that run concurrently over one sink are undefined, and keeping them apart is the caller's
-    /// job.
+    /// one holding a loaded inference model — is built once and handed to each of them. A sink
+    /// that implements <see cref="IClaimableSink"/>, as the in-box sinks with state do, is claimed
+    /// by <see cref="BuildAsync"/> and held until the pass has been disposed, not until its run
+    /// ends: build the next pass after disposing this one (ADR-0085, decision 6). For any other
+    /// sink, passes that run concurrently over it are undefined, and keeping them apart is the
+    /// caller's job.
     /// </remarks>
     IPassBuilder WithVideoSink(IVideoSink sink);
 
@@ -51,7 +54,9 @@ public interface IPassBuilder
     /// </summary>
     /// <remarks>
     /// <b>Ownership (ADR-0044).</b> Whoever constructed the sink owns it; the pass never disposes
-    /// it. One sink serves any number of passes in sequence, but not two at once.
+    /// it. One sink serves any number of passes in sequence, but not two at once. A sink that
+    /// implements <see cref="IClaimableSink"/>, such as <c>OpenAlAudioSink</c>, is claimed by
+    /// <see cref="BuildAsync"/> and held until the pass has been disposed (ADR-0085, decision 6).
     /// </remarks>
     IPassBuilder WithAudioSink(IAudioSink sink);
 
@@ -197,10 +202,18 @@ public interface IPassBuilder
     /// a ready <see cref="MediaPass"/>. Nothing runs yet: the caller invokes
     /// <see cref="MediaPass.RunToCompletionAsync"/> explicitly.
     /// </summary>
+    /// <remarks>
+    /// Each sink that implements <see cref="IClaimableSink"/> is claimed before anything else is
+    /// built, and the pass holds the claim until its <c>DisposeAsync</c> has completed, not until
+    /// its run ends. A build that fails or is cancelled releases it before it throws (ADR-0085,
+    /// decision 6).
+    /// </remarks>
     /// <exception cref="InvalidOperationException">
-    /// No sink was attached, a configurator was given without its sink, the FFmpeg bootstrap
-    /// failed, the source has neither a video nor an audio stream, or the pass yields hardware
-    /// frames and a holder on its video path declares no bound.
+    /// No sink was attached, a configurator was given without its sink, another player or pass
+    /// holds a sink (the message names the sink and its holder), the FFmpeg bootstrap failed, the
+    /// source has neither a video nor an audio stream, or the pass yields hardware frames and a
+    /// holder on its video path declares no bound.
     /// </exception>
+    /// <exception cref="ObjectDisposedException">A sink is a claimable sink that has been disposed.</exception>
     Task<MediaPass> BuildAsync(CancellationToken cancellationToken = default);
 }

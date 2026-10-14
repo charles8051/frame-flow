@@ -75,7 +75,12 @@ namespace FrameFlow.Media;
 /// <i>users</i> — they call <c>ActivateAsync</c> and <c>DeactivateAsync</c>,
 /// and never <see cref="IAsyncDisposable.DisposeAsync"/>. One sink serves one
 /// player at a time, and may serve several in sequence, which is what keeps a
-/// presenter warm across a playlist's items.
+/// presenter warm across a playlist's items. For a sink that also implements
+/// <see cref="IClaimableSink"/>, as <c>OpenAlAudioSink</c> does, the "at a
+/// time" is enforced: a second player or pass built against it fails until the
+/// one holding it has been disposed (ADR-0085, decision 6). For any other sink,
+/// two sessions on it at once race <see cref="ActivateAsync"/> and
+/// <see cref="DeactivateAsync"/>, and keeping them apart is the caller's job.
 /// </para>
 /// </remarks>
 public interface IAudioSink : IAsyncDisposable

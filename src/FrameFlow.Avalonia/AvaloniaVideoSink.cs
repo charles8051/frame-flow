@@ -33,8 +33,12 @@ namespace FrameFlow.Avalonia;
 /// When a new frame overwrites a pending frame that hasn't been rendered yet,
 /// the old frame is disposed (dropped).
 /// </para>
+/// <para>
+/// It is an <see cref="IClaimableSink"/>: a second player or pass built against it while the
+/// first holds it fails (ADR-0085, decision 6).
+/// </para>
 /// </remarks>
-public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSource
+public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSource, IClaimableSink
 {
     private static readonly VideoSinkMeters Meters = new(
         "FrameFlow.Avalonia.Sink",
@@ -44,6 +48,7 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
 
     private readonly ILogger<AvaloniaVideoSink> _logger;
     private readonly LatestWinsFrameSlot _slot = new();
+    private readonly SinkClaimGate _claims = new(typeof(AvaloniaVideoSink));
     private readonly VideoSinkTelemetry _telemetry;
     private readonly TimeProvider _timeProvider;
     private readonly long _createdTimestamp;
@@ -56,8 +61,9 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     // Only PresentAsync touches it, and its calls do not overlap and arrive in the player's order:
     // a graph's sink pump awaits each one before taking the next frame, a player's pacers present
     // through one VideoFormatAnnouncer whose semaphore serializes them, an item prepared ahead keeps
-    // its gates shut until the item before it has been disposed (ADR-0084), and IVideoSink leaves
-    // two players driving one sink at once undefined.
+    // its gates shut until the item before it has been disposed (ADR-0084), and the claim keeps a
+    // second player or pass off the sink while one holds it (ADR-0085, decision 6). Two graphs
+    // built by hand over one sink take no claim, and IVideoSink leaves that undefined.
     private PresentGapTracker _gapTracker;
 
     /// <summary>Gets the total number of frames that reached the screen via this sink.</summary>
@@ -334,10 +340,23 @@ public sealed partial class AvaloniaVideoSink : IVideoSink, IFramePresentedSourc
     public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Cpu;
 
     /// <inheritdoc />
-    /// <remarks>A second call does nothing and logs nothing.</remarks>
+    IDisposable? IClaimableSink.TryClaim(string claimant) => _claims.TryClaim(claimant);
+
+    /// <inheritdoc />
+    string? IClaimableSink.Claimant => _claims.Claimant;
+
+    /// <inheritdoc />
+    long IClaimableSink.ClaimOrder => _claims.ClaimOrder;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// A second call does nothing and logs nothing. Claiming the sink afterwards throws
+    /// <see cref="ObjectDisposedException"/>.
+    /// </remarks>
     public ValueTask DisposeAsync()
     {
         _disposed = true;
+        _claims.Close();
 
         // Takes the pending frame and closes the slot in one step, so a present racing this call
         // cannot leave a frame in it. Only the call that closed it logs.

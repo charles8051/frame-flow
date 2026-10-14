@@ -25,8 +25,12 @@ namespace FrameFlow.Sdl;
 /// When a new frame overwrites a pending frame that hasn't been rendered yet,
 /// the old frame is disposed (dropped).
 /// </para>
+/// <para>
+/// It is an <see cref="IClaimableSink"/>: a second player or pass built against it while the
+/// first holds it fails (ADR-0085, decision 6).
+/// </para>
 /// </remarks>
-public sealed unsafe partial class SdlVideoSink : IVideoSink
+public sealed unsafe partial class SdlVideoSink : IVideoSink, IClaimableSink
 {
     // The meter name keeps the ALL-CAPS spelling the namespace just lost, and
     // deliberately. A meter name is a runtime identity that exporters, views
@@ -48,6 +52,7 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     private int _textureHeight;
 
     private readonly LatestWinsFrameSlot _slot = new();
+    private readonly SinkClaimGate _claims = new(typeof(SdlVideoSink));
     private readonly VideoSinkTelemetry _telemetry;
     private volatile bool _destroyRequested;
     private int _resourcesDestroyedFlag;
@@ -275,14 +280,25 @@ public sealed unsafe partial class SdlVideoSink : IVideoSink
     }
 
     /// <inheritdoc />
+    IDisposable? IClaimableSink.TryClaim(string claimant) => _claims.TryClaim(claimant);
+
+    /// <inheritdoc />
+    string? IClaimableSink.Claimant => _claims.Claimant;
+
+    /// <inheritdoc />
+    long IClaimableSink.ClaimOrder => _claims.ClaimOrder;
+
+    /// <inheritdoc />
     /// <remarks>
     /// Releases the pending frame and refuses later ones; the SDL resources go on the SDL
     /// thread, at the next <see cref="RenderPendingFrame"/> or <see cref="DestroyResources"/>.
-    /// A second call does nothing.
+    /// A second call does nothing. Claiming the sink afterwards throws
+    /// <see cref="ObjectDisposedException"/>.
     /// </remarks>
     public ValueTask DisposeAsync()
     {
         _destroyRequested = true;
+        _claims.Close();
 
         // Takes the pending frame and closes the slot in one step, so a present racing this
         // call cannot leave a frame in it.

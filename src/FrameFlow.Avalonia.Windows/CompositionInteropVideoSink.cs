@@ -29,11 +29,16 @@ namespace FrameFlow.Avalonia.Windows;
 /// converter's staging texture; CPU frames (software decode, no D3D11VA, or a frame the
 /// decoder read back) take the view's BGRA upload fallback.
 /// </para>
+/// <para>
+/// It is an <see cref="IClaimableSink"/>: a second player or pass built against it while the
+/// first holds it fails (ADR-0085, decision 6).
+/// </para>
 /// </remarks>
-public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSource
+public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSource, IClaimableSink
 {
     private readonly ILogger _logger;
     private readonly LatestWinsFrameSlot _slot = new();
+    private readonly SinkClaimGate _claims = new(typeof(CompositionInteropVideoSink));
 
     /// <summary>Creates a sink.</summary>
     public CompositionInteropVideoSink(ILogger<CompositionInteropVideoSink>? logger = null)
@@ -209,13 +214,26 @@ public sealed class CompositionInteropVideoSink : IVideoSink, IFramePresentedSou
     /// </summary>
     internal bool HasPendingFrame => _slot.HasPending;
 
+    /// <inheritdoc />
+    IDisposable? IClaimableSink.TryClaim(string claimant) => _claims.TryClaim(claimant);
+
+    /// <inheritdoc />
+    string? IClaimableSink.Claimant => _claims.Claimant;
+
+    /// <inheritdoc />
+    long IClaimableSink.ClaimOrder => _claims.ClaimOrder;
+
     /// <inheritdoc/>
-    /// <remarks>A second call does nothing.</remarks>
+    /// <remarks>
+    /// A second call does nothing. Claiming the sink afterwards throws
+    /// <see cref="ObjectDisposedException"/>.
+    /// </remarks>
     public ValueTask DisposeAsync()
     {
         // Takes the pending frame and closes the slot in one step, so a present racing this call
         // cannot leave a frame in it.
         _slot.Close();
+        _claims.Close();
         return default;
     }
 }

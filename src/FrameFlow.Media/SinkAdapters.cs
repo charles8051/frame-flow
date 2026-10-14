@@ -28,7 +28,10 @@ namespace FrameFlow.Media;
 /// <b>Lifecycle stays on the original sink.</b> Callers still
 /// construct, activate, dispose, and (for audio) wire as
 /// <see cref="IClockSource"/> the underlying sink themselves. The
-/// adapter is purely a data-plane shim.
+/// adapter is purely a data-plane shim. It takes no claim on an
+/// <see cref="IClaimableSink"/> (ADR-0085, decision 6): nothing keeps a
+/// second graph or player off the sink while a graph built by hand
+/// feeds it. Whether a graph should claim its sinks for its run is #694.
 /// </para>
 /// <para>
 /// <b>Ownership.</b> The sink contract (ADR-0044) is "the sink takes

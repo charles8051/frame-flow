@@ -66,9 +66,17 @@ namespace FrameFlow.Media;
 /// <i>users</i> — they call <c>ActivateAsync</c> and <c>DeactivateAsync</c>,
 /// and never <see cref="IAsyncDisposable.DisposeAsync"/>. One sink serves one
 /// player at a time, and may serve several in sequence, which is what keeps a
-/// presenter warm across a playlist's items. Nothing enforces the "at a time":
-/// driving one sink from two players at once is undefined, and keeping them
-/// apart is the caller's job.
+/// presenter warm across a playlist's items.
+/// </para>
+/// <para>
+/// <b>One player at a time (ADR-0085, decision 6).</b> For a sink that also
+/// implements <see cref="IClaimableSink"/>, as the in-box sinks with state do,
+/// the "at a time" is enforced: the player and pass builders and
+/// <c>PlaybackController.Create</c> claim it, and a second build against it
+/// fails until the player or pass holding it has been disposed. For any other
+/// sink, and for a graph built by hand, nothing enforces it: driving one sink
+/// from two players at once is undefined, and keeping them apart is the
+/// caller's job.
 /// </para>
 /// </remarks>
 public interface IVideoSink : IAsyncDisposable

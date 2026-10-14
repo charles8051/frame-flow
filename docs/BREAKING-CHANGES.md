@@ -608,6 +608,79 @@ behaviour by calling `Close` from its dispose, and by counting nothing for a fra
 **Why.** A kept frame can be a decoder surface from a fixed hardware pool. A disposed sink that keeps
 one takes that surface out of the pool for as long as the sink object lives.
 
+### 18. A second player or pass built against a held in-box sink fails
+
+**A change in behaviour, not a compile error.**
+
+`AvaloniaVideoSink`, `CompositionInteropVideoSink`, `SdlVideoSink`, `HeadlessVideoSink` and
+`OpenAlAudioSink` implement the new `IClaimableSink` (ADR-0085, decision 6; #286).
+`BuildPlayerAsync`, the pass builder's `BuildAsync` and `PlaybackController.Create` claim each such
+sink they are given, video and audio, before they build anything else. A build against a sink that
+another player, controller or pass holds throws `InvalidOperationException`, naming the sink and its
+holder. Nothing stopped this before: two players on one view's sink interleaved their frames on one
+picture, and two sessions on one `OpenAlAudioSink` raced its activation and both mastered its clock.
+
+The claim is released once the holder's `DisposeAsync` has completed, which is after the last frame
+it sends has reached the sink. A player that is paused, has ended or is in `Error` still holds it,
+and so does a pass whose run has ended: a pass holds its claim until it is disposed, not until its
+run ends. A pass disposed while its run is still going keeps the claim until that run ends, because
+its dispose does not wait for the run. A build that fails or is cancelled releases its claims before
+it throws. A build against an in-box sink that has been disposed throws `ObjectDisposedException`,
+where it used to build a player whose every frame the sink discarded.
+
+The items of one player's queue, including one it prepares ahead, share that player's claim. A graph
+built by hand (`SinkAdapters.AsSinkNode`, a `Branch` edge inside a configurator, `RecorderPipeline`'s
+preview) takes no claim, and neither does a sink without the interface, such as the examples'
+`DelegatingVideoSink`, so the views behind one are not claimed either. Those keep ADR-0044's rule,
+which nothing enforces; #694 asks whether a graph should claim its sinks for its run.
+
+**Who hits this.**
+- Code that builds the next player or pass against a sink before the one already built against it
+  has been disposed: one that pauses or replaces the old player instead, disposes it without
+  awaiting, or builds the new one first and disposes the old one after.
+- Code that runs several passes over one sink while each stays in scope, for example a series of
+  `await using var pass = ...` declarations in one method, which are disposed only when the method
+  returns. Also code that disposes a pass without awaiting its run, or cancelling it and awaiting
+  it, before building the next pass.
+- Code that builds against an in-box sink that has been disposed. Until the views keep their own
+  sink for their whole life (ADR-0085, decision 2), the likely way to get one is a view's own sink:
+  a chain written with `WithAvaloniaVideoView` or `WithVideoSurface` before the view left the visual
+  tree, which disposed that sink, and built after it. Write the chain after the view is back, or
+  give the view a sink of your own, as entry 12 shows.
+
+**What to write instead.** Await the disposal of the player or pass already built against the sink,
+then build the next one:
+
+```csharp
+await player.DisposeAsync(); // pausing it is not enough, and neither is a dispose not awaited
+player = await FrameFlowPlayer.Create()
+    .WithMedia(next)
+    .WithVideoSink(sink)
+    .BuildPlayerAsync();
+```
+
+To run passes over one sink in turn, end each one's scope before the next is built. A pass whose
+run is still going holds the sink until the run ends, so await the run, or cancel it and await it,
+before building the next pass:
+
+```csharp
+foreach (var file in files)
+{
+    await using var pass = await FrameFlowPass.Create(file).WithVideoSink(sink).BuildAsync();
+    await pass.RunToCompletionAsync();
+} // disposed here, before the next iteration builds against the sink
+```
+
+To change what one player plays, keep the player and call `ReplaceAsync`. `IClaimableSink.Claimant`
+names who holds a sink, for a message of your own. A sink of your own takes part by implementing
+`IClaimableSink`: compose a `SinkClaimGate`, forward the three members to it, and call its `Close`
+from `DisposeAsync`.
+
+**Why.** ADR-0044 says one sink serves one player at a time, and nothing enforced it. ADR-0085 keeps
+a view's sink for the view's whole life, so two players built against one view would otherwise feed
+it for as long as both live. A claim taken at build fails before anything is decoded, and names the
+cause.
+
 ### Not breaking, but worth knowing
 
 - **A new timeline is not a stall to the PRESENT GAP check.** `AvaloniaVideoSink` warned PRESENT

@@ -44,8 +44,12 @@ namespace FrameFlow.Media;
 /// pacing chain is what gives up. A script asserting on this sink's own drop count will always
 /// see zero, and should watch the sync counter instead.
 /// </para>
+/// <para>
+/// <b>One player at a time.</b> It is an <see cref="IClaimableSink"/>: a second player or pass
+/// built against it while the first holds it fails (ADR-0085, decision 6).
+/// </para>
 /// </remarks>
-public sealed class HeadlessVideoSink : IVideoSink
+public sealed class HeadlessVideoSink : IVideoSink, IClaimableSink
 {
     private static readonly VideoSinkMeters Meters = new(
         "FrameFlow.Headless.Sink",
@@ -55,6 +59,7 @@ public sealed class HeadlessVideoSink : IVideoSink
 
     private readonly VideoSinkTelemetry _telemetry;
     private readonly TimeProvider _time;
+    private readonly SinkClaimGate _claims = new(typeof(HeadlessVideoSink));
     private long _abandoned;
     private volatile bool _disposed;
 
@@ -159,12 +164,23 @@ public sealed class HeadlessVideoSink : IVideoSink
     public FrameMemoryDomains AcceptedDomains => FrameMemoryDomains.Any;
 
     /// <inheritdoc />
+    IDisposable? IClaimableSink.TryClaim(string claimant) => _claims.TryClaim(claimant);
+
+    /// <inheritdoc />
+    string? IClaimableSink.Claimant => _claims.Claimant;
+
+    /// <inheritdoc />
+    long IClaimableSink.ClaimOrder => _claims.ClaimOrder;
+
+    /// <inheritdoc />
+    /// <remarks>Claiming the sink afterwards throws <see cref="ObjectDisposedException"/>.</remarks>
     public ValueTask DisposeAsync()
     {
         if (_disposed)
             return ValueTask.CompletedTask;
 
         _disposed = true;
+        _claims.Close();
 
         // Nothing to tear down: a present still waiting on PresentCost holds only its frame,
         // which it disposes itself.
