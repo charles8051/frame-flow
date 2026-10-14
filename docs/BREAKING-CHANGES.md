@@ -696,13 +696,19 @@ built before the trip keeps working (ADR-0085, decision 2; #691).
   no longer reads `null` after a detach, and `EnsureSink` and `IVideoSurface.AttachSink` return the
   same sink after a reattach. This replaces what entry 12 says about the view's own sink.
 - While the view does not present, before its first attach as after a detach, its sink keeps only
-  its newest frame, and only while a player holds its claim (entry 18). The reattach presents that
-  frame first. A frame the view presented before the detach is not kept, so a picture paused
-  before the detach comes back with the next frame the player sends. With no claim, as when a graph
-  built by hand feeds it, the sink disposes each frame it is given and does not count it in
-  `FramesAccepted`, and releasing the claim disposes the frame it kept. Nothing is presented and
-  `FramePresented` is not raised. The new `CompositionInteropVideoSink.FramesDiscardedOffScreen`
-  counts these frames; `FramesSuperseded` and the diagnostics snapshot's `FramesDropped` do not.
+  its newest frame, and only while a player holds its claim (entry 18). The view hands back the
+  frame it presented last as it leaves the tree, so that frame is the newest unless the player
+  sends another, and the reattach presents it first: a paused, ended or single-frame picture is
+  back at once. With no claim, as when a graph built by hand feeds it, the sink disposes each frame
+  it is given and does not count it in `FramesAccepted`, and releasing the claim disposes the frame
+  it kept. Nothing is presented and `FramePresented` is not raised until the reattach, which raises
+  it again for a frame presented again. The new `CompositionInteropVideoSink.FramesDiscardedOffScreen`
+  counts the frames let go of off screen; `FramesSuperseded` and the diagnostics snapshot's
+  `FramesDropped` do not.
+- While the view presents, it holds the frame it presented last until it has presented the next
+  one, where it used to release each frame once presented. On a paused player that is one decoder
+  frame held for as long as the view shows it. `MaxHeldFrames` already counted that frame and does
+  not change. `DisposeAsync`, and assigning or clearing `Sink`, release it.
 - Assigning `Sink` first claims the outgoing sink. While a player or pass holds it, the assignment
   throws `InvalidOperationException` naming the holder, and nothing changes. Otherwise the outgoing
   sink is disposed, if the view made it, or let go of, as before.
