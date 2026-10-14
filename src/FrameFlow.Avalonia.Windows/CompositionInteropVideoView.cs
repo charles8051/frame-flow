@@ -2131,6 +2131,8 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
                 : Task.Delay(PresentDrainTimeout);
             var drained = await CompletesByAsync(gating, deadline).ConfigureAwait(false);
 
+            // What the teardown's own producers threw, raised once the wait below has run too.
+            Exception? fault = null;
             if (drained)
             {
                 // Compositor released the keyed mutex; destroying the producer ring is now safe.
@@ -2138,19 +2140,20 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
                 // completed would still be on — so even the borrowed-device Release at the
                 // converter's tail can't hang the UI. Each is disposed even when one before it
                 // throws, and what they threw ends the teardown (ADR-0086, decision 3.4).
-                var fault = await PresenterTeardownReaper
+                fault = await PresenterTeardownReaper
                     .DisposeOffThreadAsync([converter, d3d12Converter, uploader])
                     .ConfigureAwait(false);
                 producersDisposed.TrySetResult();
-                if (fault is not null)
-                    ExceptionDispatchInfo.Throw(fault);
 
-                var elapsedMs = PresenterTeardownMetrics.RecordCompleted(teardownStart);
-                logger.LogInformation(
-                    "Presenter teardown completed cleanly in {ElapsedMs:F0}ms: compositor drained in-flight "
-                        + "presents and the producer rings were disposed off the UI thread (no deadlock).",
-                    elapsedMs
-                );
+                if (fault is null)
+                {
+                    var elapsedMs = PresenterTeardownMetrics.RecordCompleted(teardownStart);
+                    logger.LogInformation(
+                        "Presenter teardown completed cleanly in {ElapsedMs:F0}ms: compositor drained in-flight "
+                            + "presents and the producer rings were disposed off the UI thread (no deadlock).",
+                        elapsedMs
+                    );
+                }
             }
             else
             {
@@ -2177,8 +2180,11 @@ public sealed class CompositionInteropVideoView : Control, IVideoSurface, IInBox
 
             // The producers the attachment dropped earlier, waited for within the same bound and
             // never handed to the reaper again: each is already held by a retirement, which names
-            // a dispose that does not return (ADR-0086, decision 3.3).
+            // a dispose that does not return (ADR-0086, decision 3.3). Before a fault of the
+            // teardown's own is raised, so a failed dispose does not cut the wait short.
             await CompletesByAsync(retirements, deadline).ConfigureAwait(false);
+            if (fault is not null)
+                ExceptionDispatchInfo.Throw(fault);
         }
         finally
         {
