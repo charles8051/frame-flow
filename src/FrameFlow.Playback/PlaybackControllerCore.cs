@@ -1878,7 +1878,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
     /// says the controller is disposing. Then it cancels a seek it started that is still going,
     /// and waits for that too, before it disposes the session. A session operation that ignores
     /// its token holds the dispose; after five seconds the controller logs once that it is
-    /// waiting. What the loop and the seeks ended with is thrown once everything is torn down.
+    /// waiting. What the ticker's stop threw, and what the loop and the seeks ended with, is
+    /// thrown once everything is torn down.
     /// </para>
     /// </remarks>
     public ValueTask DisposeAsync() =>
@@ -1904,7 +1905,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                         _loopStallSubscription = null;
 
                         PrepareActiveSeekForDisposal();
-                        await _tickerBinding.StopAsync();
+                        await StopTickerAsync(failures).ConfigureAwait(false);
                     }
                     finally
                     {
@@ -1916,7 +1917,7 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
 
                     // The loop may have started the ticker again as it finished the command it was
                     // running, after the stop above. It has ended, so nothing starts it after this.
-                    await _tickerBinding.StopAsync();
+                    await StopTickerAsync(failures).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -1958,8 +1959,8 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
             _sinkClaims?.Dispose();
         }
 
-        // What the loop and the seek runners ended with, once everything is torn down
-        // (ADR-0086, decision 3.4).
+        // What the ticker's stops threw and what the loop and the seek runners ended with, once
+        // everything is torn down (ADR-0086, decision 3.4).
         switch (failures)
         {
             case []:
@@ -1969,6 +1970,22 @@ internal sealed partial class PlaybackControllerCore : IPlaybackController, IAsy
                 break;
             default:
                 throw new AggregateException(failures);
+        }
+    }
+
+    /// <summary>
+    /// Stops the position ticker, and adds what its stop throws to <paramref name="failures"/>, so
+    /// the teardown goes on to the session, the subjects and the factory whatever it threw.
+    /// </summary>
+    private async Task StopTickerAsync(List<Exception> failures)
+    {
+        try
+        {
+            await _tickerBinding.StopAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            failures.Add(ex);
         }
     }
 
