@@ -98,8 +98,8 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
     /// or when stream info probing fails.
     /// </exception>
     /// <exception cref="OperationCanceledException">
-    /// <paramref name="cancellationToken"/> was cancelled before the open, or the open or the probe
-    /// gave up because it was.
+    /// <paramref name="cancellationToken"/> was cancelled before the open, or by the time the open
+    /// and the probe had ended. Either may have given up for it partway.
     /// </exception>
     public ValueTask<IDemuxSession> OpenAsync(
         IMediaSource source,
@@ -280,6 +280,14 @@ public sealed class DemuxSessionFactory : IDemuxSessionFactory
                 $"FFmpeg could not find stream info for '{source.DisplayName}' "
                     + $"(error code {findResult})."
             );
+        }
+
+        // A probe the interrupt cut short still succeeds once any stream has its parameters, and
+        // would hand back a session probed partway (#709). An open cancelled by then throws.
+        if (cancellationToken.IsCancellationRequested)
+        {
+            formatCtx.Dispose();
+            ThrowIfCancelled(source, cancellationToken);
         }
 
         // Allocate the reusable packet buffer.

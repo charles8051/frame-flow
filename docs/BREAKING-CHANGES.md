@@ -1219,15 +1219,20 @@ given up ends as cancelled, not as having reached the end of the source.
 **Who hits this.**
 - Code that opens a network source and cancels the open: `DemuxSessionFactory.OpenAsync` and
   `BuildAsync` used to check the token only before the open began, and to finish the open whatever
-  happened to it after. A cancellation during the open now throws `OperationCanceledException`.
+  happened to it after. A cancellation during the open now throws `OperationCanceledException`,
+  including one that comes once the streams were found and the probe was reading on; the open no
+  longer returns a session probed partway.
 - Code that passes `rw_timeout` through `MediaSource.DemuxerOptions` so that a dispose or a seek
   ends. It still bounds a read that stalls while nothing is cancelled, but cancelling now ends one
   on its own.
 - Code that calls `IDemuxSession.ReadPacketAsync` or `SeekAsync` itself. A read or a seek whose
   token is cancelled while FFmpeg waits on the source throws `OperationCanceledException`, and so
-  does one that fails or reaches the end of the source once the token is cancelled. A seek's
-  keyframe search that FFmpeg gives up without a cancellation is an `InvalidOperationException`; it
-  no longer falls back to the container's own seek.
+  does one that returns, fails or reaches the end of the source once the token is cancelled. A read
+  cut short partway through a packet returns no part of it. A read given up this way leaves the
+  demuxer's position unreliable (`mov`, for one, has already moved past the packet), so the session
+  then refuses reads with `InvalidOperationException` until a seek: after a cancelled read, seek
+  before reading on. A seek's keyframe search that FFmpeg gives up without a cancellation is an
+  `InvalidOperationException`; it no longer falls back to the container's own seek.
 - A player whose first item opens during `BuildPlayerAsync`, from a source that stalls before it
   answers. The open does not see the build's token, and the cleanup of a cancelled build waits for
   it, as does disposing a player while its command loop opens an item (#719).

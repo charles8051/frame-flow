@@ -27,7 +27,7 @@ public sealed class StalledSourceTests
         using var cancel = new CancellationTokenSource();
 
         // The open runs on the calling thread, so the build gets a thread of its own here.
-        var build = Task.Run(() => PassOver(server).BuildAsync(cancel.Token));
+        var build = Task.Run(() => PassOver(server).BuildAsync(cancel.Token), CancellationToken.None);
         await server.FirstRequest.WaitAsync(Bound);
         await cancel.CancelAsync();
 

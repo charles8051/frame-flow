@@ -187,8 +187,11 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
     /// <para>
     /// <paramref name="cancellationToken"/> also reaches a read blocked in FFmpeg, on a stalled
     /// network source for instance: the demux session's interrupt callback observes it for the
-    /// whole run, and the read gives up (#709). A read that fails or ends once the token is
-    /// cancelled ends the pump as a cancellation does, not as the end of the source or a fault.
+    /// whole run, and the read gives up (#709). A read that returns, ends or fails once the token
+    /// is cancelled ends the pump as a cancellation does, not as the end of the source or a fault,
+    /// and the part of a packet a read cut short brought back is dropped, not routed. Such a read
+    /// leaves the demuxer's position unreliable, so the next run, like any read of the session,
+    /// is refused until a seek (<see cref="DemuxSession.ReadPacketAsync"/>).
     /// </para>
     /// </remarks>
     public async Task RunDemuxPumpAsync(CancellationToken cancellationToken)
@@ -198,7 +201,7 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
         _uses.Enter();
         try
         {
-            using var demuxUse = _demuxSession.BeginUse(cancellationToken);
+            using var demuxUse = _demuxSession.BeginRead(cancellationToken);
             await PumpAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -252,11 +255,11 @@ public sealed partial class DecodingPipeline : IAsyncDisposable, ISeekResettable
                 // step.Action == DemuxPumpAction.ReadNext
                 int readRet = FFAvFormat.av_read_frame(fmtCtx, packetPtr);
 
-                // A read that fails or ends once the run is cancelled was given up for it: the
-                // interrupt callback returns AVERROR_EXIT, and a protocol can turn that into
-                // another error or the end of its data (#709). It ends the run as a cancellation.
-                if (readRet < 0)
-                    cancellationToken.ThrowIfCancellationRequested();
+                // A read the interrupt cut short, or that returned once the run was cancelled, is
+                // given up before anything is routed: the part of a packet it brought back is
+                // dropped, and it ends the run as a cancellation, or as a fault naming the
+                // interrupt if nothing cancelled the run (#709).
+                _demuxSession.ThrowIfReadGivenUp(readRet, packetPtr, cancellationToken, "reading a packet");
 
                 var readKind = ClassifyDemuxReadResult(readRet);
 

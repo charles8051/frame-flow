@@ -50,7 +50,9 @@ public interface IDemuxSession : IAsyncDisposable
     /// </returns>
     /// <exception cref="OperationCanceledException">
     /// Thrown when <paramref name="cancellationToken"/> is cancelled. The session
-    /// remains open and readable after cancellation.
+    /// remains open after cancellation. A read the cancellation reached partway can leave
+    /// the container's position unreliable, and then the next read needs a seek first
+    /// (<see cref="DemuxSession"/> refuses one until then).
     /// </exception>
     ValueTask<DemuxPacket?> ReadPacketAsync(CancellationToken cancellationToken = default);
 
