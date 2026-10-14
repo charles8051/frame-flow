@@ -37,6 +37,16 @@ namespace FrameFlow.Media;
 /// to its dispose therefore cannot leave a frame in the slot that nothing will take.
 /// </para>
 /// <para>
+/// <b>On or off screen (ADR-0085, decisions 2 and 3).</b> A slot starts on screen, and works as
+/// described above. A view that presents a sink's frames takes the sink's slot off screen while it
+/// does not present it: before its first attach, after a detach, and when it lets the sink go. Off
+/// screen, the slot keeps only its newest frame while it is told to keep one, which an in-box sink
+/// does while a player holds its claim, and otherwise disposes each frame it is given. A frame
+/// replaced or disposed off screen is counted as discarded off screen, not as a drop, so a view out
+/// of sight does not read as an unhealthy one. The mode and the frame change together under the
+/// slot's gate, so no frame is kept in a slot that keeps nothing.
+/// </para>
+/// <para>
 /// <b>Threading.</b> The slot swap is performed under an internal monitor so install,
 /// take and close never race on the field. Per-sink side effects (drop meters/logs, the
 /// diagnostics stamp) run <i>outside</i> the lock: <see cref="Install"/> says what it did
@@ -52,21 +62,33 @@ public sealed class LatestWinsFrameSlot
     private readonly object _gate = new();
     private IVideoFrame? _pending;
     private bool _closed;
+    private bool _offScreen;
+    private bool _keepsOffScreen;
     private long _installed;
     private long _dropped;
+    private long _discardedOffScreen;
 
     /// <summary>
     /// Total frames the slot has installed, whether or not they superseded one. Counted under the
     /// slot's gate as each frame is installed, so it has moved before <see cref="Take"/> can return
-    /// that frame. A frame a closed slot refuses is not counted. Safe to read from any thread.
+    /// that frame. A frame the slot refuses is not counted. Safe to read from any thread.
     /// </summary>
     public long Installed => Interlocked.Read(ref _installed);
 
     /// <summary>
     /// Total frames dropped because a newer frame superseded an unconsumed one
     /// (the supersede-before-<see cref="Take"/> count). Safe to read from any thread.
+    /// A frame replaced while the slot is off screen is not counted here.
     /// </summary>
     public long Dropped => Interlocked.Read(ref _dropped);
+
+    /// <summary>
+    /// Total frames discarded while the slot was off screen: replaced by a newer frame, disposed on
+    /// arrival because the slot kept nothing, or let go when it went off screen or stopped keeping
+    /// a frame (ADR-0085, decision 2). Not counted in <see cref="Dropped"/>. Safe to read from any
+    /// thread.
+    /// </summary>
+    internal long DiscardedOffScreen => Interlocked.Read(ref _discardedOffScreen);
 
     /// <summary>
     /// Gets a value indicating whether a frame is currently pending (installed but not yet
@@ -88,6 +110,12 @@ public sealed class LatestWinsFrameSlot
     /// is superseded: disposed exactly once and counted toward <see cref="Dropped"/>. A closed
     /// slot disposes <paramref name="frame"/> instead and counts nothing.
     /// </summary>
+    /// <remarks>
+    /// Off screen (ADR-0085, decision 2), a slot that keeps its newest frame installs it and
+    /// disposes the one it replaces without counting a drop, and returns
+    /// <see cref="FrameSlotInstall.Installed"/>; one that keeps nothing disposes the frame and
+    /// returns <see cref="FrameSlotInstall.Refused"/>. Either discard is counted as off screen.
+    /// </remarks>
     /// <param name="frame">
     /// The frame to install. Ownership transfers to the slot, installed or not. Must not be
     /// <see langword="null"/>.
@@ -95,7 +123,7 @@ public sealed class LatestWinsFrameSlot
     /// <returns>
     /// What the slot did with the frame. Callers use it to run sink-specific side effects
     /// (counting an accepted frame, a drop meter, a log) outside the slot's lock, and to skip
-    /// them for a frame the closed slot refused.
+    /// them for a frame the slot refused.
     /// </returns>
     public FrameSlotInstall Install(IVideoFrame frame)
     {
@@ -103,10 +131,14 @@ public sealed class LatestWinsFrameSlot
 
         IVideoFrame? superseded = null;
         bool closed;
+        bool keepsNothing;
+        bool offScreen;
         lock (_gate)
         {
             closed = _closed;
-            if (!closed)
+            offScreen = _offScreen;
+            keepsNothing = offScreen && !_keepsOffScreen;
+            if (!closed && !keepsNothing)
             {
                 superseded = _pending;
                 _pending = frame;
@@ -123,8 +155,24 @@ public sealed class LatestWinsFrameSlot
             return FrameSlotInstall.Refused;
         }
 
+        if (keepsNothing)
+        {
+            // No view presents the slot and nothing would say when to let a kept frame go.
+            Interlocked.Increment(ref _discardedOffScreen);
+            frame.Dispose();
+            return FrameSlotInstall.Refused;
+        }
+
         if (superseded is null)
             return FrameSlotInstall.Installed;
+
+        if (offScreen)
+        {
+            // Not a drop either: no view was going to draw it.
+            Interlocked.Increment(ref _discardedOffScreen);
+            superseded.Dispose();
+            return FrameSlotInstall.Installed;
+        }
 
         Interlocked.Increment(ref _dropped);
         superseded.Dispose();
@@ -204,12 +252,60 @@ public sealed class LatestWinsFrameSlot
         onTaken?.Invoke(frame);
         return frame;
     }
+
+    /// <summary>
+    /// Puts the slot on screen, where it works as it always has, or off screen, where it keeps its
+    /// newest frame only while <see cref="SetKeepOffScreen"/> says to and otherwise disposes what it
+    /// is given. A view calls this through its sink as it starts and stops presenting the sink
+    /// (ADR-0085, decision 2). Going off screen with nothing to keep disposes the pending frame.
+    /// </summary>
+    /// <param name="onScreen">Whether a view presents what the slot holds.</param>
+    internal void SetOnScreen(bool onScreen) => Set(onScreen, keep: null);
+
+    /// <summary>
+    /// Says whether the slot keeps its newest frame while it is off screen. An in-box sink keeps one
+    /// while a player holds its claim: the frame a paused or ended player left is the one meant to
+    /// be on screen when the view comes back. Letting go of it while off screen disposes it, so a
+    /// view out of sight pins nothing for a player that is gone. On screen it changes nothing until
+    /// the slot goes off screen.
+    /// </summary>
+    /// <param name="keep">Whether to keep the newest frame off screen.</param>
+    internal void SetKeepOffScreen(bool keep) => Set(onScreen: null, keep);
+
+    // Either input may change on its own thread: the view's on the UI thread, the claim's on
+    // whichever thread takes or releases it. Both are read with the frame under the gate.
+    private void Set(bool? onScreen, bool? keep)
+    {
+        IVideoFrame? discarded = null;
+        lock (_gate)
+        {
+            if (onScreen is { } on)
+                _offScreen = !on;
+            if (keep is { } k)
+                _keepsOffScreen = k;
+
+            if (_offScreen && !_keepsOffScreen)
+            {
+                discarded = _pending;
+                _pending = null;
+            }
+        }
+
+        if (discarded is null)
+            return;
+
+        Interlocked.Increment(ref _discardedOffScreen);
+        discarded.Dispose();
+    }
 }
 
 /// <summary>What <see cref="LatestWinsFrameSlot.Install"/> did with a frame.</summary>
 public enum FrameSlotInstall
 {
-    /// <summary>The frame is pending, and the slot was empty.</summary>
+    /// <summary>
+    /// The frame is pending, and nothing was dropped for it: the slot was empty, or it is off
+    /// screen and the frame it replaced was not one a view was going to draw.
+    /// </summary>
     Installed,
 
     /// <summary>
@@ -219,7 +315,9 @@ public enum FrameSlotInstall
     Superseded,
 
     /// <summary>
-    /// The slot is closed: it disposed the frame instead of installing it, and counted nothing.
+    /// The slot disposed the frame instead of installing it, and counted nothing toward
+    /// <see cref="LatestWinsFrameSlot.Installed"/> or <see cref="LatestWinsFrameSlot.Dropped"/>:
+    /// it is closed, or it is off screen and keeps nothing.
     /// </summary>
     Refused,
 }
