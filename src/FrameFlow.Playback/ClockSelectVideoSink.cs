@@ -89,6 +89,8 @@ namespace FrameFlow.Playback;
 /// every <see cref="IVideoSink"/> already has from the graph.
 /// </para>
 /// </remarks>
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Reliability", "CA2213", Justification = "DisposeAsync runs TearDownAsync through DisposeOnce, which the analyzer cannot follow. TearDownAsync disposes them.")]
 internal sealed partial class ClockSelectVideoSink : IVideoSink
 {
     /// <summary>
@@ -464,7 +466,10 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
 
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly Task _deliveryLoop;
-    private int _disposed;
+
+    // Runs the teardown once and has every other dispose wait for it (ADR-0086, decision 3). Its
+    // HasBegun is the pacer's disposed flag, set before the teardown runs.
+    private readonly DisposeOnce _dispose = new();
 
     private int _presented;
     private int _droppedLate;
@@ -772,7 +777,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
     {
         ArgumentNullException.ThrowIfNull(frame);
 
-        if (Volatile.Read(ref _disposed) != 0)
+        if (_dispose.HasBegun)
         {
             frame.Dispose();
             return;
@@ -792,12 +797,12 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         }
 
         // Re-check disposal now the permit is held. The check before the wait is not
-        // enough: DisposeAsync sets _disposed, cancels, and lets the delivery loop drain
-        // the buffer under _gate, so a caller that acquired its permit before all that and
-        // reaches the lock afterwards would hand a frame to a buffer nothing will drain
-        // again — and then release a permit into an already-disposed semaphore. _disposed
-        // is set before the loop's teardown runs, so reading it under _gate here orders
-        // this against that drain either way round.
+        // enough: DisposeAsync marks the dispose begun, cancels, and lets the delivery loop
+        // drain the buffer under _gate, so a caller that acquired its permit before all that
+        // and reaches the lock afterwards would hand a frame to a buffer nothing will drain
+        // again — and then release a permit into an already-disposed semaphore. The dispose
+        // is marked begun before the loop's teardown runs, so reading it under _gate here
+        // orders this against that drain either way round.
         bool admitted;
         bool floorSpent;
         bool disposed;
@@ -805,7 +810,7 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         TaskCompletionSource<TimeSpan?>? reachedAt = null;
         lock (_gate)
         {
-            disposed = Volatile.Read(ref _disposed) != 0;
+            disposed = _dispose.HasBegun;
             reachedAt = _seekTargetReached;
             var hadFloor = !disposed && _buffer.HasFloor;
             admitted = !disposed && _buffer.Admit(frame);
@@ -1633,15 +1638,22 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Idempotent (ADR-0044). Stops the delivery loop and disposes buffered
-    /// frames; the inner sink is <b>not</b> disposed — the session/consumer owns
-    /// its lifecycle.
+    /// <para>
+    /// Stops the delivery loop, waits for it, and disposes buffered frames; the inner sink is
+    /// <b>not</b> disposed — the session/consumer owns its lifecycle. The first call tears down;
+    /// a call made while it runs, or after, waits for it (ADR-0086, decision 3).
+    /// </para>
+    /// <para>
+    /// The wait lasts as long as the loop's call into the inner sink or the clock does. One that
+    /// ignores its token holds the dispose, and after <see cref="DisposeWarningInterval"/> the
+    /// pacer logs once, at Warning, that it is still waiting and on which sink.
+    /// </para>
     /// </remarks>
-    public async ValueTask DisposeAsync()
-    {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
+    public ValueTask DisposeAsync() => _dispose.RunAsync(TearDownAsync);
 
+    /// <summary>The teardown the first <see cref="DisposeAsync"/> runs.</summary>
+    private async ValueTask TearDownAsync()
+    {
         _shutdownCts.Cancel();
         FailPendingParkWaiters();
         lock (_gate)
@@ -1655,7 +1667,14 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
         _arrival.Set();
         try
         {
-            await _deliveryLoop.ConfigureAwait(false);
+            await SlowWorkWarning
+                .AwaitAsync(
+                    _deliveryLoop,
+                    DisposeWarningInterval,
+                    _timeProvider,
+                    () => LogDisposeWaiting(_logger, DisposeWarningInterval.TotalSeconds, _inner.GetType().Name)
+                )
+                .ConfigureAwait(false);
         }
         catch
         {
@@ -1667,7 +1686,16 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
             _recheck.Dispose();
     }
 
+    /// <summary>How long a dispose waits for the delivery loop before it says what it waits for.</summary>
+    internal static TimeSpan DisposeWarningInterval => SlowWorkWarning.DefaultInterval;
+
     private static TimeSpan Max(TimeSpan a, TimeSpan b) => a >= b ? a : b;
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "ClockSelect's dispose has waited {Seconds:F0}s for its delivery loop, which is still in a call to the video sink {SinkType} or to the clock. One of them is not observing cancellation; the dispose waits for it."
+    )]
+    private static partial void LogDisposeWaiting(ILogger logger, double seconds, string sinkType);
 
     [LoggerMessage(
         Level = LogLevel.Information,
