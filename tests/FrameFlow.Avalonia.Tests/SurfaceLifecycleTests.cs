@@ -458,6 +458,7 @@ public sealed class SurfaceLifecycleTests
         var next = t.Next;
         var heldBefore = shell.Held;
         var heldOwnedBefore = shell.HeldOwned;
+        var boundBefore = shell.Bound;
 
         // Built only on a failure: there are millions of steps.
         void Ensure(bool ok, string what)
@@ -481,6 +482,10 @@ public sealed class SurfaceLifecycleTests
         }
 
         // The work, in order.
+        Ensure(
+            !(work.HasFlag(SurfaceWork.StopPresenting) && work.HasFlag(SurfaceWork.StartPresenting)),
+            "Never stops and starts presenting at once"
+        );
         if (work.HasFlag(SurfaceWork.Unbind))
         {
             Ensure(shell.Bound != 0, "Unbinds only what is bound");
@@ -572,14 +577,14 @@ public sealed class SurfaceLifecycleTests
         Ensure(shell.Bound == 0 || shell.Bound == shell.Held, "Only the held target is bound");
         Ensure(shell.Presenting == next.Presents, "The state says presenting exactly while the shell presents");
 
-        // Bound from the bind, before the first attach as well (a chrome control follows its
-        // transport from there), and never out of the tree after a detach.
+        // The next two state the rules rather than derive them: they are the spec for two choices
+        // ADR-0085 leaves to this core. A target is bound from the bind, before the first attach
+        // as well (a chrome control follows its transport from there), and never out of the tree
+        // after a detach. And presenting needs a bound target, so assigning none stops it.
         Ensure(
             next.IsBound == (next.Target != SurfaceTarget.None && next.Phase is SurfacePhase.New or SurfacePhase.Live),
             "Bound exactly while holding a target and neither detached nor disposed"
         );
-
-        // Presenting.
         Ensure(
             next.Presents == (next.InTree && next.Initialized && shell.Bound != 0),
             "Presents exactly while in the tree, initialised and bound"
@@ -594,10 +599,13 @@ public sealed class SurfaceLifecycleTests
         if (e == Event.Detach && before is { InTree: true, IsBound: true })
             Ensure(work.HasFlag(SurfaceWork.Unbind) && shell.Held == heldBefore, "A detach unbinds and keeps the target");
 
-        // The binding number.
-        var bindsOrUnbinds = (work & (SurfaceWork.Bind | SurfaceWork.Unbind)) != 0;
+        // The binding number. Judged on what the shell has bound before and after, not on the
+        // work flags, so a needless unbind and rebind of the same target cannot pass as a binding
+        // that started.
+        if (work.HasFlag(SurfaceWork.Unbind) && work.HasFlag(SurfaceWork.Bind))
+            Ensure(shell.Bound != boundBefore, "Never unbinds and rebinds the same target in one transition");
         Ensure(
-            next.Binding == before.Binding + (bindsOrUnbinds ? 1 : 0),
+            next.Binding == before.Binding + (shell.Bound != boundBefore ? 1 : 0),
             "The binding number moves by one exactly when a binding starts or ends"
         );
 
