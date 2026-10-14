@@ -58,8 +58,15 @@ public readonly record struct PresenterRecoveryInfo(
 /// presenter records <c>frameflow.presenter.stalls</c> from its own <see cref="Stalled"/> handler,
 /// which is the same rising edge.
 /// </para>
+/// <para>
+/// <b>Stopping.</b> <see cref="DisposeAsync"/> stops the timer and completes once a check already
+/// running, with any handler it raised, has returned, so none runs after it; a second call waits
+/// for the first (ADR-0086, decision 3). <see cref="Dispose"/> stops the timer and returns at once.
+/// A handler must not wait for the watchdog's <see cref="DisposeAsync"/>, or for a dispose that
+/// awaits it, since that dispose waits for the handler.
+/// </para>
 /// </remarks>
-public sealed class PresenterStallWatchdog : IDisposable
+public sealed class PresenterStallWatchdog : IDisposable, IAsyncDisposable
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan DefaultInterval = TimeSpan.FromMilliseconds(500);
@@ -70,7 +77,10 @@ public sealed class PresenterStallWatchdog : IDisposable
     private readonly int _recoverySamples;
     private PresenterStallEvaluator _evaluator;
     private bool _wasStalled;
-    private int _disposed;
+
+    // Stops the timer once, and has every DisposeAsync wait for a check in flight (ADR-0086,
+    // decision 3). A check that starts after the stop has begun returns without sampling.
+    private readonly DisposeOnce _dispose = new();
 
     /// <summary>Raised once on the rising edge of each detected stall.</summary>
     public event Action<PresenterStallInfo>? Stalled;
@@ -106,7 +116,7 @@ public sealed class PresenterStallWatchdog : IDisposable
 
     private void Tick(object? _)
     {
-        if (Volatile.Read(ref _disposed) != 0)
+        if (_dispose.HasBegun)
             return;
 
         PresenterSample sample;
@@ -157,10 +167,20 @@ public sealed class PresenterStallWatchdog : IDisposable
         _wasStalled = outcome.Stalled;
     }
 
-    public void Dispose()
-    {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
-        _timer.Dispose();
-    }
+    /// <summary>
+    /// Stops sampling, and returns at once: a check already running may still finish, and raise
+    /// <see cref="Stalled"/> or <see cref="Recovered"/>, after this returns.
+    /// <see cref="DisposeAsync"/> waits for it.
+    /// </summary>
+    public void Dispose() => _ = _dispose.RunAsync(StopAsync).AsTask();
+
+    /// <summary>
+    /// Stops sampling, and completes once a check already running, with any handler it raised, has
+    /// returned. No check runs and no event is raised after it completes. A call made while another
+    /// stop runs, or after, waits for that one (ADR-0086, decision 3).
+    /// </summary>
+    public ValueTask DisposeAsync() => _dispose.RunAsync(StopAsync);
+
+    // The timer's own asynchronous dispose waits for a callback in flight.
+    private ValueTask StopAsync() => _timer.DisposeAsync();
 }
