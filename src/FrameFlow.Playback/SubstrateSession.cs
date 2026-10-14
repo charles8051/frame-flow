@@ -190,6 +190,13 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     internal VideoFormatAnnouncer? FormatAnnouncer { get; init; }
 
     /// <summary>
+    /// Shared across every item played through the same sink, so a run of failed calls to it goes
+    /// on from one item to the next, and an item shorter than the run that escalates still counts
+    /// toward it (#703). Null gives this session's pacer a run of its own.
+    /// </summary>
+    internal VideoSinkFailures? SinkFailures { get; init; }
+
+    /// <summary>
     /// The hardware devices the items of one player share, which this session's decoder borrows
     /// from when no device is lent. Null when there is none.
     /// </summary>
@@ -762,10 +769,17 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
                     _loggerFactory.CreateLogger("FrameFlow.Playback.ClockSelect.Video"),
                     maxWait: PaceWaitCap,
                     formatAnnouncer: FormatAnnouncer,
+                    sinkFailures: SinkFailures,
                     // A source that stops delivering starves the ring; the controller reports
                     // Rebuffering until frames flow again (#547).
                     onStarved: _callbacks.OnBufferUnderrun,
-                    onFed: _callbacks.OnBufferReady
+                    onFed: _callbacks.OnBufferReady,
+                    // A sink that throws costs the frame, and the controller reports it on
+                    // ErrorOccurred, at most once every few seconds, and plays on. One that keeps
+                    // throwing faults the item, as a fault in the graph or the pump does, and so
+                    // does a fault in the pacer's own delivery (#703).
+                    onSinkFailed: _callbacks.OnRecoverableError,
+                    onFaulted: ReportWorkerFault
                 );
                 // Seat the cap on the gate state this pacer is born into — a session
                 // prepared while paused (a playlist advance mid-pause) must not arm the cap
@@ -2142,14 +2156,31 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     internal const string RunLaunchedMessage = "Run {RunNumber} launches on {Timeline}.";
 
     /// <summary>
-    /// Reports a fault in the pump or the graph. The shared hardware device this item decoded on
-    /// is dropped first: a fault can mean the device is no longer usable, after a driver reset
-    /// for instance, and the next item then creates a new one rather than failing on it too.
+    /// Reports a fault in the pump, the graph or the video pacer: a sink that keeps throwing, or a
+    /// fault in the pacer's own delivery (#703). The shared hardware device this item decoded on
+    /// is dropped first, a sink's fault included: a fault can mean the device is no longer usable,
+    /// after a driver reset for instance, and the next item then creates a new one rather than
+    /// failing on it too.
     /// </summary>
+    /// <remarks>
+    /// The fault is reported even when dropping the device throws. Whatever called this has
+    /// stopped, a halted pacer included, and only the report ends the item; a drop that threw
+    /// before it would leave the item playing a picture that no longer moves.
+    /// </remarks>
     private void ReportWorkerFault(Exception ex)
     {
-        if (_videoDecoder?.BoundBackend is { } backend)
-            DeviceCache?.Drop(backend);
+        try
+        {
+            if (_videoDecoder?.BoundBackend is { } backend)
+                DeviceCache?.Drop(backend);
+        }
+        catch (Exception dropFailure)
+        {
+            _logger.LogWarning(
+                dropFailure,
+                "Dropping the shared decode device after a fault threw; the fault is reported regardless."
+            );
+        }
         _callbacks.OnWorkerFaulted(ex);
     }
 

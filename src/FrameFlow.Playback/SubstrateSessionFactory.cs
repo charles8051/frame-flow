@@ -55,6 +55,9 @@ internal sealed class SubstrateSessionFactory
     // announcement is about. Every item it creates shares it (#287).
     private readonly VideoFormatAnnouncer _formatAnnouncer = new();
 
+    // Beside it for the same reason: a run of failed calls is the sink's, not an item's (#703).
+    private readonly VideoSinkFailures _sinkFailures = new();
+
     // The hardware devices every item this factory creates shares, one per backend, so an item
     // boundary does not create a device. None when the caller lends a device, which every item
     // borrows instead, or when hardware decode is disabled.
@@ -140,6 +143,7 @@ internal sealed class SubstrateSessionFactory
         {
             LatenessRecovery = _latenessRecovery,
             FormatAnnouncer = _formatAnnouncer,
+            SinkFailures = _sinkFailures,
             DeviceCache = _deviceCache,
             Detached = detached,
         };
