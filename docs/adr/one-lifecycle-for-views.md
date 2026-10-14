@@ -342,7 +342,8 @@ Sink = new FanOutVideoSink(
   new frame for that target. The target owns the frame it is given. A target with a transform
   declares the domains its transform accepts, CPU by default. A transform keeps the frame's
   dimensions and pixel format, so the format forwarded to its target stays true. The fan-out checks
-  each transform's output against the incoming frame and fails that target's call when they differ.
+  each transform's output against the incoming frame. When they differ, it disposes the output and
+  fails that target's call.
   A change of format belongs in the graph, as a node before the sink.
 - **Delivery and ownership.** For each target in order, the fan-out takes a reference just before
   the call (`AddRef` returns the same instance, `IVideoFrame.cs:77`), and the target owns that
@@ -454,6 +455,10 @@ Each slice carries its own BREAKING-CHANGES entry.
   disposes controls, so only the docs tell it. A view that is never disposed keeps its sink object.
 - The interop view's lifecycle moves out of `FrameFlow.Avalonia.Windows`, which replaces the core
   #662 added.
+- A paused player keeps one decoder frame pinned in each detached view it feeds, for as long as the
+  player lives. It is the frame an attached view would hold anyway, and the sink's `MaxHeldFrames`
+  already counts it against the decoder's pool, so it adds no pool pressure the attached case does
+  not. It is the cost of a paused picture coming back on reattach.
 - A fan-out presents to its targets in turn on the presenting thread, so a transform for one
   target, such as a filter, delays all of them. A paced branch stays with #636.
 - A fan-out over the interop view and the CPU view accepts CPU frames only, so the interop view
@@ -602,3 +607,5 @@ reference right. A transform per target keeps both derivable and fixes ownership
     builds could both fail. A fan-out now claims its flattened set in one global order.
   - A transform could change the format its target had been told. Transforms now keep dimensions and
     pixel format, and the fan-out checks it.
+- **2026-10-13, automated review turn 2.** The cost of keeping a paused frame for the player's life
+  is stated under Negative. A transform output that fails the format check is disposed.
