@@ -1,6 +1,7 @@
 // Copyright 2026 Charles Lee
 // SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
 
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 
@@ -63,7 +64,8 @@ public readonly record struct PresenterRecoveryInfo(
 /// running, with any handler it raised, has returned, so none runs after it; a second call waits
 /// for the first (ADR-0086, decision 3). <see cref="Dispose"/> stops the timer and returns at once.
 /// A handler must not wait for the watchdog's <see cref="DisposeAsync"/>, or for a dispose that
-/// awaits it, since that dispose waits for the handler.
+/// awaits it, since that dispose waits for the handler. A stop still waiting after five seconds
+/// logs once, at Warning, what it waits for: the sampler or the handler, by name.
 /// </para>
 /// </remarks>
 public sealed class PresenterStallWatchdog : IDisposable, IAsyncDisposable
@@ -81,6 +83,19 @@ public sealed class PresenterStallWatchdog : IDisposable, IAsyncDisposable
     // Stops the timer once, and has every DisposeAsync wait for a check in flight (ADR-0086,
     // decision 3). A check that starts after the stop has begun returns without sampling.
     private readonly DisposeOnce _dispose = new();
+
+    // What each check in flight is doing, by the check's number: in the sampler, or in a handler it
+    // raised. The timer may start a check while another still runs. Read by the warning a stop that
+    // waits too long logs (ADR-0086, decision 3.3).
+    private readonly ConcurrentDictionary<long, string> _running = new();
+    private readonly string _samplerName;
+    private long _checks;
+
+    /// <summary>
+    /// Times how long a stop waits for a check before it says what it waits for. For tests: a fake
+    /// clock stands in for the machine's.
+    /// </summary>
+    internal TimeProvider WarningTime { get; set; } = TimeProvider.System;
 
     /// <summary>Raised once on the rising edge of each detected stall.</summary>
     public event Action<PresenterStallInfo>? Stalled;
@@ -107,6 +122,7 @@ public sealed class PresenterStallWatchdog : IDisposable, IAsyncDisposable
         int recoverySamples = PresenterStallEvaluator.DefaultRecoverySamples)
     {
         _sample = sample;
+        _samplerName = Describe("its sampler", sample);
         _logger = logger;
         _recoverySamples = recoverySamples;
         _evaluator = PresenterStallEvaluator.Create(timeout ?? DefaultTimeout, recoverySamples);
@@ -119,6 +135,20 @@ public sealed class PresenterStallWatchdog : IDisposable, IAsyncDisposable
         if (_dispose.HasBegun)
             return;
 
+        var check = Interlocked.Increment(ref _checks);
+        try
+        {
+            Check(check);
+        }
+        finally
+        {
+            _running.TryRemove(check, out string? _);
+        }
+    }
+
+    private void Check(long check)
+    {
+        _running[check] = _samplerName;
         PresenterSample sample;
         PresenterStallOutcome outcome;
         try
@@ -152,7 +182,11 @@ public sealed class PresenterStallWatchdog : IDisposable, IAsyncDisposable
                     outcome.Reason, ms, sample.FramesPresented);
             // The stall counter itself belongs to whichever presenter owns this watchdog, so it
             // is recorded by the Stalled subscriber rather than here. Same rising edge either way.
-            Stalled?.Invoke(new PresenterStallInfo(ms, sample.FramesPresented, outcome.Reason));
+            if (Stalled is { } stalled)
+            {
+                _running[check] = Describe("its Stalled handler", stalled);
+                stalled(new PresenterStallInfo(ms, sample.FramesPresented, outcome.Reason));
+            }
         }
         else if (outcome.Recovered)
         {
@@ -161,8 +195,11 @@ public sealed class PresenterStallWatchdog : IDisposable, IAsyncDisposable
                     + "over {ConfirmedOverSamples} consecutive samples of forward progress. A host that "
                     + "latched on the stall can clear it.",
                 outcome.Reason, sample.FramesPresented, _recoverySamples);
-            Recovered?.Invoke(
-                new PresenterRecoveryInfo(sample.FramesPresented, outcome.Reason, _recoverySamples));
+            if (Recovered is { } recovered)
+            {
+                _running[check] = Describe("its Recovered handler", recovered);
+                recovered(new PresenterRecoveryInfo(sample.FramesPresented, outcome.Reason, _recoverySamples));
+            }
         }
         _wasStalled = outcome.Stalled;
     }
@@ -181,6 +218,26 @@ public sealed class PresenterStallWatchdog : IDisposable, IAsyncDisposable
     /// </summary>
     public ValueTask DisposeAsync() => _dispose.RunAsync(StopAsync);
 
-    // The timer's own asynchronous dispose waits for a callback in flight.
-    private ValueTask StopAsync() => _timer.DisposeAsync();
+    // The timer's own asynchronous dispose waits for a callback in flight. A check that does not
+    // return is named once (ADR-0086, decision 3.3).
+    private ValueTask StopAsync() =>
+        new(
+            SlowWorkWarning.AwaitAsync(
+                _timer.DisposeAsync().AsTask(),
+                SlowWorkWarning.DefaultInterval,
+                WarningTime,
+                WarnStillRunning
+            )
+        );
+
+    private void WarnStillRunning() =>
+        _logger.LogWarning(
+            "Presenter stall watchdog was stopped {Seconds:F0}s ago and still waits for {Running} to return (ADR-0086).",
+            SlowWorkWarning.DefaultInterval.TotalSeconds,
+            _running.IsEmpty ? "a check" : string.Join("; ", _running.Values.Distinct())
+        );
+
+    // "its sampler CompositionInteropVideoView.SampleStall", say: what a warning names.
+    private static string Describe(string what, Delegate handlers) =>
+        $"{what} {string.Join(", ", handlers.GetInvocationList().Select(h => $"{h.Method.DeclaringType?.Name}.{h.Method.Name}"))}";
 }
