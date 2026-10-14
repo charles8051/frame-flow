@@ -3,7 +3,8 @@ using FrameFlow.Media;
 namespace FrameFlow.Playback.Tests;
 
 /// <summary>
-/// Coverage for the video-format announcement (#287).
+/// Coverage for the video-format announcement (#287), and for who releases the frame when it
+/// fails (#701).
 /// </summary>
 /// <remarks>
 /// <see cref="IVideoSink.OnFormatChangedAsync"/> was documented as the call the pipeline makes
@@ -217,6 +218,102 @@ public sealed class VideoFormatAnnouncerTests
         );
     }
 
+    // ── Who owns the frame (#701) ───────────────────────────────────────
+
+    [Fact]
+    public async Task AFrameWhoseAnnouncementThrows_IsReleasedOnce()
+    {
+        // The sink was never handed the frame, so the announcer is what holds it, and its
+        // caller does not release it after a throw.
+        var sink = new RecordingSink
+        {
+            ThrowOnAnnouncement = new InvalidOperationException("surface"),
+        };
+        var frame = new CountedFrame();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await new VideoFormatAnnouncer().PresentAsync(sink, frame, default)
+        );
+
+        Assert.Empty(sink.Presents);
+        Assert.Equal(0, frame.References);
+    }
+
+    [Fact]
+    public async Task AFrameWhoseAnnouncementIsCancelled_IsReleasedOnce()
+    {
+        var sink = new RecordingSink { ThrowOnAnnouncement = new OperationCanceledException() };
+        var frame = new CountedFrame();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+            await new VideoFormatAnnouncer().PresentAsync(sink, frame, default)
+        );
+
+        Assert.Empty(sink.Presents);
+        Assert.Equal(0, frame.References);
+    }
+
+    [Fact]
+    public async Task AFrameCancelledWhileWaitingForTheSink_IsReleasedOnce()
+    {
+        // At a queue boundary the next item's pacer can wait here while the previous one is
+        // still inside the sink, and be stopped before its turn comes.
+        var sink = new RecordingSink();
+        var announcer = new VideoFormatAnnouncer();
+        var insideFirst = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var releaseFirst = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        sink.OnAnnouncementAsync = async () =>
+        {
+            insideFirst.TrySetResult();
+            await releaseFirst.Task;
+        };
+
+        var first = announcer
+            .PresentAsync(sink, new StubFrame(1920, 1080, PixelFormat.Bgra32), default)
+            .AsTask();
+        await insideFirst.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        using var stop = new CancellationTokenSource();
+        var frame = new CountedFrame();
+        var waiting = announcer.PresentAsync(sink, frame, stop.Token).AsTask();
+        // The first present holds the sink, so this one is parked on the wait for it, and
+        // nothing else can complete it.
+        Assert.False(waiting.IsCompleted);
+
+        await stop.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+
+        Assert.Equal(0, frame.References);
+
+        releaseFirst.TrySetResult();
+        await first.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(["1920x1080"], sink.Presents);
+    }
+
+    [Fact]
+    public async Task ASinkThatThrows_KeepsTheFrameItWasHanded()
+    {
+        // From IVideoSink.PresentAsync on the frame is the sink's, even when the call throws.
+        // This sink releases it and then fails, as a sink cancelled mid-present does, so a
+        // release from the announcer as well would be one past the last.
+        var sink = new RecordingSink
+        {
+            ReleaseThenThrowOnPresent = new InvalidOperationException("present"),
+        };
+        var frame = new CountedFrame();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await new VideoFormatAnnouncer().PresentAsync(sink, frame, default)
+        );
+
+        Assert.Single(sink.Presents);
+        Assert.Equal(0, frame.References);
+    }
+
     private sealed class RecordingSink : IVideoSink
     {
         private readonly List<VideoFormatInfo> _announcements = [];
@@ -229,6 +326,9 @@ public sealed class VideoFormatAnnouncerTests
         /// <summary>When set, the announcement throws it instead of succeeding.</summary>
         public Exception? ThrowOnAnnouncement { get; set; }
 
+        /// <summary>When set, the present releases the frame and then throws it.</summary>
+        public Exception? ReleaseThenThrowOnPresent { get; set; }
+
         public IReadOnlyList<VideoFormatInfo> Announcements => _announcements;
 
         public IReadOnlyList<string> Presents => _presents;
@@ -240,6 +340,12 @@ public sealed class VideoFormatAnnouncerTests
         {
             _presents.Add($"{frame.Width}x{frame.Height}");
             _log.Add($"frame {frame.Width}x{frame.Height}");
+            if (ReleaseThenThrowOnPresent is { } ex)
+            {
+                frame.Dispose();
+                throw ex;
+            }
+
             return ValueTask.CompletedTask;
         }
 

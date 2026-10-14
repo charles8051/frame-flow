@@ -863,7 +863,52 @@ that pointed at it could not be followed (#611). A fan-out in the library passes
 on to the views it feeds, which a delegate cannot do, because it cannot see what its delegate
 calls.
 
-### 22. `FrameFlowPlayerView` swaps a surface out under its own claim
+### 22. A video sink owns the frame it is given even when its present throws
+
+**A change in behaviour, not a compile error.**
+
+A player hands each frame to its video sink through its pacer. When the sink's `PresentAsync` threw,
+or was cancelled because the player stopped, the pacer disposed the frame again. `HeadlessVideoSink`
+disposes a frame and then throws on a cancelled token, and `FanOutVideoSink` (entry 21) disposes its
+reference and then throws when a target fails, after each target has taken its own, so behind a
+player either one's frame was released twice. A release past the last reference is counted in
+`RefCounting.OverReleases` and breaks into an attached debugger in a Debug build, and when something
+else still held the frame, such as a sink that keeps the newest one, its buffer went back to its pool
+while that holder was still using it (#701).
+
+The pacer no longer disposes a frame it has handed on. The sink owns the frame from the call to
+`IVideoSink.PresentAsync`, even when the call throws or is cancelled, which is now what the interface
+says, and what a pass and a graph built with `SinkAdapters.AsSinkNode` already did. A frame that
+fails before it reaches the sink, because the sink's `OnFormatChangedAsync` threw or the player
+stopped while the frame waited for the sink, is still disposed once. `IAudioSink.PresentAsync` now
+says the same of a buffer, which its one caller in the library already did.
+
+**Who hits this.** A sink of your own whose `PresentAsync` can throw without disposing the frame.
+Under a player, the pacer used to release that frame for it, and now nothing does: the frame leaks,
+and a frame from a fixed pool, such as a hardware decoder's, stays out of the pool.
+
+**What to write instead.** Dispose the frame on every path out of `PresentAsync`, including the one
+that throws, unless something you handed it to owns it by then:
+
+```csharp
+public async ValueTask PresentAsync(IVideoFrame frame, CancellationToken ct)
+{
+    try
+    {
+        await DrawAsync(frame, ct);
+    }
+    finally
+    {
+        frame.Dispose();
+    }
+}
+```
+
+**Why.** Only the sink knows whether it disposed the frame, kept it or handed it on before it threw,
+so a caller that disposes the frame after the throw cannot be right for every sink. ADR-0085 states
+the same rule for the targets of a fan-out (decision 8).
+
+### 23. `FrameFlowPlayerView` swaps a surface out under its own claim
 
 **A change in behaviour, not a compile error.** `FrameFlowPlayerView` also gains `IAsyncDisposable`.
 

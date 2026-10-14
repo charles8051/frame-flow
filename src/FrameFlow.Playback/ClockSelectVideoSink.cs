@@ -1423,35 +1423,25 @@ internal sealed partial class ClockSelectVideoSink : IVideoSink
                     );
                 }
 
-                try
-                {
-                    // The announcement goes with the frame rather than being a separate call
-                    // here: it has to precede the frame it describes, and it has to not be
-                    // overtaken by another pacer's frame over the same sink. Nothing announced
-                    // the format at all until #287 — the contract on
-                    // IVideoSink.OnFormatChangedAsync was documented and uncalled, so an item
-                    // of a different size from the one before it left the sink drawing at the
-                    // previous item's geometry.
-                    await _formatAnnouncer
-                        .PresentAsync(_inner, present, ct)
-                        .ConfigureAwait(false);
-                    Interlocked.Increment(ref _presented);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    present.Dispose();
-                    break;
-                }
-                catch
-                {
-                    // The frame left the buffer and nothing downstream took ownership of it,
-                    // so it has to be released before the fault travels on to the session's
-                    // worker-fault path. A sink's OnFormatChangedAsync may rebuild a surface,
-                    // which is a real thing to fail at, and the cancellation arm above cannot
-                    // cover it.
-                    present.Dispose();
-                    throw;
-                }
+                // The announcement goes with the frame rather than being a separate call
+                // here: it has to precede the frame it describes, and it has to not be
+                // overtaken by another pacer's frame over the same sink. Nothing announced
+                // the format at all until #287 — the contract on
+                // IVideoSink.OnFormatChangedAsync was documented and uncalled, so an item
+                // of a different size from the one before it left the sink drawing at the
+                // previous item's geometry.
+                //
+                // The announcer owns the frame from this call, whatever it throws (#701). It
+                // disposes the frame itself when it fails before the hand-off, a cancelled
+                // wait for the sink or a throwing OnFormatChangedAsync, and the sink owns it
+                // from IVideoSink.PresentAsync on, even when that throws. Disposing it here as
+                // well would release a reference the sink has already given back, or still
+                // holds. A cancellation leaves through the shutdown catch below, and any other
+                // failure faults the loop, which nothing reports yet (#703).
+                await _formatAnnouncer
+                    .PresentAsync(_inner, present, ct)
+                    .ConfigureAwait(false);
+                Interlocked.Increment(ref _presented);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
