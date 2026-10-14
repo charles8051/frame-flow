@@ -171,11 +171,10 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     // run until DisposeAsync or natural EOS. No per-pause cancel.
     private CancellationTokenSource? _sessionCts;
 
-    // The demux pump and graph tasks of the current run, held until they have ended: a stop whose
-    // wait is cut short leaves them here for the next stop, the dispose's above all, to wait for
-    // (#707).
+    // The demux pump, graph and lateness-recovery tasks of the current run, held until they have
+    // ended: a stop whose wait is cut short leaves them here for the next stop, the dispose's above
+    // all, to wait for (#707).
     private RunTasks<Task> _runTasks = RunTasks<Task>.None;
-    private Task? _recoveryTask;
 
     /// <summary>
     /// Lateness-recovery policy. Off unless a caller opts in — the ADR gates
@@ -338,6 +337,12 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
 
         /// <summary>A run's graph is ending: it has made its last call on a sink.</summary>
         GraphEnded,
+
+        /// <summary>A run's lateness-recovery walk has started.</summary>
+        RecoveryStarted,
+
+        /// <summary>A run's lateness-recovery walk is ending: it sets nothing more on the decoder.</summary>
+        RecoveryEnded,
 
         /// <summary>A stop, a reposition's or the dispose's, begins waiting for the run's tasks.</summary>
         WaitingForRun,
@@ -964,7 +969,10 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         // faulted pump will never deliver.
         var firstFrame = videoDecoder!.FirstFrameDecoded;
         var watch = new List<Task>(3) { firstFrame };
-        watch.AddRange(_runTasks.Held);
+        if (_runTasks.Pump is { } pump)
+            watch.Add(pump);
+        if (_runTasks.Graph is { } graph)
+            watch.Add(graph);
 
         var winner = await Task.WhenAny(watch)
             .WaitAsync(cancellationToken)
@@ -1395,7 +1403,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         /// (<see cref="WaitForSessionTasksAsync"/>) — the whole point of the cheap rewind,
         /// since it avoids the cancel-mid-GPU-op wedge. Falls back to
         /// <see cref="StopGraphAsync"/> only if a task is somehow still running (the
-        /// non-EOS safety path).
+        /// non-EOS safety path), or a lateness-recovery walk is held: it runs until it is
+        /// cancelled, and once the pump and the graph have ended, cancelling interrupts
+        /// nothing else.
         /// </summary>
         AwaitClean,
     }
@@ -1467,7 +1477,8 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         //   • AwaitClean (rewind): at EOS the tasks have already completed, so just await
         //     them with NO CTS cancel (the whole point — avoids the per-loop graph teardown
         //     and the cancel-mid-GPU-op wedge). Fall back to the cancel path only if a task
-        //     is somehow still running.
+        //     is somehow still running, which a lateness-recovery walk always is: it ends only
+        //     when cancelled.
         // Either way the wait covers tasks an earlier reposition left held: one this
         // reposition supersedes was cancelled while it waited for them, and they may still be
         // unwinding. Nothing below touches the demuxer or the decoders until they have ended.
@@ -1816,10 +1827,9 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     /// Cancels the session token, unless it is cancelled already, then disposes its source.
     /// </summary>
     /// <remarks>
-    /// The lateness-recovery walk runs on the token and is not held with the run's tasks. A rewind
-    /// on the <see cref="TaskPolicy.AwaitClean"/> path waits for a run that ended by itself without
-    /// cancelling it, so a source disposed uncancelled there left the last run's walk going beside
-    /// the next one's, for good.
+    /// Every caller runs once the run's tasks have ended, the lateness-recovery walk among them, so
+    /// the cancellation stops nothing that still runs. It keeps a source from being disposed with
+    /// its token uncancelled, which a rewind that waited for a run without stopping it used to do.
     /// </remarks>
     private void RetireSessionToken()
     {
@@ -2148,7 +2158,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
         if (_pipeline is null)
             return;
 
-        // One run at a time: the last run's pump and graph have ended.
+        // One run at a time: the last run's tasks have ended.
         ThrowIfRunGoing();
 
         RetireSessionToken();
@@ -2230,8 +2240,27 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             CancellationToken.None
         );
 
+        // The walk sets the video decoder's readback and discard level, so it is held with the
+        // run's other tasks: a reposition resets that decoder and the dispose frees it.
+        Task? recoveryTask = null;
         if (LatenessRecovery is { Enabled: true } recovery)
-            _recoveryTask = Task.Run(() => RunRecoveryWalkAsync(recovery, ct), CancellationToken.None);
+        {
+            recoveryTask = Task.Run(
+                async () =>
+                {
+                    try
+                    {
+                        Take(Step.RecoveryStarted);
+                        await RunRecoveryWalkAsync(recovery, ct).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        Take(Step.RecoveryEnded);
+                    }
+                },
+                CancellationToken.None
+            );
+        }
 
         var graphTask = Task.Run(
             async () =>
@@ -2283,7 +2312,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
             CancellationToken.None
         );
 
-        _runTasks = RunTasks<Task>.Launched(pumpTask, graphTask);
+        _runTasks = RunTasks<Task>.Launched(pumpTask, graphTask, recoveryTask);
     }
 
     /// <summary>
@@ -2391,7 +2420,7 @@ internal sealed class SubstrateSession : IPlaylistItemRuntime
     }
 
     /// <summary>
-    /// Waits for the run's pump and graph tasks to end, and forgets them once they have.
+    /// Waits for the run's tasks to end, and forgets them once they have.
     /// </summary>
     /// <remarks>
     /// <para>

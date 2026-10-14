@@ -29,7 +29,8 @@ namespace FrameFlow.Player.Tests;
 /// launches a run from there, rather than opening the gates on the stopped one (#714). A rewind
 /// stops a run still going and waits for it, a warm-up made again while the graph waits at the
 /// closed gates launches no second run beside it, and the end-of-stream flush gives up with the
-/// run.
+/// run. The lateness-recovery walk, which acts on the video decoder and ends only when cancelled, is
+/// stopped and waited for with the rest of the run.
 /// </para>
 /// <para>
 /// Where the run should have ended and has not, at a demuxer seek, a reset or a free, the test
@@ -41,6 +42,7 @@ public sealed class SubstrateSessionSeekWaitTests
 {
     private const string AvFile = "test-av-h264-aac.mp4";
     private const string VideoFile = "test-video-h264-yuv420p.mp4";
+    private const string ShortAvFile = "test-subsecond.mp4";
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
 
     private static readonly Step[] Teardown =
@@ -221,6 +223,37 @@ public sealed class SubstrateSessionSeekWaitTests
     }
 
     [RequiresFfmpegAndCorpusFact]
+    public async Task ARewindAtTheEnd_StopsTheLatenessRecoveryWalk_AndWaitsForIt_BeforeItResetsTheDecoders()
+    {
+        // A rewind at the end of an item waits for a run that ended by itself, and the pump and the
+        // graph have. The recovery walk does not end by itself, and it sets the video decoder's
+        // discard level, so the rewind has to stop it and wait for it. The walk is held at its
+        // start, where it ignores its token, until the rewind's wait has begun.
+        await using var rig = await Rig.OpenAsync(ShortAvFile, latenessRecovery: true);
+        rig.Audio.Release();
+        var walkHold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Steps.At(Step.RecoveryStarted, () => walkHold.Task.Wait(Bound));
+        await rig.Session.WarmUpAsync().AsTask().WaitAsync(Bound);
+        await rig.Session.PlayAsync().AsTask().WaitAsync(Bound);
+        await rig.EndOfStream.WaitAsync(Bound);
+        Assert.Equal(1, rig.Steps.RecoveriesGoing);
+
+        rig.Steps.At(Step.WaitingForRun, () => walkHold.TrySetResult());
+        await rig.Session.RewindToStartAsync().AsTask().WaitAsync(Bound);
+
+        Assert.Empty(rig.RunStillGoingAt);
+        var taken = rig.Steps.Taken;
+        Assert.Equal(Reposition, taken.Where(Reposition.Contains));
+        Assert.True(
+            Array.IndexOf(taken, Step.RecoveryEnded) < Array.IndexOf(taken, Step.ResettingForSeek),
+            "The decoders were reset before the recovery walk had ended."
+        );
+        Assert.Equal(1, rig.Steps.MostRecoveriesAtOnce);
+        Assert.Equal(1, rig.Session.RunNumber);
+        Assert.Empty(rig.Faults);
+    }
+
+    [RequiresFfmpegAndCorpusFact]
     public async Task TheEndOfStreamFlush_GivesUpWithTheRun()
     {
         // The flush marker waits for space in a decoder's queue, which nothing drains once the
@@ -247,14 +280,16 @@ public sealed class SubstrateSessionSeekWaitTests
         private readonly ConcurrentQueue<Exception> _faults = new();
         private readonly ConcurrentQueue<Step> _stillGoing = new();
 
-        private Rig()
+        private readonly TaskCompletionSource _endOfStream = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private Rig(bool latenessRecovery)
         {
             Session = new SubstrateSession(
                 Video,
                 Audio,
                 Clock,
                 new SessionCallbacks(
-                    OnEndOfStream: static () => { },
+                    OnEndOfStream: () => _endOfStream.TrySetResult(),
                     OnWorkerFaulted: _faults.Enqueue,
                     OnBufferReady: static () => { },
                     OnBufferUnderrun: static () => { },
@@ -264,7 +299,10 @@ public sealed class SubstrateSessionSeekWaitTests
                     OnItemFailed: static (_, _, _) => { }
                 ),
                 HardwareDecodeMode.Disabled
-            );
+            )
+            {
+                LatenessRecovery = latenessRecovery ? new LatenessRecoveryOptions { Enabled = true } : null,
+            };
             Steps = StepLog.On(Session);
             CheckRunEndedAt([.. Reposition, .. Teardown]);
         }
@@ -281,13 +319,16 @@ public sealed class SubstrateSessionSeekWaitTests
 
         public IReadOnlyCollection<Exception> Faults => _faults;
 
+        /// <summary>Completes when the session raises its end of stream.</summary>
+        public Task EndOfStream => _endOfStream.Task;
+
         /// <summary>The steps taken while a task of a run was still going, where none should have been.</summary>
         public IReadOnlyCollection<Step> RunStillGoingAt => _stillGoing;
 
         /// <summary>A session that has opened <paramref name="file"/>, and launched no run.</summary>
-        public static async Task<Rig> OpenAsync(string file)
+        public static async Task<Rig> OpenAsync(string file, bool latenessRecovery = false)
         {
-            var rig = new Rig();
+            var rig = new Rig(latenessRecovery);
             await rig.Session.InitializeAsync(MediaSource.FromFile(Corpus(file))).AsTask().WaitAsync(Bound);
             return rig;
         }
@@ -351,7 +392,7 @@ public sealed class SubstrateSessionSeekWaitTests
 
     /// <summary>
     /// The steps a session takes, in order, with an action to run at any of them, and how many of
-    /// its runs' pumps and graphs are going.
+    /// its runs' pumps, graphs and recovery walks are going.
     /// </summary>
     private sealed class StepLog
     {
@@ -361,8 +402,10 @@ public sealed class SubstrateSessionSeekWaitTests
         private readonly Dictionary<Step, TaskCompletionSource> _next = [];
         private int _pumps;
         private int _graphs;
+        private int _recoveries;
         private int _mostPumps;
         private int _mostGraphs;
+        private int _mostRecoveries;
         private TaskCompletionSource _quiet = Done();
 
         public static StepLog On(SubstrateSession session)
@@ -381,17 +424,38 @@ public sealed class SubstrateSessionSeekWaitTests
             }
         }
 
-        /// <summary>Whether no pump and no graph of any run is going.</summary>
+        /// <summary>Whether no pump, no graph and no recovery walk of any run is going.</summary>
         public bool Quiet
         {
             get
             {
                 lock (_gate)
-                    return _pumps == 0 && _graphs == 0;
+                    return QuietLocked;
             }
         }
 
-        /// <summary>Completes once no pump and no graph is going.</summary>
+        /// <summary>How many recovery walks are going.</summary>
+        public int RecoveriesGoing
+        {
+            get
+            {
+                lock (_gate)
+                    return _recoveries;
+            }
+        }
+
+        public int MostRecoveriesAtOnce
+        {
+            get
+            {
+                lock (_gate)
+                    return _mostRecoveries;
+            }
+        }
+
+        private bool QuietLocked => _pumps == 0 && _graphs == 0 && _recoveries == 0;
+
+        /// <summary>Completes once no pump, no graph and no recovery walk is going.</summary>
         public Task WhenQuiet
         {
             get
@@ -456,9 +520,15 @@ public sealed class SubstrateSessionSeekWaitTests
                     case Step.GraphEnded:
                         _graphs--;
                         break;
+                    case Step.RecoveryStarted:
+                        _mostRecoveries = Math.Max(_mostRecoveries, ++_recoveries);
+                        break;
+                    case Step.RecoveryEnded:
+                        _recoveries--;
+                        break;
                 }
 
-                if (_pumps == 0 && _graphs == 0)
+                if (QuietLocked)
                     _quiet.TrySetResult();
                 else if (_quiet.Task.IsCompleted)
                     _quiet = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
