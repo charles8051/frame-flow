@@ -301,22 +301,25 @@ jobs:
       # either, which would leave this leg green having checked nothing. The
       # last lines fail the leg unless they passed.
       #
-      # bash, which the hosted runner has, so the loop stops at a failed project.
-      # The blame flags are the Release Test step's.
+      # Every project runs even when an earlier one fails, so one failure does
+      # not hide the others' results or that check. The blame flags are the
+      # Release Test step's.
       - name: Test (Debug)
         if: matrix.configuration == 'Debug'
         shell: bash
         run: |
+          failed=0
           for project in Decoding Playback Player Media; do
             dotnet test "tests/FrameFlow.$project.Tests" --configuration Debug --no-build \
               --blame-hang-timeout 5m --blame-crash \
-              --results-directory TestResults --logger "trx;LogFileName=test-debug-$project.trx"
+              --results-directory TestResults --logger "trx;LogFileName=test-debug-$project.trx" || failed=1
           done
           passed=$(grep -cE 'testName="FrameFlow\.Decoding\.Tests\.PassiveResourceUseTests\.[^"]*"[^>]*outcome="Passed"' TestResults/test-debug-Decoding.trx) || true
           if [ "${passed:-0}" -lt 3 ]; then
             echo "::error::PassiveResourceUseTests passed ${passed:-0} of its 3 tests: the use counters went unchecked."
-            exit 1
+            failed=1
           fi
+          exit "$failed"
 
       # The tests reach the inference packages through project references, which
       # copy files a package consumer never gets. This packs them and runs an app
